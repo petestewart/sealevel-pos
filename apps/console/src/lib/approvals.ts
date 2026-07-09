@@ -15,6 +15,24 @@ import { getPool, listItems, type Item } from "@ai-manager/core";
 export type Decision = "approved" | "rejected";
 
 /**
+ * Decision audit record, written into the item payload under `decision`
+ * (GH-22): what was decided, who decided it (Clerk user id + display
+ * name), when, and whether the draft was edited before approval.
+ */
+export interface DecisionRecord {
+  action: Decision;
+  by: { id: string; name: string };
+  at: string;
+  edited: boolean;
+}
+
+/** Edited draft to persist alongside an approval (Save & approve). */
+export interface DraftEdits {
+  subject: string;
+  body: string;
+}
+
+/**
  * Items awaiting a human decision, newest first. Wrapped in React cache()
  * so the nav shell (pending pill) and the approvals page share one query
  * per request instead of hitting Postgres twice.
@@ -24,15 +42,33 @@ export const pendingApprovals = cache(
 );
 
 /**
+ * The most recently resolved email_reply items, newest decision first,
+ * for the "Recently decided" section. Ordered by resolved_at (the moment
+ * the decision landed), not created_at.
+ */
+export async function recentlyDecided(limit = 10): Promise<Item[]> {
+  const { rows } = await getPool().query<Item>(
+    `SELECT * FROM items
+     WHERE status = 'resolved' AND type = 'email_reply'
+     ORDER BY resolved_at DESC NULLS LAST, id DESC
+     LIMIT $1`,
+    [limit],
+  );
+  return rows;
+}
+
+/**
  * Record a decision on a pending item and resolve it, atomically.
  *
- * The decision (who, what, when) is written into the item payload so the
- * audit trail lives on the items backbone. Recording the decision and the
- * terminal status flip happen in ONE guarded UPDATE matching only
- * status = 'pending_approval': concurrent decisions (a double-click, or
- * approve racing reject) cannot both pass the guard, so exactly one
- * decision wins and the loser fails loudly instead of overwriting the
- * audit trail.
+ * The decision audit (who, what, when, edited) is written into the item
+ * payload so the audit trail lives on the items backbone. When the draft
+ * was edited (Save & approve), the edited subject/body replace the draft
+ * fields and the original draft is preserved under `original_draft` -- in
+ * the SAME statement. Recording the decision and the terminal status flip
+ * happen in ONE guarded UPDATE matching only status = 'pending_approval':
+ * concurrent decisions (a double-click, or approve racing reject) cannot
+ * both pass the guard, so exactly one decision wins and the loser fails
+ * loudly instead of overwriting the audit trail.
  *
  * When Job B lands, the decision event will be emitted from here as well;
  * for now the state change is the whole effect (nothing auto-sends in v1).
@@ -40,20 +76,41 @@ export const pendingApprovals = cache(
 export async function decideItem(
   id: string,
   decision: Decision,
-  decidedBy: string,
+  decidedBy: { id: string; name: string },
+  edits?: DraftEdits,
 ): Promise<Item> {
+  const record: DecisionRecord = {
+    action: decision,
+    by: decidedBy,
+    at: new Date().toISOString(),
+    edited: edits !== undefined,
+  };
+
   const { rows } = await getPool().query<Item>(
-    `UPDATE items
-     SET payload = payload || jsonb_build_object(
-           'decision', $2::text,
-           'decided_by', $3::text,
-           'decided_at', now()
-         ),
-         status = 'resolved',
-         resolved_at = now()
-     WHERE id = $1 AND status = 'pending_approval'
-     RETURNING *`,
-    [id, decision, decidedBy],
+    edits === undefined
+      ? `UPDATE items
+         SET payload = payload || jsonb_build_object('decision', $2::jsonb),
+             status = 'resolved',
+             resolved_at = now()
+         WHERE id = $1 AND status = 'pending_approval'
+         RETURNING *`
+      : `UPDATE items
+         SET payload = payload || jsonb_build_object(
+               'decision', $2::jsonb,
+               'original_draft', jsonb_build_object(
+                 'draft_subject', payload->'draft_subject',
+                 'draft_body', payload->'draft_body'
+               ),
+               'draft_subject', $3::text,
+               'draft_body', $4::text
+             ),
+             status = 'resolved',
+             resolved_at = now()
+         WHERE id = $1 AND status = 'pending_approval'
+         RETURNING *`,
+    edits === undefined
+      ? [id, JSON.stringify(record)]
+      : [id, JSON.stringify(record), edits.subject, edits.body],
   );
   const item = rows[0];
   if (!item) {

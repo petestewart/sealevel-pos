@@ -1,33 +1,141 @@
-import { Button } from "../../components/Button";
+import type { Item } from "@ai-manager/core";
 import { StatusChip } from "../../components/StatusChip";
+import {
+  ApprovalCard,
+  type ApprovalCardData,
+} from "../../components/ApprovalCard";
 import { currentRole, hasPermission } from "../../lib/rbac";
-import { pendingApprovals } from "../../lib/approvals";
-import { approveItemAction, rejectItemAction } from "./actions";
+import {
+  pendingApprovals,
+  recentlyDecided,
+  type DecisionRecord,
+} from "../../lib/approvals";
+import {
+  formatDateTime,
+  formatDecidedAt,
+  formatTime,
+  humanizeType,
+  initialsOf,
+  parseSender,
+} from "../../lib/emailDisplay";
 
 /**
- * Approval inbox: every item with status pending_approval, newest first.
- * Approve and Reject are server actions that record the decision and
- * resolve the item. Nothing auto-sends in v1; the acting Job B is a later
- * ticket (see lib/approvals.ts).
- *
- * Interim skin only: this view gets the design-system tokens and nav so it
- * matches the shell, but the full two-pane approval card is rebuilt in
- * GH-22.
+ * Approval inbox (Console.dc.html approvals spec, GH-22): every item with
+ * status pending_approval rendered as a two-pane email card, newest first,
+ * plus the last ten decided email replies with their decision audit.
+ * Nothing auto-sends in v1; approving records the decision only.
  */
+
+interface OriginalEmail {
+  from?: string;
+  subject?: string;
+  body?: string;
+}
+
+function str(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function toCardData(item: Item): ApprovalCardData {
+  const payload = item.payload;
+  const original = (payload.original_email ?? {}) as OriginalEmail;
+  const sender = parseSender(str(original.from));
+  return {
+    // Serial int at runtime despite the string type; normalize for React.
+    id: String(item.id),
+    // The triage job that classifies intent is a future ticket; until the
+    // payload carries one, show the item type rather than inventing it.
+    intent: str(payload.intent) ?? humanizeType(item.type),
+    receivedTime: formatTime(item.created_at),
+    receivedFull: formatDateTime(item.created_at),
+    assignee: item.assignee,
+    customer: sender.name,
+    initials: initialsOf(sender.name),
+    inbound: str(original.body) ?? "(no message body)",
+    draftSubject: str(payload.draft_subject) ?? "(no subject)",
+    draftBody: str(payload.draft_body) ?? "",
+  };
+}
+
+function decisionOf(item: Item): DecisionRecord | null {
+  const d = item.payload.decision as Partial<DecisionRecord> | undefined;
+  if (
+    typeof d === "object" &&
+    d !== null &&
+    (d.action === "approved" || d.action === "rejected") &&
+    typeof d.by === "object" &&
+    d.by !== null &&
+    typeof d.by.name === "string" &&
+    typeof d.at === "string"
+  ) {
+    return d as DecisionRecord;
+  }
+  return null;
+}
+
+function DecidedRow({ item }: { item: Item }) {
+  const decision = decisionOf(item);
+  // Legacy rows (pre-audit schema) stored the decision as a bare string.
+  const legacy = item.payload.decision;
+  const approved = decision
+    ? decision.action === "approved"
+    : legacy !== "rejected";
+  const sender = parseSender(
+    str((item.payload.original_email as OriginalEmail | undefined)?.from),
+  );
+  const decidedAt = decision
+    ? formatDecidedAt(new Date(decision.at))
+    : item.resolved_at
+      ? formatDecidedAt(item.resolved_at)
+      : null;
+  const verb = approved ? "Approved" : "Rejected";
+
+  return (
+    <div className="decided-row">
+      <div
+        className={`decided-icon decided-icon--${approved ? "approved" : "rejected"}`}
+        aria-hidden="true"
+      >
+        {approved ? "✓" : "✕"}
+      </div>
+      <div className="decided-main">
+        <div className="decided-meta-row">
+          <span className="decided-id">#{String(item.id).slice(0, 8)}</span>
+          <StatusChip variant={approved ? "approved" : "rejected"} />
+        </div>
+        <div className="decided-title">
+          {approved
+            ? `Draft approved for ${sender.name}`
+            : `Draft rejected, nothing sent to ${sender.name}`}
+        </div>
+        <div className="decided-meta">
+          {decision
+            ? `${verb} by ${decision.by.name}${decidedAt ? ` · ${decidedAt}` : ""}${decision.edited ? " · edited" : ""}`
+            : `${verb}${decidedAt ? ` · ${decidedAt}` : ""}`}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default async function ApprovalsPage() {
   const role = await currentRole();
   const canDecide = hasPermission(role, "approvals:decide");
-  const items = await pendingApprovals();
+  const [items, decided] = await Promise.all([
+    pendingApprovals(),
+    recentlyDecided(),
+  ]);
 
   return (
     <div className="page page--approvals">
       <header className="page-head">
         <h1>Approvals</h1>
         <p>
-          Items waiting on a human decision. Approving records your decision;
-          nothing is sent automatically in v1.
+          AI-drafted email replies awaiting your decision. Nothing is sent
+          automatically in v1.
         </p>
       </header>
+
       {items.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon" aria-hidden="true">
@@ -35,50 +143,32 @@ export default async function ApprovalsPage() {
           </div>
           <div className="empty-state-title">You&apos;re all caught up</div>
           <div className="empty-state-sub">
-            Nothing is waiting for approval. New items will appear here as
+            No drafts waiting for approval. New replies will appear here as
             they come in.
           </div>
         </div>
       ) : (
-        <ul className="item-list">
+        <div className="approval-list">
           {items.map((item) => (
-            <li key={item.id} className="item-card">
-              <div className="meta">
-                <span className="item-id">#{item.id}</span>
-                <span>{item.type}</span>
-                {item.domain ? <span>{item.domain}</span> : null}
-                {item.assignee ? (
-                  <span>assigned to {item.assignee}</span>
-                ) : null}
-                <span>
-                  created{" "}
-                  {item.created_at.toISOString().slice(0, 16).replace("T", " ")}
-                </span>
-                <StatusChip variant="pending" />
-              </div>
-              <pre>{JSON.stringify(item.payload, null, 2)}</pre>
-              {canDecide ? (
-                <div className="actions">
-                  <form action={approveItemAction}>
-                    <input type="hidden" name="id" value={item.id} />
-                    <Button type="submit" variant="primary">
-                      Approve
-                    </Button>
-                  </form>
-                  <form action={rejectItemAction}>
-                    <input type="hidden" name="id" value={item.id} />
-                    <Button type="submit" variant="destructive-text">
-                      Reject
-                    </Button>
-                  </form>
-                </div>
-              ) : (
-                <div className="meta">Your role can view but not decide.</div>
-              )}
-            </li>
+            <ApprovalCard
+              key={item.id}
+              item={toCardData(item)}
+              canDecide={canDecide}
+            />
           ))}
-        </ul>
+        </div>
       )}
+
+      {decided.length > 0 ? (
+        <>
+          <div className="section-label">Recently decided</div>
+          <div className="decided-list">
+            {decided.map((item) => (
+              <DecidedRow key={item.id} item={item} />
+            ))}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

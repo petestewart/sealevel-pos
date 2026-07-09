@@ -458,65 +458,302 @@ textarea {
   background: var(--rej-bg);
 }
 
-/* ---------- Approval inbox (interim skin; rebuilt in GH-22) ---------- */
+/* ---------- Approval inbox (Console.dc.html approvals spec) ---------- */
 
-.item-list {
+.approval-list {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  padding: 0;
-  margin: 0;
-  list-style: none;
 }
 
-.item-card {
+.approval-card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 20px;
+  overflow: hidden;
   animation: cardIn 0.25s ease both;
+  margin: 0;
 }
 
-.item-card .meta {
+.approval-card-head {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 11px;
-  font: 400 12px var(--font-ui), sans-serif;
-  color: var(--tx3);
-  margin-bottom: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line2);
 }
 
-.item-card .meta .item-id {
+.approval-card-id {
   font: 500 11.5px var(--font-mono), monospace;
   color: var(--tx2);
 }
 
-.item-card .meta .status-chip {
+.intent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font: 600 10.5px var(--font-ui), sans-serif;
+  background: var(--surface2);
+  color: var(--tx2);
+}
+
+.approval-card-time {
+  font: 400 12px var(--font-ui), sans-serif;
+  color: var(--tx3);
+}
+
+.approval-card-status {
   margin-left: auto;
 }
 
-.item-card pre {
-  background: var(--draft);
-  border: 1px solid var(--line2);
-  border-radius: 8px;
-  padding: 12px 13px;
-  overflow-x: auto;
-  font: 400 12px/1.6 var(--font-mono), monospace;
-  color: var(--txb);
+.approval-card-panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
 }
 
-.item-card .actions {
+.approval-pane {
+  padding: 20px;
+}
+
+.approval-pane--inbound {
+  border-right: 1px solid var(--line2);
+}
+
+.approval-pane--draft {
+  background: var(--draft);
+}
+
+.approval-customer {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line2);
-  margin-top: 14px;
+  margin-bottom: 14px;
 }
 
-.item-card .actions form:last-child {
+.approval-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--avatar);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 600 12px var(--font-ui), sans-serif;
+  color: var(--tx);
+  flex: none;
+}
+
+.approval-customer-meta {
+  line-height: 1.35;
+  min-width: 0;
+}
+
+.approval-customer-name {
+  font: 600 13px var(--font-ui), sans-serif;
+  color: var(--tx);
+}
+
+.approval-customer-sub {
+  font: 400 11.5px var(--font-ui), sans-serif;
+  color: var(--tx3);
+}
+
+.approval-pane-labelrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.micro-label {
+  font: 500 9.5px var(--font-mono), monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tx3);
+}
+
+.micro-label--accent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 10px var(--font-mono), monospace;
+  letter-spacing: 0.06em;
+  color: var(--accent-tx);
+}
+
+.micro-label-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex: none;
+}
+
+.approval-pane--draft .approval-pane-labelrow {
+  margin-bottom: 13px;
+}
+
+.approval-pane-timestamp {
+  font: 400 11px var(--font-ui), sans-serif;
+  color: var(--tx3);
+  white-space: nowrap;
+}
+
+.approval-inbound-text {
+  font: 400 13.5px/1.65 var(--font-ui), sans-serif;
+  color: var(--tx2);
+  white-space: pre-line;
+}
+
+.draft-subject {
+  font: 600 14px var(--font-ui), sans-serif;
+  color: var(--tx);
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--line2);
+  margin-bottom: 13px;
+}
+
+.draft-body {
+  font: 400 13.5px/1.65 var(--font-ui), sans-serif;
+  color: var(--txb);
+}
+
+.draft-body p {
+  margin: 0 0 11px;
+  white-space: pre-line;
+}
+
+.field-label {
+  display: block;
+  font: 500 10px var(--font-ui), sans-serif;
+  color: var(--tx3);
+  margin-bottom: 5px;
+}
+
+.draft-subject-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font: 600 13.5px var(--font-ui), sans-serif;
+  color: var(--tx);
+  margin-bottom: 13px;
+  outline: none;
+}
+
+.draft-body-input {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 13px;
+  font: 400 13.5px/1.65 var(--font-ui), sans-serif;
+  color: var(--txb);
+  outline: none;
+}
+
+.approval-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line2);
+}
+
+.approval-card-actions--readonly {
+  font: 400 12px var(--font-ui), sans-serif;
+  color: var(--tx3);
+}
+
+.approval-reject {
   margin-left: auto;
+}
+
+/* ---------- Recently decided ---------- */
+
+.section-label {
+  margin: 34px 0 16px;
+  font: 600 10.5px var(--font-mono), monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tx3);
+}
+
+.decided-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.decided-row {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 18px;
+  display: flex;
+  gap: 13px;
+  align-items: flex-start;
+  animation: cardIn 0.25s ease both;
+}
+
+.decided-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 600 15px var(--font-ui), sans-serif;
+}
+
+.decided-icon--approved {
+  background: var(--appr-bg);
+  color: var(--appr-tx);
+}
+
+.decided-icon--rejected {
+  background: var(--rej-bg);
+  color: var(--rej-tx);
+}
+
+.decided-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.decided-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.decided-meta-row .status-chip {
+  padding: 3px 9px;
+  font: 600 11px var(--font-ui), sans-serif;
+}
+
+.decided-id {
+  font: 500 11px var(--font-mono), monospace;
+  color: var(--tx2);
+}
+
+.decided-title {
+  font: 600 13.5px var(--font-ui), sans-serif;
+  color: var(--tx);
+  margin-bottom: 3px;
+}
+
+.decided-meta {
+  font: 400 12px var(--font-ui), sans-serif;
+  color: var(--tx3);
 }
 
 /* ---------- Empty state ---------- */
