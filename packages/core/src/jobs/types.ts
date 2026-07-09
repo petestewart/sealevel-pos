@@ -12,12 +12,21 @@ export interface JobContext {
   payload?: unknown;
 }
 
+/**
+ * Models the brain may run a job on (locked decisions in CLAUDE.md):
+ * claude-opus-4-8 for drafting-type jobs, claude-sonnet-5 for
+ * triage/classification jobs.
+ */
+export type BrainModel = "claude-opus-4-8" | "claude-sonnet-5";
+
 export interface Job {
   id: string;
   enabled: boolean;
   triggers: Trigger[];
   /** Scoped capability names; the tool runner resolves them by name. */
   tools: string[];
+  /** Model to run on. Defaults to claude-opus-4-8 when omitted. */
+  model?: BrainModel;
   /** The prompt. Almost entirely prose. */
   instructions: (ctx: JobContext) => string;
 }

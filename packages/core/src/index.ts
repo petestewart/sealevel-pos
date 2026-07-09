@@ -20,7 +20,7 @@ export {
   registerSchedules,
   type ScheduleSpec,
 } from "./queue/index.js";
-export type { Job, Trigger, JobContext } from "./jobs/types.js";
+export type { Job, Trigger, JobContext, BrainModel } from "./jobs/types.js";
 export { JOBS, jobById } from "./jobs/registry.js";
 export {
   createItem,
@@ -34,3 +34,6 @@ export type {
   CreateItemInput,
   ListItemsFilter,
 } from "./db/items.js";
+export { createItemTool, toolsByName, toolsForJob } from "./tools/registry.js";
+export { runJob, DEFAULT_BRAIN_MODEL } from "./brain/run.js";
+export { SYSTEM_PROMPT } from "./brain/prompts.js";
