@@ -10,6 +10,7 @@ import type { Widget } from "./types";
 export const itemsCountWidget: Widget = {
   id: "items-count",
   domain: "items",
+  icon: "mail",
   requires: "items:view",
   detailRoute: "/approvals",
   summary: async () => {
@@ -21,7 +22,11 @@ export const itemsCountWidget: Widget = {
     const count = open.length + unassigned.length + pendingApproval.length;
     return {
       count,
-      label: `${open.length} open, ${unassigned.length} unassigned, ${pendingApproval.length} pending approval`,
+      breakdown: [
+        { label: `${pendingApproval.length} pending approval`, tone: "pending" },
+        { label: `${unassigned.length} unassigned`, tone: "unassigned" },
+        { label: `${open.length} open`, tone: "accent" },
+      ],
       status: pendingApproval.length > 0 || unassigned.length > 0 ? "attention" : "ok",
     };
   },

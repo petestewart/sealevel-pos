@@ -1,3 +1,4 @@
+import { cache } from "react";
 import "./env";
 import { getPool, listItems, type Item } from "@ai-manager/core";
 
@@ -13,10 +14,14 @@ import { getPool, listItems, type Item } from "@ai-manager/core";
 
 export type Decision = "approved" | "rejected";
 
-/** Items awaiting a human decision, newest first. */
-export async function pendingApprovals(): Promise<Item[]> {
-  return listItems({ status: "pending_approval" });
-}
+/**
+ * Items awaiting a human decision, newest first. Wrapped in React cache()
+ * so the nav shell (pending pill) and the approvals page share one query
+ * per request instead of hitting Postgres twice.
+ */
+export const pendingApprovals = cache(
+  async (): Promise<Item[]> => listItems({ status: "pending_approval" }),
+);
 
 /**
  * Record a decision on a pending item and resolve it, atomically.
