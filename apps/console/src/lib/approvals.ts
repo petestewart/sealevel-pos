@@ -33,6 +33,43 @@ export interface DraftEdits {
 }
 
 /**
+ * Browsers submit textarea content with CRLF line endings; drafts are
+ * stored with LF. Normalize before comparing or persisting so a
+ * round-tripped, untouched draft stays byte-identical (GH-40).
+ */
+function normalizeEdits(edits: DraftEdits): DraftEdits {
+  return {
+    subject: edits.subject.replace(/\r\n/g, "\n"),
+    body: edits.body.replace(/\r\n/g, "\n"),
+  };
+}
+
+/** Payload draft fields as stored. */
+function draftOf(item: Item): DraftEdits {
+  const payload = item.payload as Record<string, unknown>;
+  return {
+    subject: String(payload["draft_subject"] ?? ""),
+    body: String(payload["draft_body"] ?? ""),
+  };
+}
+
+function sameDraft(a: DraftEdits, b: DraftEdits): boolean {
+  return a.subject === b.subject && a.body === b.body;
+}
+
+async function pendingItemOrThrow(id: string, caller: string): Promise<Item> {
+  const { rows } = await getPool().query<Item>(
+    `SELECT * FROM items WHERE id = $1 AND status = 'pending_approval'`,
+    [id],
+  );
+  const item = rows[0];
+  if (!item) {
+    throw new Error(`${caller}: no pending_approval item with id ${id}`);
+  }
+  return item;
+}
+
+/**
  * Items awaiting a human decision, newest first. Wrapped in React cache()
  * so the nav shell (pending pill) and the approvals page share one query
  * per request instead of hitting Postgres twice.
@@ -79,6 +116,15 @@ export async function decideItem(
   decidedBy: { id: string; name: string },
   edits?: DraftEdits,
 ): Promise<Item> {
+  if (edits !== undefined) {
+    // No-op save hygiene (GH-40): a Save & approve whose content matches
+    // the stored draft byte-for-byte (after CRLF normalization) must not
+    // mark the draft edited or capture original_draft.
+    edits = normalizeEdits(edits);
+    const current = await pendingItemOrThrow(id, "decideItem");
+    if (sameDraft(edits, draftOf(current))) edits = undefined;
+  }
+
   const record: DecisionRecord = {
     action: decision,
     by: decidedBy,
@@ -148,6 +194,14 @@ export async function saveDraftEdits(
   id: string,
   edits: DraftEdits,
 ): Promise<Item> {
+  // No-op save hygiene (GH-40): skip the write entirely when the
+  // CRLF-normalized content is byte-identical to the stored draft, so an
+  // untouched Save edits never sets draft_edited, captures
+  // original_draft, or rewrites line endings.
+  edits = normalizeEdits(edits);
+  const current = await pendingItemOrThrow(id, "saveDraftEdits");
+  if (sameDraft(edits, draftOf(current))) return current;
+
   const { rows } = await getPool().query<Item>(
     `UPDATE items
      SET payload = payload

@@ -45,24 +45,58 @@ function requireString(formData: FormData, field: string): string {
   return value;
 }
 
+export interface ApprovalActionState {
+  error: string | null;
+}
+
+const ALREADY_DECIDED_MESSAGE =
+  "This item was already decided by another operator. Refresh to see the latest.";
+
+/**
+ * True when a guarded UPDATE in the approvals lib matched zero rows: the
+ * item is no longer pending_approval (decided in another tab or by another
+ * operator). Surfaced as an inline message, never an error page (GH-40).
+ */
+function isAlreadyDecided(err: unknown): boolean {
+  return (
+    err instanceof Error && err.message.includes("no pending_approval item")
+  );
+}
+
 async function decide(
   formData: FormData,
   decision: Decision,
   edits?: DraftEdits,
-): Promise<void> {
+): Promise<ApprovalActionState> {
   const decider = await requireDecider();
   const id = requireString(formData, "id");
-  await decideItem(id, decision, decider, edits);
+  try {
+    await decideItem(id, decision, decider, edits);
+  } catch (err) {
+    if (isAlreadyDecided(err)) {
+      // No revalidate here: refreshing would unmount the stale card and
+      // the inline message with it. The card stays until the user acts.
+      return { error: ALREADY_DECIDED_MESSAGE };
+    }
+    throw err;
+  }
   revalidatePath("/approvals");
   revalidatePath("/");
+  return { error: null };
 }
 
-export async function approveItemAction(formData: FormData): Promise<void> {
-  await decide(formData, "approved");
+export async function approveItemAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  return decide(formData, "approved");
 }
 
-export async function rejectItemAction(formData: FormData): Promise<void> {
-  await decide(formData, "rejected");
+export async function rejectItemAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  return decide(formData, "rejected");
 }
 
 /**
@@ -71,13 +105,14 @@ export async function rejectItemAction(formData: FormData): Promise<void> {
  * guarded UPDATE that records the decision and resolves the item.
  */
 export async function saveAndApproveItemAction(
+  _prev: ApprovalActionState,
   formData: FormData,
-): Promise<void> {
+): Promise<ApprovalActionState> {
   const edits: DraftEdits = {
     subject: requireString(formData, "subject").trim(),
     body: requireString(formData, "body").trim(),
   };
-  await decide(formData, "approved", edits);
+  return decide(formData, "approved", edits);
 }
 
 /**
@@ -85,16 +120,27 @@ export async function saveAndApproveItemAction(
  * (capturing original_draft on first edit, marking the draft edited) while
  * the item stays pending_approval. No decision is recorded.
  */
-export async function saveEditsItemAction(formData: FormData): Promise<void> {
+export async function saveEditsItemAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
   await requireDecider();
   const id = requireString(formData, "id");
   const edits: DraftEdits = {
     subject: requireString(formData, "subject").trim(),
     body: requireString(formData, "body").trim(),
   };
-  await saveDraftEdits(id, edits);
+  try {
+    await saveDraftEdits(id, edits);
+  } catch (err) {
+    if (isAlreadyDecided(err)) {
+      return { error: ALREADY_DECIDED_MESSAGE };
+    }
+    throw err;
+  }
   revalidatePath("/approvals");
   revalidatePath("/");
+  return { error: null };
 }
 
 export interface ReopenState {

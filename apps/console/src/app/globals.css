@@ -786,6 +786,13 @@ textarea {
   color: var(--rej-tx);
 }
 
+.approval-action-error {
+  display: block;
+  align-self: center;
+  font: 400 12px var(--font-ui), sans-serif;
+  color: var(--rej-tx);
+}
+
 /* ---------- Empty state ---------- */
 
 .empty-state {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { Button } from "./Button";
 import { StatusChip } from "./StatusChip";
 import { paragraphsOf } from "../lib/emailDisplay";
@@ -9,7 +9,10 @@ import {
   rejectItemAction,
   saveAndApproveItemAction,
   saveEditsItemAction,
+  type ApprovalActionState,
 } from "../app/approvals/actions";
+
+const initialActionState: ApprovalActionState = { error: null };
 
 /**
  * Two-pane approval card (Console.dc.html approvals spec): header row
@@ -45,6 +48,58 @@ export function ApprovalCard({
   canDecide: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+
+  // Double-click immunity (GH-40): when the footer swaps button sets, the
+  // incoming buttons render at the same coordinates, so the second click
+  // of a double-click would activate whatever replaced the toggle. The
+  // toggle handlers disarm synchronously (setArmed(false) in the same
+  // commit that swaps the buttons, so they MOUNT disabled -- an effect
+  // would run after paint, leaving a gap the double-click slips through);
+  // this effect only re-arms them after the immunity window.
+  const [armed, setArmed] = useState(true);
+  useEffect(() => {
+    if (armed) return;
+    const t = setTimeout(() => setArmed(true), 400);
+    return () => clearTimeout(t);
+  }, [armed]);
+
+  const toggleEditing = (next: boolean) => {
+    setArmed(false);
+    setEditing(next);
+  };
+
+  const [approveState, approveAction] = useActionState(
+    approveItemAction,
+    initialActionState,
+  );
+  const [rejectState, rejectAction] = useActionState(
+    rejectItemAction,
+    initialActionState,
+  );
+  const [saveApproveState, saveApproveAction] = useActionState(
+    saveAndApproveItemAction,
+    initialActionState,
+  );
+  const [saveEditsState, saveEditsAction] = useActionState(
+    saveEditsItemAction,
+    initialActionState,
+  );
+
+  // Close the editor after a successful Save edits (state object identity
+  // changes on every dispatch; the initial object means nothing ran yet).
+  const lastSaveEditsState = useRef(saveEditsState);
+  useEffect(() => {
+    if (saveEditsState !== lastSaveEditsState.current) {
+      lastSaveEditsState.current = saveEditsState;
+      if (!saveEditsState.error) toggleEditing(false);
+    }
+  }, [saveEditsState]);
+
+  const actionError =
+    approveState.error ??
+    rejectState.error ??
+    saveApproveState.error ??
+    saveEditsState.error;
 
   return (
     <form className="approval-card">
@@ -101,6 +156,7 @@ export function ApprovalCard({
                 name="subject"
                 defaultValue={item.draftSubject}
                 required
+                autoFocus
                 className="draft-subject-input"
               />
               <label className="field-label" htmlFor={`body-${item.id}`}>
@@ -132,26 +188,32 @@ export function ApprovalCard({
           {editing ? (
             <>
               <Button
+                key="save-approve"
                 type="submit"
                 variant="primary"
-                formAction={saveAndApproveItemAction}
+                disabled={!armed}
+                formAction={saveApproveAction}
               >
                 Save &amp; approve
               </Button>
               <Button
+                key="save-edits"
                 type="submit"
                 variant="outlined"
-                formAction={async (formData: FormData) => {
-                  await saveEditsItemAction(formData);
-                  setEditing(false);
-                }}
+                disabled={!armed}
+                formAction={saveEditsAction}
               >
                 Save edits
               </Button>
               <Button
+                key="cancel-edit"
                 type="button"
                 variant="outlined"
-                onClick={() => setEditing(false)}
+                disabled={!armed}
+                onClick={(e) => {
+                  e.preventDefault();
+                  toggleEditing(false);
+                }}
               >
                 Cancel edit
               </Button>
@@ -159,30 +221,43 @@ export function ApprovalCard({
           ) : (
             <>
               <Button
+                key="approve"
                 type="submit"
                 variant="primary"
-                formAction={approveItemAction}
+                disabled={!armed}
+                formAction={approveAction}
               >
                 Approve
               </Button>
               <Button
+                key="edit-toggle"
                 type="button"
                 variant="outlined"
-                onClick={() => setEditing(true)}
+                disabled={!armed}
+                onClick={(e) => {
+                  e.preventDefault();
+                  toggleEditing(true);
+                }}
               >
                 Edit then approve
               </Button>
             </>
           )}
           <Button
+            key="reject"
             type="submit"
             variant="destructive-text"
-            formAction={rejectItemAction}
+            formAction={rejectAction}
             formNoValidate
             className="approval-reject"
           >
             Reject
           </Button>
+          {actionError ? (
+            <span role="alert" className="approval-action-error">
+              {actionError}
+            </span>
+          ) : null}
         </div>
       ) : (
         <div className="approval-card-actions approval-card-actions--readonly">
