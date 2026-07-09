@@ -9,6 +9,17 @@ export { loadEnv, requireEnv } from "./env.js";
 export { getPool, closePool } from "./db/client.js";
 export { runMigrations } from "./db/migrate.js";
 export { createRedis } from "./redis.js";
+export {
+  DEFAULT_QUEUE_NAME,
+  DEFAULT_JOB_OPTIONS,
+  createQueue,
+  enqueue,
+  DEFAULT_WORKER_CONCURRENCY,
+  workerConcurrency,
+  createQueueWorker,
+  registerSchedules,
+  type ScheduleSpec,
+} from "./queue/index.js";
 export type { Job, Trigger, JobContext } from "./jobs/types.js";
 export { JOBS, jobById } from "./jobs/registry.js";
 export {
