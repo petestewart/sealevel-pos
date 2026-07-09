@@ -1,11 +1,11 @@
-import { listItems } from "@ai-manager/core";
+import { itemStatusCounts } from "../approvals";
 import type { Widget } from "./types";
 
 /**
  * Items count widget: the first widget on the items backbone. Counts
- * unresolved items by status (open, unassigned, pending approval). Reads
- * Postgres server-side via @ai-manager/core helpers; never imported by
- * client components.
+ * unresolved items by status (open, unassigned, pending approval) via one
+ * GROUP BY query (GH-27) instead of fetching full row sets. Reads
+ * Postgres server-side; never imported by client components.
  */
 export const itemsCountWidget: Widget = {
   id: "items-count",
@@ -14,20 +14,17 @@ export const itemsCountWidget: Widget = {
   requires: "items:view",
   detailRoute: "/approvals",
   summary: async () => {
-    const [open, unassigned, pendingApproval] = await Promise.all([
-      listItems({ status: "open" }),
-      listItems({ status: "unassigned" }),
-      listItems({ status: "pending_approval" }),
-    ]);
-    const count = open.length + unassigned.length + pendingApproval.length;
+    const { open, unassigned, pending_approval: pendingApproval } =
+      await itemStatusCounts();
+    const count = open + unassigned + pendingApproval;
     return {
       count,
       breakdown: [
-        { label: `${pendingApproval.length} pending approval`, tone: "pending" },
-        { label: `${unassigned.length} unassigned`, tone: "unassigned" },
-        { label: `${open.length} open`, tone: "accent" },
+        { label: `${pendingApproval} pending approval`, tone: "pending" },
+        { label: `${unassigned} unassigned`, tone: "unassigned" },
+        { label: `${open} open`, tone: "accent" },
       ],
-      status: pendingApproval.length > 0 || unassigned.length > 0 ? "attention" : "ok",
+      status: pendingApproval > 0 || unassigned > 0 ? "attention" : "ok",
     };
   },
 };

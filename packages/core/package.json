@@ -13,7 +13,8 @@
     "migrate": "npm run build && node dist/db/migrate.js",
     "smoke": "npm run build && node dist/db/smoke.js",
     "smoke:brain": "npm run build && node dist/brain/smoke.js",
-    "smoke:novu": "npm run build && node dist/notifications/smoke.js"
+    "smoke:novu": "npm run build && node dist/notifications/smoke.js",
+    "smoke:items": "npm run build && node dist/db/smokeItems.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

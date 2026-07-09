@@ -204,14 +204,39 @@ export async function resolveItem(id: string): Promise<Item> {
   return item;
 }
 
+/** Default rows per page for listItems (QA-ROADMAP Wave A / A5). */
+export const DEFAULT_PAGE_SIZE = 25;
+
 export interface ListItemsFilter {
   status?: ItemStatus;
   type?: string;
   /** Filter by assignee; pass null for the unassigned queue (assignee IS NULL). */
   assignee?: string | null;
+  /** 1-based page number; defaults to 1. */
+  page?: number;
+  /** Rows per page; defaults to DEFAULT_PAGE_SIZE (25). */
+  pageSize?: number;
 }
 
+/**
+ * List items newest first (created_at DESC, id DESC as tiebreaker),
+ * ALWAYS paginated: every call is bounded by pageSize (default 25), so no
+ * unbounded item query exists anywhere (GH-27). A page beyond the end
+ * returns []. For totals, use countItemsByStatus rather than fetching
+ * rows.
+ */
 export async function listItems(filter: ListItemsFilter = {}): Promise<Item[]> {
+  const page = filter.page ?? 1;
+  const pageSize = filter.pageSize ?? DEFAULT_PAGE_SIZE;
+  if (!Number.isInteger(page) || page < 1) {
+    throw new Error(`listItems: page must be a positive integer, got ${page}`);
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1) {
+    throw new Error(
+      `listItems: pageSize must be a positive integer, got ${pageSize}`,
+    );
+  }
+
   const where: string[] = [];
   const params: unknown[] = [];
   if (filter.status !== undefined) {
@@ -230,9 +255,45 @@ export async function listItems(filter: ListItemsFilter = {}): Promise<Item[]> {
       where.push(`assignee = $${params.length}`);
     }
   }
+  params.push(pageSize, (page - 1) * pageSize);
   const sql = `SELECT * FROM items${
     where.length > 0 ? ` WHERE ${where.join(" AND ")}` : ""
-  } ORDER BY created_at DESC, id DESC`;
+  } ORDER BY created_at DESC, id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`;
   const { rows } = await getPool().query<Item>(sql, params);
   return rows;
+}
+
+/** Per-status item counts; statuses with no rows are present as 0. */
+export type ItemStatusCounts = Record<ItemStatus, number>;
+
+const ALL_STATUSES: readonly ItemStatus[] = [
+  "open",
+  "unassigned",
+  "pending_approval",
+  "resolved",
+];
+
+/**
+ * Count items per status in ONE query (GROUP BY status). Powers the nav
+ * pending pill, sidebar count pills, and the dashboard items widget
+ * without pulling rows. Optional type filter for per-domain counts.
+ */
+export async function countItemsByStatus(
+  filter: { type?: string } = {},
+): Promise<ItemStatusCounts> {
+  const params: unknown[] = [];
+  let whereSql = "";
+  if (filter.type !== undefined) {
+    params.push(filter.type);
+    whereSql = ` WHERE type = $${params.length}`;
+  }
+  const { rows } = await getPool().query<{ status: ItemStatus; count: string }>(
+    `SELECT status, count(*)::text AS count FROM items${whereSql} GROUP BY status`,
+    params,
+  );
+  const counts = Object.fromEntries(
+    ALL_STATUSES.map((s) => [s, 0]),
+  ) as ItemStatusCounts;
+  for (const row of rows) counts[row.status] = Number(row.count);
+  return counts;
 }

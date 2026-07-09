@@ -30,10 +30,13 @@ export {
   reopenItem,
   ReopenConflictError,
   listItems,
+  countItemsByStatus,
+  DEFAULT_PAGE_SIZE,
 } from "./db/items.js";
 export type {
   Item,
   ItemStatus,
+  ItemStatusCounts,
   CreateItemInput,
   CreateItemResult,
   ListItemsFilter,

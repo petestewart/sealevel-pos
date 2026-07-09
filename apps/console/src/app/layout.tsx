@@ -5,7 +5,7 @@ import { ClerkProvider, UserButton } from "@clerk/nextjs";
 import { currentUser } from "@clerk/nextjs/server";
 import { NavLinks } from "../components/NavLinks";
 import { ThemeToggle, type Theme } from "../components/ThemeToggle";
-import { pendingApprovals } from "../lib/approvals";
+import { itemStatusCounts } from "../lib/approvals";
 import "./globals.css";
 
 const hankenGrotesk = Hanken_Grotesk({
@@ -34,7 +34,7 @@ export const dynamic = "force-dynamic";
 /** Nav pill count; the shell must render even if Postgres is briefly down. */
 async function pendingCount(): Promise<number> {
   try {
-    return (await pendingApprovals()).length;
+    return (await itemStatusCounts()).pending_approval;
   } catch {
     return 0;
   }

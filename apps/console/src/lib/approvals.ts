@@ -1,6 +1,12 @@
 import { cache } from "react";
 import "./env";
-import { getPool, listItems, type Item } from "@ai-manager/core";
+import {
+  countItemsByStatus,
+  getPool,
+  listItems,
+  type Item,
+  type ItemStatusCounts,
+} from "@ai-manager/core";
 
 /**
  * Approval inbox data layer (ARCHITECTURE.md "Approvals: a durable state
@@ -70,12 +76,24 @@ async function pendingItemOrThrow(id: string, caller: string): Promise<Item> {
 }
 
 /**
- * Items awaiting a human decision, newest first. Wrapped in React cache()
- * so the nav shell (pending pill) and the approvals page share one query
- * per request instead of hitting Postgres twice.
+ * Items awaiting a human decision, newest first, one page at a time
+ * (GH-27: no unbounded item query remains; page size defaults to
+ * DEFAULT_PAGE_SIZE in @ai-manager/core). Wrapped in React cache() so the
+ * nav shell (pending pill) and the approvals page share one query per
+ * request instead of hitting Postgres twice.
  */
 export const pendingApprovals = cache(
-  async (): Promise<Item[]> => listItems({ status: "pending_approval" }),
+  async (page = 1): Promise<Item[]> =>
+    listItems({ status: "pending_approval", page }),
+);
+
+/**
+ * Per-status item counts in one GROUP BY query (GH-27). Shared by the nav
+ * pending pill and the dashboard items widget via React cache(), and the
+ * backing store for the future sidebar count pills (A1b).
+ */
+export const itemStatusCounts = cache(
+  async (): Promise<ItemStatusCounts> => countItemsByStatus(),
 );
 
 /**
