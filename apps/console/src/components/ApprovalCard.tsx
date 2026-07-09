@@ -33,6 +33,8 @@ export interface ApprovalCardData {
   assignee: string | null;
   customer: string;
   initials: string;
+  /** Original email subject, or "(no subject)". */
+  inboundSubject: string;
   inbound: string;
   draftSubject: string;
   draftBody: string;
@@ -48,6 +50,9 @@ export function ApprovalCard({
   canDecide: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  // No draft generated (empty or missing draft_body): show a fallback in
+  // the draft pane and keep approval blocked until edits produce a body.
+  const hasDraft = item.draftBody.length > 0;
 
   // Double-click immunity (GH-40): when the footer swaps button sets, the
   // incoming buttons render at the same coordinates, so the second click
@@ -132,6 +137,7 @@ export function ApprovalCard({
             <span className="micro-label">Original message</span>
             <span className="approval-pane-timestamp">{item.receivedFull}</span>
           </div>
+          <div className="inbound-subject">{item.inboundSubject}</div>
           <div className="approval-inbound-text">{item.inbound}</div>
         </div>
 
@@ -170,7 +176,7 @@ export function ApprovalCard({
                 className="draft-body-input"
               />
             </>
-          ) : (
+          ) : hasDraft ? (
             <>
               <div className="draft-subject">{item.draftSubject}</div>
               <div className="draft-body">
@@ -179,6 +185,8 @@ export function ApprovalCard({
                 ))}
               </div>
             </>
+          ) : (
+            <div className="draft-empty">(no draft generated)</div>
           )}
         </div>
       </div>
@@ -191,7 +199,7 @@ export function ApprovalCard({
                 key="save-approve"
                 type="submit"
                 variant="primary"
-                disabled={!armed}
+                disabled={!armed || !hasDraft}
                 formAction={saveApproveAction}
               >
                 Save &amp; approve
@@ -224,7 +232,7 @@ export function ApprovalCard({
                 key="approve"
                 type="submit"
                 variant="primary"
-                disabled={!armed}
+                disabled={!armed || !hasDraft}
                 formAction={approveAction}
               >
                 Approve

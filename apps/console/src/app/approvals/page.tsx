@@ -52,9 +52,10 @@ function toCardData(item: Item): ApprovalCardData {
     assignee: item.assignee,
     customer: sender.name,
     initials: initialsOf(sender.name),
+    inboundSubject: str(original.subject)?.trim() || "(no subject)",
     inbound: str(original.body) ?? "(no message body)",
     draftSubject: str(payload.draft_subject) ?? "(no subject)",
-    draftBody: str(payload.draft_body) ?? "",
+    draftBody: str(payload.draft_body)?.trim() ?? "",
     edited: payload.draft_edited === true,
   };
 }

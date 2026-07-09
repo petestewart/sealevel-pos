@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { currentRole, hasPermission } from "../../lib/rbac";
-import { reopenItem, ReopenConflictError } from "@ai-manager/core";
+import { getPool, reopenItem, ReopenConflictError } from "@ai-manager/core";
 import {
   decideItem,
   saveDraftEdits,
@@ -85,10 +85,32 @@ async function decide(
   return { error: null };
 }
 
+/**
+ * Server-side guard for GH-33: approving must never resolve an item whose
+ * STORED AI draft body is empty or missing. The UI disables the buttons,
+ * but the action re-checks the live DB so a forged or stale form cannot
+ * approve nothing. Returns an inline-able error message, or null when ok.
+ */
+async function emptyDraftError(id: string): Promise<string | null> {
+  const { rows } = await getPool().query<{ draft_body: string | null }>(
+    `SELECT payload->>'draft_body' AS draft_body FROM items WHERE id = $1`,
+    [id],
+  );
+  const body = rows[0]?.draft_body;
+  if (typeof body !== "string" || body.trim().length === 0) {
+    return "Cannot approve: no draft generated for this item.";
+  }
+  return null;
+}
+
 export async function approveItemAction(
   _prev: ApprovalActionState,
   formData: FormData,
 ): Promise<ApprovalActionState> {
+  // Auth first, then the live-DB empty-draft guard (GH-33), then decide.
+  await requireDecider();
+  const guardError = await emptyDraftError(requireString(formData, "id"));
+  if (guardError) return { error: guardError };
   return decide(formData, "approved");
 }
 
@@ -108,6 +130,13 @@ export async function saveAndApproveItemAction(
   _prev: ApprovalActionState,
   formData: FormData,
 ): Promise<ApprovalActionState> {
+  // Same GH-33 guard as plain Approve: the STORED draft must be non-empty.
+  // requireString below only validates the submitted fields, so without
+  // this a forged request carrying a typed body could approve an item
+  // whose generated draft is empty. Auth first, then the live DB check.
+  await requireDecider();
+  const guardError = await emptyDraftError(requireString(formData, "id"));
+  if (guardError) return { error: guardError };
   const edits: DraftEdits = {
     subject: requireString(formData, "subject").trim(),
     body: requireString(formData, "body").trim(),

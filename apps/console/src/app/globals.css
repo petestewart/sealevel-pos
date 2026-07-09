@@ -425,6 +425,12 @@ textarea {
   cursor: pointer;
 }
 
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+
 .btn--primary {
   border: none;
   background: var(--accent);
@@ -602,10 +608,27 @@ textarea {
   white-space: nowrap;
 }
 
+/* Original email subject in the inbound pane (GH-33), styled to mirror
+   the draft pane's subject line. */
+.inbound-subject {
+  font: 600 14px var(--font-ui), sans-serif;
+  color: var(--tx);
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--line2);
+  margin-bottom: 13px;
+}
+
 .approval-inbound-text {
   font: 400 13.5px/1.65 var(--font-ui), sans-serif;
   color: var(--tx2);
   white-space: pre-line;
+}
+
+/* Fallback when no AI draft was generated (GH-33). */
+.draft-empty {
+  font: 400 13.5px/1.65 var(--font-ui), sans-serif;
+  font-style: italic;
+  color: var(--tx3);
 }
 
 .draft-subject {
