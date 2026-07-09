@@ -1,11 +1,17 @@
-import { clerkMiddleware } from "@clerk/nextjs/server";
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 /**
- * Clerk protects the entire console: there are no public routes. Anyone not
+ * Clerk protects the entire console except the healthcheck. Anyone not
  * signed in is redirected to the Clerk sign-in flow. Requires
  * NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY (see .env.example).
+ *
+ * /api/healthz is public so Railway's healthcheck (which has no session)
+ * can reach it; the route is dependency-free and leaks nothing.
  */
-export default clerkMiddleware(async (auth) => {
+const isPublicRoute = createRouteMatcher(["/api/healthz"]);
+
+export default clerkMiddleware(async (auth, req) => {
+  if (isPublicRoute(req)) return;
   await auth.protect();
 });
 

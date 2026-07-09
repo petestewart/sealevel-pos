@@ -104,7 +104,9 @@ app.get("/healthz", (_req, res) => {
   res.json({ ok: true });
 });
 
-const port = Number(process.env.BULL_BOARD_PORT ?? 3010);
+// Railway injects PORT and points its healthcheck at it; locally
+// BULL_BOARD_PORT (default 3010) keeps the existing dev behavior.
+const port = Number(process.env.PORT ?? process.env.BULL_BOARD_PORT ?? 3010);
 const server = app.listen(port, () => {
   console.log(`[worker] Bull Board on http://localhost:${port}/admin/queues`);
 });
