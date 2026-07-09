@@ -1,3 +1,5 @@
+import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
+
 /**
  * Job and Trigger types (see ARCHITECTURE.md "Jobs and the registry").
  *
@@ -25,10 +27,20 @@ export interface Job {
   triggers: Trigger[];
   /** Scoped capability names; the tool runner resolves them by name. */
   tools: string[];
+  /**
+   * Optional per-run tools, private to this job and built from the run's
+   * payload (e.g. tools closed over a specific item id, so the model can
+   * only touch that item). Appended after the named tools. Use for output
+   * contracts that must be structural rather than prompt-hope.
+   */
+  // BetaRunnableTool<any>: same reasoning as tools/registry.ts — the list is
+  // heterogeneous and each tool's input type appears both contravariantly
+  // and covariantly; inputs stay runtime-validated by each tool's Zod schema.
+  runtimeTools?: (ctx: JobContext) => BetaRunnableTool<any>[];
   /** Model to run on. Defaults to claude-opus-4-8 when omitted. */
   model?: BrainModel;
-  /** The prompt. Almost entirely prose. */
-  instructions: (ctx: JobContext) => string;
+  /** The prompt. Almost entirely prose. May load data (async) to build it. */
+  instructions: (ctx: JobContext) => string | Promise<string>;
 }
 
 export type Trigger =

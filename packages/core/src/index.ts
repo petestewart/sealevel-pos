@@ -23,6 +23,15 @@ export {
 export type { Job, Trigger, JobContext, BrainModel } from "./jobs/types.js";
 export { JOBS, jobById } from "./jobs/registry.js";
 export type { InboundEmailPayload } from "./jobs/emailDraft.js";
+export { reviseJobId } from "./jobs/itemRevise.js";
+export type { ItemRevisePayload } from "./jobs/itemRevise.js";
+export {
+  DRAFT_REVISION_LIMIT,
+  DraftNotRevisableError,
+  getPendingEmailReplyItem,
+  reviseEmailReplyDraft,
+  recordDraftAnswer,
+} from "./db/itemDrafts.js";
 export {
   createItem,
   assignItem,

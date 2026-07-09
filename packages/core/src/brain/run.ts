@@ -34,13 +34,23 @@ export async function runJob(
   const job = jobById.get(jobId);
   if (!job) throw new Error(`unknown job: ${jobId}`);
 
+  // Scoped per job: named registry tools plus any per-run private tools
+  // the job builds from the payload (Job.runtimeTools).
+  const tools = [
+    ...toolsForJob(job.tools),
+    ...(job.runtimeTools?.({ payload }) ?? []),
+  ];
+
+  // Instructions may be async (e.g. loading the item a run operates on).
+  const content = await job.instructions({ payload });
+
   const finalMessage = await getClient().beta.messages.toolRunner({
     model: job.model ?? DEFAULT_BRAIN_MODEL,
     max_tokens: 16000,
     thinking: { type: "adaptive" },
     system: SYSTEM_PROMPT,
-    tools: toolsForJob(job.tools), // scoped per job
-    messages: [{ role: "user", content: job.instructions({ payload }) }],
+    tools,
+    messages: [{ role: "user", content }],
   });
 
   return finalMessage.stop_reason;
