@@ -1,0 +1,14 @@
+{
+  "name": "@ai-manager/features",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Vertical feature slices (email, social, analytics, expenses). Placeholder module; features land in later tickets.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  }
+}

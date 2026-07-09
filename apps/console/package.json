@@ -1,0 +1,14 @@
+{
+  "name": "@ai-manager/console",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Operator console. Placeholder entry point; the Next.js app lands in a later Phase 0 ticket.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  }
+}

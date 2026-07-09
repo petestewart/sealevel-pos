@@ -1,0 +1,14 @@
+{
+  "name": "@ai-manager/core",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Shared core: brain, queue, tools, jobs, db. Placeholder module; implementations land in later Phase 0 tickets.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  }
+}
