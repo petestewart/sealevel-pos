@@ -27,6 +27,8 @@ export {
   createItem,
   assignItem,
   resolveItem,
+  reopenItem,
+  ReopenConflictError,
   listItems,
 } from "./db/items.js";
 export type {

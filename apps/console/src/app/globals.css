@@ -756,6 +756,36 @@ textarea {
   color: var(--tx3);
 }
 
+/* Reopen control in the decided meta line (Console.dc.html Undo slot) */
+.decided-reopen-form {
+  display: inline;
+}
+
+.decided-reopen {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: 400 12px var(--font-ui), sans-serif;
+  color: var(--accent-tx);
+  cursor: pointer;
+}
+
+.decided-reopen:hover {
+  text-decoration: underline;
+}
+
+.decided-reopen:disabled {
+  color: var(--tx3);
+  cursor: default;
+}
+
+.decided-reopen-error {
+  display: block;
+  margin-top: 4px;
+  font: 400 12px var(--font-ui), sans-serif;
+  color: var(--rej-tx);
+}
+
 /* ---------- Empty state ---------- */
 
 .empty-state {

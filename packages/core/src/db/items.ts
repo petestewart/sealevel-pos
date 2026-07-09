@@ -128,6 +128,68 @@ export async function assignItem(
   return item;
 }
 
+/**
+ * Thrown by reopenItem when the partial unique dedupe index
+ * (items_dedupe_key_unresolved_idx, migration 0004) blocks the reopen:
+ * another unresolved item of the same type already carries the same
+ * dedupe_key, so un-resolving this one would create a duplicate.
+ */
+export class ReopenConflictError extends Error {
+  constructor(id: string) {
+    super(
+      `reopenItem: cannot reopen item ${id}; an unresolved item with the same type and dedupe key already exists`,
+    );
+    this.name = "ReopenConflictError";
+  }
+}
+
+function isDedupeViolation(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const { code, constraint } = err as { code?: unknown; constraint?: unknown };
+  // Only the dedupe index counts; any other unique_violation is a real bug
+  // and must propagate rather than masquerade as a reopen conflict.
+  return code === "23505" && constraint === "items_dedupe_key_unresolved_idx";
+}
+
+/**
+ * Reopen a resolved item back into the approval queue: status returns to
+ * 'pending_approval', resolved_at is cleared, and the prior decision (if
+ * any) is preserved by appending it to payload.decision_history before
+ * removing payload.decision. Guarded UPDATE matching only status =
+ * 'resolved', so reopening a non-resolved (or nonexistent) item throws
+ * instead of silently rewriting state.
+ *
+ * Throws ReopenConflictError when the partial unique dedupe index rejects
+ * the transition (an unresolved twin with the same type + dedupe_key
+ * exists); callers should surface that as a user-facing message.
+ */
+export async function reopenItem(id: string): Promise<Item> {
+  let rows: Item[];
+  try {
+    ({ rows } = await getPool().query<Item>(
+      `UPDATE items
+       SET status = 'pending_approval',
+           resolved_at = NULL,
+           payload = (payload - 'decision') || jsonb_build_object(
+             'decision_history',
+             coalesce(payload->'decision_history', '[]'::jsonb) ||
+               CASE WHEN payload ? 'decision'
+                    THEN jsonb_build_array(payload->'decision')
+                    ELSE '[]'::jsonb END
+           )
+       WHERE id = $1 AND status = 'resolved'
+       RETURNING *`,
+      [id],
+    ));
+  } catch (err) {
+    if (isDedupeViolation(err)) throw new ReopenConflictError(id);
+    throw err;
+  }
+  const item = rows[0];
+  if (!item) throw new Error(`reopenItem: no resolved item with id ${id}`);
+  return item;
+}
+
 /** Terminal transition: any unresolved status -> resolved. Idempotent-safe: resolving twice throws. */
 export async function resolveItem(id: string): Promise<Item> {
   const { rows } = await getPool().query<Item>(

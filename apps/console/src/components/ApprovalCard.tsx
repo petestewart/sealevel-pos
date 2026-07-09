@@ -8,6 +8,7 @@ import {
   approveItemAction,
   rejectItemAction,
   saveAndApproveItemAction,
+  saveEditsItemAction,
 } from "../app/approvals/actions";
 
 /**
@@ -32,6 +33,8 @@ export interface ApprovalCardData {
   inbound: string;
   draftSubject: string;
   draftBody: string;
+  /** True when the operator saved draft edits (payload.draft_edited). */
+  edited: boolean;
 }
 
 export function ApprovalCard({
@@ -83,6 +86,9 @@ export function ApprovalCard({
               <span className="micro-label-dot" aria-hidden="true" />
               {editing ? "Editing draft" : "AI draft reply"}
             </span>
+            {item.edited && !editing ? (
+              <span className="approval-pane-timestamp">edited</span>
+            ) : null}
           </div>
 
           {editing ? (
@@ -131,6 +137,16 @@ export function ApprovalCard({
                 formAction={saveAndApproveItemAction}
               >
                 Save &amp; approve
+              </Button>
+              <Button
+                type="submit"
+                variant="outlined"
+                formAction={async (formData: FormData) => {
+                  await saveEditsItemAction(formData);
+                  setEditing(false);
+                }}
+              >
+                Save edits
               </Button>
               <Button
                 type="button"

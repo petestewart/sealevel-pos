@@ -3,7 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { currentRole, hasPermission } from "../../lib/rbac";
-import { decideItem, type Decision, type DraftEdits } from "../../lib/approvals";
+import { reopenItem, ReopenConflictError } from "@ai-manager/core";
+import {
+  decideItem,
+  saveDraftEdits,
+  type Decision,
+  type DraftEdits,
+} from "../../lib/approvals";
 
 /**
  * Server actions for the approval inbox. Auth is enforced twice: Clerk
@@ -72,4 +78,61 @@ export async function saveAndApproveItemAction(
     body: requireString(formData, "body").trim(),
   };
   await decide(formData, "approved", edits);
+}
+
+/**
+ * Save edits without deciding (GH-25): persist the edited subject/body
+ * (capturing original_draft on first edit, marking the draft edited) while
+ * the item stays pending_approval. No decision is recorded.
+ */
+export async function saveEditsItemAction(formData: FormData): Promise<void> {
+  await requireDecider();
+  const id = requireString(formData, "id");
+  const edits: DraftEdits = {
+    subject: requireString(formData, "subject").trim(),
+    body: requireString(formData, "body").trim(),
+  };
+  await saveDraftEdits(id, edits);
+  revalidatePath("/approvals");
+  revalidatePath("/");
+}
+
+export interface ReopenState {
+  error: string | null;
+}
+
+/**
+ * Reopen a decided item (GH-25): status back to pending_approval, prior
+ * decision preserved in payload.decision_history. Returns a state object
+ * (for useActionState) so a dedupe conflict surfaces as a friendly inline
+ * message instead of crashing the page.
+ */
+export async function reopenItemAction(
+  _prev: ReopenState,
+  formData: FormData,
+): Promise<ReopenState> {
+  await requireDecider();
+  const id = requireString(formData, "id");
+  try {
+    await reopenItem(id);
+  } catch (err) {
+    if (err instanceof ReopenConflictError) {
+      return {
+        error:
+          "Cannot reopen: a newer pending item for the same email already exists. Decide that one first, then try again.",
+      };
+    }
+    // Lost a race: someone else reopened it (or it never was resolved).
+    if (err instanceof Error && err.message.includes("no resolved item")) {
+      revalidatePath("/approvals");
+      return {
+        error:
+          "This item is not in a reopenable state anymore. It may have been reopened already.",
+      };
+    }
+    throw err;
+  }
+  revalidatePath("/approvals");
+  revalidatePath("/");
+  return { error: null };
 }

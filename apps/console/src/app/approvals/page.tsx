@@ -1,5 +1,6 @@
 import type { Item } from "@ai-manager/core";
 import { StatusChip } from "../../components/StatusChip";
+import { ReopenButton } from "../../components/ReopenButton";
 import {
   ApprovalCard,
   type ApprovalCardData,
@@ -54,6 +55,7 @@ function toCardData(item: Item): ApprovalCardData {
     inbound: str(original.body) ?? "(no message body)",
     draftSubject: str(payload.draft_subject) ?? "(no subject)",
     draftBody: str(payload.draft_body) ?? "",
+    edited: payload.draft_edited === true,
   };
 }
 
@@ -73,7 +75,13 @@ function decisionOf(item: Item): DecisionRecord | null {
   return null;
 }
 
-function DecidedRow({ item }: { item: Item }) {
+function DecidedRow({
+  item,
+  canDecide,
+}: {
+  item: Item;
+  canDecide: boolean;
+}) {
   const decision = decisionOf(item);
   // Legacy rows (pre-audit schema) stored the decision as a bare string.
   const legacy = item.payload.decision;
@@ -112,6 +120,12 @@ function DecidedRow({ item }: { item: Item }) {
           {decision
             ? `${verb} by ${decision.by.name}${decidedAt ? ` · ${decidedAt}` : ""}${decision.edited ? " · edited" : ""}`
             : `${verb}${decidedAt ? ` · ${decidedAt}` : ""}`}
+          {canDecide ? (
+            <>
+              {" · "}
+              <ReopenButton id={String(item.id)} />
+            </>
+          ) : null}
         </div>
       </div>
     </div>
@@ -164,7 +178,7 @@ export default async function ApprovalsPage() {
           <div className="section-label">Recently decided</div>
           <div className="decided-list">
             {decided.map((item) => (
-              <DecidedRow key={item.id} item={item} />
+              <DecidedRow key={item.id} item={item} canDecide={canDecide} />
             ))}
           </div>
         </>
