@@ -1,0 +1,36 @@
+# Local dev infrastructure: Postgres 16 + Redis 7.
+# Usage: docker compose up -d
+# Matches DATABASE_URL / REDIS_URL in .env.example.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ai_manager
+      POSTGRES_PASSWORD: ai_manager
+      POSTGRES_DB: ai_manager
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_manager -d ai_manager"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
