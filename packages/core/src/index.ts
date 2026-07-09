@@ -22,6 +22,7 @@ export {
 } from "./queue/index.js";
 export type { Job, Trigger, JobContext, BrainModel } from "./jobs/types.js";
 export { JOBS, jobById } from "./jobs/registry.js";
+export type { InboundEmailPayload } from "./jobs/emailDraft.js";
 export {
   createItem,
   assignItem,
@@ -32,6 +33,7 @@ export type {
   Item,
   ItemStatus,
   CreateItemInput,
+  CreateItemResult,
   ListItemsFilter,
 } from "./db/items.js";
 export { createItemTool, toolsByName, toolsForJob } from "./tools/registry.js";

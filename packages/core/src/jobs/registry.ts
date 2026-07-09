@@ -1,4 +1,5 @@
 import type { Job } from "./types.js";
+import { emailDraft } from "./emailDraft.js";
 import { heartbeat } from "./heartbeat.js";
 
 /**
@@ -6,6 +7,6 @@ import { heartbeat } from "./heartbeat.js";
  * edits: adding = new file + one entry here; removing = delete or
  * enabled: false.
  */
-export const JOBS: Job[] = [heartbeat].filter((j) => j.enabled);
+export const JOBS: Job[] = [heartbeat, emailDraft].filter((j) => j.enabled);
 
 export const jobById = new Map(JOBS.map((j) => [j.id, j]));

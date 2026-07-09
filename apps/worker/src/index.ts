@@ -1,7 +1,8 @@
 /**
  * Worker app — BullMQ worker + repeatable schedules + Bull Board.
- * The brain and real job registry land in later Phase 0 tickets; the
- * processors here are plain functions exercising the queue layer.
+ * Queue jobs named after a registered brain job (jobById) dispatch to
+ * runJob(jobId, payload); the plain-function test processors remain for
+ * queue-layer smoke checks.
  */
 import express from "express";
 import { createBullBoard } from "@bull-board/api";
@@ -14,8 +15,10 @@ import {
   createQueueWorker,
   createRedis,
   enqueue,
+  jobById,
   loadEnv,
   registerSchedules,
+  runJob,
 } from "@ai-manager/core";
 
 loadEnv();
@@ -24,8 +27,8 @@ const connection = createRedis();
 const queue = createQueue(DEFAULT_QUEUE_NAME, connection);
 
 /**
- * Plain-function processors, keyed by job name. The real job registry is a
- * separate ticket; these exist to exercise the queue layer end to end.
+ * Plain-function processors, keyed by job name, for queue-layer smoke
+ * checks. Registered brain jobs are dispatched to runJob instead (below).
  */
 const processors: Record<string, (job: Job) => Promise<void>> = {
   "test-heartbeat": async (job) => {
@@ -43,6 +46,14 @@ const processors: Record<string, (job: Job) => Promise<void>> = {
 const worker = createQueueWorker(
   DEFAULT_QUEUE_NAME,
   async (job) => {
+    // Registered brain jobs (job name = registry job id) go to the brain.
+    if (jobById.has(job.name)) {
+      const stopReason = await runJob(job.name, job.data);
+      console.log(
+        `[worker] brain job ${job.name} (${job.id}) finished, stop_reason=${stopReason}`,
+      );
+      return;
+    }
     const processor = processors[job.name];
     if (!processor) throw new Error(`No processor for job name "${job.name}"`);
     await processor(job);

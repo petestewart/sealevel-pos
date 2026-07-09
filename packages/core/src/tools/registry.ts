@@ -50,13 +50,21 @@ export const createItemTool = betaZodTool({
       .record(z.string(), z.unknown())
       .optional()
       .describe("Item body: the draft, the parsed email, the anomaly details."),
+    dedupe_key: z
+      .string()
+      .optional()
+      .describe(
+        "Natural key for retry-safe creation, e.g. the source email's messageId. If an unresolved item of the same type already carries this key, no new item is created and the existing one is returned.",
+      ),
   }),
-  run: async (input) => {
-    const item = await createItem(input);
+  run: async ({ dedupe_key, ...rest }) => {
+    const { item, created } = await createItem({ ...rest, dedupeKey: dedupe_key });
     // Notify on drafts awaiting approval (ARCHITECTURE.md "Notifications").
     // emitItemEvent never throws and no-ops without NOVU_SECRET_KEY, so
-    // item creation cannot fail on notification delivery.
-    if (item.status === "pending_approval") {
+    // item creation cannot fail on notification delivery. Only fires for
+    // newly created items: a dedupe hit returns the existing row and must
+    // not re-notify.
+    if (created && item.status === "pending_approval") {
       await emitItemEvent("item.pending_approval", item, "brain");
     }
     return JSON.stringify({ id: item.id, status: item.status });
