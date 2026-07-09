@@ -9,3 +9,17 @@ export { loadEnv, requireEnv } from "./env.js";
 export { getPool, closePool } from "./db/client.js";
 export { runMigrations } from "./db/migrate.js";
 export { createRedis } from "./redis.js";
+export type { Job, Trigger, JobContext } from "./jobs/types.js";
+export { JOBS, jobById } from "./jobs/registry.js";
+export {
+  createItem,
+  assignItem,
+  resolveItem,
+  listItems,
+} from "./db/items.js";
+export type {
+  Item,
+  ItemStatus,
+  CreateItemInput,
+  ListItemsFilter,
+} from "./db/items.js";
