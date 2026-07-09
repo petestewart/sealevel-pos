@@ -3,6 +3,7 @@ import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableT
 import { z } from "zod";
 
 import { createItem } from "../db/items.js";
+import { emitItemEvent } from "../notifications/emit.js";
 
 /**
  * Tool registry (ARCHITECTURE.md "Tools and outbound guardrails").
@@ -52,6 +53,12 @@ export const createItemTool = betaZodTool({
   }),
   run: async (input) => {
     const item = await createItem(input);
+    // Notify on drafts awaiting approval (ARCHITECTURE.md "Notifications").
+    // emitItemEvent never throws and no-ops without NOVU_SECRET_KEY, so
+    // item creation cannot fail on notification delivery.
+    if (item.status === "pending_approval") {
+      await emitItemEvent("item.pending_approval", item, "brain");
+    }
     return JSON.stringify({ id: item.id, status: item.status });
   },
 });

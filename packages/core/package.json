@@ -12,10 +12,12 @@
     "clean": "rm -rf dist",
     "migrate": "npm run build && node dist/db/migrate.js",
     "smoke": "npm run build && node dist/db/smoke.js",
-    "smoke:brain": "npm run build && node dist/brain/smoke.js"
+    "smoke:brain": "npm run build && node dist/brain/smoke.js",
+    "smoke:novu": "npm run build && node dist/notifications/smoke.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
+    "@novu/api": "^3.18.0",
     "bullmq": "^5.79.3",
     "ioredis": "^5.10.1",
     "pg": "^8.12.0",

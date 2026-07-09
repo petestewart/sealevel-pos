@@ -35,5 +35,12 @@ export type {
   ListItemsFilter,
 } from "./db/items.js";
 export { createItemTool, toolsByName, toolsForJob } from "./tools/registry.js";
+export { emitItemEvent } from "./notifications/emit.js";
+export type {
+  ItemEventType,
+  ItemEventPayload,
+  EmitResult,
+  TriggerFn,
+} from "./notifications/emit.js";
 export { runJob, DEFAULT_BRAIN_MODEL } from "./brain/run.js";
 export { SYSTEM_PROMPT } from "./brain/prompts.js";
