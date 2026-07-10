@@ -52,6 +52,19 @@ export type {
   CreateItemResult,
   ListItemsFilter,
 } from "./db/items.js";
+export {
+  DEFAULT_SIGNOFF,
+  RULE_MAX_CHARS,
+  listRules,
+  getActiveRules,
+  createRule,
+  updateRule,
+  getUserSettings,
+  setUserSettings,
+  studioRulesBlock,
+  loadRulesBlock,
+} from "./db/settings.js";
+export type { Rule, UserSettings } from "./db/settings.js";
 export { createItemTool, toolsByName, toolsForJob } from "./tools/registry.js";
 export { emitItemEvent } from "./notifications/emit.js";
 export type {

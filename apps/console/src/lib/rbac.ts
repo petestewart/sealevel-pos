@@ -10,10 +10,13 @@ import { currentUser } from "@clerk/nextjs/server";
 
 export type Role = "owner" | "operator" | "viewer";
 
-export type Permission = "items:view" | "approvals:decide";
+export type Permission =
+  | "items:view"
+  | "approvals:decide"
+  | "settings:manage";
 
 const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
-  owner: ["items:view", "approvals:decide"],
+  owner: ["items:view", "approvals:decide", "settings:manage"],
   operator: ["items:view", "approvals:decide"],
   viewer: ["items:view"],
 };

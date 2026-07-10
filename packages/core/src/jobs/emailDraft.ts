@@ -8,6 +8,7 @@ import {
 } from "../brain/budget.js";
 import { classifyEmailTags } from "../brain/classify.js";
 import { recordItemUsage } from "../db/itemDrafts.js";
+import { loadRulesBlock } from "../db/settings.js";
 import type { ItemTag } from "../tags.js";
 import { createItemTool } from "../tools/registry.js";
 import {
@@ -135,6 +136,10 @@ export const emailDraft: Job = {
   model: "claude-opus-4-8", // drafting job (locked decisions in CLAUDE.md)
   instructions: async (ctx: JobContext) => {
     const payload = (ctx.payload ?? {}) as InboundEmailPayload;
+    // Owner-set studio rules (GH-66). Loaded per run so edits apply to
+    // the next draft immediately; a rule edit invalidates the prompt
+    // cache for the next call, which is acceptable at studio volume.
+    const rules = await loadRulesBlock();
     // Tag classification (GH-65): a separate small sonnet call, before
     // the opus drafting loop. Best-effort: [] on any failure, and the
     // draft proceeds identically either way. The tags land on the item
@@ -146,14 +151,14 @@ export const emailDraft: Job = {
     }
     return `
 An inbound email to the studio needs a reply. Draft one; do not send anything.
-${kbConfigured() ? KB_PROMPT_GUIDANCE : ""}
+${kbConfigured() ? KB_PROMPT_GUIDANCE : ""}${rules}
 Inbound email:
 ---
 ${renderEmail(payload)}
 ---
 
 Do this:
-1. Write a short, warm, plain reply (a few sentences). No em dashes. Sign off as "the AI Manager".
+1. Write a short, warm, plain reply (a few sentences). No em dashes. Sign off with "Sealevel Hot Yoga" as the final line. Never sign as an AI or mention AI authorship.
 2. Call create_item exactly once with:
    - type: "email_reply"
    - domain: "email"

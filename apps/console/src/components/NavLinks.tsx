@@ -8,12 +8,20 @@ import { usePathname } from "next/navigation";
  * pending-count pill next to Approvals (hidden at zero), per the
  * Console.dc.html nav spec.
  */
-export function NavLinks({ pendingCount }: { pendingCount: number }) {
+export function NavLinks({
+  pendingCount,
+  showSettings = false,
+}: {
+  pendingCount: number;
+  /** Owners get the Settings link (GH-66); the page re-checks RBAC. */
+  showSettings?: boolean;
+}) {
   const pathname = usePathname();
   const dashActive = pathname === "/";
   // The approvals inbox lives under /items (A1b); /approvals redirects.
   const approvalsActive =
     pathname.startsWith("/items") || pathname.startsWith("/approvals");
+  const settingsActive = pathname.startsWith("/settings");
 
   return (
     <div className="nav-links">
@@ -31,6 +39,14 @@ export function NavLinks({ pendingCount }: { pendingCount: number }) {
           <span className="nav-pill">{pendingCount}</span>
         ) : null}
       </div>
+      {showSettings ? (
+        <Link
+          href="/settings"
+          className={`nav-link${settingsActive ? " is-active" : ""}`}
+        >
+          Settings
+        </Link>
+      ) : null}
     </div>
   );
 }

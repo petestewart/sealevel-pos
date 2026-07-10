@@ -26,3 +26,29 @@ export async function requireDecider(): Promise<{ id: string; name: string }> {
     userId;
   return { id: userId, name };
 }
+
+/**
+ * Auth guard for the settings actions (GH-66): owner-only
+ * (settings:manage), enforced server-side on every mutation regardless
+ * of what the UI renders.
+ */
+export async function requireSettingsManager(): Promise<{
+  id: string;
+  name: string;
+}> {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Not signed in");
+
+  const role = await currentRole();
+  if (!hasPermission(role, "settings:manage")) {
+    throw new Error("Your role does not allow managing settings");
+  }
+
+  const user = await currentUser();
+  const name =
+    user?.fullName ??
+    user?.firstName ??
+    user?.primaryEmailAddress?.emailAddress ??
+    userId;
+  return { id: userId, name };
+}

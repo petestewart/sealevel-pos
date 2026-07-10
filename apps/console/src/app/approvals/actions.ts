@@ -1,7 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getPool, reopenItem, ReopenConflictError } from "@ai-manager/core";
+import {
+  getPool,
+  getUserSettings,
+  reopenItem,
+  ReopenConflictError,
+} from "@ai-manager/core";
 import { requireDecider } from "../../lib/requireDecider";
 import { classifyDecision } from "../../lib/itemView";
 import { formatRelativeTime } from "../../lib/emailDisplay";
@@ -106,8 +111,23 @@ async function decide(
 ): Promise<ApprovalActionState> {
   const decider = await requireDecider();
   const id = requireString(formData, "id");
+  // Personal signoff (GH-66): if the approving user opted in, their name
+  // is added above the default studio signoff. A settings lookup failure
+  // degrades to the default signoff rather than blocking the decision.
+  let signoffName: string | undefined;
+  if (decision === "approved") {
+    try {
+      const settings = await getUserSettings(decider.id);
+      if (settings.sign_with_name) {
+        signoffName =
+          settings.signature_name ?? decider.name.split(/\s+/)[0] ?? undefined;
+      }
+    } catch {
+      signoffName = undefined;
+    }
+  }
   try {
-    await decideItem(id, decision, decider, edits);
+    await decideItem(id, decision, decider, edits, signoffName);
   } catch (err) {
     if (isAlreadyDecided(err)) {
       // No revalidate here: refreshing would unmount the stale card and

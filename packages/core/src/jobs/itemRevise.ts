@@ -9,6 +9,7 @@ import {
   INSTRUCTION_MAX_CHARS,
   truncateForPrompt,
 } from "../brain/budget.js";
+import { loadRulesBlock } from "../db/settings.js";
 import {
   getPendingEmailReplyItem,
   recordDraftAnswer,
@@ -180,12 +181,14 @@ export const itemRevise: Job = {
     // pending_approval; a decided item must fail the run, not be mutated.
     const item = await getPendingEmailReplyItem(itemId);
     const payload = item.payload;
+    // Owner-set studio rules (GH-66); revisions must respect them too.
+    const rules = await loadRulesBlock();
 
     return `
 An operator reviewing a pending draft email reply sent you a one-shot instruction. Decide which kind it is and finish with exactly one call to update_draft or answer_question:
-${kbConfigured() ? KB_PROMPT_GUIDANCE : ""}
+${kbConfigured() ? KB_PROMPT_GUIDANCE : ""}${rules}
 
-- If it asks you to CHANGE the draft (shorten it, change tone, add or remove something), write the revised reply and call update_draft exactly once with the full new subject and body, plus a rationale: 1 to 3 plain sentences on why the revised draft says what it says (what you changed and why). Keep the reply short, warm, and plain. No em dashes, in the reply or the rationale. Sign off as "the AI Manager".
+- If it asks you to CHANGE the draft (shorten it, change tone, add or remove something), write the revised reply and call update_draft exactly once with the full new subject and body, plus a rationale: 1 to 3 plain sentences on why the revised draft says what it says (what you changed and why). Keep the reply short, warm, and plain. No em dashes, in the reply or the rationale. Sign off with "Sealevel Hot Yoga" as the final line unless the operator asked for a different signoff. Never sign as an AI or mention AI authorship.
 - If it asks a QUESTION (about the original email, the draft, or your reasoning), do NOT touch the draft. Call answer_question exactly once with the question and a concise answer.
 
 Never call both update_draft and answer_question, and never call either twice. Knowledge base lookups (if available) may precede that final call.

@@ -7,6 +7,7 @@ import { CountRefresher } from "../components/CountRefresher";
 import { NavLinks } from "../components/NavLinks";
 import { ThemeToggle, type Theme } from "../components/ThemeToggle";
 import { itemStatusCounts } from "../lib/approvals";
+import { currentRole, hasPermission } from "../lib/rbac";
 import "./globals.css";
 
 const hankenGrotesk = Hanken_Grotesk({
@@ -63,6 +64,7 @@ export default async function RootLayout({
   const displayName = user?.firstName ?? user?.username ?? null;
   const initialsSource = user?.fullName ?? displayName;
   const count = await pendingCount();
+  const showSettings = hasPermission(await currentRole(), "settings:manage");
 
   return (
     <ClerkProvider>
@@ -81,7 +83,7 @@ export default async function RootLayout({
               <span className="nav-brand-name">Sealevel</span>
               <span className="nav-brand-tag">Ops</span>
             </div>
-            <NavLinks pendingCount={count} />
+            <NavLinks pendingCount={count} showSettings={showSettings} />
             <div className="nav-right">
               <ThemeToggle initialTheme={theme} />
               <div className="nav-divider" />

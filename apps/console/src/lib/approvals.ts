@@ -2,6 +2,7 @@ import { cache } from "react";
 import "./env";
 import {
   countItemsByStatus,
+  DEFAULT_SIGNOFF,
   getPool,
   listItems,
   type Item,
@@ -30,6 +31,8 @@ export interface DecisionRecord {
   by: { id: string; name: string };
   at: string;
   edited: boolean;
+  /** Personal signoff name applied at approval time (GH-66), if any. */
+  signoff?: string;
 }
 
 /** Edited draft to persist alongside an approval (Save & approve). */
@@ -61,6 +64,45 @@ function draftOf(item: Item): DraftEdits {
 
 function sameDraft(a: DraftEdits, b: DraftEdits): boolean {
   return a.subject === b.subject && a.body === b.body;
+}
+
+/**
+ * Personal signoff (GH-66): when the approving user has sign_with_name
+ * enabled, the draft's default "Sealevel Hot Yoga" signoff line gains
+ * their name above it:
+ *
+ *   ... see you soon!        ... see you soon!
+ *   Sealevel Hot Yoga   ->   Pete
+ *                            Sealevel Hot Yoga
+ *
+ * Deliberately conservative: it only fires when the LAST non-empty line
+ * is exactly the default signoff (drafting instructs the model to end
+ * every reply that way). Any other shape returns the body unchanged --
+ * never guess at rewriting someone's prose.
+ */
+export function applyPersonalSignoff(body: string, name: string): string {
+  const trimmedName = name.trim();
+  if (trimmedName.length === 0) return body;
+  // Tolerate trailing punctuation on the signoff line ("Sealevel Hot
+  // Yoga.") so the match isn't invisibly defeated by a period.
+  const normalize = (s: string) => s.trim().replace(/[.!]+$/, "").toLowerCase();
+  const lines = body.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!.trim();
+    if (line.length === 0) continue;
+    if (normalize(line) !== DEFAULT_SIGNOFF.toLowerCase()) return body;
+    // Already personally signed (e.g. the operator typed their name above
+    // the studio signoff while editing): do not insert a duplicate.
+    for (let j = i - 1; j >= 0; j--) {
+      const prev = lines[j]!.trim();
+      if (prev.length === 0) continue;
+      if (normalize(prev) === trimmedName.toLowerCase()) return body;
+      break;
+    }
+    lines.splice(i, 0, trimmedName);
+    return lines.join("\n");
+  }
+  return body;
 }
 
 async function pendingItemOrThrow(id: string, caller: string): Promise<Item> {
@@ -276,21 +318,49 @@ export async function decideItem(
   decision: Decision,
   decidedBy: { id: string; name: string },
   edits?: DraftEdits,
+  signoffName?: string,
 ): Promise<Item> {
+  let current: Item | undefined;
   if (edits !== undefined) {
     // No-op save hygiene (GH-40): a Save & approve whose content matches
     // the stored draft byte-for-byte (after CRLF normalization) must not
     // mark the draft edited or capture original_draft.
     edits = normalizeEdits(edits);
-    const current = await pendingItemOrThrow(id, "decideItem");
+    current = await pendingItemOrThrow(id, "decideItem");
     if (sameDraft(edits, draftOf(current))) edits = undefined;
   }
+
+  // Whether the HUMAN edited the draft, decided before the signoff step
+  // so a mechanical signoff swap never claims a human edit.
+  const humanEdited = edits !== undefined;
+
+  // Personal signoff (GH-66): applies only on approval, only when the
+  // draft ends with the default studio signoff (applyPersonalSignoff is
+  // a no-op otherwise).
+  let signoffApplied: string | undefined;
+  if (decision === "approved" && signoffName && signoffName.trim()) {
+    current ??= await pendingItemOrThrow(id, "decideItem");
+    const base = edits ?? draftOf(current);
+    const signedBody = applyPersonalSignoff(base.body, signoffName);
+    if (signedBody !== base.body) {
+      signoffApplied = signoffName.trim();
+      edits = { subject: base.subject, body: signedBody };
+    }
+  }
+
+  // When only the signoff changed the body, the edited flag must still
+  // reflect any EARLIER human edit (payload.draft_edited), matching what
+  // the no-edits SQL branch reads back.
+  const priorEdited =
+    current !== undefined &&
+    Boolean((current.payload as Record<string, unknown>)["draft_edited"]);
 
   const record: DecisionRecord = {
     action: decision,
     by: decidedBy,
     at: new Date().toISOString(),
-    edited: edits !== undefined,
+    edited: humanEdited || (signoffApplied !== undefined && priorEdited),
+    ...(signoffApplied !== undefined ? { signoff: signoffApplied } : {}),
   };
 
   const { rows } = await getPool().query<Item>(

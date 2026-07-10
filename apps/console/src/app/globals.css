@@ -1756,6 +1756,111 @@ textarea {
   opacity: 0.85;
 }
 
+/* ---------- Settings (GH-66) ---------- */
+
+.page--settings {
+  max-width: 720px;
+}
+
+.settings-section {
+  margin-bottom: 36px;
+}
+
+.settings-help {
+  font: 400 12.5px/1.6 var(--font-ui), sans-serif;
+  color: var(--tx3);
+  margin: 0 0 14px;
+  max-width: 560px;
+}
+
+.settings-rule {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  background: var(--surface);
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.settings-rule.is-inactive {
+  opacity: 0.62;
+}
+
+.settings-rule-edit {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-rule-input {
+  min-height: 58px;
+}
+
+.settings-form-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.settings-rule-category {
+  font: 500 10.5px var(--font-mono), monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tx3);
+  border: 1px solid var(--line2);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+
+.settings-rule-status {
+  font: 400 11.5px var(--font-ui), sans-serif;
+  color: var(--tx3);
+  margin-right: auto;
+}
+
+.settings-rule-toggle {
+  padding-top: 2px;
+}
+
+.settings-add-rule {
+  margin-top: 18px;
+}
+
+.settings-category-input {
+  max-width: 260px;
+  margin-bottom: 0;
+  border-color: var(--line);
+}
+
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font: 500 13px var(--font-ui), sans-serif;
+  color: var(--tx);
+  margin: 0 0 16px;
+  cursor: pointer;
+}
+
+.settings-check input {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+}
+
+.settings-error {
+  font: 400 12px var(--font-ui), sans-serif;
+  color: var(--rej-tx);
+  margin: 8px 0 0;
+}
+
+.settings-saved {
+  font: 400 12px var(--font-ui), sans-serif;
+  color: var(--tx3);
+}
+
 /* ---------- AI tag chips (GH-65) ---------- */
 
 .tag-chip {
