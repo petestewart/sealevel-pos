@@ -5,6 +5,7 @@ import { DecidedDetail } from "../../../components/DecidedDetail";
 import { ItemRow } from "../../../components/ItemRow";
 import { currentRole, hasPermission } from "../../../lib/rbac";
 import {
+  adjacentPendingId,
   decidedItems,
   pendingApprovals,
   recentlyDecided,
@@ -154,9 +155,43 @@ async function resolveSelected(
   return fetched && belongsToInbox(fetched, inbox) ? fetched : null;
 }
 
-function Detail({ item, canDecide }: { item: Item; canDecide: boolean }) {
+/**
+ * Where the detail pane should advance to after the selected pending item is
+ * decided (A2, GH-30). To keep the operator's place, selection moves to the
+ * NEXT still-pending row; if the decided item was the last pending one, it
+ * falls back to the PREVIOUS pending row, and if none remain, to the inbox
+ * base URL (no ?item) so the pane shows the "all caught up" placeholder
+ * gracefully. Only truly-pending rows are candidates (the recently-decided
+ * GH-28 tail is never an advance target). The neighbor is looked up straight
+ * from the DB (adjacentPendingId), NOT from the loaded page, so the advance
+ * stays correct even for a pending item deep-linked beyond the first page.
+ * This is a JS-only enhancement layered on top of the server action; the
+ * href is computed server-side and handed to the card, which navigates on a
+ * successful decision.
+ */
+async function advanceHrefFor(selected: Item, slug: string): Promise<string> {
+  const base = `/items/${slug}`;
+  const nextId = await adjacentPendingId(selected);
+  return nextId ? `${base}?item=${encodeURIComponent(nextId)}` : base;
+}
+
+function Detail({
+  item,
+  canDecide,
+  advanceHref,
+}: {
+  item: Item;
+  canDecide: boolean;
+  advanceHref?: string;
+}) {
   if (item.status === "pending_approval") {
-    return <ApprovalCard item={toCardData(item)} canDecide={canDecide} />;
+    return (
+      <ApprovalCard
+        item={toCardData(item)}
+        canDecide={canDecide}
+        advanceHref={advanceHref}
+      />
+    );
   }
   return <DecidedDetail item={item} canDecide={canDecide} />;
 }
@@ -182,6 +217,14 @@ export default async function InboxPage({
   // null and falls back to the placeholder -- never a crash, never the
   // wrong detail view.
   const selected = await resolveSelected(selectedId, items, inbox);
+
+  // Advance target for a decision (A2, GH-30), only meaningful when the
+  // selected item is the interactive (pending) card. Looked up from the DB
+  // so it is correct even for a deep-linked pending item beyond page 1.
+  const advanceHref =
+    selected != null && selected.status === "pending_approval"
+      ? await advanceHrefFor(selected, inbox.slug)
+      : undefined;
 
   return (
     <div className="page page--inbox">
@@ -211,7 +254,11 @@ export default async function InboxPage({
 
         <div className="detail-pane">
           {selected ? (
-            <Detail item={selected} canDecide={canDecide} />
+            <Detail
+              item={selected}
+              canDecide={canDecide}
+              advanceHref={advanceHref}
+            />
           ) : (
             <DetailPlaceholder hasItems={items.length > 0} />
           )}

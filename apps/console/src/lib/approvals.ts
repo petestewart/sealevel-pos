@@ -201,6 +201,52 @@ export async function recentlyDecided(limit = 10): Promise<Item[]> {
 }
 
 /**
+ * The id of the pending item ADJACENT to `item` in the pending inbox's list
+ * order (listItems orders by created_at DESC, id DESC), for advancing
+ * selection after an in-place decision (A2, GH-30). Returns the NEXT (older)
+ * pending row; when `item` is the last pending one, the PREVIOUS (newer)
+ * pending row; and null when `item` is the only pending item left.
+ *
+ * This is a direct neighbor query, NOT scoped to the loaded page, so the
+ * advance is correct even when the decided item was deep-linked beyond the
+ * first page of pending items. Both branches match the list ordering
+ * exactly, so "next" and "previous" mean the same rows the operator sees.
+ *
+ * The anchor row's (created_at, id) is read via a subselect on the id
+ * rather than binding item.created_at from JS: node-postgres surfaces
+ * timestamptz as a millisecond-precision Date, and binding that truncated
+ * value back into a strict row comparison let the anchor row itself
+ * qualify as its own "previous" neighbor (its stored microsecond timestamp
+ * is greater than the truncated parameter) -- which made the advance
+ * point selection at the item just decided. Comparing against the stored
+ * value keeps full precision, so the strict comparisons exclude the anchor.
+ */
+export async function adjacentPendingId(item: Item): Promise<string | null> {
+  const pool = getPool();
+  const params = [item.id];
+  const next = await pool.query<{ id: string }>(
+    `SELECT id FROM items
+     WHERE status = 'pending_approval'
+       AND (created_at, id) <
+           (SELECT created_at, id FROM items WHERE id = $1::bigint)
+     ORDER BY created_at DESC, id DESC
+     LIMIT 1`,
+    params,
+  );
+  if (next.rows[0]) return String(next.rows[0].id);
+  const prev = await pool.query<{ id: string }>(
+    `SELECT id FROM items
+     WHERE status = 'pending_approval'
+       AND (created_at, id) >
+           (SELECT created_at, id FROM items WHERE id = $1::bigint)
+     ORDER BY created_at ASC, id ASC
+     LIMIT 1`,
+    params,
+  );
+  return prev.rows[0] ? String(prev.rows[0].id) : null;
+}
+
+/**
  * Record a decision on a pending item and resolve it, atomically.
  *
  * The decision audit (who, what, when, edited) is written into the item

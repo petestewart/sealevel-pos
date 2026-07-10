@@ -1,8 +1,16 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import {
+  useActionState,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "./Button";
 import { StatusChip } from "./StatusChip";
+import { useToast } from "./Toast";
 import { paragraphsOf } from "../lib/emailDisplay";
 import { InboundEmail, type AttachmentInfo } from "./InboundEmail";
 import {
@@ -14,6 +22,16 @@ import {
 } from "../app/approvals/actions";
 
 const initialActionState: ApprovalActionState = { error: null };
+
+/**
+ * Truthful decision confirmations (A2, GH-30). Nothing auto-sends in v1, so
+ * the toast states only that the decision was recorded and the reply is
+ * ready for a human to send. No claim of sending; no em dashes.
+ */
+const APPROVE_TOAST = "Approved. Reply is ready. Nothing sends automatically in v1.";
+const SAVE_APPROVE_TOAST =
+  "Saved and approved. Reply is ready. Nothing sends automatically in v1.";
+const REJECT_TOAST = "Rejected. No reply will be sent.";
 
 /**
  * Two-pane approval card (Console.dc.html approvals spec): header row
@@ -53,11 +71,25 @@ export interface ApprovalCardData {
 export function ApprovalCard({
   item,
   canDecide,
+  advanceHref,
 }: {
   item: ApprovalCardData;
   canDecide: boolean;
+  /**
+   * URL to move selection to after a successful decision (A2, GH-30): the
+   * next still-pending row, or the inbox base when none remain. Optional so
+   * the card still renders (and decides) if a caller omits it; without it a
+   * decision falls back to the server's own revalidate (no advance).
+   */
+  advanceHref?: string;
 }) {
+  const router = useRouter();
+  const toast = useToast();
+  const formRef = useRef<HTMLFormElement>(null);
   const [editing, setEditing] = useState(false);
+  const [isDeciding, startDeciding] = useTransition();
+  const [decideError, setDecideError] = useState<string | null>(null);
+
   // No draft generated (empty or missing draft_body): show a fallback in
   // the draft pane and keep approval blocked until edits produce a body.
   const hasDraft = item.draftBody.length > 0;
@@ -81,6 +113,12 @@ export function ApprovalCard({
     setEditing(next);
   };
 
+  // Each decide action is bound through useActionState purely to obtain a
+  // progressive-enhancement dispatcher for `formAction`: with JS off (or
+  // pre-hydration) the native POST runs the server action and revalidates.
+  // When JS is present the button's onClick preventDefaults and drives the
+  // enhanced flow (toast + advance) instead, so these dispatchers are the
+  // no-JS fallback path only.
   const [approveState, approveAction] = useActionState(
     approveItemAction,
     initialActionState,
@@ -93,6 +131,9 @@ export function ApprovalCard({
     saveAndApproveItemAction,
     initialActionState,
   );
+  // Save edits (non-deciding, GH-25) keeps the item pending, so unlike a
+  // decision the card is NOT replaced and its effect can reliably close the
+  // editor. It never advances or toasts.
   const [saveEditsState, saveEditsAction] = useActionState(
     saveEditsItemAction,
     initialActionState,
@@ -108,14 +149,57 @@ export function ApprovalCard({
     }
   }, [saveEditsState]);
 
+  /**
+   * Progressive-enhancement decide handler (A2, GH-30). Each decide button
+   * keeps the RAW server action as its `formAction`, so with JS disabled (or
+   * before hydration) the native form POST still records the decision and
+   * revalidates -- correct fallback state, just no in-place advance. When JS
+   * is present this onClick takes over: it runs the SAME server action and,
+   * on success, shows a truthful toast and soft-navigates selection to the
+   * next pending item. Advancing here (before the revalidated tree can
+   * commit) is what keeps the decided card from flashing its own resolved
+   * view. On an error (empty-draft guard GH-33, already-decided race GH-40)
+   * it surfaces the message inline and does not advance. A decision in
+   * flight disables the footer so a rapid second click cannot double-submit.
+   */
+  const decide =
+    (
+      action: (
+        prev: ApprovalActionState,
+        formData: FormData,
+      ) => Promise<ApprovalActionState>,
+      message: string,
+      validate: boolean,
+    ) =>
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      const form = formRef.current;
+      if (!form) return; // fall through to the native POST (no JS takeover)
+      event.preventDefault();
+      // Preserve the edit-then-approve required-field UX that formNoValidate
+      // would otherwise skip; Reject passes validate=false (formNoValidate).
+      if (validate && !form.reportValidity()) return;
+      const formData = new FormData(form);
+      setDecideError(null);
+      startDeciding(async () => {
+        const result = await action(initialActionState, formData);
+        if (result.error) {
+          setDecideError(result.error);
+          return;
+        }
+        toast.show(message);
+        if (advanceHref) router.replace(advanceHref, { scroll: false });
+      });
+    };
+
   const actionError =
+    decideError ??
     approveState.error ??
     rejectState.error ??
     saveApproveState.error ??
     saveEditsState.error;
 
   return (
-    <form className="approval-card">
+    <form className="approval-card" ref={formRef}>
       <input type="hidden" name="id" value={item.id} />
 
       <div className="approval-card-head">
@@ -220,8 +304,13 @@ export function ApprovalCard({
                 key="save-approve"
                 type="submit"
                 variant="primary"
-                disabled={!armed || !hasDraft}
+                disabled={!armed || !hasDraft || isDeciding}
                 formAction={saveApproveAction}
+                onClick={decide(
+                  saveAndApproveItemAction,
+                  SAVE_APPROVE_TOAST,
+                  true,
+                )}
               >
                 Save &amp; approve
               </Button>
@@ -229,7 +318,7 @@ export function ApprovalCard({
                 key="save-edits"
                 type="submit"
                 variant="outlined"
-                disabled={!armed}
+                disabled={!armed || isDeciding}
                 formAction={saveEditsAction}
               >
                 Save edits
@@ -253,8 +342,9 @@ export function ApprovalCard({
                 key="approve"
                 type="submit"
                 variant="primary"
-                disabled={!armed || !hasDraft}
+                disabled={!armed || !hasDraft || isDeciding}
                 formAction={approveAction}
+                onClick={decide(approveItemAction, APPROVE_TOAST, true)}
               >
                 Approve
               </Button>
@@ -276,7 +366,9 @@ export function ApprovalCard({
             key="reject"
             type="submit"
             variant="destructive-text"
+            disabled={isDeciding}
             formAction={rejectAction}
+            onClick={decide(rejectItemAction, REJECT_TOAST, false)}
             formNoValidate
             className="approval-reject"
           >

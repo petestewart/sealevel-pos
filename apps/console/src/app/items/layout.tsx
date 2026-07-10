@@ -2,6 +2,7 @@ import {
   InboxSidebar,
   type InboxSidebarEntry,
 } from "../../components/InboxSidebar";
+import { ToastProvider } from "../../components/Toast";
 import { decisionCounts, itemStatusCounts } from "../../lib/approvals";
 import { INBOXES, type InboxCounts } from "../../lib/inboxes";
 
@@ -41,9 +42,11 @@ export default async function ItemsLayout({
   }));
 
   return (
-    <div className="items-shell">
-      <InboxSidebar entries={entries} />
-      <div className="items-content">{children}</div>
-    </div>
+    <ToastProvider>
+      <div className="items-shell">
+        <InboxSidebar entries={entries} />
+        <div className="items-content">{children}</div>
+      </div>
+    </ToastProvider>
   );
 }
