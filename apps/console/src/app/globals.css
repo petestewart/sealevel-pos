@@ -719,6 +719,38 @@ textarea {
   color: var(--tx3);
 }
 
+/* Delivery status line (GH-56): decided replies state plainly that
+   nothing has been sent. Amber (pend tokens) for the approved case so
+   the gap is visible without alarming; muted for rejected, where "not
+   sent" is the expected outcome. */
+.delivery-status {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font: 400 12.5px/1.5 var(--font-ui), sans-serif;
+  color: var(--tx2);
+  background: var(--surface2);
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 13px;
+}
+
+.delivery-status--pending {
+  color: var(--pend-tx);
+  background: var(--pend-bg);
+  border-color: transparent;
+}
+
+.delivery-status-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  align-self: center;
+}
+
 .draft-subject {
   font: 600 14px var(--font-ui), sans-serif;
   color: var(--tx);

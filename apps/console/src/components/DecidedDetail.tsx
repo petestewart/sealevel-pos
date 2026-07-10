@@ -1,5 +1,6 @@
 import type { Item } from "@ai-manager/core";
 import { StatusChip } from "./StatusChip";
+import { DeliveryStatus } from "./DeliveryStatus";
 import { ReopenButton } from "./ReopenButton";
 import { RemoveRejectedButton } from "./RemoveRejectedButton";
 import { InboundEmail } from "./InboundEmail";
@@ -10,8 +11,8 @@ import { decisionOf, isApproved, toCardData } from "../lib/itemView";
  * Read view for a decided item in the detail pane (A1c, GH-29). Reuses the
  * approval-card two-pane shell and the shared toCardData derivation so a
  * decided item reads exactly like its pending form, minus the actions:
- * original message on the left, the final reply on the right (labelled
- * "not sent" for a rejected draft, since nothing auto-sends in v1). The
+ * original message on the left, the final reply on the right, with a
+ * DeliveryStatus line stating that nothing has been sent (GH-56). The
  * footer carries the decision audit and the Reopen control (GH-25), so
  * this is the decided counterpart of ApprovalCard, not a fork of its
  * interactive machinery.
@@ -70,12 +71,14 @@ export function DecidedDetail({
           <div className="approval-pane-labelrow">
             <span className="micro-label micro-label--accent">
               <span className="micro-label-dot" aria-hidden="true" />
-              {approved ? "Approved reply" : "Rejected draft (not sent)"}
+              {approved ? "Approved reply" : "Rejected draft"}
             </span>
             {data.edited ? (
               <span className="approval-pane-timestamp">edited</span>
             ) : null}
           </div>
+
+          <DeliveryStatus approved={approved} hasReply={hasReply} />
 
           {hasReply ? (
             <>
