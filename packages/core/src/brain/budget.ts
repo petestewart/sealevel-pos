@@ -33,7 +33,12 @@ export function truncateForPrompt(
   console.warn(
     `[budget] truncated ${label}: ${text.length} chars -> ${maxChars}`,
   );
-  return `${text.slice(0, maxChars)}\n\n[truncated: ${label} exceeded the size budget; ${text.length - maxChars} characters omitted]`;
+  // Back off one unit if the cut lands mid-surrogate-pair, so the kept
+  // text never ends in a lone high surrogate.
+  let cut = maxChars;
+  const last = text.charCodeAt(cut - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut -= 1;
+  return `${text.slice(0, cut)}\n\n[truncated: ${label} exceeded the size budget; ${text.length - cut} characters omitted]`;
 }
 
 /** Token usage accumulated across every API call in one brain run. */
