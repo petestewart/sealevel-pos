@@ -945,7 +945,9 @@ textarea {
 .items-shell {
   display: flex;
   align-items: flex-start;
-  max-width: 1080px;
+  /* Wider than the 1080 dashboard so the list pane + two-pane detail card
+     both have room (A1c). Still centered; never wider than the viewport. */
+  max-width: 1220px;
   margin: 0 auto;
   padding: 0 26px;
 }
@@ -1025,6 +1027,196 @@ textarea {
 .items-content .page {
   padding-left: 34px;
   padding-right: 0;
+}
+
+/* ---------- List pane + detail pane (A1c, GH-29) ---------- */
+
+.list-detail {
+  display: flex;
+  align-items: flex-start;
+  gap: 22px;
+}
+
+/* Left: compact scannable list. Fixed, sticky so the detail scrolls
+   independently on tall threads. */
+.list-pane {
+  flex: none;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: sticky;
+  top: 76px;
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/* Right: full item (ApprovalCard or DecidedDetail read view). */
+.detail-pane {
+  flex: 1;
+  min-width: 0;
+}
+
+.item-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: 11px;
+  border: 1px solid transparent;
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.item-row:hover {
+  background: var(--surface2);
+}
+
+.item-row.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.item-row .status-dot {
+  margin-top: 6px;
+}
+
+.item-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.item-row-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.item-row-sender {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 600 13px var(--font-ui), sans-serif;
+  color: var(--tx);
+}
+
+.item-row-time {
+  flex: none;
+  font: 400 11px var(--font-ui), sans-serif;
+  color: var(--tx3);
+}
+
+.item-row-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 500 12.5px var(--font-ui), sans-serif;
+  color: var(--tx2);
+}
+
+.item-row-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 12px var(--font-ui), sans-serif;
+  color: var(--tx3);
+}
+
+.item-row.is-active .item-row-sender,
+.item-row.is-active .item-row-subject {
+  color: var(--accent-tx);
+}
+
+/* Empty list column (fits inside the narrow list pane). */
+.list-empty {
+  padding: 32px 14px;
+  text-align: center;
+}
+
+.list-empty-title {
+  font: 600 13.5px var(--font-ui), sans-serif;
+  color: var(--tx);
+  margin-bottom: 4px;
+}
+
+.list-empty-sub {
+  font: 400 12px/1.5 var(--font-ui), sans-serif;
+  color: var(--tx3);
+}
+
+/* Empty detail pane ("Select an item to review"). */
+.detail-placeholder {
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  padding: 64px 24px;
+  text-align: center;
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.detail-placeholder-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--surface2);
+  margin: 0 auto 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tx3);
+  font-size: 19px;
+}
+
+.detail-placeholder-title {
+  font: 600 15px var(--font-ui), sans-serif;
+  color: var(--tx);
+  margin-bottom: 5px;
+}
+
+.detail-placeholder-sub {
+  font: 400 12.5px/1.5 var(--font-ui), sans-serif;
+  color: var(--tx3);
+  max-width: 280px;
+}
+
+/* Decided detail footer: audit line + Reopen, mirroring the card actions. */
+.approval-card-actions--decided {
+  gap: 10px;
+  align-items: center;
+}
+
+.decided-audit {
+  font: 400 12.5px var(--font-ui), sans-serif;
+  color: var(--tx3);
+}
+
+/* Stack list above detail before the panes get too tight, so the desktop
+   two-pane never forces horizontal scroll. Full mobile flow is A7. */
+@media (max-width: 920px) {
+  .list-detail {
+    flex-direction: column;
+  }
+
+  .list-pane {
+    width: 100%;
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .detail-pane {
+    width: 100%;
+  }
 }
 
 /* Stack the sidebar above the content on narrow screens; the full mobile

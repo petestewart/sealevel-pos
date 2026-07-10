@@ -39,6 +39,7 @@ export {
   reopenItem,
   ReopenConflictError,
   listItems,
+  getItemById,
   countItemsByStatus,
   DEFAULT_PAGE_SIZE,
 } from "./db/items.js";

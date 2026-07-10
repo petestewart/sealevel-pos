@@ -263,6 +263,21 @@ export async function listItems(filter: ListItemsFilter = {}): Promise<Item[]> {
   return rows;
 }
 
+/**
+ * Fetch a single item by id, or null if none exists. Used by the inbox
+ * detail pane (A1c/GH-29) to resolve a deep-linked ?item=<id> that lies
+ * beyond the loaded page of list rows, without loading every page. The
+ * caller is responsible for validating the item belongs to the inbox it
+ * was requested from.
+ */
+export async function getItemById(id: string): Promise<Item | null> {
+  const { rows } = await getPool().query<Item>(
+    `SELECT * FROM items WHERE id = $1`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
 /** Per-status item counts; statuses with no rows are present as 0. */
 export type ItemStatusCounts = Record<ItemStatus, number>;
 

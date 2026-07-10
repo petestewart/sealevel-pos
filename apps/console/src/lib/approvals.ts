@@ -98,10 +98,19 @@ export const itemStatusCounts = cache(
 
 /**
  * A resolved email_reply item counts as "rejected" only when its decision
- * says so; everything else resolved counts as approved. This mirrors the
- * DecidedRow rendering rule (legacy rows stored the decision as a bare
- * string, and rows missing a decision default to approved), so the
- * sidebar counts always match what the inboxes render.
+ * says so; everything else resolved counts as approved. This is the SQL
+ * form of the ONE canonical classifier `classifyDecision` (lib/itemView.ts)
+ * -- the two are kept byte-for-byte equivalent so the sidebar counts, the
+ * decision-inbox queries, inbox membership, row tone, and the decided
+ * detail title can never disagree on an edge case (e.g. a partial
+ * `{action:"rejected"}` with no by/at is rejected in BOTH). Any change to
+ * the rule must be made in both places together.
+ *
+ *   bare string 'rejected'                -> first clause  -> rejected
+ *   object with action='rejected'         -> second clause -> rejected
+ *     (->> yields NULL for a bare string / missing key, so only an
+ *      explicit action='rejected' matches; partials still match)
+ *   everything else resolved              -> coalesce false -> approved
  */
 const REJECTED_SQL = `(
   (jsonb_typeof(payload->'decision') = 'string' AND payload->>'decision' = 'rejected')
