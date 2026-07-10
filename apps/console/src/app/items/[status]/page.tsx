@@ -1,4 +1,3 @@
-import { Fragment } from "react";
 import { notFound } from "next/navigation";
 import { getItemById, type Item } from "@ai-manager/core";
 import { ApprovalCard } from "../../../components/ApprovalCard";
@@ -6,6 +5,7 @@ import { DecidedDetail } from "../../../components/DecidedDetail";
 import { ItemRow } from "../../../components/ItemRow";
 import { ListScrollRestore } from "../../../components/ListScrollRestore";
 import { MobileBackBar } from "../../../components/MobileBackBar";
+import { RecentlyDecidedSection } from "../../../components/RecentlyDecidedSection";
 import { currentRole, hasPermission } from "../../../lib/rbac";
 import {
   adjacentPendingId,
@@ -269,35 +269,45 @@ export default async function InboxPage({
           {items.length === 0 ? (
             <ListEmpty inbox={inbox} />
           ) : (
-            items.map((it, index) => {
-              const id = String(it.id);
+            (() => {
               // In the pending inbox, everything after the pending block is
               // the recently-decided tail (GH-28/GH-54): loadInboxItems
-              // appends it, so status is the split. The divider goes before
-              // the first tail row; tail rows render muted.
-              const inTail =
+              // appends it, so status is the split. The tail renders muted
+              // inside a collapsible section (GH-64); other inboxes have no
+              // tail and render a flat list.
+              const isTail = (it: Item) =>
                 inbox.source.kind === "pending" &&
                 it.status !== "pending_approval";
-              const tailStartsHere =
-                inTail &&
-                (index === 0 ||
-                  items[index - 1]?.status === "pending_approval");
-              return (
-                <Fragment key={id}>
-                  {tailStartsHere ? (
-                    <div className="list-section-divider">
-                      Recently decided
-                    </div>
-                  ) : null}
+              const head = items.filter((it) => !isTail(it));
+              const tail = items.filter(isTail);
+              const row = (it: Item, muted: boolean) => {
+                const id = String(it.id);
+                return (
                   <ItemRow
+                    key={id}
                     row={toRow(it)}
                     href={`/items/${inbox.slug}?item=${encodeURIComponent(id)}`}
                     active={selected != null && String(selected.id) === id}
-                    muted={inTail}
+                    muted={muted}
                   />
-                </Fragment>
+                );
+              };
+              return (
+                <>
+                  {head.map((it) => row(it, false))}
+                  {tail.length > 0 ? (
+                    <RecentlyDecidedSection
+                      count={tail.length}
+                      autoExpand={
+                        selected != null && isTail(selected)
+                      }
+                    >
+                      {tail.map((it) => row(it, true))}
+                    </RecentlyDecidedSection>
+                  ) : null}
+                </>
               );
-            })
+            })()
           )}
         </div>
 

@@ -1755,3 +1755,32 @@ textarea {
 .item-row.is-muted:not(.is-active):hover {
   opacity: 0.85;
 }
+
+/* Collapsible recently-decided section (GH-64): the divider becomes a
+   full-width toggle button; keep the quiet divider look, add a chevron
+   that rotates when collapsed. */
+.list-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.list-section-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.tail-chevron {
+  display: inline-block;
+  transition: transform 120ms ease;
+  font-size: 10px;
+  line-height: 1;
+}
+.tail-chevron.is-collapsed {
+  transform: rotate(-90deg);
+}
