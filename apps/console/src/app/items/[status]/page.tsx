@@ -189,13 +189,18 @@ function Detail({
   if (item.status === "pending_approval") {
     return (
       <ApprovalCard
+        // Keyed by item id so client state (edit mode, typed draft text)
+        // resets when the selection changes. Without this, auto-advance
+        // after a decide reuses the component instance and the NEXT item
+        // renders mid-edit with the PREVIOUS item's subject/body staged.
+        key={item.id}
         item={toCardData(item)}
         canDecide={canDecide}
         advanceHref={advanceHref}
       />
     );
   }
-  return <DecidedDetail item={item} canDecide={canDecide} />;
+  return <DecidedDetail key={item.id} item={item} canDecide={canDecide} />;
 }
 
 export default async function InboxPage({
