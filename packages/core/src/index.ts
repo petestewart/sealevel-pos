@@ -63,3 +63,10 @@ export type {
 export { runJob, DEFAULT_BRAIN_MODEL } from "./brain/run.js";
 export { SYSTEM_PROMPT } from "./brain/prompts.js";
 export type { UsageTotals } from "./brain/budget.js";
+export {
+  TAG_REGISTRY,
+  isKnownTag,
+  sanitizeTags,
+  tagLabel,
+} from "./tags.js";
+export type { TagDefinition, ItemTag } from "./tags.js";

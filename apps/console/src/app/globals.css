@@ -1756,6 +1756,33 @@ textarea {
   opacity: 0.85;
 }
 
+/* ---------- AI tag chips (GH-65) ---------- */
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font: 600 10px var(--font-ui), sans-serif;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  background: var(--accent-soft);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.item-row .tag-chip {
+  font-size: 9px;
+  padding: 1px 6px;
+}
+
+.item-row-tags {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
 /* Collapsible recently-decided section (GH-64): the divider becomes a
    full-width toggle button; keep the quiet divider look, add a chevron
    that rotates when collapsed. */

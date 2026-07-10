@@ -39,6 +39,11 @@ export function DecidedDetail({
       <div className="approval-card-head">
         <span className="approval-card-id">#{data.id.slice(0, 8)}</span>
         <span className="intent-chip">{data.intent}</span>
+        {data.tags.map((t) => (
+          <span key={t} className="tag-chip">
+            {t}
+          </span>
+        ))}
         <span className="approval-card-time">{data.receivedTime}</span>
         {data.assignee ? (
           <span className="approval-card-time">· {data.assignee}</span>

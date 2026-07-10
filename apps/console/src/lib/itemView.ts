@@ -1,4 +1,4 @@
-import type { Item } from "@ai-manager/core";
+import { sanitizeTags, tagLabel, type Item } from "@ai-manager/core";
 import type { ApprovalCardData } from "../components/ApprovalCard";
 import type { DecisionRecord } from "./approvals";
 import {
@@ -72,6 +72,16 @@ function lastAnswerOf(payload: Record<string, unknown>) {
   return question && answer ? { question, answer } : null;
 }
 
+/**
+ * Chip labels for an item's AI tags (GH-65). Untrusted payload.tags runs
+ * through the registry gate (sanitizeTags), so unknown or malformed
+ * values render as nothing rather than crashing or showing raw model
+ * output; items predating tags simply return [].
+ */
+export function tagsOf(item: Item): string[] {
+  return sanitizeTags(item.payload.tags).map((t) => tagLabel(t.tag));
+}
+
 export function toCardData(item: Item): ApprovalCardData {
   const payload = item.payload;
   const original = originalOf(item);
@@ -79,6 +89,7 @@ export function toCardData(item: Item): ApprovalCardData {
   return {
     id: String(item.id),
     intent: str(payload.intent) ?? humanizeType(item.type),
+    tags: tagsOf(item),
     receivedTime: formatTime(item.created_at),
     receivedFull: formatDateTime(item.created_at),
     assignee: item.assignee,
@@ -193,6 +204,8 @@ export interface RowView {
   time: string;
   preview: string;
   tone: RowTone;
+  /** AI tag chip labels (GH-65); [] for untagged items. */
+  tags: string[];
 }
 
 export function toRow(item: Item): RowView {
@@ -213,5 +226,6 @@ export function toRow(item: Item): RowView {
     time,
     preview: previewOf(item),
     tone,
+    tags: tagsOf(item),
   };
 }

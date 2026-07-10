@@ -52,7 +52,18 @@ export function ItemRow({
           <span className="item-row-sender">{row.sender}</span>
           <span className="item-row-time">{row.time}</span>
         </span>
-        <span className="item-row-subject">{row.subject}</span>
+        <span className="item-row-subject">
+          {row.subject}
+          {row.tags.length > 0 ? (
+            <span className="item-row-tags">
+              {row.tags.map((t) => (
+                <span key={t} className="tag-chip">
+                  {t}
+                </span>
+              ))}
+            </span>
+          ) : null}
+        </span>
         <span className="item-row-preview">{row.preview}</span>
       </span>
     </Link>

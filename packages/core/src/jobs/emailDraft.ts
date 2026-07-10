@@ -1,7 +1,14 @@
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 
-import { EMAIL_BODY_MAX_CHARS, truncateForPrompt } from "../brain/budget.js";
+import {
+  EMAIL_BODY_MAX_CHARS,
+  emptyUsage,
+  truncateForPrompt,
+  type UsageTotals,
+} from "../brain/budget.js";
+import { classifyEmailTags } from "../brain/classify.js";
 import { recordItemUsage } from "../db/itemDrafts.js";
+import type { ItemTag } from "../tags.js";
 import { createItemTool } from "../tools/registry.js";
 import {
   createKbToolset,
@@ -62,13 +69,23 @@ function createItemWithSources(
   return {
     ...base,
     run: async (input: Record<string, unknown>) => {
-      if (log.sources.length > 0 || log.unavailable) {
+      // Tags (GH-65) ride on the tool call like sources: classified by a
+      // separate sonnet call before the drafting loop and merged here
+      // structurally, so the drafting model can neither forget nor forge
+      // them (they are not part of its prompt contract at all).
+      const tags = runState?.["tags"] as ItemTag[] | undefined;
+      if (log.sources.length > 0 || log.unavailable || (tags?.length ?? 0) > 0) {
         input = {
           ...input,
           payload: {
             ...((input["payload"] as Record<string, unknown>) ?? {}),
-            sources: log.sources,
-            ...(log.unavailable ? { kb_unavailable: true } : {}),
+            ...(log.sources.length > 0 || log.unavailable
+              ? {
+                  sources: log.sources,
+                  ...(log.unavailable ? { kb_unavailable: true } : {}),
+                }
+              : {}),
+            ...((tags?.length ?? 0) > 0 ? { tags } : {}),
           },
         };
       }
@@ -102,11 +119,31 @@ export const emailDraft: Job = {
   recordUsage: async (ctx, usage) => {
     const itemId = ctx.runState?.["itemId"];
     if (typeof itemId !== "string") return; // no item created this run
-    await recordItemUsage(itemId, { ...usage });
+    // Include the tag-classification sonnet call (GH-65) so the per-item
+    // cost record (GH-62) counts every API call the run made.
+    const classify = ctx.runState?.["classifyUsage"] as UsageTotals | undefined;
+    const total = { ...usage };
+    if (classify) {
+      total.input_tokens += classify.input_tokens;
+      total.output_tokens += classify.output_tokens;
+      total.cache_creation_input_tokens += classify.cache_creation_input_tokens;
+      total.cache_read_input_tokens += classify.cache_read_input_tokens;
+      total.api_calls += classify.api_calls;
+    }
+    await recordItemUsage(itemId, total);
   },
   model: "claude-opus-4-8", // drafting job (locked decisions in CLAUDE.md)
-  instructions: (ctx: JobContext) => {
+  instructions: async (ctx: JobContext) => {
     const payload = (ctx.payload ?? {}) as InboundEmailPayload;
+    // Tag classification (GH-65): a separate small sonnet call, before
+    // the opus drafting loop. Best-effort: [] on any failure, and the
+    // draft proceeds identically either way. The tags land on the item
+    // via the create_item wrapper (runState), not via the prompt.
+    if (ctx.runState) {
+      const classifyUsage = emptyUsage();
+      ctx.runState["tags"] = await classifyEmailTags(payload, classifyUsage);
+      ctx.runState["classifyUsage"] = classifyUsage;
+    }
     return `
 An inbound email to the studio needs a reply. Draft one; do not send anything.
 ${kbConfigured() ? KB_PROMPT_GUIDANCE : ""}

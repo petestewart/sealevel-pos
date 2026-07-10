@@ -48,6 +48,8 @@ const REJECT_TOAST = "Rejected. No reply will be sent.";
 export interface ApprovalCardData {
   id: string;
   intent: string;
+  /** AI tag chip labels (GH-65); [] when untagged. */
+  tags: string[];
   receivedTime: string;
   receivedFull: string;
   assignee: string | null;
@@ -225,6 +227,11 @@ export function ApprovalCard({
       <div className="approval-card-head">
         <span className="approval-card-id">#{item.id.slice(0, 8)}</span>
         <span className="intent-chip">{item.intent}</span>
+        {item.tags.map((t) => (
+          <span key={t} className="tag-chip">
+            {t}
+          </span>
+        ))}
         <span className="approval-card-time">{item.receivedTime}</span>
         {item.assignee ? (
           <span className="approval-card-time">· {item.assignee}</span>
