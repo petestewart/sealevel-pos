@@ -1361,3 +1361,22 @@ textarea {
     animation: none;
   }
 }
+
+/* ---------- Stale-decide Refresh affordance (GH-31) ---------- */
+
+/* Inline "Refresh" next to the already-decided conflict message; styled as
+   a text link so it reads as part of the sentence, not a second CTA. */
+.approval-refresh-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-left: 6px;
+  font: 500 12px var(--font-ui), sans-serif;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.approval-refresh-link:hover {
+  opacity: 0.8;
+}

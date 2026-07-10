@@ -98,6 +98,27 @@ export function formatDecidedAt(at: Date, now: Date = new Date()): string {
   return dayOf(at) === dayOf(now) ? formatTime(at) : formatDateTime(at);
 }
 
+/**
+ * Coarse relative time for conflict messages (GH-31): "just now",
+ * "N minutes ago", "N hours ago", "N days ago". Never negative; a clock
+ * skew that puts `at` in the future reads as "just now".
+ */
+export function formatRelativeTime(at: Date, now: Date = new Date()): string {
+  // Invalid dates (NaN time) read as "just now" rather than "NaN days ago";
+  // conflict messages degrade to vague-but-sensible instead of garbled.
+  if (Number.isNaN(at.getTime())) return "just now";
+  const seconds = Math.max(0, Math.floor((now.getTime() - at.getTime()) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return minutes === 1 ? "1 minute ago" : `${minutes} minutes ago`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? "1 day ago" : `${days} days ago`;
+}
+
 /** "email_reply" -> "Email reply" (intent-chip fallback per GH-22). */
 export function humanizeType(type: string): string {
   const words = type.split(/[_\-\s]+/).filter(Boolean).join(" ");

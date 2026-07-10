@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { useRouter } from "next/navigation";
 import {
   reopenItemAction,
   type ReopenState,
@@ -13,6 +14,7 @@ import {
  * message instead of throwing, rendered inline below the meta line.
  */
 export function ReopenButton({ id }: { id: string }) {
+  const router = useRouter();
   const initial: ReopenState = { error: null };
   const [state, formAction, pending] = useActionState(
     reopenItemAction,
@@ -27,7 +29,17 @@ export function ReopenButton({ id }: { id: string }) {
       </button>
       {state.error ? (
         <span role="alert" className="decided-reopen-error">
-          {state.error}
+          {state.error}{" "}
+          <button
+            type="button"
+            className="approval-refresh-link"
+            onClick={(e) => {
+              e.preventDefault();
+              router.refresh();
+            }}
+          >
+            Refresh
+          </button>
         </span>
       ) : null}
     </form>

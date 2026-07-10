@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { currentRole, hasPermission } from "../../lib/rbac";
 import { getPool, reopenItem, ReopenConflictError } from "@ai-manager/core";
+import { classifyDecision } from "../../lib/itemView";
+import { formatRelativeTime } from "../../lib/emailDisplay";
 import {
   decideItem,
   saveDraftEdits,
@@ -47,6 +49,12 @@ function requireString(formData: FormData, field: string): string {
 
 export interface ApprovalActionState {
   error: string | null;
+  /**
+   * True when the error is a stale-item conflict (the item was decided in
+   * another tab or by another operator). The card renders a Refresh
+   * affordance next to the message so the operator can resync (GH-31).
+   */
+  stale?: boolean;
 }
 
 const ALREADY_DECIDED_MESSAGE =
@@ -63,6 +71,51 @@ function isAlreadyDecided(err: unknown): boolean {
   );
 }
 
+/**
+ * Rich already-decided conflict state (GH-31): look up what actually
+ * happened to the item and say who decided it (decision.by.name, falling
+ * back to "another operator" for partial/legacy audits), what the decision
+ * was (via the canonical classifyDecision), and when (relative time from
+ * decision.at, falling back to resolved_at). Any lookup failure falls back
+ * to the generic message; this path must never throw, because the whole
+ * point is to keep the stale card mounted with an inline message.
+ */
+async function staleDecideState(id: string): Promise<ApprovalActionState> {
+  try {
+    const { rows } = await getPool().query<{
+      status: string;
+      payload: Record<string, unknown>;
+      resolved_at: Date | null;
+    }>(`SELECT status, payload, resolved_at FROM items WHERE id = $1`, [id]);
+    const row = rows[0];
+    if (row && row.status === "resolved") {
+      const action = classifyDecision(row.payload);
+      const d = row.payload.decision as
+        | { by?: { name?: unknown }; at?: unknown }
+        | string
+        | undefined;
+      const byName =
+        typeof d === "object" &&
+        typeof d?.by?.name === "string" &&
+        d.by.name.trim().length > 0
+          ? d.by.name.trim()
+          : "another operator";
+      const atRaw =
+        typeof d === "object" && typeof d?.at === "string"
+          ? new Date(d.at)
+          : row.resolved_at;
+      const when =
+        atRaw !== null && !Number.isNaN(atRaw.getTime())
+          ? `, ${formatRelativeTime(atRaw)}`
+          : "";
+      return { error: `Already ${action} by ${byName}${when}.`, stale: true };
+    }
+  } catch {
+    // Fall through to the generic message.
+  }
+  return { error: ALREADY_DECIDED_MESSAGE, stale: true };
+}
+
 async function decide(
   formData: FormData,
   decision: Decision,
@@ -75,8 +128,9 @@ async function decide(
   } catch (err) {
     if (isAlreadyDecided(err)) {
       // No revalidate here: refreshing would unmount the stale card and
-      // the inline message with it. The card stays until the user acts.
-      return { error: ALREADY_DECIDED_MESSAGE };
+      // the inline message with it. The card stays until the user acts
+      // (the inline Refresh affordance is that act, GH-31).
+      return staleDecideState(id);
     }
     throw err;
   }
@@ -162,7 +216,7 @@ export async function saveEditsItemAction(
     await saveDraftEdits(id, edits);
   } catch (err) {
     if (isAlreadyDecided(err)) {
-      return { error: ALREADY_DECIDED_MESSAGE };
+      return staleDecideState(id);
     }
     throw err;
   }
@@ -196,11 +250,13 @@ export async function reopenItemAction(
       };
     }
     // Lost a race: someone else reopened it (or it never was resolved).
+    // No revalidate here, matching the decide conflict paths (GH-31): a
+    // revalidation unmounts the row before the operator can read the
+    // message. The message's Refresh affordance (or the next count-refresh
+    // tick) resyncs the list on the operator's terms.
     if (err instanceof Error && err.message.includes("no resolved item")) {
-      revalidatePath("/", "layout");
       return {
-        error:
-          "This item is not in a reopenable state anymore. It may have been reopened already.",
+        error: "Already reopened or changed by another operator.",
       };
     }
     throw err;

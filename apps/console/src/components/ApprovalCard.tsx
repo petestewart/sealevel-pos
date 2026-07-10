@@ -88,7 +88,9 @@ export function ApprovalCard({
   const formRef = useRef<HTMLFormElement>(null);
   const [editing, setEditing] = useState(false);
   const [isDeciding, startDeciding] = useTransition();
-  const [decideError, setDecideError] = useState<string | null>(null);
+  const [decideError, setDecideError] = useState<ApprovalActionState | null>(
+    null,
+  );
 
   // No draft generated (empty or missing draft_body): show a fallback in
   // the draft pane and keep approval blocked until edits produce a body.
@@ -183,7 +185,7 @@ export function ApprovalCard({
       startDeciding(async () => {
         const result = await action(initialActionState, formData);
         if (result.error) {
-          setDecideError(result.error);
+          setDecideError(result);
           return;
         }
         toast.show(message);
@@ -191,12 +193,15 @@ export function ApprovalCard({
       });
     };
 
-  const actionError =
-    decideError ??
-    approveState.error ??
-    rejectState.error ??
-    saveApproveState.error ??
-    saveEditsState.error;
+  // First state carrying an error wins, from whichever path produced it
+  // (enhanced onClick flow or a no-JS useActionState dispatch). Keeping the
+  // whole state (not just the message) preserves the stale flag that drives
+  // the Refresh affordance (GH-31).
+  const errorState =
+    [decideError, approveState, rejectState, saveApproveState, saveEditsState]
+      .filter((s): s is ApprovalActionState => s !== null)
+      .find((s) => s.error) ?? null;
+  const actionError = errorState?.error ?? null;
 
   return (
     <form className="approval-card" ref={formRef}>
@@ -377,6 +382,18 @@ export function ApprovalCard({
           {actionError ? (
             <span role="alert" className="approval-action-error">
               {actionError}
+              {errorState?.stale ? (
+                <button
+                  type="button"
+                  className="approval-refresh-link"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    router.refresh();
+                  }}
+                >
+                  Refresh
+                </button>
+              ) : null}
             </span>
           ) : null}
         </div>
