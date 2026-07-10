@@ -156,8 +156,9 @@ function isDedupeViolation(err: unknown): boolean {
  * 'pending_approval', resolved_at is cleared, and the prior decision (if
  * any) is preserved by appending it to payload.decision_history before
  * removing payload.decision. Guarded UPDATE matching only status =
- * 'resolved', so reopening a non-resolved (or nonexistent) item throws
- * instead of silently rewriting state.
+ * 'resolved' and not archived (payload.archived, GH-55), so reopening a
+ * non-resolved, archived, or nonexistent item throws instead of silently
+ * rewriting state or resurrecting a removed item from a stale form.
  *
  * Throws ReopenConflictError when the partial unique dedupe index rejects
  * the transition (an unresolved twin with the same type + dedupe_key
@@ -177,7 +178,7 @@ export async function reopenItem(id: string): Promise<Item> {
                     THEN jsonb_build_array(payload->'decision')
                     ELSE '[]'::jsonb END
            )
-       WHERE id = $1 AND status = 'resolved'
+       WHERE id = $1 AND status = 'resolved' AND NOT (payload ? 'archived')
        RETURNING *`,
       [id],
     ));

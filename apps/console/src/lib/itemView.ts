@@ -158,6 +158,16 @@ export function isApproved(item: Item): boolean {
   return classifyDecision(item.payload) === "approved";
 }
 
+/**
+ * Whether the item was archived out of the UI (GH-55). Matches the SQL
+ * guard NOT_ARCHIVED_SQL in approvals.ts (presence of the payload key);
+ * keep the two in sync. Archived items are hidden from every inbox,
+ * count, and deep link, but their rows and audit stay in the database.
+ */
+export function isArchived(item: Item): boolean {
+  return Object.prototype.hasOwnProperty.call(item.payload, "archived");
+}
+
 export type RowTone = "pending" | "approved" | "rejected";
 
 /** Semantic tone for a row's status dot, derived from item state. */

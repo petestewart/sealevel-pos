@@ -6,6 +6,8 @@ import { requireDecider } from "../../lib/requireDecider";
 import { classifyDecision } from "../../lib/itemView";
 import { formatRelativeTime } from "../../lib/emailDisplay";
 import {
+  archiveAllRejected,
+  archiveRejectedItem,
   decideItem,
   saveDraftEdits,
   type Decision,
@@ -237,11 +239,56 @@ export async function reopenItemAction(
     // tick) resyncs the list on the operator's terms.
     if (err instanceof Error && err.message.includes("no resolved item")) {
       return {
-        error: "Already reopened or changed by another operator.",
+        error: "Already reopened, removed, or changed by another operator.",
       };
     }
     throw err;
   }
+  revalidatePath("/", "layout");
+  return { error: null };
+}
+
+/**
+ * Per-item Remove from the Rejected inbox (GH-55): archive the item
+ * (hidden everywhere, never deleted). The guarded UPDATE in
+ * archiveRejectedItem matches only a resolved, rejected, not-yet-archived
+ * item, so races (a concurrent Reopen, a double Remove, another operator
+ * clearing all) surface as an inline message, never a crash or a state
+ * overwrite.
+ */
+export async function removeRejectedAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  const decider = await requireDecider();
+  const id = requireString(formData, "id");
+  const archived = await archiveRejectedItem(id, decider);
+  if (!archived) {
+    return {
+      error:
+        "Could not remove this item. It may have been reopened, removed already, or changed by another operator.",
+      stale: true,
+    };
+  }
+  revalidatePath("/", "layout");
+  return { error: null };
+}
+
+export interface ClearRejectedState {
+  error: string | null;
+}
+
+/**
+ * Clear all rejected items (GH-55): archive every rejected, not-yet-
+ * archived email reply in one statement. Clearing an already-empty inbox
+ * is a valid no-op, not an error.
+ */
+export async function clearRejectedAction(
+  _prev: ClearRejectedState,
+  _formData: FormData,
+): Promise<ClearRejectedState> {
+  const decider = await requireDecider();
+  await archiveAllRejected(decider);
   revalidatePath("/", "layout");
   return { error: null };
 }

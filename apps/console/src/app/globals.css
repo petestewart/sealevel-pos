@@ -1653,6 +1653,56 @@ textarea {
   margin-bottom: 0;
 }
 
+/* Remove / Clear all controls for the Rejected inbox (GH-55) */
+.decided-remove {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: 400 12px var(--font-ui), sans-serif;
+  color: var(--rej-tx);
+  cursor: pointer;
+}
+
+.decided-remove:hover {
+  text-decoration: underline;
+}
+
+.decided-remove:disabled {
+  color: var(--tx3);
+  cursor: default;
+}
+
+.decided-remove--confirm {
+  font-weight: 600;
+}
+
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line2);
+}
+
+.clear-rejected {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.clear-rejected-prompt {
+  font: 400 12px var(--font-ui), sans-serif;
+  color: var(--tx2);
+}
+
+.decided-remove-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 /* Recently-decided section in the pending list (GH-54): a quiet divider
    label above the tail, and muted tail rows so pending work stays the
    visual focus. Muting is skipped while a tail row is actively selected. */

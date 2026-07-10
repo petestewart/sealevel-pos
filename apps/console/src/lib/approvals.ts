@@ -117,6 +117,15 @@ const REJECTED_SQL = `(
   OR payload->'decision'->>'action' = 'rejected'
 )`;
 
+/**
+ * Archived items (GH-55) are hidden from every inbox, count, and deep
+ * link but never deleted: the row, its decision audit, and its payload
+ * stay in the database with an `archived` record ({at, by}) noting who
+ * cleared it. The SQL guard is the presence of the payload key, matching
+ * isArchived (lib/itemView.ts) exactly.
+ */
+const NOT_ARCHIVED_SQL = `NOT (payload ? 'archived')`;
+
 export type DecisionAction = "approved" | "rejected";
 
 /** Per-decision counts of resolved email replies. */
@@ -143,7 +152,7 @@ export const decisionCounts = cache(async (): Promise<DecisionCounts> => {
   const { rows } = await getPool().query<{ rejected: boolean; count: string }>(
     `SELECT coalesce(${REJECTED_SQL}, false) AS rejected, count(*)::text AS count
      FROM items
-     WHERE status = 'resolved' AND type = 'email_reply'
+     WHERE status = 'resolved' AND type = 'email_reply' AND ${NOT_ARCHIVED_SQL}
      GROUP BY 1`,
   );
   const counts: DecisionCounts = { approved: 0, rejected: 0 };
@@ -175,7 +184,7 @@ export async function decidedItems(
   }
   const { rows } = await getPool().query<Item>(
     `SELECT * FROM items
-     WHERE status = 'resolved' AND type = 'email_reply'
+     WHERE status = 'resolved' AND type = 'email_reply' AND ${NOT_ARCHIVED_SQL}
        AND ${action === "rejected" ? "" : "NOT "}coalesce(${REJECTED_SQL}, false)
      ORDER BY resolved_at DESC NULLS LAST, id DESC
      LIMIT $1 OFFSET $2`,
@@ -192,7 +201,7 @@ export async function decidedItems(
 export async function recentlyDecided(limit = 10): Promise<Item[]> {
   const { rows } = await getPool().query<Item>(
     `SELECT * FROM items
-     WHERE status = 'resolved' AND type = 'email_reply'
+     WHERE status = 'resolved' AND type = 'email_reply' AND ${NOT_ARCHIVED_SQL}
      ORDER BY resolved_at DESC NULLS LAST, id DESC
      LIMIT $1`,
     [limit],
@@ -378,4 +387,65 @@ export async function saveDraftEdits(
     throw new Error(`saveDraftEdits: no pending_approval item with id ${id}`);
   }
   return item;
+}
+
+/**
+ * Archive record written under payload.archived (GH-55): when the item
+ * was removed from the Rejected inbox and by whom. Presence of the key is
+ * what NOT_ARCHIVED_SQL and isArchived() test.
+ */
+export interface ArchiveRecord {
+  at: string;
+  by: { id: string; name: string };
+}
+
+function archiveRecord(by: { id: string; name: string }): string {
+  const record: ArchiveRecord = { at: new Date().toISOString(), by };
+  return JSON.stringify(record);
+}
+
+/**
+ * Archive ONE rejected item (per-item Remove, GH-55). Atomic guarded
+ * UPDATE: only a resolved, rejected, not-yet-archived email reply
+ * qualifies, so a concurrent Reopen (item back to pending) or a
+ * double-click (already archived) matches zero rows and the caller
+ * surfaces an inline conflict message instead of overwriting state.
+ * Nothing is deleted; the decision audit stays intact.
+ */
+export async function archiveRejectedItem(
+  id: string,
+  by: { id: string; name: string },
+): Promise<Item | null> {
+  const { rows } = await getPool().query<Item>(
+    `UPDATE items
+     SET payload = payload || jsonb_build_object('archived', $2::jsonb)
+     WHERE id = $1 AND status = 'resolved' AND type = 'email_reply'
+       AND coalesce(${REJECTED_SQL}, false)
+       AND ${NOT_ARCHIVED_SQL}
+     RETURNING *`,
+    [id, archiveRecord(by)],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Archive EVERY rejected item ("Clear all", GH-55). Same qualification
+ * as archiveRejectedItem, one statement, so items rejected after the
+ * operator confirmed are still safely included and nothing racing back
+ * to pending is touched. Returns how many items were archived (0 is a
+ * valid outcome when another operator cleared first).
+ */
+export async function archiveAllRejected(by: {
+  id: string;
+  name: string;
+}): Promise<number> {
+  const result = await getPool().query(
+    `UPDATE items
+     SET payload = payload || jsonb_build_object('archived', $1::jsonb)
+     WHERE status = 'resolved' AND type = 'email_reply'
+       AND coalesce(${REJECTED_SQL}, false)
+       AND ${NOT_ARCHIVED_SQL}`,
+    [archiveRecord(by)],
+  );
+  return result.rowCount ?? 0;
 }

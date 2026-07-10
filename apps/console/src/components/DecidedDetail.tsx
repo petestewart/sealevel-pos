@@ -1,6 +1,7 @@
 import type { Item } from "@ai-manager/core";
 import { StatusChip } from "./StatusChip";
 import { ReopenButton } from "./ReopenButton";
+import { RemoveRejectedButton } from "./RemoveRejectedButton";
 import { InboundEmail } from "./InboundEmail";
 import { paragraphsOf, formatDecidedAt } from "../lib/emailDisplay";
 import { decisionOf, isApproved, toCardData } from "../lib/itemView";
@@ -111,6 +112,7 @@ export function DecidedDetail({
               }`}
         </span>
         {canDecide ? <ReopenButton id={data.id} /> : null}
+        {canDecide && !approved ? <RemoveRejectedButton id={data.id} /> : null}
       </div>
     </div>
   );

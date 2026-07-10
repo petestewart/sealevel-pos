@@ -10,11 +10,13 @@ import { currentRole, hasPermission } from "../../../lib/rbac";
 import {
   adjacentPendingId,
   decidedItems,
+  decisionCounts,
   pendingApprovals,
   recentlyDecided,
 } from "../../../lib/approvals";
 import { inboxBySlug, type InboxDefinition } from "../../../lib/inboxes";
-import { isApproved, toCardData, toRow } from "../../../lib/itemView";
+import { isApproved, isArchived, toCardData, toRow } from "../../../lib/itemView";
+import { ClearRejectedButton } from "../../../components/ClearRejectedButton";
 
 /**
  * Inbox route /items/[status] as a LIST pane + DETAIL pane (A1c, GH-29).
@@ -118,6 +120,9 @@ function DetailPlaceholder({ hasItems }: { hasItems: boolean }) {
  * differ only in inclusion policy, by design.
  */
 function belongsToInbox(item: Item, inbox: InboxDefinition): boolean {
+  // Archived items (GH-55) are hidden from every inbox; a deep link to
+  // one falls back to the placeholder, never a detail view.
+  if (isArchived(item)) return false;
   const source = inbox.source;
   switch (source.kind) {
     case "pending":
@@ -255,6 +260,11 @@ export default async function InboxPage({
           whether ?item resolved. Desktop ignores the class entirely. */}
       <div className={`list-detail${selected ? " has-selection" : ""}`}>
         <div className="list-pane" aria-label={`${inbox.title} list`}>
+          {inbox.slug === "rejected" && canDecide && items.length > 0 ? (
+            <div className="list-toolbar">
+              <ClearRejectedButton count={(await decisionCounts()).rejected} />
+            </div>
+          ) : null}
           {selected == null ? <ListScrollRestore /> : null}
           {items.length === 0 ? (
             <ListEmpty inbox={inbox} />
