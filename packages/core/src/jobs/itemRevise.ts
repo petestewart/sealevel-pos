@@ -77,9 +77,19 @@ export function itemReviseTools(itemId: string): BetaRunnableTool<any>[] {
     inputSchema: z.object({
       subject: z.string().min(1).describe("The revised reply subject."),
       body: z.string().min(1).describe("The full revised reply body."),
+      rationale: z
+        .string()
+        .optional()
+        .describe(
+          "1-3 plain sentences explaining why the revised draft says what it says. Replaces the previous 'Why this draft' note shown to the reviewing human (payload.draft_rationale).",
+        ),
     }),
-    run: async ({ subject, body }) => {
-      const item = await reviseEmailReplyDraft(itemId, { subject, body });
+    run: async ({ subject, body, rationale }) => {
+      const item = await reviseEmailReplyDraft(itemId, {
+        subject,
+        body,
+        rationale,
+      });
       const revisions = Array.isArray(item.payload["draft_revisions"])
         ? (item.payload["draft_revisions"] as unknown[]).length
         : 0;
@@ -133,7 +143,7 @@ export const itemRevise: Job = {
     return `
 An operator reviewing a pending draft email reply sent you a one-shot instruction. Decide which kind it is and respond with exactly one tool call:
 
-- If it asks you to CHANGE the draft (shorten it, change tone, add or remove something), write the revised reply and call update_draft exactly once with the full new subject and body. Keep the reply short, warm, and plain. No em dashes. Sign off as "the AI Manager".
+- If it asks you to CHANGE the draft (shorten it, change tone, add or remove something), write the revised reply and call update_draft exactly once with the full new subject and body, plus a rationale: 1 to 3 plain sentences on why the revised draft says what it says (what you changed and why). Keep the reply short, warm, and plain. No em dashes, in the reply or the rationale. Sign off as "the AI Manager".
 - If it asks a QUESTION (about the original email, the draft, or your reasoning), do NOT touch the draft. Call answer_question exactly once with the question and a concise answer.
 
 Never call both tools. Never call the same tool twice.

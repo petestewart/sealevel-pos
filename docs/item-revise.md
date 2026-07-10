@@ -7,7 +7,9 @@ whether it is an edit or a question:
 - Edit ("make it two sentences shorter"): the draft is replaced. The prior
   draft is pushed onto `payload.draft_revisions` (most recent 5 kept, each
   entry `{ draft_subject, draft_body, revised_at }`) and `payload.last_answer`
-  is cleared.
+  is cleared. `payload.draft_rationale` (the "Why this draft" note, GH-38) is
+  replaced with the revision's rationale, or dropped if the model gave none,
+  so a stale note never describes the wrong draft.
 - Question ("what class is she asking about?"): the draft is untouched and
   `payload.last_answer = { question, answer, at }` is written.
 

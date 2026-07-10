@@ -61,6 +61,8 @@ function toCardData(item: Item): ApprovalCardData {
     draftSubject: str(payload.draft_subject) ?? "(no subject)",
     draftBody: str(payload.draft_body)?.trim() ?? "",
     edited: payload.draft_edited === true,
+    // GH-38: older items predate the rationale field; null means no note.
+    rationale: str(payload.draft_rationale)?.trim() || null,
   };
 }
 

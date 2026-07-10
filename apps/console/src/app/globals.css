@@ -624,6 +624,48 @@ textarea {
   white-space: pre-line;
 }
 
+/* Collapsed "Why this draft" rationale note under the draft (GH-38):
+   mono micro-label summary, muted body, collapsed by default. */
+.draft-rationale {
+  margin-top: 14px;
+  border-top: 1px solid var(--line2);
+  padding-top: 10px;
+}
+
+.draft-rationale-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.draft-rationale-summary::-webkit-details-marker {
+  display: none;
+}
+
+.draft-rationale-summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 4px solid var(--tx3);
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  flex: none;
+  transition: transform 120ms ease;
+}
+
+.draft-rationale[open] > .draft-rationale-summary::before {
+  transform: rotate(90deg);
+}
+
+.draft-rationale-text {
+  margin: 8px 0 0;
+  font: 400 12.5px/1.6 var(--font-ui), sans-serif;
+  color: var(--tx3);
+}
+
 /* Inbound email rendering robustness (GH-34): quoted-text collapse,
    raw-source view, long-body clamp, attachment notice. */
 .inbound-email {

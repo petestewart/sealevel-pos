@@ -56,9 +56,27 @@ export const createItemTool = betaZodTool({
       .describe(
         "Natural key for retry-safe creation, e.g. the source email's messageId. If an unresolved item of the same type already carries this key, no new item is created and the existing one is returned.",
       ),
+    rationale: z
+      .string()
+      .optional()
+      .describe(
+        "For draft items: 1-3 plain sentences explaining WHY the draft says what it says (which policy, fact, or judgment shaped it). Shown to the reviewing human as a 'Why this draft' note. Stored at payload.draft_rationale.",
+      ),
   }),
-  run: async ({ dedupe_key, ...rest }) => {
-    const { item, created } = await createItem({ ...rest, dedupeKey: dedupe_key });
+  run: async ({ dedupe_key, rationale, ...rest }) => {
+    // Rationale rides in the payload (GH-38: payload.draft_rationale) so
+    // it lives with the draft it explains; a top-level schema field keeps
+    // it structural (the model fills a typed slot, not a prompt-hoped
+    // payload key).
+    const payload =
+      rationale === undefined
+        ? rest.payload
+        : { ...(rest.payload ?? {}), draft_rationale: rationale };
+    const { item, created } = await createItem({
+      ...rest,
+      payload,
+      dedupeKey: dedupe_key,
+    });
     // Notify on drafts awaiting approval (ARCHITECTURE.md "Notifications").
     // emitItemEvent never throws and no-ops without NOVU_SECRET_KEY, so
     // item creation cannot fail on notification delivery. Only fires for

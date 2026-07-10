@@ -43,6 +43,11 @@ export interface ApprovalCardData {
   draftBody: string;
   /** True when the operator saved draft edits (payload.draft_edited). */
   edited: boolean;
+  /**
+   * Model's "why this draft" note (payload.draft_rationale, GH-38), or
+   * null for items that predate it. Null renders no note at all.
+   */
+  rationale: string | null;
 }
 
 export function ApprovalCard({
@@ -191,6 +196,19 @@ export function ApprovalCard({
           ) : (
             <div className="draft-empty">(no draft generated)</div>
           )}
+
+          {/* GH-38: collapsed "Why this draft" rationale note. Only for
+              items whose payload carries draft_rationale; absent means no
+              note (back-compat with pre-GH-38 items). Hidden while editing
+              so the editor keeps its focused layout. */}
+          {!editing && item.rationale ? (
+            <details className="draft-rationale">
+              <summary className="draft-rationale-summary">
+                <span className="micro-label">Why this draft</span>
+              </summary>
+              <p className="draft-rationale-text">{item.rationale}</p>
+            </details>
+          ) : null}
         </div>
       </div>
 

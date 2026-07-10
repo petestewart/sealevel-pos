@@ -55,6 +55,7 @@ Do this:
        : ""
    }
    - payload: { "draft_subject": <reply subject>, "draft_body": <your reply>, "original_email": <the inbound email fields you were given> }
+   - rationale: 1 to 3 plain sentences explaining why the draft says what it says, e.g. which policy, fact, or judgment shaped it ("Extended the intro offer because the customer was sick; matched the warm tone policy"). No em dashes. This is shown to the human reviewer as a "Why this draft" note.
 3. Reply with a one-line summary including the created item id.
 
 The draft only becomes real if a human approves it later. Do not claim anything was sent.

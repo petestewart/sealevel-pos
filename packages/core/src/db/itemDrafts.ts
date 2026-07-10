@@ -58,7 +58,10 @@ export async function getPendingEmailReplyItem(id: string): Promise<Item> {
  *   payload.draft_revisions (kept to the most recent DRAFT_REVISION_LIMIT);
  * - sets the new draft_subject / draft_body;
  * - clears payload.last_answer (a stale answer must not outlive the draft
- *   it described).
+ *   it described);
+ * - replaces payload.draft_rationale with the revision's rationale when
+ *   one is given, and drops it otherwise (GH-38: a "Why this draft" note
+ *   describing the previous draft must not survive onto the new one).
  *
  * The WHERE clause re-checks status = 'pending_approval' at write time, so
  * an item decided between the job's read and this write is left untouched
@@ -66,11 +69,14 @@ export async function getPendingEmailReplyItem(id: string): Promise<Item> {
  */
 export async function reviseEmailReplyDraft(
   id: string,
-  draft: { subject: string; body: string },
+  draft: { subject: string; body: string; rationale?: string },
 ): Promise<Item> {
   const { rows } = await getPool().query<Item>(
     `UPDATE items
-     SET payload = (payload - 'last_answer') || jsonb_build_object(
+     SET payload = (payload - 'last_answer' - 'draft_rationale')
+     || CASE WHEN $5::text IS NULL THEN '{}'::jsonb
+        ELSE jsonb_build_object('draft_rationale', to_jsonb($5::text)) END
+     || jsonb_build_object(
        'draft_subject', to_jsonb($2::text),
        'draft_body', to_jsonb($3::text),
        'draft_revisions',
@@ -93,7 +99,7 @@ export async function reviseEmailReplyDraft(
      )
      WHERE id = $1 AND type = 'email_reply' AND status = 'pending_approval'
      RETURNING *`,
-    [id, draft.subject, draft.body, DRAFT_REVISION_LIMIT],
+    [id, draft.subject, draft.body, DRAFT_REVISION_LIMIT, draft.rationale ?? null],
   );
   const item = rows[0];
   if (!item) throw new DraftNotRevisableError(id, "reviseEmailReplyDraft");
