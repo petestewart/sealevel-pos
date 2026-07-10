@@ -21,10 +21,13 @@ export function ItemRow({
   row,
   href,
   active,
+  muted = false,
 }: {
   row: RowView;
   href: string;
   active: boolean;
+  /** Renders the row de-emphasized (the pending inbox's decided tail, GH-54). */
+  muted?: boolean;
 }) {
   const pathname = usePathname();
 
@@ -36,7 +39,7 @@ export function ItemRow({
   return (
     <Link
       href={href}
-      className={`item-row${active ? " is-active" : ""}`}
+      className={`item-row${active ? " is-active" : ""}${muted ? " is-muted" : ""}`}
       aria-current={active ? "true" : undefined}
       onClick={saveListScroll}
     >

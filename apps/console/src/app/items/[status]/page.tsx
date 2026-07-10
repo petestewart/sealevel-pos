@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { notFound } from "next/navigation";
 import { getItemById, type Item } from "@ai-manager/core";
 import { ApprovalCard } from "../../../components/ApprovalCard";
@@ -28,6 +29,13 @@ import { isApproved, toCardData, toRow } from "../../../lib/itemView";
  * exhaustiveness check still guards new registry entries.
  */
 
+/**
+ * How many recently decided items trail the pending list (GH-54). Small on
+ * purpose: enough that a just-decided item stays visible after the
+ * decision, not so many that Pending reads as an everything-view.
+ */
+const RECENT_TAIL_LIMIT = 3;
+
 /** All items an inbox lists, in display order (newest-relevant first). */
 async function loadInboxItems(inbox: InboxDefinition): Promise<Item[]> {
   const source = inbox.source;
@@ -37,9 +45,11 @@ async function loadInboxItems(inbox: InboxDefinition): Promise<Item[]> {
       // decided tail (GH-28). Both are selectable; the detail pane picks
       // the renderer from each item's status. This is what lets a just-
       // approved item stay visible (and selected) after the decision.
+      // The tail is capped and rendered under a "Recently decided"
+      // divider (GH-54) so Pending doesn't read as showing everything.
       const [pending, decided] = await Promise.all([
         pendingApprovals(),
-        recentlyDecided(),
+        recentlyDecided(RECENT_TAIL_LIMIT),
       ]);
       return [...pending, ...decided];
     }
@@ -249,15 +259,33 @@ export default async function InboxPage({
           {items.length === 0 ? (
             <ListEmpty inbox={inbox} />
           ) : (
-            items.map((it) => {
+            items.map((it, index) => {
               const id = String(it.id);
+              // In the pending inbox, everything after the pending block is
+              // the recently-decided tail (GH-28/GH-54): loadInboxItems
+              // appends it, so status is the split. The divider goes before
+              // the first tail row; tail rows render muted.
+              const inTail =
+                inbox.source.kind === "pending" &&
+                it.status !== "pending_approval";
+              const tailStartsHere =
+                inTail &&
+                (index === 0 ||
+                  items[index - 1]?.status === "pending_approval");
               return (
-                <ItemRow
-                  key={id}
-                  row={toRow(it)}
-                  href={`/items/${inbox.slug}?item=${encodeURIComponent(id)}`}
-                  active={selected != null && String(selected.id) === id}
-                />
+                <Fragment key={id}>
+                  {tailStartsHere ? (
+                    <div className="list-section-divider">
+                      Recently decided
+                    </div>
+                  ) : null}
+                  <ItemRow
+                    row={toRow(it)}
+                    href={`/items/${inbox.slug}?item=${encodeURIComponent(id)}`}
+                    active={selected != null && String(selected.id) === id}
+                    muted={inTail}
+                  />
+                </Fragment>
               );
             })
           )}

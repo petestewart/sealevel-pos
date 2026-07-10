@@ -1652,3 +1652,24 @@ textarea {
 .draft-revision-body p:last-child {
   margin-bottom: 0;
 }
+
+/* Recently-decided section in the pending list (GH-54): a quiet divider
+   label above the tail, and muted tail rows so pending work stays the
+   visual focus. Muting is skipped while a tail row is actively selected. */
+.list-section-divider {
+  margin: 8px 2px 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font: 600 10.5px var(--font-ui), sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tx3);
+}
+
+.item-row.is-muted:not(.is-active) {
+  opacity: 0.62;
+}
+
+.item-row.is-muted:not(.is-active):hover {
+  opacity: 0.85;
+}
