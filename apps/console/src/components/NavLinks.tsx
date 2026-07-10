@@ -11,7 +11,9 @@ import { usePathname } from "next/navigation";
 export function NavLinks({ pendingCount }: { pendingCount: number }) {
   const pathname = usePathname();
   const dashActive = pathname === "/";
-  const approvalsActive = pathname.startsWith("/approvals");
+  // The approvals inbox lives under /items (A1b); /approvals redirects.
+  const approvalsActive =
+    pathname.startsWith("/items") || pathname.startsWith("/approvals");
 
   return (
     <div className="nav-links">
@@ -20,7 +22,7 @@ export function NavLinks({ pendingCount }: { pendingCount: number }) {
       </Link>
       <div className="nav-link-group">
         <Link
-          href="/approvals"
+          href="/items/pending"
           className={`nav-link${approvalsActive ? " is-active" : ""}`}
         >
           Approvals

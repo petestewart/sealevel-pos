@@ -80,8 +80,7 @@ async function decide(
     }
     throw err;
   }
-  revalidatePath("/approvals");
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { error: null };
 }
 
@@ -167,8 +166,7 @@ export async function saveEditsItemAction(
     }
     throw err;
   }
-  revalidatePath("/approvals");
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { error: null };
 }
 
@@ -199,7 +197,7 @@ export async function reopenItemAction(
     }
     // Lost a race: someone else reopened it (or it never was resolved).
     if (err instanceof Error && err.message.includes("no resolved item")) {
-      revalidatePath("/approvals");
+      revalidatePath("/", "layout");
       return {
         error:
           "This item is not in a reopenable state anymore. It may have been reopened already.",
@@ -207,7 +205,6 @@ export async function reopenItemAction(
     }
     throw err;
   }
-  revalidatePath("/approvals");
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { error: null };
 }

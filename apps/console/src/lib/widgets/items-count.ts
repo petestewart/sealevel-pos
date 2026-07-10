@@ -12,7 +12,7 @@ export const itemsCountWidget: Widget = {
   domain: "items",
   icon: "mail",
   requires: "items:view",
-  detailRoute: "/approvals",
+  detailRoute: "/items/pending",
   summary: async () => {
     const { open, unassigned, pending_approval: pendingApproval } =
       await itemStatusCounts();

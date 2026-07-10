@@ -97,6 +97,85 @@ export const itemStatusCounts = cache(
 );
 
 /**
+ * A resolved email_reply item counts as "rejected" only when its decision
+ * says so; everything else resolved counts as approved. This mirrors the
+ * DecidedRow rendering rule (legacy rows stored the decision as a bare
+ * string, and rows missing a decision default to approved), so the
+ * sidebar counts always match what the inboxes render.
+ */
+const REJECTED_SQL = `(
+  (jsonb_typeof(payload->'decision') = 'string' AND payload->>'decision' = 'rejected')
+  OR payload->'decision'->>'action' = 'rejected'
+)`;
+
+export type DecisionAction = "approved" | "rejected";
+
+/** Per-decision counts of resolved email replies. */
+export interface DecisionCounts {
+  approved: number;
+  rejected: number;
+}
+
+/**
+ * Count resolved email replies per decision in one GROUP BY query. Powers
+ * the Approved / Rejected sidebar count pills (A1b), alongside
+ * itemStatusCounts which powers the Pending pill. React cache() so the
+ * sidebar and any inbox page share one query per request.
+ *
+ * FUTURE (not now): this scans all resolved email_reply rows and
+ * classifies each via the jsonb decision expression. Once production
+ * volume warrants it, a partial expression index on
+ * (status='resolved' AND type='email_reply') keyed by the decision
+ * classification would keep both this count and decidedItems() cheap. Do
+ * not add it before real volume data exists -- premature indexing on an
+ * empty table is guesswork.
+ */
+export const decisionCounts = cache(async (): Promise<DecisionCounts> => {
+  const { rows } = await getPool().query<{ rejected: boolean; count: string }>(
+    `SELECT coalesce(${REJECTED_SQL}, false) AS rejected, count(*)::text AS count
+     FROM items
+     WHERE status = 'resolved' AND type = 'email_reply'
+     GROUP BY 1`,
+  );
+  const counts: DecisionCounts = { approved: 0, rejected: 0 };
+  for (const row of rows) {
+    counts[row.rejected ? "rejected" : "approved"] = Number(row.count);
+  }
+  return counts;
+});
+
+/**
+ * Resolved email replies for one decision inbox (Approved or Rejected),
+ * newest decision first, always paginated (GH-27: no unbounded item
+ * query). A page beyond the end returns [].
+ */
+export async function decidedItems(
+  action: DecisionAction,
+  page = 1,
+  pageSize = 25,
+): Promise<Item[]> {
+  if (!Number.isInteger(page) || page < 1) {
+    throw new Error(
+      `decidedItems: page must be a positive integer, got ${page}`,
+    );
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1) {
+    throw new Error(
+      `decidedItems: pageSize must be a positive integer, got ${pageSize}`,
+    );
+  }
+  const { rows } = await getPool().query<Item>(
+    `SELECT * FROM items
+     WHERE status = 'resolved' AND type = 'email_reply'
+       AND ${action === "rejected" ? "" : "NOT "}coalesce(${REJECTED_SQL}, false)
+     ORDER BY resolved_at DESC NULLS LAST, id DESC
+     LIMIT $1 OFFSET $2`,
+    [pageSize, (page - 1) * pageSize],
+  );
+  return rows;
+}
+
+/**
  * The most recently resolved email_reply items, newest decision first,
  * for the "Recently decided" section. Ordered by resolved_at (the moment
  * the decision landed), not created_at.
