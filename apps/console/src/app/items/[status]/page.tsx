@@ -3,6 +3,8 @@ import { getItemById, type Item } from "@ai-manager/core";
 import { ApprovalCard } from "../../../components/ApprovalCard";
 import { DecidedDetail } from "../../../components/DecidedDetail";
 import { ItemRow } from "../../../components/ItemRow";
+import { ListScrollRestore } from "../../../components/ListScrollRestore";
+import { MobileBackBar } from "../../../components/MobileBackBar";
 import { currentRole, hasPermission } from "../../../lib/rbac";
 import {
   adjacentPendingId,
@@ -233,8 +235,12 @@ export default async function InboxPage({
         <p>{inbox.blurb}</p>
       </header>
 
-      <div className="list-detail">
+      {/* has-selection drives the A7 mobile flow (GH-35): at phone width
+          the list and the detail alternate as full-screen views, keyed off
+          whether ?item resolved. Desktop ignores the class entirely. */}
+      <div className={`list-detail${selected ? " has-selection" : ""}`}>
         <div className="list-pane" aria-label={`${inbox.title} list`}>
+          {selected == null ? <ListScrollRestore /> : null}
           {items.length === 0 ? (
             <ListEmpty inbox={inbox} />
           ) : (
@@ -253,6 +259,9 @@ export default async function InboxPage({
         </div>
 
         <div className="detail-pane">
+          {selected ? (
+            <MobileBackBar href={`/items/${inbox.slug}`} label={inbox.label} />
+          ) : null}
           {selected ? (
             <Detail
               item={selected}

@@ -1362,6 +1362,136 @@ textarea {
   }
 }
 
+/* =====================================================================
+   A7 Mobile breakpoint (GH-35) -- appended mobile-only section.
+   Everything below is scoped to the phone breakpoint (<= 720px, matching
+   the existing narrow-screen rules above) plus the default-hidden
+   .mobile-back-bar. Desktop rendering is pixel-identical: no rule here
+   applies above 720px. Do not fold these into the sections above; the
+   parallel GH-31 work also touches this file.
+   ===================================================================== */
+
+/* Back control for the full-screen mobile detail. Hidden on desktop. */
+.mobile-back-bar {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  /* --- List <-> detail as alternating full-screen views --------------- */
+
+  .mobile-back-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+    padding: 9px 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    font: 600 13.5px var(--font-ui), sans-serif;
+    color: var(--tx);
+  }
+
+  .mobile-back-bar:hover {
+    background: var(--surface2);
+  }
+
+  .mobile-back-arrow {
+    color: var(--accent-tx);
+  }
+
+  /* With a selection, the detail owns the screen; without one, the list
+     does. The ?item= URL semantics are untouched -- this only chooses
+     which pane of the same server-rendered page is visible. */
+  .list-detail.has-selection .list-pane {
+    display: none;
+  }
+
+  .list-detail:not(.has-selection) .detail-pane {
+    display: none;
+  }
+
+  /* Full-screen detail: also hide the inbox strip and the page header so
+     the open item reads as its own screen under the top nav. */
+  .items-shell:has(.list-detail.has-selection) .inbox-sidebar,
+  .items-shell:has(.list-detail.has-selection) .page-head {
+    display: none;
+  }
+
+  .items-shell:has(.list-detail.has-selection) .items-content .page {
+    padding-top: 18px;
+  }
+
+  /* --- Approval card fits a phone ------------------------------------- */
+
+  /* Stack the two panes vertically: inbound above draft. */
+  .approval-card-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .approval-pane--inbound {
+    border-right: none;
+    border-bottom: 1px solid var(--line2);
+  }
+
+  .approval-pane {
+    padding: 16px 14px;
+  }
+
+  /* Header chips and footer buttons wrap instead of overflowing. */
+  .approval-card-head {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    padding: 12px 14px;
+  }
+
+  .approval-card-actions {
+    flex-wrap: wrap;
+    row-gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .approval-action-error {
+    flex-basis: 100%;
+  }
+
+  /* --- Top nav fits a phone -------------------------------------------- */
+
+  /* The earlier narrow-nav rules keep the bar compact; at true phone
+     widths the remaining brand + links + controls still overflow 375px,
+     so tighten the gaps and let the link row shrink. */
+  .nav {
+    gap: 8px;
+    padding: 0 12px;
+  }
+
+  .nav-links {
+    gap: 10px;
+    margin-left: 2px;
+    min-width: 0;
+  }
+
+  .nav-right {
+    gap: 10px;
+  }
+
+  .nav-brand {
+    gap: 7px;
+  }
+
+  /* --- Toast on small screens ------------------------------------------ */
+
+  .toast-region {
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    padding: 0 12px;
+  }
+
+  .toast {
+    width: 100%;
+    max-width: none;
+  }
+}
+
 /* ---------- Stale-decide Refresh affordance (GH-31) ---------- */
 
 /* Inline "Refresh" next to the already-decided conflict message; styled as

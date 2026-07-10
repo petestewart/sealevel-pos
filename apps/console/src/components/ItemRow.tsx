@@ -1,5 +1,9 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import type { RowView } from "../lib/itemView";
+import { listScrollKey, MOBILE_MEDIA_QUERY } from "./ListScrollRestore";
 
 /**
  * Compact, scannable inbox list row (A1c, GH-29): the collapsed state of
@@ -7,6 +11,11 @@ import type { RowView } from "../lib/itemView";
  * preview. The whole row is a Link that sets ?item=<id>, so selection is
  * URL-driven: deep-linkable, shareable, and back-button friendly. The
  * active row is highlighted with the accent-soft selection token.
+ *
+ * At the mobile breakpoint tapping a row swaps the list for a full-screen
+ * detail (A7, GH-35), so the tap first saves the list's scroll position
+ * for ListScrollRestore to put back when the operator returns. Above the
+ * breakpoint the handler is a no-op and navigation is unchanged.
  */
 export function ItemRow({
   row,
@@ -17,11 +26,19 @@ export function ItemRow({
   href: string;
   active: boolean;
 }) {
+  const pathname = usePathname();
+
+  const saveListScroll = () => {
+    if (!window.matchMedia(MOBILE_MEDIA_QUERY).matches) return;
+    sessionStorage.setItem(listScrollKey(pathname), String(window.scrollY));
+  };
+
   return (
     <Link
       href={href}
       className={`item-row${active ? " is-active" : ""}`}
       aria-current={active ? "true" : undefined}
+      onClick={saveListScroll}
     >
       <span
         className={`status-dot dot--${row.tone}`}
