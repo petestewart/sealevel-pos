@@ -38,6 +38,40 @@ function originalOf(item: Item): OriginalEmail {
  * decided item the draft_* fields already hold the final/edited reply, so
  * this doubles as the decided read view's source.
  */
+/** Prior drafts from payload.draft_revisions (GH-36), oldest first. */
+function revisionsOf(payload: Record<string, unknown>) {
+  const raw = payload.draft_revisions;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    const e = entry as {
+      draft_subject?: unknown;
+      draft_body?: unknown;
+      revised_at?: unknown;
+    };
+    const body = str(e.draft_body);
+    if (!body) return [];
+    const at = typeof e.revised_at === "string" ? new Date(e.revised_at) : null;
+    return [
+      {
+        subject: str(e.draft_subject) ?? "(no subject)",
+        body,
+        revisedAt:
+          at !== null && !Number.isNaN(at.getTime()) ? formatDateTime(at) : "",
+      },
+    ];
+  });
+}
+
+/** payload.last_answer (GH-36 Q&A) with both fields present, or null. */
+function lastAnswerOf(payload: Record<string, unknown>) {
+  const raw = payload.last_answer as
+    | { question?: unknown; answer?: unknown }
+    | undefined;
+  const question = str(raw?.question);
+  const answer = str(raw?.answer);
+  return question && answer ? { question, answer } : null;
+}
+
 export function toCardData(item: Item): ApprovalCardData {
   const payload = item.payload;
   const original = originalOf(item);
@@ -57,6 +91,8 @@ export function toCardData(item: Item): ApprovalCardData {
     draftBody: str(payload.draft_body)?.trim() ?? "",
     edited: payload.draft_edited === true,
     rationale: str(payload.draft_rationale)?.trim() || null,
+    revisions: revisionsOf(payload),
+    lastAnswer: lastAnswerOf(payload),
   };
 }
 

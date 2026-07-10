@@ -13,6 +13,7 @@ import { StatusChip } from "./StatusChip";
 import { useToast } from "./Toast";
 import { paragraphsOf } from "../lib/emailDisplay";
 import { InboundEmail, type AttachmentInfo } from "./InboundEmail";
+import { ReviseBox, type LastAnswerData } from "./ReviseBox";
 import {
   approveItemAction,
   rejectItemAction,
@@ -66,6 +67,20 @@ export interface ApprovalCardData {
    * null for items that predate it. Null renders no note at all.
    */
   rationale: string | null;
+  /**
+   * Prior drafts (payload.draft_revisions, GH-36/GH-37), oldest first,
+   * each already display-formatted. Empty for never-revised items.
+   */
+  revisions: DraftRevision[];
+  /** Stored Q&A note (payload.last_answer), or null. */
+  lastAnswer: LastAnswerData | null;
+}
+
+export interface DraftRevision {
+  subject: string;
+  body: string;
+  /** Display-formatted revised_at, or "" when the timestamp was absent. */
+  revisedAt: string;
 }
 
 export function ApprovalCard({
@@ -244,8 +259,21 @@ export function ApprovalCard({
               <span className="micro-label-dot" aria-hidden="true" />
               {editing ? "Editing draft" : "AI draft reply"}
             </span>
-            {item.edited && !editing ? (
-              <span className="approval-pane-timestamp">edited</span>
+            {!editing && (item.edited || item.revisions.length > 0) ? (
+              <span className="approval-pane-timestamp">
+                {[
+                  // History caps at 5 kept entries, so past that the exact
+                  // revision number is unknowable: show "revision 5+".
+                  item.revisions.length > 0
+                    ? item.revisions.length >= 5
+                      ? "revision 5+"
+                      : `revision ${item.revisions.length}`
+                    : null,
+                  item.edited ? "edited" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
             ) : null}
           </div>
 
@@ -298,8 +326,50 @@ export function ApprovalCard({
               <p className="draft-rationale-text">{item.rationale}</p>
             </details>
           ) : null}
+
+          {/* GH-37: prior drafts, read-only, collapsed by default. Shown
+              newest first so the most recent superseded draft is on top.
+              Hidden while editing, like the rationale note. */}
+          {!editing && item.revisions.length > 0 ? (
+            <details className="draft-rationale draft-revisions">
+              <summary className="draft-rationale-summary">
+                <span className="micro-label">
+                  Previous versions ({item.revisions.length})
+                </span>
+              </summary>
+              {[...item.revisions].reverse().map((rev, i) => (
+                <div className="draft-revision" key={i}>
+                  <div className="draft-revision-head">
+                    <span className="micro-label">
+                      Version {item.revisions.length - i}
+                    </span>
+                    {rev.revisedAt ? (
+                      <span className="approval-pane-timestamp">
+                        replaced {rev.revisedAt}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="draft-revision-subject">{rev.subject}</div>
+                  <div className="draft-revision-body">
+                    {paragraphsOf(rev.body).map((para, j) => (
+                      <p key={j}>{para}</p>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </details>
+          ) : null}
         </div>
       </div>
+
+      {/* GH-37: revise / Q&A box. Decide permission is required to send
+          instructions (the server action re-checks), and the box only
+          exists on the pending card at all: decided items render
+          DecidedDetail, which has no ReviseBox. Hidden while editing so
+          the editor keeps its focused layout. */}
+      {canDecide && !editing ? (
+        <ReviseBox itemId={item.id} lastAnswer={item.lastAnswer} />
+      ) : null}
 
       {canDecide ? (
         <div className="approval-card-actions">

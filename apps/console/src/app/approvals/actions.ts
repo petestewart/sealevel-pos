@@ -1,9 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { auth, currentUser } from "@clerk/nextjs/server";
-import { currentRole, hasPermission } from "../../lib/rbac";
 import { getPool, reopenItem, ReopenConflictError } from "@ai-manager/core";
+import { requireDecider } from "../../lib/requireDecider";
 import { classifyDecision } from "../../lib/itemView";
 import { formatRelativeTime } from "../../lib/emailDisplay";
 import {
@@ -20,24 +19,6 @@ import {
  * an audit (who via Clerk id + display name, when, edited or not) in the
  * item payload (GH-22).
  */
-
-async function requireDecider(): Promise<{ id: string; name: string }> {
-  const { userId } = await auth();
-  if (!userId) throw new Error("Not signed in");
-
-  const role = await currentRole();
-  if (!hasPermission(role, "approvals:decide")) {
-    throw new Error("Your role does not allow approval decisions");
-  }
-
-  const user = await currentUser();
-  const name =
-    user?.fullName ??
-    user?.firstName ??
-    user?.primaryEmailAddress?.emailAddress ??
-    userId;
-  return { id: userId, name };
-}
 
 function requireString(formData: FormData, field: string): string {
   const value = formData.get(field);
