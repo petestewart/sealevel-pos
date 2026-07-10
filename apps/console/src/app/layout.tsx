@@ -3,6 +3,7 @@ import { Hanken_Grotesk, IBM_Plex_Mono } from "next/font/google";
 import { cookies } from "next/headers";
 import { ClerkProvider, UserButton } from "@clerk/nextjs";
 import { currentUser } from "@clerk/nextjs/server";
+import { CountRefresher } from "../components/CountRefresher";
 import { NavLinks } from "../components/NavLinks";
 import { ThemeToggle, type Theme } from "../components/ThemeToggle";
 import { itemStatusCounts } from "../lib/approvals";
@@ -71,6 +72,7 @@ export default async function RootLayout({
         className={`${hankenGrotesk.variable} ${plexMono.variable}`}
       >
         <body>
+          <CountRefresher />
           <nav className="nav">
             <div className="nav-brand">
               <div className="nav-brand-mark" aria-hidden="true">
