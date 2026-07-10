@@ -19,6 +19,7 @@ import {
   initialsOf,
   parseSender,
 } from "../../lib/emailDisplay";
+import { parseAttachments } from "../../lib/emailText";
 
 /**
  * Approval inbox (Console.dc.html approvals spec, GH-22): every item with
@@ -31,6 +32,8 @@ interface OriginalEmail {
   from?: string;
   subject?: string;
   body?: string;
+  /** Future ingestion will populate attachment names/sizes (GH-34). */
+  attachments?: unknown;
 }
 
 function str(value: unknown): string | undefined {
@@ -54,6 +57,7 @@ function toCardData(item: Item): ApprovalCardData {
     initials: initialsOf(sender.name),
     inboundSubject: str(original.subject)?.trim() || "(no subject)",
     inbound: str(original.body) ?? "(no message body)",
+    attachments: parseAttachments(original.attachments),
     draftSubject: str(payload.draft_subject) ?? "(no subject)",
     draftBody: str(payload.draft_body)?.trim() ?? "",
     edited: payload.draft_edited === true,

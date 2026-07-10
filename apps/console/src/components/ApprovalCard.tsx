@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import { Button } from "./Button";
 import { StatusChip } from "./StatusChip";
 import { paragraphsOf } from "../lib/emailDisplay";
+import { InboundEmail, type AttachmentInfo } from "./InboundEmail";
 import {
   approveItemAction,
   rejectItemAction,
@@ -36,6 +37,8 @@ export interface ApprovalCardData {
   /** Original email subject, or "(no subject)". */
   inboundSubject: string;
   inbound: string;
+  /** Attachment descriptors from payload.original_email.attachments. */
+  attachments: AttachmentInfo[];
   draftSubject: string;
   draftBody: string;
   /** True when the operator saved draft edits (payload.draft_edited). */
@@ -138,7 +141,7 @@ export function ApprovalCard({
             <span className="approval-pane-timestamp">{item.receivedFull}</span>
           </div>
           <div className="inbound-subject">{item.inboundSubject}</div>
-          <div className="approval-inbound-text">{item.inbound}</div>
+          <InboundEmail body={item.inbound} attachments={item.attachments} />
         </div>
 
         <div className="approval-pane approval-pane--draft">

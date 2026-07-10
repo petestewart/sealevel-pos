@@ -624,6 +624,52 @@ textarea {
   white-space: pre-line;
 }
 
+/* Inbound email rendering robustness (GH-34): quoted-text collapse,
+   raw-source view, long-body clamp, attachment notice. */
+.inbound-email {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.inbound-toggle {
+  font: 500 12px var(--font-ui), sans-serif;
+  color: var(--accent-tx);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.inbound-toggle:hover {
+  text-decoration: underline;
+}
+
+.inbound-quoted {
+  color: var(--tx3);
+  border-left: 2px solid var(--line2);
+  padding-left: 10px;
+}
+
+.inbound-raw {
+  font: 400 11.5px/1.5 var(--font-mono), monospace;
+  color: var(--tx3);
+  background: var(--line2);
+  border-radius: 6px;
+  padding: 10px;
+  max-width: 100%;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.inbound-attachments {
+  font: 400 12px var(--font-ui), sans-serif;
+  color: var(--tx3);
+}
+
 /* Fallback when no AI draft was generated (GH-33). */
 .draft-empty {
   font: 400 13.5px/1.65 var(--font-ui), sans-serif;
