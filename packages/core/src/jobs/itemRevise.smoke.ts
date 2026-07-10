@@ -4,6 +4,7 @@ import { createItem, resolveItem } from "../db/items.js";
 import { getPool } from "../db/client.js";
 import { loadEnv } from "../env.js";
 import { runJob } from "../brain/run.js";
+import { kbConfigured } from "../tools/kb.js";
 import { itemRevise, itemReviseTools, reviseJobId } from "./itemRevise.js";
 
 /**
@@ -39,20 +40,26 @@ async function main(): Promise<void> {
   // --- Read-only toolset assertion (always runs) ---------------------
   // No registry tools at all: nothing outbound, nothing shared.
   assert.deepEqual(itemRevise.tools, []);
-  // The per-run toolset is exactly the two private item-payload tools.
+  // The per-run toolset is exactly the two private item-payload tools,
+  // plus (when SEALEVEL_MCP_* is configured, GH-57) the two READ-ONLY
+  // knowledge base tools. Nothing else, ever: this is the allowlist that
+  // keeps the revise job free of outbound or write capability.
+  const expected = kbConfigured()
+    ? ["answer_question", "read_wiki_page", "search_wiki", "update_draft"]
+    : ["answer_question", "update_draft"];
   const toolNames = itemReviseTools("00000000-0000-0000-0000-000000000000")
     .map((t) => t.name)
     .sort();
   assert.deepEqual(toolNames, ["answer_question", "update_draft"]);
-  // Job.runtimeTools yields the same set from a payload.
+  // Job.runtimeTools yields the private tools plus the KB read tools.
   const fromJob = (itemRevise.runtimeTools?.({
     payload: { itemId: "x", instruction: "y" },
   }) ?? [])
     .map((t) => t.name)
     .sort();
-  assert.deepEqual(fromJob, ["answer_question", "update_draft"]);
+  assert.deepEqual(fromJob, expected);
   console.log(
-    "ok: item.revise toolset is read-only: only update_draft + answer_question",
+    `ok: item.revise toolset is read-only: ${fromJob.join(", ")}`,
   );
 
   // Payload validation and deterministic jobId.

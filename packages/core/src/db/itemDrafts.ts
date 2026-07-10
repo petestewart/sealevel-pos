@@ -58,7 +58,8 @@ export async function getPendingEmailReplyItem(id: string): Promise<Item> {
  *   payload.draft_revisions (kept to the most recent DRAFT_REVISION_LIMIT);
  * - sets the new draft_subject / draft_body;
  * - clears payload.last_answer (a stale answer must not outlive the draft
- *   it described);
+ *   it described) and payload.sources (KB lookups describe the revision
+ *   that made them; a KB-less revision must not inherit them, GH-57);
  * - replaces payload.draft_rationale with the revision's rationale when
  *   one is given, and drops it otherwise (GH-38: a "Why this draft" note
  *   describing the previous draft must not survive onto the new one).
@@ -69,13 +70,21 @@ export async function getPendingEmailReplyItem(id: string): Promise<Item> {
  */
 export async function reviseEmailReplyDraft(
   id: string,
-  draft: { subject: string; body: string; rationale?: string },
+  draft: {
+    subject: string;
+    body: string;
+    rationale?: string;
+    /** KB lookups behind this revision (GH-57); stored at payload.sources. */
+    sources?: unknown[];
+  },
 ): Promise<Item> {
   const { rows } = await getPool().query<Item>(
     `UPDATE items
-     SET payload = (payload - 'last_answer' - 'draft_rationale')
+     SET payload = (payload - 'last_answer' - 'draft_rationale' - 'sources')
      || CASE WHEN $5::text IS NULL THEN '{}'::jsonb
         ELSE jsonb_build_object('draft_rationale', to_jsonb($5::text)) END
+     || CASE WHEN $6::jsonb IS NULL THEN '{}'::jsonb
+        ELSE jsonb_build_object('sources', $6::jsonb) END
      || jsonb_build_object(
        'draft_subject', to_jsonb($2::text),
        'draft_body', to_jsonb($3::text),
@@ -99,7 +108,16 @@ export async function reviseEmailReplyDraft(
      )
      WHERE id = $1 AND type = 'email_reply' AND status = 'pending_approval'
      RETURNING *`,
-    [id, draft.subject, draft.body, DRAFT_REVISION_LIMIT, draft.rationale ?? null],
+    [
+      id,
+      draft.subject,
+      draft.body,
+      DRAFT_REVISION_LIMIT,
+      draft.rationale ?? null,
+      draft.sources && draft.sources.length > 0
+        ? JSON.stringify(draft.sources)
+        : null,
+    ],
   );
   const item = rows[0];
   if (!item) throw new DraftNotRevisableError(id, "reviseEmailReplyDraft");

@@ -9,6 +9,12 @@ import {
   recordDraftAnswer,
   reviseEmailReplyDraft,
 } from "../db/itemDrafts.js";
+import {
+  createKbToolset,
+  KB_PROMPT_GUIDANCE,
+  kbConfigured,
+  type KbRunLog,
+} from "../tools/kb.js";
 import type { Job, JobContext } from "./types.js";
 
 /**
@@ -69,7 +75,10 @@ function parsePayload(payload: unknown): ItemRevisePayload {
  * (jobs/itemRevise.smoke.ts), which asserts these two names are the
  * job's entire side-effect surface.
  */
-export function itemReviseTools(itemId: string): BetaRunnableTool<any>[] {
+export function itemReviseTools(
+  itemId: string,
+  kbLog?: KbRunLog,
+): BetaRunnableTool<any>[] {
   const updateDraft = betaZodTool({
     name: "update_draft",
     description:
@@ -89,6 +98,8 @@ export function itemReviseTools(itemId: string): BetaRunnableTool<any>[] {
         subject,
         body,
         rationale,
+        // KB lookups behind this revision (GH-57), recorded structurally.
+        sources: kbLog && kbLog.sources.length > 0 ? kbLog.sources : undefined,
       });
       const revisions = Array.isArray(item.payload["draft_revisions"])
         ? (item.payload["draft_revisions"] as unknown[]).length
@@ -130,7 +141,11 @@ export const itemRevise: Job = {
   tools: [], // no registry tools: read-only apart from the two per-run tools
   runtimeTools: (ctx: JobContext) => {
     const { itemId } = parsePayload(ctx.payload);
-    return itemReviseTools(itemId);
+    // KB read tools (GH-57) join the two private item tools; the KB log
+    // threads into update_draft so a KB-informed revision records its
+    // sources on the item.
+    const kb = createKbToolset();
+    return [...itemReviseTools(itemId, kb.log), ...kb.tools];
   },
   model: "claude-opus-4-8", // drafting quality (locked decisions in CLAUDE.md)
   instructions: async (ctx: JobContext) => {
@@ -141,12 +156,13 @@ export const itemRevise: Job = {
     const payload = item.payload;
 
     return `
-An operator reviewing a pending draft email reply sent you a one-shot instruction. Decide which kind it is and respond with exactly one tool call:
+An operator reviewing a pending draft email reply sent you a one-shot instruction. Decide which kind it is and finish with exactly one call to update_draft or answer_question:
+${kbConfigured() ? KB_PROMPT_GUIDANCE : ""}
 
 - If it asks you to CHANGE the draft (shorten it, change tone, add or remove something), write the revised reply and call update_draft exactly once with the full new subject and body, plus a rationale: 1 to 3 plain sentences on why the revised draft says what it says (what you changed and why). Keep the reply short, warm, and plain. No em dashes, in the reply or the rationale. Sign off as "the AI Manager".
 - If it asks a QUESTION (about the original email, the draft, or your reasoning), do NOT touch the draft. Call answer_question exactly once with the question and a concise answer.
 
-Never call both tools. Never call the same tool twice.
+Never call both update_draft and answer_question, and never call either twice. Knowledge base lookups (if available) may precede that final call.
 
 Original inbound email:
 ---
