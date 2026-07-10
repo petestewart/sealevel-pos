@@ -31,6 +31,7 @@ export {
   getPendingEmailReplyItem,
   reviseEmailReplyDraft,
   recordDraftAnswer,
+  recordItemUsage,
 } from "./db/itemDrafts.js";
 export {
   createItem,
@@ -61,3 +62,4 @@ export type {
 } from "./notifications/emit.js";
 export { runJob, DEFAULT_BRAIN_MODEL } from "./brain/run.js";
 export { SYSTEM_PROMPT } from "./brain/prompts.js";
+export type { UsageTotals } from "./brain/budget.js";

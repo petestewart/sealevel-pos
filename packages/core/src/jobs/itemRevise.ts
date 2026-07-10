@@ -5,8 +5,14 @@ import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableT
 import { z } from "zod";
 
 import {
+  EMAIL_BODY_MAX_CHARS,
+  INSTRUCTION_MAX_CHARS,
+  truncateForPrompt,
+} from "../brain/budget.js";
+import {
   getPendingEmailReplyItem,
   recordDraftAnswer,
+  recordItemUsage,
   reviseEmailReplyDraft,
 } from "../db/itemDrafts.js";
 import {
@@ -128,10 +134,25 @@ export function itemReviseTools(
   return [updateDraft, answerQuestion];
 }
 
-function renderPayloadField(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value === undefined || value === null) return "(none)";
-  return JSON.stringify(value, null, 2);
+function renderPayloadField(
+  value: unknown,
+  label: string,
+  opts?: { truncate?: boolean },
+): string {
+  const text =
+    typeof value === "string"
+      ? value
+      : value === undefined || value === null
+        ? "(none)"
+        : JSON.stringify(value, null, 2);
+  // Budgeted (GH-62): reference-only fields (the original email) are
+  // re-billed on every tool-loop iteration and safe to cap. The CURRENT
+  // DRAFT is deliberately never truncated: update_draft full-overwrites
+  // the body, so a truncated view would make the model reproduce a
+  // shortened draft and silently corrupt it. Draft size is already
+  // bounded in practice by the model's own output cap.
+  if (opts?.truncate === false) return text;
+  return truncateForPrompt(text, EMAIL_BODY_MAX_CHARS, label);
 }
 
 export const itemRevise: Job = {
@@ -148,6 +169,11 @@ export const itemRevise: Job = {
     return [...itemReviseTools(itemId, kb.log), ...kb.tools];
   },
   model: "claude-opus-4-8", // drafting quality (locked decisions in CLAUDE.md)
+  recordUsage: async (ctx, usage) => {
+    // The target item is known up front; attach what this revision cost.
+    const { itemId } = parsePayload(ctx.payload);
+    await recordItemUsage(itemId, { ...usage });
+  },
   instructions: async (ctx: JobContext) => {
     const { itemId, instruction } = parsePayload(ctx.payload);
     // Throws unless the item exists, is an email_reply, and is still
@@ -166,18 +192,18 @@ Never call both update_draft and answer_question, and never call either twice. K
 
 Original inbound email:
 ---
-${renderPayloadField(payload["original_email"])}
+${renderPayloadField(payload["original_email"], "original email")}
 ---
 
-Current draft subject: ${renderPayloadField(payload["draft_subject"])}
+Current draft subject: ${renderPayloadField(payload["draft_subject"], "draft subject", { truncate: false })}
 Current draft body:
 ---
-${renderPayloadField(payload["draft_body"])}
+${renderPayloadField(payload["draft_body"], "draft body", { truncate: false })}
 ---
 
 Operator instruction:
 ---
-${instruction}
+${truncateForPrompt(instruction, INSTRUCTION_MAX_CHARS, "operator instruction")}
 ---
 
 After the tool call, reply with a one-line summary of what you did.

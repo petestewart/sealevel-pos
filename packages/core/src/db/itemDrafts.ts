@@ -151,3 +151,30 @@ export async function recordDraftAnswer(
   if (!item) throw new DraftNotRevisableError(id, "recordDraftAnswer");
   return item;
 }
+
+/**
+ * Attach a run's token usage to an item (GH-62): payload.usage holds the
+ * LATEST run (easy display), payload.usage_runs accumulates every run
+ * (draft + each revision) so per-item cost is never lost. Bounded in
+ * practice: one draft plus DRAFT_REVISION_LIMIT-capped revisions.
+ * Deliberately NOT guarded on status: usage is post-run metadata about a
+ * run that already happened, and the run's item may legitimately have
+ * been decided in the meantime. Merging only usage keys cannot disturb
+ * draft state. Missing ids are a no-op (the caller logs).
+ */
+export async function recordItemUsage(
+  id: string,
+  usage: Record<string, number>,
+): Promise<void> {
+  await getPool().query(
+    `UPDATE items
+     SET payload = payload || jsonb_build_object(
+       'usage', $2::jsonb,
+       'usage_runs',
+       coalesce(payload->'usage_runs', '[]'::jsonb)
+         || jsonb_build_array($2::jsonb || jsonb_build_object('at', to_jsonb(now())))
+     )
+     WHERE id = $1`,
+    [id, JSON.stringify(usage)],
+  );
+}

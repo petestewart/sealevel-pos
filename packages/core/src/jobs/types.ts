@@ -1,5 +1,7 @@
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 
+import type { UsageTotals } from "../brain/budget.js";
+
 /**
  * Job and Trigger types (see ARCHITECTURE.md "Jobs and the registry").
  *
@@ -12,6 +14,13 @@ import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableT
 export interface JobContext {
   /** Trigger-specific payload (webhook event, parsed email, cron tick). */
   payload?: unknown;
+  /**
+   * Per-run scratch state shared between runtimeTools, instructions and
+   * recordUsage (one object per run, created by runJob). Lets a per-run
+   * tool leave breadcrumbs for the post-run hooks, e.g. the id of the
+   * item a create_item call produced, so usage can be attached to it.
+   */
+  runState?: Record<string, unknown>;
 }
 
 /**
@@ -41,6 +50,13 @@ export interface Job {
   model?: BrainModel;
   /** The prompt. Almost entirely prose. May load data (async) to build it. */
   instructions: (ctx: JobContext) => string | Promise<string>;
+  /**
+   * Optional post-run hook (GH-62): receives the token usage accumulated
+   * across every API call in the run, so the job can store cost data on
+   * whatever it produced (e.g. payload.usage on an item). Failures are
+   * logged by runJob and never fail the run.
+   */
+  recordUsage?: (ctx: JobContext, usage: UsageTotals) => Promise<void>;
 }
 
 export type Trigger =

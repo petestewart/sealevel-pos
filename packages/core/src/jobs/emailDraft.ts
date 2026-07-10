@@ -1,5 +1,7 @@
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 
+import { EMAIL_BODY_MAX_CHARS, truncateForPrompt } from "../brain/budget.js";
+import { recordItemUsage } from "../db/itemDrafts.js";
 import { createItemTool } from "../tools/registry.js";
 import {
   createKbToolset,
@@ -33,7 +35,13 @@ function renderEmail(payload: InboundEmailPayload): string {
     `From: ${payload.from ?? "(unknown sender)"}`,
     `Subject: ${payload.subject ?? "(no subject)"}`,
     "",
-    payload.body ?? "(empty body)",
+    // Budgeted (GH-62): an arbitrarily long inbound body is re-billed on
+    // every tool-loop iteration; a real customer email never trips this.
+    truncateForPrompt(
+      payload.body ?? "(empty body)",
+      EMAIL_BODY_MAX_CHARS,
+      "inbound email body",
+    ),
   ].join("\n");
 }
 
@@ -46,11 +54,14 @@ function renderEmail(payload: InboundEmailPayload): string {
  * forged by the model (it rides on the tool call itself); what the draft
  * BODY says is still governed by the prompt rules plus human approval.
  */
-function createItemWithSources(log: KbRunLog): BetaRunnableTool<any> {
+function createItemWithSources(
+  log: KbRunLog,
+  runState?: Record<string, unknown>,
+): BetaRunnableTool<any> {
   const base = createItemTool as BetaRunnableTool<any>;
   return {
     ...base,
-    run: (input: Record<string, unknown>) => {
+    run: async (input: Record<string, unknown>) => {
       if (log.sources.length > 0 || log.unavailable) {
         input = {
           ...input,
@@ -61,7 +72,19 @@ function createItemWithSources(log: KbRunLog): BetaRunnableTool<any> {
           },
         };
       }
-      return base.run(input);
+      const result = await base.run(input);
+      // Breadcrumb for recordUsage (GH-62): remember which item this run
+      // created so the run's token usage can be attached to it after the
+      // loop finishes.
+      if (runState && typeof result === "string") {
+        try {
+          const parsed = JSON.parse(result) as { id?: unknown };
+          if (typeof parsed.id === "string") runState["itemId"] = parsed.id;
+        } catch {
+          // Non-JSON tool result: no breadcrumb, usage is just logged.
+        }
+      }
+      return result;
     },
   };
 }
@@ -72,9 +95,14 @@ export const emailDraft: Job = {
   triggers: [{ kind: "manual" }],
   // create_item moves to runtimeTools so the per-run KB log can ride on it.
   tools: [],
-  runtimeTools: () => {
+  runtimeTools: (ctx: JobContext) => {
     const kb = createKbToolset();
-    return [createItemWithSources(kb.log), ...kb.tools];
+    return [createItemWithSources(kb.log, ctx.runState), ...kb.tools];
+  },
+  recordUsage: async (ctx, usage) => {
+    const itemId = ctx.runState?.["itemId"];
+    if (typeof itemId !== "string") return; // no item created this run
+    await recordItemUsage(itemId, { ...usage });
   },
   model: "claude-opus-4-8", // drafting job (locked decisions in CLAUDE.md)
   instructions: (ctx: JobContext) => {

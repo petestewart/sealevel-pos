@@ -2,6 +2,8 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 import { z } from "zod";
 
+import { KB_RESULT_MAX_CHARS, truncateForPrompt } from "../brain/budget.js";
+
 /**
  * Sealevel knowledge base tools (GH-57).
  *
@@ -31,6 +33,11 @@ export interface KbSource {
   /** The query (search) or page name (read). */
   ref: string;
   at: string;
+  /**
+   * Set when the result was cut to the size budget (GH-62): the model
+   * cited this lookup but saw only the head of its content.
+   */
+  truncated?: boolean;
 }
 
 /** Per-run record of KB usage, attached to item payloads as sources. */
@@ -208,10 +215,12 @@ export function createKbToolset(): {
   const log: KbRunLog = { sources: [], unavailable: false };
   if (!kbConfigured()) return { tools: [], log };
 
-  const record = (tool: string, ref: string): void => {
-    log.sources.push({ tool, ref, at: new Date().toISOString() });
+  const record = (tool: string, ref: string): KbSource => {
+    const source: KbSource = { tool, ref, at: new Date().toISOString() };
+    log.sources.push(source);
     // Lookup refs are operator-visible metadata, never secrets.
     console.log(`[kb] ${tool}: ${ref}`);
+    return source;
   };
 
   const call = async (
@@ -219,10 +228,16 @@ export function createKbToolset(): {
     ref: string,
     args: Record<string, unknown>,
   ): Promise<string> => {
-    record(tool, ref);
+    const source = record(tool, ref);
     try {
       const text = await getClient().callTool(tool, args);
-      return text.length > 0 ? text : "(no results)";
+      if (text.length === 0) return "(no results)";
+      // Cost hardening (GH-62): a huge wiki page re-billed on every tool
+      // loop iteration is what pushed a run into the >200k pricing tier.
+      // The source entry is flagged so citations stay honest about the
+      // model having seen only the head of the content.
+      if (text.length > KB_RESULT_MAX_CHARS) source.truncated = true;
+      return truncateForPrompt(text, KB_RESULT_MAX_CHARS, `kb ${tool} result`);
     } catch (err) {
       log.unavailable = true;
       console.warn(
