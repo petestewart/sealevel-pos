@@ -2,12 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import {
+  assignItemAudited,
   getPool,
   getUserSettings,
   reopenItem,
   ReopenConflictError,
 } from "@ai-manager/core";
 import { requireDecider } from "../../lib/requireDecider";
+import { assignableUsers } from "../../lib/assignees";
 import { classifyDecision } from "../../lib/itemView";
 import { formatRelativeTime } from "../../lib/emailDisplay";
 import {
@@ -309,6 +311,67 @@ export async function clearRejectedAction(
 ): Promise<ClearRejectedState> {
   const decider = await requireDecider();
   await archiveAllRejected(decider);
+  revalidatePath("/", "layout");
+  return { error: null };
+}
+
+/**
+ * Assign, re-assign, or unassign an item (GH-79). Decider-gated like every
+ * approval mutation. The form carries the caller's last-seen assignee id
+ * ("" for unassigned) so the guarded UPDATE (assignItemAudited) loses
+ * cleanly when another operator changed the assignment first: the loser
+ * gets an inline stale message and a Refresh affordance, never a silent
+ * overwrite. Assignee display names travel with the form (picked from the
+ * Clerk-sourced options list) so the audit trail and payload.assignee_name
+ * never need a lookup at render time.
+ */
+export async function assignItemAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  const by = await requireDecider();
+  const id = requireString(formData, "id");
+  const toId = formData.get("assignee_id");
+  const expectedRaw = formData.get("expected_assignee");
+  const expected =
+    typeof expectedRaw === "string" && expectedRaw.length > 0
+      ? expectedRaw
+      : null;
+
+  // The assignment TARGET is validated server-side against the live
+  // Clerk-sourced eligible list (operator/owner roles), and the display
+  // name comes from that same server lookup -- the client's option list
+  // is presentation only. A forged form cannot assign to a viewer or a
+  // made-up id, and cannot plant an attacker-chosen name in the audit
+  // trail. During a Clerk outage the list is [], so new assigns are
+  // rejected while unassign (which needs no lookup) keeps working.
+  let to: { id: string; name: string } | null = null;
+  if (typeof toId === "string" && toId.length > 0) {
+    const eligible = (await assignableUsers()).find((u) => u.id === toId);
+    if (!eligible) {
+      return {
+        error:
+          "That user cannot be assigned items right now. Refresh and try again.",
+      };
+    }
+    to = { id: eligible.id, name: eligible.name };
+  }
+
+  // No-op guard: re-assigning to the current assignee (or unassigning an
+  // already-unassigned item) writes nothing -- keeps assignment_history
+  // meaningful instead of accumulating from==to entries.
+  if ((to?.id ?? null) === expected) {
+    return { error: null };
+  }
+
+  const updated = await assignItemAudited(id, to, by, expected);
+  if (!updated) {
+    return {
+      error:
+        "Assignment changed by another operator, or the item is no longer assignable. Refresh to see the latest.",
+      stale: true,
+    };
+  }
   revalidatePath("/", "layout");
   return { error: null };
 }

@@ -36,6 +36,7 @@ export {
 export {
   createItem,
   assignItem,
+  assignItemAudited,
   resolveItem,
   reopenItem,
   ReopenConflictError,
@@ -45,6 +46,7 @@ export {
   DEFAULT_PAGE_SIZE,
 } from "./db/items.js";
 export type {
+  AssigneeRef,
   Item,
   ItemStatus,
   ItemStatusCounts,

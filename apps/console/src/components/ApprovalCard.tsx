@@ -11,6 +11,8 @@ import { useRouter } from "next/navigation";
 import { Button } from "./Button";
 import { StatusChip } from "./StatusChip";
 import { useToast } from "./Toast";
+import { AssigneeControl } from "./AssigneeControl";
+import type { AssignableUser } from "../lib/assignees";
 import { paragraphsOf } from "../lib/emailDisplay";
 import { InboundEmail, type AttachmentInfo } from "./InboundEmail";
 import { ReviseBox, type LastAnswerData } from "./ReviseBox";
@@ -52,7 +54,10 @@ export interface ApprovalCardData {
   tags: string[];
   receivedTime: string;
   receivedFull: string;
-  assignee: string | null;
+  /** Assignee Clerk user id (items.assignee), or null (GH-79). */
+  assigneeId: string | null;
+  /** Assignee display name (payload.assignee_name), or null. */
+  assigneeName: string | null;
   customer: string;
   initials: string;
   /** Original email subject, or "(no subject)". */
@@ -89,9 +94,12 @@ export function ApprovalCard({
   item,
   canDecide,
   advanceHref,
+  assignees = [],
 }: {
   item: ApprovalCardData;
   canDecide: boolean;
+  /** Assignable users for the header picker (GH-79). */
+  assignees?: AssignableUser[];
   /**
    * URL to move selection to after a successful decision (A2, GH-30): the
    * next still-pending row, or the inbox base when none remain. Optional so
@@ -233,9 +241,13 @@ export function ApprovalCard({
           </span>
         ))}
         <span className="approval-card-time">{item.receivedTime}</span>
-        {item.assignee ? (
-          <span className="approval-card-time">· {item.assignee}</span>
-        ) : null}
+        <AssigneeControl
+          itemId={item.id}
+          assigneeId={item.assigneeId}
+          assigneeName={item.assigneeName}
+          options={assignees}
+          canDecide={canDecide}
+        />
         <span className="approval-card-status">
           <StatusChip variant="pending" />
         </span>

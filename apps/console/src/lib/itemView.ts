@@ -82,6 +82,16 @@ export function tagsOf(item: Item): string[] {
   return sanitizeTags(item.payload.tags).map((t) => tagLabel(t.tag));
 }
 
+/**
+ * Display name for the item's assignee: payload.assignee_name (stored at
+ * assignment time, GH-79), falling back to the raw assignee column for
+ * rows assigned outside the audited path.
+ */
+export function assigneeNameOf(item: Item): string | null {
+  if (!item.assignee) return null;
+  return str(item.payload.assignee_name) ?? item.assignee;
+}
+
 export function toCardData(item: Item): ApprovalCardData {
   const payload = item.payload;
   const original = originalOf(item);
@@ -92,7 +102,8 @@ export function toCardData(item: Item): ApprovalCardData {
     tags: tagsOf(item),
     receivedTime: formatTime(item.created_at),
     receivedFull: formatDateTime(item.created_at),
-    assignee: item.assignee,
+    assigneeId: item.assignee,
+    assigneeName: assigneeNameOf(item),
     customer: sender.name,
     initials: initialsOf(sender.name),
     inboundSubject: str(original.subject)?.trim() || "(no subject)",
@@ -206,6 +217,8 @@ export interface RowView {
   tone: RowTone;
   /** AI tag chip labels (GH-65); [] for untagged items. */
   tags: string[];
+  /** Assignee display name (GH-79), or null; rows render an initials chip. */
+  assigneeName: string | null;
 }
 
 export function toRow(item: Item): RowView {
@@ -227,5 +240,6 @@ export function toRow(item: Item): RowView {
     preview: previewOf(item),
     tone,
     tags: tagsOf(item),
+    assigneeName: assigneeNameOf(item),
   };
 }

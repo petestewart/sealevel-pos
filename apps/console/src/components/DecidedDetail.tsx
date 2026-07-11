@@ -45,8 +45,10 @@ export function DecidedDetail({
           </span>
         ))}
         <span className="approval-card-time">{data.receivedTime}</span>
-        {data.assignee ? (
-          <span className="approval-card-time">· {data.assignee}</span>
+        {data.assigneeName ? (
+          <span className="approval-card-time" title="Assigned to">
+            · {data.assigneeName}
+          </span>
         ) : null}
         <span className="approval-card-status">
           <StatusChip variant={approved ? "approved" : "rejected"} />

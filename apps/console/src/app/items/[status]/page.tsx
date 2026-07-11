@@ -16,6 +16,7 @@ import {
   recentlyDecided,
 } from "../../../lib/approvals";
 import { inboxBySlug, type InboxDefinition } from "../../../lib/inboxes";
+import { assignableUsers, type AssignableUser } from "../../../lib/assignees";
 import { isApproved, isArchived, toCardData, toRow } from "../../../lib/itemView";
 import { ClearRejectedButton } from "../../../components/ClearRejectedButton";
 
@@ -197,14 +198,17 @@ function Detail({
   item,
   canDecide,
   advanceHref,
+  assignees,
 }: {
   item: Item;
   canDecide: boolean;
   advanceHref?: string;
+  assignees: AssignableUser[];
 }) {
   if (item.status === "pending_approval") {
     return (
       <ApprovalCard
+        assignees={assignees}
         // Keyed by item id so client state (edit mode, typed draft text)
         // resets when the selection changes. Without this, auto-advance
         // after a decide reuses the component instance and the NEXT item
@@ -240,6 +244,13 @@ export default async function InboxPage({
   // null and falls back to the placeholder -- never a crash, never the
   // wrong detail view.
   const selected = await resolveSelected(selectedId, items, inbox);
+
+  // Assignable users for the header picker (GH-79); only fetched when the
+  // detail pane will render an interactive pending card.
+  const assignees =
+    selected != null && selected.status === "pending_approval" && canDecide
+      ? await assignableUsers()
+      : [];
 
   // Advance target for a decision (A2, GH-30), only meaningful when the
   // selected item is the interactive (pending) card. Looked up from the DB
@@ -328,6 +339,7 @@ export default async function InboxPage({
                 item={selected}
                 canDecide={canDecide}
                 advanceHref={advanceHref}
+                assignees={assignees}
               />
             ) : (
               <DetailPlaceholder hasItems={items.length > 0} />

@@ -128,6 +128,81 @@ export async function assignItem(
   return item;
 }
 
+/** A user reference stored in assignment audit entries. */
+export interface AssigneeRef {
+  id: string;
+  name: string;
+}
+
+/**
+ * Assign, re-assign, or unassign an item with an audit trail (GH-79).
+ *
+ * Differences from assignItem (which serves the open/unassigned worklist
+ * lifecycle): the status transition is confined to that lifecycle -- a
+ * pending_approval item KEEPS its status when assigned or unassigned
+ * (assignment on an approval item is routing metadata, not a state
+ * change; flipping it to 'unassigned' would silently drop it from the
+ * pending inbox, the GH-4 class of bug). Resolved and archived items are
+ * not assignable.
+ *
+ * Concurrency: the UPDATE is guarded on the caller's last-seen assignee
+ * (IS NOT DISTINCT FROM, so null == null), the same stale-action pattern
+ * the decide flow uses. A lost race, a resolved/archived item, or a
+ * missing id all return null; callers surface an inline stale message.
+ *
+ * Audit: payload.assignee_name mirrors the display name for rendering;
+ * payload.assignment_history appends {at, by, from, to} with user refs
+ * ({id, name}) or null for unassigned ends. History is unbounded by
+ * design: assignments are rare, and the trail is the point.
+ */
+export async function assignItemAudited(
+  id: string,
+  to: AssigneeRef | null,
+  by: AssigneeRef,
+  expectedAssignee: string | null,
+): Promise<Item | null> {
+  const { rows } = await getPool().query<Item>(
+    `UPDATE items
+     SET assignee = $2::text,
+         status = CASE
+           WHEN status IN ('open', 'unassigned') THEN
+             CASE WHEN $2::text IS NULL THEN 'unassigned' ELSE 'open' END
+           ELSE status
+         END,
+         payload = (payload - 'assignee_name')
+           || CASE
+                WHEN $2::text IS NULL THEN '{}'::jsonb
+                ELSE jsonb_build_object('assignee_name', $3::text)
+              END
+           || jsonb_build_object(
+                'assignment_history',
+                coalesce(payload->'assignment_history', '[]'::jsonb)
+                  || jsonb_build_array(jsonb_build_object(
+                       'at', to_jsonb(now()),
+                       'by', jsonb_build_object('id', $4::text, 'name', $5::text),
+                       'from', CASE
+                         WHEN assignee IS NULL THEN 'null'::jsonb
+                         ELSE jsonb_build_object(
+                           'id', assignee,
+                           'name', coalesce(payload->>'assignee_name', assignee)
+                         )
+                       END,
+                       'to', CASE
+                         WHEN $2::text IS NULL THEN 'null'::jsonb
+                         ELSE jsonb_build_object('id', $2::text, 'name', $3::text)
+                       END
+                     ))
+              )
+     WHERE id = $1
+       AND status <> 'resolved'
+       AND NOT (payload ? 'archived')
+       AND assignee IS NOT DISTINCT FROM $6::text
+     RETURNING *`,
+    [id, to?.id ?? null, to?.name ?? null, by.id, by.name, expectedAssignee],
+  );
+  return rows[0] ?? null;
+}
+
 /**
  * Thrown by reopenItem when the partial unique dedupe index
  * (items_dedupe_key_unresolved_idx, migration 0004) blocks the reopen:

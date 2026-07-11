@@ -50,6 +50,19 @@ export function ItemRow({
       <span className="item-row-body">
         <span className="item-row-top">
           <span className="item-row-sender">{row.sender}</span>
+          {row.assigneeName ? (
+            <span
+              className="assignee-chip"
+              title={`Assigned to ${row.assigneeName}`}
+              aria-label={`Assigned to ${row.assigneeName}`}
+            >
+              {row.assigneeName
+                .split(/\s+/)
+                .slice(0, 2)
+                .map((w) => w[0]?.toUpperCase() ?? "")
+                .join("")}
+            </span>
+          ) : null}
           <span className="item-row-time">{row.time}</span>
         </span>
         <span className="item-row-subject">
