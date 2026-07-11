@@ -2144,7 +2144,8 @@ textarea {
   background: none;
   cursor: pointer;
   text-align: left;
-  font: inherit;
+  /* No font: inherit here — it would override .list-section-divider's
+     pinned 10.5px eyebrow font (same element, later rule). */
 }
 .list-section-toggle:focus-visible {
   outline: 2px solid var(--accent);

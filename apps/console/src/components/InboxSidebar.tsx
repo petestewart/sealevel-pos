@@ -53,8 +53,9 @@ function Glyph({ icon }: { icon: InboxIcon }) {
     case "clock":
       return (
         <svg {...shared}>
-          <path d="M5 8 L8 4 L16 4 L19 8" />
-          <path d="M4 8 L4 17 C4 18.6 5.4 20 7 20 L17 20 C18.6 20 20 18.6 20 17 L20 8" />
+          <path d="M12 2.5 L12 9.5 M9 7 L12 10 L15 7" />
+          <path d="M4 12 L4 17 C4 18.6 5.4 20 7 20 L17 20 C18.6 20 20 18.6 20 17 L20 12" />
+          <path d="M4 12 L8.5 12 L10 14.5 L14 14.5 L15.5 12 L20 12" />
         </svg>
       );
     case "check":
