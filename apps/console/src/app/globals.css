@@ -1365,25 +1365,6 @@ textarea {
   color: var(--tx3);
 }
 
-/* Stack list above detail before the panes get too tight, so the desktop
-   two-pane never forces horizontal scroll. Full mobile flow is A7. */
-@media (max-width: 920px) {
-  .list-detail {
-    flex-direction: column;
-  }
-
-  .list-pane {
-    width: 100%;
-    position: static;
-    max-height: none;
-    overflow-y: visible;
-  }
-
-  .detail-pane {
-    width: 100%;
-  }
-}
-
 /* Stack the sidebar above the content on narrow screens; the full mobile
    list-to-detail flow is A7. No horizontal scroll at any width. */
 @media (max-width: 720px) {
@@ -1536,11 +1517,14 @@ textarea {
 
 /* =====================================================================
    A7 Mobile breakpoint (GH-35) -- appended mobile-only section.
-   Everything below is scoped to the phone breakpoint (<= 720px, matching
-   the existing narrow-screen rules above) plus the default-hidden
-   .mobile-back-bar. Desktop rendering is pixel-identical: no rule here
-   applies above 720px. Do not fold these into the sections above; the
-   parallel GH-31 work also touches this file.
+   The list<->detail full-screen alternation (and its back bar) applies to
+   every width below the 921px side-by-side split -- see the
+   @media (max-width: 920px) block right below -- so a selected item never
+   renders as a stacked detail-below-list. The rest of this section is
+   scoped to the phone breakpoint (<= 720px, matching the existing
+   narrow-screen rules above). Desktop rendering (>=921px) is pixel
+   identical: no rule here applies there. Do not fold the phone-only rules
+   above 720px; the parallel GH-31 work also touches this file.
    ===================================================================== */
 
 /* Back control for the full-screen mobile detail. Hidden on desktop. */
@@ -1548,8 +1532,26 @@ textarea {
   display: none;
 }
 
-@media (max-width: 720px) {
-  /* --- List <-> detail as alternating full-screen views --------------- */
+/* --- List <-> detail as alternating full-screen views -------------------
+   Covers every width below the 921px side-by-side split (matches the
+   ListDetailShell JS breakpoint, which also keys off 920/921). Below this,
+   the side-by-side layout isn't active, so a selection must take over the
+   full screen instead of stacking under the list. */
+@media (max-width: 920px) {
+  .list-detail {
+    flex-direction: column;
+  }
+
+  .list-pane {
+    width: 100%;
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .detail-pane {
+    width: 100%;
+  }
 
   .mobile-back-bar {
     display: inline-flex;
@@ -1593,7 +1595,9 @@ textarea {
   .items-shell:has(.list-detail.has-selection) .items-content .page {
     padding-top: 18px;
   }
+}
 
+@media (max-width: 720px) {
   /* --- Approval card fits a phone ------------------------------------- */
 
   /* Stack the two panes vertically: inbound above draft. */
