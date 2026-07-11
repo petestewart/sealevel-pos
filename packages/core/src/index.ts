@@ -67,14 +67,17 @@ export {
 } from "./db/settings.js";
 export type { Rule, UserSettings } from "./db/settings.js";
 export {
-  STUDIO_INFO_FIELDS,
+  STUDIO_INFO_KEY_MAX_CHARS,
   STUDIO_INFO_VALUE_MAX_CHARS,
-  getStudioInfo,
-  setStudioInfo,
+  STUDIO_INFO_MAX_ENTRIES,
+  getStudioInfoEntries,
+  addStudioInfoEntry,
+  saveStudioInfoEntry,
+  deleteStudioInfoEntry,
   studioInfoBlock,
   loadStudioInfoBlock,
 } from "./db/studioInfo.js";
-export type { StudioInfoField } from "./db/studioInfo.js";
+export type { StudioInfoEntry } from "./db/studioInfo.js";
 export { createItemTool, toolsByName, toolsForJob } from "./tools/registry.js";
 export { emitItemEvent } from "./notifications/emit.js";
 export type {

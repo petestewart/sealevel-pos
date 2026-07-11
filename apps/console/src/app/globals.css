@@ -2085,17 +2085,38 @@ textarea {
   transform: rotate(-90deg);
 }
 
-/* Studio info settings (GH-71) */
-.settings-studio-info {
+/* Studio info settings (GH-71, generic entries GH-74) */
+.settings-info-entry {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 6px;
   max-width: 560px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
 }
-.settings-info-field {
+.settings-info-entry-edit {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  align-items: flex-start;
+}
+.settings-info-entry-key {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--tx2);
+  overflow-wrap: anywhere;
+}
+.settings-info-entry-remove {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.settings-add-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 560px;
+  margin-top: 12px;
 }
 .settings-info-input {
   width: 100%;

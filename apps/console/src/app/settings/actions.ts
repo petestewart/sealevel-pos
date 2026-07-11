@@ -2,13 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import {
+  addStudioInfoEntry,
   createRule,
   deleteRule as deleteRuleRow,
+  deleteStudioInfoEntry,
   RULE_MAX_CHARS,
-  setStudioInfo,
+  saveStudioInfoEntry,
   setUserSettings,
-  STUDIO_INFO_FIELDS,
-  STUDIO_INFO_VALUE_MAX_CHARS,
   updateRule,
 } from "@ai-manager/core";
 import { requireSettingsManager } from "../../lib/requireDecider";
@@ -111,22 +111,46 @@ export async function saveSignature(
   return { error: null, saved: true };
 }
 
-export async function saveStudioInfo(
+export async function addStudioInfo(
   _prev: SettingsActionState,
   formData: FormData,
 ): Promise<SettingsActionState> {
   const who = await requireSettingsManager();
-  const entries: Record<string, string> = {};
-  for (const field of STUDIO_INFO_FIELDS) {
-    const value = fieldString(formData, field.key);
-    if (value.length > STUDIO_INFO_VALUE_MAX_CHARS) {
-      return {
-        error: `${field.label} is limited to ${STUDIO_INFO_VALUE_MAX_CHARS} characters.`,
-      };
-    }
-    entries[field.key] = value;
-  }
-  await setStudioInfo(entries, who.id);
+  const error = await addStudioInfoEntry(
+    fieldString(formData, "entry_key"),
+    fieldString(formData, "entry_value"),
+    who.id,
+  );
+  if (error) return { error };
+  revalidatePath("/settings");
+  return { error: null, saved: true };
+}
+
+export async function saveStudioInfoValue(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  const who = await requireSettingsManager();
+  const key = fieldString(formData, "entry_key");
+  if (key.length === 0) return { error: "Missing entry key." };
+  const error = await saveStudioInfoEntry(
+    key,
+    fieldString(formData, "entry_value"),
+    who.id,
+  );
+  if (error) return { error };
+  revalidatePath("/settings");
+  return { error: null, saved: true };
+}
+
+export async function removeStudioInfo(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  await requireSettingsManager();
+  const key = fieldString(formData, "entry_key");
+  if (key.length === 0) return { error: "Missing entry key." };
+  await deleteStudioInfoEntry(key);
   revalidatePath("/settings");
   return { error: null, saved: true };
 }

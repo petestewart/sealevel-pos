@@ -1,13 +1,19 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import type { Rule, StudioInfoField, UserSettings } from "@ai-manager/core";
+import type {
+  Rule,
+  StudioInfoEntry,
+  UserSettings,
+} from "@ai-manager/core";
 import {
   addRule,
+  addStudioInfo,
   removeRule,
+  removeStudioInfo,
   saveRule,
   saveSignature,
-  saveStudioInfo,
+  saveStudioInfoValue,
   setRuleActive,
   type SettingsActionState,
 } from "../app/settings/actions";
@@ -326,47 +332,113 @@ export function SignatureForm({
   );
 }
 
-export function StudioInfoForm({
-  fields,
-  values,
-}: {
-  fields: readonly StudioInfoField[];
-  values: Record<string, string>;
-}) {
-  const [state, formAction, pending] = useActionState(saveStudioInfo, IDLE);
+/**
+ * One studio info entry: editable value with Save, and a two-step
+ * Remove (arm then confirm) consistent with the app's other
+ * irreversible actions. Keyed by entry.key from the parent so state
+ * resets if the list changes under it.
+ */
+export function StudioInfoEntryRow({ entry }: { entry: StudioInfoEntry }) {
+  const [saveState, saveAction, savePending] = useActionState(
+    saveStudioInfoValue,
+    IDLE,
+  );
+  const [removeState, removeAction, removePending] = useActionState(
+    removeStudioInfo,
+    IDLE,
+  );
+  const [armed, setArmed] = useState(false);
   return (
-    <form action={formAction} className="settings-studio-info">
-      {fields.map((field) => (
-        <div key={field.key} className="settings-info-field">
-          <label className="field-label" htmlFor={`info-${field.key}`}>
-            {field.label}
-          </label>
-          {field.multiline ? (
-            <textarea
-              id={`info-${field.key}`}
-              name={field.key}
-              className="draft-body-input settings-info-input"
-              defaultValue={values[field.key] ?? ""}
-              placeholder={field.hint}
-              maxLength={500}
-              rows={2}
-            />
-          ) : (
-            <input
-              type="text"
-              id={`info-${field.key}`}
-              name={field.key}
-              className="draft-subject-input settings-info-input"
-              defaultValue={values[field.key] ?? ""}
-              placeholder={field.hint}
-              maxLength={500}
-            />
-          )}
-        </div>
-      ))}
+    <div className="settings-info-entry">
+      <form action={saveAction} className="settings-info-entry-edit">
+        <input type="hidden" name="entry_key" value={entry.key} />
+        <span className="settings-info-entry-key" title={entry.key}>
+          {entry.key}
+        </span>
+        <textarea
+          // Keyed by the stored value so a successful save (which may
+          // trim/normalize) re-seeds the uncontrolled textarea with the
+          // canonical persisted text instead of the locally typed text.
+          key={entry.value}
+          name="entry_value"
+          className="draft-body-input settings-info-input"
+          defaultValue={entry.value}
+          maxLength={500}
+          rows={2}
+          required
+          aria-label={`Value for ${entry.key}`}
+        />
+        <button
+          type="submit"
+          className="btn btn--outlined"
+          disabled={savePending}
+        >
+          {savePending ? "Saving..." : "Save"}
+        </button>
+        <InlineError state={saveState} />
+      </form>
+      <form action={removeAction} className="settings-info-entry-remove">
+        <input type="hidden" name="entry_key" value={entry.key} />
+        {armed ? (
+          <>
+            <button
+              type="submit"
+              className="btn btn--destructive-text"
+              disabled={removePending}
+            >
+              {removePending ? "Removing..." : "Confirm remove"}
+            </button>
+            <button
+              type="button"
+              className="btn btn--outlined"
+              onClick={() => setArmed(false)}
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className="btn btn--destructive-text"
+            onClick={() => setArmed(true)}
+          >
+            Remove
+          </button>
+        )}
+        <InlineError state={removeState} />
+      </form>
+    </div>
+  );
+}
+
+/** Add-entry form: a label ("Booking link") plus its value. */
+export function AddStudioInfoForm() {
+  const [state, formAction, pending] = useActionState(addStudioInfo, IDLE);
+  return (
+    <form action={formAction} className="settings-add-info">
+      <div className="settings-form-row">
+        <input
+          type="text"
+          name="entry_key"
+          className="draft-subject-input settings-category-input"
+          placeholder="Label, e.g. Booking link"
+          maxLength={80}
+          required
+          aria-label="New entry label"
+        />
+      </div>
+      <textarea
+        name="entry_value"
+        className="draft-body-input settings-info-input"
+        placeholder="The fact the model should know, e.g. the exact booking URL."
+        maxLength={500}
+        rows={2}
+        required
+        aria-label="New entry value"
+      />
       <div className="settings-form-row">
         <button type="submit" className="btn btn--primary" disabled={pending}>
-          {pending ? "Saving..." : "Save studio info"}
+          {pending ? "Adding..." : "Add entry"}
         </button>
         {state.saved && !state.error ? (
           <span className="settings-saved-note">Saved.</span>

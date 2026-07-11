@@ -1,15 +1,15 @@
 import { currentUser } from "@clerk/nextjs/server";
 import {
-  getStudioInfo,
+  getStudioInfoEntries,
   getUserSettings,
   listRules,
-  STUDIO_INFO_FIELDS,
 } from "@ai-manager/core";
 import {
   AddRuleForm,
+  AddStudioInfoForm,
   RuleRow,
   SignatureForm,
-  StudioInfoForm,
+  StudioInfoEntryRow,
 } from "../../components/SettingsForms";
 import { currentRole, hasPermission } from "../../lib/rbac";
 
@@ -47,7 +47,7 @@ export default async function SettingsPage() {
   const [rules, settings, studioInfo] = await Promise.all([
     listRules(),
     getUserSettings(userId),
-    getStudioInfo(),
+    getStudioInfoEntries(),
   ]);
 
   return (
@@ -74,11 +74,19 @@ export default async function SettingsPage() {
       <section className="settings-section">
         <h2 className="section-label">Studio info</h2>
         <p className="settings-help">
-          Customer-safe facts the AI can use in replies: the booking link,
-          contact details, and key policies. Empty fields are simply left
-          out of drafts.
+          Customer-safe facts the AI can use in replies, as labeled
+          entries: the booking link, contact details, policies, or
+          anything else it should know. Think of it as an FAQ for the
+          model. Removed entries leave drafts immediately.
         </p>
-        <StudioInfoForm fields={STUDIO_INFO_FIELDS} values={studioInfo} />
+        {studioInfo.length === 0 ? (
+          <p className="settings-help">No entries yet. Add the first one below.</p>
+        ) : (
+          studioInfo.map((entry) => (
+            <StudioInfoEntryRow key={entry.key} entry={entry} />
+          ))
+        )}
+        <AddStudioInfoForm />
       </section>
 
       <section className="settings-section">
