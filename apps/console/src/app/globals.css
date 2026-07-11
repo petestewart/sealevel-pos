@@ -1194,6 +1194,35 @@ textarea {
   min-width: 0;
 }
 
+/* Temporary full-width detail (GH-78). Scoped to the side-by-side layout:
+   below 921px the panes stack (and A7 takes over at phone width), so the
+   class is inert and the toggle is hidden -- mobile is untouched. */
+.detail-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.detail-expand-toggle {
+  color: var(--tx3);
+}
+
+.detail-expand-toggle:hover {
+  color: var(--tx1);
+}
+
+@media (min-width: 921px) {
+  .list-detail.is-expanded .list-pane {
+    display: none;
+  }
+}
+
+@media (max-width: 920px) {
+  .detail-toolbar {
+    display: none;
+  }
+}
+
 .item-row {
   display: flex;
   align-items: flex-start;

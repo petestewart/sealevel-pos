@@ -3,6 +3,7 @@ import { getItemById, type Item } from "@ai-manager/core";
 import { ApprovalCard } from "../../../components/ApprovalCard";
 import { DecidedDetail } from "../../../components/DecidedDetail";
 import { ItemRow } from "../../../components/ItemRow";
+import { ListDetailShell } from "../../../components/ListDetailShell";
 import { ListScrollRestore } from "../../../components/ListScrollRestore";
 import { MobileBackBar } from "../../../components/MobileBackBar";
 import { RecentlyDecidedSection } from "../../../components/RecentlyDecidedSection";
@@ -257,9 +258,12 @@ export default async function InboxPage({
 
       {/* has-selection drives the A7 mobile flow (GH-35): at phone width
           the list and the detail alternate as full-screen views, keyed off
-          whether ?item resolved. Desktop ignores the class entirely. */}
-      <div className={`list-detail${selected ? " has-selection" : ""}`}>
-        <div className="list-pane" aria-label={`${inbox.title} list`}>
+          whether ?item resolved. The shell also owns the desktop full-width
+          expand state (GH-78); both panes stay server-rendered. */}
+      <ListDetailShell
+        hasSelection={selected != null}
+        list={
+          <div className="list-pane" aria-label={`${inbox.title} list`}>
           {inbox.slug === "rejected" && canDecide && items.length > 0 ? (
             <div className="list-toolbar">
               <ClearRejectedButton count={(await decisionCounts()).rejected} />
@@ -310,22 +314,27 @@ export default async function InboxPage({
             })()
           )}
         </div>
-
-        <div className="detail-pane">
-          {selected ? (
-            <MobileBackBar href={`/items/${inbox.slug}`} label={inbox.label} />
-          ) : null}
-          {selected ? (
-            <Detail
-              item={selected}
-              canDecide={canDecide}
-              advanceHref={advanceHref}
-            />
-          ) : (
-            <DetailPlaceholder hasItems={items.length > 0} />
-          )}
-        </div>
-      </div>
+        }
+        detail={
+          <>
+            {selected ? (
+              <MobileBackBar
+                href={`/items/${inbox.slug}`}
+                label={inbox.label}
+              />
+            ) : null}
+            {selected ? (
+              <Detail
+                item={selected}
+                canDecide={canDecide}
+                advanceHref={advanceHref}
+              />
+            ) : (
+              <DetailPlaceholder hasItems={items.length > 0} />
+            )}
+          </>
+        }
+      />
     </div>
   );
 }
