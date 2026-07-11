@@ -490,7 +490,9 @@ textarea {
 .approval-card-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 11px;
+  row-gap: 6px;
   padding: 14px 20px;
   border-bottom: 1px solid var(--line2);
 }
@@ -518,6 +520,7 @@ textarea {
 
 .approval-card-status {
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .approval-card-panes {
@@ -2213,6 +2216,7 @@ textarea {
   align-items: center;
   gap: 0.4rem;
   min-width: 0;
+  flex-shrink: 1;
 }
 .assignee-label {
   font-size: 11px;
@@ -2229,6 +2233,8 @@ textarea {
   border-radius: 6px;
   padding: 0.15rem 0.4rem;
   max-width: 11rem;
+  min-width: 0;
+  flex-shrink: 1;
 }
 .assignee-select:focus-visible {
   outline: 2px solid var(--accent);
