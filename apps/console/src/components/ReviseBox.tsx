@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "./Button";
 import { INSTRUCTION_MAX_LENGTH } from "../lib/reviseLimits";
 import {
   pollReviseAction,
@@ -48,10 +47,20 @@ type Phase =
 export function ReviseBox({
   itemId,
   lastAnswer,
+  redoSignal = 0,
+  onWorkingChange,
 }: {
   itemId: string;
   /** Stored payload.last_answer, shown as the inline note (server data). */
   lastAnswer: LastAnswerData | null;
+  /**
+   * Monotonic counter from the parent card's "Redo draft" icon (which
+   * lives next to the draft header, not in this box). Each increment
+   * triggers one redo run; 0 means never pressed.
+   */
+  redoSignal?: number;
+  /** Lets the parent disable its redo icon while a run is in flight. */
+  onWorkingChange?: (working: boolean) => void;
 }) {
   const router = useRouter();
   const [instruction, setInstruction] = useState("");
@@ -69,6 +78,26 @@ export function ReviseBox({
   }, []);
 
   const working = phase.kind === "working";
+
+  useEffect(() => {
+    onWorkingChange?.(working);
+    // On unmount (e.g. entering edit mode mid-run), clear the parent's
+    // mirror so it can't stick true while this box is gone.
+    return () => onWorkingChange?.(false);
+  }, [working, onWorkingChange]);
+
+  // Synchronous double-submit guard: state-based `working` only flips
+  // after a re-render, so key auto-repeat (held Enter fires keydown every
+  // ~30ms) could enqueue duplicate server actions before the textarea
+  // disables. This ref flips in the same tick as the first submit.
+  const submitting = useRef(false);
+  // ORDER MATTERS: this reset effect must stay declared BEFORE the queued-
+  // redo effect below. When a run ends, this clears the guard first so the
+  // redo effect (re-running on the same phase change) can drain a queued
+  // press instead of reading a stale submitting=true and dropping it.
+  useEffect(() => {
+    if (!working) submitting.current = false;
+  }, [working]);
 
   async function poll(
     jobId: string,
@@ -158,6 +187,37 @@ export function ReviseBox({
   const trimmed = instruction.trim();
   const answer = freshAnswer ?? lastAnswer;
 
+  function submitInstruction() {
+    if (submitting.current) return;
+    submitting.current = true;
+    start(
+      () => submitReviseInstructionAction(itemId, trimmed),
+      trimmed,
+      "Working on it",
+    );
+  }
+
+  // The parent's redo icon increments redoSignal; run once per increment.
+  // The seen ref ignores the initial value (including a remount while a
+  // signal is outstanding). A press landing in the one-paint gap where a
+  // run just started but the parent's disabled mirror hasn't caught up is
+  // NOT consumed here -- phase.kind in the deps re-runs the effect when
+  // the run finishes and the queued press executes then, instead of being
+  // silently dropped.
+  const seenRedoSignal = useRef(redoSignal);
+  useEffect(() => {
+    if (redoSignal === seenRedoSignal.current) return;
+    if (phase.kind === "working" || submitting.current) return;
+    seenRedoSignal.current = redoSignal;
+    submitting.current = true;
+    start(
+      () => redoDraftAction(itemId),
+      "Redo the draft from scratch",
+      "Redoing the draft from scratch",
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [redoSignal, phase.kind]);
+
   return (
     <div className="revise-box">
       <label className="micro-label revise-label" htmlFor={`revise-${itemId}`}>
@@ -166,62 +226,61 @@ export function ReviseBox({
       <div className="revise-hint">
         Revise the draft or ask a question about this email.
       </div>
-      <textarea
-        id={`revise-${itemId}`}
-        className="revise-input"
-        placeholder={'Try "shorten this" or "what class is she asking about?"'}
-        value={instruction}
-        maxLength={INSTRUCTION_MAX_LENGTH}
-        disabled={working}
-        onChange={(e) => setInstruction(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && trimmed && !working) {
-            e.preventDefault();
-            start(
-              () => submitReviseInstructionAction(itemId, trimmed),
-              trimmed,
-              "Working on it",
-            );
-          }
-        }}
-      />
-      <div className="revise-actions">
-        <Button
-          type="button"
-          variant="outlined"
-          disabled={working || trimmed.length === 0}
-          onClick={(e) => {
-            e.preventDefault();
-            start(
-              () => submitReviseInstructionAction(itemId, trimmed),
-              trimmed,
-              "Working on it",
-            );
-          }}
-        >
-          Send to AI
-        </Button>
-        <Button
-          type="button"
-          variant="outlined"
+      <div className="revise-inputwrap">
+        <textarea
+          id={`revise-${itemId}`}
+          className="revise-input"
+          placeholder={'Try "shorten this" or "what class is she asking about?"'}
+          value={instruction}
+          maxLength={INSTRUCTION_MAX_LENGTH}
           disabled={working}
+          onChange={(e) => setInstruction(e.target.value)}
+          onKeyDown={(e) => {
+            // Enter sends, Shift+Enter inserts a newline. Ignore Enter
+            // during IME composition (isComposing, plus keyCode 229 for
+            // engines that clear the flag before the commit keystroke).
+            if (e.key !== "Enter" || e.shiftKey) return;
+            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229)
+              return;
+            e.preventDefault();
+            if (trimmed && !working) submitInstruction();
+          }}
+        />
+        <button
+          type="button"
+          className="revise-send"
+          disabled={working || trimmed.length === 0}
+          aria-label="Send to AI"
+          title="Send to AI"
           onClick={(e) => {
             e.preventDefault();
-            start(
-              () => redoDraftAction(itemId),
-              "Redo the draft from scratch",
-              "Redoing the draft from scratch",
-            );
+            submitInstruction();
           }}
         >
-          Redo draft
-        </Button>
-        {trimmed.length > 0 ? (
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M8 13V3M8 3L3.5 7.5M8 3l4.5 4.5"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
+      {trimmed.length > 0 ? (
+        <div className="revise-actions">
           <span className="revise-count">
             {trimmed.length}/{INSTRUCTION_MAX_LENGTH}
           </span>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {phase.kind === "working" ? (
         <div className="revise-status" role="status">

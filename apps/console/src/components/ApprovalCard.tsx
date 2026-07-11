@@ -40,7 +40,7 @@ const REJECT_TOAST = "Rejected. No reply will be sent.";
  * Two-pane approval card (Console.dc.html approvals spec): header row
  * (mono id, intent chip, time, assignee, Pending chip), original message
  * left, AI draft reply right on the --draft background, footer actions.
- * "Edit then approve" swaps the right pane to a subject input + body
+ * "Edit" swaps the right pane to a subject input + body
  * textarea and the footer to Save & approve / Cancel edit / Reject.
  *
  * Truthful copy (DESIGN-NOTES.md adaptation 1): nothing sends in v1, so
@@ -112,6 +112,12 @@ export function ApprovalCard({
   const toast = useToast();
   const formRef = useRef<HTMLFormElement>(null);
   const [editing, setEditing] = useState(false);
+  // Redo-draft icon lives in the draft header but the run/poll machinery
+  // lives in ReviseBox: each press bumps the signal, ReviseBox runs one
+  // redo per bump, and reviseWorking mirrors its busy state back so the
+  // icon disables while any revise/redo run is in flight.
+  const [redoSignal, setRedoSignal] = useState(0);
+  const [reviseWorking, setReviseWorking] = useState(false);
   const [isDeciding, startDeciding] = useTransition();
   const [decideError, setDecideError] = useState<ApprovalActionState | null>(
     null,
@@ -278,6 +284,35 @@ export function ApprovalCard({
               <span className="micro-label-dot" aria-hidden="true" />
               {editing ? "Editing draft" : "AI draft reply"}
             </span>
+            {canDecide && !editing ? (
+              <button
+                type="button"
+                className="icon-btn draft-redo"
+                disabled={reviseWorking}
+                aria-label="Redo draft"
+                title="Redo draft"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setRedoSignal((s) => s + 1);
+                }}
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M13.5 8a5.5 5.5 0 1 1-1.61-3.89M13.5 2.5v3h-3"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            ) : null}
             {!editing && (item.edited || item.revisions.length > 0) ? (
               <span className="approval-pane-timestamp">
                 {[
@@ -387,7 +422,12 @@ export function ApprovalCard({
           DecidedDetail, which has no ReviseBox. Hidden while editing so
           the editor keeps its focused layout. */}
       {canDecide && !editing ? (
-        <ReviseBox itemId={item.id} lastAnswer={item.lastAnswer} />
+        <ReviseBox
+          itemId={item.id}
+          lastAnswer={item.lastAnswer}
+          redoSignal={redoSignal}
+          onWorkingChange={setReviseWorking}
+        />
       ) : null}
 
       {canDecide ? (
@@ -452,7 +492,7 @@ export function ApprovalCard({
                   toggleEditing(true);
                 }}
               >
-                Edit then approve
+                Edit
               </Button>
             </>
           )}
