@@ -18,6 +18,13 @@ export interface InboxCounts {
 export type InboxTone = "pending" | "approved" | "rejected";
 
 /**
+ * Icon shown for the inbox when the sidebar is collapsed to a rail
+ * (GH-77). Names map to inline SVGs in InboxSidebar; a new inbox picks an
+ * existing glyph or adds one there.
+ */
+export type InboxIcon = "clock" | "check" | "x";
+
+/**
  * Each inbox declares HOW its body is fetched and rendered, rather than
  * the route inferring it from the slug (A1b: "registry accepts future
  * entries"). The route dispatches on `source.kind`, so a new registry
@@ -45,6 +52,8 @@ export interface InboxDefinition {
   label: string;
   /** Status-dot color in the sidebar, from the semantic status palette. */
   tone: InboxTone;
+  /** Glyph for the collapsed icon rail (GH-77). */
+  icon: InboxIcon;
   /** Page heading. */
   title: string;
   /** Page subheading. */
@@ -60,6 +69,7 @@ export const INBOXES: readonly InboxDefinition[] = [
     slug: "pending",
     label: "Pending",
     tone: "pending",
+    icon: "clock",
     title: "Pending approvals",
     blurb:
       "AI-drafted email replies awaiting your decision. Nothing is sent automatically in v1.",
@@ -70,6 +80,7 @@ export const INBOXES: readonly InboxDefinition[] = [
     slug: "approved",
     label: "Approved",
     tone: "approved",
+    icon: "check",
     title: "Approved",
     blurb: "Replies you approved, newest decision first.",
     source: { kind: "decision", decision: "approved" },
@@ -79,6 +90,7 @@ export const INBOXES: readonly InboxDefinition[] = [
     slug: "rejected",
     label: "Rejected",
     tone: "rejected",
+    icon: "x",
     title: "Rejected",
     blurb: "Drafts you rejected. Nothing was sent for these.",
     source: { kind: "decision", decision: "rejected" },

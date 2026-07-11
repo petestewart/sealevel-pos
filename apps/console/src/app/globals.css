@@ -1002,13 +1002,110 @@ textarea {
   gap: 2px;
 }
 
+.inbox-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
 .inbox-sidebar-label {
   font: 600 0.6562rem var(--font-ui), sans-serif;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--tx3);
   padding: 0 12px;
-  margin-bottom: 8px;
+}
+
+.sidebar-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--tx3);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.sidebar-toggle:hover {
+  background: var(--surface2);
+  color: var(--tx);
+}
+
+.sidebar-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.sidebar-toggle-glyph {
+  transition: transform 0.15s ease;
+}
+
+.sidebar-toggle-glyph.is-collapsed {
+  transform: rotate(180deg);
+}
+
+/* Collapsed icon rail (GH-77) -- desktop only; mobile keeps the row
+   layout and hides the toggle entirely. */
+@media (min-width: 721px) {
+  .inbox-sidebar.is-collapsed {
+    width: 54px;
+  }
+
+  .inbox-sidebar.is-collapsed .inbox-sidebar-label {
+    display: none;
+  }
+
+  .inbox-sidebar.is-collapsed .inbox-sidebar-head {
+    justify-content: center;
+  }
+
+  .inbox-sidebar.is-collapsed .inbox-link {
+    justify-content: center;
+    padding: 9px 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .sidebar-toggle {
+    display: none;
+  }
+}
+
+.inbox-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+
+.inbox-badge {
+  position: absolute;
+  top: -7px;
+  right: -9px;
+  min-width: 15px;
+  padding: 1px 4px;
+  border-radius: 999px;
+  text-align: center;
+  font: 600 0.5625rem var(--font-mono), monospace;
+  background: var(--surface2);
+  color: var(--tx2);
+  border: 1px solid var(--line);
+  line-height: 1.35;
+}
+
+.inbox-link.is-active .inbox-badge {
+  background: var(--accent-soft);
+  color: var(--accent-tx);
+  border-color: transparent;
 }
 
 .inbox-link {

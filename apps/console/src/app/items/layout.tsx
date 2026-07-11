@@ -38,6 +38,7 @@ export default async function ItemsLayout({
     slug: inbox.slug,
     label: inbox.label,
     tone: inbox.tone,
+    icon: inbox.icon,
     count: inbox.count(counts),
   }));
 
