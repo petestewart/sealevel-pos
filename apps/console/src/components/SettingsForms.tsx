@@ -165,11 +165,18 @@ export function RuleRow({ rule }: { rule: Rule }) {
   // it back to Delete. Without this, focus drops to <body>.
   const cancelRef = useRef<HTMLButtonElement>(null);
   const deleteRef = useRef<HTMLButtonElement>(null);
+  const wasConfirming = useRef(false);
   useEffect(() => {
     if (!confirmingDelete) {
       setArmed(false);
+      // Only pull focus back to Delete when leaving confirm mode, not on
+      // the initial mount (the ref is attached by the time this runs,
+      // unlike the inline rAF this replaces).
+      if (wasConfirming.current) deleteRef.current?.focus();
+      wasConfirming.current = false;
       return;
     }
+    wasConfirming.current = true;
     cancelRef.current?.focus();
     const t = setTimeout(() => setArmed(true), 400);
     return () => clearTimeout(t);
@@ -222,10 +229,7 @@ export function RuleRow({ rule }: { rule: Rule }) {
                 ref={cancelRef}
                 className="icon-btn"
                 disabled={deletePending}
-                onClick={() => {
-                  setConfirmingDelete(false);
-                  requestAnimationFrame(() => deleteRef.current?.focus());
-                }}
+                onClick={() => setConfirmingDelete(false)}
                 aria-label="Cancel delete"
                 title="Cancel"
               >
