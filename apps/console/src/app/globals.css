@@ -138,7 +138,7 @@ textarea {
 }
 
 .nav-brand-tag {
-  font: 500 0.625rem var(--font-mono), monospace;
+  font: 500 10px var(--font-mono), monospace;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--tx3);
