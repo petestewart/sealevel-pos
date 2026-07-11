@@ -1887,25 +1887,87 @@ textarea {
 .settings-rule {
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 14px 16px;
-  margin-bottom: 12px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
   background: var(--surface);
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
 }
 
 .settings-rule.is-inactive {
   opacity: 0.62;
 }
 
+.settings-rule-line {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .settings-rule-edit {
   flex: 1;
-  min-width: 0;
+  min-width: 220px;
+  display: flex;
 }
 
 .settings-rule-input {
-  min-height: 58px;
+  min-height: 34px;
+  max-height: 140px;
+  field-sizing: content;
+  resize: vertical;
+}
+
+.settings-rule-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.settings-rule-iconform {
+  display: inline-flex;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tx2);
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    color 0.12s ease,
+    background-color 0.12s ease;
+}
+
+.icon-btn:hover:not(:disabled) {
+  border-color: var(--line2);
+  color: var(--tx);
+  background: var(--surface2);
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.icon-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.icon-btn--danger {
+  color: var(--rej-tx);
+}
+
+.icon-btn--danger:hover:not(:disabled) {
+  border-color: var(--rej-tx);
+  color: var(--rej-tx);
 }
 
 .settings-form-row {
@@ -1928,11 +1990,6 @@ textarea {
 .settings-rule-status {
   font: 400 0.7188rem var(--font-ui), sans-serif;
   color: var(--tx3);
-  margin-right: auto;
-}
-
-.settings-rule-toggle {
-  padding-top: 2px;
 }
 
 .settings-add-rule {

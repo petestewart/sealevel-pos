@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import {
   createRule,
+  deleteRule as deleteRuleRow,
   RULE_MAX_CHARS,
   setStudioInfo,
   setUserSettings,
@@ -73,6 +74,21 @@ export async function setRuleActive(
   const active = fieldString(formData, "active") === "true";
   const updated = await updateRule(id, { active }, who.id);
   if (!updated) return { error: "Rule not found. It may have been removed." };
+  revalidatePath("/settings");
+  return { error: null, saved: true };
+}
+
+export async function removeRule(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  const who = await requireSettingsManager();
+  const id = fieldString(formData, "id").trim();
+  if (id.length === 0) return { error: "Missing rule id." };
+  const deleted = await deleteRuleRow(id, who.id);
+  if (!deleted) {
+    return { error: "Rule not found. It may already have been deleted." };
+  }
   revalidatePath("/settings");
   return { error: null, saved: true };
 }

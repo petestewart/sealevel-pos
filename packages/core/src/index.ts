@@ -59,6 +59,7 @@ export {
   getActiveRules,
   createRule,
   updateRule,
+  deleteRule,
   getUserSettings,
   setUserSettings,
   studioRulesBlock,

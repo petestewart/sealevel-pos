@@ -101,6 +101,30 @@ export async function updateRule(
   return rows[0] ?? null;
 }
 
+/**
+ * Hard-delete a rule (GH-75). Returns false when the rule no longer
+ * exists, so a stale form (rule deleted in another tab) surfaces the
+ * conflict instead of silently "succeeding" twice. The delete is the one
+ * unrecoverable operation on this surface, so the deleted text and the
+ * actor are logged before the row disappears.
+ */
+export async function deleteRule(
+  id: string,
+  deletedBy: string,
+): Promise<boolean> {
+  const { rows } = await getPool().query<{ rule_text: string }>(
+    `DELETE FROM rules WHERE id = $1 RETURNING rule_text`,
+    [id],
+  );
+  const deleted = rows[0];
+  if (deleted) {
+    console.log(
+      `[rules] rule ${id} deleted by ${deletedBy}: ${JSON.stringify(deleted.rule_text.slice(0, 200))}`,
+    );
+  }
+  return deleted !== undefined;
+}
+
 export async function getUserSettings(userId: string): Promise<UserSettings> {
   const { rows } = await getPool().query<UserSettings>(
     `SELECT user_id, sign_with_name, signature_name

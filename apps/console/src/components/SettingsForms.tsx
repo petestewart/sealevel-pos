@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import type { Rule, StudioInfoField, UserSettings } from "@ai-manager/core";
 import {
   addRule,
+  removeRule,
   saveRule,
   saveSignature,
   saveStudioInfo,
@@ -61,61 +62,218 @@ export function AddRuleForm() {
   );
 }
 
+function SaveIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path
+        d="M2.5 8.5 6 12l7.5-8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path
+        d="M5.5 3v10M10.5 3v10"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path
+        d="M5 3.2v9.6L12.4 8 5 3.2Z"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path
+        d="M2.5 4.5h11M6.5 2.5h3M4 4.5l.7 9h6.6l.7-9M6.6 7v4M9.4 7v4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CancelIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path
+        d="M4 4l8 8M12 4l-8 8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/**
+ * Compact rule row (GH-75): editable text on the left; category, state,
+ * and icon actions (save / disable-enable / delete) right-aligned on one
+ * line. Delete is a two-step confirm, and the confirm button mounts
+ * disabled with a 400ms re-arm (the GH-22 lesson: DOM reuse can land a
+ * double-click's second press on a button that just appeared in the same
+ * spot).
+ */
 export function RuleRow({ rule }: { rule: Rule }) {
   const [editState, editAction, editPending] = useActionState(saveRule, IDLE);
   const [toggleState, toggleAction, togglePending] = useActionState(
     setRuleActive,
     IDLE,
   );
+  const [deleteState, deleteAction, deletePending] = useActionState(
+    removeRule,
+    IDLE,
+  );
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [armed, setArmed] = useState(false);
+  // Keyboard/AT focus: entering confirm mode unmounts the Delete button,
+  // so focus is moved to Cancel (safe, always enabled); canceling moves
+  // it back to Delete. Without this, focus drops to <body>.
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const deleteRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!confirmingDelete) {
+      setArmed(false);
+      return;
+    }
+    cancelRef.current?.focus();
+    const t = setTimeout(() => setArmed(true), 400);
+    return () => clearTimeout(t);
+  }, [confirmingDelete]);
+
+  const anyError = editState.error ?? toggleState.error ?? deleteState.error;
+
   return (
     <div className={`settings-rule${rule.active ? "" : " is-inactive"}`}>
-      <form action={editAction} className="settings-rule-edit">
-        <input type="hidden" name="id" value={rule.id} />
-        <textarea
-          name="rule_text"
-          className="draft-body-input settings-rule-input"
-          defaultValue={rule.rule_text}
-          maxLength={500}
-          required
-          aria-label="Rule text"
-        />
-        <div className="settings-form-row">
+      <div className="settings-rule-line">
+        <form
+          action={editAction}
+          id={`rule-edit-${rule.id}`}
+          className="settings-rule-edit"
+        >
+          <input type="hidden" name="id" value={rule.id} />
+          <textarea
+            name="rule_text"
+            className="draft-body-input settings-rule-input"
+            defaultValue={rule.rule_text}
+            maxLength={500}
+            required
+            rows={1}
+            aria-label="Rule text"
+          />
+        </form>
+        <div className="settings-rule-meta">
           {rule.category ? (
             <span className="settings-rule-category">{rule.category}</span>
           ) : null}
           <span className="settings-rule-status">
             {rule.active ? "Active" : "Disabled"}
           </span>
-          <button
-            type="submit"
-            className="btn btn--outlined"
-            disabled={editPending}
-          >
-            {editPending ? "Saving..." : "Save"}
-          </button>
+          {confirmingDelete ? (
+            <>
+              <form action={deleteAction} className="settings-rule-iconform">
+                <input type="hidden" name="id" value={rule.id} />
+                <button
+                  type="submit"
+                  className="icon-btn icon-btn--danger"
+                  disabled={!armed || deletePending}
+                  aria-label="Confirm delete rule"
+                  title="Confirm delete"
+                >
+                  <TrashIcon />
+                </button>
+              </form>
+              <button
+                type="button"
+                ref={cancelRef}
+                className="icon-btn"
+                disabled={deletePending}
+                onClick={() => {
+                  setConfirmingDelete(false);
+                  requestAnimationFrame(() => deleteRef.current?.focus());
+                }}
+                aria-label="Cancel delete"
+                title="Cancel"
+              >
+                <CancelIcon />
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="submit"
+                form={`rule-edit-${rule.id}`}
+                className="icon-btn"
+                disabled={editPending}
+                aria-label="Save rule"
+                title="Save"
+              >
+                <SaveIcon />
+              </button>
+              <form action={toggleAction} className="settings-rule-iconform">
+                <input type="hidden" name="id" value={rule.id} />
+                <input
+                  type="hidden"
+                  name="active"
+                  value={rule.active ? "false" : "true"}
+                />
+                <button
+                  type="submit"
+                  className="icon-btn"
+                  disabled={togglePending}
+                  aria-label={rule.active ? "Disable rule" : "Enable rule"}
+                  title={rule.active ? "Disable" : "Enable"}
+                >
+                  {rule.active ? <PauseIcon /> : <PlayIcon />}
+                </button>
+              </form>
+              <button
+                type="button"
+                ref={deleteRef}
+                className="icon-btn icon-btn--danger"
+                onClick={() => setConfirmingDelete(true)}
+                aria-label="Delete rule"
+                title="Delete"
+              >
+                <TrashIcon />
+              </button>
+            </>
+          )}
         </div>
-        <InlineError state={editState} />
-      </form>
-      <form action={toggleAction} className="settings-rule-toggle">
-        <input type="hidden" name="id" value={rule.id} />
-        <input
-          type="hidden"
-          name="active"
-          value={rule.active ? "false" : "true"}
-        />
-        <button
-          type="submit"
-          className={`btn ${rule.active ? "btn--destructive-text" : "btn--outlined"}`}
-          disabled={togglePending}
-        >
-          {togglePending
-            ? "Working..."
-            : rule.active
-              ? "Disable"
-              : "Enable"}
-        </button>
-        <InlineError state={toggleState} />
-      </form>
+      </div>
+      {anyError ? (
+        <p className="settings-error" role="alert">
+          {anyError}
+        </p>
+      ) : null}
     </div>
   );
 }
