@@ -73,6 +73,12 @@
   }
 }
 
+/* GH-73: global type scale. Font sizes are rem-based; this single value
+   scales all console text (125% of the original 16px baseline). */
+html {
+  font-size: 125%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -122,17 +128,17 @@ textarea {
   align-items: center;
   justify-content: center;
   color: #fff;
-  font-size: 15px;
+  font-size: 0.9375rem;
   font-weight: 700;
 }
 
 .nav-brand-name {
-  font: 700 15px var(--font-ui), sans-serif;
+  font: 700 0.9375rem var(--font-ui), sans-serif;
   color: var(--tx);
 }
 
 .nav-brand-tag {
-  font: 500 10px var(--font-mono), monospace;
+  font: 500 0.625rem var(--font-mono), monospace;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--tx3);
@@ -152,7 +158,7 @@ textarea {
 .nav-link {
   display: flex;
   align-items: center;
-  font: 600 13.5px var(--font-ui), sans-serif;
+  font: 600 0.8438rem var(--font-ui), sans-serif;
   color: var(--tx2);
   padding: 0 2px;
   border-bottom: 2px solid transparent;
@@ -178,7 +184,7 @@ textarea {
   height: 18px;
   padding: 0 5px;
   border-radius: 9px;
-  font: 600 11px var(--font-ui), sans-serif;
+  font: 600 0.6875rem var(--font-ui), sans-serif;
   background: var(--accent-soft);
   color: var(--accent-tx);
 }
@@ -203,7 +209,7 @@ textarea {
 }
 
 .nav-user-name {
-  font: 500 12.5px var(--font-ui), sans-serif;
+  font: 500 0.7812rem var(--font-ui), sans-serif;
   color: var(--tx2);
 }
 
@@ -215,7 +221,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  font: 600 12px var(--font-ui), sans-serif;
+  font: 600 0.75rem var(--font-ui), sans-serif;
   color: var(--tx);
   overflow: hidden;
 }
@@ -228,7 +234,7 @@ textarea {
   background: transparent;
   color: var(--tx2);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 0.875rem;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -261,14 +267,14 @@ textarea {
 
 .page-head h1 {
   margin: 0 0 5px;
-  font: 700 23px var(--font-ui), sans-serif;
+  font: 700 1.4375rem var(--font-ui), sans-serif;
   color: var(--tx);
   letter-spacing: -0.01em;
 }
 
 .page-head p {
   margin: 0;
-  font: 400 13.5px var(--font-ui), sans-serif;
+  font: 400 0.8438rem var(--font-ui), sans-serif;
   color: var(--tx2);
 }
 
@@ -320,7 +326,7 @@ textarea {
 }
 
 .widget-card-label {
-  font: 500 10.5px var(--font-mono), monospace;
+  font: 500 0.6562rem var(--font-mono), monospace;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--tx3);
@@ -328,7 +334,7 @@ textarea {
 
 .widget-card-arrow {
   color: var(--tx3);
-  font-size: 15px;
+  font-size: 0.9375rem;
 }
 
 .widget-card--attention .widget-card-arrow {
@@ -336,7 +342,7 @@ textarea {
 }
 
 .widget-card-count {
-  font: 700 40px/1 var(--font-ui), sans-serif;
+  font: 700 2.5rem/1 var(--font-ui), sans-serif;
   color: var(--tx);
   margin: 16px 0 14px;
 }
@@ -351,7 +357,7 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font: 500 12.5px var(--font-ui), sans-serif;
+  font: 500 0.7812rem var(--font-ui), sans-serif;
   color: var(--tx2);
 }
 
@@ -390,7 +396,7 @@ textarea {
   gap: 6px;
   padding: 4px 10px;
   border-radius: 999px;
-  font: 600 11.5px var(--font-ui), sans-serif;
+  font: 600 0.7188rem var(--font-ui), sans-serif;
 }
 
 .status-chip .status-dot {
@@ -420,7 +426,7 @@ textarea {
 /* ---------- Buttons ---------- */
 
 .btn {
-  font: 600 13.5px var(--font-ui), sans-serif;
+  font: 600 0.8438rem var(--font-ui), sans-serif;
   border-radius: 9px;
   cursor: pointer;
 }
@@ -490,7 +496,7 @@ textarea {
 }
 
 .approval-card-id {
-  font: 500 11.5px var(--font-mono), monospace;
+  font: 500 0.7188rem var(--font-mono), monospace;
   color: var(--tx2);
 }
 
@@ -500,13 +506,13 @@ textarea {
   gap: 6px;
   padding: 3px 9px;
   border-radius: 6px;
-  font: 600 10.5px var(--font-ui), sans-serif;
+  font: 600 0.6562rem var(--font-ui), sans-serif;
   background: var(--surface2);
   color: var(--tx2);
 }
 
 .approval-card-time {
-  font: 400 12px var(--font-ui), sans-serif;
+  font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--tx3);
 }
 
@@ -546,7 +552,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  font: 600 12px var(--font-ui), sans-serif;
+  font: 600 0.75rem var(--font-ui), sans-serif;
   color: var(--tx);
   flex: none;
 }
@@ -557,12 +563,12 @@ textarea {
 }
 
 .approval-customer-name {
-  font: 600 13px var(--font-ui), sans-serif;
+  font: 600 0.8125rem var(--font-ui), sans-serif;
   color: var(--tx);
 }
 
 .approval-customer-sub {
-  font: 400 11.5px var(--font-ui), sans-serif;
+  font: 400 0.7188rem var(--font-ui), sans-serif;
   color: var(--tx3);
 }
 
@@ -570,12 +576,13 @@ textarea {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 2px 8px;
   margin-bottom: 8px;
 }
 
 .micro-label {
-  font: 500 9.5px var(--font-mono), monospace;
+  font: 500 0.5938rem var(--font-mono), monospace;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--tx3);
@@ -585,7 +592,7 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font: 600 10px var(--font-mono), monospace;
+  font: 600 0.625rem var(--font-mono), monospace;
   letter-spacing: 0.06em;
   color: var(--accent-tx);
 }
@@ -603,7 +610,7 @@ textarea {
 }
 
 .approval-pane-timestamp {
-  font: 400 11px var(--font-ui), sans-serif;
+  font: 400 0.6875rem var(--font-ui), sans-serif;
   color: var(--tx3);
   white-space: nowrap;
 }
@@ -611,7 +618,7 @@ textarea {
 /* Original email subject in the inbound pane (GH-33), styled to mirror
    the draft pane's subject line. */
 .inbound-subject {
-  font: 600 14px var(--font-ui), sans-serif;
+  font: 600 0.875rem var(--font-ui), sans-serif;
   color: var(--tx);
   padding-bottom: 11px;
   border-bottom: 1px solid var(--line2);
@@ -619,7 +626,7 @@ textarea {
 }
 
 .approval-inbound-text {
-  font: 400 13.5px/1.65 var(--font-ui), sans-serif;
+  font: 400 0.8438rem/1.65 var(--font-ui), sans-serif;
   color: var(--tx2);
   white-space: pre-line;
 }
@@ -662,7 +669,7 @@ textarea {
 
 .draft-rationale-text {
   margin: 8px 0 0;
-  font: 400 12.5px/1.6 var(--font-ui), sans-serif;
+  font: 400 0.7812rem/1.6 var(--font-ui), sans-serif;
   color: var(--tx3);
 }
 
@@ -676,7 +683,7 @@ textarea {
 }
 
 .inbound-toggle {
-  font: 500 12px var(--font-ui), sans-serif;
+  font: 500 0.75rem var(--font-ui), sans-serif;
   color: var(--accent-tx);
   background: none;
   border: none;
@@ -695,7 +702,7 @@ textarea {
 }
 
 .inbound-raw {
-  font: 400 11.5px/1.5 var(--font-mono), monospace;
+  font: 400 0.7188rem/1.5 var(--font-mono), monospace;
   color: var(--tx3);
   background: var(--line2);
   border-radius: 6px;
@@ -708,13 +715,13 @@ textarea {
 }
 
 .inbound-attachments {
-  font: 400 12px var(--font-ui), sans-serif;
+  font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--tx3);
 }
 
 /* Fallback when no AI draft was generated (GH-33). */
 .draft-empty {
-  font: 400 13.5px/1.65 var(--font-ui), sans-serif;
+  font: 400 0.8438rem/1.65 var(--font-ui), sans-serif;
   font-style: italic;
   color: var(--tx3);
 }
@@ -727,7 +734,7 @@ textarea {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font: 400 12.5px/1.5 var(--font-ui), sans-serif;
+  font: 400 0.7812rem/1.5 var(--font-ui), sans-serif;
   color: var(--tx2);
   background: var(--surface2);
   border: 1px solid var(--line2);
@@ -752,7 +759,7 @@ textarea {
 }
 
 .draft-subject {
-  font: 600 14px var(--font-ui), sans-serif;
+  font: 600 0.875rem var(--font-ui), sans-serif;
   color: var(--tx);
   padding-bottom: 11px;
   border-bottom: 1px solid var(--line2);
@@ -760,7 +767,7 @@ textarea {
 }
 
 .draft-body {
-  font: 400 13.5px/1.65 var(--font-ui), sans-serif;
+  font: 400 0.8438rem/1.65 var(--font-ui), sans-serif;
   color: var(--txb);
 }
 
@@ -771,7 +778,7 @@ textarea {
 
 .field-label {
   display: block;
-  font: 500 10px var(--font-ui), sans-serif;
+  font: 500 0.625rem var(--font-ui), sans-serif;
   color: var(--tx3);
   margin-bottom: 5px;
 }
@@ -782,7 +789,7 @@ textarea {
   border: 1px solid var(--accent);
   border-radius: 8px;
   padding: 9px 11px;
-  font: 600 13.5px var(--font-ui), sans-serif;
+  font: 600 0.8438rem var(--font-ui), sans-serif;
   color: var(--tx);
   margin-bottom: 13px;
   outline: none;
@@ -796,7 +803,7 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px 13px;
-  font: 400 13.5px/1.65 var(--font-ui), sans-serif;
+  font: 400 0.8438rem/1.65 var(--font-ui), sans-serif;
   color: var(--txb);
   outline: none;
 }
@@ -810,7 +817,7 @@ textarea {
 }
 
 .approval-card-actions--readonly {
-  font: 400 12px var(--font-ui), sans-serif;
+  font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--tx3);
 }
 
@@ -822,7 +829,7 @@ textarea {
 
 .section-label {
   margin: 34px 0 16px;
-  font: 600 10.5px var(--font-mono), monospace;
+  font: 600 0.6562rem var(--font-mono), monospace;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--tx3);
@@ -853,7 +860,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  font: 600 15px var(--font-ui), sans-serif;
+  font: 600 0.9375rem var(--font-ui), sans-serif;
 }
 
 .decided-icon--approved {
@@ -880,22 +887,22 @@ textarea {
 
 .decided-meta-row .status-chip {
   padding: 3px 9px;
-  font: 600 11px var(--font-ui), sans-serif;
+  font: 600 0.6875rem var(--font-ui), sans-serif;
 }
 
 .decided-id {
-  font: 500 11px var(--font-mono), monospace;
+  font: 500 0.6875rem var(--font-mono), monospace;
   color: var(--tx2);
 }
 
 .decided-title {
-  font: 600 13.5px var(--font-ui), sans-serif;
+  font: 600 0.8438rem var(--font-ui), sans-serif;
   color: var(--tx);
   margin-bottom: 3px;
 }
 
 .decided-meta {
-  font: 400 12px var(--font-ui), sans-serif;
+  font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--tx3);
 }
 
@@ -908,7 +915,7 @@ textarea {
   border: none;
   background: transparent;
   padding: 0;
-  font: 400 12px var(--font-ui), sans-serif;
+  font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--accent-tx);
   cursor: pointer;
 }
@@ -925,14 +932,14 @@ textarea {
 .decided-reopen-error {
   display: block;
   margin-top: 4px;
-  font: 400 12px var(--font-ui), sans-serif;
+  font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--rej-tx);
 }
 
 .approval-action-error {
   display: block;
   align-self: center;
-  font: 400 12px var(--font-ui), sans-serif;
+  font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--rej-tx);
 }
 
@@ -956,17 +963,17 @@ textarea {
   align-items: center;
   justify-content: center;
   color: var(--tx3);
-  font-size: 19px;
+  font-size: 1.1875rem;
 }
 
 .empty-state-title {
-  font: 600 15px var(--font-ui), sans-serif;
+  font: 600 0.9375rem var(--font-ui), sans-serif;
   color: var(--tx);
   margin-bottom: 5px;
 }
 
 .empty-state-sub {
-  font: 400 12.5px/1.5 var(--font-ui), sans-serif;
+  font: 400 0.7812rem/1.5 var(--font-ui), sans-serif;
   color: var(--tx3);
   max-width: 280px;
   margin: 0 auto;
@@ -996,7 +1003,7 @@ textarea {
 }
 
 .inbox-sidebar-label {
-  font: 600 10.5px var(--font-ui), sans-serif;
+  font: 600 0.6562rem var(--font-ui), sans-serif;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--tx3);
@@ -1010,7 +1017,7 @@ textarea {
   gap: 9px;
   padding: 8px 12px;
   border-radius: 9px;
-  font: 500 13.5px var(--font-ui), sans-serif;
+  font: 500 0.8438rem var(--font-ui), sans-serif;
   color: var(--tx2);
   text-decoration: none;
   transition: background 0.12s ease, color 0.12s ease;
@@ -1041,7 +1048,7 @@ textarea {
   padding: 2px 7px;
   border-radius: 999px;
   text-align: center;
-  font: 600 11px var(--font-mono), monospace;
+  font: 600 0.6875rem var(--font-mono), monospace;
   background: var(--surface2);
   color: var(--tx2);
 }
@@ -1135,13 +1142,13 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 600 13px var(--font-ui), sans-serif;
+  font: 600 0.8125rem var(--font-ui), sans-serif;
   color: var(--tx);
 }
 
 .item-row-time {
   flex: none;
-  font: 400 11px var(--font-ui), sans-serif;
+  font: 400 0.6875rem var(--font-ui), sans-serif;
   color: var(--tx3);
 }
 
@@ -1149,7 +1156,7 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 500 12.5px var(--font-ui), sans-serif;
+  font: 500 0.7812rem var(--font-ui), sans-serif;
   color: var(--tx2);
 }
 
@@ -1157,7 +1164,7 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 400 12px var(--font-ui), sans-serif;
+  font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--tx3);
 }
 
@@ -1173,13 +1180,13 @@ textarea {
 }
 
 .list-empty-title {
-  font: 600 13.5px var(--font-ui), sans-serif;
+  font: 600 0.8438rem var(--font-ui), sans-serif;
   color: var(--tx);
   margin-bottom: 4px;
 }
 
 .list-empty-sub {
-  font: 400 12px/1.5 var(--font-ui), sans-serif;
+  font: 400 0.75rem/1.5 var(--font-ui), sans-serif;
   color: var(--tx3);
 }
 
@@ -1206,17 +1213,17 @@ textarea {
   align-items: center;
   justify-content: center;
   color: var(--tx3);
-  font-size: 19px;
+  font-size: 1.1875rem;
 }
 
 .detail-placeholder-title {
-  font: 600 15px var(--font-ui), sans-serif;
+  font: 600 0.9375rem var(--font-ui), sans-serif;
   color: var(--tx);
   margin-bottom: 5px;
 }
 
 .detail-placeholder-sub {
-  font: 400 12.5px/1.5 var(--font-ui), sans-serif;
+  font: 400 0.7812rem/1.5 var(--font-ui), sans-serif;
   color: var(--tx3);
   max-width: 280px;
 }
@@ -1228,7 +1235,7 @@ textarea {
 }
 
 .decided-audit {
-  font: 400 12.5px var(--font-ui), sans-serif;
+  font: 400 0.7812rem var(--font-ui), sans-serif;
   color: var(--tx3);
 }
 
@@ -1296,18 +1303,25 @@ textarea {
    viewport. */
 @media (max-width: 720px) {
   .nav {
-    gap: 12px;
+    gap: 10px;
     padding: 0 14px;
   }
 
   .nav-brand-tag,
+  .nav-brand-name,
   .nav-user-name,
   .nav-divider {
     display: none;
   }
 
   .nav-links {
-    gap: 12px;
+    gap: 10px;
+  }
+
+  /* GH-73: at the 125% type scale the full-size nav no longer fits a
+     ~375px viewport; tighten link type on phones only. */
+  .nav-link {
+    font-size: 0.8rem;
   }
 }
 
@@ -1338,7 +1352,7 @@ textarea {
   border: 1px solid var(--line);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
   color: var(--tx);
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1.35;
   animation: toastIn 160ms ease-out;
 }
@@ -1367,7 +1381,7 @@ textarea {
   border-radius: 6px;
   background: transparent;
   color: var(--tx2);
-  font-size: 18px;
+  font-size: 1.125rem;
   line-height: 1;
   cursor: pointer;
 }
@@ -1420,7 +1434,7 @@ textarea {
     border: 1px solid var(--line);
     border-radius: 10px;
     background: var(--surface);
-    font: 600 13.5px var(--font-ui), sans-serif;
+    font: 600 0.8438rem var(--font-ui), sans-serif;
     color: var(--tx);
   }
 
@@ -1533,7 +1547,7 @@ textarea {
   border: none;
   padding: 0;
   margin-left: 6px;
-  font: 500 12px var(--font-ui), sans-serif;
+  font: 500 0.75rem var(--font-ui), sans-serif;
   color: var(--accent);
   text-decoration: underline;
   cursor: pointer;
@@ -1557,7 +1571,7 @@ textarea {
 
 .revise-hint {
   margin: 4px 0 8px;
-  font: 400 12px var(--font-ui), sans-serif;
+  font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--tx3);
 }
 
@@ -1570,7 +1584,7 @@ textarea {
   border-radius: 8px;
   background: var(--surface2);
   color: var(--tx);
-  font: 400 13px/1.5 var(--font-ui), sans-serif;
+  font: 400 0.8125rem/1.5 var(--font-ui), sans-serif;
 }
 
 .revise-input:focus {
@@ -1590,7 +1604,7 @@ textarea {
 }
 
 .revise-count {
-  font: 400 11px var(--font-mono), monospace;
+  font: 400 0.6875rem var(--font-mono), monospace;
   color: var(--tx3);
 }
 
@@ -1599,7 +1613,7 @@ textarea {
   align-items: center;
   gap: 7px;
   margin-top: 10px;
-  font: 400 12.5px var(--font-ui), sans-serif;
+  font: 400 0.7812rem var(--font-ui), sans-serif;
   color: var(--tx2);
 }
 
@@ -1638,13 +1652,13 @@ textarea {
 }
 
 .revise-answer-q {
-  font: 600 12px var(--font-ui), sans-serif;
+  font: 600 0.75rem var(--font-ui), sans-serif;
   color: var(--tx2);
   margin-bottom: 4px;
 }
 
 .revise-answer-a {
-  font: 400 13px/1.55 var(--font-ui), sans-serif;
+  font: 400 0.8125rem/1.55 var(--font-ui), sans-serif;
   color: var(--tx);
   white-space: pre-line;
 }
@@ -1667,13 +1681,13 @@ textarea {
 }
 
 .draft-revision-subject {
-  font: 600 12.5px var(--font-ui), sans-serif;
+  font: 600 0.7812rem var(--font-ui), sans-serif;
   color: var(--tx2);
   margin-bottom: 6px;
 }
 
 .draft-revision-body {
-  font: 400 12.5px/1.55 var(--font-ui), sans-serif;
+  font: 400 0.7812rem/1.55 var(--font-ui), sans-serif;
   color: var(--tx3);
 }
 
@@ -1690,7 +1704,7 @@ textarea {
   border: none;
   background: transparent;
   padding: 0;
-  font: 400 12px var(--font-ui), sans-serif;
+  font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--rej-tx);
   cursor: pointer;
 }
@@ -1724,7 +1738,7 @@ textarea {
 }
 
 .clear-rejected-prompt {
-  font: 400 12px var(--font-ui), sans-serif;
+  font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--tx2);
 }
 
@@ -1742,7 +1756,7 @@ textarea {
   margin: 8px 2px 2px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
-  font: 600 10.5px var(--font-ui), sans-serif;
+  font: 600 0.6562rem var(--font-ui), sans-serif;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--tx3);
@@ -1767,7 +1781,7 @@ textarea {
 }
 
 .settings-help {
-  font: 400 12.5px/1.6 var(--font-ui), sans-serif;
+  font: 400 0.7812rem/1.6 var(--font-ui), sans-serif;
   color: var(--tx3);
   margin: 0 0 14px;
   max-width: 560px;
@@ -1805,7 +1819,7 @@ textarea {
 }
 
 .settings-rule-category {
-  font: 500 10.5px var(--font-mono), monospace;
+  font: 500 0.6562rem var(--font-mono), monospace;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--tx3);
@@ -1815,7 +1829,7 @@ textarea {
 }
 
 .settings-rule-status {
-  font: 400 11.5px var(--font-ui), sans-serif;
+  font: 400 0.7188rem var(--font-ui), sans-serif;
   color: var(--tx3);
   margin-right: auto;
 }
@@ -1838,7 +1852,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 9px;
-  font: 500 13px var(--font-ui), sans-serif;
+  font: 500 0.8125rem var(--font-ui), sans-serif;
   color: var(--tx);
   margin: 0 0 16px;
   cursor: pointer;
@@ -1851,13 +1865,13 @@ textarea {
 }
 
 .settings-error {
-  font: 400 12px var(--font-ui), sans-serif;
+  font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--rej-tx);
   margin: 8px 0 0;
 }
 
 .settings-saved {
-  font: 400 12px var(--font-ui), sans-serif;
+  font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--tx3);
 }
 
@@ -1868,7 +1882,7 @@ textarea {
   align-items: center;
   padding: 2px 8px;
   border-radius: 999px;
-  font: 600 10px var(--font-ui), sans-serif;
+  font: 600 0.625rem var(--font-ui), sans-serif;
   letter-spacing: 0.4px;
   text-transform: uppercase;
   background: var(--accent-soft);
@@ -1877,7 +1891,7 @@ textarea {
 }
 
 .item-row .tag-chip {
-  font-size: 9px;
+  font-size: 0.5625rem;
   padding: 1px 6px;
 }
 
@@ -1910,7 +1924,7 @@ textarea {
 .tail-chevron {
   display: inline-block;
   transition: transform 120ms ease;
-  font-size: 10px;
+  font-size: 0.625rem;
   line-height: 1;
 }
 .tail-chevron.is-collapsed {
@@ -1934,5 +1948,5 @@ textarea {
 }
 .settings-saved-note {
   color: var(--tx3);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
