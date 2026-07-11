@@ -16,6 +16,10 @@ import {
   recentlyDecided,
 } from "../../../lib/approvals";
 import { inboxBySlug, type InboxDefinition } from "../../../lib/inboxes";
+import {
+  effectiveSignoffDefault,
+  type SignoffDefault,
+} from "../../../lib/signoff";
 import { assignableUsers, type AssignableUser } from "../../../lib/assignees";
 import { isApproved, isArchived, toCardData, toRow } from "../../../lib/itemView";
 import { ClearRejectedButton } from "../../../components/ClearRejectedButton";
@@ -198,11 +202,13 @@ function Detail({
   item,
   canDecide,
   advanceHref,
+  signoffDefault,
   assignees,
 }: {
   item: Item;
   canDecide: boolean;
   advanceHref?: string;
+  signoffDefault?: SignoffDefault;
   assignees: AssignableUser[];
 }) {
   if (item.status === "pending_approval") {
@@ -217,6 +223,7 @@ function Detail({
         item={toCardData(item)}
         canDecide={canDecide}
         advanceHref={advanceHref}
+        signoffDefault={signoffDefault}
       />
     );
   }
@@ -258,6 +265,14 @@ export default async function InboxPage({
   const advanceHref =
     selected != null && selected.status === "pending_approval"
       ? await advanceHrefFor(selected, inbox.slug)
+      : undefined;
+
+  // Preselection for the per-email signoff picker (GH-76): the deciding
+  // user's effective global setting. Only looked up when the interactive
+  // card will actually render.
+  const signoffDefault =
+    canDecide && selected != null && selected.status === "pending_approval"
+      ? await effectiveSignoffDefault()
       : undefined;
 
   return (
@@ -340,6 +355,7 @@ export default async function InboxPage({
                 canDecide={canDecide}
                 advanceHref={advanceHref}
                 assignees={assignees}
+                signoffDefault={signoffDefault}
               />
             ) : (
               <DetailPlaceholder hasItems={items.length > 0} />

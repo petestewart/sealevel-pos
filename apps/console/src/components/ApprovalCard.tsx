@@ -90,10 +90,18 @@ export interface DraftRevision {
   revisedAt: string;
 }
 
+export interface SignoffDefaultData {
+  /** The user's effective global signoff setting (GH-66). */
+  mode: "default" | "name";
+  /** What "My name" signs with, or null when no usable name exists. */
+  name: string | null;
+}
+
 export function ApprovalCard({
   item,
   canDecide,
   advanceHref,
+  signoffDefault,
   assignees = [],
 }: {
   item: ApprovalCardData;
@@ -107,11 +115,25 @@ export function ApprovalCard({
    * decision falls back to the server's own revalidate (no advance).
    */
   advanceHref?: string;
+  /**
+   * Preselected signoff for the per-email picker (GH-76): the user's
+   * global setting. Optional so callers without the lookup still render;
+   * the picker then defaults to the studio signoff.
+   */
+  signoffDefault?: SignoffDefaultData;
 }) {
   const router = useRouter();
   const toast = useToast();
   const formRef = useRef<HTMLFormElement>(null);
   const [editing, setEditing] = useState(false);
+  // Per-email signoff override (GH-76). Pending client state, keyed to
+  // this card instance (the card is keyed by item.id upstream), so it
+  // survives revisions and router.refresh() but resets with the item.
+  // Posted as signoff_mode with every decide; the server treats a missing
+  // value as "use the global setting".
+  const [signoffMode, setSignoffMode] = useState<"default" | "name" | "none">(
+    signoffDefault?.mode ?? "default",
+  );
   // Redo-draft icon lives in the draft header but the run/poll machinery
   // lives in ReviseBox: each press bumps the signal, ReviseBox runs one
   // redo per bump, and reviseWorking mirrors its busy state back so the
@@ -432,6 +454,24 @@ export function ApprovalCard({
 
       {canDecide ? (
         <div className="approval-card-actions">
+          <label className="signoff-picker">
+            <span className="micro-label">Signoff</span>
+            <select
+              name="signoff_mode"
+              className="signoff-select"
+              value={signoffMode}
+              onChange={(e) =>
+                setSignoffMode(e.target.value as "default" | "name" | "none")
+              }
+              aria-label="Signoff for this email"
+            >
+              <option value="default">Sealevel Hot Yoga</option>
+              {signoffDefault?.name ? (
+                <option value="name">My name ({signoffDefault.name})</option>
+              ) : null}
+              <option value="none">No signoff</option>
+            </select>
+          </label>
           {editing ? (
             <>
               <Button

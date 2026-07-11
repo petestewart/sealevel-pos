@@ -828,6 +828,29 @@ textarea {
   margin-left: auto;
 }
 
+/* Per-email signoff picker (GH-76), leading the actions row. */
+.signoff-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.signoff-select {
+  appearance: none;
+  background: var(--bg2);
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font: 400 0.75rem var(--font-ui), sans-serif;
+  color: var(--txb);
+  cursor: pointer;
+}
+
+.signoff-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* ---------- Recently decided ---------- */
 
 .section-label {

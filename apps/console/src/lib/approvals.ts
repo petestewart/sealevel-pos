@@ -31,7 +31,12 @@ export interface DecisionRecord {
   by: { id: string; name: string };
   at: string;
   edited: boolean;
-  /** Personal signoff name applied at approval time (GH-66), if any. */
+  /**
+   * Signoff applied at approval time, if any: the approver's name
+   * (GH-66), or the literal "none" when the studio signoff was removed
+   * by the per-email override (GH-76). Absent when the draft shipped
+   * with the studio default.
+   */
   signoff?: string;
 }
 
@@ -80,6 +85,66 @@ function sameDraft(a: DraftEdits, b: DraftEdits): boolean {
  * every reply that way). Any other shape returns the body unchanged --
  * never guess at rewriting someone's prose.
  */
+/**
+ * Per-email signoff choice (GH-76). "default" keeps the draft as-is (the
+ * studio signoff the model was instructed to end with), "name" inserts the
+ * approver's name above it (applyPersonalSignoff), "none" strips it.
+ */
+export type SignoffMode = "default" | "name" | "none";
+
+export interface SignoffChoice {
+  mode: SignoffMode;
+  /** Approver's signature name; only meaningful for mode "name". */
+  name?: string;
+}
+
+/**
+ * Remove the studio signoff for the "none" choice (GH-76). As conservative
+ * as applyPersonalSignoff: only fires when the LAST non-empty line is
+ * exactly the default signoff. It also removes an immediately preceding
+ * short valediction line ("Warmly,", "Best regards,") that would otherwise
+ * dangle with nothing under it, then trims trailing blank lines. Any other
+ * body shape is returned unchanged.
+ */
+export function removeStudioSignoff(body: string): string {
+  const normalize = (s: string) => s.trim().replace(/[.!]+$/, "").toLowerCase();
+  const lines = body.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!.trim();
+    if (line.length === 0) continue;
+    if (normalize(line) !== DEFAULT_SIGNOFF.toLowerCase()) return body;
+    let end = i;
+    // A dangling closer directly above ("Warmly," / "Best regards,")
+    // reads wrong with no name under it; drop it with the signoff. Kept
+    // deliberately narrow -- a short comma-terminated line of at most
+    // three words -- so a real content sentence that happens to end in a
+    // comma ("Hope to see you soon,") is never eaten.
+    for (let j = i - 1; j >= 0; j--) {
+      const prev = lines[j]!.trim();
+      if (prev.length === 0) continue;
+      if (
+        prev.endsWith(",") &&
+        prev.length <= 30 &&
+        prev.split(/\s+/).length <= 3
+      ) {
+        end = j;
+      }
+      break;
+    }
+    const kept = lines.slice(0, end);
+    while (kept.length > 0 && kept[kept.length - 1]!.trim().length === 0) {
+      kept.pop();
+    }
+    // Never gut the draft: a body that is nothing but the signoff (or
+    // signoff + closer) stays unchanged, and the audit records no
+    // signoff change -- shipping an empty email is worse than an
+    // unwanted signoff.
+    if (kept.every((l) => l.trim().length === 0)) return body;
+    return kept.join("\n");
+  }
+  return body;
+}
+
 export function applyPersonalSignoff(body: string, name: string): string {
   const trimmedName = name.trim();
   if (trimmedName.length === 0) return body;
@@ -318,7 +383,7 @@ export async function decideItem(
   decision: Decision,
   decidedBy: { id: string; name: string },
   edits?: DraftEdits,
-  signoffName?: string,
+  signoff?: SignoffChoice,
 ): Promise<Item> {
   let current: Item | undefined;
   if (edits !== undefined) {
@@ -334,17 +399,36 @@ export async function decideItem(
   // so a mechanical signoff swap never claims a human edit.
   const humanEdited = edits !== undefined;
 
-  // Personal signoff (GH-66): applies only on approval, only when the
-  // draft ends with the default studio signoff (applyPersonalSignoff is
-  // a no-op otherwise).
+  // Signoff choice (GH-66 global default, GH-76 per-email override):
+  // applies only on approval. "name" inserts the approver's name above the
+  // studio signoff; "none" strips the studio signoff; both are no-ops on
+  // any draft that does not end with the default signoff, so a hand-edited
+  // ending is never rewritten. The audit records what was actually applied
+  // ("none", or the name), never a request that matched nothing.
   let signoffApplied: string | undefined;
-  if (decision === "approved" && signoffName && signoffName.trim()) {
+  if (decision === "approved" && signoff && signoff.mode !== "default") {
     current ??= await pendingItemOrThrow(id, "decideItem");
-    const base = edits ?? draftOf(current);
-    const signedBody = applyPersonalSignoff(base.body, signoffName);
-    if (signedBody !== base.body) {
-      signoffApplied = signoffName.trim();
-      edits = { subject: base.subject, body: signedBody };
+    // The stored draft may carry CRLF; normalize BEFORE the line-based
+    // signoff transforms so no kept line ends in a dangling \r.
+    const base = normalizeEdits(edits ?? draftOf(current));
+    // Signature names are single-line by construction: collapse any
+    // whitespace (a newline smuggled into signature_name must not inject
+    // extra lines into the outgoing email), and a "name" that IS the
+    // studio signoff would only duplicate the line -- treat as default.
+    const safeName = signoff.name?.replace(/\s+/g, " ").trim();
+    let nextBody = base.body;
+    if (
+      signoff.mode === "name" &&
+      safeName &&
+      safeName.toLowerCase() !== DEFAULT_SIGNOFF.toLowerCase()
+    ) {
+      nextBody = applyPersonalSignoff(base.body, safeName);
+    } else if (signoff.mode === "none") {
+      nextBody = removeStudioSignoff(base.body);
+    }
+    if (nextBody !== base.body) {
+      signoffApplied = signoff.mode === "none" ? "none" : safeName;
+      edits = { subject: base.subject, body: nextBody };
     }
   }
 

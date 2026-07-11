@@ -19,6 +19,7 @@ import {
   saveDraftEdits,
   type Decision,
   type DraftEdits,
+  type SignoffChoice,
 } from "../../lib/approvals";
 
 /**
@@ -113,23 +114,39 @@ async function decide(
 ): Promise<ApprovalActionState> {
   const decider = await requireDecider();
   const id = requireString(formData, "id");
-  // Personal signoff (GH-66): if the approving user opted in, their name
-  // is added above the default studio signoff. A settings lookup failure
-  // degrades to the default signoff rather than blocking the decision.
-  let signoffName: string | undefined;
+  // Signoff for THIS email (GH-76): the card posts signoff_mode
+  // (default | name | none), preselected from the user's global setting.
+  // A missing or unrecognized value (legacy form, forged request) falls
+  // back to the GH-66 global-setting behavior. A settings lookup failure
+  // degrades to the studio default rather than blocking the decision.
+  let signoff: SignoffChoice | undefined;
   if (decision === "approved") {
+    const raw = formData.get("signoff_mode");
+    const mode =
+      raw === "default" || raw === "name" || raw === "none" ? raw : undefined;
     try {
-      const settings = await getUserSettings(decider.id);
-      if (settings.sign_with_name) {
-        signoffName =
-          settings.signature_name ?? decider.name.split(/\s+/)[0] ?? undefined;
+      if (mode === "none" || mode === "default") {
+        signoff = { mode };
+      } else {
+        // Explicit "name" choice, or no valid mode posted: both need the
+        // user's settings (the latter to honor the global sign_with_name).
+        const settings = await getUserSettings(decider.id);
+        if (mode === "name" || settings.sign_with_name) {
+          signoff = {
+            mode: "name",
+            name:
+              settings.signature_name ??
+              decider.name.split(/\s+/)[0] ??
+              undefined,
+          };
+        }
       }
     } catch {
-      signoffName = undefined;
+      signoff = mode === "none" ? { mode } : undefined;
     }
   }
   try {
-    await decideItem(id, decision, decider, edits, signoffName);
+    await decideItem(id, decision, decider, edits, signoff);
   } catch (err) {
     if (isAlreadyDecided(err)) {
       // No revalidate here: refreshing would unmount the stale card and
