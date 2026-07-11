@@ -1,9 +1,15 @@
 import { currentUser } from "@clerk/nextjs/server";
-import { getUserSettings, listRules } from "@ai-manager/core";
+import {
+  getStudioInfo,
+  getUserSettings,
+  listRules,
+  STUDIO_INFO_FIELDS,
+} from "@ai-manager/core";
 import {
   AddRuleForm,
   RuleRow,
   SignatureForm,
+  StudioInfoForm,
 } from "../../components/SettingsForms";
 import { currentRole, hasPermission } from "../../lib/rbac";
 
@@ -38,9 +44,10 @@ export default async function SettingsPage() {
   const user = await currentUser();
   const userId = user?.id ?? "";
   const defaultName = user?.firstName ?? user?.fullName ?? "Your name";
-  const [rules, settings] = await Promise.all([
+  const [rules, settings, studioInfo] = await Promise.all([
     listRules(),
     getUserSettings(userId),
+    getStudioInfo(),
   ]);
 
   return (
@@ -62,6 +69,16 @@ export default async function SettingsPage() {
           rules.map((rule) => <RuleRow key={rule.id} rule={rule} />)
         )}
         <AddRuleForm />
+      </section>
+
+      <section className="settings-section">
+        <h2 className="section-label">Studio info</h2>
+        <p className="settings-help">
+          Customer-safe facts the AI can use in replies: the booking link,
+          contact details, and key policies. Empty fields are simply left
+          out of drafts.
+        </p>
+        <StudioInfoForm fields={STUDIO_INFO_FIELDS} values={studioInfo} />
       </section>
 
       <section className="settings-section">

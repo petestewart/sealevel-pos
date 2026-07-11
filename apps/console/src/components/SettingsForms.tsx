@@ -1,11 +1,12 @@
 "use client";
 
 import { useActionState } from "react";
-import type { Rule, UserSettings } from "@ai-manager/core";
+import type { Rule, StudioInfoField, UserSettings } from "@ai-manager/core";
 import {
   addRule,
   saveRule,
   saveSignature,
+  saveStudioInfo,
   setRuleActive,
   type SettingsActionState,
 } from "../app/settings/actions";
@@ -160,6 +161,57 @@ export function SignatureForm({
         </button>
         {state.saved && !state.error ? (
           <span className="settings-saved">Saved.</span>
+        ) : null}
+      </div>
+      <InlineError state={state} />
+    </form>
+  );
+}
+
+export function StudioInfoForm({
+  fields,
+  values,
+}: {
+  fields: readonly StudioInfoField[];
+  values: Record<string, string>;
+}) {
+  const [state, formAction, pending] = useActionState(saveStudioInfo, IDLE);
+  return (
+    <form action={formAction} className="settings-studio-info">
+      {fields.map((field) => (
+        <div key={field.key} className="settings-info-field">
+          <label className="field-label" htmlFor={`info-${field.key}`}>
+            {field.label}
+          </label>
+          {field.multiline ? (
+            <textarea
+              id={`info-${field.key}`}
+              name={field.key}
+              className="draft-body-input settings-info-input"
+              defaultValue={values[field.key] ?? ""}
+              placeholder={field.hint}
+              maxLength={500}
+              rows={2}
+            />
+          ) : (
+            <input
+              type="text"
+              id={`info-${field.key}`}
+              name={field.key}
+              className="draft-subject-input settings-info-input"
+              defaultValue={values[field.key] ?? ""}
+              placeholder={field.hint}
+              maxLength={500}
+            />
+          )}
+        </div>
+      ))}
+      <div className="settings-form-row">
+        <button type="submit" className="btn btn--primary" disabled={pending}>
+          {pending ? "Saving..." : "Save studio info"}
+        </button>
+        {state.saved && !state.error ? (
+          <span className="settings-saved-note">Saved.</span>
         ) : null}
       </div>
       <InlineError state={state} />

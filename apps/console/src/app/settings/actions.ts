@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 import {
   createRule,
   RULE_MAX_CHARS,
+  setStudioInfo,
   setUserSettings,
+  STUDIO_INFO_FIELDS,
+  STUDIO_INFO_VALUE_MAX_CHARS,
   updateRule,
 } from "@ai-manager/core";
 import { requireSettingsManager } from "../../lib/requireDecider";
@@ -88,6 +91,26 @@ export async function saveSignature(
     signWithName,
     signatureName: name || null,
   });
+  revalidatePath("/settings");
+  return { error: null, saved: true };
+}
+
+export async function saveStudioInfo(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  const who = await requireSettingsManager();
+  const entries: Record<string, string> = {};
+  for (const field of STUDIO_INFO_FIELDS) {
+    const value = fieldString(formData, field.key);
+    if (value.length > STUDIO_INFO_VALUE_MAX_CHARS) {
+      return {
+        error: `${field.label} is limited to ${STUDIO_INFO_VALUE_MAX_CHARS} characters.`,
+      };
+    }
+    entries[field.key] = value;
+  }
+  await setStudioInfo(entries, who.id);
   revalidatePath("/settings");
   return { error: null, saved: true };
 }

@@ -65,6 +65,15 @@ export {
   loadRulesBlock,
 } from "./db/settings.js";
 export type { Rule, UserSettings } from "./db/settings.js";
+export {
+  STUDIO_INFO_FIELDS,
+  STUDIO_INFO_VALUE_MAX_CHARS,
+  getStudioInfo,
+  setStudioInfo,
+  studioInfoBlock,
+  loadStudioInfoBlock,
+} from "./db/studioInfo.js";
+export type { StudioInfoField } from "./db/studioInfo.js";
 export { createItemTool, toolsByName, toolsForJob } from "./tools/registry.js";
 export { emitItemEvent } from "./notifications/emit.js";
 export type {

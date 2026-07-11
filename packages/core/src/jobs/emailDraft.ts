@@ -9,6 +9,7 @@ import {
 import { classifyEmailTags } from "../brain/classify.js";
 import { recordItemUsage } from "../db/itemDrafts.js";
 import { loadRulesBlock } from "../db/settings.js";
+import { loadStudioInfoBlock } from "../db/studioInfo.js";
 import type { ItemTag } from "../tags.js";
 import { createItemTool } from "../tools/registry.js";
 import {
@@ -140,6 +141,9 @@ export const emailDraft: Job = {
     // the next draft immediately; a rule edit invalidates the prompt
     // cache for the next call, which is acceptable at studio volume.
     const rules = await loadRulesBlock();
+    // Owner-set studio info (GH-71): customer-safe facts (booking link,
+    // policies), injected right after the rules block, same lifecycle.
+    const studioInfo = await loadStudioInfoBlock();
     // Tag classification (GH-65): a separate small sonnet call, before
     // the opus drafting loop. Best-effort: [] on any failure, and the
     // draft proceeds identically either way. The tags land on the item
@@ -151,7 +155,7 @@ export const emailDraft: Job = {
     }
     return `
 An inbound email to the studio needs a reply. Draft one; do not send anything.
-${kbConfigured() ? KB_PROMPT_GUIDANCE : ""}${rules}
+${kbConfigured() ? KB_PROMPT_GUIDANCE : ""}${rules}${studioInfo}
 Inbound email:
 ---
 ${renderEmail(payload)}

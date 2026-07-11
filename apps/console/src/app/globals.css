@@ -1916,3 +1916,23 @@ textarea {
 .tail-chevron.is-collapsed {
   transform: rotate(-90deg);
 }
+
+/* Studio info settings (GH-71) */
+.settings-studio-info {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 560px;
+}
+.settings-info-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-info-input {
+  width: 100%;
+}
+.settings-saved-note {
+  color: var(--tx3);
+  font-size: 13px;
+}
