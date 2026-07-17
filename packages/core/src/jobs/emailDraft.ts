@@ -7,6 +7,7 @@ import {
   type UsageTotals,
 } from "../brain/budget.js";
 import { classifyEmailTags } from "../brain/classify.js";
+import { suggestAssignee } from "../brain/suggestAssignee.js";
 import { recordItemUsage } from "../db/itemDrafts.js";
 import { loadRulesBlock } from "../db/settings.js";
 import { loadStudioInfoBlock } from "../db/studioInfo.js";
@@ -21,13 +22,23 @@ import {
 import type { Job, JobContext } from "./types.js";
 
 /**
- * Async lane end to end (ARCHITECTURE.md "Two lanes"): a manual-trigger
- * job that drafts a reply to an inbound email and surfaces it as an
- * items row pending human approval. Nothing sends anything; the draft
- * lives in the item payload until a human approves it in the console.
+ * Async lane end to end (ARCHITECTURE.md "Two lanes"): the job that drafts
+ * a reply to an inbound email and surfaces it as an items row pending human
+ * approval. Nothing sends anything here; the draft lives in the item
+ * payload until a human approves it in the console (the send is Job B,
+ * gmail/send.ts).
  *
- * Payload: the inbound email (from, subject, body, optional messageId),
- * passed through from the enqueue call.
+ * Trigger (GH-95): `{kind:"email"}` -- fired by the ingestion heartbeat
+ * (jobs/dispatch.ts) for every inbound message -- plus `{kind:"manual"}`
+ * so it can still be hand-fired (apps/worker fire.ts) for testing without a
+ * mailbox. It historically fired only manually as "manual.email_draft".
+ *
+ * Payload: the inbound email, passed through from the enqueue call. Beyond
+ * the human-facing from/subject/body it may carry Gmail threading metadata
+ * (threadId, the RFC822 Message-ID, Reply-To); that metadata is kept out of
+ * the model's prompt and stamped onto the item structurally (email_meta,
+ * below) so a later reply can thread correctly and the model can neither
+ * see nor corrupt it -- the same discipline as tags and KB sources.
  */
 
 /** Shape of the inbound email payload this job expects. */
@@ -35,8 +46,46 @@ export interface InboundEmailPayload {
   from?: string;
   subject?: string;
   body?: string;
-  /** Source message id, used for idempotent enqueue upstream. */
+  /** Source message id, used for idempotent enqueue + item dedupe upstream. */
   messageId?: string;
+  /** Gmail internal message id (label/read mutations target this). */
+  gmailId?: string;
+  /** Gmail thread id, so an approved reply threads into the conversation. */
+  threadId?: string;
+  /** RFC822 Message-ID header, for In-Reply-To / References on a reply. */
+  messageIdHeader?: string;
+  /** Existing References chain, extended when we reply. */
+  references?: string;
+  /** Reply-To header, the preferred reply recipient when the sender set one. */
+  replyTo?: string;
+  /** The inbound To header (informational). */
+  to?: string;
+}
+
+/**
+ * Threading metadata stamped onto the item payload as `email_meta` (GH-95),
+ * structurally rather than through the prompt. gmail/send.ts reads this to
+ * thread the approved reply; nothing customer-facing depends on it.
+ */
+export interface EmailMeta {
+  gmailId?: string;
+  threadId?: string;
+  messageIdHeader?: string;
+  references?: string;
+  replyTo?: string;
+  to?: string;
+}
+
+/** Extract the threading metadata (if any) from an inbound payload. */
+function emailMetaOf(payload: InboundEmailPayload): EmailMeta | undefined {
+  const meta: EmailMeta = {};
+  if (payload.gmailId) meta.gmailId = payload.gmailId;
+  if (payload.threadId) meta.threadId = payload.threadId;
+  if (payload.messageIdHeader) meta.messageIdHeader = payload.messageIdHeader;
+  if (payload.references) meta.references = payload.references;
+  if (payload.replyTo) meta.replyTo = payload.replyTo;
+  if (payload.to) meta.to = payload.to;
+  return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
 function renderEmail(payload: InboundEmailPayload): string {
@@ -66,28 +115,38 @@ function renderEmail(payload: InboundEmailPayload): string {
 function createItemWithSources(
   log: KbRunLog,
   runState?: Record<string, unknown>,
+  emailMeta?: EmailMeta,
 ): BetaRunnableTool<any> {
   const base = createItemTool as BetaRunnableTool<any>;
   return {
     ...base,
     run: async (input: Record<string, unknown>) => {
-      // Tags (GH-65) ride on the tool call like sources: classified by a
-      // separate sonnet call before the drafting loop and merged here
-      // structurally, so the drafting model can neither forget nor forge
-      // them (they are not part of its prompt contract at all).
+      // Everything here rides on the tool call structurally, never through
+      // the model's prompt, so the drafting model can neither forget nor
+      // forge it:
+      //  - tags (GH-65): a separate sonnet classification;
+      //  - sources / kb_unavailable (GH-57): the KB lookups this run made;
+      //  - email_meta (GH-95): Gmail threading data for a later reply;
+      //  - assignee_suggestion (GH-95): the sonnet routing suggestion.
       const tags = runState?.["tags"] as ItemTag[] | undefined;
-      if (log.sources.length > 0 || log.unavailable || (tags?.length ?? 0) > 0) {
+      const suggestion = runState?.["assignee_suggestion"];
+      const extra: Record<string, unknown> = {
+        ...(log.sources.length > 0 || log.unavailable
+          ? {
+              sources: log.sources,
+              ...(log.unavailable ? { kb_unavailable: true } : {}),
+            }
+          : {}),
+        ...((tags?.length ?? 0) > 0 ? { tags } : {}),
+        ...(emailMeta ? { email_meta: emailMeta } : {}),
+        ...(suggestion ? { assignee_suggestion: suggestion } : {}),
+      };
+      if (Object.keys(extra).length > 0) {
         input = {
           ...input,
           payload: {
             ...((input["payload"] as Record<string, unknown>) ?? {}),
-            ...(log.sources.length > 0 || log.unavailable
-              ? {
-                  sources: log.sources,
-                  ...(log.unavailable ? { kb_unavailable: true } : {}),
-                }
-              : {}),
-            ...((tags?.length ?? 0) > 0 ? { tags } : {}),
+            ...extra,
           },
         };
       }
@@ -109,14 +168,20 @@ function createItemWithSources(
 }
 
 export const emailDraft: Job = {
-  id: "manual.email_draft",
+  id: "email.received",
   enabled: true,
-  triggers: [{ kind: "manual" }],
+  // Fires on any inbound email (the ingestion heartbeat), and stays
+  // hand-fireable for testing without a mailbox (fire.ts).
+  triggers: [{ kind: "email", match: /.*/ }, { kind: "manual" }],
   // create_item moves to runtimeTools so the per-run KB log can ride on it.
   tools: [],
   runtimeTools: (ctx: JobContext) => {
     const kb = createKbToolset();
-    return [createItemWithSources(kb.log, ctx.runState), ...kb.tools];
+    const meta = emailMetaOf((ctx.payload ?? {}) as InboundEmailPayload);
+    return [
+      createItemWithSources(kb.log, ctx.runState, meta),
+      ...kb.tools,
+    ];
   },
   recordUsage: async (ctx, usage) => {
     const itemId = ctx.runState?.["itemId"];
@@ -144,13 +209,20 @@ export const emailDraft: Job = {
     // Owner-set studio info (GH-71): customer-safe facts (booking link,
     // policies), injected right after the rules block, same lifecycle.
     const studioInfo = await loadStudioInfoBlock();
-    // Tag classification (GH-65): a separate small sonnet call, before
-    // the opus drafting loop. Best-effort: [] on any failure, and the
-    // draft proceeds identically either way. The tags land on the item
-    // via the create_item wrapper (runState), not via the prompt.
+    // Triage sonnet calls (GH-65 tags, GH-95 assignee suggestion): separate
+    // small calls before the opus drafting loop, run concurrently. Both are
+    // best-effort ([]/null on failure) and the draft proceeds identically
+    // either way. Their results land on the item via the create_item
+    // wrapper (runState), not via the prompt, and their token usage is
+    // folded into the per-item cost record (recordUsage below).
     if (ctx.runState) {
       const classifyUsage = emptyUsage();
-      ctx.runState["tags"] = await classifyEmailTags(payload, classifyUsage);
+      const [tags, suggestion] = await Promise.all([
+        classifyEmailTags(payload, classifyUsage),
+        suggestAssignee(payload, classifyUsage),
+      ]);
+      ctx.runState["tags"] = tags;
+      ctx.runState["assignee_suggestion"] = suggestion ?? undefined;
       ctx.runState["classifyUsage"] = classifyUsage;
     }
     return `

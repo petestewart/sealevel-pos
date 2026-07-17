@@ -1,9 +1,14 @@
 /**
- * Fire the manual.email_draft job by hand (async lane end to end,
- * ARCHITECTURE.md "Two lanes"). Enqueues one queue job named after the
+ * Fire the email.received drafting job by hand (async lane end to end,
+ * ARCHITECTURE.md "Two lanes"). This is the manual test path that predates
+ * real Gmail ingestion (GH-95): it enqueues one queue job named after the
  * registry job id with an inbound-email payload; the running worker
  * dispatches it to the brain, which drafts a reply and creates an
  * email_reply item pending approval. Nothing sends anything.
+ *
+ * For real inbound mail the worker's email.ingest poll dispatches the same
+ * job automatically; this stays for testing the draft path without a
+ * mailbox (and to exercise it with a crafted payload).
  *
  * Usage (from apps/worker):
  *   npm run fire:email-draft            # sample inbound email
@@ -62,9 +67,9 @@ async function main(): Promise<void> {
       `[fire] job ${jobId} already exists (state=${await existing.getState()}); not enqueueing a duplicate`,
     );
   } else {
-    const id = await enqueue(queue, "manual.email_draft", payload, { jobId });
+    const id = await enqueue(queue, "email.received", payload, { jobId });
     console.log(
-      `[fire] enqueued manual.email_draft as job ${id} (from=${payload.from}, subject=${payload.subject})`,
+      `[fire] enqueued email.received as job ${id} (from=${payload.from}, subject=${payload.subject})`,
     );
   }
 

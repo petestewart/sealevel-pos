@@ -3,8 +3,12 @@
 import { revalidatePath } from "next/cache";
 import {
   assignItemAudited,
+  enqueueEmailSend,
   getPool,
   getUserSettings,
+  gmailSendConfigured,
+  markDeliveryQueued,
+  recordDeliveryFailed,
   reopenItem,
   ReopenConflictError,
 } from "@ai-manager/core";
@@ -156,8 +160,53 @@ async function decide(
     }
     throw err;
   }
+  // Outbound send on approval (GH-95, Job B). The operator's Approve click
+  // is the send authorization -- this is how sending coexists with the
+  // "nothing auto-sends in v1" lock -- and it only happens when a human has
+  // explicitly enabled sending for the deployment (GMAIL_SEND_ENABLED).
+  // Best-effort: a queue hiccup must never fail the recorded approval, and
+  // it must not leave the item stuck showing "queued" with no job behind it
+  // (queueSendIfEnabled reverts an un-enqueued stamp to 'failed').
+  if (decision === "approved") await queueSendIfEnabled(id);
   revalidatePath("/", "layout");
   return { error: null };
+}
+
+/**
+ * When outbound send is enabled, stamp the item's delivery as queued and
+ * enqueue Job B (the worker sends via Gmail). Deterministic jobId +
+ * markDeliveryQueued's guard (won't re-queue an already sent/in-flight
+ * item) make this safe on a re-approve after reopen. Never throws.
+ *
+ * If the stamp succeeds but the enqueue fails (a Redis hiccup), the 'queued'
+ * record would otherwise outlive the (nonexistent) job forever -- the item
+ * would show "queued for delivery" and never send. So on an enqueue failure
+ * we revert the stamp to 'failed', which is honest in the UI (red, "will be
+ * retried") and lets a reopen + re-approve re-queue it.
+ */
+async function queueSendIfEnabled(id: string): Promise<void> {
+  if (!gmailSendConfigured()) return;
+  let queued = false;
+  try {
+    // markDeliveryQueued returns null when the item is not a fresh-approved
+    // deliverable (already sent, in flight, rejected, archived); in that
+    // case do not enqueue a redundant send.
+    queued = Boolean(await markDeliveryQueued(id));
+    if (queued) await enqueueEmailSend(id);
+  } catch (err) {
+    console.error(
+      `[approvals] failed to enqueue send for item ${id}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    // Roll back the optimistic 'queued' so it does not linger with no job.
+    if (queued) {
+      await recordDeliveryFailed(
+        id,
+        "could not queue the send; approve again to retry",
+      ).catch(() => undefined);
+    }
+  }
 }
 
 /**

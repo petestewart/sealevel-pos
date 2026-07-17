@@ -752,6 +752,21 @@ textarea {
   border-color: transparent;
 }
 
+/* Real send outcomes (GH-95): a delivered reply reads green, a failed or
+   skipped send reads red, so an operator can tell at a glance whether the
+   customer got the message. */
+.delivery-status--sent {
+  color: var(--appr-tx);
+  background: var(--appr-bg);
+  border-color: transparent;
+}
+
+.delivery-status--failed {
+  color: var(--rej-tx);
+  background: var(--rej-bg);
+  border-color: transparent;
+}
+
 .delivery-status-dot {
   flex: none;
   width: 6px;
@@ -2269,6 +2284,47 @@ textarea {
 .assignee-error {
   font-size: 0.75rem;
   color: var(--rej-tx);
+}
+
+/* AI assignee suggestion chip (GH-95): a subtle accent-tinted chip on an
+   unassigned item. When the suggested owner maps to an eligible user it is
+   a button that assigns them in one click (AI suggests, human confirms);
+   when it does not, it is info-only. */
+.assignee-suggest {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  color: var(--accent-tx);
+  background: var(--accent-soft);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+button.assignee-suggest:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+button.assignee-suggest:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+button.assignee-suggest:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.assignee-suggest--info {
+  color: var(--tx2);
+  background: var(--surface2);
+  cursor: default;
+}
+.assignee-suggest-spark {
+  font-size: 0.7rem;
+  line-height: 1;
 }
 .assignee-chip {
   flex: none;

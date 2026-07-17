@@ -1,4 +1,12 @@
-import { sanitizeTags, tagLabel, type Item } from "@ai-manager/core";
+import {
+  sanitizeSuggestion,
+  sanitizeTags,
+  tagLabel,
+  type AssigneeSuggestion,
+  type DeliveryRecord,
+  type DeliveryStatus,
+  type Item,
+} from "@ai-manager/core";
 import type { ApprovalCardData } from "../components/ApprovalCard";
 import type { DecisionRecord } from "./approvals";
 import {
@@ -92,6 +100,59 @@ export function assigneeNameOf(item: Item): string | null {
   return str(item.payload.assignee_name) ?? item.assignee;
 }
 
+const DELIVERY_STATUSES: readonly DeliveryStatus[] = [
+  "queued",
+  "sending",
+  "sent",
+  "failed",
+  "skipped",
+];
+
+/**
+ * The item's delivery record (GH-95), validated into a known shape, or
+ * null when absent/malformed. Written only by the send pipeline
+ * (core db/delivery.ts); the console reads it to show real send status on a
+ * decided reply instead of the old "nothing is sent" placeholder.
+ */
+export function deliveryOf(item: Item): DeliveryRecord | null {
+  const d = item.payload.delivery as Partial<DeliveryRecord> | undefined;
+  if (
+    typeof d === "object" &&
+    d !== null &&
+    typeof d.status === "string" &&
+    (DELIVERY_STATUSES as readonly string[]).includes(d.status)
+  ) {
+    return d as DeliveryRecord;
+  }
+  return null;
+}
+
+/**
+ * The item's AI assignee suggestion (GH-95), validated through the routing
+ * registry gate, or null. Shown as a one-click suggestion chip on an
+ * unassigned pending item; the operator confirms (no auto-assign, per the
+ * locked decision).
+ */
+export function suggestionOf(item: Item): AssigneeSuggestion | null {
+  return sanitizeSuggestion(item.payload.assignee_suggestion);
+}
+
+/**
+ * The suggestion in the card's shape, or null. Only actionable suggestions
+ * (a named default owner) are surfaced: a "general" route has no owner and
+ * would offer nothing to click, so it is dropped rather than shown as a
+ * dead chip.
+ */
+function suggestionForCard(item: Item): ApprovalCardData["suggestion"] {
+  const s = suggestionOf(item);
+  if (!s || s.suggestedName.length === 0) return null;
+  return {
+    category: s.category,
+    suggestedName: s.suggestedName,
+    reason: s.reason,
+  };
+}
+
 export function toCardData(item: Item): ApprovalCardData {
   const payload = item.payload;
   const original = originalOf(item);
@@ -104,6 +165,7 @@ export function toCardData(item: Item): ApprovalCardData {
     receivedFull: formatDateTime(item.created_at),
     assigneeId: item.assignee,
     assigneeName: assigneeNameOf(item),
+    suggestion: suggestionForCard(item),
     customer: sender.name,
     initials: initialsOf(sender.name),
     inboundSubject: str(original.subject)?.trim() || "(no subject)",

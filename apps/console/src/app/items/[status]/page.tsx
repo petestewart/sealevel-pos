@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getItemById, type Item } from "@ai-manager/core";
+import { getItemById, gmailSendConfigured, type Item } from "@ai-manager/core";
 import { ApprovalCard } from "../../../components/ApprovalCard";
 import { DecidedDetail } from "../../../components/DecidedDetail";
 import { ItemRow } from "../../../components/ItemRow";
@@ -215,6 +215,7 @@ function Detail({
     return (
       <ApprovalCard
         assignees={assignees}
+        sendEnabled={gmailSendConfigured()}
         // Keyed by item id so client state (edit mode, typed draft text)
         // resets when the selection changes. Without this, auto-advance
         // after a decide reuses the component instance and the NEXT item

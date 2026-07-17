@@ -1,11 +1,11 @@
-import type { Item } from "@ai-manager/core";
+import { gmailSendConfigured, type Item } from "@ai-manager/core";
 import { StatusChip } from "./StatusChip";
 import { DeliveryStatus } from "./DeliveryStatus";
 import { ReopenButton } from "./ReopenButton";
 import { RemoveRejectedButton } from "./RemoveRejectedButton";
 import { InboundEmail } from "./InboundEmail";
 import { paragraphsOf, formatDecidedAt } from "../lib/emailDisplay";
-import { decisionOf, isApproved, toCardData } from "../lib/itemView";
+import { decisionOf, deliveryOf, isApproved, toCardData } from "../lib/itemView";
 
 /**
  * Read view for a decided item in the detail pane (A1c, GH-29). Reuses the
@@ -33,6 +33,8 @@ export function DecidedDetail({
       ? formatDecidedAt(item.resolved_at)
       : null;
   const hasReply = data.draftBody.length > 0;
+  const delivery = deliveryOf(item);
+  const sendEnabled = gmailSendConfigured();
 
   return (
     <div className="approval-card">
@@ -85,7 +87,12 @@ export function DecidedDetail({
             ) : null}
           </div>
 
-          <DeliveryStatus approved={approved} hasReply={hasReply} />
+          <DeliveryStatus
+            approved={approved}
+            hasReply={hasReply}
+            delivery={delivery}
+            sendEnabled={sendEnabled}
+          />
 
           {hasReply ? (
             <>

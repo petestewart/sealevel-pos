@@ -26,6 +26,14 @@ import {
 
 const initialActionState: ApprovalActionState = { error: null };
 
+/** AI assignee suggestion passed to the header chip (GH-95). */
+export interface AssigneeSuggestionData {
+  category: string;
+  /** Default owner display name for the route ("" for general/none). */
+  suggestedName: string;
+  reason: string;
+}
+
 /**
  * Truthful decision confirmations (A2, GH-30). Nothing auto-sends in v1, so
  * the toast states only that the decision was recorded and the reply is
@@ -35,6 +43,15 @@ const APPROVE_TOAST = "Approved. Reply is ready. Nothing sends automatically in 
 const SAVE_APPROVE_TOAST =
   "Saved and approved. Reply is ready. Nothing sends automatically in v1.";
 const REJECT_TOAST = "Rejected. No reply will be sent.";
+
+/**
+ * When outbound send is enabled for the deployment (GH-95), an Approve
+ * actually delivers, so the confirmation says so instead of the v1
+ * "nothing sends" copy. No em dashes.
+ */
+const APPROVE_SEND_TOAST = "Approved. Sending the reply to the customer.";
+const SAVE_APPROVE_SEND_TOAST =
+  "Saved and approved. Sending the reply to the customer.";
 
 /**
  * Two-pane approval card (Console.dc.html approvals spec): header row
@@ -58,6 +75,12 @@ export interface ApprovalCardData {
   assigneeId: string | null;
   /** Assignee display name (payload.assignee_name), or null. */
   assigneeName: string | null;
+  /**
+   * AI assignee suggestion (GH-95), or null. Shown as a one-click chip on
+   * an unassigned item; applying it assigns through the normal audited
+   * path (AI suggests, human confirms).
+   */
+  suggestion: AssigneeSuggestionData | null;
   customer: string;
   initials: string;
   /** Original email subject, or "(no subject)". */
@@ -103,11 +126,18 @@ export function ApprovalCard({
   advanceHref,
   signoffDefault,
   assignees = [],
+  sendEnabled = false,
 }: {
   item: ApprovalCardData;
   canDecide: boolean;
   /** Assignable users for the header picker (GH-79). */
   assignees?: AssignableUser[];
+  /**
+   * Whether outbound send is enabled for this deployment (GH-95). Only
+   * affects confirmation copy: an approval delivers when true, so the
+   * toast says "sending" instead of the v1 "nothing sends" line.
+   */
+  sendEnabled?: boolean;
   /**
    * URL to move selection to after a successful decision (A2, GH-30): the
    * next still-pending row, or the inbox base when none remain. Optional so
@@ -275,6 +305,7 @@ export function ApprovalCard({
           assigneeName={item.assigneeName}
           options={assignees}
           canDecide={canDecide}
+          suggestion={item.suggestion}
         />
         <span className="approval-card-status">
           <StatusChip variant="pending" />
@@ -482,7 +513,7 @@ export function ApprovalCard({
                 formAction={saveApproveAction}
                 onClick={decide(
                   saveAndApproveItemAction,
-                  SAVE_APPROVE_TOAST,
+                  sendEnabled ? SAVE_APPROVE_SEND_TOAST : SAVE_APPROVE_TOAST,
                   true,
                 )}
               >
@@ -518,7 +549,11 @@ export function ApprovalCard({
                 variant="primary"
                 disabled={!armed || !hasDraft || isDeciding}
                 formAction={approveAction}
-                onClick={decide(approveItemAction, APPROVE_TOAST, true)}
+                onClick={decide(
+                  approveItemAction,
+                  sendEnabled ? APPROVE_SEND_TOAST : APPROVE_TOAST,
+                  true,
+                )}
               >
                 Approve
               </Button>

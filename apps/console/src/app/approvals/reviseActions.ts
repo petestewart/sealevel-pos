@@ -18,7 +18,7 @@ import { INSTRUCTION_MAX_LENGTH } from "../../lib/reviseLimits";
 
 /**
  * Redo draft (GH-37) is implemented as a revise instruction, not a
- * re-enqueue of manual.email_draft. A true re-fire of the original job
+ * re-enqueue of the email.received drafting job. A true re-fire of the original job
  * cannot regenerate this item's draft: its jobId (email-draft-<messageId>)
  * is deduped while the record lives in Redis, and even when it runs, its
  * only write surface is create_item with dedupe_key = messageId, which

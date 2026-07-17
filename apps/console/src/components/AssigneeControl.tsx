@@ -7,6 +7,7 @@ import {
   type ApprovalActionState,
 } from "../app/approvals/actions";
 import type { AssignableUser } from "../lib/assignees";
+import type { AssigneeSuggestionData } from "./ApprovalCard";
 
 /**
  * Assignment picker for a pending item's card header (GH-79). A compact
@@ -26,12 +27,15 @@ export function AssigneeControl({
   assigneeName,
   options,
   canDecide,
+  suggestion,
 }: {
   itemId: string;
   assigneeId: string | null;
   assigneeName: string | null;
   options: AssignableUser[];
   canDecide: boolean;
+  /** AI assignee suggestion (GH-95), or null; shown only when unassigned. */
+  suggestion?: AssigneeSuggestionData | null;
 }) {
   const router = useRouter();
   const [state, setState] = useState<ApprovalActionState | null>(null);
@@ -64,6 +68,23 @@ export function AssigneeControl({
   if (assigneeId && !known.has(assigneeId)) {
     known.set(assigneeId, assigneeName ?? assigneeId);
   }
+
+  // Match the suggested owner's display name to an eligible user: exact,
+  // or by first name (routing owners are first names like "Pete"; Clerk
+  // names may be full names). Case-insensitive. No match -> info-only chip.
+  const suggestedUser =
+    suggestion && suggestion.suggestedName
+      ? options.find((u) => {
+          const owner = suggestion.suggestedName.trim().toLowerCase();
+          const name = u.name.trim().toLowerCase();
+          return name === owner || name.split(/\s+/)[0] === owner;
+        })
+      : undefined;
+  // The suggestion is only useful while the item is still unassigned.
+  // (canDecide is already guaranteed here: the component early-returns above
+  // when the viewer cannot decide.)
+  const effectiveAssignee = optimistic ?? assigneeId ?? "";
+  const showSuggestion = effectiveAssignee === "" && Boolean(suggestion);
 
   const submit = (value: string) => {
     if (value === (assigneeId ?? "")) return;
@@ -101,6 +122,40 @@ export function AssigneeControl({
           </option>
         ))}
       </select>
+      {showSuggestion && suggestion ? (
+        suggestedUser ? (
+          <button
+            type="button"
+            className="assignee-suggest"
+            title={
+              suggestion.reason
+                ? `AI suggestion: ${suggestion.reason}`
+                : `Suggested from category: ${suggestion.category}`
+            }
+            disabled={isPending}
+            onClick={() => submit(suggestedUser.id)}
+          >
+            <span className="assignee-suggest-spark" aria-hidden="true">
+              &#9733;
+            </span>
+            Assign {suggestedUser.name}?
+          </button>
+        ) : (
+          <span
+            className="assignee-suggest assignee-suggest--info"
+            title={
+              suggestion.reason
+                ? `AI suggestion: ${suggestion.reason}`
+                : undefined
+            }
+          >
+            <span className="assignee-suggest-spark" aria-hidden="true">
+              &#9733;
+            </span>
+            AI suggests {suggestion.suggestedName}
+          </span>
+        )
+      ) : null}
       {state?.error ? (
         <span className="assignee-error" role="alert">
           {state.error}{" "}

@@ -14,15 +14,73 @@ export {
   DEFAULT_JOB_OPTIONS,
   createQueue,
   enqueue,
+  getSharedQueue,
+  closeSharedQueue,
+  enqueueEmailSend,
+  emailSendJobId,
+  EMAIL_SEND_JOB,
   DEFAULT_WORKER_CONCURRENCY,
   workerConcurrency,
   createQueueWorker,
   registerSchedules,
+  cronSchedulesFromJobs,
+  emailIngestSchedule,
+  EMAIL_INGEST_JOB,
   type ScheduleSpec,
 } from "./queue/index.js";
 export type { Job, Trigger, JobContext, BrainModel } from "./jobs/types.js";
 export { JOBS, jobById } from "./jobs/registry.js";
-export type { InboundEmailPayload } from "./jobs/emailDraft.js";
+export type { InboundEmailPayload, EmailMeta } from "./jobs/emailDraft.js";
+export {
+  dispatchInboundEmail,
+  jobsForInboundEmail,
+  inboundEmailJobId,
+  type DispatchResult,
+} from "./jobs/dispatch.js";
+export {
+  gmailConfigured,
+  gmailSendConfigured,
+  gmailConfig,
+  gmailPollCron,
+  DEFAULT_INGEST_QUERY,
+  DEFAULT_POLL_CRON,
+  type GmailConfig,
+} from "./gmail/config.js";
+export { ingestInbound, type IngestResult } from "./gmail/ingest.js";
+export { sendApprovedReply, type SendResult } from "./gmail/send.js";
+export {
+  gmailClient,
+  GmailClient,
+  GmailSendError,
+  type SentMessage,
+} from "./gmail/client.js";
+export {
+  parseGmailMessage,
+  buildRawReply,
+  extractPlainBody,
+  extractAddress,
+  replySubject,
+  type ParsedInboundEmail,
+  type GmailMessageResource,
+  type ReplyFields,
+} from "./gmail/parse.js";
+export {
+  markDeliveryQueued,
+  claimDeliveryForSend,
+  recordDeliverySent,
+  recordDeliveryFailed,
+  type DeliveryRecord,
+  type DeliveryStatus,
+} from "./db/delivery.js";
+export {
+  ROUTING_REGISTRY,
+  isKnownRoute,
+  routeOwner,
+  sanitizeSuggestion,
+  type RouteDefinition,
+  type AssigneeSuggestion,
+} from "./routing.js";
+export { suggestAssignee } from "./brain/suggestAssignee.js";
 export { reviseJobId } from "./jobs/itemRevise.js";
 export type { ItemRevisePayload } from "./jobs/itemRevise.js";
 export {
