@@ -39,6 +39,7 @@ export {
 } from "./jobs/dispatch.js";
 export {
   gmailConfigured,
+  gmailSendEnabled,
   gmailSendConfigured,
   gmailSendMode,
   gmailConfig,

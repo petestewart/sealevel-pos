@@ -109,7 +109,10 @@ export interface SendResult {
  */
 export async function sendApprovedReply(itemId: string): Promise<SendResult> {
   if (!gmailSendConfigured()) {
-    // The console gates enqueue on the same check, so this is defensive:
+    // Full-creds gate (gmailSendConfigured). The console enqueues on the
+    // flag alone (gmailSendEnabled, no creds), so this worker-side check is
+    // what actually protects a half-configured deployment: if a job is
+    // enqueued while the worker lacks Gmail credentials, degrade cleanly --
     // do not throw (a retry cannot fix config), just report skipped.
     console.warn(
       `[send] item ${itemId}: Gmail send not configured/enabled; skipping`,

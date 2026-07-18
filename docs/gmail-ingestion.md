@@ -45,6 +45,17 @@ silently turning on **outbound delivery**. A human must opt into sending,
 and even then nothing goes out until an operator clicks Approve. No secret
 is ever logged.
 
+**Console vs worker gate (why the console needs no Gmail secrets).** The
+send gate is split so the Gmail refresh token stays off the web-facing
+console. The **console** gates on the flag alone (`gmailSendEnabled`,
+`GMAIL_SEND_ENABLED=true`, no credential check): it only decides whether an
+approval enqueues Job B and whether the decided view shows the "will send"
+copy, both credential-free. The **worker** gates on `gmailSendConfigured`
+(the full four Gmail creds **and** the flag) and re-checks it before it
+actually delivers or drafts, so a job enqueued while the worker lacks creds
+is skipped, never half-sent. Set `GMAIL_SEND_ENABLED` on both services; the
+Gmail credentials only need to live on the worker.
+
 ### Getting a refresh token
 
 The app authenticates as an installed OAuth2 client with a long-lived

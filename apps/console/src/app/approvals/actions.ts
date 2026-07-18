@@ -6,7 +6,7 @@ import {
   enqueueEmailSend,
   getPool,
   getUserSettings,
-  gmailSendConfigured,
+  gmailSendEnabled,
   markDeliveryQueued,
   recordDeliveryFailed,
   reopenItem,
@@ -185,7 +185,11 @@ async function decide(
  * retried") and lets a reopen + re-approve re-queue it.
  */
 async function queueSendIfEnabled(id: string): Promise<void> {
-  if (!gmailSendConfigured()) return;
+  // Flag-only gate (gmailSendEnabled): the console decides whether to enqueue
+  // Job B without needing Gmail credentials. The worker re-checks full creds
+  // (gmailSendConfigured) before it actually sends, so a job enqueued while
+  // the worker is unconfigured degrades to a clean skip.
+  if (!gmailSendEnabled()) return;
   let queued = false;
   try {
     // markDeliveryQueued returns null when the item is not a fresh-approved

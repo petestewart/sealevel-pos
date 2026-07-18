@@ -1,4 +1,4 @@
-import { gmailSendConfigured, gmailSendMode, type Item } from "@ai-manager/core";
+import { gmailSendEnabled, gmailSendMode, type Item } from "@ai-manager/core";
 import { StatusChip } from "./StatusChip";
 import { DeliveryStatus } from "./DeliveryStatus";
 import { ReopenButton } from "./ReopenButton";
@@ -34,7 +34,7 @@ export function DecidedDetail({
       : null;
   const hasReply = data.draftBody.length > 0;
   const delivery = deliveryOf(item);
-  const sendEnabled = gmailSendConfigured();
+  const sendEnabled = gmailSendEnabled();
   const sendMode = gmailSendMode();
 
   return (

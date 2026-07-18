@@ -81,11 +81,42 @@ export function gmailConfigured(): boolean {
 }
 
 /**
+ * The outbound-send gate is deliberately split across the two services so
+ * the Gmail refresh token never has to sit on the web-facing console:
+ *
+ *   gmailSendEnabled()     flag only (GMAIL_SEND_ENABLED=true), NO creds.
+ *                          The CONSOLE gate: it only enqueues Job B and
+ *                          shows the "will send" delivery copy; it never
+ *                          touches Gmail, so it needs no credentials.
+ *   gmailSendConfigured()  full creds AND the flag. The WORKER gate: the
+ *                          send routine re-checks this before it actually
+ *                          delivers or drafts, so a job enqueued while the
+ *                          worker lacks creds degrades cleanly (skipped),
+ *                          never sends half-configured.
+ *
+ * Unset flag, either way: approvals behave exactly as in v1 (decision
+ * recorded, nothing sent).
+ */
+
+/**
+ * True when outbound send is explicitly enabled (GMAIL_SEND_ENABLED=true),
+ * regardless of whether Gmail credentials are present. This is the CONSOLE
+ * gate: it only decides whether an approval enqueues Job B and whether the
+ * decided view shows the "will send" copy, both of which are credential-free.
+ * Keeping the console off the credential check keeps the Gmail refresh token
+ * out of the web-facing service; the worker still verifies full creds
+ * (gmailSendConfigured) before anything is actually sent.
+ */
+export function gmailSendEnabled(): boolean {
+  return process.env["GMAIL_SEND_ENABLED"] === "true";
+}
+
+/**
  * True when Gmail is configured AND outbound send is explicitly enabled
- * (GMAIL_SEND_ENABLED=true). This is the gate the console checks before
- * enqueuing a send on approval and the send routine checks before it
- * delivers: unset, approvals behave exactly as in v1 (decision recorded,
- * nothing sent).
+ * (GMAIL_SEND_ENABLED=true). This is the WORKER gate: the send routine
+ * checks it before it delivers or drafts, so a job enqueued while creds are
+ * missing is skipped rather than half-run. The console uses the flag-only
+ * gmailSendEnabled() instead, so it never needs the Gmail credentials.
  */
 export function gmailSendConfigured(): boolean {
   return gmailConfigured() && process.env["GMAIL_SEND_ENABLED"] === "true";

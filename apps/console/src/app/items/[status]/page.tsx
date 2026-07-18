@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import {
   getItemById,
-  gmailSendConfigured,
+  gmailSendEnabled,
   gmailSendMode,
   type Item,
 } from "@ai-manager/core";
@@ -220,7 +220,7 @@ function Detail({
     return (
       <ApprovalCard
         assignees={assignees}
-        sendEnabled={gmailSendConfigured()}
+        sendEnabled={gmailSendEnabled()}
         sendMode={gmailSendMode()}
         // Keyed by item id so client state (edit mode, typed draft text)
         // resets when the selection changes. Without this, auto-advance

@@ -25,6 +25,7 @@ import {
   gmailConfig,
   gmailConfigured,
   gmailSendConfigured,
+  gmailSendEnabled,
   gmailSendMode,
 } from "./config.js";
 import type { DeliveryStatus } from "../db/delivery.js";
@@ -270,6 +271,45 @@ function testConfigGate(): void {
   assert.equal(DEFAULT_POLL_CRON, "*/2 * * * *");
 }
 
+function testSendEnabledGate(): void {
+  // The console gate (gmailSendEnabled) is the flag ALONE, with NO credential
+  // check -- that is what keeps the Gmail refresh token off the web-facing
+  // console. gmailSendConfigured (the worker gate) additionally requires the
+  // full creds. Drive the flag directly and assert the split.
+  const savedFlag = process.env["GMAIL_SEND_ENABLED"];
+  const hadCreds = gmailConfigured();
+  try {
+    process.env["GMAIL_SEND_ENABLED"] = "true";
+    assert.equal(
+      gmailSendEnabled(),
+      true,
+      "flag true -> console gate open regardless of creds",
+    );
+    // The worker gate still needs creds, so it only opens when creds exist.
+    assert.equal(
+      gmailSendConfigured(),
+      hadCreds,
+      "worker gate tracks creds even with the flag on",
+    );
+
+    process.env["GMAIL_SEND_ENABLED"] = "false";
+    assert.equal(gmailSendEnabled(), false, "flag false -> console gate shut");
+    assert.equal(gmailSendConfigured(), false, "worker gate shut with flag off");
+
+    delete process.env["GMAIL_SEND_ENABLED"];
+    assert.equal(gmailSendEnabled(), false, "flag unset -> console gate shut");
+
+    process.env["GMAIL_SEND_ENABLED"] = "1";
+    assert.equal(gmailSendEnabled(), false, "only exact 'true' opens the gate");
+  } finally {
+    if (savedFlag === undefined) delete process.env["GMAIL_SEND_ENABLED"];
+    else process.env["GMAIL_SEND_ENABLED"] = savedFlag;
+  }
+  console.log(
+    "[smoke] send gate: console flag-only (gmailSendEnabled) vs worker full-creds (gmailSendConfigured)",
+  );
+}
+
 function testSendMode(): void {
   // Gmail send/draft mode (GH-97): default is "send" (backward compatible),
   // only an exact "draft" flips it, and anything else falls back to "send".
@@ -310,6 +350,7 @@ async function main(): Promise<void> {
   testDispatchMatching();
   testRouting();
   testConfigGate();
+  testSendEnabledGate();
   testSendMode();
   console.log("[smoke] gmail: all offline assertions passed");
 }
