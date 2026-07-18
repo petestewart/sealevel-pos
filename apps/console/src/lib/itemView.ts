@@ -11,7 +11,7 @@ import type { ApprovalCardData } from "../components/ApprovalCard";
 import type { DecisionRecord } from "./approvals";
 import {
   formatDateTime,
-  formatTime,
+  formatCardTimestamp,
   formatDecidedAt,
   humanizeType,
   initialsOf,
@@ -162,7 +162,7 @@ export function toCardData(item: Item): ApprovalCardData {
     id: String(item.id),
     intent: str(payload.intent) ?? humanizeType(item.type),
     tags: tagsOf(item),
-    receivedTime: formatTime(item.created_at),
+    receivedTime: formatCardTimestamp(item.created_at),
     receivedFull: formatDateTime(item.created_at),
     assigneeId: item.assignee,
     assigneeName: assigneeNameOf(item),
@@ -293,7 +293,7 @@ export function toRow(item: Item): RowView {
   const time =
     decided && item.resolved_at
       ? formatDecidedAt(item.resolved_at)
-      : formatTime(item.created_at);
+      : formatCardTimestamp(item.created_at);
   return {
     id: String(item.id),
     sender: sender.name,

@@ -86,16 +86,39 @@ export function formatDateTime(at: Date): string {
   return `${date} · ${formatTime(at)}`;
 }
 
+/** YYYY-MM-DD in studio time, for same-day comparisons. */
+function studioDay(at: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: TIME_ZONE,
+  }).format(at);
+}
+
 /** Time only when the moment is today (studio time), else date + time. */
 export function formatDecidedAt(at: Date, now: Date = new Date()): string {
-  const dayOf = (d: Date) =>
-    new Intl.DateTimeFormat("en-CA", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      timeZone: TIME_ZONE,
-    }).format(d);
-  return dayOf(at) === dayOf(now) ? formatTime(at) : formatDateTime(at);
+  return studioDay(at) === studioDay(now) ? formatTime(at) : formatDateTime(at);
+}
+
+/** "7/14" numeric month/day in studio time (no year). */
+function formatShortDate(at: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "numeric",
+    day: "numeric",
+    timeZone: TIME_ZONE,
+  }).format(at);
+}
+
+/**
+ * Compact card/row timestamp: "8:52 AM" when the moment is today (studio
+ * time), else "7/14 8:52 AM". Same-day items stay terse; older items carry a
+ * numeric month/day so a bare time is never mistaken for today's.
+ */
+export function formatCardTimestamp(at: Date, now: Date = new Date()): string {
+  return studioDay(at) === studioDay(now)
+    ? formatTime(at)
+    : `${formatShortDate(at)} ${formatTime(at)}`;
 }
 
 /**
