@@ -31,6 +31,17 @@ export interface SentMessage {
 }
 
 /**
+ * A created Gmail draft (Gmail send/draft mode, GH-97). `id` is the draft
+ * resource id (Drafts folder); `messageId`/`threadId` are the underlying
+ * message's ids when Gmail returns them. Only `id` is guaranteed.
+ */
+export interface CreatedDraft {
+  id: string;
+  messageId?: string;
+  threadId?: string;
+}
+
+/**
  * Error from messages.send that carries whether the outcome is AMBIGUOUS:
  * true when the message MAY already have been accepted by Gmail (a network
  * error/timeout after the request left, or a 2xx whose body we could not
@@ -271,6 +282,96 @@ export class GmailClient {
       throw new GmailSendError("send accepted but returned no message id", true);
     }
     return { id: data.id, threadId: data.threadId };
+  }
+
+  /**
+   * Create a Gmail DRAFT from a base64url RFC822 message (Gmail send/draft
+   * mode, GH-97), threaded when a threadId is given. The draft lands in the
+   * studio's Drafts folder for a human to review and send manually; nothing
+   * reaches the customer until they hit send in Gmail.
+   *
+   * Failures are classified with the SAME ambiguous-vs-not scheme as
+   * sendMessage (GmailSendError.ambiguous), so the caller's no-double-DRAFT
+   * guard mirrors the no-double-send guard exactly: a token-refresh failure
+   * or a non-2xx response means the draft was NOT created (safe to retry); a
+   * network error, or a 2xx whose body we could not read, means it may
+   * already exist (do NOT retry, or a second draft could be parked). Gmail's
+   * drafts.create has no idempotency key, so this classification is the only
+   * lever, just as for send.
+   */
+  async createDraft(
+    rawBase64Url: string,
+    threadId?: string,
+  ): Promise<CreatedDraft> {
+    // Token refresh happens before the request leaves; a failure here is
+    // definitely pre-create, so it is safe to retry.
+    let token: string;
+    try {
+      token = await this.token();
+    } catch (err) {
+      throw new GmailSendError(
+        `token refresh before draft failed: ${err instanceof Error ? err.message : String(err)}`,
+        false,
+      );
+    }
+
+    const message = threadId
+      ? { raw: rawBase64Url, threadId }
+      : { raw: rawBase64Url };
+
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/drafts`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ message }),
+      });
+    } catch (err) {
+      // Network error / timeout: the request may have reached Gmail and a
+      // draft may already exist.
+      throw new GmailSendError(
+        `network error during draft: ${err instanceof Error ? err.message : String(err)}`,
+        true,
+      );
+    }
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      // Gmail returns 2xx only when it created the draft; a non-2xx means it
+      // did not, so retrying is safe.
+      throw new GmailSendError(
+        `HTTP ${res.status}${detail ? ` ${detail.slice(0, 300)}` : ""}`,
+        false,
+      );
+    }
+
+    // A draft resource is { id, message: { id, threadId } }.
+    let data: { id?: string; message?: { id?: string; threadId?: string } };
+    try {
+      data = (await res.json()) as {
+        id?: string;
+        message?: { id?: string; threadId?: string };
+      };
+    } catch {
+      // A 2xx we cannot read: the draft was almost certainly created.
+      throw new GmailSendError(
+        "draft accepted but response body unreadable",
+        true,
+      );
+    }
+    if (!data.id) {
+      // Accepted (2xx) but no draft id: treat as created to avoid a
+      // double-draft on retry.
+      throw new GmailSendError("draft accepted but returned no draft id", true);
+    }
+    return {
+      id: data.id,
+      messageId: data.message?.id,
+      threadId: data.message?.threadId,
+    };
   }
 }
 

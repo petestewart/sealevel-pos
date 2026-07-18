@@ -14,8 +14,10 @@ import type { Item } from "./items.js";
  *    it won the claim; a message already 'sent' or 'sending' returns null
  *    and the worker skips it. This is what makes a BullMQ retry, a double
  *    enqueue, or two workers safe: exactly one claim wins.
- *  - recordDeliverySent / recordDeliveryFailed: the terminal write after
- *    the Gmail call, only meaningful for the claimer.
+ *  - recordDeliverySent / recordDeliveryDrafted / recordDeliveryFailed: the
+ *    terminal write after the Gmail call, only meaningful for the claimer.
+ *    recordDeliveryDrafted is the draft-mode success (Gmail send/draft mode,
+ *    GH-97): the reply was parked as a Gmail draft, not delivered.
  *
  * Every claim/queue guard also re-checks that the item is a resolved,
  * approved, non-archived email_reply, so a rejected or reopened item can
@@ -28,6 +30,7 @@ export type DeliveryStatus =
   | "queued"
   | "sending"
   | "sent"
+  | "drafted"
   | "failed"
   | "skipped";
 
@@ -37,7 +40,13 @@ export interface DeliveryRecord {
   at: string;
   /** Gmail message id of the sent reply (status 'sent'). */
   messageId?: string;
-  /** Recipient the reply went to (status 'sent'). */
+  /**
+   * Gmail draft id parked in the Drafts folder (status 'drafted', Gmail
+   * send/draft mode GH-97). The reply is NOT with the customer: a human
+   * sends it manually from Gmail.
+   */
+  draftId?: string;
+  /** Recipient the reply went to ('sent') or is addressed to ('drafted'). */
   to?: string;
   /** Error summary (status 'failed'). */
   error?: string;
@@ -57,8 +66,16 @@ const APPROVED_EMAIL_REPLY_SQL = `
     OR payload->'decision'->>'action' = 'rejected'
   , false)`;
 
-/** Delivery statuses that must never be overwritten by a new send attempt. */
-const TERMINAL_OR_INFLIGHT = "('sent', 'sending')";
+/**
+ * Delivery statuses that must never be overwritten by a new send attempt:
+ * 'sent' (delivered), 'sending' (in flight, or an ambiguous outcome left
+ * stuck on purpose), and 'drafted' (a Gmail draft is already parked, Gmail
+ * send/draft mode GH-97). Guards both markDeliveryQueued and
+ * claimDeliveryForSend, so a reopen -> re-approve on an item that already
+ * went out OR already has a draft returns null and is never re-processed.
+ * 'drafted' being terminal (like 'sent') is what prevents a double-draft.
+ */
+const TERMINAL_OR_INFLIGHT = "('sent', 'sending', 'drafted')";
 
 function deliveryRecord(rec: Omit<DeliveryRecord, "at">): string {
   const full: DeliveryRecord = { ...rec, at: new Date().toISOString() };
@@ -115,6 +132,26 @@ export async function recordDeliverySent(
     `UPDATE items SET payload = payload || jsonb_build_object('delivery', $2::jsonb)
      WHERE id = $1`,
     [id, deliveryRecord({ status: "sent", messageId: sent.messageId, to: sent.to })],
+  );
+}
+
+/**
+ * Terminal write after a successful DRAFT creation (Gmail send/draft mode,
+ * GH-97, claimer only). The reply was parked as a Gmail draft rather than
+ * delivered: nothing has reached the customer until a human sends it from
+ * Gmail. Records status 'drafted' with the draft id and recipient; like
+ * 'sent' this is a terminal success the claim guard refuses to re-claim,
+ * so a retry never creates a second draft. Deliberately unguarded on status
+ * for the same reason as recordDeliverySent: only the claimer reaches here.
+ */
+export async function recordDeliveryDrafted(
+  id: string,
+  draft: { draftId: string; to: string },
+): Promise<void> {
+  await getPool().query(
+    `UPDATE items SET payload = payload || jsonb_build_object('delivery', $2::jsonb)
+     WHERE id = $1`,
+    [id, deliveryRecord({ status: "drafted", draftId: draft.draftId, to: draft.to })],
   );
 }
 

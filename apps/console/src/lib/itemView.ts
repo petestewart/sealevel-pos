@@ -104,6 +104,7 @@ const DELIVERY_STATUSES: readonly DeliveryStatus[] = [
   "queued",
   "sending",
   "sent",
+  "drafted",
   "failed",
   "skipped",
 ];

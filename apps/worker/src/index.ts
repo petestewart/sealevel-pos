@@ -52,17 +52,24 @@ const processors: Record<string, (job: Job) => Promise<void>> = {
     }
   },
   // Outbound send on approval (GH-95, Job B): deliver one item's approved
-  // reply via Gmail. Enqueued by the console when an operator approves.
+  // reply via Gmail, or park it as a draft when GMAIL_SEND_MODE=draft (Gmail
+  // send/draft mode, GH-97). The same job handles both modes; sendApprovedReply
+  // branches internally. Enqueued by the console when an operator approves.
   [EMAIL_SEND_JOB]: async (job) => {
     const itemId = (job.data as { itemId?: unknown })?.itemId;
     if (typeof itemId !== "string" || itemId.length === 0) {
       throw new Error(`${EMAIL_SEND_JOB}: job ${job.id} has no itemId in data`);
     }
     const result = await sendApprovedReply(itemId);
+    // 'drafted' carries a draftId (no reason); 'skipped' carries a reason.
+    const detail =
+      result.status === "drafted" && result.draftId
+        ? ` (draft ${result.draftId})`
+        : result.reason
+          ? ` (${result.reason})`
+          : "";
     console.log(
-      `[worker] ${EMAIL_SEND_JOB} item ${itemId}: ${result.status}${
-        result.reason ? ` (${result.reason})` : ""
-      }`,
+      `[worker] ${EMAIL_SEND_JOB} item ${itemId}: ${result.status}${detail}`,
     );
   },
   "test-heartbeat": async (job) => {

@@ -2,16 +2,24 @@ import type { DeliveryRecord } from "@ai-manager/core";
 import { formatDateTime } from "../lib/emailDisplay";
 
 /**
- * Delivery status line for a decided reply (GH-56, then GH-95 send).
+ * Delivery status line for a decided reply (GH-56, then GH-95 send, GH-97
+ * draft mode).
  *
  * Until the send pipeline landed, approving only recorded a decision and
  * this line said so. Now an approved reply may actually be delivered
  * (Job B, gated behind the operator's Approve click and the deployment's
  * GMAIL_SEND_ENABLED flag), so this reflects real state from
- * payload.delivery: queued, sending, sent, failed, or skipped. When
+ * payload.delivery: queued, sending, sent, drafted, failed, or skipped. When
  * sending is not enabled the item carries no delivery record and this keeps
  * the honest "approved, not sent" copy so an operator never assumes a reply
  * went out.
+ *
+ * Gmail send/draft mode (GH-97): in draft mode an approval parks a Gmail
+ * draft instead of delivering, so 'drafted' reads "a draft was created ...
+ * send it from your Drafts folder" and the pre-record "preparing" copy says
+ * a draft is being prepared, not that a message is sending. The delivery
+ * record is authoritative for a finished state; sendMode only tunes the
+ * pre-record preparing copy.
  */
 
 function statusLine(delivery: DeliveryRecord): {
@@ -39,6 +47,13 @@ function statusLine(delivery: DeliveryRecord): {
         }.`,
         tone: "sent",
       };
+    case "drafted":
+      // Draft mode (GH-97): the reply is NOT with the customer. A Gmail
+      // draft is parked; a human sends it manually from the Drafts folder.
+      return {
+        copy: "Approved. A draft was created in Gmail; review and send it from your Drafts folder.",
+        tone: "sent",
+      };
     case "failed":
       return {
         copy: `Send failed${
@@ -59,6 +74,7 @@ export function DeliveryStatus({
   hasReply,
   delivery,
   sendEnabled,
+  sendMode = "send",
 }: {
   approved: boolean;
   hasReply: boolean;
@@ -66,6 +82,13 @@ export function DeliveryStatus({
   delivery?: DeliveryRecord | null;
   /** Whether outbound send is enabled for this deployment. */
   sendEnabled?: boolean;
+  /**
+   * The deployment's outbound mode (Gmail send/draft mode, GH-97). Only
+   * tunes the pre-record "preparing" copy (a draft is being prepared vs a
+   * message is sending); a finished delivery record is authoritative and
+   * ignores this. Defaults to "send" so pre-GH-97 callers are unchanged.
+   */
+  sendMode?: "send" | "draft";
 }) {
   // A real delivery record always wins: it is the source of truth.
   if (delivery) {
@@ -86,8 +109,12 @@ export function DeliveryStatus({
   } else if (!hasReply) {
     copy = "Approved, not sent. No draft was generated and nothing has gone to the customer.";
   } else if (sendEnabled) {
-    // Sending is on but no record yet (the send is being enqueued).
-    copy = "Approved. Preparing to send to the customer.";
+    // Sending is on but no record yet (the job is being enqueued). Draft
+    // mode (GH-97) prepares a Gmail draft, not a delivery, so say so.
+    copy =
+      sendMode === "draft"
+        ? "Approved. Preparing a draft in Gmail."
+        : "Approved. Preparing to send to the customer.";
     pending = true;
   } else {
     copy = "Approved, not sent. Sending is disabled for this studio, so this reply has not gone to the customer.";

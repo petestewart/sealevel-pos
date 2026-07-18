@@ -23,6 +23,17 @@
  *   GMAIL_MARK_READ        "false" to leave ingested mail unread
  *   GMAIL_POLL_CRON        poll schedule (default every 2 minutes)
  *   GMAIL_SEND_ENABLED     "true" to actually send approved replies
+ *   GMAIL_SEND_MODE        "send" (deliver, default) or "draft" (park a
+ *                          Gmail draft for a human to send) -- see below
+ *
+ * Gmail send/draft mode (GH-97): when sending is enabled, GMAIL_SEND_MODE
+ * chooses whether an approval DELIVERS the reply ("send", the default and
+ * backward-compatible behavior) or instead parks a Gmail DRAFT in the
+ * studio's Drafts folder ("draft") that a human then sends manually from
+ * Gmail. Draft mode is a safer middle ground before fully automated
+ * sending: nothing reaches the customer until a human hits send in Gmail.
+ * The mode is inert unless GMAIL_SEND_ENABLED is true -- with sending off,
+ * an approval still only records the decision (no send AND no draft).
  *
  * No secret is ever logged. GMAIL_SEND_ENABLED defaults OFF so that
  * standing up the credentials enables INGESTION (safe, read + label only)
@@ -125,4 +136,16 @@ export function gmailConfig(): GmailConfig {
 /** The configured poll cadence, without requiring the full config to be valid. */
 export function gmailPollCron(): string {
   return process.env["GMAIL_POLL_CRON"]?.trim() || DEFAULT_POLL_CRON;
+}
+
+/**
+ * The effective outbound mode (Gmail send/draft mode, GH-97): "draft" only
+ * when GMAIL_SEND_MODE is exactly "draft", otherwise "send". Anything unset,
+ * empty, or unrecognized falls back to "send" so the default (and every
+ * pre-GH-97 deployment) behaves exactly as before -- an approval delivers
+ * the reply. This gate is only consulted once GMAIL_SEND_ENABLED is on
+ * (gmailSendConfigured); with sending off nothing runs regardless of mode.
+ */
+export function gmailSendMode(): "send" | "draft" {
+  return process.env["GMAIL_SEND_MODE"] === "draft" ? "draft" : "send";
 }

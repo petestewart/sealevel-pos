@@ -54,6 +54,17 @@ const SAVE_APPROVE_SEND_TOAST =
   "Saved and approved. Sending the reply to the customer.";
 
 /**
+ * When send is enabled in DRAFT mode (Gmail send/draft mode, GH-97), an
+ * Approve parks a Gmail draft rather than delivering, so the confirmation
+ * says a draft was created (to send manually from Gmail), never "sending".
+ * Nothing reaches the customer until a human hits send in Gmail. No em dashes.
+ */
+const APPROVE_DRAFT_TOAST =
+  "Approved. A draft was created in Gmail; send it from your Drafts folder.";
+const SAVE_APPROVE_DRAFT_TOAST =
+  "Saved and approved. A draft was created in Gmail; send it from your Drafts folder.";
+
+/**
  * Two-pane approval card (Console.dc.html approvals spec): header row
  * (mono id, intent chip, time, assignee, Pending chip), original message
  * left, AI draft reply right on the --draft background, footer actions.
@@ -127,6 +138,7 @@ export function ApprovalCard({
   signoffDefault,
   assignees = [],
   sendEnabled = false,
+  sendMode = "send",
 }: {
   item: ApprovalCardData;
   canDecide: boolean;
@@ -138,6 +150,13 @@ export function ApprovalCard({
    * toast says "sending" instead of the v1 "nothing sends" line.
    */
   sendEnabled?: boolean;
+  /**
+   * The deployment's outbound mode when send is enabled (Gmail send/draft
+   * mode, GH-97): "send" delivers, "draft" parks a Gmail draft. Only tunes
+   * the approve/save-approve toast copy (a draft was created vs sending).
+   * Ignored when sendEnabled is false. Defaults to "send".
+   */
+  sendMode?: "send" | "draft";
   /**
    * URL to move selection to after a successful decision (A2, GH-30): the
    * next still-pending row, or the inbox base when none remain. Optional so
@@ -178,6 +197,21 @@ export function ApprovalCard({
   // No draft generated (empty or missing draft_body): show a fallback in
   // the draft pane and keep approval blocked until edits produce a body.
   const hasDraft = item.draftBody.length > 0;
+
+  // Decision-confirmation copy (GH-30, GH-95, GH-97). Three cases: sending
+  // off keeps the v1 "nothing sends" line; send mode says "sending"; draft
+  // mode (GH-97) says a Gmail draft was created (to send manually), never
+  // "sending". sendMode is only consulted when sendEnabled is true.
+  const approveToast = sendEnabled
+    ? sendMode === "draft"
+      ? APPROVE_DRAFT_TOAST
+      : APPROVE_SEND_TOAST
+    : APPROVE_TOAST;
+  const saveApproveToast = sendEnabled
+    ? sendMode === "draft"
+      ? SAVE_APPROVE_DRAFT_TOAST
+      : SAVE_APPROVE_SEND_TOAST
+    : SAVE_APPROVE_TOAST;
 
   // Double-click immunity (GH-40): when the footer swaps button sets, the
   // incoming buttons render at the same coordinates, so the second click
@@ -513,7 +547,7 @@ export function ApprovalCard({
                 formAction={saveApproveAction}
                 onClick={decide(
                   saveAndApproveItemAction,
-                  sendEnabled ? SAVE_APPROVE_SEND_TOAST : SAVE_APPROVE_TOAST,
+                  saveApproveToast,
                   true,
                 )}
               >
@@ -551,7 +585,7 @@ export function ApprovalCard({
                 formAction={approveAction}
                 onClick={decide(
                   approveItemAction,
-                  sendEnabled ? APPROVE_SEND_TOAST : APPROVE_TOAST,
+                  approveToast,
                   true,
                 )}
               >

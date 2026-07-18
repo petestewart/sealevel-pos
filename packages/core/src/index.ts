@@ -40,6 +40,7 @@ export {
 export {
   gmailConfigured,
   gmailSendConfigured,
+  gmailSendMode,
   gmailConfig,
   gmailPollCron,
   DEFAULT_INGEST_QUERY,
@@ -53,6 +54,7 @@ export {
   GmailClient,
   GmailSendError,
   type SentMessage,
+  type CreatedDraft,
 } from "./gmail/client.js";
 export {
   parseGmailMessage,
@@ -68,6 +70,7 @@ export {
   markDeliveryQueued,
   claimDeliveryForSend,
   recordDeliverySent,
+  recordDeliveryDrafted,
   recordDeliveryFailed,
   type DeliveryRecord,
   type DeliveryStatus,

@@ -25,7 +25,9 @@ import {
   gmailConfig,
   gmailConfigured,
   gmailSendConfigured,
+  gmailSendMode,
 } from "./config.js";
+import type { DeliveryStatus } from "../db/delivery.js";
 
 /**
  * Gmail layer smoke test (GH-95). Everything here is pure/offline: message
@@ -268,6 +270,34 @@ function testConfigGate(): void {
   assert.equal(DEFAULT_POLL_CRON, "*/2 * * * *");
 }
 
+function testSendMode(): void {
+  // Gmail send/draft mode (GH-97): default is "send" (backward compatible),
+  // only an exact "draft" flips it, and anything else falls back to "send".
+  const saved = process.env["GMAIL_SEND_MODE"];
+  try {
+    delete process.env["GMAIL_SEND_MODE"];
+    assert.equal(gmailSendMode(), "send", "unset defaults to send");
+    process.env["GMAIL_SEND_MODE"] = "";
+    assert.equal(gmailSendMode(), "send", "empty defaults to send");
+    process.env["GMAIL_SEND_MODE"] = "draft";
+    assert.equal(gmailSendMode(), "draft", "'draft' is respected");
+    process.env["GMAIL_SEND_MODE"] = "SEND";
+    assert.equal(gmailSendMode(), "send", "unrecognized falls back to send");
+    process.env["GMAIL_SEND_MODE"] = "nonsense";
+    assert.equal(gmailSendMode(), "send", "unrecognized falls back to send");
+  } finally {
+    if (saved === undefined) delete process.env["GMAIL_SEND_MODE"];
+    else process.env["GMAIL_SEND_MODE"] = saved;
+  }
+
+  // The 'drafted' delivery status (GH-97) is part of the DeliveryStatus
+  // union: this assignment fails typecheck if it is ever dropped, so the
+  // draft-mode terminal state can never silently disappear.
+  const drafted: DeliveryStatus = "drafted";
+  assert.equal(drafted, "drafted", "delivery status list includes 'drafted'");
+  console.log("[smoke] send mode: default send, 'draft' respected, 'drafted' status present");
+}
+
 async function main(): Promise<void> {
   loadEnv();
   testParseMultipart();
@@ -280,6 +310,7 @@ async function main(): Promise<void> {
   testDispatchMatching();
   testRouting();
   testConfigGate();
+  testSendMode();
   console.log("[smoke] gmail: all offline assertions passed");
 }
 

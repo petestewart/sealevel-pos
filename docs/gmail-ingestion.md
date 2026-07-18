@@ -37,6 +37,7 @@ Optional (safe defaults):
 | `GMAIL_MARK_READ` | `true` | `false` leaves ingested mail unread |
 | `GMAIL_POLL_CRON` | `*/2 * * * *` | poll cadence |
 | `GMAIL_SEND_ENABLED` | unset (off) | `true` to actually send approved replies |
+| `GMAIL_SEND_MODE` | `send` | `send` delivers on approval; `draft` parks a Gmail draft to send manually (GH-97). Inert unless send is enabled |
 
 `GMAIL_SEND_ENABLED` defaults **off** on purpose: standing up the
 credentials enables **ingestion** (read + label only, safe) without
@@ -137,6 +138,40 @@ Test the poll by hand after provisioning: `npm run ingest:once` (from
 The decided view's delivery line (`DeliveryStatus`) reflects real state:
 queued, sending, sent (green, with recipient + time), or failed (red). With
 sending disabled it keeps the honest "approved, not sent" copy.
+
+### Send vs draft mode (GH-97)
+
+When sending is enabled, `GMAIL_SEND_MODE` chooses what an approval does:
+
+- **`send`** (default, backward compatible): the reply is delivered to the
+  customer exactly as above.
+- **`draft`**: instead of sending, the worker creates a **Gmail draft** in
+  the studio's Drafts folder (`drafts.create`, threaded to the original) and
+  records `payload.delivery = {status:"drafted", draftId, to}`. Nothing
+  reaches the customer until a human opens Gmail and hits send. This is a
+  safer middle ground before fully automated sending.
+
+The mode branches inside `sendApprovedReply` **only after** the atomic claim
+and the reply build, so every guarantee is identical across modes:
+
+- The same `claimDeliveryForSend` claim gates both, so a retry or double
+  enqueue can never act twice.
+- `drafted`, like `sent`, is a terminal success in the never-re-claim set
+  (`TERMINAL_OR_INFLIGHT`), so a reopen -> re-approve never parks a second
+  draft.
+- `createDraft` classifies failures with the **same** ambiguous-vs-not
+  scheme as `sendMessage`. A definitely-not-created failure (non-2xx, or a
+  pre-request failure) reverts to `failed` and retries; an **ambiguous**
+  failure (network timeout, or a 2xx whose body could not be read, so a
+  draft may already exist) leaves the item `sending` and is **not** retried.
+  `drafts.create` has no idempotency key, so this is the only lever against a
+  duplicate draft, mirroring the no-double-send guarantee exactly.
+
+The mode is inert unless `GMAIL_SEND_ENABLED=true`: with sending off an
+approval still only records the decision (no send **and** no draft). Set
+`GMAIL_SEND_MODE` on **both** the worker (it does the drafting) and the
+console (its approve toast and delivery line say "a draft was created"
+instead of "sending").
 
 ### Why this respects "nothing auto-sends in v1"
 
