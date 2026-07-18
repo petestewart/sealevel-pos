@@ -6,6 +6,11 @@ import {
   truncateForPrompt,
   type UsageTotals,
 } from "../brain/budget.js";
+import {
+  bookingConfigured,
+  bookingLinkGuidance,
+  bookingUrl,
+} from "../booking.js";
 import { classifyEmailTags } from "../brain/classify.js";
 import { suggestAssignee } from "../brain/suggestAssignee.js";
 import { recordItemUsage } from "../db/itemDrafts.js";
@@ -209,6 +214,14 @@ export const emailDraft: Job = {
     // Owner-set studio info (GH-71): customer-safe facts (booking link,
     // policies), injected right after the rules block, same lifecycle.
     const studioInfo = await loadStudioInfoBlock();
+    // Booking link rule: when SEALEVEL_BOOKING_URL is configured, tell the
+    // model to close a class-attendance reply with a booking invitation and
+    // the EXACT configured link (booking.ts). Gated exactly like the KB
+    // guidance: unset means no rule and no behavior change. The URL is
+    // interpolated verbatim so the model copies it rather than inventing one.
+    const booking = bookingConfigured()
+      ? bookingLinkGuidance(bookingUrl()!)
+      : "";
     // Triage sonnet calls (GH-65 tags, GH-95 assignee suggestion): separate
     // small calls before the opus drafting loop, run concurrently. Both are
     // best-effort ([]/null on failure) and the draft proceeds identically
@@ -227,7 +240,7 @@ export const emailDraft: Job = {
     }
     return `
 An inbound email to the studio needs a reply. Draft one; do not send anything.
-${kbConfigured() ? KB_PROMPT_GUIDANCE : ""}${rules}${studioInfo}
+${kbConfigured() ? KB_PROMPT_GUIDANCE : ""}${booking}${rules}${studioInfo}
 Inbound email:
 ---
 ${renderEmail(payload)}

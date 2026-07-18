@@ -6,6 +6,11 @@
 export const CORE_PACKAGE = "@ai-manager/core";
 
 export { loadEnv, requireEnv } from "./env.js";
+export {
+  bookingUrl,
+  bookingConfigured,
+  bookingLinkGuidance,
+} from "./booking.js";
 export { getPool, closePool } from "./db/client.js";
 export { runMigrations } from "./db/migrate.js";
 export { createRedis } from "./redis.js";

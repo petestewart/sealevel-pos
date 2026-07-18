@@ -16,7 +16,8 @@
     "smoke:novu": "npm run build && node dist/notifications/smoke.js",
     "smoke:revise": "npm run build && node dist/jobs/itemRevise.smoke.js",
     "smoke:items": "npm run build && node dist/db/smokeItems.js",
-    "smoke:gmail": "npm run build && node dist/gmail/gmail.smoke.js"
+    "smoke:gmail": "npm run build && node dist/gmail/gmail.smoke.js",
+    "smoke:booking": "npm run build && node dist/booking.smoke.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
