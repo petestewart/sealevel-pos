@@ -128,6 +128,72 @@ export function extractPlainBody(payload: GmailMessagePart | undefined): string 
 }
 
 /**
+ * Strip quoted reply history from an inbound body, returning ONLY the new
+ * message the sender just wrote. A customer replying in-thread ("what times
+ * are the weekend hot 26 classes?") carries the entire prior conversation
+ * quoted beneath their new line; feeding that whole blob to the drafting
+ * model made it answer the OLD quoted questions too. This cuts everything
+ * from the first quote boundary onward.
+ *
+ * Boundaries recognized (the earliest one in the body wins):
+ *  - an attribution line like `On <date...>, <name> wrote:` (Gmail/Apple
+ *    Mail), whose "wrote:" may wrap across a line or two;
+ *  - a run of lines beginning with ">";
+ *  - an `-----Original Message-----` delimiter (Outlook);
+ *  - a quoted header block: a `From:` line immediately followed by another
+ *    quoted header (Sent:/Date:/To:/Subject:), so an ordinary sentence like
+ *    "From: my point of view" is never mistaken for one.
+ *
+ * Conservative by design: this is used ONLY to shape what the model reads
+ * (emailDraft.ts), never to alter the stored/threaded body (extractPlainBody
+ * still returns the full body). If stripping would leave nothing (for
+ * example a body that is entirely a top-quote), the ORIGINAL body is
+ * returned so the model is never handed an empty message.
+ */
+export function stripQuotedReply(body: string): string {
+  if (!body) return body;
+  const lines = body.split(/\r?\n/);
+
+  let cut = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i]!.trimStart();
+
+    // A run of quoted lines (clients prefix quoted text with ">").
+    if (t.startsWith(">")) {
+      cut = i;
+      break;
+    }
+    // Outlook "-----Original Message-----" delimiter.
+    if (/^-{2,}\s*original message\s*-{2,}/i.test(t)) {
+      cut = i;
+      break;
+    }
+    // Attribution line: "On <date>, <name> wrote:". The "wrote:" may wrap
+    // onto the next line or two, so inspect a small window.
+    if (/^on\b/i.test(t)) {
+      const window = lines.slice(i, i + 3).join(" ");
+      if (/\bwrote:/i.test(window)) {
+        cut = i;
+        break;
+      }
+    }
+    // Quoted header block: a "From:" line followed within a few lines by
+    // another quoted header line.
+    if (/^from:\s/i.test(t)) {
+      const nextFew = lines.slice(i + 1, i + 5);
+      if (nextFew.some((l) => /^\s*(sent|date|to|subject):\s/i.test(l))) {
+        cut = i;
+        break;
+      }
+    }
+  }
+
+  if (cut === -1) return body;
+  const kept = lines.slice(0, cut).join("\n").trimEnd();
+  return kept.trim().length > 0 ? kept : body;
+}
+
+/**
  * Parse a Gmail message resource into a ParsedInboundEmail. Total: missing
  * fields degrade to undefined, and `messageId` always resolves to a
  * non-empty stable key (Message-ID header, else Gmail id, else a synthetic

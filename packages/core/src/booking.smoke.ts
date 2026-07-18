@@ -56,8 +56,8 @@ function main(): void {
     );
     assert.match(
       guidance,
-      /invitation to book/i,
-      "guidance invites the customer to book",
+      /invitation for the customer to book their own spot/i,
+      "guidance invites the customer to book their OWN spot",
     );
     assert.match(
       guidance,
@@ -68,6 +68,29 @@ function main(): void {
       guidance,
       /not about attending a class/i,
       "guidance scopes the rule to class-attendance replies",
+    );
+    // Fix B: booking is self-service. The guidance must frame it that way,
+    // forbid booking on the customer's behalf, and redirect a "book me"
+    // request to the self-serve link.
+    assert.match(
+      guidance,
+      /self-service/i,
+      "guidance states booking is self-service",
+    );
+    assert.match(
+      guidance,
+      /Never say or imply that the studio will book/i,
+      "guidance forbids claiming the studio books for the customer",
+    );
+    assert.match(
+      guidance,
+      /never offer to get them booked in/i,
+      "guidance forbids offering to get the customer booked in",
+    );
+    assert.match(
+      guidance,
+      /asks us to book a class for them/i,
+      "guidance redirects a 'book me' request to self-serve",
     );
     // The invitation text becomes outgoing customer copy: no em dashes.
     assert.ok(!guidance.includes("—"), "guidance is em-dash-free");

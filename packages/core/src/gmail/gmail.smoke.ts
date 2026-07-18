@@ -17,6 +17,7 @@ import {
   extractPlainBody,
   parseGmailMessage,
   replySubject,
+  stripQuotedReply,
   type GmailMessageResource,
 } from "./parse.js";
 import {
@@ -193,6 +194,80 @@ function testHeaderInjection(): void {
   console.log("[smoke] header injection: CRLF in to/subject/threading is neutralized");
 }
 
+function testStripQuotedReply(): void {
+  // The real failure: a new question followed by an attribution line and the
+  // quoted prior thread. Only the new question must survive.
+  const withAttribution = [
+    "what times do you have hot 26 classes on weekends?",
+    "",
+    "On Fri, Jul 18, 2026 at 3:00 PM Pete Stewart <pete@example.com> wrote:",
+    "> when is your next vinyasa class",
+    "> how much to drop in?",
+  ].join("\n");
+  assert.equal(
+    stripQuotedReply(withAttribution),
+    "what times do you have hot 26 classes on weekends?",
+    "attribution line and everything after it is removed",
+  );
+
+  // Leading ">" quoted lines beneath the new message are cut.
+  const withLeadingQuote = [
+    "Sounds good, see you then.",
+    "> earlier they wrote this",
+    "> and this",
+  ].join("\n");
+  assert.equal(
+    stripQuotedReply(withLeadingQuote),
+    "Sounds good, see you then.",
+    "run of leading > lines is removed",
+  );
+
+  // An Outlook-style "-----Original Message-----" block is cut.
+  const withOriginal = [
+    "Can I still use my intro offer?",
+    "-----Original Message-----",
+    "From: studio@sealevel.example",
+    "Subject: welcome",
+  ].join("\n");
+  assert.equal(
+    stripQuotedReply(withOriginal),
+    "Can I still use my intro offer?",
+    "Original Message delimiter and after is removed",
+  );
+
+  // A quoted Gmail header block (From:/Sent:/To:) starts the quote.
+  const withHeaderBlock = [
+    "Do you have parking?",
+    "",
+    "From: Pete Stewart <pete@example.com>",
+    "Sent: Friday, July 18, 2026 3:00 PM",
+    "To: studio@sealevel.example",
+    "Subject: hi",
+  ].join("\n");
+  assert.equal(
+    stripQuotedReply(withHeaderBlock),
+    "Do you have parking?",
+    "quoted From:/Sent:/To: header block starts the quote",
+  );
+
+  // A message with no quotes passes through unchanged.
+  const noQuote = "Just wondering what your weekend hours are. Thanks!";
+  assert.equal(stripQuotedReply(noQuote), noQuote, "no-quote body is unchanged");
+
+  // Fallback: an all-quoted body (nothing new) returns the ORIGINAL so the
+  // model is never handed an empty message.
+  const allQuoted = ["> only quoted content", "> nothing new here"].join("\n");
+  assert.equal(
+    stripQuotedReply(allQuoted),
+    allQuoted,
+    "all-quoted body falls back to the original",
+  );
+
+  console.log(
+    "[smoke] stripQuotedReply: cuts attribution/>/Original Message/header block, passes clean bodies, falls back when all-quoted",
+  );
+}
+
 function testHelpers(): void {
   assert.equal(extractAddress("Jordan <jordan@example.com>"), "jordan@example.com");
   assert.equal(extractAddress("plain@example.com"), "plain@example.com");
@@ -346,6 +421,7 @@ async function main(): Promise<void> {
   testBuildRawReply();
   testUnicodeSubjectAndBody();
   testHeaderInjection();
+  testStripQuotedReply();
   testHelpers();
   testDispatchMatching();
   testRouting();

@@ -17,6 +17,7 @@ import { recordItemUsage } from "../db/itemDrafts.js";
 import { loadRulesBlock } from "../db/settings.js";
 import { loadStudioInfoBlock } from "../db/studioInfo.js";
 import type { ItemTag } from "../tags.js";
+import { stripQuotedReply } from "../gmail/parse.js";
 import { createItemTool } from "../tools/registry.js";
 import {
   createKbToolset,
@@ -100,8 +101,11 @@ function renderEmail(payload: InboundEmailPayload): string {
     "",
     // Budgeted (GH-62): an arbitrarily long inbound body is re-billed on
     // every tool-loop iteration; a real customer email never trips this.
+    // Quoted reply history is stripped here (stripQuotedReply) so the model
+    // only answers the NEW message, not questions from the quoted thread
+    // beneath it. The stored/threaded body is untouched (parse.ts).
     truncateForPrompt(
-      payload.body ?? "(empty body)",
+      stripQuotedReply(payload.body ?? "(empty body)"),
       EMAIL_BODY_MAX_CHARS,
       "inbound email body",
     ),
