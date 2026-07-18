@@ -10,6 +10,7 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "eval": "npm run eval --workspace @ai-manager/core --",
     "clean": "npm run clean --workspaces --if-present"
   },
   "engines": {

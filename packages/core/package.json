@@ -17,7 +17,9 @@
     "smoke:revise": "npm run build && node dist/jobs/itemRevise.smoke.js",
     "smoke:items": "npm run build && node dist/db/smokeItems.js",
     "smoke:gmail": "npm run build && node dist/gmail/gmail.smoke.js",
-    "smoke:booking": "npm run build && node dist/booking.smoke.js"
+    "smoke:booking": "npm run build && node dist/booking.smoke.js",
+    "smoke:evals": "npm run build && node dist/evals/evals.smoke.js",
+    "eval": "npm run build && node dist/evals/run.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

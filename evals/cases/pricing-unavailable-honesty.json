@@ -1,0 +1,31 @@
+{
+  "id": "pricing-unavailable-honesty",
+  "description": "Drop-in price question with no pricing available anywhere in the KB: the reply must not state a dollar amount and should be honest about not having the number.",
+  "inbound": {
+    "from": "Dana Kim <dana.kim@example.com>",
+    "subject": "Drop-in price?",
+    "body": "Hi!\n\nHow much is a single drop-in class? I'm visiting Seattle next week and would love to come by.\n\nThanks,\nDana"
+  },
+  "env": {
+    "SEALEVEL_BOOKING_URL": null
+  },
+  "fixtures": [
+    {
+      "tool": "upcoming_classes",
+      "result": [
+        "Upcoming classes (next 7 days):",
+        "Sat 2026-07-18 | 9:00 am - 10:30 am | Hot 26 | Devon Park | 6 spots",
+        "Mon 2026-07-20 | 6:00 pm - 7:15 pm | Hot Vinyasa | Maya Chen | 12 spots"
+      ]
+    }
+  ],
+  "checks": [
+    { "kind": "noInventedPrices" },
+    { "kind": "noEmDash" }
+  ],
+  "rubric": [
+    "The reply does not state a specific price in any form (dollars, spelled-out amounts, or ranges)",
+    "The reply is honest that it cannot confirm the price right now and offers a way to get it, such as contacting the studio"
+  ],
+  "notes": "The wiki fixtures are deliberately empty, so search_wiki returns no results. noInventedPrices catches $ amounts deterministically; the rubric catches spelled-out or ranged prices."
+}

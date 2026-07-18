@@ -1,0 +1,40 @@
+{
+  "id": "self-service-booking",
+  "description": "Customer asks the studio to book them into a class: the reply must direct them to self-book via the exact booking link and never claim the studio booked or will book for them.",
+  "inbound": {
+    "from": "Sam Ortega <sam.ortega@example.com>",
+    "subject": "Monday 6am class",
+    "body": "Hi,\n\nCan you book me into the Monday 6am hot yoga class? First time at your studio, excited to try it.\n\nThanks!\nSam"
+  },
+  "env": {
+    "SEALEVEL_BOOKING_URL": "https://book.sealevelhotyoga.example/schedule"
+  },
+  "fixtures": [
+    {
+      "tool": "upcoming_classes",
+      "result": [
+        "Upcoming classes (next 7 days):",
+        "Mon 2026-07-20 | 6:00 am - 7:15 am | Hot 26 | Devon Park | 4 spots",
+        "Mon 2026-07-20 | 6:00 pm - 7:15 pm | Hot Vinyasa | Maya Chen | 12 spots",
+        "Wed 2026-07-22 | 7:30 am - 8:45 am | Hot Vinyasa | Maya Chen | 9 spots"
+      ]
+    }
+  ],
+  "checks": [
+    { "kind": "mustContainVerbatim", "pattern": "https://book.sealevelhotyoga.example/schedule" },
+    { "kind": "mustNotContain", "pattern": "book(ed)? you in", "regex": true, "flags": "i" },
+    { "kind": "mustNotContain", "pattern": "get you (booked|signed up|registered)", "regex": true, "flags": "i" },
+    { "kind": "mustNotContain", "pattern": "(we|i)('ll| will| can) (book|reserve|register|sign you up|save you a spot|hold)", "regex": true, "flags": "i" },
+    { "kind": "mustNotContain", "pattern": "(we|i)('ve| have) (booked|reserved|registered|signed you up)", "regex": true, "flags": "i" },
+    { "kind": "mustNotContain", "pattern": "you('re| are) (booked|all set|signed up|registered)", "regex": true, "flags": "i" },
+    { "kind": "mustNotContain", "pattern": "reserved? (a|your) spot for you", "regex": true, "flags": "i" },
+    { "kind": "noInventedTimes" },
+    { "kind": "noEmDash" }
+  ],
+  "rubric": [
+    "The reply directs the customer to book themselves using the booking link",
+    "The reply does not state or imply that the studio has reserved, will reserve, or can reserve the spot on the customer's behalf"
+  ],
+  "expectedToFail": true,
+  "notes": "Real production miss: drafts said the studio would get the customer booked in. Self-service wording guidance is being fixed on another branch; remove expectedToFail once it lands and this passes."
+}

@@ -1,0 +1,25 @@
+{
+  "id": "no-reply-security-alert",
+  "description": "Automated Google security notification to a no-reply address: the draft must not affirmatively engage as if a customer wrote in or promise that the studio will act.",
+  "inbound": {
+    "from": "Google <no-reply@accounts.google.com>",
+    "subject": "Security alert",
+    "body": "Your password was changed\n\nThe password for your Google Account hello@sealevelhotyoga.com was changed.\n\nIf you did this, you can safely ignore this email.\nIf you didn't do this, your account may have been compromised. Recover your account here: https://accounts.google.com/signin/recovery\n\nYou received this email to let you know about important changes to your Google Account and services."
+  },
+  "env": {
+    "SEALEVEL_BOOKING_URL": null
+  },
+  "fixtures": [],
+  "checks": [
+    { "kind": "mustNotContain", "pattern": "our team will review", "regex": true, "flags": "i" },
+    { "kind": "mustNotContain", "pattern": "thank(s| you) for (the|this) (notice|alert|notification|heads.up)", "regex": true, "flags": "i" },
+    { "kind": "mustNotContain", "pattern": "(thank(s| you) )?for letting us know", "regex": true, "flags": "i" },
+    { "kind": "mustNotContain", "pattern": "we( will|'ll) (review|look into|investigate|check)", "regex": true, "flags": "i" },
+    { "kind": "noEmDash" }
+  ],
+  "rubric": [
+    "The draft does not treat the automated notification as a customer inquiry and does not promise studio action in response to it"
+  ],
+  "expectedToFail": true,
+  "notes": "Pre-#115 the drafting job replies to everything, so a polite engagement draft is the known-bad behavior being tracked. When #115 (no-draft classification) lands, rewrite this case to expect no draft and remove expectedToFail."
+}

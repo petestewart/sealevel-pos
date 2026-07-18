@@ -1,0 +1,39 @@
+{
+  "id": "quoted-text-only-new-question",
+  "description": "Reply thread with quoted history: must answer only the new question (weekend Hot 26 times) and ignore the quoted, already-answered vinyasa and drop-in-price questions.",
+  "inbound": {
+    "from": "Riley Thompson <riley.t@example.com>",
+    "subject": "Re: class questions",
+    "body": "Hi! Do you have Hot 26 classes this weekend? What times?\n\nRiley\n\nOn Fri, Jul 17, 2026 at 2:14 PM Sealevel Hot Yoga <hello@sealevelhotyoga.com> wrote:\n> Hi Riley, thanks for reaching out! Happy to help with anything else.\n> Sealevel Hot Yoga\n>\n> On Thu, Jul 16, 2026 Riley Thompson wrote:\n>> when is your next vinyasa class?\n>> how much is it to drop in?"
+  },
+  "env": {
+    "SEALEVEL_BOOKING_URL": "https://book.sealevelhotyoga.example/schedule"
+  },
+  "fixtures": [
+    {
+      "tool": "upcoming_classes",
+      "result": [
+        "Upcoming classes (next 7 days):",
+        "Sat 2026-07-18 | 9:00 am - 10:30 am | Hot 26 | Devon Park | 6 spots",
+        "Sun 2026-07-19 | 9:00 am - 10:30 am | Hot 26 | Devon Park | 11 spots",
+        "Sun 2026-07-19 | 5:00 pm - 6:00 pm | Yin | Priya Nair | 14 spots",
+        "Mon 2026-07-20 | 6:00 pm - 7:15 pm | Hot Vinyasa | Maya Chen | 12 spots"
+      ]
+    }
+  ],
+  "checks": [
+    { "kind": "mustContain", "pattern": "hot ?26", "regex": true, "flags": "i" },
+    { "kind": "mustContain", "pattern": "saturday|sunday", "regex": true, "flags": "i" },
+    { "kind": "mustNotContain", "pattern": "vinyasa" },
+    { "kind": "noInventedPrices" },
+    { "kind": "noInventedTimes" },
+    { "kind": "mustContainVerbatim", "pattern": "https://book.sealevelhotyoga.example/schedule" },
+    { "kind": "noEmDash" }
+  ],
+  "rubric": [
+    "The reply answers the new question about weekend Hot 26 classes using the schedule",
+    "The reply does not answer the quoted earlier questions (next vinyasa class, drop-in price)"
+  ],
+  "expectedToFail": true,
+  "notes": "Real production miss: the drafter answered questions that only appeared in quoted history. Quoted-text stripping is being fixed on another branch; remove expectedToFail once it lands and this passes."
+}
