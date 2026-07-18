@@ -48,6 +48,33 @@ Four stages, each with a hard boundary between them:
 3. **Approve.** A human reviews the proposal in the console approval inbox, alongside email replies. They can approve, edit then approve, or reject. The decision is recorded with the same audit shape as email decisions (`DecisionRecord`: action, by {id, name}, at, edited) via the same guarded single-UPDATE pattern in `decideItem`, so races and double-decisions are impossible.
 4. **Write.** Approval enqueues a Job B (the same durable two-event state machine used for email send on approval): a worker job that calls a new gated `write_wiki_page` tool on the MCP server, authenticated as a distinct KB-writer identity. Only that identity has the write tool registered. The write commits the change and records provenance.
 
+## What belongs in the wiki
+
+The write-back path is only as good as its notion of what the wiki is for. A fact belongs in the wiki only if ALL four criteria hold:
+
+1. **General.** Useful across many future conversations, not tied to one customer or one thread.
+2. **Durable.** Changes rarely; when it does change, a human should consciously update it (via this design's approve-then-write path or a repo edit).
+3. **Canonical.** There must be exactly one authoritative version: policies, procedures, standing studio facts.
+4. **Not owned by a live system.** Mindbody owns the schedule and pricing (served live via the `upcoming_classes` and `class_pricing` tools); the website owns the booking page. Facts a live system already answers are pulled live at draft time, never copied into the wiki, where they would go stale and disagree.
+
+Passes: the hot-room policy, what to bring, parking, the cancellation policy, mat rental. Fails: customer-specific facts (a refund promised to one person), time-bound notices unless given an explicit expiry ("closed this Tuesday"), and anything Mindbody already answers (class times, teachers, current prices).
+
+### Knowledge routing rule
+
+Every candidate fact routes to exactly one home:
+
+| Kind of knowledge | Home | Path |
+| --- | --- | --- |
+| General + durable + canonical | Wiki | Human-gated write-back (this design, epic GH-114) |
+| Customer-specific / episodic (what we told this sender before, prior commitments, ongoing threads) | The mailbox itself | Retrieved at draft time via the sender-scoped `search_email_history` tool (GH-118), never written to the wiki |
+| Live-system-owned (schedule, prices) | Mindbody | `upcoming_classes` / `class_pricing` tools, never written to the wiki |
+
+The episodic row carries a hard privacy constraint from GH-118: retrieval is scoped strictly to the current email's sender, with the sender identity bound server-side (the model passes only a query, never an address), because the mailbox contains other customers' PII.
+
+### Detector implication
+
+The kb_update detector (GH-111) must apply this triage, not just spot "facts": it proposes wiki writes ONLY for the first bucket. Episodic, customer-specific context and live-system-owned facts are never proposed as wiki updates; the former is served by `search_email_history` at draft time, the latter by the Mindbody tools. This makes the exclusions in the detector prompt (below) a routing decision, not just noise filtering.
+
 ## Detection (the kb_update detector)
 
 - A dedicated triage call using the triage/classification model tier (per the locked model split: triage and classification on the smaller model, drafting on the larger one), run alongside the existing tag and assignee calls in `emailDraft.ts`. Best-effort: a detector failure never blocks the draft.
