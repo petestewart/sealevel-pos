@@ -20,6 +20,7 @@
     "smoke:emailhistory": "npm run build && node dist/tools/emailHistory.smoke.js",
     "smoke:gmailstate": "npm run build && node dist/gmail/state.smoke.js",
     "smoke:spamtrash": "npm run build && node dist/db/spamTrash.smoke.js",
+    "smoke:reviewqueue": "npm run build && node dist/db/reviewQueue.smoke.js",
     "smoke:booking": "npm run build && node dist/booking.smoke.js",
     "smoke:evals": "npm run build && node dist/evals/evals.smoke.js",
     "eval": "npm run build && node dist/evals/run.js"

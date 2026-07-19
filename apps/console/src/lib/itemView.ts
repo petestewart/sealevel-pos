@@ -447,6 +447,28 @@ export function suspectedSpamOf(
   return { kind: kind ?? "sender", value: value ?? "" };
 }
 
+/**
+ * Whether an approved reply is STAGED: waiting in the Approved queue
+ * (GH-106), i.e. approved but delivery never queued. Mirrors the SQL
+ * predicate STAGED_APPROVED_SQL in @ai-manager/core db/delivery.ts; keep
+ * the two in sync. The absence of a payload.delivery key is the test (a
+ * queued/sent/failed item has one); items that predate the send pipeline
+ * also match, which is honest: they too are approved and never released.
+ */
+export function isStaged(item: Item): boolean {
+  const body = item.payload.draft_body;
+  return (
+    item.status === "resolved" &&
+    item.type === "email_reply" &&
+    !isArchived(item) &&
+    !isTrashed(item) &&
+    classifyDecision(item.payload) === "approved" &&
+    !Object.prototype.hasOwnProperty.call(item.payload, "delivery") &&
+    typeof body === "string" &&
+    body.length > 0
+  );
+}
+
 export type RowTone =
   | "pending"
   | "approved"
@@ -470,12 +492,24 @@ export function toneOf(item: Item): RowTone {
   }
 }
 
+function flattenPreview(body: string, max: number, empty: string): string {
+  const flat = body.replace(/\s+/g, " ").trim();
+  if (flat.length === 0) return empty;
+  return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+}
+
 /** One-line, collapsed preview of the inbound message for a list row. */
 export function previewOf(item: Item, max = 120): string {
-  const body = str(originalOf(item).body) ?? "";
-  const flat = body.replace(/\s+/g, " ").trim();
-  if (flat.length === 0) return "No message body";
-  return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+  return flattenPreview(str(originalOf(item).body) ?? "", max, "No message body");
+}
+
+/**
+ * One-line preview of the OUTGOING draft, for the Approved queue's rows
+ * (GH-106): the queue exists to review what is about to go out, so its
+ * rows preview the reply rather than the inbound message.
+ */
+export function draftPreviewOf(item: Item, max = 120): string {
+  return flattenPreview(str(item.payload.draft_body) ?? "", max, "No draft");
 }
 
 /** Compact list-row view model. */

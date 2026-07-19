@@ -2,6 +2,7 @@ import { gmailSendEnabled, gmailSendMode, type Item } from "@ai-manager/core";
 import { StatusChip } from "./StatusChip";
 import { DeliveryStatus } from "./DeliveryStatus";
 import { ReopenButton } from "./ReopenButton";
+import { ReleaseItemButton } from "./ReleaseButtons";
 import { RemoveRejectedButton } from "./RemoveRejectedButton";
 import { RestoreTrashedButton } from "./RestoreTrashedButton";
 import { InboundEmail } from "./InboundEmail";
@@ -11,6 +12,7 @@ import {
   classifyDecision,
   decisionOf,
   deliveryOf,
+  isStaged,
   toCardData,
 } from "../lib/itemView";
 
@@ -58,6 +60,11 @@ export function DecidedDetail({
   const delivery = deliveryOf(item);
   const sendEnabled = gmailSendEnabled();
   const sendMode = gmailSendMode();
+  // Staged (GH-106): approved with no delivery record, i.e. waiting in
+  // the Approved queue for a release. Drives the delivery line's copy and
+  // the per-item Release control (which only has teeth when sending is
+  // enabled; with it off, releasing would be a no-op, so it is hidden).
+  const staged = isStaged(item);
 
   return (
     <div className="approval-card">
@@ -159,6 +166,7 @@ export function DecidedDetail({
               delivery={delivery}
               sendEnabled={sendEnabled}
               sendMode={sendMode}
+              staged={staged}
             />
           )}
 
@@ -232,6 +240,11 @@ export function DecidedDetail({
         {/* Trashed items restore (clearing the trash marker and undoing the
             Gmail move) instead of reopening: a plain Reopen would leave the
             item both pending and trashed, an incoherent state. */}
+        {/* Release (GH-106): queue this staged reply's delivery without
+            waiting for the batch Send approved. */}
+        {canDecide && staged && sendEnabled ? (
+          <ReleaseItemButton id={data.id} />
+        ) : null}
         {canDecide && trashed ? <RestoreTrashedButton id={data.id} /> : null}
         {canDecide && !trashed ? <ReopenButton id={data.id} /> : null}
         {canDecide && action === "rejected" ? (

@@ -93,6 +93,14 @@ function Glyph({ icon }: { icon: InboxIcon }) {
           <path d="M5.6 5.6 L18.4 18.4" />
         </svg>
       );
+    case "send":
+      // Approved queue (GH-106): a paper plane, "ready to go out".
+      return (
+        <svg {...shared}>
+          <path d="m22 2-7 20-4-9-9-4Z" />
+          <path d="M22 2 11 13" />
+        </svg>
+      );
     default: {
       const _exhaustive: never = icon;
       throw new Error(`InboxSidebar: unhandled inbox icon ${_exhaustive}`);

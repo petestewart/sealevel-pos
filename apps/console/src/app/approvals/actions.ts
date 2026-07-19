@@ -9,6 +9,7 @@ import {
   getUserSettings,
   gmailSendEnabled,
   gmailStateActionForDecision,
+  listStagedApprovedItems,
   markDeliveryQueued,
   recordDeliveryFailed,
   recordSpamSignal,
@@ -185,7 +186,24 @@ async function decide(
   // Best-effort: a queue hiccup must never fail the recorded approval, and
   // it must not leave the item stuck showing "queued" with no job behind it
   // (queueSendIfEnabled reverts an un-enqueued stamp to 'failed').
-  if (decision === "approved") await queueSendIfEnabled(id);
+  //
+  // Review-queue mode (GH-106): when the APPROVING user's stage_approvals
+  // setting is on, the delivery enqueue is skipped entirely and the item
+  // waits in the Approved queue until released (Send approved). Only
+  // DELIVERY is staged: the decision itself, and the mark-read Gmail job
+  // enqueued above, happen immediately either way. The setting is read at
+  // decision time; a settings lookup failure falls back to the default
+  // (immediate delivery), so a hiccup never silently parks a reply for an
+  // operator who never opted into staging.
+  if (decision === "approved") {
+    let stage = false;
+    try {
+      stage = (await getUserSettings(decider.id)).stage_approvals;
+    } catch {
+      stage = false;
+    }
+    if (!stage) await queueSendIfEnabled(id);
+  }
   revalidatePath("/", "layout");
   return { error: null };
 }
@@ -234,7 +252,11 @@ async function queueGmailStateForDecision(
  * When outbound send is enabled, stamp the item's delivery as queued and
  * enqueue Job B (the worker sends via Gmail). Deterministic jobId +
  * markDeliveryQueued's guard (won't re-queue an already sent/in-flight
- * item) make this safe on a re-approve after reopen. Never throws.
+ * item) make this safe on a re-approve after reopen -- and equally safe as
+ * the RELEASE step of the review queue (GH-106), where it runs once per
+ * staged item: a double release, or a release racing an approve, can never
+ * double-send. Never throws; returns what happened so the release actions
+ * can surface an inline message (decide() ignores the result).
  *
  * If the stamp succeeds but the enqueue fails (a Redis hiccup), the 'queued'
  * record would otherwise outlive the (nonexistent) job forever -- the item
@@ -242,12 +264,14 @@ async function queueGmailStateForDecision(
  * we revert the stamp to 'failed', which is honest in the UI (red, "will be
  * retried") and lets a reopen + re-approve re-queue it.
  */
-async function queueSendIfEnabled(id: string): Promise<void> {
+async function queueSendIfEnabled(
+  id: string,
+): Promise<"queued" | "disabled" | "ineligible" | "error"> {
   // Flag-only gate (gmailSendEnabled): the console decides whether to enqueue
   // Job B without needing Gmail credentials. The worker re-checks full creds
   // (gmailSendConfigured) before it actually sends, so a job enqueued while
   // the worker is unconfigured degrades to a clean skip.
-  if (!gmailSendEnabled()) return;
+  if (!gmailSendEnabled()) return "disabled";
   let queued = false;
   try {
     // markDeliveryQueued returns null when the item is not a fresh-approved
@@ -255,6 +279,7 @@ async function queueSendIfEnabled(id: string): Promise<void> {
     // case do not enqueue a redundant send.
     queued = Boolean(await markDeliveryQueued(id));
     if (queued) await enqueueEmailSend(id);
+    return queued ? "queued" : "ineligible";
   } catch (err) {
     console.error(
       `[approvals] failed to enqueue send for item ${id}: ${
@@ -268,7 +293,80 @@ async function queueSendIfEnabled(id: string): Promise<void> {
         "could not queue the send; approve again to retry",
       ).catch(() => undefined);
     }
+    return "error";
   }
+}
+
+/**
+ * Release ONE staged approved reply from the Approved queue (GH-106):
+ * runs the exact per-item queue-send path an immediate-mode approval
+ * runs. Decider-gated like every approval mutation. Conflicts (already
+ * released by another operator, reopened, no longer approved) surface as
+ * an inline stale message, never a double-send: markDeliveryQueued's
+ * guard plus the deterministic send jobId make release idempotent.
+ */
+export async function releaseApprovedItemAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  await requireDecider();
+  const id = requireString(formData, "id");
+  const outcome = await queueSendIfEnabled(id);
+  switch (outcome) {
+    case "queued":
+      revalidatePath("/", "layout");
+      return { error: null };
+    case "disabled":
+      return {
+        error:
+          "Sending is disabled for this studio, so nothing can be released.",
+      };
+    case "ineligible":
+      return {
+        error:
+          "This reply is no longer waiting for release. It may have been released, reopened, or changed by another operator.",
+        stale: true,
+      };
+    case "error":
+      return {
+        error: "Could not queue this reply for delivery. Try again.",
+      };
+  }
+}
+
+export interface SendApprovedState {
+  error: string | null;
+  /** How many staged replies this click released, on success. */
+  released?: number;
+}
+
+/**
+ * Send approved (GH-106): release EVERY staged reply in the Approved
+ * queue. Each item goes through the same guarded per-item path as a
+ * single release (markDeliveryQueued + deterministic jobId), so a
+ * concurrent release, an item reopened mid-batch, or a double click can
+ * never double-send; those items are simply skipped. Releasing an empty
+ * queue is a valid no-op. The queue is global, so this releases staged
+ * items regardless of which operator approved them.
+ */
+export async function sendApprovedBatchAction(
+  _prev: SendApprovedState,
+  _formData: FormData,
+): Promise<SendApprovedState> {
+  await requireDecider();
+  if (!gmailSendEnabled()) {
+    return {
+      error:
+        "Sending is disabled for this studio, so nothing can be released.",
+    };
+  }
+  const staged = await listStagedApprovedItems();
+  let released = 0;
+  for (const item of staged) {
+    if ((await queueSendIfEnabled(String(item.id))) === "queued") released++;
+  }
+  revalidatePath("/", "layout");
+  return { error: null, released };
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   deleteStudioInfoEntry,
   RULE_MAX_CHARS,
   saveStudioInfoEntry,
+  setStageApprovals,
   setUserSettings,
   updateRule,
 } from "@ai-manager/core";
@@ -107,6 +108,23 @@ export async function saveSignature(
     signWithName,
     signatureName: name || null,
   });
+  revalidatePath("/settings");
+  return { error: null, saved: true };
+}
+
+/**
+ * Review-queue mode toggle (GH-106): whether THIS user's approvals stage
+ * into the Approved queue instead of queueing delivery immediately. A
+ * per-user setting like the signature preference; it only changes what
+ * happens when YOU approve. The Approved queue itself is global.
+ */
+export async function saveStageApprovals(
+  _prev: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  const who = await requireSettingsManager();
+  const staged = formData.get("stage_approvals") === "on";
+  await setStageApprovals(who.id, staged);
   revalidatePath("/settings");
   return { error: null, saved: true };
 }

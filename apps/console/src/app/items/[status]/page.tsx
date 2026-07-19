@@ -19,6 +19,7 @@ import {
   decisionCounts,
   pendingApprovals,
   recentlyDecided,
+  stagedApprovedItems,
   trashedItems,
 } from "../../../lib/approvals";
 import { inboxBySlug, type InboxDefinition } from "../../../lib/inboxes";
@@ -29,12 +30,15 @@ import {
 import { assignableUsers, type AssignableUser } from "../../../lib/assignees";
 import {
   classifyDecision,
+  draftPreviewOf,
   isArchived,
+  isStaged,
   isTrashed,
   toCardData,
   toRow,
 } from "../../../lib/itemView";
 import { ClearRejectedButton } from "../../../components/ClearRejectedButton";
+import { SendApprovedButton } from "../../../components/ReleaseButtons";
 
 /**
  * Inbox route /items/[status] as a LIST pane + DETAIL pane (A1c, GH-29).
@@ -79,6 +83,10 @@ async function loadInboxItems(inbox: InboxDefinition): Promise<Item[]> {
       // Trashed AND spam items share the Trash view (both carry the
       // payload.trashed marker), newest discard first.
       return trashedItems();
+    case "staged":
+      // Approved queue (GH-106): approved replies whose delivery was
+      // never queued, waiting for a release (Send approved).
+      return stagedApprovedItems();
     default: {
       const _exhaustive: never = source;
       throw new Error(
@@ -98,7 +106,9 @@ function ListEmpty({ inbox }: { inbox: InboxDefinition }) {
           ? "Emails filed as not needing a reply will appear here."
           : inbox.slug === "trash"
             ? "Emails you trash or confirm as spam will appear here."
-            : "Drafts you reject will appear here.";
+            : inbox.slug === "queue"
+              ? "Approved replies waiting for release will appear here when your settings queue approvals."
+              : "Drafts you reject will appear here.";
   return (
     <div className="list-empty">
       <div className="list-empty-title">
@@ -165,6 +175,10 @@ function belongsToInbox(item: Item, inbox: InboxDefinition): boolean {
       );
     case "trash":
       return isTrashed(item);
+    case "staged":
+      // Approved queue membership (GH-106): approved with no delivery
+      // record. isStaged mirrors the SQL predicate the list query uses.
+      return isStaged(item);
     default: {
       const _exhaustive: never = source;
       throw new Error(
@@ -323,6 +337,22 @@ export default async function InboxPage({
               <ClearRejectedButton count={(await decisionCounts()).rejected} />
             </div>
           ) : null}
+          {/* Approved queue toolbar (GH-106): the batch release. Only a
+              decider can release, and with sending disabled the queue has
+              no teeth, so an honest note replaces the button. */}
+          {inbox.slug === "queue" && items.length > 0 ? (
+            <div className="list-toolbar">
+              {canDecide && gmailSendEnabled() ? (
+                <SendApprovedButton count={items.length} />
+              ) : (
+                <span className="queue-disabled-note">
+                  {gmailSendEnabled()
+                    ? "Your role can view this queue but not release replies."
+                    : "Sending is disabled for this studio. Replies stay here until it is enabled."}
+                </span>
+              )}
+            </div>
+          ) : null}
           {selected == null ? <ListScrollRestore /> : null}
           {items.length === 0 ? (
             <ListEmpty inbox={inbox} />
@@ -340,10 +370,16 @@ export default async function InboxPage({
               const tail = items.filter(isTail);
               const row = (it: Item, muted: boolean) => {
                 const id = String(it.id);
+                // The queue exists to review what is about to go OUT, so
+                // its rows preview the draft reply, not the inbound email.
+                const rowData =
+                  inbox.source.kind === "staged"
+                    ? { ...toRow(it), preview: draftPreviewOf(it) }
+                    : toRow(it);
                 return (
                   <ItemRow
                     key={id}
-                    row={toRow(it)}
+                    row={rowData}
                     href={`/items/${inbox.slug}?item=${encodeURIComponent(id)}`}
                     active={selected != null && String(selected.id) === id}
                     muted={muted}

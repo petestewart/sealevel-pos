@@ -13,6 +13,7 @@ import {
   removeStudioInfo,
   saveRule,
   saveSignature,
+  saveStageApprovals,
   saveStudioInfoValue,
   setRuleActive,
   type SettingsActionState,
@@ -326,6 +327,43 @@ export function SignatureForm({
       <div className="settings-form-row">
         <button type="submit" className="btn btn--primary" disabled={pending}>
           {pending ? "Saving..." : "Save signature"}
+        </button>
+        {state.saved && !state.error ? (
+          <span className="settings-saved">Saved.</span>
+        ) : null}
+      </div>
+      <InlineError state={state} />
+    </form>
+  );
+}
+
+/**
+ * Review-queue mode (GH-106): a per-user toggle. When on, YOUR approvals
+ * record the decision but hold delivery; the reply waits in the Approved
+ * queue until someone clicks Send approved (or releases it per item).
+ * Other operators' approvals follow their own setting.
+ */
+export function StageApprovalsForm({ settings }: { settings: UserSettings }) {
+  const [state, formAction, pending] = useActionState(saveStageApprovals, IDLE);
+  return (
+    <form action={formAction} className="settings-signature">
+      <p className="settings-help">
+        By default, approving a reply queues its delivery right away. Turn
+        this on to hold your approved replies in the Approved queue instead;
+        nothing goes out until you click Send approved there. The source
+        email is still marked read when you approve.
+      </p>
+      <label className="settings-check">
+        <input
+          type="checkbox"
+          name="stage_approvals"
+          defaultChecked={settings.stage_approvals}
+        />
+        <span>Queue approved replies until I click Send approved</span>
+      </label>
+      <div className="settings-form-row">
+        <button type="submit" className="btn btn--primary" disabled={pending}>
+          {pending ? "Saving..." : "Save approvals setting"}
         </button>
         {state.saved && !state.error ? (
           <span className="settings-saved">Saved.</span>

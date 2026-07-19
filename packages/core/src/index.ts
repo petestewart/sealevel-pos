@@ -90,6 +90,8 @@ export {
 export {
   markDeliveryQueued,
   claimDeliveryForSend,
+  listStagedApprovedItems,
+  countStagedApprovedItems,
   recordDeliverySent,
   recordDeliveryDrafted,
   recordDeliveryFailed,
@@ -174,6 +176,7 @@ export {
   deleteRule,
   getUserSettings,
   setUserSettings,
+  setStageApprovals,
   studioRulesBlock,
   loadRulesBlock,
 } from "./db/settings.js";

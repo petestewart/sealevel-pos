@@ -75,6 +75,7 @@ export function DeliveryStatus({
   delivery,
   sendEnabled,
   sendMode = "send",
+  staged = false,
 }: {
   approved: boolean;
   hasReply: boolean;
@@ -89,6 +90,15 @@ export function DeliveryStatus({
    * ignores this. Defaults to "send" so pre-GH-97 callers are unchanged.
    */
   sendMode?: "send" | "draft";
+  /**
+   * Review queue (GH-106): the item is approved but its delivery was
+   * never queued, so it waits in the Approved queue for a release. The
+   * copy is deliberately "not yet released" rather than "queued for
+   * release" because a pre-send-pipeline approved item is
+   * indistinguishable from a deliberately staged one; both read
+   * correctly. Defaults to false so existing callers are unchanged.
+   */
+  staged?: boolean;
 }) {
   // A real delivery record always wins: it is the source of truth.
   if (delivery) {
@@ -108,6 +118,14 @@ export function DeliveryStatus({
     copy = "Not sent. Rejected drafts are never delivered.";
   } else if (!hasReply) {
     copy = "Approved, not sent. No draft was generated and nothing has gone to the customer.";
+  } else if (sendEnabled && staged) {
+    // Staged in the Approved queue (GH-106): nothing goes out until a
+    // release. Draft mode releases into a parked Gmail draft, not a send.
+    copy =
+      sendMode === "draft"
+        ? "Approved. Not yet released. Use Send approved in the Approved queue to park this reply as a Gmail draft."
+        : "Approved. Not yet released. Use Send approved in the Approved queue to deliver this reply.";
+    pending = true;
   } else if (sendEnabled) {
     // Sending is on but no record yet (the job is being enqueued). Draft
     // mode (GH-97) prepares a Gmail draft, not a delivery, so say so.

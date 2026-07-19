@@ -2090,6 +2090,37 @@ textarea {
   flex-wrap: wrap;
 }
 
+/* Approved queue release controls (GH-106) */
+.send-approved {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.send-approved-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: 600 0.75rem var(--font-ui), sans-serif;
+  color: var(--accent-tx);
+  cursor: pointer;
+}
+
+.send-approved-btn:hover {
+  text-decoration: underline;
+}
+
+.send-approved-btn:disabled {
+  color: var(--tx3);
+  cursor: default;
+}
+
+.queue-disabled-note {
+  font: 400 0.75rem var(--font-ui), sans-serif;
+  color: var(--tx2);
+}
+
 .clear-rejected-prompt {
   font: 400 0.75rem var(--font-ui), sans-serif;
   color: var(--tx2);

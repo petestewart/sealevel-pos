@@ -21,6 +21,13 @@ export interface UserSettings {
   user_id: string;
   sign_with_name: boolean;
   signature_name: string | null;
+  /**
+   * Review-queue mode (GH-106): when true, this user's approvals record
+   * the decision but do not queue delivery; the reply waits in the
+   * console's Approved queue until released (Send approved). Default
+   * false preserves the original behavior (approve queues delivery).
+   */
+  stage_approvals: boolean;
 }
 
 /** The studio-wide default signoff for outgoing drafts. */
@@ -127,12 +134,17 @@ export async function deleteRule(
 
 export async function getUserSettings(userId: string): Promise<UserSettings> {
   const { rows } = await getPool().query<UserSettings>(
-    `SELECT user_id, sign_with_name, signature_name
+    `SELECT user_id, sign_with_name, signature_name, stage_approvals
      FROM user_settings WHERE user_id = $1`,
     [userId],
   );
   return (
-    rows[0] ?? { user_id: userId, sign_with_name: false, signature_name: null }
+    rows[0] ?? {
+      user_id: userId,
+      sign_with_name: false,
+      signature_name: null,
+      stage_approvals: false,
+    }
   );
 }
 
@@ -144,6 +156,9 @@ export async function setUserSettings(
   if (name !== null && name.length > 80) {
     throw new Error("Signature name must be 80 characters or fewer");
   }
+  // Deliberately touches ONLY the signature columns on conflict, so a
+  // signature save never clobbers stage_approvals (and vice versa,
+  // setStageApprovals below). A fresh INSERT takes the column defaults.
   const { rows } = await getPool().query<UserSettings>(
     `INSERT INTO user_settings (user_id, sign_with_name, signature_name)
      VALUES ($1, $2, $3)
@@ -151,8 +166,30 @@ export async function setUserSettings(
        SET sign_with_name = EXCLUDED.sign_with_name,
            signature_name = EXCLUDED.signature_name,
            updated_at = now()
-     RETURNING user_id, sign_with_name, signature_name`,
+     RETURNING user_id, sign_with_name, signature_name, stage_approvals`,
     [userId, settings.signWithName, name],
+  );
+  return rows[0]!;
+}
+
+/**
+ * Set the review-queue mode for one user (GH-106): whether THEIR
+ * approvals stage into the Approved queue instead of queueing delivery
+ * immediately. Upserts only this column, so it can never clobber the
+ * user's signature preference.
+ */
+export async function setStageApprovals(
+  userId: string,
+  stageApprovals: boolean,
+): Promise<UserSettings> {
+  const { rows } = await getPool().query<UserSettings>(
+    `INSERT INTO user_settings (user_id, stage_approvals)
+     VALUES ($1, $2)
+     ON CONFLICT (user_id) DO UPDATE
+       SET stage_approvals = EXCLUDED.stage_approvals,
+           updated_at = now()
+     RETURNING user_id, sign_with_name, signature_name, stage_approvals`,
+    [userId, stageApprovals],
   );
   return rows[0]!;
 }

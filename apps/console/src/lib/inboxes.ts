@@ -15,6 +15,8 @@ export interface InboxCounts {
   decisions: DecisionCounts;
   /** Trashed items (trash + spam decisions), keyed on payload.trashed. */
   trashed: number;
+  /** Approved replies waiting for release (GH-106), no delivery record. */
+  staged: number;
 }
 
 export type InboxTone =
@@ -29,7 +31,7 @@ export type InboxTone =
  * (GH-77). Names map to inline SVGs in InboxSidebar; a new inbox picks an
  * existing glyph or adds one there.
  */
-export type InboxIcon = "clock" | "check" | "x" | "bell-off" | "ban";
+export type InboxIcon = "clock" | "check" | "x" | "bell-off" | "ban" | "send";
 
 /**
  * Each inbox declares HOW its body is fetched and rendered, rather than
@@ -54,7 +56,13 @@ export type InboxIcon = "clock" | "check" | "x" | "bell-off" | "ban";
 export type InboxSource =
   | { kind: "pending" }
   | { kind: "decision"; decision: DecisionAction }
-  | { kind: "trash" };
+  | { kind: "trash" }
+  /**
+   * Approved replies waiting for release (GH-106): approved items whose
+   * delivery was never queued. The review queue's home; releasing (Send
+   * approved) queues delivery and the item leaves this view for Approved.
+   */
+  | { kind: "staged" };
 
 export interface InboxDefinition {
   /** URL segment: /items/<slug>. */
@@ -96,6 +104,17 @@ export const INBOXES: readonly InboxDefinition[] = [
     blurb: "Replies you approved, newest decision first.",
     source: { kind: "decision", decision: "approved" },
     count: ({ decisions }) => decisions.approved,
+  },
+  {
+    slug: "queue",
+    label: "Approved queue",
+    tone: "approved",
+    icon: "send",
+    title: "Approved queue",
+    blurb:
+      "Approved replies waiting for release. Nothing here goes out until you release it: use Send approved to release everything, or release items one at a time. Approvals land here when your settings queue approved replies.",
+    source: { kind: "staged" },
+    count: ({ staged }) => staged,
   },
   {
     slug: "rejected",

@@ -9,6 +9,7 @@ import {
   AddStudioInfoForm,
   RuleRow,
   SignatureForm,
+  StageApprovalsForm,
   StudioInfoEntryRow,
 } from "../../components/SettingsForms";
 import { currentRole, hasPermission } from "../../lib/rbac";
@@ -92,6 +93,11 @@ export default async function SettingsPage() {
       <section className="settings-section">
         <h2 className="section-label">Signature</h2>
         <SignatureForm settings={settings} defaultName={defaultName} />
+      </section>
+
+      <section className="settings-section">
+        <h2 className="section-label">Approvals</h2>
+        <StageApprovalsForm settings={settings} />
       </section>
     </div>
   );

@@ -6,6 +6,7 @@ import { ToastProvider } from "../../components/Toast";
 import {
   decisionCounts,
   itemStatusCounts,
+  stagedCount,
   trashedCount,
 } from "../../lib/approvals";
 import { INBOXES, type InboxCounts } from "../../lib/inboxes";
@@ -19,12 +20,13 @@ import { INBOXES, type InboxCounts } from "../../lib/inboxes";
 /** The shell must render even if Postgres is briefly down. */
 async function loadCounts(): Promise<InboxCounts> {
   try {
-    const [statuses, decisions, trashed] = await Promise.all([
+    const [statuses, decisions, trashed, staged] = await Promise.all([
       itemStatusCounts(),
       decisionCounts(),
       trashedCount(),
+      stagedCount(),
     ]);
-    return { statuses, decisions, trashed };
+    return { statuses, decisions, trashed, staged };
   } catch {
     return {
       statuses: { open: 0, unassigned: 0, pending_approval: 0, resolved: 0 },
@@ -36,6 +38,7 @@ async function loadCounts(): Promise<InboxCounts> {
         spam: 0,
       },
       trashed: 0,
+      staged: 0,
     };
   }
 }

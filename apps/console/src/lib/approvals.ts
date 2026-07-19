@@ -2,10 +2,12 @@ import { cache } from "react";
 import "./env";
 import {
   countItemsByStatus,
+  countStagedApprovedItems,
   countTrashedItems,
   DEFAULT_SIGNOFF,
   getPool,
   listItems,
+  listStagedApprovedItems,
   listTrashedItems,
   NOT_TRASHED_SQL,
   type Item,
@@ -282,6 +284,25 @@ export const trashedCount = cache(async (): Promise<number> =>
 export async function trashedItems(page = 1): Promise<Item[]> {
   return listTrashedItems(page);
 }
+
+/**
+ * Approved replies waiting for release, for the Approved queue view
+ * (GH-106). The queue is GLOBAL: it lists every staged item regardless of
+ * who approved it (the per-user setting only controls whether YOUR
+ * approvals stage). Thin wrapper over core listStagedApprovedItems, which
+ * owns the staged predicate (approved, no delivery record).
+ */
+export async function stagedApprovedItems(): Promise<Item[]> {
+  return listStagedApprovedItems();
+}
+
+/**
+ * Count of staged approved replies for the queue's sidebar pill (GH-106).
+ * React cache(), like the other count queries.
+ */
+export const stagedCount = cache(async (): Promise<number> =>
+  countStagedApprovedItems(),
+);
 
 /**
  * Resolved email replies for one decision inbox (Approved or Rejected),

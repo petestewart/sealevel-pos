@@ -77,6 +77,55 @@ const APPROVED_EMAIL_REPLY_SQL = `
  */
 const TERMINAL_OR_INFLIGHT = "('sent', 'sending', 'drafted')";
 
+/**
+ * SQL predicate: this approved reply is STAGED, i.e. waiting in the
+ * review queue (GH-106). Staged is representable without a column: a
+ * resolved, approved (under the FULL decision classifier, so no-reply /
+ * trashed / spam items never qualify), non-archived, non-trashed email
+ * reply that has a draft to send and NO delivery record at all. The
+ * absence of payload.delivery means delivery was never queued: either
+ * the approving user had stage_approvals on, or the item predates the
+ * send pipeline. Both read correctly as "approved, not yet released".
+ *
+ * The extra action exclusions on top of APPROVED_EMAIL_REPLY_SQL mirror
+ * classifyDecision (console lib/itemView.ts) precedence, and the trashed
+ * guard mirrors NOT_TRASHED_SQL (db/trash.ts); keep them in sync.
+ */
+const STAGED_APPROVED_SQL = `
+  ${APPROVED_EMAIL_REPLY_SQL}
+  AND coalesce(payload->'decision'->>'action', '')
+      NOT IN ('no_reply_needed', 'trashed', 'spam')
+  AND NOT (payload ? 'trashed')
+  AND NOT (payload ? 'delivery')
+  AND coalesce(payload->>'draft_body', '') <> ''`;
+
+/**
+ * Approved replies waiting for release (GH-106), newest decision first.
+ * Powers the console's Approved queue view and the Send approved batch
+ * action, which runs the normal queue-send path (markDeliveryQueued +
+ * deterministic jobId) per item, so releasing is idempotent and can
+ * never double-send. Bounded: the queue is expected to be small (it
+ * empties on every release).
+ */
+export async function listStagedApprovedItems(limit = 200): Promise<Item[]> {
+  const { rows } = await getPool().query<Item>(
+    `SELECT * FROM items
+     WHERE ${STAGED_APPROVED_SQL}
+     ORDER BY resolved_at DESC NULLS LAST, id DESC
+     LIMIT $1`,
+    [limit],
+  );
+  return rows;
+}
+
+/** Count of staged approved replies, for the queue's sidebar pill. */
+export async function countStagedApprovedItems(): Promise<number> {
+  const { rows } = await getPool().query<{ count: string }>(
+    `SELECT count(*)::text AS count FROM items WHERE ${STAGED_APPROVED_SQL}`,
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
 function deliveryRecord(rec: Omit<DeliveryRecord, "at">): string {
   const full: DeliveryRecord = { ...rec, at: new Date().toISOString() };
   return JSON.stringify(full);
