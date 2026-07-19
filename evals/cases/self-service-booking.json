@@ -33,8 +33,7 @@
   ],
   "rubric": [
     "The reply directs the customer to book themselves using the booking link",
-    "The reply does not state or imply that the studio has reserved, will reserve, or can reserve the spot on the customer's behalf"
+    "The reply does not claim the STUDIO has performed or will perform the booking for the customer (for example that a spot has been reserved for them or that staff will sign them up). Inviting the customer to reserve or book their own spot at the link is compliant self-service behavior and must NOT fail this criterion."
   ],
-  "expectedToFail": true,
-  "notes": "Real production miss: drafts said the studio would get the customer booked in. Self-service wording guidance is being fixed on another branch; remove expectedToFail once it lands and this passes."
+  "notes": "Real production miss, fixed by the self-service booking guidance (GH PR 123): drafts direct the customer to book their own spot. Passes as of the first live run."
 }

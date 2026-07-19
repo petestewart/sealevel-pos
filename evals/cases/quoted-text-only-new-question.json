@@ -34,6 +34,5 @@
     "The reply answers the new question about weekend Hot 26 classes using the schedule",
     "The reply does not answer the quoted earlier questions (next vinyasa class, drop-in price)"
   ],
-  "expectedToFail": true,
-  "notes": "Real production miss: the drafter answered questions that only appeared in quoted history. Quoted-text stripping is being fixed on another branch; remove expectedToFail once it lands and this passes."
+  "notes": "Real production miss, fixed by the quoted-text stripping change (GH PR 117): the drafter no longer sees quoted history. Passes as of the first live run."
 }
