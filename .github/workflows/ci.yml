@@ -10,6 +10,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual trigger for the drafting evals: run the full golden-case suite
+  # on demand (Actions tab -> CI -> Run workflow) without needing a PR
+  # that touches a prompt-affecting path.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -54,7 +58,7 @@ jobs:
   drafting-evals:
     name: drafting evals (golden cases)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,8 +69,13 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          base="${{ github.event.pull_request.base.sha }}"
-          if git diff --name-only "$base"...HEAD -- \
+          # A manual dispatch is an explicit request to run the suite, so
+          # the path gate is bypassed; PRs still only spend tokens when a
+          # prompt-affecting path changed.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif base="${{ github.event.pull_request.base.sha }}" && \
+            git diff --name-only "$base"...HEAD -- \
               packages/core/src/jobs/emailDraft.ts \
               packages/core/src/booking.ts \
               packages/core/src/tools/kb.ts \
