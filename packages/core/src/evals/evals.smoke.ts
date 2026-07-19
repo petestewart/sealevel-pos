@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 
+import { emailDraft } from "../jobs/emailDraft.js";
+import type { JobContext } from "../jobs/types.js";
 import { createKbToolset, KB_PROMPT_GUIDANCE } from "../tools/kb.js";
+import {
+  TraceRecorder,
+  TRACE_ERROR_MAX_CHARS,
+  TRACE_MAX_CALLS,
+  TRACE_REF_MAX_CHARS,
+} from "../tools/trace.js";
 import { casesDir, caseHash, rubricHash } from "./cache.js";
 import { fixtureText, loadCases, parseCase } from "./cases.js";
 import { extractPrices, extractTimes, runChecks } from "./checks.js";
@@ -141,6 +149,185 @@ async function testFixtureKbThroughRealToolset(): Promise<void> {
   }
 }
 
+/** Run-trace recorder caps (GH-122): entry cap, text budgets, dedupe. */
+function testTraceRecorderCaps(): void {
+  const r = new TraceRecorder();
+  for (let i = 0; i < TRACE_MAX_CALLS + 5; i++) {
+    r.record({
+      tool: "search_wiki",
+      ref: "x".repeat(TRACE_REF_MAX_CHARS * 3),
+      outcome: "ok",
+      resultChars: 10,
+      durationMs: 3,
+    });
+  }
+  const t = r.snapshot();
+  assert.ok(t, "snapshot returns a trace");
+  assert.equal(t.calls.length, TRACE_MAX_CALLS, "entry cap enforced");
+  assert.equal(t.dropped_calls, 5, "overflow counted, not stored");
+  assert.ok(
+    t.calls[0]!.ref.length <= TRACE_REF_MAX_CHARS,
+    "ref capped to the per-entry budget",
+  );
+  // Guidance/degradation flags deduplicate.
+  r.guide("kb");
+  r.guide("kb");
+  r.degrade("kb-unavailable");
+  r.degrade("kb-unavailable");
+  assert.deepEqual(r.snapshot()!.guidance, ["kb"]);
+  assert.deepEqual(r.snapshot()!.degraded, ["kb-unavailable"]);
+  // Error messages are capped too, and only stored on error outcomes.
+  const r2 = new TraceRecorder();
+  r2.record({ tool: "t", outcome: "error", error: "e".repeat(999) });
+  r2.record({ tool: "t", outcome: "ok", error: "ignored" });
+  const t2 = r2.snapshot()!;
+  assert.ok(t2.calls[0]!.error!.length <= TRACE_ERROR_MAX_CHARS);
+  assert.equal(t2.calls[1]!.error, undefined);
+  // Snapshots are copies: later mutation cannot alter a stored payload.
+  const before = r2.snapshot()!;
+  r2.record({ tool: "later", outcome: "ok" });
+  assert.equal(before.calls.length, 2);
+}
+
+/**
+ * End-to-end trace capture through the REAL KB toolset (GH-122): fixture
+ * results produce ok/empty entries with sizes and durations, and a
+ * KB-layer failure produces an error entry plus the kb-unavailable
+ * degradation flag, all without failing the lookup itself.
+ */
+async function testRunTraceThroughRealToolset(): Promise<void> {
+  const restoreEnv = applyCaseEnv(undefined);
+  const uninstall = installFixtureKb([
+    { tool: "upcoming_classes", result: FIXTURES },
+    { tool: "read_wiki_page", result: "" }, // KB returned nothing
+  ]);
+  const recorder = new TraceRecorder();
+  try {
+    const { tools, log } = createKbToolset(recorder);
+    const byName = new Map(tools.map((t) => [t.name, t]));
+    const schedule = await byName.get("upcoming_classes")!.run({ days: 7 });
+    assert.equal(schedule, FIXTURES, "trace capture does not alter results");
+    await byName.get("read_wiki_page")!.run({ name: "Nope" });
+    // Break the transport under the toolset so the third call errors.
+    const fetchBefore = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("kb down");
+    }) as typeof fetch;
+    try {
+      const note = await byName.get("search_wiki")!.run({ query: "pricing" });
+      assert.ok(
+        typeof note === "string" && note.length > 0,
+        "KB failure still degrades to the unavailable note",
+      );
+    } finally {
+      globalThis.fetch = fetchBefore;
+    }
+    assert.equal(log.unavailable, true);
+    const t = recorder.snapshot()!;
+    assert.deepEqual(
+      t.calls.map((c) => [c.tool, c.outcome]),
+      [
+        ["upcoming_classes", "ok"],
+        ["read_wiki_page", "empty"],
+        ["search_wiki", "error"],
+      ],
+      "tool calls recorded in order with outcomes",
+    );
+    assert.equal(t.calls[0]!.result_chars, FIXTURES.length);
+    assert.equal(typeof t.calls[0]!.duration_ms, "number");
+    assert.equal(t.calls[1]!.result_chars, 0);
+    assert.match(t.calls[2]!.error ?? "", /kb down/);
+    assert.deepEqual(t.degraded, ["kb-unavailable"]);
+  } finally {
+    uninstall();
+    restoreEnv();
+  }
+}
+
+/**
+ * GH-122 wiring on the drafting job, offline: runtimeTools registers the
+ * trace recorder (toolset + model), instructions() records guidance and
+ * degradation flags in the hermetic env (KB configured; DATABASE_URL
+ * absent so rules/studio-info degrade), and a THROWING capture path
+ * never changes a run's behavior: tool results and failure modes are
+ * identical with a poisoned recorder.
+ */
+async function testTraceCaptureIsBestEffort(): Promise<void> {
+  // ANTHROPIC_API_KEY is cleared so the best-effort triage side calls in
+  // instructions() fail fast offline instead of calling the real API.
+  const restoreEnv = applyCaseEnv({ ANTHROPIC_API_KEY: null });
+  const uninstall = installFixtureKb([
+    { tool: "upcoming_classes", result: FIXTURES },
+  ]);
+  try {
+    // A recorder whose every capture entry point throws must not affect
+    // KB lookups.
+    const broken = new TraceRecorder();
+    broken.record = () => {
+      throw new Error("capture exploded");
+    };
+    broken.snapshot = () => {
+      throw new Error("capture exploded");
+    };
+    const kb = createKbToolset(broken);
+    const schedule = await kb.tools
+      .find((t) => t.name === "upcoming_classes")!
+      .run({ days: 7 });
+    assert.equal(schedule, FIXTURES, "broken capture leaves lookups intact");
+    assert.equal(kb.log.unavailable, false);
+
+    // Drafting-job wiring: recorder in runState, full toolset + model.
+    const ctx: JobContext = {
+      payload: { from: "a@b.c", subject: "s", body: "hi" },
+      runState: {},
+    };
+    const tools = emailDraft.runtimeTools!(ctx);
+    const names = tools.map((t) => t.name).sort();
+    assert.deepEqual(names, [
+      "class_pricing",
+      "create_item",
+      "read_wiki_page",
+      "search_wiki",
+      "upcoming_classes",
+    ]);
+    const recorder = ctx.runState!["trace"];
+    assert.ok(recorder instanceof TraceRecorder, "recorder stashed in runState");
+    const t = recorder.snapshot()!;
+    assert.deepEqual([...t.toolset].sort(), names, "registered toolset recorded");
+    assert.equal(t.model, "claude-opus-4-8");
+
+    // instructions() flags active guidance and degraded blocks: KB is
+    // configured (fixture env), booking is not, and the DB-backed blocks
+    // degrade instantly with DATABASE_URL absent.
+    await emailDraft.instructions(ctx);
+    const t2 = recorder.snapshot()!;
+    assert.deepEqual(t2.guidance, ["kb"]);
+    assert.ok(t2.degraded.includes("rules-unavailable"));
+    assert.ok(t2.degraded.includes("studio-info-unavailable"));
+
+    // Poison the SAME recorder the create_item wrapper closed over: the
+    // run must fail on the real cause (no database offline), never on
+    // the capture path.
+    recorder.record = () => {
+      throw new Error("capture exploded");
+    };
+    recorder.snapshot = () => {
+      throw new Error("capture exploded");
+    };
+    await assert.rejects(
+      async () =>
+        tools
+          .find((tool) => tool.name === "create_item")!
+          .run({ type: "email_reply", domain: "email", payload: {} }),
+      /DATABASE_URL/,
+      "a throwing capture path does not change the run's failure mode",
+    );
+  } finally {
+    uninstall();
+    restoreEnv();
+  }
+}
+
 function testEnvRestore(): void {
   const before = process.env["SEALEVEL_MCP_URL"];
   const restore = applyCaseEnv({ SEALEVEL_BOOKING_URL: "https://b.example/x" });
@@ -269,6 +456,9 @@ async function main(): Promise<void> {
   testStringChecks();
   testFixtureMatching();
   await testFixtureKbThroughRealToolset();
+  testTraceRecorderCaps();
+  await testRunTraceThroughRealToolset();
+  await testTraceCaptureIsBestEffort();
   testEnvRestore();
   testShippedCasesLoad();
   testNoFollowupAndNoGapNarration();

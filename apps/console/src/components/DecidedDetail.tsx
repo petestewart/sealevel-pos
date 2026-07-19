@@ -4,6 +4,7 @@ import { DeliveryStatus } from "./DeliveryStatus";
 import { ReopenButton } from "./ReopenButton";
 import { RemoveRejectedButton } from "./RemoveRejectedButton";
 import { InboundEmail } from "./InboundEmail";
+import { RunTraceSection } from "./RunTrace";
 import { paragraphsOf, formatDecidedAt } from "../lib/emailDisplay";
 import { decisionOf, deliveryOf, isApproved, toCardData } from "../lib/itemView";
 
@@ -118,9 +119,13 @@ export function DecidedDetail({
             </details>
           ) : null}
 
-          {/* GH-122: deploy-version stamp for the build that produced the
-              final draft. Muted operator-facing metadata, same as pending. */}
-          {data.generatedBy ? (
+          {/* GH-122: run trace for the run that produced the final draft,
+              with the deploy-version stamp folded in; items that predate
+              the trace keep the standalone stamp line. Same muted
+              operator-facing metadata as pending. */}
+          {data.trace ? (
+            <RunTraceSection trace={data.trace} generatedBy={data.generatedBy} />
+          ) : data.generatedBy ? (
             <div className="draft-generated-by">
               Drafted by {data.generatedBy.commit}
               {data.generatedBy.at ? ` at ${data.generatedBy.at}` : ""}

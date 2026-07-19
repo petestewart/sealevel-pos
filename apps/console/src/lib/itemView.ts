@@ -8,6 +8,10 @@ import {
   type Item,
 } from "@ai-manager/core";
 import type { ApprovalCardData } from "../components/ApprovalCard";
+import type {
+  RunTraceCallData,
+  RunTraceData,
+} from "../components/RunTrace";
 import type { DecisionRecord } from "./approvals";
 import {
   formatDateTime,
@@ -87,6 +91,104 @@ function generatedByOf(payload: Record<string, unknown>) {
   return {
     commit,
     at: at !== null && !Number.isNaN(at.getTime()) ? formatDateTime(at) : "",
+  };
+}
+
+/** Strings only, deduplicated; anything else in the array is dropped. */
+function strArrayOf(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((v): v is string => typeof v === "string"))];
+}
+
+const TRACE_OUTCOMES = ["ok", "empty", "error"] as const;
+
+/** A non-negative finite number, or null. */
+function numOf(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
+}
+
+/**
+ * Run trace (GH-122) from payload.run_trace, validated into the display
+ * shape, or null for items that predate it or a malformed value (null
+ * renders nothing; back-compat like generated_by). Untrusted payload data:
+ * malformed entries are dropped, unknown outcomes discard the entry, and
+ * only expected primitives pass through. The run's cost summary comes
+ * from payload.usage (GH-62), written by the same run's recordUsage hook.
+ */
+export function runTraceOf(
+  payload: Record<string, unknown>,
+): RunTraceData | null {
+  const raw = payload.run_trace as
+    | {
+        calls?: unknown;
+        dropped_calls?: unknown;
+        toolset?: unknown;
+        guidance?: unknown;
+        degraded?: unknown;
+        model?: unknown;
+      }
+    | undefined;
+  if (typeof raw !== "object" || raw === null) return null;
+  const calls: RunTraceCallData[] = Array.isArray(raw.calls)
+    ? raw.calls.flatMap((entry) => {
+        const e = entry as {
+          tool?: unknown;
+          ref?: unknown;
+          outcome?: unknown;
+          error?: unknown;
+          result_chars?: unknown;
+          duration_ms?: unknown;
+        };
+        const tool = str(e.tool);
+        const outcome = (TRACE_OUTCOMES as readonly unknown[]).includes(
+          e.outcome,
+        )
+          ? (e.outcome as RunTraceCallData["outcome"])
+          : null;
+        if (!tool || !outcome) return [];
+        return [
+          {
+            tool,
+            ref: str(e.ref) ?? "",
+            outcome,
+            error: outcome === "error" ? (str(e.error) ?? null) : null,
+            resultChars: numOf(e.result_chars),
+            durationMs: numOf(e.duration_ms),
+          },
+        ];
+      })
+    : [];
+  const toolset = strArrayOf(raw.toolset);
+  const guidance = strArrayOf(raw.guidance);
+  const degraded = strArrayOf(raw.degraded);
+  // An object with nothing displayable renders no section at all.
+  if (
+    calls.length === 0 &&
+    toolset.length === 0 &&
+    guidance.length === 0 &&
+    degraded.length === 0
+  ) {
+    return null;
+  }
+  const usage = payload.usage as
+    | { api_calls?: unknown; input_tokens?: unknown; output_tokens?: unknown }
+    | undefined;
+  const apiCalls = numOf(usage?.api_calls);
+  const inputTokens = numOf(usage?.input_tokens);
+  const outputTokens = numOf(usage?.output_tokens);
+  return {
+    calls,
+    droppedCalls: numOf(raw.dropped_calls) ?? 0,
+    toolset,
+    guidance,
+    degraded,
+    model: str(raw.model) ?? null,
+    usage:
+      apiCalls !== null && inputTokens !== null && outputTokens !== null
+        ? { apiCalls, inputTokens, outputTokens }
+        : null,
   };
 }
 
@@ -197,6 +299,7 @@ export function toCardData(item: Item): ApprovalCardData {
     edited: payload.draft_edited === true,
     rationale: str(payload.draft_rationale)?.trim() || null,
     generatedBy: generatedByOf(payload),
+    trace: runTraceOf(payload),
     revisions: revisionsOf(payload),
     lastAnswer: lastAnswerOf(payload),
   };

@@ -64,7 +64,10 @@ export async function getPendingEmailReplyItem(id: string): Promise<Item> {
  *   one is given, and drops it otherwise (GH-38: a "Why this draft" note
  *   describing the previous draft must not survive onto the new one);
  * - replaces payload.generated_by with the revision's deploy-version stamp
- *   when one is given (GH-122: the stamp describes the current draft).
+ *   when one is given (GH-122: the stamp describes the current draft);
+ * - replaces payload.run_trace with the revision's run trace when one is
+ *   given, and drops it otherwise (GH-122: a trace describes the run that
+ *   produced the CURRENT draft; it must never outlive that draft).
  *
  * The WHERE clause re-checks status = 'pending_approval' at write time, so
  * an item decided between the job's read and this write is left untouched
@@ -84,17 +87,25 @@ export async function reviseEmailReplyDraft(
      * always describes the CURRENT draft text.
      */
     generatedBy?: { commit: string; at: string };
+    /**
+     * Run trace for this revision (GH-122): the revise run's tool-call
+     * trace, stored at payload.run_trace. Best-effort: when capture
+     * failed the prior trace is simply dropped, never left stale.
+     */
+    runTrace?: unknown;
   },
 ): Promise<Item> {
   const { rows } = await getPool().query<Item>(
     `UPDATE items
-     SET payload = (payload - 'last_answer' - 'draft_rationale' - 'sources')
+     SET payload = (payload - 'last_answer' - 'draft_rationale' - 'sources' - 'run_trace')
      || CASE WHEN $5::text IS NULL THEN '{}'::jsonb
         ELSE jsonb_build_object('draft_rationale', to_jsonb($5::text)) END
      || CASE WHEN $6::jsonb IS NULL THEN '{}'::jsonb
         ELSE jsonb_build_object('sources', $6::jsonb) END
      || CASE WHEN $7::jsonb IS NULL THEN '{}'::jsonb
         ELSE jsonb_build_object('generated_by', $7::jsonb) END
+     || CASE WHEN $8::jsonb IS NULL THEN '{}'::jsonb
+        ELSE jsonb_build_object('run_trace', $8::jsonb) END
      || jsonb_build_object(
        'draft_subject', to_jsonb($2::text),
        'draft_body', to_jsonb($3::text),
@@ -128,6 +139,7 @@ export async function reviseEmailReplyDraft(
         ? JSON.stringify(draft.sources)
         : null,
       draft.generatedBy ? JSON.stringify(draft.generatedBy) : null,
+      draft.runTrace ? JSON.stringify(draft.runTrace) : null,
     ],
   );
   const item = rows[0];

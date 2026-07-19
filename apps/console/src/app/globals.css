@@ -677,11 +677,108 @@ textarea {
 }
 
 /* GH-122: deploy-version stamp under the draft, one muted operator-only
-   line ("Drafted by <commit> at <time>"). */
+   line ("Drafted by <commit> at <time>"). Kept for items that predate the
+   run trace; traced items fold the stamp into the trace section below. */
 .draft-generated-by {
   margin-top: 8px;
   font: 400 0.6875rem var(--font-ui), sans-serif;
   color: var(--tx3);
+}
+
+/* GH-122: collapsible run trace under "Why this draft". Same collapsed
+   details shell as the rationale note; inside, a muted mono timeline of
+   tool calls with outcome badges, then compact metadata lines (toolset,
+   guidance, degradations, model/usage, build stamp). Operator-only. */
+.run-trace-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.trace-calls {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 5px;
+  border-bottom: 1px solid var(--line2);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.trace-call {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex-wrap: wrap;
+  font: 400 0.7188rem var(--font-mono), monospace;
+  color: var(--tx3);
+}
+
+.trace-outcome {
+  font: 600 9px var(--font-mono), monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex: none;
+}
+
+.trace-outcome--ok {
+  background: var(--appr-bg);
+  color: var(--appr-tx);
+}
+
+.trace-outcome--empty {
+  background: var(--unas-bg);
+  color: var(--unas-tx);
+}
+
+.trace-outcome--error {
+  background: var(--rej-bg);
+  color: var(--rej-tx);
+}
+
+.trace-tool {
+  color: var(--tx2);
+  font-weight: 600;
+}
+
+.trace-ref {
+  overflow-wrap: anywhere;
+}
+
+.trace-meta {
+  white-space: nowrap;
+}
+
+.trace-error {
+  flex-basis: 100%;
+  color: var(--rej-tx);
+  overflow-wrap: anywhere;
+  padding-left: 12px;
+}
+
+.trace-line {
+  font: 400 0.6875rem var(--font-ui), sans-serif;
+  color: var(--tx3);
+  overflow-wrap: anywhere;
+}
+
+.trace-line-label {
+  font: 500 9.5px var(--font-mono), monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tx3);
+  margin-right: 6px;
+}
+
+.trace-line--warn {
+  color: var(--pend-tx);
+}
+
+.trace-line--warn .trace-line-label {
+  color: var(--pend-tx);
 }
 
 /* Inbound email rendering robustness (GH-34): quoted-text collapse,

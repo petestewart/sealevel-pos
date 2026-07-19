@@ -250,10 +250,19 @@ ${lines.join("\n")}
  * not yet applied) degrades to "no studio info" with a loud log instead
  * of failing the whole draft run. Mirrors loadRulesBlock (GH-66).
  */
-export async function loadStudioInfoBlock(): Promise<string> {
+export async function loadStudioInfoBlock(
+  /** Best-effort degradation hook (GH-122 run trace): called when studio
+   * info could not be loaded and drafting proceeds without it. */
+  onUnavailable?: () => void,
+): Promise<string> {
   try {
     return await studioInfoBlock();
   } catch (err) {
+    try {
+      onUnavailable?.();
+    } catch {
+      // The degradation hook is trace capture; it must never fail the run.
+    }
     console.warn(
       `[studio-info] failed to load studio info; drafting without it: ${err instanceof Error ? err.message : String(err)}`,
     );

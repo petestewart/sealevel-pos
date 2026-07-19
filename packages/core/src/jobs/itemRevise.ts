@@ -23,6 +23,7 @@ import {
   kbConfigured,
   type KbRunLog,
 } from "../tools/kb.js";
+import { TraceRecorder } from "../tools/trace.js";
 import { workerVersion } from "../version.js";
 import type { Job, JobContext } from "./types.js";
 
@@ -87,6 +88,7 @@ function parsePayload(payload: unknown): ItemRevisePayload {
 export function itemReviseTools(
   itemId: string,
   kbLog?: KbRunLog,
+  recorder?: TraceRecorder,
 ): BetaRunnableTool<any>[] {
   const updateDraft = betaZodTool({
     name: "update_draft",
@@ -103,6 +105,16 @@ export function itemReviseTools(
         ),
     }),
     run: async ({ subject, body, rationale }) => {
+      // Run trace (GH-122): the revision replaces the draft, so the trace
+      // is refreshed too (reviseEmailReplyDraft drops the old one either
+      // way). Best-effort: capture failure means an untraced revision.
+      let trace: unknown;
+      try {
+        recorder?.record({ tool: "update_draft", outcome: "ok" });
+        trace = recorder?.snapshot();
+      } catch {
+        trace = undefined;
+      }
       const item = await reviseEmailReplyDraft(itemId, {
         subject,
         body,
@@ -112,6 +124,7 @@ export function itemReviseTools(
         // Deploy-version stamp (GH-122): the revision replaces the draft,
         // so the stamp is refreshed to the build that produced it.
         generatedBy: { commit: workerVersion(), at: new Date().toISOString() },
+        runTrace: trace,
       });
       const revisions = Array.isArray(item.payload["draft_revisions"])
         ? (item.payload["draft_revisions"] as unknown[]).length
@@ -168,11 +181,24 @@ export const itemRevise: Job = {
   tools: [], // no registry tools: read-only apart from the two per-run tools
   runtimeTools: (ctx: JobContext) => {
     const { itemId } = parsePayload(ctx.payload);
+    // Run trace (GH-122): the revise job shares the drafting job's trace
+    // machinery, so a revised draft carries the trace of the run that
+    // produced it (update_draft persists it; answer_question leaves the
+    // draft and therefore its trace untouched).
+    const recorder = new TraceRecorder();
     // KB read tools (GH-57) join the two private item tools; the KB log
     // threads into update_draft so a KB-informed revision records its
     // sources on the item.
-    const kb = createKbToolset();
-    return [...itemReviseTools(itemId, kb.log), ...kb.tools];
+    const kb = createKbToolset(recorder);
+    const tools = [...itemReviseTools(itemId, kb.log, recorder), ...kb.tools];
+    try {
+      recorder.setModel(itemRevise.model ?? "claude-opus-4-8");
+      recorder.setToolset(tools.map((t) => t.name));
+      if (ctx.runState) ctx.runState["trace"] = recorder;
+    } catch {
+      // Trace capture must never fail the run.
+    }
+    return tools;
   },
   model: "claude-opus-4-8", // drafting quality (locked decisions in CLAUDE.md)
   recordUsage: async (ctx, usage) => {
@@ -186,10 +212,25 @@ export const itemRevise: Job = {
     // pending_approval; a decided item must fail the run, not be mutated.
     const item = await getPendingEmailReplyItem(itemId);
     const payload = item.payload;
+    // Run trace (GH-122): the recorder stashed by runtimeTools, if any.
+    const rawRecorder = ctx.runState?.["trace"];
+    const recorder =
+      rawRecorder instanceof TraceRecorder ? rawRecorder : undefined;
     // Owner-set studio rules (GH-66); revisions must respect them too.
-    const rules = await loadRulesBlock();
+    const rules = await loadRulesBlock(() =>
+      recorder?.degrade("rules-unavailable"),
+    );
     // Owner-set studio info (GH-71); revisions must respect it too.
-    const studioInfo = await loadStudioInfoBlock();
+    const studioInfo = await loadStudioInfoBlock(() =>
+      recorder?.degrade("studio-info-unavailable"),
+    );
+    try {
+      if (kbConfigured()) recorder?.guide("kb");
+      if (rules) recorder?.guide("rules");
+      if (studioInfo) recorder?.guide("studio-info");
+    } catch {
+      // Trace capture must never fail the run.
+    }
 
     return `
 An operator reviewing a pending draft email reply sent you a one-shot instruction. Decide which kind it is and finish with exactly one call to update_draft or answer_question:

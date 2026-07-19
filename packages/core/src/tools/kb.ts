@@ -3,6 +3,7 @@ import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableT
 import { z } from "zod";
 
 import { KB_RESULT_MAX_CHARS, truncateForPrompt } from "../brain/budget.js";
+import type { TraceRecorder } from "./trace.js";
 
 /**
  * Sealevel knowledge base tools (GH-57).
@@ -207,9 +208,12 @@ const UNAVAILABLE_NOTE =
 /**
  * Build the per-run KB toolset. Returns no tools when unconfigured. The
  * returned log records every lookup for payload.sources and whether the
- * KB failed during the run.
+ * KB failed during the run. When a TraceRecorder is provided (GH-122),
+ * every call is also recorded on the run trace with its outcome, raw
+ * result size and duration; trace capture is best-effort and can never
+ * fail or change a lookup.
  */
-export function createKbToolset(): {
+export function createKbToolset(recorder?: TraceRecorder): {
   tools: BetaRunnableTool<any>[];
   log: KbRunLog;
 } {
@@ -230,8 +234,23 @@ export function createKbToolset(): {
     args: Record<string, unknown>,
   ): Promise<string> => {
     const source = record(tool, ref);
+    const started = Date.now();
     try {
       const text = await getClient().callTool(tool, args);
+      // Run trace (GH-122): outcome + raw size + duration, best-effort.
+      // Error messages here are already client-layer sanitized (the token
+      // never appears in a KbClient error), so recording them is safe.
+      try {
+        recorder?.record({
+          tool,
+          ref,
+          outcome: text.length === 0 ? "empty" : "ok",
+          resultChars: text.length,
+          durationMs: Date.now() - started,
+        });
+      } catch {
+        // Trace capture must never fail the lookup.
+      }
       if (text.length === 0) return "(no results)";
       // Cost hardening (GH-62): a huge wiki page re-billed on every tool
       // loop iteration is what pushed a run into the >200k pricing tier.
@@ -241,6 +260,18 @@ export function createKbToolset(): {
       return truncateForPrompt(text, KB_RESULT_MAX_CHARS, `kb ${tool} result`);
     } catch (err) {
       log.unavailable = true;
+      try {
+        recorder?.record({
+          tool,
+          ref,
+          outcome: "error",
+          error: err instanceof Error ? err.message : String(err),
+          durationMs: Date.now() - started,
+        });
+        recorder?.degrade("kb-unavailable");
+      } catch {
+        // Trace capture must never fail the lookup.
+      }
       console.warn(
         `[kb] ${tool} failed: ${err instanceof Error ? err.message : String(err)}`,
       );

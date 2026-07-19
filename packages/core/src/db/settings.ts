@@ -173,10 +173,19 @@ export async function setUserSettings(
  * (e.g. migration not yet applied) degrades to "no rules" with a loud
  * log instead of failing the whole draft run.
  */
-export async function loadRulesBlock(): Promise<string> {
+export async function loadRulesBlock(
+  /** Best-effort degradation hook (GH-122 run trace): called when the
+   * rules could not be loaded and drafting proceeds without them. */
+  onUnavailable?: () => void,
+): Promise<string> {
   try {
     return await studioRulesBlock();
   } catch (err) {
+    try {
+      onUnavailable?.();
+    } catch {
+      // The degradation hook is trace capture; it must never fail the run.
+    }
     console.warn(
       `[rules] failed to load studio rules; drafting without them: ${err instanceof Error ? err.message : String(err)}`,
     );

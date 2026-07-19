@@ -17,6 +17,7 @@ import { paragraphsOf } from "../lib/emailDisplay";
 import { previewSignoff } from "../lib/signoffPreview";
 import { InboundEmail, type AttachmentInfo } from "./InboundEmail";
 import { ReviseBox, type LastAnswerData } from "./ReviseBox";
+import { RunTraceSection, type RunTraceData } from "./RunTrace";
 import {
   approveItemAction,
   rejectItemAction,
@@ -116,6 +117,13 @@ export interface ApprovalCardData {
    * Operator-facing metadata only; never part of the draft itself.
    */
   generatedBy: { commit: string; at: string } | null;
+  /**
+   * Run trace (payload.run_trace, GH-122): the drafting run's tool-call
+   * timeline, toolset, guidance and degradation flags, or null for items
+   * that predate it. Null renders no trace section (the version stamp
+   * then falls back to its standalone line).
+   */
+  trace: RunTraceData | null;
   /**
    * Prior drafts (payload.draft_revisions, GH-36/GH-37), oldest first,
    * each already display-formatted. Empty for never-revised items.
@@ -490,10 +498,13 @@ export function ApprovalCard({
             </details>
           ) : null}
 
-          {/* GH-122: deploy-version stamp, one muted operator-facing line
-              so "which code drafted this?" is a glance, not a deploy-log
-              reconstruction. Hidden while editing, like the rationale. */}
-          {!editing && item.generatedBy ? (
+          {/* GH-122: collapsible run trace (tool calls, toolset, guidance,
+              degradations) with the deploy-version stamp folded in. Items
+              that predate the trace keep the standalone stamp line.
+              Hidden while editing, like the rationale. */}
+          {!editing && item.trace ? (
+            <RunTraceSection trace={item.trace} generatedBy={item.generatedBy} />
+          ) : !editing && item.generatedBy ? (
             <div className="draft-generated-by">
               Drafted by {item.generatedBy.commit}
               {item.generatedBy.at ? ` at ${item.generatedBy.at}` : ""}

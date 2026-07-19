@@ -25,6 +25,7 @@ import {
   kbConfigured,
   type KbRunLog,
 } from "../tools/kb.js";
+import { TraceRecorder } from "../tools/trace.js";
 import { workerVersion } from "../version.js";
 import type { Job, JobContext } from "./types.js";
 
@@ -126,6 +127,7 @@ function createItemWithSources(
   log: KbRunLog,
   runState?: Record<string, unknown>,
   emailMeta?: EmailMeta,
+  recorder?: TraceRecorder,
 ): BetaRunnableTool<any> {
   const base = createItemTool as BetaRunnableTool<any>;
   return {
@@ -141,9 +143,29 @@ function createItemWithSources(
       //  - generated_by (GH-122): which worker build drafted this, so a
       //    draft from a mid-redeploy worker running old code is
       //    diagnosable by lookup. Operator-facing metadata only; it never
-      //    enters the model prompt or the customer draft.
+      //    enters the model prompt or the customer draft;
+      //  - run_trace (GH-122): the run's tool-call trace. Best-effort by
+      //    contract: any capture failure yields an untraced draft, never
+      //    a failed one.
       const tags = runState?.["tags"] as ItemTag[] | undefined;
       const suggestion = runState?.["assignee_suggestion"];
+      let trace: unknown;
+      try {
+        // The trace is snapshotted here, inside the create_item call, so
+        // it lands on the item atomically with the draft. The create_item
+        // entry is recorded first (outcome "ok": if the write below
+        // throws, no item exists and the trace is never persisted, so the
+        // entry cannot lie).
+        recorder?.record({
+          tool: "create_item",
+          ref:
+            typeof input["type"] === "string" ? `type ${input["type"]}` : "",
+          outcome: "ok",
+        });
+        trace = recorder?.snapshot();
+      } catch {
+        trace = undefined; // capture failed; the draft proceeds untraced
+      }
       const extra: Record<string, unknown> = {
         ...(log.sources.length > 0 || log.unavailable
           ? {
@@ -154,6 +176,7 @@ function createItemWithSources(
         ...((tags?.length ?? 0) > 0 ? { tags } : {}),
         ...(emailMeta ? { email_meta: emailMeta } : {}),
         ...(suggestion ? { assignee_suggestion: suggestion } : {}),
+        ...(trace ? { run_trace: trace } : {}),
         generated_by: { commit: workerVersion(), at: new Date().toISOString() },
       };
       if (Object.keys(extra).length > 0) {
@@ -191,12 +214,25 @@ export const emailDraft: Job = {
   // create_item moves to runtimeTools so the per-run KB log can ride on it.
   tools: [],
   runtimeTools: (ctx: JobContext) => {
-    const kb = createKbToolset();
+    // Run trace (GH-122): one recorder per run, threaded into the KB
+    // toolset and the create_item wrapper; instructions() adds guidance
+    // flags via runState. Best-effort throughout: capture failures leave
+    // the draft untraced, never broken.
+    const recorder = new TraceRecorder();
+    const kb = createKbToolset(recorder);
     const meta = emailMetaOf((ctx.payload ?? {}) as InboundEmailPayload);
-    return [
-      createItemWithSources(kb.log, ctx.runState, meta),
+    const tools = [
+      createItemWithSources(kb.log, ctx.runState, meta, recorder),
       ...kb.tools,
     ];
+    try {
+      recorder.setModel(emailDraft.model ?? "claude-opus-4-8");
+      recorder.setToolset(tools.map((t) => t.name));
+      if (ctx.runState) ctx.runState["trace"] = recorder;
+    } catch {
+      // Trace capture must never fail the run.
+    }
+    return tools;
   },
   recordUsage: async (ctx, usage) => {
     const itemId = ctx.runState?.["itemId"];
@@ -217,13 +253,24 @@ export const emailDraft: Job = {
   model: "claude-opus-4-8", // drafting job (locked decisions in CLAUDE.md)
   instructions: async (ctx: JobContext) => {
     const payload = (ctx.payload ?? {}) as InboundEmailPayload;
+    // Run trace (GH-122): the recorder stashed by runtimeTools, if any
+    // (evals/draft.ts runs instructions without runState and stays
+    // untraced by design). Guidance/degradation flags are recorded here
+    // because this is where the blocks are assembled.
+    const rawRecorder = ctx.runState?.["trace"];
+    const recorder =
+      rawRecorder instanceof TraceRecorder ? rawRecorder : undefined;
     // Owner-set studio rules (GH-66). Loaded per run so edits apply to
     // the next draft immediately; a rule edit invalidates the prompt
     // cache for the next call, which is acceptable at studio volume.
-    const rules = await loadRulesBlock();
+    const rules = await loadRulesBlock(() =>
+      recorder?.degrade("rules-unavailable"),
+    );
     // Owner-set studio info (GH-71): customer-safe facts (booking link,
     // policies), injected right after the rules block, same lifecycle.
-    const studioInfo = await loadStudioInfoBlock();
+    const studioInfo = await loadStudioInfoBlock(() =>
+      recorder?.degrade("studio-info-unavailable"),
+    );
     // Booking link rule: when SEALEVEL_BOOKING_URL is configured, tell the
     // model to close a class-attendance reply with a booking invitation and
     // the EXACT configured link (booking.ts). Gated exactly like the KB
@@ -232,6 +279,14 @@ export const emailDraft: Job = {
     const booking = bookingConfigured()
       ? bookingLinkGuidance(bookingUrl()!)
       : "";
+    try {
+      if (kbConfigured()) recorder?.guide("kb");
+      if (booking) recorder?.guide("booking");
+      if (rules) recorder?.guide("rules");
+      if (studioInfo) recorder?.guide("studio-info");
+    } catch {
+      // Trace capture must never fail the run.
+    }
     // Triage sonnet calls (GH-65 tags, GH-95 assignee suggestion): separate
     // small calls before the opus drafting loop, run concurrently. Both are
     // best-effort ([]/null on failure) and the draft proceeds identically

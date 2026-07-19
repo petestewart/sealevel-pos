@@ -149,6 +149,18 @@ export {
 } from "./db/studioInfo.js";
 export type { StudioInfoEntry } from "./db/studioInfo.js";
 export { createItemTool, toolsByName, toolsForJob } from "./tools/registry.js";
+export {
+  TraceRecorder,
+  TRACE_MAX_CALLS,
+  TRACE_REF_MAX_CHARS,
+  TRACE_ERROR_MAX_CHARS,
+} from "./tools/trace.js";
+export type {
+  RunTrace,
+  TraceCall,
+  TraceCallInput,
+  TraceOutcome,
+} from "./tools/trace.js";
 export { emitItemEvent } from "./notifications/emit.js";
 export type {
   ItemEventType,
