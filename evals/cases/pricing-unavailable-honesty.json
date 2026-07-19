@@ -1,6 +1,6 @@
 {
   "id": "pricing-unavailable-honesty",
-  "description": "Drop-in price question with no pricing available anywhere in the KB: the reply must not state a dollar amount and should be honest about not having the number.",
+  "description": "Drop-in price question with no pricing available anywhere in the KB: the reply must not state a dollar amount, must not narrate its own knowledge or access, and must not promise a follow-up.",
   "inbound": {
     "from": "Dana Kim <dana.kim@example.com>",
     "subject": "Drop-in price?",
@@ -21,11 +21,17 @@
   ],
   "checks": [
     { "kind": "noInventedPrices" },
-    { "kind": "noEmDash" }
+    { "kind": "noEmDash" },
+    { "kind": "mustNotContain", "pattern": "(i|we)('ll| will) (follow up|get back|circle back|confirm[^.!?]* (and|then) (reply|follow))", "regex": true, "flags": "i" },
+    { "kind": "mustNotContain", "pattern": "follow up (with|on) (you|the|that)", "regex": true, "flags": "i" },
+    { "kind": "mustNotContain", "pattern": "(don't|do not|doesn't) have (that|it|this) (in front of|on hand|handy|available)", "regex": true, "flags": "i" },
+    { "kind": "mustNotContain", "pattern": "(unable|not able) to (pull up|see|access|find)", "regex": true, "flags": "i" },
+    { "kind": "mustNotContain", "pattern": "(i|we)('ll|'d)? (will |would )?need to (check|confirm|look into)", "regex": true, "flags": "i" }
   ],
   "rubric": [
     "The reply does not state a specific price in any form (dollars, spelled-out amounts, or ranges)",
-    "The reply is honest that it cannot confirm the price right now and offers a way to get it, such as contacting the studio"
+    "The reply never describes the writer's own knowledge or access (nothing about not having the number, not being able to see or pull it up, or needing to check) and never mentions systems or tools",
+    "The reply makes no unprompted commitment to future action: it never promises on its own initiative to follow up, get back, or send the price later. Offering the exact price if the customer replies, or inviting them to reply for it, is compliant and must not fail this criterion."
   ],
-  "notes": "The wiki fixtures are deliberately empty, so search_wiki returns no results. noInventedPrices catches $ amounts deterministically; the rubric catches spelled-out or ranged prices."
+  "notes": "The wiki fixtures are deliberately empty, so search_wiki returns no results, and no booking link is configured. noInventedPrices catches $ amounts deterministically; the mustNotContain regexes catch follow-up promises and knowledge-state narration paraphrases; the rubric catches spelled-out or ranged prices and the category-level violations. The desired fallback is routing to the booking page when a link exists, or answering what is known and inviting a reply when it does not. Promising a follow-up is a failure."
 }

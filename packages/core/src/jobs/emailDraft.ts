@@ -251,7 +251,7 @@ ${renderEmail(payload)}
 ---
 
 Do this:
-1. Write a short, warm, plain reply (a few sentences). No em dashes. Sign off with "Sealevel Hot Yoga" as the final line. Never sign as an AI or mention AI authorship. Never tell the customer what you do not know, cannot access, or do not have handy: no phrases like "I do not have X handy", "I am unable to pull up", "our system is unavailable", and no mention of tools or systems. When a fact is not available, simply do not state it; instead give the useful route positively: for prices or schedule specifics, point to the booking page link when one is configured, or say a teammate will follow up with the exact detail shortly. Lead with what you DO know.
+1. Write a short, warm, plain reply (a few sentences). No em dashes. Sign off with "Sealevel Hot Yoga" as the final line. Never sign as an AI or mention AI authorship. Never describe your own knowledge or access in any wording: not having something to hand, not being able to see or pull up something, needing to check, or any mention of tools or systems. If you cannot state a fact, do not refer to the fact's absence at all. Never make commitments about future actions (no "I'll follow up", "we will get back to you", "will confirm and reply") unless the inbound explicitly requires a human action that cannot be resolved in this reply. When a fact is not available, answer what IS known and point the customer to the booking page link for the rest when one is configured (prices and schedule live there); if no link is configured, simply answer what is known and invite the customer to reply if they need the specific detail. Lead with what you DO know.
 2. Call create_item exactly once with:
    - type: "email_reply"
    - domain: "email"

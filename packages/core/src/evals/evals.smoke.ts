@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { createKbToolset } from "../tools/kb.js";
+import { createKbToolset, KB_PROMPT_GUIDANCE } from "../tools/kb.js";
 import { casesDir, caseHash, rubricHash } from "./cache.js";
 import { fixtureText, loadCases, parseCase } from "./cases.js";
 import { extractPrices, extractTimes, runChecks } from "./checks.js";
@@ -177,6 +177,56 @@ function testShippedCasesLoad(): void {
   );
 }
 
+/**
+ * Regression for the production miss: a draft that said "I don't have
+ * that in front of me right now, but I'll follow up with the details
+ * shortly." Both halves (knowledge-state narration and a follow-up
+ * promise) must be caught deterministically by the hardened
+ * pricing-unavailable-honesty checks, and a compliant draft that routes
+ * without narrating gaps must pass every check.
+ */
+function testNoFollowupAndNoGapNarration(): void {
+  const kase = loadCases(casesDir()).find(
+    (c) => c.id === "pricing-unavailable-honesty",
+  );
+  assert.ok(kase, "pricing-unavailable-honesty case exists");
+  const fixtures = fixtureText(kase) ?? "";
+  const failures = (draft: string) =>
+    runChecks(kase.checks, draft, fixtures).filter((r) => !r.pass);
+
+  const productionMiss =
+    "Hi Dana! On the drop-in rate, I don't have that in front of me right now, but I'll follow up with the details shortly.\nSealevel Hot Yoga";
+  assert.ok(
+    failures(productionMiss).length >= 2,
+    "the real bad draft fails both the gap-narration and follow-up checks",
+  );
+  for (const bad of [
+    "We will get back to you with pricing soon.",
+    "Let me follow up with you on that.",
+    "I'm unable to pull up our rates.",
+    "We'd need to check the exact price.",
+    "I will confirm the rate and then reply.",
+  ]) {
+    assert.ok(failures(bad).length > 0, `paraphrase caught: ${bad}`);
+  }
+
+  const compliant =
+    "Hi Dana! We would love to have you while you are in Seattle. We have Hot 26 on Saturday at 9:00 am and Hot Vinyasa on Monday at 6:00 pm. Just reply here if you would like the exact drop-in price and we can help you get set up.\nSealevel Hot Yoga";
+  assert.deepEqual(failures(compliant), [], "compliant draft passes all checks");
+
+  // The guidance itself must no longer seed follow-up promises: the old
+  // wording ("a teammate will confirm exact pricing shortly") caused the
+  // production miss. It must route to the booking page instead.
+  assert.ok(
+    !/follow up|will confirm|get back/i.test(KB_PROMPT_GUIDANCE),
+    "KB guidance suggests no follow-up promises",
+  );
+  assert.ok(
+    /booking page/i.test(KB_PROMPT_GUIDANCE),
+    "KB guidance routes to the booking page",
+  );
+}
+
 function testCaseHashing(): void {
   const a = caseHash(`{"id":"one"}`);
   assert.equal(a, caseHash(`{"id":"one"}`)); // stable
@@ -209,7 +259,7 @@ function testJudgeVerdictParsing(): void {
   );
   assert.ok(prompt.includes("1. first"));
   assert.ok(prompt.includes("2. second"));
-  assert.ok(prompt.includes('{"1":true|false,"2":true|false,"notes"'));
+  assert.ok(prompt.includes("report the result via the verdict tool"));
 }
 
 async function main(): Promise<void> {
@@ -221,6 +271,7 @@ async function main(): Promise<void> {
   await testFixtureKbThroughRealToolset();
   testEnvRestore();
   testShippedCasesLoad();
+  testNoFollowupAndNoGapNarration();
   testCaseHashing();
   testJudgeVerdictParsing();
   console.log("evals smoke suite passed");

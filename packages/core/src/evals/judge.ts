@@ -32,7 +32,6 @@ export function buildJudgePrompt(c: EvalCase, draftBody: string): string {
   const criteria = (c.rubric ?? [])
     .map((r, i) => `${i + 1}. ${r}`)
     .join("\n");
-  const keys = (c.rubric ?? []).map((_, i) => `"${i + 1}":true|false`).join(",");
   return `Grade a drafted reply to an inbound email to a yoga studio against the numbered criteria.
 
 Inbound email:
@@ -46,7 +45,7 @@ ${draftBody}
 Criteria:
 ${criteria}
 
-Respond with ONLY minified JSON, nothing else: {${keys},"notes":"<=30 words"}`;
+Grade every criterion and report the result via the verdict tool.`;
 }
 
 /** Parse the judge's JSON verdict; a missing criterion counts as a fail. */
@@ -82,16 +81,65 @@ export async function judgeCase(
   const rubric = c.rubric ?? [];
   client ??= new Anthropic();
   const usage = emptyUsage();
-  const response = await client.messages.create({
-    model: JUDGE_MODEL,
-    max_tokens: 200,
-    messages: [{ role: "user", content: buildJudgePrompt(c, draftBody) }],
-  });
-  addUsage(usage, response.usage);
-  const text = response.content
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
-  const { criteria, notes } = parseVerdict(text, rubric.length);
-  return { criteria, notes, usage };
+  // The judge occasionally returns an empty or non-JSON body. One retry
+  // absorbs the transient case; a second failure degrades to an all-fail
+  // verdict (conservative: the case reads as failed, with the reason in
+  // notes) instead of throwing, so one flaky judge call can never crash
+  // the whole suite and eat the scorecard.
+  // Forced tool use: the model MUST call the verdict tool, so the result
+  // arrives as a structured object with no text parsing. (Assistant
+  // prefill is not supported on this model, and free-text JSON proved
+  // unreliable: the model could spend the whole budget reasoning and
+  // return an empty text body.)
+  const properties: Record<string, unknown> = {
+    notes: { type: "string", description: "At most 30 words." },
+  };
+  const required: string[] = ["notes"];
+  for (let i = 1; i <= rubric.length; i++) {
+    properties[String(i)] = {
+      type: "boolean",
+      description: `Criterion ${i} passes.`,
+    };
+    required.push(String(i));
+  }
+  let lastError = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await client.messages.create({
+        model: JUDGE_MODEL,
+        max_tokens: 500,
+        messages: [{ role: "user", content: buildJudgePrompt(c, draftBody) }],
+        tools: [
+          {
+            name: "verdict",
+            description: "Report the grading verdict for every criterion.",
+            input_schema: { type: "object", properties, required },
+          },
+        ],
+        tool_choice: { type: "tool", name: "verdict" },
+      });
+      addUsage(usage, response.usage);
+      const block = response.content.find((b) => b.type === "tool_use");
+      if (!block || block.type !== "tool_use") {
+        throw new Error(
+          `judge returned no verdict tool call (stop_reason=${response.stop_reason ?? "?"})`,
+        );
+      }
+      const input = block.input as Record<string, unknown>;
+      const criteria: Record<string, boolean> = {};
+      for (let i = 1; i <= rubric.length; i++) {
+        criteria[String(i)] = input[String(i)] === true;
+      }
+      return {
+        criteria,
+        notes: typeof input["notes"] === "string" ? input["notes"] : "",
+        usage,
+      };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+  }
+  const criteria: Record<string, boolean> = {};
+  for (let i = 1; i <= rubric.length; i++) criteria[String(i)] = false;
+  return { criteria, notes: `judge unusable after retry: ${lastError}`, usage };
 }

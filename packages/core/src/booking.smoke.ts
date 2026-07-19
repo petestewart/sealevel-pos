@@ -94,6 +94,12 @@ function main(): void {
     );
     // The invitation text becomes outgoing customer copy: no em dashes.
     assert.ok(!guidance.includes("—"), "guidance is em-dash-free");
+    // The fallback posture bans follow-up promises everywhere; this
+    // guidance must not seed one either.
+    assert.ok(
+      !/follow up|get back to/i.test(guidance),
+      "guidance suggests no follow-up promises",
+    );
   });
   console.log(
     "ok: booking guidance interpolates the exact URL and is em-dash-free",
