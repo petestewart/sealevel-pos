@@ -26,7 +26,12 @@ import {
   type SignoffDefault,
 } from "../../../lib/signoff";
 import { assignableUsers, type AssignableUser } from "../../../lib/assignees";
-import { isApproved, isArchived, toCardData, toRow } from "../../../lib/itemView";
+import {
+  classifyDecision,
+  isArchived,
+  toCardData,
+  toRow,
+} from "../../../lib/itemView";
 import { ClearRejectedButton } from "../../../components/ClearRejectedButton";
 
 /**
@@ -83,7 +88,9 @@ function ListEmpty({ inbox }: { inbox: InboxDefinition }) {
       ? "New replies will appear here as they come in."
       : inbox.slug === "approved"
         ? "Replies you approve will appear here."
-        : "Drafts you reject will appear here.";
+        : inbox.slug === "no-reply"
+          ? "Emails filed as not needing a reply will appear here."
+          : "Drafts you reject will appear here.";
   return (
     <div className="list-empty">
       <div className="list-empty-title">
@@ -118,8 +125,8 @@ function DetailPlaceholder({ hasItems }: { hasItems: boolean }) {
  * paginated) before a by-id fetch renders it -- so we never render the
  * wrong view: a pending inbox's canonical members are pending_approval
  * items (ApprovalCard); a decision inbox's are resolved email_reply items
- * whose approved/rejected classification (the ONE `classifyDecision` rule,
- * via isApproved) matches the route. An id that doesn't exist, or belongs
+ * whose decision classification (the ONE `classifyDecision` rule) matches
+ * the route. An id that doesn't exist, or belongs
  * to another inbox, fails this check and falls back to the placeholder.
  *
  * Note this is stricter than what the pending inbox LISTS: the pending
@@ -139,10 +146,12 @@ function belongsToInbox(item: Item, inbox: InboxDefinition): boolean {
     case "pending":
       return item.status === "pending_approval";
     case "decision":
+      // Three-way membership (GH-115): the item's canonical classification
+      // (the ONE classifyDecision rule) must equal this inbox's decision.
       return (
         item.status === "resolved" &&
         item.type === "email_reply" &&
-        isApproved(item) === (source.decision === "approved")
+        classifyDecision(item.payload) === source.decision
       );
     default: {
       const _exhaustive: never = source;

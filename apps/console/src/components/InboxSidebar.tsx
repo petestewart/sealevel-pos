@@ -73,6 +73,17 @@ function Glyph({ icon }: { icon: InboxIcon }) {
           <path d="M10 9 L10 16 M12 9 L12 16 M14 9 L14 16" />
         </svg>
       );
+    case "bell-off":
+      // No reply needed (GH-115): a muted bell, "nothing to act on here".
+      return (
+        <svg {...shared}>
+          <path d="M9.5 4.5 C10.2 4 11 3.7 12 3.7 C15 3.7 17 6 17 9 L17 13" />
+          <path d="M7 7.5 L7 9 C7 12 6 14 5 15.5 L14.5 15.5" />
+          <path d="M18 15.5 L19 15.5" />
+          <path d="M10 18.5 C10.3 19.6 11.1 20.3 12 20.3 C12.9 20.3 13.7 19.6 14 18.5" />
+          <path d="M4 4 L20 20" />
+        </svg>
+      );
     default: {
       const _exhaustive: never = icon;
       throw new Error(`InboxSidebar: unhandled inbox icon ${_exhaustive}`);

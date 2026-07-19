@@ -311,7 +311,9 @@ export function decisionOf(item: Item): DecisionRecord | null {
   if (
     typeof d === "object" &&
     d !== null &&
-    (d.action === "approved" || d.action === "rejected") &&
+    (d.action === "approved" ||
+      d.action === "rejected" ||
+      d.action === "no_reply_needed") &&
     typeof d.by === "object" &&
     d.by !== null &&
     typeof d.by.name === "string" &&
@@ -331,35 +333,55 @@ export function decisionOf(item: Item): DecisionRecord | null {
  * (GH-29 QA: a partial `{action:"rejected"}` was once counted rejected by
  * SQL but shown approved by the old full-audit check).
  *
- * Rule, byte-for-byte matching REJECTED_SQL:
+ * Rule, byte-for-byte matching REJECTED_SQL / NO_REPLY_SQL /
+ * DECISION_ACTION_SQL (approvals.ts), in precedence order:
  *   - legacy bare string "rejected"                -> rejected
  *   - any object with action === "rejected"
  *     (full audit record OR partial, by/at absent) -> rejected
+ *   - any object with action === "no_reply_needed"
+ *     (GH-115; no legacy bare-string form exists)  -> no_reply_needed
  *   - everything else resolved (approved object,
  *     legacy bare "approved", missing decision,
  *     any other partial)                           -> approved
  *
- * SQL equivalence (approvals.ts REJECTED_SQL):
+ * SQL equivalence (approvals.ts):
  *   (jsonb_typeof(payload->'decision')='string' AND payload->>'decision'='rejected')
  *   -> the bare-string branch;
  *   OR payload->'decision'->>'action'='rejected'
  *   -> the object branch (->> yields NULL for a bare string or missing key,
- *      so only an explicit action='rejected' matches). coalesce(...,false)
- *      makes every other resolved row approved. Identical to the below.
+ *      so only an explicit action='rejected' matches). Then
+ *   payload->'decision'->>'action'='no_reply_needed' -> no_reply_needed.
+ *   coalesce(...,false) makes every other resolved row approved.
+ *   DECISION_ACTION_SQL applies the same precedence. Identical to the below.
  */
+export type DecisionClass = "approved" | "rejected" | "no_reply_needed";
+
 export function classifyDecision(
   payload: Record<string, unknown>,
-): "approved" | "rejected" {
+): DecisionClass {
   const d = payload.decision;
   if (typeof d === "string") return d === "rejected" ? "rejected" : "approved";
-  if (
-    typeof d === "object" &&
-    d !== null &&
-    (d as { action?: unknown }).action === "rejected"
-  ) {
-    return "rejected";
+  if (typeof d === "object" && d !== null) {
+    const action = (d as { action?: unknown }).action;
+    if (action === "rejected") return "rejected";
+    if (action === "no_reply_needed") return "no_reply_needed";
   }
   return "approved";
+}
+
+/**
+ * Human phrasing for a decision class, lowercase for mid-sentence use
+ * ("Already marked no reply needed by Sam"). No em dashes.
+ */
+export function decisionPhrase(action: DecisionClass): string {
+  switch (action) {
+    case "approved":
+      return "approved";
+    case "rejected":
+      return "rejected";
+    case "no_reply_needed":
+      return "marked no reply needed";
+  }
 }
 
 /** Whether a resolved item was approved (canonical rule). */
@@ -377,12 +399,19 @@ export function isArchived(item: Item): boolean {
   return Object.prototype.hasOwnProperty.call(item.payload, "archived");
 }
 
-export type RowTone = "pending" | "approved" | "rejected";
+export type RowTone = "pending" | "approved" | "rejected" | "noreply";
 
 /** Semantic tone for a row's status dot, derived from item state. */
 export function toneOf(item: Item): RowTone {
   if (item.status === "pending_approval") return "pending";
-  return isApproved(item) ? "approved" : "rejected";
+  switch (classifyDecision(item.payload)) {
+    case "approved":
+      return "approved";
+    case "rejected":
+      return "rejected";
+    case "no_reply_needed":
+      return "noreply";
+  }
 }
 
 /** One-line, collapsed preview of the inbound message for a list row. */

@@ -83,6 +83,48 @@ function testParseMultipart(): void {
   console.log("[smoke] parse multipart: prefers text/plain, extracts threading ok");
 }
 
+/**
+ * GH-115: the automated-mail signal headers (Auto-Submitted, Precedence,
+ * List-Id, List-Unsubscribe) are captured additively by parseGmailMessage
+ * for the layered no-reply detector, and stay undefined when absent.
+ */
+function testParseAutomatedHeaders(): void {
+  const msg: GmailMessageResource = {
+    id: "id-auto",
+    payload: {
+      mimeType: "text/plain",
+      headers: [
+        { name: "From", value: "Service <updates@service.example>" },
+        { name: "Subject", value: "Your receipt" },
+        { name: "Auto-Submitted", value: "auto-generated" },
+        { name: "precedence", value: "bulk" }, // case-insensitive lookup
+        { name: "List-Id", value: "<news.service.example>" },
+        { name: "List-Unsubscribe", value: "<mailto:unsub@service.example>" },
+      ],
+      body: { data: b64url("Thanks for your order.") },
+    },
+  };
+  const parsed = parseGmailMessage(msg);
+  assert.equal(parsed.autoSubmitted, "auto-generated");
+  assert.equal(parsed.precedence, "bulk");
+  assert.equal(parsed.listId, "<news.service.example>");
+  assert.equal(parsed.listUnsubscribe, "<mailto:unsub@service.example>");
+
+  const plain = parseGmailMessage({
+    id: "id-plain",
+    payload: {
+      mimeType: "text/plain",
+      headers: [{ name: "From", value: "jordan@example.com" }],
+      body: { data: b64url("hi") },
+    },
+  });
+  assert.equal(plain.autoSubmitted, undefined);
+  assert.equal(plain.precedence, undefined);
+  assert.equal(plain.listId, undefined);
+  assert.equal(plain.listUnsubscribe, undefined);
+  console.log("[smoke] parse: automated-mail signal headers captured");
+}
+
 function testParseHtmlOnly(): void {
   const msg: GmailMessageResource = {
     id: "id2",
@@ -416,6 +458,7 @@ function testSendMode(): void {
 async function main(): Promise<void> {
   loadEnv();
   testParseMultipart();
+  testParseAutomatedHeaders();
   testParseHtmlOnly();
   testParseAttachmentSkipped();
   testBuildRawReply();

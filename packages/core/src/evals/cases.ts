@@ -65,6 +65,20 @@ export interface EvalCase {
    */
   rubric?: string[];
   /**
+   * GH-115: the case expects the no-reply gate to classify the inbound as
+   * no_reply_needed BEFORE drafting, so no draft exists and none of the
+   * body checks run (they remain as a safety net that only fires if the
+   * gate regresses and a draft is generated anyway). Cases WITHOUT this
+   * flag assert the opposite: being classified no-reply is a failure
+   * (guards the tiers against over-blocking real customer mail).
+   */
+  expectNoReply?: boolean;
+  /**
+   * With expectNoReply: the exact detection tier that must decide
+   * (1 sender rules, 2 headers, 3 model). Omit to accept any tier.
+   */
+  expectNoReplyTier?: 1 | 2 | 3;
+  /**
    * Known-bad today: a failure is reported but keeps the suite green, so
    * real production misses stay tracked while their fixes are in flight.
    * A pass is flagged so the marker gets removed.
@@ -152,6 +166,12 @@ export function parseCase(file: string, raw: string): EvalCase {
     fixtures: parsedFixtures,
     checks: checks as CheckSpec[],
     ...(rubric ? { rubric: rubric as string[] } : {}),
+    ...(data["expectNoReply"] === true ? { expectNoReply: true } : {}),
+    ...(data["expectNoReplyTier"] === 1 ||
+    data["expectNoReplyTier"] === 2 ||
+    data["expectNoReplyTier"] === 3
+      ? { expectNoReplyTier: data["expectNoReplyTier"] as 1 | 2 | 3 }
+      : {}),
     ...(data["expectedToFail"] === true ? { expectedToFail: true } : {}),
     ...(typeof data["notes"] === "string" ? { notes: data["notes"] } : {}),
     raw,

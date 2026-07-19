@@ -39,6 +39,7 @@ export function outputsDir(): string {
  */
 export const PROMPT_SOURCES = [
   "packages/core/src/jobs/emailDraft.ts",
+  "packages/core/src/brain/noReply.ts",
   "packages/core/src/booking.ts",
   "packages/core/src/tools/kb.ts",
   "packages/core/src/tools/registry.ts",
@@ -93,6 +94,12 @@ export interface SavedOutput {
   final_text: string;
   usage: UsageTotals;
   judge?: SavedJudge;
+  /**
+   * GH-115: present when the no-reply gate classified the inbound and the
+   * drafting call was skipped (draft is null in that case). Absent for
+   * runs that drafted normally.
+   */
+  classification?: { action: "no_reply_needed"; tier: 1 | 2 | 3; reason: string };
 }
 
 export function readOutput(caseId: string): SavedOutput | undefined {

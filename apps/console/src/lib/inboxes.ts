@@ -1,5 +1,5 @@
 import type { ItemStatusCounts } from "@ai-manager/core";
-import type { DecisionCounts } from "./approvals";
+import type { DecisionAction, DecisionCounts } from "./approvals";
 
 /**
  * Inbox registry (same plug-in philosophy as the widget and jobs
@@ -15,14 +15,14 @@ export interface InboxCounts {
   decisions: DecisionCounts;
 }
 
-export type InboxTone = "pending" | "approved" | "rejected";
+export type InboxTone = "pending" | "approved" | "rejected" | "noreply";
 
 /**
  * Icon shown for the inbox when the sidebar is collapsed to a rail
  * (GH-77). Names map to inline SVGs in InboxSidebar; a new inbox picks an
  * existing glyph or adds one there.
  */
-export type InboxIcon = "clock" | "check" | "x";
+export type InboxIcon = "clock" | "check" | "x" | "bell-off";
 
 /**
  * Each inbox declares HOW its body is fetched and rendered, rather than
@@ -43,7 +43,7 @@ export type InboxIcon = "clock" | "check" | "x";
  */
 export type InboxSource =
   | { kind: "pending" }
-  | { kind: "decision"; decision: "approved" | "rejected" };
+  | { kind: "decision"; decision: DecisionAction };
 
 export interface InboxDefinition {
   /** URL segment: /items/<slug>. */
@@ -95,6 +95,17 @@ export const INBOXES: readonly InboxDefinition[] = [
     blurb: "Drafts you rejected. Nothing was sent for these.",
     source: { kind: "decision", decision: "rejected" },
     count: ({ decisions }) => decisions.rejected,
+  },
+  {
+    slug: "no-reply",
+    label: "No reply",
+    tone: "noreply",
+    icon: "bell-off",
+    title: "No reply needed",
+    blurb:
+      "Emails filed as not needing a reply, like automated notifications and receipts. Nothing was drafted or sent; each shows why it was filed.",
+    source: { kind: "decision", decision: "no_reply_needed" },
+    count: ({ decisions }) => decisions.no_reply_needed,
   },
 ];
 

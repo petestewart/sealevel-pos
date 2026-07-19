@@ -19,12 +19,16 @@ import {
  * later ticket. Rejection likewise just records and closes.
  */
 
-export type Decision = "approved" | "rejected";
+export type Decision = "approved" | "rejected" | "no_reply_needed";
 
 /**
  * Decision audit record, written into the item payload under `decision`
  * (GH-22): what was decided, who decided it (Clerk user id + display
- * name), when, and whether the draft was edited before approval.
+ * name), when, and whether the draft was edited before approval. The
+ * "no_reply_needed" action (GH-115) shares this exact shape whether the
+ * classifier decided (by = {id:"system", name:"System"}, written by the
+ * worker preflight) or an operator did, so a future learning pass mines
+ * one field for both.
  */
 export interface DecisionRecord {
   action: Decision;
@@ -38,6 +42,18 @@ export interface DecisionRecord {
    * with the studio default.
    */
   signoff?: string;
+  /**
+   * Why no reply is needed (GH-115): the tier's rule or the classifier's
+   * short explanation, or the operator marker. Only on no_reply_needed
+   * records. Operator-facing; no em dashes.
+   */
+  reason?: string;
+  /**
+   * Which detection layer decided a no_reply_needed classification
+   * (1 sender rules, 2 automated headers, 3 model). Absent on operator
+   * decisions.
+   */
+  tier?: number;
 }
 
 /** Edited draft to persist alongside an approval (Save & approve). */
@@ -144,6 +160,27 @@ const REJECTED_SQL = `(
 )`;
 
 /**
+ * "No reply needed" classification (GH-115), the SQL twin of the
+ * no_reply_needed branch in classifyDecision (lib/itemView.ts); the two
+ * must stay byte-for-byte equivalent, same contract as REJECTED_SQL.
+ * Only an object decision with the explicit action matches (there is no
+ * legacy bare-string form: the state postdates the structured audit).
+ * Rejected takes precedence in every classifier expression, mirroring the
+ * order in classifyDecision.
+ */
+const NO_REPLY_SQL = `(payload->'decision'->>'action' = 'no_reply_needed')`;
+
+/**
+ * The full three-way classifier as one SQL expression, precedence matching
+ * classifyDecision exactly: rejected, then no_reply_needed, then approved.
+ */
+const DECISION_ACTION_SQL = `CASE
+  WHEN coalesce(${REJECTED_SQL}, false) THEN 'rejected'
+  WHEN coalesce(${NO_REPLY_SQL}, false) THEN 'no_reply_needed'
+  ELSE 'approved'
+END`;
+
+/**
  * Archived items (GH-55) are hidden from every inbox, count, and deep
  * link but never deleted: the row, its decision audit, and its payload
  * stay in the database with an `archived` record ({at, by}) noting who
@@ -152,12 +189,13 @@ const REJECTED_SQL = `(
  */
 const NOT_ARCHIVED_SQL = `NOT (payload ? 'archived')`;
 
-export type DecisionAction = "approved" | "rejected";
+export type DecisionAction = "approved" | "rejected" | "no_reply_needed";
 
 /** Per-decision counts of resolved email replies. */
 export interface DecisionCounts {
   approved: number;
   rejected: number;
+  no_reply_needed: number;
 }
 
 /**
@@ -175,16 +213,21 @@ export interface DecisionCounts {
  * empty table is guesswork.
  */
 export const decisionCounts = cache(async (): Promise<DecisionCounts> => {
-  const { rows } = await getPool().query<{ rejected: boolean; count: string }>(
-    `SELECT coalesce(${REJECTED_SQL}, false) AS rejected, count(*)::text AS count
+  const { rows } = await getPool().query<{
+    action: DecisionAction;
+    count: string;
+  }>(
+    `SELECT ${DECISION_ACTION_SQL} AS action, count(*)::text AS count
      FROM items
      WHERE status = 'resolved' AND type = 'email_reply' AND ${NOT_ARCHIVED_SQL}
      GROUP BY 1`,
   );
-  const counts: DecisionCounts = { approved: 0, rejected: 0 };
-  for (const row of rows) {
-    counts[row.rejected ? "rejected" : "approved"] = Number(row.count);
-  }
+  const counts: DecisionCounts = {
+    approved: 0,
+    rejected: 0,
+    no_reply_needed: 0,
+  };
+  for (const row of rows) counts[row.action] = Number(row.count);
   return counts;
 });
 
@@ -211,10 +254,10 @@ export async function decidedItems(
   const { rows } = await getPool().query<Item>(
     `SELECT * FROM items
      WHERE status = 'resolved' AND type = 'email_reply' AND ${NOT_ARCHIVED_SQL}
-       AND ${action === "rejected" ? "" : "NOT "}coalesce(${REJECTED_SQL}, false)
+       AND ${DECISION_ACTION_SQL} = $3
      ORDER BY resolved_at DESC NULLS LAST, id DESC
      LIMIT $1 OFFSET $2`,
-    [pageSize, (page - 1) * pageSize],
+    [pageSize, (page - 1) * pageSize, action],
   );
   return rows;
 }
@@ -364,6 +407,11 @@ export async function decideItem(
     at: new Date().toISOString(),
     edited: humanEdited || (signoffApplied !== undefined && priorEdited),
     ...(signoffApplied !== undefined ? { signoff: signoffApplied } : {}),
+    // GH-115: an operator "No reply needed" records why in the same field
+    // the classifier uses, so future learning can mine both uniformly.
+    ...(decision === "no_reply_needed"
+      ? { reason: "Marked as not needing a reply by the operator." }
+      : {}),
   };
 
   const { rows } = await getPool().query<Item>(

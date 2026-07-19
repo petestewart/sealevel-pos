@@ -102,6 +102,49 @@ export async function createItem(
 }
 
 /**
+ * Create an email_reply item that is ALREADY resolved as "no reply needed"
+ * (GH-115). The classifier decided before any draft existed, so the item is
+ * born in its terminal state: it never enters the pending approval queue,
+ * but stays a first-class, auditable row (the "AI suggests, human confirms"
+ * posture files it reviewably instead of deleting it). The caller supplies
+ * the full payload including the decision record
+ * ({action:"no_reply_needed", by, at, reason, tier}).
+ *
+ * Dedupe: the partial unique index (migration 0004) only guards UNRESOLVED
+ * items, so a resolved insert cannot lean on ON CONFLICT. Instead any
+ * existing email_reply carrying the same dedupe_key (any status) short-
+ * circuits the insert and is returned. The remaining race window (two
+ * concurrent inserts) is already closed upstream by the deterministic
+ * BullMQ jobId per source message (jobs/dispatch.ts).
+ */
+export async function createNoReplyItem(input: {
+  payload: Record<string, unknown>;
+  dedupeKey?: string;
+}): Promise<CreateItemResult> {
+  const pool = getPool();
+  if (input.dedupeKey !== undefined) {
+    const { rows: existing } = await pool.query<Item>(
+      `SELECT * FROM items
+       WHERE type = 'email_reply' AND payload->>'dedupe_key' = $1
+       LIMIT 1`,
+      [input.dedupeKey],
+    );
+    if (existing[0]) return { item: existing[0], created: false };
+  }
+  const payload =
+    input.dedupeKey === undefined
+      ? input.payload
+      : { ...input.payload, dedupe_key: input.dedupeKey };
+  const { rows } = await pool.query<Item>(
+    `INSERT INTO items (type, domain, status, payload, resolved_at)
+     VALUES ('email_reply', 'email', 'resolved', $1, now())
+     RETURNING *`,
+    [JSON.stringify(payload)],
+  );
+  return { item: rows[0]!, created: true };
+}
+
+/**
  * Assign (or reassign) an unresolved item; pass null to unassign. Status
  * follows the assignment: unassigning moves the item to 'unassigned' (so
  * it shows in the unassigned queue), and assigning a currently-unassigned

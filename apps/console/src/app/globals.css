@@ -384,6 +384,12 @@ textarea {
   background: var(--unas-tx);
 }
 
+/* No reply needed (GH-115): neutral, deliberately quieter than the
+   decision colors; these items ask for nothing. */
+.dot--noreply {
+  background: var(--unas-tx);
+}
+
 .dot--accent {
   background: var(--accent);
 }
@@ -419,6 +425,11 @@ textarea {
 }
 
 .status-chip--unassigned {
+  background: var(--unas-bg);
+  color: var(--unas-tx);
+}
+
+.status-chip--noreply {
   background: var(--unas-bg);
   color: var(--unas-tx);
 }

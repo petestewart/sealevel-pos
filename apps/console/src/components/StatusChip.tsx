@@ -2,12 +2,14 @@ export type StatusChipVariant =
   | "pending"
   | "approved"
   | "rejected"
+  | "noreply"
   | "unassigned";
 
 const LABELS: Record<StatusChipVariant, string> = {
   pending: "Pending",
   approved: "Approved",
   rejected: "Rejected",
+  noreply: "No reply needed",
   unassigned: "Unassigned",
 };
 

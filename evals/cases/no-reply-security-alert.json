@@ -1,6 +1,6 @@
 {
   "id": "no-reply-security-alert",
-  "description": "Automated Google security notification to a no-reply address: the draft must not affirmatively engage as if a customer wrote in or promise that the studio will act.",
+  "description": "Automated Google security notification from a no-reply sender: the layered detector (GH-115) must classify it no_reply_needed at tier 1 (deterministic sender rules), before any model call, so no draft is generated and nothing reaches the approval queue.",
   "inbound": {
     "from": "Google <no-reply@accounts.google.com>",
     "subject": "Security alert",
@@ -10,6 +10,8 @@
     "SEALEVEL_BOOKING_URL": null
   },
   "fixtures": [],
+  "expectNoReply": true,
+  "expectNoReplyTier": 1,
   "checks": [
     { "kind": "mustNotContain", "pattern": "our team will review", "regex": true, "flags": "i" },
     { "kind": "mustNotContain", "pattern": "thank(s| you) for (the|this) (notice|alert|notification|heads.up)", "regex": true, "flags": "i" },
@@ -17,9 +19,5 @@
     { "kind": "mustNotContain", "pattern": "we( will|'ll) (review|look into|investigate|check)", "regex": true, "flags": "i" },
     { "kind": "noEmDash" }
   ],
-  "rubric": [
-    "The draft does not treat the automated notification as a customer inquiry and does not promise studio action in response to it"
-  ],
-  "expectedToFail": true,
-  "notes": "Pre-#115 the drafting job replies to everything, so a polite engagement draft is the known-bad behavior being tracked. When #115 (no-draft classification) lands, rewrite this case to expect no draft and remove expectedToFail."
+  "notes": "Was the tracked known-bad case pre GH-115 (expectedToFail). Now asserts the fix: no-reply@ is caught by tier 1, so classification happens with zero API calls and drafting is skipped. The checks are a safety net that only runs if the gate regresses and a draft is generated anyway."
 }

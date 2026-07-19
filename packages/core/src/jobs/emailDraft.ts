@@ -12,8 +12,10 @@ import {
   bookingUrl,
 } from "../booking.js";
 import { classifyEmailTags } from "../brain/classify.js";
+import { classifyNoReply } from "../brain/noReply.js";
 import { suggestAssignee } from "../brain/suggestAssignee.js";
 import { recordItemUsage } from "../db/itemDrafts.js";
+import { createNoReplyItem } from "../db/items.js";
 import { loadRulesBlock } from "../db/settings.js";
 import { loadStudioInfoBlock } from "../db/studioInfo.js";
 import type { ItemTag } from "../tags.js";
@@ -68,6 +70,19 @@ export interface InboundEmailPayload {
   replyTo?: string;
   /** The inbound To header (informational). */
   to?: string;
+  /**
+   * Automated-mail signal headers (GH-115), captured by gmail/parse.ts for
+   * the layered no-reply detector. Classification inputs only: never fed
+   * to a model prompt, never stamped onto the item.
+   */
+  /** Auto-Submitted header (RFC 3834), e.g. "auto-generated". */
+  autoSubmitted?: string;
+  /** Precedence header (bulk / list / auto_reply). */
+  precedence?: string;
+  /** List-Id header (list mail). */
+  listId?: string;
+  /** List-Unsubscribe header (bulk mail). */
+  listUnsubscribe?: string;
 }
 
 /**
@@ -211,6 +226,65 @@ export const emailDraft: Job = {
   // Fires on any inbound email (the ingestion heartbeat), and stays
   // hand-fireable for testing without a mailbox (fire.ts).
   triggers: [{ kind: "email", match: /.*/ }, { kind: "manual" }],
+  // No-reply gate (GH-115): before ANY model call, the layered detector
+  // (brain/noReply.ts) screens the inbound. Tiers 1-2 (sender rules, RFC
+  // 3834 headers) are free and always on; tier 3 is one sonnet call, only
+  // when a key is configured. On a hit the item is created directly in its
+  // terminal "no reply needed" state (status resolved, decision record on
+  // the payload) and the whole drafting run, opus call included, is
+  // skipped. On a classifier error or a pass, drafting proceeds untouched:
+  // a real customer email is never lost to this gate.
+  preflight: async (ctx: JobContext) => {
+    const payload = (ctx.payload ?? {}) as InboundEmailPayload;
+    const usage = emptyUsage();
+    const classification = await classifyNoReply(payload, usage);
+    if (!classification) return { handled: false };
+
+    const meta = emailMetaOf(payload);
+    const now = new Date().toISOString();
+    const { item, created } = await createNoReplyItem({
+      payload: {
+        original_email: {
+          from: payload.from ?? "(unknown sender)",
+          subject: payload.subject ?? "(no subject)",
+          body: payload.body ?? "(empty body)",
+          ...(payload.to ? { to: payload.to } : {}),
+        },
+        ...(meta ? { email_meta: meta } : {}),
+        // Same audit shape as operator decisions (console lib/approvals):
+        // who decided (the system), what, when, why, and via which tier,
+        // so a future learning pass can mine system and operator calls
+        // through one field.
+        decision: {
+          action: "no_reply_needed",
+          by: { id: "system", name: "System" },
+          at: now,
+          edited: false,
+          reason: classification.reason,
+          tier: classification.tier,
+        },
+        generated_by: { commit: workerVersion(), at: now },
+      },
+      ...(payload.messageId ? { dedupeKey: payload.messageId } : {}),
+    });
+    // Tier 3 spent one sonnet call; attach it to the item (GH-62).
+    // Best-effort, like every usage write.
+    if (created && usage.api_calls > 0) {
+      await recordItemUsage(item.id, { ...usage }).catch((err: unknown) =>
+        console.warn(
+          `[no-reply] could not record usage on item ${item.id}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
+    }
+    console.log(
+      `[no-reply] filed item ${item.id} as no_reply_needed (tier ${classification.tier}${
+        created ? "" : ", dedupe hit"
+      })`,
+    );
+    return { handled: true };
+  },
   // create_item moves to runtimeTools so the per-run KB log can ride on it.
   tools: [],
   runtimeTools: (ctx: JobContext) => {

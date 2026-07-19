@@ -46,6 +46,14 @@ export interface Job {
   // heterogeneous and each tool's input type appears both contravariantly
   // and covariantly; inputs stay runtime-validated by each tool's Zod schema.
   runtimeTools?: (ctx: JobContext) => BetaRunnableTool<any>[];
+  /**
+   * Optional pre-model gate (GH-115). Runs before instructions() and the
+   * tool loop; when it returns {handled: true} the job has fully handled
+   * the run itself (side effects included) and runJob skips the model loop
+   * entirely, so nothing is billed for it. A throw propagates so BullMQ
+   * retries the whole run, same as any other job failure.
+   */
+  preflight?: (ctx: JobContext) => Promise<{ handled: boolean }>;
   /** Model to run on. Defaults to claude-opus-4-8 when omitted. */
   model?: BrainModel;
   /** The prompt. Almost entirely prose. May load data (async) to build it. */

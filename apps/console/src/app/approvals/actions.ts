@@ -14,7 +14,7 @@ import {
 } from "@ai-manager/core";
 import { requireDecider } from "../../lib/requireDecider";
 import { assignableUsers } from "../../lib/assignees";
-import { classifyDecision } from "../../lib/itemView";
+import { classifyDecision, decisionPhrase } from "../../lib/itemView";
 import { formatRelativeTime } from "../../lib/emailDisplay";
 import {
   archiveAllRejected,
@@ -103,7 +103,10 @@ async function staleDecideState(id: string): Promise<ApprovalActionState> {
         atRaw !== null && !Number.isNaN(atRaw.getTime())
           ? `, ${formatRelativeTime(atRaw)}`
           : "";
-      return { error: `Already ${action} by ${byName}${when}.`, stale: true };
+      return {
+        error: `Already ${decisionPhrase(action)} by ${byName}${when}.`,
+        stale: true,
+      };
     }
   } catch {
     // Fall through to the generic message.
@@ -247,6 +250,21 @@ export async function rejectItemAction(
   formData: FormData,
 ): Promise<ApprovalActionState> {
   return decide(formData, "rejected");
+}
+
+/**
+ * One-click "No reply needed" (GH-115), symmetric with approve/reject:
+ * resolves the item with a no_reply_needed decision audit (who, when, and
+ * a reason recorded in the same payload field the classifier writes, so a
+ * future learning pass can mine operator corrections). Nothing is sent;
+ * the send path only ever runs on approval. Works regardless of whether a
+ * draft exists, since dismissing an email needs no draft to dismiss.
+ */
+export async function noReplyItemAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  return decide(formData, "no_reply_needed");
 }
 
 /**

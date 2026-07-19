@@ -91,6 +91,14 @@ export {
   type AssigneeSuggestion,
 } from "./routing.js";
 export { suggestAssignee } from "./brain/suggestAssignee.js";
+export {
+  classifyNoReply,
+  classifyNoReplyDeterministic,
+  classifyNoReplyLlm,
+  detectAutomatedHeaders,
+  detectNoReplySender,
+} from "./brain/noReply.js";
+export type { NoReplyClassification, NoReplySignals } from "./brain/noReply.js";
 export { reviseJobId } from "./jobs/itemRevise.js";
 export type { ItemRevisePayload } from "./jobs/itemRevise.js";
 export {
@@ -103,6 +111,7 @@ export {
 } from "./db/itemDrafts.js";
 export {
   createItem,
+  createNoReplyItem,
   assignItem,
   assignItemAudited,
   resolveItem,

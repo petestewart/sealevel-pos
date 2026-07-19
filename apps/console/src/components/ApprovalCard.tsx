@@ -20,6 +20,7 @@ import { ReviseBox, type LastAnswerData } from "./ReviseBox";
 import { RunTraceSection, type RunTraceData } from "./RunTrace";
 import {
   approveItemAction,
+  noReplyItemAction,
   rejectItemAction,
   saveAndApproveItemAction,
   saveEditsItemAction,
@@ -45,6 +46,8 @@ const APPROVE_TOAST = "Approved. Reply is ready. Nothing sends automatically in 
 const SAVE_APPROVE_TOAST =
   "Saved and approved. Reply is ready. Nothing sends automatically in v1.";
 const REJECT_TOAST = "Rejected. No reply will be sent.";
+const NO_REPLY_TOAST =
+  "Filed as no reply needed. Nothing will be sent for this email.";
 
 /**
  * When outbound send is enabled for the deployment (GH-95), an Approve
@@ -276,6 +279,12 @@ export function ApprovalCard({
     rejectItemAction,
     initialActionState,
   );
+  // No reply needed (GH-115): a decision like approve/reject, so it gets
+  // the same no-JS fallback dispatcher and the same enhanced flow.
+  const [noReplyState, noReplyAction] = useActionState(
+    noReplyItemAction,
+    initialActionState,
+  );
   const [saveApproveState, saveApproveAction] = useActionState(
     saveAndApproveItemAction,
     initialActionState,
@@ -345,7 +354,14 @@ export function ApprovalCard({
   // whole state (not just the message) preserves the stale flag that drives
   // the Refresh affordance (GH-31).
   const errorState =
-    [decideError, approveState, rejectState, saveApproveState, saveEditsState]
+    [
+      decideError,
+      approveState,
+      rejectState,
+      noReplyState,
+      saveApproveState,
+      saveEditsState,
+    ]
       .filter((s): s is ApprovalActionState => s !== null)
       .find((s) => s.error) ?? null;
   const actionError = errorState?.error ?? null;
@@ -645,6 +661,17 @@ export function ApprovalCard({
                 }}
               >
                 Edit
+              </Button>
+              <Button
+                key="no-reply"
+                type="submit"
+                variant="outlined"
+                disabled={!armed || isDeciding}
+                formAction={noReplyAction}
+                onClick={decide(noReplyItemAction, NO_REPLY_TOAST, false)}
+                formNoValidate
+              >
+                No reply needed
               </Button>
             </>
           )}

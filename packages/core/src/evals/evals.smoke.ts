@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 
+import {
+  classifyNoReplyDeterministic,
+  detectAutomatedHeaders,
+  detectNoReplySender,
+} from "../brain/noReply.js";
 import { emailDraft } from "../jobs/emailDraft.js";
 import type { JobContext } from "../jobs/types.js";
 import { createKbToolset, KB_PROMPT_GUIDANCE } from "../tools/kb.js";
@@ -414,6 +419,159 @@ function testNoFollowupAndNoGapNarration(): void {
   );
 }
 
+/**
+ * GH-115 tier 1: the deterministic no-reply SENDER matrix. Positive rows
+ * are unambiguously send-only local parts (with separators, VERP tokens,
+ * display names, mixed case); negative rows are the near-misses that must
+ * never match: reply@/replies@ (real reply addresses), tokens not at the
+ * start of the local part, and "noreplyshop@" (no separator after the
+ * token; the conservative documented choice is to draft for it rather
+ * than risk over-blocking a weirdly named human sender).
+ */
+function testNoReplySenderMatrix(): void {
+  const hit = (from: string) => detectNoReplySender(from) !== null;
+  for (const from of [
+    "noreply@studio.example",
+    "no-reply@accounts.google.com",
+    "Google <no-reply@accounts.google.com>",
+    "NO.REPLY@Bank.Example",
+    "no_reply@x.example",
+    "noreply+security@x.example",
+    "noreply-2@x.example",
+    "noreply2@x.example",
+    "donotreply@x.example",
+    "do-not-reply@x.example",
+    "do.not.reply@x.example",
+    "DoNotReply@x.example",
+    "MAILER-DAEMON@googlemail.com",
+    "mailer-daemon@x.example",
+    "postmaster@x.example",
+    "bounce@x.example",
+    "bounces@x.example",
+    "bounce-123@x.example",
+    "bounces+12345-abcd=user@sendgrid.example",
+  ]) {
+    assert.ok(hit(from), `tier 1 must match: ${from}`);
+  }
+  for (const from of [
+    "reply@x.example",
+    "replies@x.example",
+    "jordan@example.com",
+    "Jordan Lee <jordan@example.com>",
+    "notify@x.example",
+    "support@x.example",
+    "brunoreply@x.example",
+    "noreplyshop@x.example",
+    "info.noreply@x.example",
+    "team-donotreplyfans@x.example",
+    "bouncer@x.example",
+    "postmasterson@x.example",
+    "no-reply", // no @, no local part to judge
+    "",
+  ]) {
+    assert.ok(!hit(from), `tier 1 must NOT match: ${from || "(empty)"}`);
+  }
+  // The reason is operator-facing: present, mentions the address, no em dash.
+  const reason = detectNoReplySender("no-reply@accounts.google.com");
+  assert.ok(reason && reason.includes("no-reply@accounts.google.com"));
+  assert.ok(reason && !reason.includes("—"));
+}
+
+/**
+ * GH-115 tier 2: the automated-mail HEADER matrix (RFC 3834 and friends).
+ * Auto-Submitted matches any auto-* value ("no" never matches: RFC 3834
+ * says "no" marks human origin); Precedence matches exactly bulk, list,
+ * and auto_reply (NOT "junk": nonstandard spam vocabulary, and spam is a
+ * different outcome than "legitimate but needing no reply"); List-Id /
+ * List-Unsubscribe match by presence. A newsletter therefore classifies
+ * as no-reply via its list headers; that is the intended behavior, since
+ * bulk mail has no human counterparty awaiting an individual reply and a
+ * personal customer email never carries these headers.
+ */
+function testAutomatedHeaderMatrix(): void {
+  const hit = (signals: Parameters<typeof detectAutomatedHeaders>[0]) =>
+    detectAutomatedHeaders(signals) !== null;
+  for (const signals of [
+    { autoSubmitted: "auto-generated" },
+    { autoSubmitted: "auto-replied" },
+    { autoSubmitted: "Auto-Generated" },
+    { autoSubmitted: "auto-notified" }, // RFC 3834 registered extension form
+    { precedence: "bulk" },
+    { precedence: "Bulk" },
+    { precedence: "list" },
+    { precedence: "auto_reply" },
+    { listId: "<news.studio.example>" },
+    { listUnsubscribe: "<mailto:unsub@x.example>" },
+  ]) {
+    assert.ok(hit(signals), `tier 2 must match: ${JSON.stringify(signals)}`);
+  }
+  for (const signals of [
+    {},
+    { autoSubmitted: "no" }, // RFC 3834: explicitly human-originated
+    { autoSubmitted: "" },
+    { autoSubmitted: "automatic" }, // not an auto-* token
+    { precedence: "first-class" },
+    { precedence: "junk" }, // documented non-match (spam is a different outcome)
+    { listId: "   " },
+    { listUnsubscribe: "" },
+    { from: "jordan@example.com", subject: "hi", body: "hello" },
+  ]) {
+    assert.ok(
+      !hit(signals),
+      `tier 2 must NOT match: ${JSON.stringify(signals)}`,
+    );
+  }
+}
+
+/** GH-115: tier ordering and the combined deterministic classifier. */
+function testNoReplyDeterministicLayering(): void {
+  // Tier 1 wins when both tiers would match (cheapest to explain).
+  const both = classifyNoReplyDeterministic({
+    from: "noreply@x.example",
+    autoSubmitted: "auto-generated",
+  });
+  assert.equal(both?.tier, 1);
+  assert.equal(both?.action, "no_reply_needed");
+  // Headers alone decide at tier 2.
+  const headersOnly = classifyNoReplyDeterministic({
+    from: "updates@service.example",
+    precedence: "bulk",
+  });
+  assert.equal(headersOnly?.tier, 2);
+  // A plain human email passes both free tiers (the gray area falls to
+  // tier 3, which is a live call and not exercised here).
+  assert.equal(
+    classifyNoReplyDeterministic({
+      from: "Priya Raman <priya.raman84@gmail.com>",
+      subject: "Trying hot yoga for the first time",
+      body: "Do you have classes that are good for beginners?",
+    }),
+    null,
+  );
+}
+
+/** GH-115: the shipped golden cases carry the right gate expectations. */
+function testNoReplyCaseExpectations(): void {
+  const cases = loadCases(casesDir());
+  const alert = cases.find((c) => c.id === "no-reply-security-alert");
+  assert.ok(alert, "no-reply-security-alert case exists");
+  assert.equal(alert.expectNoReply, true);
+  assert.equal(alert.expectNoReplyTier, 1);
+  assert.equal(alert.expectedToFail, undefined, "expectedToFail removed");
+  // The case really is decidable by the free tiers, offline.
+  const det = classifyNoReplyDeterministic(alert.inbound);
+  assert.equal(det?.tier, 1);
+
+  const customer = cases.find((c) => c.id === "customer-question-not-no-reply");
+  assert.ok(customer, "customer-question-not-no-reply case exists");
+  assert.equal(customer.expectNoReply, undefined);
+  assert.equal(
+    classifyNoReplyDeterministic(customer.inbound),
+    null,
+    "the customer case must pass tiers 1-2",
+  );
+}
+
 function testCaseHashing(): void {
   const a = caseHash(`{"id":"one"}`);
   assert.equal(a, caseHash(`{"id":"one"}`)); // stable
@@ -462,6 +620,10 @@ async function main(): Promise<void> {
   testEnvRestore();
   testShippedCasesLoad();
   testNoFollowupAndNoGapNarration();
+  testNoReplySenderMatrix();
+  testAutomatedHeaderMatrix();
+  testNoReplyDeterministicLayering();
+  testNoReplyCaseExpectations();
   testCaseHashing();
   testJudgeVerdictParsing();
   console.log("evals smoke suite passed");

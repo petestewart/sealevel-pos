@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 
 import type { UsageTotals } from "../brain/budget.js";
+import { classifyNoReplyDeterministic } from "../brain/noReply.js";
 import { fixtureText, loadCases, type EvalCase } from "./cases.js";
 import {
   caseHash,
@@ -34,7 +35,12 @@ import { judgeCase } from "./judge.js";
 
 interface CaseReport {
   c: EvalCase;
-  draftSource: "fresh" | "cached" | "stale cache" | "missing";
+  draftSource:
+    | "fresh"
+    | "cached"
+    | "stale cache"
+    | "missing"
+    | "no-reply gate";
   checks?: CheckResult[];
   judge?: {
     criteria: Record<string, boolean>;
@@ -76,6 +82,76 @@ async function runOne(
   const hash = caseHash(c.raw);
   let saved = readOutput(c.id);
 
+  // GH-115: the free deterministic no-reply tiers (sender rules, headers)
+  // run in-process for EVERY case at zero cost, live or offline. For a
+  // case expecting classification they can decide the outcome outright;
+  // for a drafting case they are the over-blocking guard (a real customer
+  // email matching tier 1/2 is a failure even against a cached draft).
+  const detGate = classifyNoReplyDeterministic(c.inbound);
+
+  if (c.expectNoReply) {
+    // Tier 1/2 expectations are decidable right here with no API call and
+    // no cache. Only a gray-area (tier 3) expectation needs the model.
+    let cls = detGate;
+    report.draftSource = "no-reply gate";
+    if (!cls) {
+      if (opts.offline) {
+        if (saved?.classification) {
+          cls = saved.classification;
+          report.draftSource = saved.hash === hash ? "cached" : "stale cache";
+        } else {
+          report.problems.push(
+            "no cached classification; run a live eval first",
+          );
+          report.draftSource = "missing";
+          return report;
+        }
+      } else if (saved && saved.hash === hash && !opts.force) {
+        cls = saved.classification ?? null;
+        report.draftSource = "cached";
+      } else {
+        const result = await runDraftCase(c);
+        spend(report.spent, result.usage);
+        saved = {
+          case_id: c.id,
+          hash,
+          generated_at: new Date().toISOString(),
+          draft: result.draft ?? null,
+          create_item_calls: result.createItemCalls,
+          final_text: result.finalText,
+          usage: result.usage,
+          ...(result.classification
+            ? { classification: result.classification }
+            : {}),
+        };
+        writeOutput(saved);
+        cls = result.classification ?? null;
+        report.draftSource = "fresh";
+      }
+    }
+    if (!cls) {
+      report.problems.push(
+        "expected a no_reply_needed classification but a draft was generated",
+      );
+      report.outcome = "fail";
+    } else if (
+      c.expectNoReplyTier !== undefined &&
+      cls.tier !== c.expectNoReplyTier
+    ) {
+      report.problems.push(
+        `classified no_reply_needed at tier ${cls.tier}, expected tier ${c.expectNoReplyTier}`,
+      );
+      report.outcome = "fail";
+    } else {
+      report.outcome = "pass";
+    }
+    if (c.expectedToFail) {
+      if (report.outcome === "fail") report.outcome = "xfail";
+      else if (report.outcome === "pass") report.outcome = "xpass";
+    }
+    return report;
+  }
+
   if (opts.offline) {
     if (!saved) {
       report.problems.push("no cached output; run a live eval first");
@@ -100,13 +176,29 @@ async function runOne(
       create_item_calls: result.createItemCalls,
       final_text: result.finalText,
       usage: result.usage,
+      ...(result.classification
+        ? { classification: result.classification }
+        : {}),
     };
     writeOutput(saved);
     report.draftSource = "fresh";
   }
 
   const body = saved?.draft?.body;
-  if (typeof body !== "string" || body.length === 0) {
+  // Over-blocking guards (GH-115): this case expects a normal draft, so a
+  // no-reply classification, from the run itself or from the always-on
+  // deterministic tiers, is a failure.
+  if (saved?.classification) {
+    report.problems.push(
+      `classified no_reply_needed at tier ${saved.classification.tier} (${saved.classification.reason}) but this case expects a draft`,
+    );
+    report.outcome = "fail";
+  } else if (detGate) {
+    report.problems.push(
+      `deterministic no-reply tier ${detGate.tier} would misclassify this email: ${detGate.reason}`,
+    );
+    report.outcome = "fail";
+  } else if (typeof body !== "string" || body.length === 0) {
     report.problems.push(
       `no draft captured (create_item calls: ${saved?.create_item_calls ?? 0})`,
     );

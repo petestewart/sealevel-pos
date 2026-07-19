@@ -23,7 +23,7 @@ async function loadCounts(): Promise<InboxCounts> {
   } catch {
     return {
       statuses: { open: 0, unassigned: 0, pending_approval: 0, resolved: 0 },
-      decisions: { approved: 0, rejected: 0 },
+      decisions: { approved: 0, rejected: 0, no_reply_needed: 0 },
     };
   }
 }

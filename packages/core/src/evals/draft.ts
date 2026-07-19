@@ -3,6 +3,7 @@ import type { BetaMessage } from "@anthropic-ai/sdk/resources/beta";
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 
 import { addUsage, emptyUsage, type UsageTotals } from "../brain/budget.js";
+import { classifyNoReply, type NoReplyClassification } from "../brain/noReply.js";
 import { SYSTEM_PROMPT } from "../brain/prompts.js";
 import { emailDraft } from "../jobs/emailDraft.js";
 import type { JobContext } from "../jobs/types.js";
@@ -38,6 +39,12 @@ export interface DraftRunResult {
   finalText: string;
   stopReason: BetaMessage["stop_reason"] | null;
   usage: UsageTotals;
+  /**
+   * GH-115: set when the no-reply gate (the same brain/noReply.ts layers
+   * the production preflight runs) classified the inbound, in which case
+   * drafting was skipped and `draft` is absent.
+   */
+  classification?: NoReplyClassification;
 }
 
 const MAX_ITERATIONS = 12; // mirrors brain/run.ts
@@ -60,6 +67,24 @@ export async function runDraftCase(c: EvalCase): Promise<DraftRunResult> {
   const restoreEnv = applyCaseEnv(c.env);
   const uninstallKb = installFixtureKb(c.fixtures ?? []);
   try {
+    // The no-reply gate (GH-115) runs first, exactly as the production
+    // preflight does: tiers 1-2 free, tier 3 one sonnet call. On a hit the
+    // drafting loop is skipped entirely and the classification is the
+    // run's result. This IS part of what the suite measures (a case can
+    // assert either outcome via expectNoReply), so unlike the tags and
+    // assignee triage calls it is not skipped for token savings.
+    const gateUsage = emptyUsage();
+    const classification = await classifyNoReply(c.inbound, gateUsage);
+    if (classification) {
+      return {
+        classification,
+        createItemCalls: 0,
+        finalText: "",
+        stopReason: null,
+        usage: gateUsage,
+      };
+    }
+
     const captured: Array<Record<string, unknown>> = [];
     const base = createItemTool as BetaRunnableTool<any>;
     const captureCreateItem: BetaRunnableTool<any> = {
@@ -107,7 +132,9 @@ export async function runDraftCase(c: EvalCase): Promise<DraftRunResult> {
       ],
     });
 
-    const usage = emptyUsage();
+    // Start from the gate's usage so a tier-3 "needs a reply" screening
+    // call is counted in the run's spend, matching production accounting.
+    const usage = gateUsage;
     let finalMessage: BetaMessage | undefined;
     for await (const message of runner) {
       addUsage(usage, message.usage);

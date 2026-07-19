@@ -52,6 +52,17 @@ export async function runJob(
   // id) for the usage hook.
   const ctx = { payload, runState: {} as Record<string, unknown> };
 
+  // Pre-model gate (GH-115): a job may fully handle a run without the
+  // model (e.g. email.received filing obvious no-reply mail). Nothing is
+  // billed and no tool loop runs; the job did its own side effects.
+  if (job.preflight) {
+    const { handled } = await job.preflight(ctx);
+    if (handled) {
+      console.log(`[brain] ${jobId} handled in preflight; model loop skipped`);
+      return "end_turn";
+    }
+  }
+
   // Scoped per job: named registry tools plus any per-run private tools
   // the job builds from the payload (Job.runtimeTools).
   const tools = [...toolsForJob(job.tools), ...(job.runtimeTools?.(ctx) ?? [])];

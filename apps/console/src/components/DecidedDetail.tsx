@@ -6,7 +6,12 @@ import { RemoveRejectedButton } from "./RemoveRejectedButton";
 import { InboundEmail } from "./InboundEmail";
 import { RunTraceSection } from "./RunTrace";
 import { paragraphsOf, formatDecidedAt } from "../lib/emailDisplay";
-import { decisionOf, deliveryOf, isApproved, toCardData } from "../lib/itemView";
+import {
+  classifyDecision,
+  decisionOf,
+  deliveryOf,
+  toCardData,
+} from "../lib/itemView";
 
 /**
  * Read view for a decided item in the detail pane (A1c, GH-29). Reuses the
@@ -26,7 +31,9 @@ export function DecidedDetail({
   canDecide: boolean;
 }) {
   const data = toCardData(item);
-  const approved = isApproved(item);
+  const action = classifyDecision(item.payload);
+  const approved = action === "approved";
+  const noReply = action === "no_reply_needed";
   const decision = decisionOf(item);
   const decidedAt = decision
     ? formatDecidedAt(new Date(decision.at))
@@ -34,6 +41,12 @@ export function DecidedDetail({
       ? formatDecidedAt(item.resolved_at)
       : null;
   const hasReply = data.draftBody.length > 0;
+  // Footer audit wording: sentence-initial form of the decision.
+  const decidedLabel = approved
+    ? "Approved"
+    : noReply
+      ? "Marked no reply needed"
+      : "Rejected";
   const delivery = deliveryOf(item);
   const sendEnabled = gmailSendEnabled();
   const sendMode = gmailSendMode();
@@ -55,7 +68,9 @@ export function DecidedDetail({
           </span>
         ) : null}
         <span className="approval-card-status">
-          <StatusChip variant={approved ? "approved" : "rejected"} />
+          <StatusChip
+            variant={approved ? "approved" : noReply ? "noreply" : "rejected"}
+          />
         </span>
       </div>
 
@@ -82,20 +97,54 @@ export function DecidedDetail({
           <div className="approval-pane-labelrow">
             <span className="micro-label micro-label--accent">
               <span className="micro-label-dot" aria-hidden="true" />
-              {approved ? "Approved reply" : "Rejected draft"}
+              {approved
+                ? "Approved reply"
+                : noReply
+                  ? "No reply needed"
+                  : "Rejected draft"}
             </span>
             {data.edited ? (
               <span className="approval-pane-timestamp">edited</span>
             ) : null}
           </div>
 
-          <DeliveryStatus
-            approved={approved}
-            hasReply={hasReply}
-            delivery={delivery}
-            sendEnabled={sendEnabled}
-            sendMode={sendMode}
-          />
+          {/* GH-115: a no-reply item never entered the send path, so the
+              delivery line's approved/rejected copy does not apply; a
+              plain truthful note replaces it. */}
+          {noReply ? (
+            <div className="delivery-status" role="note">
+              <span className="delivery-status-dot" aria-hidden="true" />
+              <span>
+                Not sent. This email was filed as not needing a reply.
+              </span>
+            </div>
+          ) : (
+            <DeliveryStatus
+              approved={approved}
+              hasReply={hasReply}
+              delivery={delivery}
+              sendEnabled={sendEnabled}
+              sendMode={sendMode}
+            />
+          )}
+
+          {/* GH-115: why no reply is needed, from the decision audit (the
+              tier's rule, the classifier's explanation, or the operator
+              marker). Rendered like the draft rationale, but always open
+              via the summary text since it IS the content here. */}
+          {noReply && decision?.reason ? (
+            <details className="draft-rationale" open>
+              <summary className="draft-rationale-summary">
+                <span className="micro-label">Why no reply</span>
+              </summary>
+              <p className="draft-rationale-text">
+                {decision.reason}
+                {typeof decision.tier === "number"
+                  ? ` (detected by tier ${decision.tier})`
+                  : ""}
+              </p>
+            </details>
+          ) : null}
 
           {hasReply ? (
             <>
@@ -107,7 +156,11 @@ export function DecidedDetail({
               </div>
             </>
           ) : (
-            <div className="draft-empty">(no draft generated)</div>
+            <div className="draft-empty">
+              {noReply
+                ? "(no draft generated; drafting was skipped for this email)"
+                : "(no draft generated)"}
+            </div>
           )}
 
           {data.rationale ? (
@@ -137,15 +190,15 @@ export function DecidedDetail({
       <div className="approval-card-actions approval-card-actions--decided">
         <span className="decided-audit">
           {decision
-            ? `${approved ? "Approved" : "Rejected"} by ${decision.by.name}${
+            ? `${decidedLabel} by ${decision.by.name}${
                 decidedAt ? ` · ${decidedAt}` : ""
               }${decision.edited ? " · edited" : ""}`
-            : `${approved ? "Approved" : "Rejected"}${
-                decidedAt ? ` · ${decidedAt}` : ""
-              }`}
+            : `${decidedLabel}${decidedAt ? ` · ${decidedAt}` : ""}`}
         </span>
         {canDecide ? <ReopenButton id={data.id} /> : null}
-        {canDecide && !approved ? <RemoveRejectedButton id={data.id} /> : null}
+        {canDecide && action === "rejected" ? (
+          <RemoveRejectedButton id={data.id} />
+        ) : null}
       </div>
     </div>
   );

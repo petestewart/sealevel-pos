@@ -59,6 +59,19 @@ export interface ParsedInboundEmail {
   to?: string;
   /** Date header, if present. */
   date?: string;
+  /**
+   * Automated-mail signal headers (GH-115), captured for the layered
+   * no-reply detector (brain/noReply.ts). Classification inputs only:
+   * they never enter a model prompt or an outgoing reply.
+   */
+  /** Auto-Submitted header (RFC 3834), e.g. "auto-generated". */
+  autoSubmitted?: string;
+  /** Precedence header (bulk / list / auto_reply). */
+  precedence?: string;
+  /** List-Id header (list mail). */
+  listId?: string;
+  /** List-Unsubscribe header (bulk mail). */
+  listUnsubscribe?: string;
 }
 
 /** Decode Gmail's base64url (RFC 4648, '-'/'_' , no padding) to a UTF-8 string. */
@@ -222,6 +235,10 @@ export function parseGmailMessage(
     replyTo: header(p, "Reply-To")?.trim(),
     to: header(p, "To")?.trim(),
     date: header(p, "Date")?.trim(),
+    autoSubmitted: header(p, "Auto-Submitted")?.trim(),
+    precedence: header(p, "Precedence")?.trim(),
+    listId: header(p, "List-Id")?.trim(),
+    listUnsubscribe: header(p, "List-Unsubscribe")?.trim(),
   };
 }
 

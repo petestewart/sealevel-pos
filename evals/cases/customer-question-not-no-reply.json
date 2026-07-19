@@ -1,0 +1,19 @@
+{
+  "id": "customer-question-not-no-reply",
+  "description": "A plain customer question from a personal address must NOT be classified no_reply_needed by any tier (guards the GH-115 gate against over-blocking) and gets a normal drafted reply. Deterministic checks only; no judge.",
+  "inbound": {
+    "from": "Priya Raman <priya.raman84@gmail.com>",
+    "subject": "Trying hot yoga for the first time",
+    "body": "Hi! I have never done hot yoga before and I am a little nervous about the heat. Do you have classes that are good for beginners, and is there anything I should bring for my first visit?"
+  },
+  "env": {
+    "SEALEVEL_BOOKING_URL": null
+  },
+  "fixtures": [],
+  "checks": [
+    { "kind": "mustContain", "pattern": "Sealevel Hot Yoga" },
+    { "kind": "mustNotContain", "pattern": "no reply (is )?(needed|required)", "regex": true, "flags": "i" },
+    { "kind": "noEmDash" }
+  ],
+  "notes": "GH-115 over-blocking guard. The runner additionally asserts, at zero cost, that the deterministic tiers (sender rules and automated-mail headers) pass nothing for this inbound, and fails the case if the tier-3 model classifies it no_reply_needed instead of drafting."
+}
