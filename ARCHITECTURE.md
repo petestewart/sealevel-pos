@@ -212,6 +212,14 @@ export const gmailTool = betaZodTool({
 
 Outbound/destructive tools (post to social, send campaign, book a class) are **idempotent** (idempotency keys / natural-key dedupe) and may be **approval-gated** — they create a `pending_approval` item instead of acting directly (see Approvals). This keeps a misfire from blasting the client list.
 
+**The drafter's knowledge tools (shipped).** The email drafting job's knowledge base is the **sealevel-mcp-server** (a Cloudflare Worker serving MCP over Streamable HTTP, backed by D1). The worker connects as an MCP client with a service token (`SEALEVEL_MCP_URL` + `SEALEVEL_MCP_TOKEN`; unset = jobs run KB-less) and exposes a curated, strictly read-only toolset to the brain (`packages/core/src/tools/kb.ts`):
+
+- `search_wiki` / `read_wiki_page`: the studio wiki, for **policies and studio information only**.
+- `upcoming_classes`: the live class schedule from Mindbody (customer-safe fields: class type, date, time, teacher, spots).
+- `class_pricing`: the live published purchase options (drop-in, packs, memberships, intro offers).
+
+The **knowledge routing rule**: pricing and schedule come exclusively from the live tools, never the wiki, where they would go stale and disagree; the wiki holds only general, durable, canonical studio facts. The server enforces the same read-only scoping for the service identity, so the client-side allowlist is defense in depth. Every lookup is logged onto the item as `payload.sources` for the approving human; KB write-back is designed (human-gated, separate writer identity) in `docs/design/kb-write-back.md` but not built.
+
 ## Approvals: a durable state machine, not a long wait
 
 "Draft → wait for a human → act" (social posts, campaign sends, sometimes email replies) is decomposed into two events joined by durable state:
@@ -221,6 +229,14 @@ Outbound/destructive tools (post to social, send campaign, book a class) are **i
 3. The approval flips status and emits an event that triggers **Job B**, which performs the action via the idempotent outbound tool.
 
 No in-process waiting, no Temporal — just two BullMQ jobs and a state row. The console is the approval surface; one-click email-link approval can be layered on later.
+
+**Shipped for email (GH-95/GH-97, `docs/gmail-ingestion.md`).** The email lane runs this state machine end to end against a real mailbox:
+
+- **Inbound**: a repeatable poll ingests unread studio Gmail, dispatches each message to the drafting job by email trigger, and marks it processed only after dispatch. Three idempotency layers (processed label excluded from the poll query, deterministic BullMQ jobId, item `dedupe_key`) mean duplicates never produce duplicate drafts.
+- **Outbound**: Approve in the console enqueues Job B (`email.send`); the worker atomically claims the item and either **delivers** the threaded reply from the studio address (`GMAIL_SEND_MODE=send`) or **parks a Gmail draft** for a human to send from Gmail (`GMAIL_SEND_MODE=draft`, the safer default posture). The Approve click is the only trigger; with `GMAIL_SEND_ENABLED` unset, approvals record the decision and nothing leaves the building.
+- **The gate is split across services** so the Gmail refresh token never sits on the web-facing console: the **console** gates on the flag alone (`gmailSendEnabled`, no credential check) to decide whether an approval enqueues Job B and what the delivery copy says; the **worker** gates on the full four Gmail credentials plus the flag (`gmailSendConfigured`) and re-checks before acting, so a job enqueued while the worker lacks creds is skipped, never half-sent.
+
+**Run trace.** Every drafting run stamps the worker's built commit on the item it creates (`payload.generated_by`, from `RAILWAY_GIT_COMMIT_SHA` via `packages/core/src/version.ts`), so "which code drafted this?" is a lookup, not a deploy-timeline reconstruction.
 
 ## Operator console — designed for continuous change
 
@@ -290,12 +306,16 @@ features/social/
 
 Drop it in → it produces items, shows a card to permitted users, routes notifications per each user's prefs, and is approvable in the console. Same discipline as jobs, now spanning UI and notifications.
 
+## Draft quality evals (shipped)
+
+Email drafting quality is guarded by a golden-case eval suite: cases in `evals/cases` (inbound email + KB/schedule/pricing fixtures + deterministic checks + an optional judge rubric), engine in `packages/core/src/evals/`. Run with `npm run eval` (`--case <id>`, `--offline`, `--force`). Token discipline: free deterministic checks always run first, a case reaches the model judge only if it has a rubric and passed the deterministic tier, and drafts/verdicts are cached by content hash so unchanged cases cost nothing. In CI, the live suite runs on PRs only when a prompt-affecting path changed (drafting job, booking, KB tools, prompts, eval code) and the `ANTHROPIC_API_KEY` repo secret exists; a manual `workflow_dispatch` runs it on demand. Prompt-affecting changes must keep the suite green.
+
 ## Channel integrations + compliance
 
 Per-channel tools, each with idempotency and the relevant compliance built in, not bolted on:
 
 - **SMS (Twilio):** inbound webhooks for the conversation lane; outbound with idempotency keys; **TCPA** consent + opt-out (STOP) tracking.
-- **Email (Gmail + bulk):** inbound for the email lane; **CAN-SPAM** unsubscribe handling and deliverability for campaigns.
+- **Email (Gmail + bulk):** inbound for the email lane; **CAN-SPAM** unsubscribe handling and deliverability for campaigns. The Gmail integration is live in both directions (poll-based ingestion; send or draft-park on approval) via an installed OAuth2 app with a refresh token; see `docs/gmail-ingestion.md`.
 - **Social (per platform):** OAuth per platform, posting + read APIs, rate limits.
 
 Consent/opt-out state lives in Postgres and is checked before any outbound marketing send.
@@ -315,6 +335,8 @@ Consent/opt-out state lives in Postgres and is checked before any outbound marke
 | Auth | Clerk or Auth.js |
 | Console | Next.js + Tremor/shadcn (+ optional React-Admin/AdminJS) |
 | Hosting | Always-on host + Redis (Fly.io / Railway / VPS) |
+
+Where every piece of configuration lives across hosts (Railway, Clerk, Cloudflare, GitHub Actions) is mapped in `docs/infrastructure.md`.
 
 ## Repo structure
 
@@ -386,4 +408,4 @@ Quoted/paraphrased from the Mindbody developer docs:
 - Mindbody API Pricing Change FAQ — https://developers.mindbodyonline.com/ui/faq
 - Mindbody Developer Portal — https://developers.mindbodyonline.com/
 
-Last updated: 2026-06-27
+Last updated: 2026-07-19
