@@ -13,6 +13,9 @@ export {
   enqueueGmailState,
   gmailStateJobId,
   EMAIL_GMAIL_STATE_JOB,
+  enqueueEvalCapture,
+  evalCaptureJobId,
+  EVAL_CAPTURE_JOB,
   type GmailStateJobPayload,
 } from "./enqueue.js";
 export {

@@ -28,6 +28,9 @@ export {
   enqueueGmailState,
   gmailStateJobId,
   EMAIL_GMAIL_STATE_JOB,
+  enqueueEvalCapture,
+  evalCaptureJobId,
+  EVAL_CAPTURE_JOB,
   type GmailStateJobPayload,
   DEFAULT_WORKER_CONCURRENCY,
   workerConcurrency,
@@ -179,6 +182,8 @@ export {
   setStageApprovals,
   studioRulesBlock,
   loadRulesBlock,
+  renderRulesBlock,
+  setEvalRulesFixture,
 } from "./db/settings.js";
 export type { Rule, UserSettings } from "./db/settings.js";
 export {
@@ -198,8 +203,22 @@ export {
   TraceRecorder,
   TRACE_MAX_CALLS,
   TRACE_REF_MAX_CHARS,
+  TRACE_ARGS_MAX_CHARS,
   TRACE_ERROR_MAX_CHARS,
 } from "./tools/trace.js";
+export {
+  captureEvalCase,
+  captureRecordForItem,
+  recordEvalCapture,
+  CAPTURE_FIXTURE_MAX_CHARS,
+  CAPTURE_CASE_MAX_CHARS,
+  CAPTURE_EXCLUDED_TOOLS,
+} from "./evals/capture.js";
+export type {
+  EvalCaptureRecord,
+  ReplayFn,
+  CaptureItemLike,
+} from "./evals/capture.js";
 export type {
   RunTrace,
   TraceCall,

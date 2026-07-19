@@ -192,6 +192,38 @@ export function runTraceOf(
   };
 }
 
+/**
+ * Eval-case capture record (GH-128) from payload.eval_capture, validated
+ * into a display shape, or null when absent/malformed (renders nothing;
+ * back-compat like the trace). Written by the eval.capture worker job:
+ * either a finished case (serialized here for the copy/download block) or
+ * an honest failure note.
+ */
+export function evalCaptureOf(payload: Record<string, unknown>): {
+  at: string;
+  caseJson: string | null;
+  fileName: string | null;
+  error: string | null;
+} | null {
+  const raw = payload.eval_capture as
+    | { at?: unknown; case?: unknown; error?: unknown }
+    | undefined;
+  if (typeof raw !== "object" || raw === null) return null;
+  const at = str(raw.at);
+  if (!at) return null;
+  const kase =
+    typeof raw.case === "object" && raw.case !== null
+      ? (raw.case as Record<string, unknown>)
+      : null;
+  const caseId = kase ? str(kase.id) : undefined;
+  return {
+    at,
+    caseJson: kase ? JSON.stringify(kase, null, 2) : null,
+    fileName: kase ? `${caseId ?? "captured-case"}.json` : null,
+    error: str(raw.error) ?? null,
+  };
+}
+
 /** payload.last_answer (GH-36 Q&A) with both fields present, or null. */
 function lastAnswerOf(payload: Record<string, unknown>) {
   const raw = payload.last_answer as
@@ -300,6 +332,7 @@ export function toCardData(item: Item): ApprovalCardData {
     rationale: str(payload.draft_rationale)?.trim() || null,
     generatedBy: generatedByOf(payload),
     trace: runTraceOf(payload),
+    evalCapture: evalCaptureOf(payload),
     revisions: revisionsOf(payload),
     lastAnswer: lastAnswerOf(payload),
     suspectedSpam: suspectedSpamOf(item),

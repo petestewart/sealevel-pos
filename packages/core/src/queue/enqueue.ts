@@ -95,6 +95,36 @@ export async function enqueueGmailState(
   });
 }
 
+/** The BullMQ job name for eval-case capture from an item (GH-128). */
+export const EVAL_CAPTURE_JOB = "eval.capture";
+
+/**
+ * Timestamped jobId for one eval-case capture: re-capturing the same item
+ * (e.g. after the draft was revised, or after fixing KB config) must
+ * never be deduped into a silent no-op, so unlike the send/state jobs the
+ * id is deliberately not deterministic. The job itself is idempotent in
+ * effect: it overwrites payload.eval_capture with the latest record.
+ */
+export function evalCaptureJobId(itemId: string): string {
+  return `evalcapture-${itemId}-${Date.now()}`;
+}
+
+/**
+ * Enqueue an eval-case capture for one item (GH-128). Enqueued by the
+ * console (operator action); the worker holds the KB credentials and does
+ * the replay, matching the GH-116 gate split. Low attempts: capture
+ * records its own failures on the item payload, so a thrown failure here
+ * means the item is missing or the DB write failed.
+ */
+export async function enqueueEvalCapture(itemId: string): Promise<string> {
+  return enqueue(
+    getSharedQueue(),
+    EVAL_CAPTURE_JOB,
+    { itemId },
+    { jobId: evalCaptureJobId(itemId), attempts: 2 },
+  );
+}
+
 /** Close the shared producer queue + connection (clean process shutdown). */
 export async function closeSharedQueue(): Promise<void> {
   if (sharedQueue) {

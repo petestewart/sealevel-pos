@@ -231,15 +231,29 @@ export async function loadRulesBlock(
 }
 
 export async function studioRulesBlock(): Promise<string> {
+  if (evalRulesFixture !== null) return renderRulesBlock(evalRulesFixture);
   const rules = await getActiveRules();
-  if (rules.length === 0) return "";
-  if (rules.length > RULES_MAX_INJECTED) {
+  return renderRulesBlock(rules.map((r) => r.rule_text));
+}
+
+/**
+ * Pure renderer for the studio-rules prompt block (GH-128 refactor): a
+ * rules array in, the sanitized block out. THE single rendering path for
+ * rules: studioRulesBlock (the DB loader above) calls it with the active
+ * rules, and the eval harness calls it with a case's `rules` fixture, so
+ * an eval-injected rule is rendered byte-for-byte the way production
+ * renders an owner-authored one (control chars stripped, marker-escape,
+ * whitespace collapse, length + count caps, numbering, delimiters).
+ */
+export function renderRulesBlock(ruleTexts: string[]): string {
+  if (ruleTexts.length === 0) return "";
+  if (ruleTexts.length > RULES_MAX_INJECTED) {
     console.warn(
-      `[rules] ${rules.length} active rules; only the first ${RULES_MAX_INJECTED} are injected into prompts`,
+      `[rules] ${ruleTexts.length} active rules; only the first ${RULES_MAX_INJECTED} are injected into prompts`,
     );
   }
-  const lines = rules.slice(0, RULES_MAX_INJECTED).map((r, i) => {
-    const clean = r.rule_text
+  const lines = ruleTexts.slice(0, RULES_MAX_INJECTED).map((text, i) => {
+    const clean = text
       // eslint-disable-next-line no-control-regex
       .replace(/[\u0000-\u001f\u007f]/g, " ")
       .replace(/<\s*\/?\s*studio_rules\s*>/gi, " ")
@@ -254,4 +268,20 @@ Studio rules, set by the studio owners in the console. Apply every rule to the r
 ${lines.join("\n")}
 </studio_rules>
 `;
+}
+
+/**
+ * Eval-only rules fixture (GH-128). The eval environment has no
+ * DATABASE_URL, so studioRulesBlock would always degrade to "" and a
+ * rule-dependent behavior could never be tested. runDraftCase sets this
+ * (and clears it in a finally) for a case with a `rules` fixture;
+ * studioRulesBlock then renders the fixture through the exact production
+ * path above instead of reading the DB. Never set outside the eval
+ * harness and its smoke suite; null (the default) means production
+ * behavior.
+ */
+let evalRulesFixture: string[] | null = null;
+
+export function setEvalRulesFixture(rules: string[] | null): void {
+  evalRulesFixture = rules;
 }

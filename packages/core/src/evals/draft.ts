@@ -5,6 +5,7 @@ import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableT
 import { addUsage, emptyUsage, type UsageTotals } from "../brain/budget.js";
 import { classifyNoReply, type NoReplyClassification } from "../brain/noReply.js";
 import { SYSTEM_PROMPT } from "../brain/prompts.js";
+import { setEvalRulesFixture } from "../db/settings.js";
 import { emailDraft } from "../jobs/emailDraft.js";
 import type { JobContext } from "../jobs/types.js";
 import { createItemTool } from "../tools/registry.js";
@@ -66,6 +67,12 @@ function getClient(): Anthropic {
 export async function runDraftCase(c: EvalCase): Promise<DraftRunResult> {
   const restoreEnv = applyCaseEnv(c.env);
   const uninstallKb = installFixtureKb(c.fixtures ?? []);
+  // Rules fixture (GH-128): with DATABASE_URL absent the rules block is
+  // always empty, so a case's `rules` are injected via the eval seam in
+  // db/settings.ts. The job's own instructions() then renders them through
+  // studioRulesBlock -> renderRulesBlock: the production sanitization,
+  // numbering, and placement, not an eval-side approximation.
+  setEvalRulesFixture(c.rules ?? null);
   try {
     // The no-reply gate (GH-115) runs first, exactly as the production
     // preflight does: tiers 1-2 free, tier 3 one sonnet call. On a hit the
@@ -173,6 +180,7 @@ export async function runDraftCase(c: EvalCase): Promise<DraftRunResult> {
       usage,
     };
   } finally {
+    setEvalRulesFixture(null);
     uninstallKb();
     restoreEnv();
   }

@@ -811,6 +811,82 @@ textarea {
   color: var(--pend-tx);
 }
 
+/* GH-128: "Eval case" collapsible under the run trace. Same details
+   shell; inside, the capture button + hint, then the captured case JSON
+   in a scrollable copyable block with a download link. Operator-only. */
+.eval-capture-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.eval-capture-form {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.eval-capture-button {
+  font: 600 0.7188rem var(--font-ui), sans-serif;
+  color: var(--tx2);
+  background: var(--bg2);
+  border: 1px solid var(--line2);
+  border-radius: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.eval-capture-button:hover {
+  color: var(--tx1);
+  border-color: var(--line1);
+}
+
+.eval-capture-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.eval-capture-hint {
+  font: 400 0.6875rem var(--font-ui), sans-serif;
+  color: var(--tx3);
+}
+
+.eval-capture-error {
+  font: 400 0.7188rem var(--font-ui), sans-serif;
+  color: var(--rej-tx);
+  overflow-wrap: anywhere;
+}
+
+.eval-capture-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.eval-capture-at {
+  font: 400 0.6875rem var(--font-mono), monospace;
+  color: var(--tx3);
+}
+
+.eval-capture-json {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  font: 400 0.6875rem/1.55 var(--font-mono), monospace;
+  color: var(--tx2);
+  background: var(--bg2);
+  border: 1px solid var(--line2);
+  border-radius: 6px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
 /* Inbound email rendering robustness (GH-34): quoted-text collapse,
    raw-source view, long-body clamp, attachment notice. */
 .inbound-email {

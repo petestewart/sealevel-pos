@@ -19,6 +19,10 @@ import { InboundEmail, type AttachmentInfo } from "./InboundEmail";
 import { ReviseBox, type LastAnswerData } from "./ReviseBox";
 import { RunTraceSection, type RunTraceData } from "./RunTrace";
 import {
+  EvalCaptureSection,
+  type EvalCaptureData,
+} from "./EvalCaptureSection";
+import {
   approveItemAction,
   noReplyItemAction,
   notSpamItemAction,
@@ -136,6 +140,12 @@ export interface ApprovalCardData {
    * then falls back to its standalone line).
    */
   trace: RunTraceData | null;
+  /**
+   * Eval-case capture (payload.eval_capture, GH-128): the last captured
+   * golden-case JSON or its failure note, or null when never captured.
+   * Rendered (operator-only) as the "Eval case" collapsible.
+   */
+  evalCapture: EvalCaptureData | null;
   /**
    * Prior drafts (payload.draft_revisions, GH-36/GH-37), oldest first,
    * each already display-formatted. Empty for never-revised items.
@@ -595,6 +605,12 @@ export function ApprovalCard({
               Drafted by {item.generatedBy.commit}
               {item.generatedBy.at ? ` at ${item.generatedBy.at}` : ""}
             </div>
+          ) : null}
+
+          {/* GH-128: one-click eval-case capture, operator-only. Hidden
+              while editing, like the trace and rationale. */}
+          {!editing && canDecide ? (
+            <EvalCaptureSection id={item.id} capture={item.evalCapture} />
           ) : null}
 
           {/* GH-37: prior drafts, read-only, collapsed by default. Shown

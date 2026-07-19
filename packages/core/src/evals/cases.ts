@@ -16,6 +16,7 @@ export const FIXTURE_TOOLS = [
   "search_wiki",
   "read_wiki_page",
   "upcoming_classes",
+  "class_pricing",
 ] as const;
 
 export interface FixtureEntry {
@@ -56,6 +57,14 @@ export interface EvalCase {
    */
   env?: Record<string, string | null>;
   fixtures?: FixtureEntry[];
+  /**
+   * Studio-rules fixture (GH-128). The hermetic eval env has no
+   * DATABASE_URL, so without this the rules block is always empty. When
+   * present, the draft runner injects these rule texts through the SAME
+   * rendering path production uses (db/settings.ts renderRulesBlock, via
+   * studioRulesBlock), so rule-based behavior is testable in evals.
+   */
+  rules?: string[];
   /** Deterministic assertions, run first and at zero API cost. */
   checks: CheckSpec[];
   /**
@@ -147,6 +156,13 @@ export function parseCase(file: string, raw: string): EvalCase {
       result,
     };
   });
+  const rules = data["rules"];
+  if (rules !== undefined) {
+    if (!Array.isArray(rules) || rules.length === 0) {
+      fail(file, "rules, when present, must be a non-empty array");
+    }
+    for (const r of rules) asString(file, r, "rules entry");
+  }
   const rubric = data["rubric"];
   if (rubric !== undefined) {
     if (!Array.isArray(rubric) || rubric.length === 0) {
@@ -164,6 +180,7 @@ export function parseCase(file: string, raw: string): EvalCase {
     },
     ...(data["env"] ? { env: data["env"] as Record<string, string | null> } : {}),
     fixtures: parsedFixtures,
+    ...(rules ? { rules: rules as string[] } : {}),
     checks: checks as CheckSpec[],
     ...(rubric ? { rubric: rubric as string[] } : {}),
     ...(data["expectNoReply"] === true ? { expectNoReply: true } : {}),

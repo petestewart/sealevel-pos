@@ -14,8 +14,10 @@ import {
   EMAIL_GMAIL_STATE_JOB,
   EMAIL_INGEST_JOB,
   EMAIL_SEND_JOB,
+  EVAL_CAPTURE_JOB,
   JOBS,
   applyGmailState,
+  captureEvalCase,
   closeSharedQueue,
   createQueue,
   createQueueWorker,
@@ -123,6 +125,27 @@ const processors: Record<string, (job: Job) => Promise<void>> = {
       `[worker] ${EMAIL_GMAIL_STATE_JOB} ${action} message ${gmailId}${
         typeof itemId === "string" ? ` (item ${itemId})` : ""
       }: ${result.status}${result.reason ? ` (${result.reason})` : ""}`,
+    );
+  },
+  // Eval-case capture (GH-128): replay the item's recorded trace calls
+  // against the live KB toolset and store a runnable golden-case JSON at
+  // payload.eval_capture. Enqueued by the console (operator action); the
+  // worker holds the KB credentials. Capture-level failures (KB
+  // unconfigured, replay error) are recorded honestly on the payload by
+  // captureEvalCase itself; only a missing item or a failed DB write
+  // throws (and retries).
+  [EVAL_CAPTURE_JOB]: async (job) => {
+    const itemId = (job.data as { itemId?: unknown })?.itemId;
+    if (typeof itemId !== "string" || itemId.length === 0) {
+      throw new Error(
+        `${EVAL_CAPTURE_JOB}: job ${job.id} has no itemId in data`,
+      );
+    }
+    const record = await captureEvalCase(itemId);
+    console.log(
+      `[worker] ${EVAL_CAPTURE_JOB} item ${itemId}: ${
+        record.error ? `failed (${record.error})` : "captured"
+      }`,
     );
   },
   "test-heartbeat": async (job) => {

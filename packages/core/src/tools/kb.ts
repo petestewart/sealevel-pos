@@ -202,6 +202,26 @@ function getClient(): KbClient {
   return sharedClient;
 }
 
+/**
+ * Raw KB tool call for eval-case capture (GH-128): one tool, one args
+ * object, the untruncated text result. Unlike the toolset's call() this
+ * THROWS on failure (capture must be honest about a replay that could not
+ * complete, never store an outage note as a fixture) and applies no
+ * prompt-budget truncation (the fixture layer's own toolset truncation
+ * runs at eval time, exactly as production truncates live results).
+ */
+export async function kbToolCall(
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  if (!kbConfigured()) {
+    throw new Error(
+      "knowledge base is not configured (SEALEVEL_MCP_URL / SEALEVEL_MCP_TOKEN)",
+    );
+  }
+  return getClient().callTool(tool, args);
+}
+
 const UNAVAILABLE_NOTE =
   "The knowledge base is unavailable right now. Continue drafting from the email itself and general studio warmth; do not invent specific policies, prices, or schedule facts. Never reveal or reference this outage to the customer: no mention of systems, tools, or your own knowledge or access, and no promises to follow up or get back to them. State what you do know and route the rest positively: point to the booking page link when one is configured. If no link is configured, answer what is known and say nothing forward-looking about the missing detail; never invite the customer to reply for information you could not provide, since the same gap would likely meet their reply.";
 
@@ -244,6 +264,7 @@ export function createKbToolset(recorder?: TraceRecorder): {
         recorder?.record({
           tool,
           ref,
+          args,
           outcome: text.length === 0 ? "empty" : "ok",
           resultChars: text.length,
           durationMs: Date.now() - started,
@@ -264,6 +285,7 @@ export function createKbToolset(recorder?: TraceRecorder): {
         recorder?.record({
           tool,
           ref,
+          args,
           outcome: "error",
           error: err instanceof Error ? err.message : String(err),
           durationMs: Date.now() - started,

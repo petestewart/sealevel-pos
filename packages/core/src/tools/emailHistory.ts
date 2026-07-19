@@ -213,6 +213,11 @@ export function createEmailHistoryToolset(
         recorder?.record({
           tool: "search_email_history",
           ref,
+          // Args (GH-128): the sanitized free text only. The bound sender
+          // is deliberately not recorded, same as the run-log note above.
+          // Eval capture never replays this tool (privacy exclusion), so
+          // the args are purely diagnostic.
+          args: sanitized.length > 0 ? { query: sanitized } : {},
           outcome: blocks.length === 0 ? "empty" : "ok",
           resultChars: result.length,
           durationMs: Date.now() - started,
@@ -226,6 +231,7 @@ export function createEmailHistoryToolset(
         recorder?.record({
           tool: "search_email_history",
           ref,
+          args: sanitized.length > 0 ? { query: sanitized } : {},
           outcome: "error",
           error: err instanceof Error ? err.message : String(err),
           durationMs: Date.now() - started,

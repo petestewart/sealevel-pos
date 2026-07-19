@@ -7,6 +7,7 @@ import { RemoveRejectedButton } from "./RemoveRejectedButton";
 import { RestoreTrashedButton } from "./RestoreTrashedButton";
 import { InboundEmail } from "./InboundEmail";
 import { RunTraceSection } from "./RunTrace";
+import { EvalCaptureSection } from "./EvalCaptureSection";
 import { paragraphsOf, formatDecidedAt } from "../lib/emailDisplay";
 import {
   classifyDecision,
@@ -225,6 +226,13 @@ export function DecidedDetail({
               Drafted by {data.generatedBy.commit}
               {data.generatedBy.at ? ` at ${data.generatedBy.at}` : ""}
             </div>
+          ) : null}
+
+          {/* GH-128: one-click eval-case capture, operator-only. A decided
+              item is exactly where a miss gets noticed, so the capture
+              affordance lives here too, not just on the pending card. */}
+          {canDecide ? (
+            <EvalCaptureSection id={data.id} capture={data.evalCapture} />
           ) : null}
         </div>
       </div>

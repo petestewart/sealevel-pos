@@ -29,6 +29,15 @@ export const TRACE_MAX_CALLS = 30;
 /** Per-entry budget for the ref/args summary. */
 export const TRACE_REF_MAX_CHARS = 200;
 
+/**
+ * Per-entry budget for the full tool-call args JSON (GH-128). Args are
+ * small structured objects ({days: 7}, {query: "parking"}), so 500 chars
+ * is generous; the cap only guards against a pathological input. Retained
+ * so eval-case capture can replay the exact calls a run made; result TEXT
+ * is still never stored (see the module posture above).
+ */
+export const TRACE_ARGS_MAX_CHARS = 500;
+
 /** Per-entry budget for a sanitized error message. */
 export const TRACE_ERROR_MAX_CHARS = 200;
 
@@ -40,6 +49,13 @@ export interface TraceCall {
   tool: string;
   /** Short ref/args summary (the query, page name, filter), capped. */
   ref: string;
+  /**
+   * Full tool-call arguments as bounded JSON (GH-128), capped at
+   * TRACE_ARGS_MAX_CHARS. Absent for calls recorded without args (older
+   * traces, or args that could not be serialized). Additive to the GH-122
+   * schema; existing traces without it remain valid.
+   */
+  args?: string;
   outcome: TraceOutcome;
   /** Sanitized error message, capped; only when outcome is "error". */
   error?: string;
@@ -77,6 +93,8 @@ function clip(text: string, max: number): string {
 export interface TraceCallInput {
   tool: string;
   ref?: string;
+  /** The tool call's full arguments object, serialized + capped on record. */
+  args?: Record<string, unknown>;
   outcome: TraceOutcome;
   error?: string;
   resultChars?: number;
@@ -109,6 +127,16 @@ export class TraceRecorder {
         outcome: call.outcome,
         at: new Date().toISOString(),
       };
+      if (call.args !== undefined) {
+        try {
+          const json = JSON.stringify(call.args);
+          if (typeof json === "string") {
+            entry.args = clip(json, TRACE_ARGS_MAX_CHARS);
+          }
+        } catch {
+          // Unserializable args: the entry simply has no args field.
+        }
+      }
       if (call.outcome === "error" && call.error) {
         entry.error = clip(call.error, TRACE_ERROR_MAX_CHARS);
       }
