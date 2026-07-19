@@ -17,9 +17,24 @@ export default clerkMiddleware(async (auth, req) => {
 
 export const config = {
   matcher: [
-    // Run on everything except Next internals and static assets.
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    // Always run for API routes.
+    // Run on every request except Next.js's own internals (_next/static,
+    // _next/image, etc). GH-134: the previous matcher also excluded common
+    // static-file extensions (css, js, png, ico, ...) so Clerk's middleware
+    // would skip requests for those paths. This app ships no /public
+    // directory, so nothing actually serves those extensions as static
+    // files: a request for a nonexistent path like the browser's automatic
+    // /favicon.ico, or a bot probing /foo.js, fell through to Next's
+    // not-found rendering, which still goes through the root layout
+    // (apps/console/src/app/layout.tsx) and calls currentUser()/auth().
+    // Because clerkMiddleware never ran for that request, auth() threw
+    // "can't detect usage of clerkMiddleware()" on a loop of automated
+    // requests. Covering every non-_next path (all real pages here are
+    // rendered by the app router, not served from static files) puts every
+    // request that can reach auth() inside clerkMiddleware's context; only
+    // /api/healthz is carved back out as public above.
+    "/((?!_next).*)",
+    // Always run for API routes too (kept for clarity/robustness; already
+    // covered by the pattern above).
     "/(api|trpc)(.*)",
   ],
 };

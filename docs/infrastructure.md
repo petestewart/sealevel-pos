@@ -49,6 +49,8 @@ Railway injects `PORT` and `RAILWAY_GIT_COMMIT_SHA` (the draft version stamp) it
 
 The console deliberately holds **no Gmail credentials**: the send gate is split so the refresh token lives only on the worker (see docs/gmail-ingestion.md, "Console vs worker gate"). A `pg-backup` cron service also runs in the project with `DATABASE_URL`, `BACKUP_RCLONE_REMOTE`, and the `RCLONE_CONFIG_R2_*` credential set (see docs/backups.md and docs/railway.md).
 
+Railway's service Settings > Deploy > Healthcheck Path must point at `GET /api/healthz` (already set in `apps/console/railway.json`), not the default `/`. `/api/healthz` is the only route excluded from Clerk auth; every other route runs inside `clerkMiddleware()` (GH-134).
+
 ## Clerk
 
 Login only; no app data or behavior lives here. Manage users and allowed origins (the console's Railway domain must be listed) in the Clerk dashboard. Its only footprint in our infrastructure is the two keys above, copied into the Railway console service.
