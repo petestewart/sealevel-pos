@@ -101,6 +101,14 @@ function Glyph({ icon }: { icon: InboxIcon }) {
           <path d="M22 2 11 13" />
         </svg>
       );
+    case "book":
+      // Knowledge (GH-112): an open book, "the studio's wiki lives here".
+      return (
+        <svg {...shared}>
+          <path d="M12 6.5 C10.5 4.9 8.3 4 5.5 4 L3 4 L3 18 L5.5 18 C8.3 18 10.5 18.9 12 20.5 C13.5 18.9 15.7 18 18.5 18 L21 18 L21 4 L18.5 4 C15.7 4 13.5 4.9 12 6.5 Z" />
+          <path d="M12 6.5 L12 20.5" />
+        </svg>
+      );
     default: {
       const _exhaustive: never = icon;
       throw new Error(`InboxSidebar: unhandled inbox icon ${_exhaustive}`);

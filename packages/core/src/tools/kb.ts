@@ -65,15 +65,22 @@ interface JsonRpcResponse {
 }
 
 /**
- * Minimal MCP Streamable HTTP client for the two fixed KB tools. The
+ * Minimal MCP Streamable HTTP client for the sealevel-mcp-server. The
  * official SDK client is transport-heavy for a worker that needs exactly
  * tools/call over fetch; this stays dependency-free and testable.
  *
  * Sessions: initialize returns an mcp-session-id header that must ride on
  * subsequent calls; on a session-level rejection the client re-initializes
  * once and retries, so long-lived workers survive session expiry.
+ *
+ * The client is generic over its credential: the READ path below feeds it
+ * SEALEVEL_MCP_TOKEN (the drafter's read-only service identity), and the
+ * KB write-back path (kb/write.ts, GH-113) constructs its own instance
+ * with the separate kb-writer token. Exported for that second consumer;
+ * the read singleton and toolset in this module never see the writer
+ * credential.
  */
-class KbClient {
+export class KbClient {
   private sessionId: string | undefined;
   /** Serializes calls: the model may fire tool calls in parallel, and
    * interleaved initialize/retry on one shared session races. */
@@ -220,6 +227,20 @@ export async function kbToolCall(
     );
   }
   return getClient().callTool(tool, args);
+}
+
+/**
+ * Direct read-path tool call for NON-model consumers (the kb_update
+ * detector, GH-111, fetching page content and search results to build a
+ * proposal's base). Same shared read client and token as the drafting
+ * toolset; throws on failure so best-effort callers degrade on their own
+ * terms. Never used inside a model tool loop.
+ */
+export function kbReadToolText(
+  tool: "search_wiki" | "read_wiki_page",
+  args: Record<string, unknown>,
+): Promise<string> {
+  return kbToolCall(tool, args);
 }
 
 const UNAVAILABLE_NOTE =

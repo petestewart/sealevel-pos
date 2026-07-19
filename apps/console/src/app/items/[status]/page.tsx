@@ -7,6 +7,8 @@ import {
 } from "@ai-manager/core";
 import { ApprovalCard } from "../../../components/ApprovalCard";
 import { DecidedDetail } from "../../../components/DecidedDetail";
+import { KbDecidedDetail } from "../../../components/KbDecidedDetail";
+import { KbUpdateCard } from "../../../components/KbUpdateCard";
 import { ItemRow } from "../../../components/ItemRow";
 import { ListDetailShell } from "../../../components/ListDetailShell";
 import { ListScrollRestore } from "../../../components/ListScrollRestore";
@@ -17,11 +19,13 @@ import {
   adjacentPendingId,
   decidedItems,
   decisionCounts,
+  knowledgeItems,
   pendingApprovals,
   recentlyDecided,
   stagedApprovedItems,
   trashedItems,
 } from "../../../lib/approvals";
+import { itemInboxHref, toKbCardData } from "../../../lib/kbView";
 import { inboxBySlug, type InboxDefinition } from "../../../lib/inboxes";
 import {
   effectiveSignoffDefault,
@@ -87,6 +91,10 @@ async function loadInboxItems(inbox: InboxDefinition): Promise<Item[]> {
       // Approved queue (GH-106): approved replies whose delivery was
       // never queued, waiting for a release (Send approved).
       return stagedApprovedItems();
+    case "knowledge":
+      // KB write-back (GH-112/GH-113): pending proposals first, then the
+      // decided write history with provenance.
+      return knowledgeItems();
     default: {
       const _exhaustive: never = source;
       throw new Error(
@@ -108,7 +116,9 @@ function ListEmpty({ inbox }: { inbox: InboxDefinition }) {
             ? "Emails you trash or confirm as spam will appear here."
             : inbox.slug === "queue"
               ? "Approved replies waiting for release will appear here when your settings queue approvals."
-              : "Drafts you reject will appear here.";
+              : inbox.slug === "knowledge"
+                ? "Knowledge base update proposals will appear here when emails surface durable studio facts."
+                : "Drafts you reject will appear here.";
   return (
     <div className="list-empty">
       <div className="list-empty-title">
@@ -179,6 +189,10 @@ function belongsToInbox(item: Item, inbox: InboxDefinition): boolean {
       // Approved queue membership (GH-106): approved with no delivery
       // record. isStaged mirrors the SQL predicate the list query uses.
       return isStaged(item);
+    case "knowledge":
+      // Every kb_update item belongs to Knowledge (GH-112): pending
+      // proposals and the decided write history alike.
+      return item.type === "kb_update";
     default: {
       const _exhaustive: never = source;
       throw new Error(
@@ -244,13 +258,55 @@ function Detail({
   advanceHref,
   signoffDefault,
   assignees,
+  kbLinks,
 }: {
   item: Item;
   canDecide: boolean;
   advanceHref?: string;
   signoffDefault?: SignoffDefault;
   assignees: AssignableUser[];
+  /** Resolved deep links for a kb_update item's provenance (GH-112). */
+  kbLinks?: { sourceHref: string | null; revertHref: string | null };
 }) {
+  // kb_update items (KB write-back, GH-112/GH-113) get their own card
+  // pair; everything else keeps the email renderers.
+  if (item.type === "kb_update") {
+    if (item.status === "pending_approval") {
+      const data = toKbCardData(item);
+      if (!data) {
+        return (
+          <div className="detail-placeholder">
+            <div className="detail-placeholder-title">
+              Malformed knowledge base proposal
+            </div>
+            <div className="detail-placeholder-sub">
+              This proposal cannot be displayed or approved. Reject it from
+              the pending list.
+            </div>
+          </div>
+        );
+      }
+      return (
+        <KbUpdateCard
+          key={item.id}
+          item={data}
+          canDecide={canDecide}
+          advanceHref={advanceHref}
+          sourceHref={kbLinks?.sourceHref ?? null}
+          revertHref={kbLinks?.revertHref ?? null}
+        />
+      );
+    }
+    return (
+      <KbDecidedDetail
+        key={item.id}
+        item={item}
+        canDecide={canDecide}
+        sourceHref={kbLinks?.sourceHref ?? null}
+        revertHref={kbLinks?.revertHref ?? null}
+      />
+    );
+  }
   if (item.status === "pending_approval") {
     return (
       <ApprovalCard
@@ -316,6 +372,20 @@ export default async function InboxPage({
     canDecide && selected != null && selected.status === "pending_approval"
       ? await effectiveSignoffDefault()
       : undefined;
+
+  // Provenance deep links for a selected kb_update item (GH-112): resolve
+  // where the source email item (or, for a rollback, the reverted write)
+  // currently lives so the card links straight to it. One by-id fetch,
+  // only when a kb item is open.
+  let kbLinks: { sourceHref: string | null; revertHref: string | null } | undefined;
+  if (selected != null && selected.type === "kb_update") {
+    const data = toKbCardData(selected);
+    const [sourceHref, revertHref] = await Promise.all([
+      data?.source?.itemId ? itemInboxHref(data.source.itemId) : null,
+      data?.revertOfItemId ? itemInboxHref(data.revertOfItemId) : null,
+    ]);
+    kbLinks = { sourceHref, revertHref };
+  }
 
   return (
     <div className="page page--inbox">
@@ -420,6 +490,7 @@ export default async function InboxPage({
                 advanceHref={advanceHref}
                 assignees={assignees}
                 signoffDefault={signoffDefault}
+                kbLinks={kbLinks}
               />
             ) : (
               <DetailPlaceholder hasItems={items.length > 0} />

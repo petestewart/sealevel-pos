@@ -17,6 +17,8 @@ export interface InboxCounts {
   trashed: number;
   /** Approved replies waiting for release (GH-106), no delivery record. */
   staged: number;
+  /** Pending kb_update proposals (KB write-back, GH-112). */
+  knowledgePending: number;
 }
 
 export type InboxTone =
@@ -31,7 +33,14 @@ export type InboxTone =
  * (GH-77). Names map to inline SVGs in InboxSidebar; a new inbox picks an
  * existing glyph or adds one there.
  */
-export type InboxIcon = "clock" | "check" | "x" | "bell-off" | "ban" | "send";
+export type InboxIcon =
+  | "clock"
+  | "check"
+  | "x"
+  | "bell-off"
+  | "ban"
+  | "send"
+  | "book";
 
 /**
  * Each inbox declares HOW its body is fetched and rendered, rather than
@@ -62,7 +71,14 @@ export type InboxSource =
    * delivery was never queued. The review queue's home; releasing (Send
    * approved) queues delivery and the item leaves this view for Approved.
    */
-  | { kind: "staged" };
+  | { kind: "staged" }
+  /**
+   * Knowledge base write-back (GH-112/GH-113): every kb_update item,
+   * pending proposals first for review and decided ones beneath them with
+   * their write outcome and provenance -- the "recent committed writes"
+   * view the audit ticket calls for, plus the Propose revert affordance.
+   */
+  | { kind: "knowledge" };
 
 export interface InboxDefinition {
   /** URL segment: /items/<slug>. */
@@ -136,6 +152,17 @@ export const INBOXES: readonly InboxDefinition[] = [
       "Emails filed as not needing a reply, like automated notifications and receipts. Nothing was drafted or sent; each shows why it was filed.",
     source: { kind: "decision", decision: "no_reply_needed" },
     count: ({ decisions }) => decisions.no_reply_needed,
+  },
+  {
+    slug: "knowledge",
+    label: "Knowledge",
+    tone: "pending",
+    icon: "book",
+    title: "Knowledge base",
+    blurb:
+      "Proposed knowledge base updates and their write history. A proposal only reaches the wiki after you approve it here; rolling back a written change files a new proposal through the same gate.",
+    source: { kind: "knowledge" },
+    count: ({ knowledgePending }) => knowledgePending,
   },
   {
     slug: "trash",

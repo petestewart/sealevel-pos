@@ -52,6 +52,9 @@ jobs:
       - name: Eval engine offline smoke suite
         run: npm run smoke:evals --workspace @ai-manager/core
 
+      - name: KB write-back offline smoke suite
+        run: npm run smoke:kbwriteback --workspace @ai-manager/core
+
   # Golden-case drafting evals (evals/cases). Live drafting costs real API
   # tokens, so this job only spends them when a prompt-affecting path
   # changed AND the ANTHROPIC_API_KEY secret is present; otherwise it

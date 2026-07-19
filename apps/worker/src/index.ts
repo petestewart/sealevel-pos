@@ -28,12 +28,14 @@ import {
   ingestInbound,
   isGmailStateAction,
   jobById,
+  KB_WRITE_JOB,
   loadEnv,
   markGmailTrashed,
   registerSchedules,
   runJob,
   sendApprovedReply,
   workerVersion,
+  writeApprovedKbUpdate,
 } from "@ai-manager/core";
 
 loadEnv();
@@ -125,6 +127,25 @@ const processors: Record<string, (job: Job) => Promise<void>> = {
       `[worker] ${EMAIL_GMAIL_STATE_JOB} ${action} message ${gmailId}${
         typeof itemId === "string" ? ` (item ${itemId})` : ""
       }: ${result.status}${result.reason ? ` (${result.reason})` : ""}`,
+    );
+  },
+  // KB write on approval (GH-113, Job B of the KB write-back loop): commit
+  // one approved kb_update proposal to the wiki through the MCP server's
+  // gated write_wiki_page tool, as the distinct kb-writer identity.
+  // Enqueued by the console when an operator approves a kb_update item.
+  // Outcomes (written / stale / denied / failed / skipped) are recorded on
+  // the item payload; only retryable failures throw for BullMQ. Without
+  // the writer token the job records an honest 'skipped'.
+  [KB_WRITE_JOB]: async (job) => {
+    const itemId = (job.data as { itemId?: unknown })?.itemId;
+    if (typeof itemId !== "string" || itemId.length === 0) {
+      throw new Error(`${KB_WRITE_JOB}: job ${job.id} has no itemId in data`);
+    }
+    const result = await writeApprovedKbUpdate(itemId);
+    console.log(
+      `[worker] ${KB_WRITE_JOB} item ${itemId}: ${result.status}${
+        result.detail ? ` (${result.detail})` : ""
+      }`,
     );
   },
   // Eval-case capture (GH-128): replay the item's recorded trace calls

@@ -3,19 +3,25 @@
 import { revalidatePath } from "next/cache";
 import {
   assignItemAudited,
+  createKbRevertProposal,
   enqueueEmailSend,
   enqueueGmailState,
+  enqueueKbWrite,
+  getItemById,
   getPool,
   getUserSettings,
   gmailSendEnabled,
   gmailStateActionForDecision,
   listStagedApprovedItems,
   markDeliveryQueued,
+  markKbWriteQueued,
   recordDeliveryFailed,
+  recordKbWrite,
   recordSpamSignal,
   reopenItem,
   ReopenConflictError,
   restoreTrashedItem,
+  saveKbProposalEdits,
   trashItem,
   type Item,
 } from "@ai-manager/core";
@@ -701,6 +707,156 @@ export async function restoreTrashedAction(
   }
   revalidatePath("/", "layout");
   return { error: null };
+}
+
+/**
+ * Approve a pending kb_update proposal (GH-112): record the decision
+ * through the same guarded decideItem path as email replies (identical
+ * DecisionRecord audit; concurrent decisions lose cleanly with the stale
+ * card affordance), then enqueue the kb.write job (GH-113) that commits
+ * the change through the MCP server's gated write_wiki_page tool. The
+ * Approve click is the write authorization; nothing was written before
+ * it, and only the worker (holding the kb-writer token) writes after it.
+ *
+ * Server-side guard mirroring the email empty-draft guard (GH-33): the
+ * STORED proposal must be a well-formed kb_update with page content; a
+ * forged form cannot approve an empty or foreign item into a KB write.
+ */
+export async function approveKbUpdateAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  const decider = await requireDecider();
+  const id = requireString(formData, "id");
+  const { rows } = await getPool().query<{
+    type: string;
+    proposed_content: string | null;
+    target_page: string | null;
+  }>(
+    `SELECT type, payload->>'proposed_content' AS proposed_content,
+            payload->>'target_page' AS target_page
+     FROM items WHERE id = $1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row || row.type !== "kb_update") {
+    return { error: "This item is not a knowledge base proposal." };
+  }
+  if (
+    typeof row.proposed_content !== "string" ||
+    row.proposed_content.trim().length === 0 ||
+    typeof row.target_page !== "string" ||
+    row.target_page.trim().length === 0
+  ) {
+    return { error: "Cannot approve: this proposal has no page content." };
+  }
+  try {
+    await decideItem(id, "approved", decider);
+  } catch (err) {
+    if (isAlreadyDecided(err)) return staleDecideState(id);
+    throw err;
+  }
+  await queueKbWrite(id);
+  revalidatePath("/", "layout");
+  return { error: null };
+}
+
+/**
+ * Enqueue the kb.write job for a just-approved proposal, mirroring
+ * queueSendIfEnabled's honesty guarantees: the guarded queued stamp
+ * (markKbWriteQueued refuses rejected/reopened/already-written items),
+ * the deterministic jobId, and the revert-to-failed when the enqueue
+ * itself fails so the item never claims "queued" with no job behind it.
+ * Never throws; the recorded decision is the source of truth either way,
+ * and reopen + re-approve is the retry path.
+ */
+async function queueKbWrite(
+  id: string,
+): Promise<"queued" | "ineligible" | "error"> {
+  let queued = false;
+  try {
+    queued = Boolean(await markKbWriteQueued(id));
+    if (queued) await enqueueKbWrite(id);
+    return queued ? "queued" : "ineligible";
+  } catch (err) {
+    console.error(
+      `[approvals] failed to enqueue kb write for item ${id}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    if (queued) {
+      await recordKbWrite(id, {
+        status: "failed",
+        error:
+          "could not queue the knowledge base write; reopen and approve again to retry",
+      }).catch(() => undefined);
+    }
+    return "error";
+  }
+}
+
+/**
+ * Save a human edit to a pending proposal's page content (GH-112, the kb
+ * analogue of Save edits): proposed_content is replaced, the AI original
+ * is captured under original_proposal, and the eventual decision audit is
+ * marked edited. The item stays pending; nothing is decided or written.
+ */
+export async function saveKbEditsAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  await requireDecider();
+  const id = requireString(formData, "id");
+  const content = requireString(formData, "proposed_content");
+  if (content.trim().length === 0) {
+    return { error: "The proposed page content cannot be empty." };
+  }
+  try {
+    await saveKbProposalEdits(id, content);
+  } catch (err) {
+    if (isAlreadyDecided(err)) return staleDecideState(id);
+    throw err;
+  }
+  revalidatePath("/", "layout");
+  return { error: null };
+}
+
+/**
+ * Propose reverting a committed KB write (GH-113): files a NEW pending
+ * kb_update whose proposed content is the prior page content stored on
+ * the written item. Rollback is a proposal, not a special power: nothing
+ * is restored until a human approves the new item through the exact same
+ * gate, so no unaudited write path exists. Deduped per source item, so a
+ * double click surfaces the existing proposal instead of filing twice.
+ */
+export async function proposeKbRevertAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  await requireDecider();
+  const id = requireString(formData, "id");
+  const item = await getItemById(id);
+  if (!item) {
+    return { error: "This item no longer exists.", stale: true };
+  }
+  try {
+    const { created } = await createKbRevertProposal(item);
+    revalidatePath("/", "layout");
+    return created
+      ? { error: null }
+      : {
+          error:
+            "A revert proposal for this update already exists in the pending queue.",
+        };
+  } catch (err) {
+    return {
+      error: `Cannot propose a revert: ${
+        err instanceof Error && err.message.includes("no committed KB write")
+          ? "this item has no committed knowledge base write to revert, or the page did not exist before it."
+          : "the proposal could not be created. Refresh and try again."
+      }`,
+    };
+  }
 }
 
 /**

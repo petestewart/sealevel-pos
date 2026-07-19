@@ -12,6 +12,7 @@ import {
   bookingUrl,
 } from "../booking.js";
 import { classifyEmailTags } from "../brain/classify.js";
+import { maybeProposeKbUpdate } from "../brain/kbUpdate.js";
 import { classifyNoReply } from "../brain/noReply.js";
 import { suggestAssignee } from "../brain/suggestAssignee.js";
 import { recordItemUsage } from "../db/itemDrafts.js";
@@ -438,6 +439,35 @@ export const emailDraft: Job = {
       total.cache_read_input_tokens += classify.cache_read_input_tokens;
       total.api_calls += classify.api_calls;
     }
+    // KB write-back detector (GH-111): AFTER the draft is filed, one
+    // best-effort sonnet chain screens the inbound for a durable studio
+    // fact and, on a confident hit, files a SEPARATE inert kb_update
+    // proposal item (pending human approval; no KB write happens here and
+    // the drafting toolset gained nothing). Config-gated like every brain
+    // call (key + KB connection); any failure logs and changes nothing
+    // about the already-created draft. Its usage folds into this item's
+    // cost record. Runs only via this hook, which the eval harness
+    // (evals/draft.ts) never calls, so eval cases stay hermetic.
+    const detectUsage = emptyUsage();
+    try {
+      await maybeProposeKbUpdate(
+        (ctx.payload ?? {}) as InboundEmailPayload,
+        itemId,
+        detectUsage,
+      );
+    } catch (err) {
+      // maybeProposeKbUpdate is no-throw by contract; belt and suspenders.
+      console.warn(
+        `[kb-detect] unexpected detector error (draft unaffected): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    total.input_tokens += detectUsage.input_tokens;
+    total.output_tokens += detectUsage.output_tokens;
+    total.cache_creation_input_tokens += detectUsage.cache_creation_input_tokens;
+    total.cache_read_input_tokens += detectUsage.cache_read_input_tokens;
+    total.api_calls += detectUsage.api_calls;
     await recordItemUsage(itemId, total);
   },
   model: "claude-opus-4-8", // drafting job (locked decisions in CLAUDE.md)

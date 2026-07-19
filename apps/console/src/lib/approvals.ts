@@ -305,6 +305,39 @@ export const stagedCount = cache(async (): Promise<number> =>
 );
 
 /**
+ * Every kb_update item for the Knowledge inbox (GH-112/GH-113), pending
+ * proposals first (they need a decision), then decided ones newest
+ * decision first (the write history with provenance). Bounded page like
+ * every inbox body; kb volume is tiny (a proposal requires a durable fact
+ * in an email).
+ */
+export async function knowledgeItems(page = 1): Promise<Item[]> {
+  const [pending, decided] = await Promise.all([
+    listItems({ type: "kb_update", status: "pending_approval", page }),
+    getPool()
+      .query<Item>(
+        `SELECT * FROM items
+         WHERE type = 'kb_update' AND status = 'resolved' AND ${NOT_ARCHIVED_SQL}
+         ORDER BY resolved_at DESC NULLS LAST, id DESC
+         LIMIT 25 OFFSET $1`,
+        [(page - 1) * 25],
+      )
+      .then((r) => r.rows),
+  ]);
+  return [...pending, ...decided];
+}
+
+/**
+ * Count of PENDING kb_update proposals for the Knowledge sidebar pill:
+ * the actionable number (decided history is not "to do"). React cache()
+ * like the other count queries.
+ */
+export const knowledgePendingCount = cache(async (): Promise<number> => {
+  const counts = await countItemsByStatus({ type: "kb_update" });
+  return counts.pending_approval;
+});
+
+/**
  * Resolved email replies for one decision inbox (Approved or Rejected),
  * newest decision first, always paginated (GH-27: no unbounded item
  * query). A page beyond the end returns [].

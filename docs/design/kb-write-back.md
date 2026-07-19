@@ -1,6 +1,13 @@
 # Design: knowledge base write-back (human-gated)
 
-Status: proposed
+Status: implemented (GH-110 server side in sealevel-mcp-server PR #26; GH-111/GH-112/GH-113 client side in this repo). Repo-commit durability (open question 1) remains open: the server's D1 write is immediately visible to the drafter but is rebuilt from the sealevel-knowledge-base repo by the wiki-sync Action, so an approved change is not durable across syncs until the repo-commit follow-up ships; the append-only `kb_writes` audit does survive syncs and preserves every change for replay.
+
+Implementation notes vs. this design:
+- The detector runs as a post-draft best-effort chain from the drafting job's recordUsage hook (detect -> search -> target -> read base -> compose, all on the triage model tier, forced tool calls); its usage folds into the source item's cost record. Gated on ANTHROPIC_API_KEY + the KB read connection; the eval harness never invokes the hook, so eval cases stay hermetic.
+- The write tool's actual contract (PR #26) is `{name, content, base_hash, provenance {approved_by, source_ref, reason}}`; a stale base returns a structured conflict with `current_hash`. The item then records `kb_write: {status: "stale"}` and the honest recovery is a fresh proposal against the current page (reopen + re-approve would re-send the same stale base, so the console copy says so). `denied` (schedule/pricing denylist, identity) is likewise terminal per proposal; `failed` retries via BullMQ and then reopen + re-approve; without SEALEVEL_MCP_KB_WRITER_TOKEN the job records `skipped`.
+- The console surface is the Knowledge inbox (/items/knowledge): pending proposals (also present in Pending) above the decided write history with provenance, diffs, and the Propose revert affordance. Rollback files a new kb_update whose base is the committed content and whose proposal is the stored prior content; it flows through the same approve-then-write gate.
+- The write tool is idempotent server-side (identical content reports success without a duplicate audit row), which together with the deterministic kbwrite-<itemId> jobId is the no-double-commit guarantee; the client keeps no claim state.
+
 Related: GH-57 (read-only KB wiring), sealevel-mcp-server GH-15 (visibility tiers), GH-16 (live schedule tool)
 
 ## Problem statement

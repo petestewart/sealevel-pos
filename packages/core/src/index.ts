@@ -28,6 +28,9 @@ export {
   enqueueGmailState,
   gmailStateJobId,
   EMAIL_GMAIL_STATE_JOB,
+  enqueueKbWrite,
+  kbWriteJobId,
+  KB_WRITE_JOB,
   enqueueEvalCapture,
   evalCaptureJobId,
   EVAL_CAPTURE_JOB,
@@ -198,6 +201,40 @@ export {
   loadStudioInfoBlock,
 } from "./db/studioInfo.js";
 export type { StudioInfoEntry } from "./db/studioInfo.js";
+export {
+  buildKbRevertPayload,
+  buildKbUpdatePayload,
+  createKbRevertProposal,
+  createKbUpdateItem,
+  isProtectedKbPageName,
+  kbProposalOf,
+  kbWriteOf,
+  markKbWriteQueued,
+  normalizeKbPageName,
+  recordKbWrite,
+  saveKbProposalEdits,
+  sha256Hex,
+} from "./db/kbItems.js";
+export type {
+  KbChangeKind,
+  KbProposal,
+  KbSourceRef,
+  KbUpdatePayloadInput,
+  KbWriteRecord,
+  KbWriteStatus,
+} from "./db/kbItems.js";
+export {
+  detectKbUpdateProposal,
+  kbUpdateDetectionEnabled,
+  maybeProposeKbUpdate,
+  KB_DETECT_MIN_CONFIDENCE,
+} from "./brain/kbUpdate.js";
+export type { KbDetection, KbDetectorDeps } from "./brain/kbUpdate.js";
+export {
+  kbWriterConfigured,
+  writeApprovedKbUpdate,
+} from "./kb/write.js";
+export type { KbWriteDeps, KbWriteJobResult } from "./kb/write.js";
 export { createItemTool, toolsByName, toolsForJob } from "./tools/registry.js";
 export {
   TraceRecorder,

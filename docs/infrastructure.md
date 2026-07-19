@@ -26,6 +26,7 @@ App behavior -> Railway. Live schedule/pricing -> Cloudflare. Nightly analytics 
 | `NOVU_SECRET_KEY` | no | Notifications; unset = notifications no-op |
 | `NOVU_SUBSCRIBER_PETE`, `NOVU_SUBSCRIBER_ALISON` | with Novu | Subscriber ids |
 | `SEALEVEL_MCP_URL`, `SEALEVEL_MCP_TOKEN` | no | Knowledge base connection to the Cloudflare MCP server; unset = jobs run KB-less |
+| `SEALEVEL_MCP_KB_WRITER_TOKEN` | no | KB write-back (GH-113): the kb-writer service credential (server secret `KB_WRITER_TOKEN`, minted via wrangler in sealevel-mcp-server) used only by the post-approval `kb.write` job; unset = approved KB updates record an honest `skipped`. Worker only, never the console |
 | `SEALEVEL_BOOKING_URL` | no | The one canonical self-service booking link, interpolated verbatim into drafts; unset = booking rule absent |
 | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_USER` | no | Gmail layer (all four or it is inert); worker only, never the console |
 | `GMAIL_SEND_ENABLED` | no | `true` opts the deployment into outbound; default off (ingestion-only) |
@@ -60,9 +61,9 @@ Login only; no app data or behavior lives here. Manage users and allowed origins
 The live knowledge layer: an MCP Worker plus a D1 database (the wiki), deployed from the sealevel-mcp-server repo via wrangler. Its wrangler secrets:
 
 - `MINDBODY_API_KEY`, `MINDBODY_SITE_ID`: back the live `upcoming_classes` and `class_pricing` tools.
-- The MCP OAuth secrets and the service-token secrets that authenticate clients, including the ai-manager worker's service identity.
+- The MCP OAuth secrets and the service-token secrets that authenticate clients, including the ai-manager worker's service identity and the separate `KB_WRITER_TOKEN` for the `service:kb-writer` identity (the only identity with the gated `write_wiki_page` tool; sealevel-mcp-server PR #26). `KB_WRITER_TOKEN` must be minted there before any approved KB update can actually write.
 
-Config changes here (new tools, identity scoping) ship from that repo, not this one. The ai-manager side only holds the client pair `SEALEVEL_MCP_URL` / `SEALEVEL_MCP_TOKEN`.
+Config changes here (new tools, identity scoping) ship from that repo, not this one. The ai-manager side only holds the client pair `SEALEVEL_MCP_URL` / `SEALEVEL_MCP_TOKEN`, plus `SEALEVEL_MCP_KB_WRITER_TOKEN` (the client copy of `KB_WRITER_TOKEN`) on the worker for the KB write-back job.
 
 ## GitHub Actions
 

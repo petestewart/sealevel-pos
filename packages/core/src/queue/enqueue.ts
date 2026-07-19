@@ -95,6 +95,36 @@ export async function enqueueGmailState(
   });
 }
 
+/** The BullMQ job name for the gated KB write on approval (GH-113). */
+export const KB_WRITE_JOB = "kb.write";
+
+/**
+ * Deterministic jobId for one item's KB write: kbwrite-<itemId>. Item ids
+ * are numeric, so the id is BullMQ-safe. Determinism makes a duplicate
+ * enqueue (double approve submit, reopen + re-approve inside the job
+ * record's lifetime) a windowed no-op; the durable double-commit guard is
+ * the server's idempotent write (identical content reports success
+ * without a duplicate audit row).
+ */
+export function kbWriteJobId(itemId: string): string {
+  return `kbwrite-${itemId}`;
+}
+
+/**
+ * Enqueue the KB write for one approved kb_update item. Mirrors
+ * enqueueEmailSend: low attempts so a write that keeps failing surfaces
+ * on the item (kb_write 'failed') rather than retrying indefinitely;
+ * reopen + re-approve is the operator retry path.
+ */
+export async function enqueueKbWrite(itemId: string): Promise<string> {
+  return enqueue(
+    getSharedQueue(),
+    KB_WRITE_JOB,
+    { itemId },
+    { jobId: kbWriteJobId(itemId), attempts: 3 },
+  );
+}
+
 /** The BullMQ job name for eval-case capture from an item (GH-128). */
 export const EVAL_CAPTURE_JOB = "eval.capture";
 

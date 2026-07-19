@@ -561,6 +561,32 @@ export interface RowView {
 }
 
 export function toRow(item: Item): RowView {
+  // kb_update items (KB write-back, GH-112) have no original_email; their
+  // row leads with the target wiki page and the proposal summary.
+  if (item.type === "kb_update") {
+    const page = str(item.payload.target_page) ?? "(unknown page)";
+    const summary = str(item.payload.summary) ?? "";
+    const isRevert =
+      typeof (item.payload.source as Record<string, unknown> | undefined)?.[
+        "revert_of_item_id"
+      ] === "string";
+    const tone = toneOf(item);
+    const decided = tone !== "pending";
+    return {
+      id: String(item.id),
+      sender: isRevert ? "KB revert" : "KB update",
+      initials: "KB",
+      subject: `Wiki: ${page}`,
+      time:
+        decided && item.resolved_at
+          ? formatDecidedAt(item.resolved_at)
+          : formatCardTimestamp(item.created_at),
+      preview: summary.length > 0 ? summary : "Knowledge base proposal",
+      tone,
+      tags: [],
+      assigneeName: assigneeNameOf(item),
+    };
+  }
   const original = originalOf(item);
   const sender = parseSender(str(original.from));
   const tone = toneOf(item);

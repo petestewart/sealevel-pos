@@ -2590,3 +2590,174 @@ button.assignee-suggest:disabled {
   font-weight: 600;
   letter-spacing: 0.02em;
 }
+
+/* ---- KB write-back (GH-112/GH-113): kb_update proposal cards ---- */
+
+/* Single-column body: the diff IS the content, so no two-pane split. */
+.kb-card-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.kb-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.kb-card-page {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.kb-page-name {
+  font: 600 0.875rem var(--font-mono), monospace;
+  color: var(--tx);
+}
+
+.kb-card-summary {
+  margin: 0;
+  font: 400 0.8438rem/1.6 var(--font-ui), sans-serif;
+  color: var(--txb);
+}
+
+.kb-card-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  font: 400 0.7188rem/1.5 var(--font-ui), sans-serif;
+  color: var(--tx2);
+}
+
+.kb-source-link {
+  color: var(--accent-tx);
+  text-decoration: none;
+}
+
+.kb-source-link:hover {
+  text-decoration: underline;
+}
+
+.kb-confidence {
+  color: var(--tx3);
+}
+
+/* Rendered line diff: additions green, deletions red, collapsed
+   unchanged runs as an ellipsis divider. Monospace, horizontal scroll
+   inside its own container so long lines never widen the card. */
+.kb-diff {
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.kb-diff-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line2);
+  background: var(--surface2);
+}
+
+.kb-diff-stats {
+  display: flex;
+  gap: 8px;
+  font: 600 0.6875rem var(--font-mono), monospace;
+}
+
+.kb-diff-stat--add {
+  color: var(--appr-tx);
+}
+
+.kb-diff-stat--del {
+  color: var(--rej-tx);
+}
+
+.kb-diff-body {
+  overflow-x: auto;
+  padding: 6px 0;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.kb-diff-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px;
+  font: 400 0.75rem/1.7 var(--font-mono), monospace;
+  color: var(--txb);
+  white-space: pre;
+}
+
+.kb-diff-row--add {
+  background: var(--appr-bg);
+  color: var(--appr-tx);
+}
+
+.kb-diff-row--del {
+  background: var(--rej-bg);
+  color: var(--rej-tx);
+}
+
+.kb-diff-row--gap {
+  color: var(--tx3);
+  text-align: center;
+  display: block;
+  user-select: none;
+}
+
+.kb-diff-sign {
+  flex: none;
+  width: 1ch;
+  user-select: none;
+}
+
+.kb-diff-text {
+  flex: 1;
+}
+
+.kb-content-input {
+  min-height: 260px;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.75rem;
+}
+
+/* Write outcome line (GH-113), same shape as the delivery status line:
+   green for written, amber for queued/stale/skipped honesty, red for
+   denied/failed. */
+.kb-write-status {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font: 400 0.7812rem/1.5 var(--font-ui), sans-serif;
+  color: var(--tx2);
+  background: var(--surface2);
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.kb-write-status--ok {
+  color: var(--appr-tx);
+  background: var(--appr-bg);
+  border-color: transparent;
+}
+
+.kb-write-status--pending,
+.kb-write-status--warn {
+  color: var(--pend-tx);
+  background: var(--pend-bg);
+  border-color: transparent;
+}
+
+.kb-write-status--error {
+  color: var(--rej-tx);
+  background: var(--rej-bg);
+  border-color: transparent;
+}
