@@ -72,103 +72,22 @@ function sameDraft(a: DraftEdits, b: DraftEdits): boolean {
 }
 
 /**
- * Personal signoff (GH-66): when the approving user has sign_with_name
- * enabled, the draft's default "Sealevel Hot Yoga" signoff line gains
- * their name above it:
- *
- *   ... see you soon!        ... see you soon!
- *   Sealevel Hot Yoga   ->   Pete
- *                            Sealevel Hot Yoga
- *
- * Deliberately conservative: it only fires when the LAST non-empty line
- * is exactly the default signoff (drafting instructs the model to end
- * every reply that way). Any other shape returns the body unchanged --
- * never guess at rewriting someone's prose.
+ * Signoff transforms (GH-66 personal signoff, GH-76 per-email override)
+ * live in lib/signoffPreview.ts, a client-safe module, so the approval
+ * card can preview them live. Re-exported here so the server decide path
+ * (and existing importers) are unchanged.
  */
-/**
- * Per-email signoff choice (GH-76). "default" keeps the draft as-is (the
- * studio signoff the model was instructed to end with), "name" inserts the
- * approver's name above it (applyPersonalSignoff), "none" strips it.
- */
-export type SignoffMode = "default" | "name" | "none";
-
-export interface SignoffChoice {
-  mode: SignoffMode;
-  /** Approver's signature name; only meaningful for mode "name". */
-  name?: string;
-}
-
-/**
- * Remove the studio signoff for the "none" choice (GH-76). As conservative
- * as applyPersonalSignoff: only fires when the LAST non-empty line is
- * exactly the default signoff. It also removes an immediately preceding
- * short valediction line ("Warmly,", "Best regards,") that would otherwise
- * dangle with nothing under it, then trims trailing blank lines. Any other
- * body shape is returned unchanged.
- */
-export function removeStudioSignoff(body: string): string {
-  const normalize = (s: string) => s.trim().replace(/[.!]+$/, "").toLowerCase();
-  const lines = body.split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i]!.trim();
-    if (line.length === 0) continue;
-    if (normalize(line) !== DEFAULT_SIGNOFF.toLowerCase()) return body;
-    let end = i;
-    // A dangling closer directly above ("Warmly," / "Best regards,")
-    // reads wrong with no name under it; drop it with the signoff. Kept
-    // deliberately narrow -- a short comma-terminated line of at most
-    // three words -- so a real content sentence that happens to end in a
-    // comma ("Hope to see you soon,") is never eaten.
-    for (let j = i - 1; j >= 0; j--) {
-      const prev = lines[j]!.trim();
-      if (prev.length === 0) continue;
-      if (
-        prev.endsWith(",") &&
-        prev.length <= 30 &&
-        prev.split(/\s+/).length <= 3
-      ) {
-        end = j;
-      }
-      break;
-    }
-    const kept = lines.slice(0, end);
-    while (kept.length > 0 && kept[kept.length - 1]!.trim().length === 0) {
-      kept.pop();
-    }
-    // Never gut the draft: a body that is nothing but the signoff (or
-    // signoff + closer) stays unchanged, and the audit records no
-    // signoff change -- shipping an empty email is worse than an
-    // unwanted signoff.
-    if (kept.every((l) => l.trim().length === 0)) return body;
-    return kept.join("\n");
-  }
-  return body;
-}
-
-export function applyPersonalSignoff(body: string, name: string): string {
-  const trimmedName = name.trim();
-  if (trimmedName.length === 0) return body;
-  // Tolerate trailing punctuation on the signoff line ("Sealevel Hot
-  // Yoga.") so the match isn't invisibly defeated by a period.
-  const normalize = (s: string) => s.trim().replace(/[.!]+$/, "").toLowerCase();
-  const lines = body.split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i]!.trim();
-    if (line.length === 0) continue;
-    if (normalize(line) !== DEFAULT_SIGNOFF.toLowerCase()) return body;
-    // Already personally signed (e.g. the operator typed their name above
-    // the studio signoff while editing): do not insert a duplicate.
-    for (let j = i - 1; j >= 0; j--) {
-      const prev = lines[j]!.trim();
-      if (prev.length === 0) continue;
-      if (normalize(prev) === trimmedName.toLowerCase()) return body;
-      break;
-    }
-    lines.splice(i, 0, trimmedName);
-    return lines.join("\n");
-  }
-  return body;
-}
+export {
+  applyPersonalSignoff,
+  removeStudioSignoff,
+  type SignoffMode,
+  type SignoffChoice,
+} from "./signoffPreview";
+import {
+  applyPersonalSignoff,
+  removeStudioSignoff,
+  type SignoffChoice,
+} from "./signoffPreview";
 
 async function pendingItemOrThrow(id: string, caller: string): Promise<Item> {
   const { rows } = await getPool().query<Item>(

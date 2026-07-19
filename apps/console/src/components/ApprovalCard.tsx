@@ -14,6 +14,7 @@ import { useToast } from "./Toast";
 import { AssigneeControl } from "./AssigneeControl";
 import type { AssignableUser } from "../lib/assignees";
 import { paragraphsOf } from "../lib/emailDisplay";
+import { previewSignoff } from "../lib/signoffPreview";
 import { InboundEmail, type AttachmentInfo } from "./InboundEmail";
 import { ReviseBox, type LastAnswerData } from "./ReviseBox";
 import {
@@ -197,6 +198,20 @@ export function ApprovalCard({
   // No draft generated (empty or missing draft_body): show a fallback in
   // the draft pane and keep approval blocked until edits produce a body.
   const hasDraft = item.draftBody.length > 0;
+
+  // Live signoff preview (GH-76 follow-up): the read-only draft pane shows
+  // exactly what approval will produce for the CURRENT selector choice, via
+  // the same pure transforms decideItem applies (previewSignoff mirrors its
+  // normalization and guards). Display-only: the form still posts the
+  // stored body (when unedited) plus signoff_mode, and the server applies
+  // the transform at decide time, so nothing is applied twice. While
+  // EDITING, the textarea keeps the raw stored draft (never fight the
+  // operator's text); the preview reappears when editing ends.
+  const previewBody = previewSignoff(
+    item.draftBody,
+    signoffMode,
+    signoffDefault?.name,
+  );
 
   // Decision-confirmation copy (GH-30, GH-95, GH-97). Three cases: sending
   // off keeps the v1 "nothing sends" line; send mode says "sending"; draft
@@ -446,7 +461,7 @@ export function ApprovalCard({
             <>
               <div className="draft-subject">{item.draftSubject}</div>
               <div className="draft-body">
-                {paragraphsOf(item.draftBody).map((para, i) => (
+                {paragraphsOf(previewBody).map((para, i) => (
                   <p key={i}>{para}</p>
                 ))}
               </div>
