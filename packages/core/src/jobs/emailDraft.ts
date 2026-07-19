@@ -21,8 +21,13 @@ import { enqueueGmailState } from "../queue/enqueue.js";
 import { loadRulesBlock } from "../db/settings.js";
 import { loadStudioInfoBlock } from "../db/studioInfo.js";
 import type { ItemTag } from "../tags.js";
-import { stripQuotedReply } from "../gmail/parse.js";
+import { extractAddress, stripQuotedReply } from "../gmail/parse.js";
 import { createItemTool } from "../tools/registry.js";
+import {
+  createEmailHistoryToolset,
+  EMAIL_HISTORY_PROMPT_GUIDANCE,
+  emailHistoryAvailable,
+} from "../tools/emailHistory.js";
 import {
   createKbToolset,
   KB_PROMPT_GUIDANCE,
@@ -392,10 +397,23 @@ export const emailDraft: Job = {
     // the draft untraced, never broken.
     const recorder = new TraceRecorder();
     const kb = createKbToolset(recorder);
-    const meta = emailMetaOf((ctx.payload ?? {}) as InboundEmailPayload);
+    const payload = (ctx.payload ?? {}) as InboundEmailPayload;
+    const meta = emailMetaOf(payload);
+    // Sender-scoped email history (GH-118): the sender identity is bound
+    // HERE, server-side, from the inbound payload; the model never passes
+    // an address. Shares the KB run log so history lookups land in
+    // payload.sources alongside KB lookups. Absent when Gmail is
+    // unconfigured or the sender address fails scope validation.
+    const history = createEmailHistoryToolset(
+      extractAddress(payload.from),
+      kb.log,
+      recorder,
+      payload.gmailId ? { excludeGmailId: payload.gmailId } : {},
+    );
     const tools = [
       createItemWithSources(kb.log, ctx.runState, meta, recorder),
       ...kb.tools,
+      ...history.tools,
     ];
     try {
       recorder.setModel(emailDraft.model ?? "claude-opus-4-8");
@@ -451,8 +469,15 @@ export const emailDraft: Job = {
     const booking = bookingConfigured()
       ? bookingLinkGuidance(bookingUrl()!)
       : "";
+    // Sender-scoped email history guidance (GH-118), gated exactly like
+    // the toolset in runtimeTools: Gmail configured AND a scope-safe
+    // sender address. Unset means no guidance and no behavior change.
+    const historyGuidance = emailHistoryAvailable(extractAddress(payload.from))
+      ? EMAIL_HISTORY_PROMPT_GUIDANCE
+      : "";
     try {
       if (kbConfigured()) recorder?.guide("kb");
+      if (historyGuidance) recorder?.guide("email-history");
       if (booking) recorder?.guide("booking");
       if (rules) recorder?.guide("rules");
       if (studioInfo) recorder?.guide("studio-info");
@@ -477,7 +502,7 @@ export const emailDraft: Job = {
     }
     return `
 An inbound email to the studio needs a reply. Draft one; do not send anything.
-${kbConfigured() ? KB_PROMPT_GUIDANCE : ""}${booking}${rules}${studioInfo}
+${kbConfigured() ? KB_PROMPT_GUIDANCE : ""}${historyGuidance}${booking}${rules}${studioInfo}
 Inbound email:
 ---
 ${renderEmail(payload)}

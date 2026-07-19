@@ -46,6 +46,9 @@ jobs:
       - name: Gmail offline smoke suite
         run: npm run smoke:gmail --workspace @ai-manager/core
 
+      - name: Email history tool offline smoke suite
+        run: npm run smoke:emailhistory --workspace @ai-manager/core
+
       - name: Eval engine offline smoke suite
         run: npm run smoke:evals --workspace @ai-manager/core
 
@@ -79,6 +82,7 @@ jobs:
               packages/core/src/jobs/emailDraft.ts \
               packages/core/src/booking.ts \
               packages/core/src/tools/kb.ts \
+              packages/core/src/tools/emailHistory.ts \
               packages/core/src/brain/prompts.ts \
               packages/core/src/evals \
               evals | grep -q .; then

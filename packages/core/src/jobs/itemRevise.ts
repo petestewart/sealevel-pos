@@ -189,6 +189,13 @@ export const itemRevise: Job = {
     // KB read tools (GH-57) join the two private item tools; the KB log
     // threads into update_draft so a KB-informed revision records its
     // sources on the item.
+    //
+    // The sender-scoped search_email_history tool (GH-118) is NOT wired
+    // here: runtimeTools is synchronous and this job's payload carries
+    // only {itemId, instruction}; the sender address lives on the item
+    // row, an async DB read away, so binding it server-side (the tool's
+    // hard privacy requirement) is not cheaply possible in this hook.
+    // Revisions run from the operator's instruction plus the KB.
     const kb = createKbToolset(recorder);
     const tools = [...itemReviseTools(itemId, kb.log, recorder), ...kb.tools];
     try {

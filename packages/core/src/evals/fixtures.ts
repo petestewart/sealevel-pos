@@ -107,6 +107,15 @@ export function applyCaseEnv(
     SEALEVEL_MCP_TOKEN: FIXTURE_KB_TOKEN,
     DATABASE_URL: null,
     SEALEVEL_BOOKING_URL: null,
+    // Gmail creds are removed so gmailConfigured() is false in every
+    // case: the sender-scoped search_email_history tool (GH-118) and its
+    // prompt guidance are simply absent, which is that layer's designed
+    // hermetic behavior, and a developer's local Gmail env can never
+    // leak a real mailbox call into an eval run.
+    GMAIL_CLIENT_ID: null,
+    GMAIL_CLIENT_SECRET: null,
+    GMAIL_REFRESH_TOKEN: null,
+    GMAIL_USER: null,
     ...(overrides ?? {}),
   };
   const previous = new Map<string, string | undefined>();
