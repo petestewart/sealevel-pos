@@ -5,6 +5,7 @@ import { getPool } from "../db/client.js";
 import { loadEnv } from "../env.js";
 import { runJob } from "../brain/run.js";
 import { kbConfigured } from "../tools/kb.js";
+import { workerVersion } from "../version.js";
 import { itemRevise, itemReviseTools, reviseJobId } from "./itemRevise.js";
 
 /**
@@ -80,6 +81,17 @@ async function main(): Promise<void> {
   assert.match(reviseJobId("abc", "shorter"), /^revise-abc-[0-9a-f]{12}$/);
   console.log("ok: payload validation throws; reviseJobId is deterministic");
 
+  // Deploy-version stamp (GH-122): a 7-char commit prefix when Railway
+  // injects the build sha, "dev" otherwise. Both draft and revise runs
+  // write { commit, at } to payload.generated_by.
+  const prevSha = process.env["RAILWAY_GIT_COMMIT_SHA"];
+  process.env["RAILWAY_GIT_COMMIT_SHA"] = "0123456789abcdef";
+  assert.equal(workerVersion(), "0123456");
+  delete process.env["RAILWAY_GIT_COMMIT_SHA"];
+  assert.equal(workerVersion(), "dev");
+  if (prevSha !== undefined) process.env["RAILWAY_GIT_COMMIT_SHA"] = prevSha;
+  console.log("ok: workerVersion is the 7-char build sha, or dev");
+
   if (!process.env["DATABASE_URL"] || !process.env["ANTHROPIC_API_KEY"]) {
     console.log(
       "skip: DATABASE_URL and/or ANTHROPIC_API_KEY not set; live run not exercised",
@@ -119,6 +131,11 @@ async function main(): Promise<void> {
   assert.ok(Array.isArray(revisions) && revisions.length === 1);
   assert.equal(revisions[0]!["draft_body"], priorBody, "prior draft preserved");
   assert.equal(payload["last_answer"], undefined, "no last_answer after revise");
+  // GH-122: the revision stamps which worker build produced the new draft.
+  const genBy = payload["generated_by"] as { commit?: unknown; at?: unknown };
+  assert.ok(genBy, "generated_by stamped by the revision");
+  assert.equal(genBy.commit, workerVersion());
+  assert.ok(typeof genBy.at === "string" && genBy.at.length > 0);
   console.log(
     `ok: revise run (stop_reason=${stop}) replaced the draft and kept history`,
   );

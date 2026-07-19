@@ -117,6 +117,15 @@ export function DecidedDetail({
               <p className="draft-rationale-text">{data.rationale}</p>
             </details>
           ) : null}
+
+          {/* GH-122: deploy-version stamp for the build that produced the
+              final draft. Muted operator-facing metadata, same as pending. */}
+          {data.generatedBy ? (
+            <div className="draft-generated-by">
+              Drafted by {data.generatedBy.commit}
+              {data.generatedBy.at ? ` at ${data.generatedBy.at}` : ""}
+            </div>
+          ) : null}
         </div>
       </div>
 

@@ -70,6 +70,26 @@ function revisionsOf(payload: Record<string, unknown>) {
   });
 }
 
+/**
+ * Deploy-version stamp (GH-122) from payload.generated_by: which worker
+ * build produced the current draft, written structurally by the draft and
+ * revise jobs. Null for items that predate the stamp or a malformed value;
+ * null renders nothing (back-compat). The timestamp is pre-formatted for
+ * display; a missing/invalid `at` yields an empty string.
+ */
+function generatedByOf(payload: Record<string, unknown>) {
+  const raw = payload.generated_by as
+    | { commit?: unknown; at?: unknown }
+    | undefined;
+  const commit = str(raw?.commit);
+  if (!commit) return null;
+  const at = typeof raw?.at === "string" ? new Date(raw.at) : null;
+  return {
+    commit,
+    at: at !== null && !Number.isNaN(at.getTime()) ? formatDateTime(at) : "",
+  };
+}
+
 /** payload.last_answer (GH-36 Q&A) with both fields present, or null. */
 function lastAnswerOf(payload: Record<string, unknown>) {
   const raw = payload.last_answer as
@@ -176,6 +196,7 @@ export function toCardData(item: Item): ApprovalCardData {
     draftBody: str(payload.draft_body)?.trim() ?? "",
     edited: payload.draft_edited === true,
     rationale: str(payload.draft_rationale)?.trim() || null,
+    generatedBy: generatedByOf(payload),
     revisions: revisionsOf(payload),
     lastAnswer: lastAnswerOf(payload),
   };

@@ -23,6 +23,7 @@ import {
   kbConfigured,
   type KbRunLog,
 } from "../tools/kb.js";
+import { workerVersion } from "../version.js";
 import type { Job, JobContext } from "./types.js";
 
 /**
@@ -108,6 +109,9 @@ export function itemReviseTools(
         rationale,
         // KB lookups behind this revision (GH-57), recorded structurally.
         sources: kbLog && kbLog.sources.length > 0 ? kbLog.sources : undefined,
+        // Deploy-version stamp (GH-122): the revision replaces the draft,
+        // so the stamp is refreshed to the build that produced it.
+        generatedBy: { commit: workerVersion(), at: new Date().toISOString() },
       });
       const revisions = Array.isArray(item.payload["draft_revisions"])
         ? (item.payload["draft_revisions"] as unknown[]).length

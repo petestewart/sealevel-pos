@@ -110,6 +110,13 @@ export interface ApprovalCardData {
    */
   rationale: string | null;
   /**
+   * Deploy-version stamp (payload.generated_by, GH-122): the worker build
+   * that produced the current draft, or null for items that predate it.
+   * `at` is pre-formatted for display ("" when the timestamp is absent).
+   * Operator-facing metadata only; never part of the draft itself.
+   */
+  generatedBy: { commit: string; at: string } | null;
+  /**
    * Prior drafts (payload.draft_revisions, GH-36/GH-37), oldest first,
    * each already display-formatted. Empty for never-revised items.
    */
@@ -481,6 +488,16 @@ export function ApprovalCard({
               </summary>
               <p className="draft-rationale-text">{item.rationale}</p>
             </details>
+          ) : null}
+
+          {/* GH-122: deploy-version stamp, one muted operator-facing line
+              so "which code drafted this?" is a glance, not a deploy-log
+              reconstruction. Hidden while editing, like the rationale. */}
+          {!editing && item.generatedBy ? (
+            <div className="draft-generated-by">
+              Drafted by {item.generatedBy.commit}
+              {item.generatedBy.at ? ` at ${item.generatedBy.at}` : ""}
+            </div>
           ) : null}
 
           {/* GH-37: prior drafts, read-only, collapsed by default. Shown

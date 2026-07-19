@@ -6,6 +6,7 @@
 export const CORE_PACKAGE = "@ai-manager/core";
 
 export { loadEnv, requireEnv } from "./env.js";
+export { workerVersion } from "./version.js";
 export {
   bookingUrl,
   bookingConfigured,

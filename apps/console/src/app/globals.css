@@ -676,6 +676,14 @@ textarea {
   color: var(--tx3);
 }
 
+/* GH-122: deploy-version stamp under the draft, one muted operator-only
+   line ("Drafted by <commit> at <time>"). */
+.draft-generated-by {
+  margin-top: 8px;
+  font: 400 0.6875rem var(--font-ui), sans-serif;
+  color: var(--tx3);
+}
+
 /* Inbound email rendering robustness (GH-34): quoted-text collapse,
    raw-source view, long-body clamp, attachment notice. */
 .inbound-email {

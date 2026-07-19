@@ -25,6 +25,7 @@ import {
   kbConfigured,
   type KbRunLog,
 } from "../tools/kb.js";
+import { workerVersion } from "../version.js";
 import type { Job, JobContext } from "./types.js";
 
 /**
@@ -136,7 +137,11 @@ function createItemWithSources(
       //  - tags (GH-65): a separate sonnet classification;
       //  - sources / kb_unavailable (GH-57): the KB lookups this run made;
       //  - email_meta (GH-95): Gmail threading data for a later reply;
-      //  - assignee_suggestion (GH-95): the sonnet routing suggestion.
+      //  - assignee_suggestion (GH-95): the sonnet routing suggestion;
+      //  - generated_by (GH-122): which worker build drafted this, so a
+      //    draft from a mid-redeploy worker running old code is
+      //    diagnosable by lookup. Operator-facing metadata only; it never
+      //    enters the model prompt or the customer draft.
       const tags = runState?.["tags"] as ItemTag[] | undefined;
       const suggestion = runState?.["assignee_suggestion"];
       const extra: Record<string, unknown> = {
@@ -149,6 +154,7 @@ function createItemWithSources(
         ...((tags?.length ?? 0) > 0 ? { tags } : {}),
         ...(emailMeta ? { email_meta: emailMeta } : {}),
         ...(suggestion ? { assignee_suggestion: suggestion } : {}),
+        generated_by: { commit: workerVersion(), at: new Date().toISOString() },
       };
       if (Object.keys(extra).length > 0) {
         input = {

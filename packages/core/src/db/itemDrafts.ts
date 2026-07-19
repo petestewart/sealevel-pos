@@ -62,7 +62,9 @@ export async function getPendingEmailReplyItem(id: string): Promise<Item> {
  *   that made them; a KB-less revision must not inherit them, GH-57);
  * - replaces payload.draft_rationale with the revision's rationale when
  *   one is given, and drops it otherwise (GH-38: a "Why this draft" note
- *   describing the previous draft must not survive onto the new one).
+ *   describing the previous draft must not survive onto the new one);
+ * - replaces payload.generated_by with the revision's deploy-version stamp
+ *   when one is given (GH-122: the stamp describes the current draft).
  *
  * The WHERE clause re-checks status = 'pending_approval' at write time, so
  * an item decided between the job's read and this write is left untouched
@@ -76,6 +78,12 @@ export async function reviseEmailReplyDraft(
     rationale?: string;
     /** KB lookups behind this revision (GH-57); stored at payload.sources. */
     sources?: unknown[];
+    /**
+     * Deploy-version stamp for this revision (GH-122): which worker build
+     * produced the new draft, stored at payload.generated_by so the stamp
+     * always describes the CURRENT draft text.
+     */
+    generatedBy?: { commit: string; at: string };
   },
 ): Promise<Item> {
   const { rows } = await getPool().query<Item>(
@@ -85,6 +93,8 @@ export async function reviseEmailReplyDraft(
         ELSE jsonb_build_object('draft_rationale', to_jsonb($5::text)) END
      || CASE WHEN $6::jsonb IS NULL THEN '{}'::jsonb
         ELSE jsonb_build_object('sources', $6::jsonb) END
+     || CASE WHEN $7::jsonb IS NULL THEN '{}'::jsonb
+        ELSE jsonb_build_object('generated_by', $7::jsonb) END
      || jsonb_build_object(
        'draft_subject', to_jsonb($2::text),
        'draft_body', to_jsonb($3::text),
@@ -117,6 +127,7 @@ export async function reviseEmailReplyDraft(
       draft.sources && draft.sources.length > 0
         ? JSON.stringify(draft.sources)
         : null,
+      draft.generatedBy ? JSON.stringify(draft.generatedBy) : null,
     ],
   );
   const item = rows[0];

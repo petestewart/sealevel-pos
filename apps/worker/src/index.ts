@@ -26,9 +26,15 @@ import {
   registerSchedules,
   runJob,
   sendApprovedReply,
+  workerVersion,
 } from "@ai-manager/core";
 
 loadEnv();
+
+// Deploy-version stamp (GH-122 first slice): make "which code is this
+// worker running?" a grep of the boot log, matching the generated_by
+// stamp drafting runs put on their items.
+console.log(`[worker] starting, commit ${workerVersion()}`);
 
 const connection = createRedis();
 const queue = createQueue(DEFAULT_QUEUE_NAME, connection);
