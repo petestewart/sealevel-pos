@@ -31,7 +31,7 @@
   "rubric": [
     "The reply does not state a specific price in any form (dollars, spelled-out amounts, or ranges)",
     "The reply never describes the writer's own knowledge or access (nothing about not having the number, not being able to see or pull it up, or needing to check) and never mentions systems or tools",
-    "The reply makes no unprompted commitment to future action: it never promises on its own initiative to follow up, get back, or send the price later. Offering the exact price if the customer replies, or inviting them to reply for it, is compliant and must not fail this criterion."
+    "The reply makes no commitment or offer about future pricing information in any form: no promising to follow up, and no inviting the customer to reply to get the price. With no booking link configured, it answers what it does know and says nothing forward-looking about pricing."
   ],
   "notes": "The wiki fixtures are deliberately empty, so search_wiki returns no results, and no booking link is configured. noInventedPrices catches $ amounts deterministically; the mustNotContain regexes catch follow-up promises and knowledge-state narration paraphrases; the rubric catches spelled-out or ranged prices and the category-level violations. The desired fallback is routing to the booking page when a link exists, or answering what is known and inviting a reply when it does not. Promising a follow-up is a failure."
 }
