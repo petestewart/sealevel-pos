@@ -34,6 +34,10 @@ export {
   enqueueEvalCapture,
   evalCaptureJobId,
   EVAL_CAPTURE_JOB,
+  enqueueLearningMine,
+  learningMineJobId,
+  learningThresholdKind,
+  LEARNING_MINE_JOB,
   type GmailStateJobPayload,
   DEFAULT_WORKER_CONCURRENCY,
   workerConcurrency,
@@ -42,6 +46,9 @@ export {
   cronSchedulesFromJobs,
   emailIngestSchedule,
   EMAIL_INGEST_JOB,
+  learningMineSchedule,
+  LEARNING_MINE_SCHEDULE_ID,
+  DEFAULT_LEARNING_MINE_CRON,
   type ScheduleSpec,
 } from "./queue/index.js";
 export type { Job, Trigger, JobContext, BrainModel } from "./jobs/types.js";
@@ -175,6 +182,7 @@ export type {
 export {
   DEFAULT_SIGNOFF,
   RULE_MAX_CHARS,
+  RULES_MAX_INJECTED,
   listRules,
   getActiveRules,
   createRule,
@@ -230,6 +238,45 @@ export {
   KB_DETECT_MIN_CONFIDENCE,
 } from "./brain/kbUpdate.js";
 export type { KbDetection, KbDetectorDeps } from "./brain/kbUpdate.js";
+export {
+  getLearningState,
+  advanceLearningState,
+  normalizeRuleFingerprint,
+  recordRejectedRuleProposal,
+  listRejectedRuleFingerprints,
+  signalsFromDecidedItem,
+  collectLearningSignals,
+  countOperatorDecisionsSince,
+  maybeEnqueueLearningMineOnThreshold,
+  ruleProposalOf,
+  buildRuleProposalPayload,
+  createRuleProposalItem,
+  saveRuleProposalEdits,
+  insertRuleFromProposal,
+  recordRuleInsert,
+  ruleInsertOf,
+  LEARNING_MIN_SIGNALS,
+  LEARNING_MINE_THRESHOLD,
+  LEARNING_SIGNAL_ROW_CAP,
+  LEARNING_EVIDENCE_MAX_CHARS,
+} from "./db/learning.js";
+export type {
+  LearningState,
+  LearningSignal,
+  LearningSignalKind,
+  CollectedSignals,
+  RuleEvidence,
+  RuleProposal,
+  RuleProposalInput,
+  RuleInsertRecord,
+} from "./db/learning.js";
+export {
+  mineOperatorLessons,
+  buildSignalDigest,
+  defaultMinerDeps,
+  LEARNING_DIGEST_MAX_SIGNALS,
+} from "./brain/learnRules.js";
+export type { LearningMinerDeps, MineResult } from "./brain/learnRules.js";
 export {
   kbWriterConfigured,
   writeApprovedKbUpdate,

@@ -587,6 +587,27 @@ export function toRow(item: Item): RowView {
       assigneeName: assigneeNameOf(item),
     };
   }
+  // rule_proposal items (learning loop, GH-127) have no original_email;
+  // their row leads with the proposed rule text.
+  if (item.type === "rule_proposal") {
+    const ruleText = str(item.payload.rule_text) ?? "(no rule text)";
+    const tone = toneOf(item);
+    const decided = tone !== "pending";
+    return {
+      id: String(item.id),
+      sender: "Rule proposal",
+      initials: "RP",
+      subject: "Learned lesson",
+      time:
+        decided && item.resolved_at
+          ? formatDecidedAt(item.resolved_at)
+          : formatCardTimestamp(item.created_at),
+      preview: ruleText.replace(/\s+/g, " ").trim().slice(0, 120),
+      tone,
+      tags: [],
+      assigneeName: assigneeNameOf(item),
+    };
+  }
   const original = originalOf(item);
   const sender = parseSender(str(original.from));
   const tone = toneOf(item);

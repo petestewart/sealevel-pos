@@ -22,6 +22,7 @@
     "smoke:spamtrash": "npm run build && node dist/db/spamTrash.smoke.js",
     "smoke:reviewqueue": "npm run build && node dist/db/reviewQueue.smoke.js",
     "smoke:kbwriteback": "npm run build && node dist/kb/kbWriteBack.smoke.js",
+    "smoke:learning": "npm run build && node dist/db/learning.smoke.js",
     "smoke:booking": "npm run build && node dist/booking.smoke.js",
     "smoke:evals": "npm run build && node dist/evals/evals.smoke.js",
     "eval": "npm run build && node dist/evals/run.js"

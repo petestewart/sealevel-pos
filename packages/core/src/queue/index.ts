@@ -19,6 +19,10 @@ export {
   enqueueEvalCapture,
   evalCaptureJobId,
   EVAL_CAPTURE_JOB,
+  enqueueLearningMine,
+  learningMineJobId,
+  learningThresholdKind,
+  LEARNING_MINE_JOB,
   type GmailStateJobPayload,
 } from "./enqueue.js";
 export {
@@ -31,5 +35,8 @@ export {
   cronSchedulesFromJobs,
   emailIngestSchedule,
   EMAIL_INGEST_JOB,
+  learningMineSchedule,
+  LEARNING_MINE_SCHEDULE_ID,
+  DEFAULT_LEARNING_MINE_CRON,
   type ScheduleSpec,
 } from "./schedules.js";

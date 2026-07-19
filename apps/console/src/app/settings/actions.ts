@@ -6,6 +6,7 @@ import {
   createRule,
   deleteRule as deleteRuleRow,
   deleteStudioInfoEntry,
+  enqueueLearningMine,
   RULE_MAX_CHARS,
   saveStudioInfoEntry,
   setStageApprovals,
@@ -125,6 +126,37 @@ export async function saveStageApprovals(
   const who = await requireSettingsManager();
   const staged = formData.get("stage_approvals") === "on";
   await setStageApprovals(who.id, staged);
+  revalidatePath("/settings");
+  return { error: null, saved: true };
+}
+
+/**
+ * "Mine lessons now" (learning loop, GH-127): the manual leg of the
+ * hybrid trigger. Enqueues one learning.mine run on the worker, which
+ * reads the operator corrections decided since the last mine and files
+ * 0-3 pending rule proposals for review. Timestamped jobId, so the button
+ * always fires (unlike the deduped threshold trigger); the miner's own
+ * minimum-signals gate makes a premature click a harmless logged skip.
+ * Nothing is learned from this action itself: proposals still require an
+ * approval in the pending queue.
+ */
+export async function mineLessonsNow(
+  _prev: SettingsActionState,
+  _formData: FormData,
+): Promise<SettingsActionState> {
+  await requireSettingsManager();
+  try {
+    await enqueueLearningMine(`manual-${Date.now()}`);
+  } catch (err) {
+    console.error(
+      `[settings] failed to enqueue learning.mine: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return {
+      error: "Could not start mining. Check that the worker is running and try again.",
+    };
+  }
   revalidatePath("/settings");
   return { error: null, saved: true };
 }

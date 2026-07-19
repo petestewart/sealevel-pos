@@ -7,21 +7,29 @@ import {
   enqueueEmailSend,
   enqueueGmailState,
   enqueueKbWrite,
+  getActiveRules,
   getItemById,
   getPool,
   getUserSettings,
   gmailSendEnabled,
   gmailStateActionForDecision,
+  insertRuleFromProposal,
   listStagedApprovedItems,
   markDeliveryQueued,
   markKbWriteQueued,
+  maybeEnqueueLearningMineOnThreshold,
   recordDeliveryFailed,
   recordKbWrite,
+  recordRejectedRuleProposal,
+  recordRuleInsert,
   recordSpamSignal,
   reopenItem,
   ReopenConflictError,
   restoreTrashedItem,
+  RULE_MAX_CHARS,
+  RULES_MAX_INJECTED,
   saveKbProposalEdits,
+  saveRuleProposalEdits,
   trashItem,
   type Item,
 } from "@ai-manager/core";
@@ -210,6 +218,12 @@ async function decide(
     }
     if (!stage) await queueSendIfEnabled(id);
   }
+  // Learning-loop threshold trigger (GH-127): when enough operator
+  // decisions have piled up since the last mine, enqueue a mine run early
+  // instead of waiting for the nightly cron. One cheap COUNT, never
+  // throws, deduped per high-water mark inside the helper; a miss only
+  // means the nightly run picks the signals up.
+  await maybeEnqueueLearningMineOnThreshold();
   revalidatePath("/", "layout");
   return { error: null };
 }
@@ -857,6 +871,184 @@ export async function proposeKbRevertAction(
       }`,
     };
   }
+}
+
+/**
+ * Approve a pending rule_proposal (learning loop, GH-127): record the
+ * decision through the same guarded decideItem path as email replies and
+ * kb_update proposals (identical DecisionRecord audit; concurrent
+ * decisions lose cleanly with the stale card affordance), then insert the
+ * (possibly operator-edited) rule into the studio rules table. The
+ * Approve click is the ONLY path by which a mined lesson becomes a rule;
+ * nothing was learned before it, and the resulting rule is visible,
+ * editable, and deletable in Settings like any owner-written rule.
+ *
+ * Cap honesty: the rules prompt budget (RULES_MAX_INJECTED) is checked
+ * before deciding (inline error, item stays pending and actionable) AND
+ * enforced inside the INSERT itself (insertRuleFromProposal), so a race
+ * past the pre-check records an honest rule_insert failure on the item
+ * instead of silently exceeding the budget. Reopen + re-approve after
+ * deactivating a rule in Settings is the retry path.
+ */
+export async function approveRuleProposalAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  const decider = await requireDecider();
+  const id = requireString(formData, "id");
+  const { rows } = await getPool().query<{
+    type: string;
+    rule_text: string | null;
+  }>(
+    `SELECT type, payload->>'rule_text' AS rule_text FROM items WHERE id = $1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row || row.type !== "rule_proposal") {
+    return { error: "This item is not a rule proposal." };
+  }
+  const ruleText = row.rule_text?.trim() ?? "";
+  if (ruleText.length === 0) {
+    return { error: "Cannot approve: this proposal has no rule text." };
+  }
+  // Pre-check the cap before resolving anything, so an at-cap approve
+  // surfaces the message while the proposal stays pending and actionable.
+  try {
+    if ((await getActiveRules()).length >= RULES_MAX_INJECTED) {
+      return {
+        error: `Rule limit reached: ${RULES_MAX_INJECTED} rules are active. Deactivate one in Settings, then approve this proposal.`,
+      };
+    }
+  } catch {
+    // A rules read failure falls through to the guarded insert, which
+    // enforces the cap again in SQL and records an honest failure.
+  }
+  try {
+    await decideItem(id, "approved", decider);
+  } catch (err) {
+    if (isAlreadyDecided(err)) return staleDecideState(id);
+    throw err;
+  }
+  try {
+    const inserted = await insertRuleFromProposal(ruleText, decider.id);
+    if (inserted === "cap") {
+      await recordRuleInsert(id, {
+        status: "failed",
+        error: `Rule limit reached: ${RULES_MAX_INJECTED} rules are active. Deactivate one in Settings, then reopen and approve again.`,
+      }).catch(() => undefined);
+      revalidatePath("/", "layout");
+      return {
+        error:
+          "Approved, but the rule was not added: the rule limit is reached. Deactivate a rule in Settings, then reopen and approve this proposal again.",
+      };
+    }
+    await recordRuleInsert(id, {
+      status: "inserted",
+      rule_id: String(inserted.id),
+    }).catch(() => undefined);
+  } catch (err) {
+    console.error(
+      `[approvals] failed to insert learned rule for item ${id}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    await recordRuleInsert(id, {
+      status: "failed",
+      error:
+        "The rule could not be added to Settings. Reopen and approve again to retry.",
+    }).catch(() => undefined);
+    revalidatePath("/", "layout");
+    return {
+      error:
+        "Approved, but the rule could not be added to Settings. Reopen and approve again to retry.",
+    };
+  }
+  revalidatePath("/", "layout");
+  return { error: null };
+}
+
+/**
+ * Reject a pending rule_proposal (GH-127): records the decision through
+ * the same guarded path, then remembers the lesson's normalized
+ * fingerprint in rule_proposal_memory (negative dedup) so the miner does
+ * not re-propose rephrasings of it. Both the rule text the operator saw
+ * and, if it was edited, the miner's original are remembered. The memory
+ * write is best-effort after the decision is durable: a failure only
+ * means this one lesson might resurface once, to be rejected again.
+ */
+export async function rejectRuleProposalAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  const decider = await requireDecider();
+  const id = requireString(formData, "id");
+  // Read the texts BEFORE deciding; the guarded decide loses cleanly to a
+  // concurrent decision, in which case nothing is remembered here.
+  const { rows } = await getPool().query<{
+    type: string;
+    rule_text: string | null;
+    original_text: string | null;
+  }>(
+    `SELECT type, payload->>'rule_text' AS rule_text,
+            payload->'original_proposal'->>'rule_text' AS original_text
+     FROM items WHERE id = $1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row || row.type !== "rule_proposal") {
+    return { error: "This item is not a rule proposal." };
+  }
+  try {
+    await decideItem(id, "rejected", decider);
+  } catch (err) {
+    if (isAlreadyDecided(err)) return staleDecideState(id);
+    throw err;
+  }
+  const texts = [row.rule_text, row.original_text].filter(
+    (t): t is string => typeof t === "string" && t.trim().length > 0,
+  );
+  for (const text of texts) {
+    try {
+      await recordRejectedRuleProposal(text, decider.id);
+    } catch (err) {
+      console.error(
+        `[approvals] failed to record rejected rule fingerprint for item ${id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+  revalidatePath("/", "layout");
+  return { error: null };
+}
+
+/**
+ * Save a human edit to a pending rule proposal's text (GH-127, the rule
+ * analogue of Save edits): rule_text is replaced, the miner's original is
+ * captured under original_proposal, and the eventual decision audit is
+ * marked edited. The item stays pending; nothing is decided or learned.
+ */
+export async function saveRuleEditsAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  await requireDecider();
+  const id = requireString(formData, "id");
+  const text = requireString(formData, "rule_text").trim();
+  if (text.length === 0) {
+    return { error: "The rule text cannot be empty." };
+  }
+  if (text.length > RULE_MAX_CHARS) {
+    return { error: `Rules are limited to ${RULE_MAX_CHARS} characters.` };
+  }
+  try {
+    await saveRuleProposalEdits(id, text);
+  } catch (err) {
+    if (isAlreadyDecided(err)) return staleDecideState(id);
+    throw err;
+  }
+  revalidatePath("/", "layout");
+  return { error: null };
 }
 
 /**

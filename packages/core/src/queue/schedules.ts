@@ -57,6 +57,29 @@ export function emailIngestSchedule(): ScheduleSpec {
   };
 }
 
+/** The schedule id for the nightly learning-loop mine (GH-127). */
+export const LEARNING_MINE_SCHEDULE_ID = "learning.mine.nightly";
+
+/** Default nightly cadence: a quiet hour, after the day's decisions. */
+export const DEFAULT_LEARNING_MINE_CRON = "45 3 * * *";
+
+/**
+ * The nightly learning-loop schedule (GH-127): the baseline trigger of
+ * the hybrid design (nightly cron + decision-count threshold + manual
+ * "Mine lessons now"). Patterns need a batch window: one edit is noise,
+ * four of five is a lesson, so per-event mining would either propose from
+ * n=1 or re-scan everything. Registered on every boot like the Gmail
+ * poll; the job runs harmlessly (a logged skip) until enough operator
+ * decisions accumulate. Cadence from LEARNING_MINE_CRON.
+ */
+export function learningMineSchedule(): ScheduleSpec {
+  return {
+    id: LEARNING_MINE_SCHEDULE_ID,
+    pattern: process.env.LEARNING_MINE_CRON || DEFAULT_LEARNING_MINE_CRON,
+    jobName: "learning.mine",
+  };
+}
+
 /**
  * Derive repeatable schedules from the registry's cron triggers (GH-95):
  * reads Job.triggers -- the path that had been declared and never read --

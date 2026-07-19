@@ -9,6 +9,7 @@ import type {
 import {
   addRule,
   addStudioInfo,
+  mineLessonsNow,
   removeRule,
   removeStudioInfo,
   saveRule,
@@ -486,6 +487,29 @@ export function AddStudioInfoForm() {
           <span className="settings-saved-note">Saved.</span>
         ) : null}
       </div>
+      <InlineError state={state} />
+    </form>
+  );
+}
+
+/**
+ * "Mine lessons now" (learning loop, GH-127): the manual leg of the
+ * hybrid mining trigger. Enqueues one mine run on the worker; any
+ * lessons found land as rule proposals in the Pending queue for
+ * approval. Useful right after a burst of corrective edits.
+ */
+export function MineLessonsForm() {
+  const [state, formAction, pending] = useActionState(mineLessonsNow, IDLE);
+  return (
+    <form action={formAction} className="settings-form-row">
+      <button type="submit" className="btn btn--outlined" disabled={pending}>
+        {pending ? "Starting..." : "Mine lessons now"}
+      </button>
+      {state.saved && !state.error ? (
+        <span className="settings-saved-note">
+          Mining started. Any proposals will appear in the Pending queue.
+        </span>
+      ) : null}
       <InlineError state={state} />
     </form>
   );

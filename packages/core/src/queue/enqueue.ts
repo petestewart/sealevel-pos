@@ -155,6 +155,43 @@ export async function enqueueEvalCapture(itemId: string): Promise<string> {
   );
 }
 
+/** The BullMQ job name for the learning-loop miner (GH-127). */
+export const LEARNING_MINE_JOB = "learning.mine";
+
+/**
+ * JobId for one mine request: learnmine-<kind>. Manual requests use a
+ * timestamped kind (an operator's "Mine lessons now" must always fire);
+ * the threshold trigger uses a kind deterministic per high-water mark
+ * (learningThresholdKind), so the burst of decisions that crosses the
+ * threshold enqueues one run, not one per decision (windowed idempotency,
+ * see queue.ts). The nightly cron registers separately as a repeatable
+ * schedule and never collides with these ids.
+ */
+export function learningMineJobId(kind: string): string {
+  return `learnmine-${kind}`;
+}
+
+/** Deterministic threshold-trigger kind for one high-water-mark window. */
+export function learningThresholdKind(lastMinedAt: string): string {
+  const epoch = Date.parse(lastMinedAt);
+  return `threshold-${Number.isNaN(epoch) ? "unknown" : epoch}`;
+}
+
+/**
+ * Enqueue a learning-loop mine run (GH-127). Low attempts: the miner's
+ * high-water mark only advances on success, so a failed run's signals are
+ * simply re-examined by the next trigger (nightly cron, threshold, or
+ * manual) instead of retrying indefinitely.
+ */
+export async function enqueueLearningMine(kind: string): Promise<string> {
+  return enqueue(
+    getSharedQueue(),
+    LEARNING_MINE_JOB,
+    { requested: kind },
+    { jobId: learningMineJobId(kind), attempts: 2 },
+  );
+}
+
 /** Close the shared producer queue + connection (clean process shutdown). */
 export async function closeSharedQueue(): Promise<void> {
   if (sharedQueue) {

@@ -35,7 +35,12 @@ export const DEFAULT_SIGNOFF = "Sealevel Hot Yoga";
 
 /** Bounds enforced app-side (the table also CHECKs rule length). */
 export const RULE_MAX_CHARS = 500;
-const RULES_MAX_INJECTED = 50;
+/**
+ * Active-rule budget: how many rules the prompt renderer injects.
+ * Exported for the learning loop (GH-127), whose approve path refuses to
+ * insert a learned rule past this cap instead of silently exceeding it.
+ */
+export const RULES_MAX_INJECTED = 50;
 
 export async function listRules(): Promise<Rule[]> {
   const { rows } = await getPool().query<Rule>(

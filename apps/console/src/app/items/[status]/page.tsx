@@ -10,6 +10,8 @@ import { DecidedDetail } from "../../../components/DecidedDetail";
 import { KbDecidedDetail } from "../../../components/KbDecidedDetail";
 import { KbUpdateCard } from "../../../components/KbUpdateCard";
 import { ItemRow } from "../../../components/ItemRow";
+import { RuleProposalCard } from "../../../components/RuleProposalCard";
+import { RuleProposalDecidedDetail } from "../../../components/RuleProposalDecidedDetail";
 import { ListDetailShell } from "../../../components/ListDetailShell";
 import { ListScrollRestore } from "../../../components/ListScrollRestore";
 import { MobileBackBar } from "../../../components/MobileBackBar";
@@ -26,6 +28,7 @@ import {
   trashedItems,
 } from "../../../lib/approvals";
 import { itemInboxHref, toKbCardData } from "../../../lib/kbView";
+import { toRuleProposalCardData } from "../../../lib/ruleProposalView";
 import { inboxBySlug, type InboxDefinition } from "../../../lib/inboxes";
 import {
   effectiveSignoffDefault,
@@ -304,6 +307,42 @@ function Detail({
         canDecide={canDecide}
         sourceHref={kbLinks?.sourceHref ?? null}
         revertHref={kbLinks?.revertHref ?? null}
+      />
+    );
+  }
+  // rule_proposal items (learning loop, GH-127) get their own card pair,
+  // the KB pattern's sibling: pending proposals render the interactive
+  // rule card, decided ones the read-only detail with the insert outcome.
+  if (item.type === "rule_proposal") {
+    if (item.status === "pending_approval") {
+      const data = toRuleProposalCardData(item);
+      if (!data) {
+        return (
+          <div className="detail-placeholder">
+            <div className="detail-placeholder-title">
+              Malformed rule proposal
+            </div>
+            <div className="detail-placeholder-sub">
+              This proposal cannot be displayed or approved. Reject it from
+              the pending list.
+            </div>
+          </div>
+        );
+      }
+      return (
+        <RuleProposalCard
+          key={item.id}
+          item={data}
+          canDecide={canDecide}
+          advanceHref={advanceHref}
+        />
+      );
+    }
+    return (
+      <RuleProposalDecidedDetail
+        key={item.id}
+        item={item}
+        canDecide={canDecide}
       />
     );
   }

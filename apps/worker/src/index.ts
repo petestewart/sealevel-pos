@@ -29,8 +29,11 @@ import {
   isGmailStateAction,
   jobById,
   KB_WRITE_JOB,
+  LEARNING_MINE_JOB,
+  learningMineSchedule,
   loadEnv,
   markGmailTrashed,
+  mineOperatorLessons,
   registerSchedules,
   runJob,
   sendApprovedReply,
@@ -169,6 +172,24 @@ const processors: Record<string, (job: Job) => Promise<void>> = {
       }`,
     );
   },
+  // Learning-loop miner (GH-127): distill the operator corrections
+  // decided since the high-water mark into 0-3 pending rule_proposal
+  // items. Fired by the nightly schedule, the decision-count threshold
+  // trigger, and the Settings page's "Mine lessons now" button. Nothing
+  // is learned here: proposals are inert until a human approves one in
+  // the console, which is the only path into the rules table. Runs as a
+  // worker job only, never in the drafting path, so the eval suite never
+  // sees it. Expected no-ops (quiet window, no API key) return a skipped
+  // status instead of throwing, so the nightly run never dead-letters.
+  [LEARNING_MINE_JOB]: async (job) => {
+    const requested = (job.data as { requested?: unknown })?.requested;
+    const result = await mineOperatorLessons();
+    console.log(
+      `[worker] ${LEARNING_MINE_JOB}${
+        typeof requested === "string" ? ` (${requested})` : ""
+      }: ${result.status}${result.reason ? ` (${result.reason})` : ""}, signals=${result.signals} candidates=${result.candidates} filed=${result.proposalsFiled}`,
+    );
+  },
   "test-heartbeat": async (job) => {
     console.log(
       `[worker] test-heartbeat ran (job ${job.id}, attempt ${job.attemptsMade + 1})`,
@@ -214,6 +235,9 @@ worker.on("failed", (job, err) => {
 // test-heartbeat demo. registerSchedules prunes any scheduler not listed.
 await registerSchedules(queue, [
   emailIngestSchedule(),
+  // Nightly learning-loop mine (GH-127): the baseline of the hybrid
+  // trigger (cron + threshold + manual). Harmless until signals exist.
+  learningMineSchedule(),
   ...cronSchedulesFromJobs(JOBS),
   {
     id: "test-heartbeat",

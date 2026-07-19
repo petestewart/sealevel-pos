@@ -1,12 +1,15 @@
 import { currentUser } from "@clerk/nextjs/server";
 import {
+  getLearningState,
   getStudioInfoEntries,
   getUserSettings,
   listRules,
+  type LearningState,
 } from "@ai-manager/core";
 import {
   AddRuleForm,
   AddStudioInfoForm,
+  MineLessonsForm,
   RuleRow,
   SignatureForm,
   StageApprovalsForm,
@@ -50,6 +53,23 @@ export default async function SettingsPage() {
     getUserSettings(userId),
     getStudioInfoEntries(),
   ]);
+  // Learning-loop state (GH-127), best-effort: a missing table (migration
+  // not yet applied) degrades to the section rendering without stats.
+  let learning: LearningState | null = null;
+  try {
+    learning = await getLearningState();
+  } catch {
+    learning = null;
+  }
+  const lastMined =
+    learning !== null && Date.parse(learning.last_mined_at) > 0
+      ? new Date(learning.last_mined_at).toLocaleString("en-US", {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        })
+      : null;
 
   return (
     <div className="page page--settings">
@@ -88,6 +108,32 @@ export default async function SettingsPage() {
           ))
         )}
         <AddStudioInfoForm />
+      </section>
+
+      <section className="settings-section">
+        <h2 className="section-label">Learning</h2>
+        <p className="settings-help">
+          The system watches how you correct its drafts (edits, redos,
+          rejections) and periodically proposes new studio rules from
+          repeated patterns. Proposals appear in the Pending queue for
+          your approval; nothing is learned without it, and approved
+          rules show up above as regular rules you can edit or delete.
+          Mining runs nightly and after bursts of decisions; use the
+          button to mine right away.
+        </p>
+        {learning !== null ? (
+          <p className="settings-help">
+            {lastMined
+              ? `Last mined ${lastMined}. `
+              : "Not mined yet. "}
+            {learning.runs} run{learning.runs === 1 ? "" : "s"},{" "}
+            {learning.signals_seen} correction
+            {learning.signals_seen === 1 ? "" : "s"} examined,{" "}
+            {learning.proposals_filed} proposal
+            {learning.proposals_filed === 1 ? "" : "s"} filed.
+          </p>
+        ) : null}
+        <MineLessonsForm />
       </section>
 
       <section className="settings-section">
