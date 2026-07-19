@@ -15,7 +15,9 @@ import { classifyEmailTags } from "../brain/classify.js";
 import { classifyNoReply } from "../brain/noReply.js";
 import { suggestAssignee } from "../brain/suggestAssignee.js";
 import { recordItemUsage } from "../db/itemDrafts.js";
-import { createNoReplyItem } from "../db/items.js";
+import { createItem, createNoReplyItem } from "../db/items.js";
+import { matchesSpamSignal, type SpamSignal } from "../db/spamSignals.js";
+import { enqueueGmailState } from "../queue/enqueue.js";
 import { loadRulesBlock } from "../db/settings.js";
 import { loadStudioInfoBlock } from "../db/studioInfo.js";
 import type { ItemTag } from "../tags.js";
@@ -109,6 +111,62 @@ function emailMetaOf(payload: InboundEmailPayload): EmailMeta | undefined {
   if (payload.replyTo) meta.replyTo = payload.replyTo;
   if (payload.to) meta.to = payload.to;
   return Object.keys(meta).length > 0 ? meta : undefined;
+}
+
+/**
+ * Item payload for a suspected-spam preflight hit (pure; exported for the
+ * offline smoke). The item is created PENDING with no draft: drafting was
+ * deliberately skipped (no opus spend on likely junk), and the card
+ * surfaces payload.suspected_spam as a "Suspected spam" chip with a
+ * one-click "Confirm spam" (the spam decision). "Not spam" clears the
+ * flag and leaves a draftless pending item; the operator can use the
+ * existing Redo draft affordance to generate a reply -- the least
+ * invasive recovery, reusing the item.revise machinery unchanged.
+ */
+export function suspectedSpamPayload(
+  payload: InboundEmailPayload,
+  signal: Pick<SpamSignal, "kind" | "value">,
+  at = new Date().toISOString(),
+): Record<string, unknown> {
+  const meta = emailMetaOf(payload);
+  return {
+    original_email: {
+      from: payload.from ?? "(unknown sender)",
+      subject: payload.subject ?? "(no subject)",
+      body: payload.body ?? "(empty body)",
+      ...(payload.to ? { to: payload.to } : {}),
+    },
+    ...(meta ? { email_meta: meta } : {}),
+    suspected_spam: {
+      matched_signal: { kind: signal.kind, value: signal.value },
+      at,
+    },
+    generated_by: { commit: workerVersion(), at },
+  };
+}
+
+/**
+ * Best-effort mark-read enqueue for a SYSTEM decision (read = decided):
+ * the no-reply preflight files its item already decided, so the source
+ * Gmail message should flip to read like any operator decision would.
+ * Never throws -- a queue hiccup leaves the message unread, which is the
+ * honest failure mode -- and no-ops when the payload carries no gmailId
+ * (hand-fired runs, eval fixtures).
+ */
+async function enqueueMarkReadSafe(
+  itemId: string,
+  gmailId: string | undefined,
+): Promise<void> {
+  if (!gmailId) return;
+  try {
+    await enqueueGmailState({ itemId, gmailId, action: "mark_read" });
+  } catch (err) {
+    console.warn(
+      `[no-reply] could not enqueue mark-read for item ${itemId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
 }
 
 function renderEmail(payload: InboundEmailPayload): string {
@@ -236,6 +294,43 @@ export const emailDraft: Job = {
   // a real customer email is never lost to this gate.
   preflight: async (ctx: JobContext) => {
     const payload = (ctx.payload ?? {}) as InboundEmailPayload;
+
+    // Spam-signal gate (GH-115 follow-on), FIRST because it is one free DB
+    // lookup and outranks the generic automation heuristics: the sender
+    // (or their domain) was previously CONFIRMED spam by an operator, so
+    // even an automated-looking message from them files as suspected spam
+    // awaiting a one-click confirm rather than auto-resolving as no-reply.
+    // No draft is made (no opus spend on likely junk). Best-effort: any
+    // lookup failure logs and falls through to normal drafting -- a real
+    // customer email is never lost to this gate.
+    let spamSignal: SpamSignal | null = null;
+    try {
+      spamSignal = await matchesSpamSignal(payload.from);
+    } catch (err) {
+      console.warn(
+        `[spam-gate] signal lookup failed; drafting proceeds: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    if (spamSignal) {
+      const { item, created } = await createItem({
+        type: "email_reply",
+        domain: "email",
+        status: "pending_approval",
+        payload: suspectedSpamPayload(payload, spamSignal),
+        ...(payload.messageId ? { dedupeKey: payload.messageId } : {}),
+      });
+      // NOT decided yet (the operator confirms), so no mark-read enqueue:
+      // the message stays unread in Gmail until the confirm/decision.
+      console.log(
+        `[spam-gate] filed item ${item.id} as suspected spam (matched ${spamSignal.kind} "${spamSignal.value}"${
+          created ? "" : ", dedupe hit"
+        }); drafting skipped`,
+      );
+      return { handled: true };
+    }
+
     const usage = emptyUsage();
     const classification = await classifyNoReply(payload, usage);
     if (!classification) return { handled: false };
@@ -278,6 +373,9 @@ export const emailDraft: Job = {
         ),
       );
     }
+    // Read = decided: the classifier's filing IS the decision, so flip the
+    // source message to read exactly as an operator decision would.
+    await enqueueMarkReadSafe(item.id, payload.gmailId);
     console.log(
       `[no-reply] filed item ${item.id} as no_reply_needed (tier ${classification.tier}${
         created ? "" : ", dedupe hit"

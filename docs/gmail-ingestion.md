@@ -34,7 +34,7 @@ Optional (safe defaults):
 | `GMAIL_INGEST_QUERY` | `in:inbox is:unread` | Gmail search for the poll |
 | `GMAIL_INGEST_MAX` | `25` | max messages pulled per poll |
 | `GMAIL_PROCESSED_LABEL` | `AI-Manager/Ingested` | label added after ingest (empty string disables) |
-| `GMAIL_MARK_READ` | `true` | `false` leaves ingested mail unread |
+| `GMAIL_MARK_READ` | `false` | `true` marks mail read at ingestion time (not recommended; see "Read = decided" below) |
 | `GMAIL_POLL_CRON` | `*/2 * * * *` | poll cadence |
 | `GMAIL_SEND_ENABLED` | unset (off) | `true` to actually send approved replies |
 | `GMAIL_SEND_MODE` | `send` | `send` delivers on approval; `draft` parks a Gmail draft to send manually (GH-97). Inert unless send is enabled |
@@ -96,22 +96,77 @@ are refreshed automatically at runtime.
    has a catch-all email trigger, so every message drafts a reply. This is
    the heartbeat's email dispatch path from ARCHITECTURE.md, which had been
    declared and never read since Phase 0.
-4. The message is marked processed (UNREAD removed, processed label added)
-   **only after** its dispatch succeeds, so a mid-poll failure leaves it
-   for the next poll. Re-dispatch is a no-op (deterministic jobId +
-   item `dedupe_key`), so duplicates never produce duplicate drafts.
+4. The message is marked processed (processed label added; UNREAD is left
+   alone by default, see "Read = decided" below) **only after** its
+   dispatch succeeds, so a mid-poll failure leaves it for the next poll.
+   Re-dispatch is a no-op (deterministic jobId + item `dedupe_key`), so
+   duplicates never produce duplicate drafts.
 
 The drafting job stamps the threading metadata onto the item as
 `payload.email_meta` structurally (not through the model's prompt, same
 discipline as tags and KB sources), so the model can neither see nor
-corrupt it and a later reply threads correctly.
+corrupt it and a later reply threads correctly. `email_meta.gmailId` is
+also what the Gmail state job (below) targets.
 
-Idempotency has three layers: the ingest marks mail read **and applies the
-processed label, which the poll query excludes**, so an ingested message is
-never re-fetched (robust even with `GMAIL_MARK_READ=false` and past the 24h
-BullMQ dedupe window); the BullMQ jobId (`email-<jobId>-<hash(messageId)>`)
+Idempotency has three layers: the ingest applies the **processed label,
+which the poll query excludes**, so an ingested message is never
+re-fetched (independent of the read flag, and robust past the 24h BullMQ
+dedupe window); the BullMQ jobId (`email-<jobId>-<hash(messageId)>`)
 dedupes a duplicate enqueue; and the item `dedupe_key` (the message id)
 makes `create_item` return the existing item instead of a second draft.
+
+## Read = decided (locked decision, 2026-07-19)
+
+A Gmail message stays **UNREAD until its item is decided** in the console:
+approve, save-and-approve, reject, no reply needed, trash, or spam (and the
+no-reply classifier's automatic filing counts as a decision too). The
+processed label means "the system ingested this"; the read flag means "a
+human (or the classifier) decided about this" -- so the studio's unread
+count in Gmail keeps meaning what it always meant: mail nobody has dealt
+with yet.
+
+Mechanics:
+
+- Ingestion stamps only the processed label. `GMAIL_MARK_READ` now
+  **defaults to false** and can stay false; setting it `true` restores the
+  old mark-read-at-ingestion behavior for deployments that prefer it.
+- Every decision path enqueues an `email.gmailState` job (deterministic
+  jobId `gmailstate-<itemId>-<action>`) that the **worker** runs against
+  Gmail: `mark_read` for approve/reject/no-reply, `trash` (move to Gmail's
+  trash + mark read) for a trash decision, `spam` (add the SPAM label, pull
+  from the inbox, mark read) for a spam decision, and `untrash`/`unspam`
+  when a trashed item is restored.
+- The console never talks to Gmail: it only enqueues (the same gate split
+  as sending -- the console holds no Gmail credentials, the worker
+  re-checks `gmailConfigured()` and degrades to a logged skip without
+  them).
+- The enqueue is best-effort and never blocks or fails the recorded
+  decision: a queue hiccup just leaves the message unread. There is no
+  rollback bookkeeping because nothing on the item claims the Gmail state
+  changed; every operation is idempotent (removing an absent label,
+  re-trashing, re-reporting spam are all no-ops), so BullMQ's normal
+  retries are safe, unlike the send path where a retry could double-send.
+
+## Trash, spam, and the spam learning loop
+
+Trash and spam are decisions like approve/reject: recorded in the same
+audit shape (`payload.decision = {action:"trashed"|"spam", by, at, ...}`),
+resolving the item, plus a `payload.trashed` marker that gives the item a
+home in the console's Trash view and hides it from every other inbox.
+Restore puts it back exactly where it was (`prev_status`), preserving the
+discard decision on `decision_history`.
+
+Confirming **spam** additionally records the sender AND their domain as
+confirmed spam signals (`spam_signals` table, migration 0008): a simple,
+inspectable list, not a black-box model. During ingestion the drafting
+job's preflight checks each inbound sender against the list **before any
+model call**; on a match no draft is made (no opus spend on likely junk)
+and the item is created pending with `payload.suspected_spam`, surfaced on
+the card as a "Suspected spam" chip with one-click **Confirm spam** (the
+spam decision) and **Not spam** (clears the flag; the item stays pending
+and draftless, and Redo draft generates a reply on demand). The signal is
+not deleted by a single "Not spam"; un-learning a sender is a deliberate
+act via `deleteSpamSignal`.
 
 **Dead-letter caveat.** A message is marked processed once its drafting job
 is *enqueued*, not once the draft is *created* (the draft is produced

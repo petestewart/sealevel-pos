@@ -180,6 +180,64 @@ export class GmailClient {
   }
 
   /**
+   * Gmail read/trash/spam state mutations (read = decided, GH-115
+   * follow-on). Unlike sendMessage/createDraft these need NO
+   * ambiguous-outcome classification: every one of them is idempotent
+   * (removing an absent label, trashing an already-trashed message, or
+   * re-adding SPAM are all no-op successes on Gmail's side), so a retry
+   * after ANY failure shape -- network timeout included -- is safe. They
+   * ride the shared request() helper, which throws with the HTTP status
+   * and a bounded error detail on any non-2xx, and the worker job simply
+   * lets BullMQ retry.
+   */
+
+  /** Mark a message read (remove the UNREAD label). Idempotent. */
+  async markRead(id: string): Promise<void> {
+    await this.modifyMessage(id, { removeLabelIds: ["UNREAD"] });
+  }
+
+  /**
+   * Move a message to Gmail's trash (GH-96 salvage). Reversible in Gmail
+   * (it lands in Trash, auto-purged after 30 days), so this is a soft
+   * delete, matching the item-level trash. Idempotent: trashing an
+   * already-trashed message is a no-op success.
+   */
+  async trashMessage(id: string): Promise<void> {
+    await this.request<unknown>(`/messages/${encodeURIComponent(id)}/trash`, {
+      method: "POST",
+    });
+  }
+
+  /** Restore a message from Gmail's trash (item restore). Idempotent. */
+  async untrashMessage(id: string): Promise<void> {
+    await this.request<unknown>(
+      `/messages/${encodeURIComponent(id)}/untrash`,
+      { method: "POST" },
+    );
+  }
+
+  /**
+   * Report a message as spam: add Gmail's SPAM label and pull it out of
+   * the inbox, clearing UNREAD in the same call (a spam decision is a
+   * decision, and read = decided). Adding SPAM is what feeds Gmail's own
+   * filter, so confirmed spam teaches both systems. Idempotent.
+   */
+  async reportSpam(id: string): Promise<void> {
+    await this.modifyMessage(id, {
+      addLabelIds: ["SPAM"],
+      removeLabelIds: ["INBOX", "UNREAD"],
+    });
+  }
+
+  /** Undo a spam report: back to the inbox, SPAM label removed. Idempotent. */
+  async unreportSpam(id: string): Promise<void> {
+    await this.modifyMessage(id, {
+      addLabelIds: ["INBOX"],
+      removeLabelIds: ["SPAM"],
+    });
+  }
+
+  /**
    * Resolve a label name to its id, creating the label if it does not
    * exist. Result cached per client so a poll of N messages resolves the
    * processed label once. Nested names ("AI-Manager/Ingested") create a

@@ -2,9 +2,12 @@ import { cache } from "react";
 import "./env";
 import {
   countItemsByStatus,
+  countTrashedItems,
   DEFAULT_SIGNOFF,
   getPool,
   listItems,
+  listTrashedItems,
+  NOT_TRASHED_SQL,
   type Item,
   type ItemStatusCounts,
 } from "@ai-manager/core";
@@ -22,16 +25,24 @@ import {
 export type Decision = "approved" | "rejected" | "no_reply_needed";
 
 /**
+ * Every action a decision audit record can carry: the decideItem trio
+ * plus the trash/spam discard decisions (GH-115 follow-on), which are
+ * written by the core trashItem() in the same shape.
+ */
+export type DecidedAction = Decision | "trashed" | "spam";
+
+/**
  * Decision audit record, written into the item payload under `decision`
  * (GH-22): what was decided, who decided it (Clerk user id + display
  * name), when, and whether the draft was edited before approval. The
  * "no_reply_needed" action (GH-115) shares this exact shape whether the
  * classifier decided (by = {id:"system", name:"System"}, written by the
  * worker preflight) or an operator did, so a future learning pass mines
- * one field for both.
+ * one field for both. "trashed" and "spam" (written by core trashItem)
+ * share it too.
  */
 export interface DecisionRecord {
-  action: Decision;
+  action: DecidedAction;
   by: { id: string; name: string };
   at: string;
   edited: boolean;
@@ -171,12 +182,25 @@ const REJECTED_SQL = `(
 const NO_REPLY_SQL = `(payload->'decision'->>'action' = 'no_reply_needed')`;
 
 /**
- * The full three-way classifier as one SQL expression, precedence matching
- * classifyDecision exactly: rejected, then no_reply_needed, then approved.
+ * Trash and spam decisions (GH-115 follow-on), SQL twins of the trashed /
+ * spam branches in classifyDecision (lib/itemView.ts); byte-for-byte
+ * equivalence contract as above. Object-decision-only, like no_reply.
+ */
+const TRASHED_SQL = `(payload->'decision'->>'action' = 'trashed')`;
+const SPAM_SQL = `(payload->'decision'->>'action' = 'spam')`;
+
+/**
+ * The full classifier as one SQL expression, precedence matching
+ * classifyDecision exactly: rejected, then no_reply_needed, then trashed,
+ * then spam, then approved. The actions are mutually exclusive in
+ * practice (one decision field), so the order only settles pathological
+ * partials, but it must match classifyDecision either way.
  */
 const DECISION_ACTION_SQL = `CASE
   WHEN coalesce(${REJECTED_SQL}, false) THEN 'rejected'
   WHEN coalesce(${NO_REPLY_SQL}, false) THEN 'no_reply_needed'
+  WHEN coalesce(${TRASHED_SQL}, false) THEN 'trashed'
+  WHEN coalesce(${SPAM_SQL}, false) THEN 'spam'
   ELSE 'approved'
 END`;
 
@@ -189,13 +213,20 @@ END`;
  */
 const NOT_ARCHIVED_SQL = `NOT (payload ? 'archived')`;
 
-export type DecisionAction = "approved" | "rejected" | "no_reply_needed";
+export type DecisionAction =
+  | "approved"
+  | "rejected"
+  | "no_reply_needed"
+  | "trashed"
+  | "spam";
 
 /** Per-decision counts of resolved email replies. */
 export interface DecisionCounts {
   approved: number;
   rejected: number;
   no_reply_needed: number;
+  trashed: number;
+  spam: number;
 }
 
 /**
@@ -226,10 +257,31 @@ export const decisionCounts = cache(async (): Promise<DecisionCounts> => {
     approved: 0,
     rejected: 0,
     no_reply_needed: 0,
+    trashed: 0,
+    spam: 0,
   };
   for (const row of rows) counts[row.action] = Number(row.count);
   return counts;
 });
+
+/**
+ * Count of trashed items for the Trash sidebar pill (GH-115 follow-on).
+ * Keyed on the payload.trashed marker (core countTrashedItems), so it
+ * covers both discard flavors (trashed + spam) exactly like the Trash
+ * view's listing. React cache(), like the other count queries.
+ */
+export const trashedCount = cache(async (): Promise<number> =>
+  countTrashedItems(),
+);
+
+/**
+ * Trashed items for the Trash inbox, newest discard first, paginated.
+ * Thin wrapper over core listTrashedItems so the console keeps a single
+ * import surface for inbox bodies.
+ */
+export async function trashedItems(page = 1): Promise<Item[]> {
+  return listTrashedItems(page);
+}
 
 /**
  * Resolved email replies for one decision inbox (Approved or Rejected),
@@ -268,9 +320,13 @@ export async function decidedItems(
  * the decision landed), not created_at.
  */
 export async function recentlyDecided(limit = 10): Promise<Item[]> {
+  // Trashed/spam items are excluded (NOT_TRASHED_SQL): they live in the
+  // Trash view only, and vanish from every other inbox, including this
+  // pending-inbox tail.
   const { rows } = await getPool().query<Item>(
     `SELECT * FROM items
      WHERE status = 'resolved' AND type = 'email_reply' AND ${NOT_ARCHIVED_SQL}
+       AND ${NOT_TRASHED_SQL}
      ORDER BY resolved_at DESC NULLS LAST, id DESC
      LIMIT $1`,
     [limit],
@@ -508,6 +564,29 @@ export async function saveDraftEdits(
     throw new Error(`saveDraftEdits: no pending_approval item with id ${id}`);
   }
   return item;
+}
+
+/**
+ * Clear the suspected-spam flag on a still-pending item ("Not spam",
+ * GH-115 follow-on). Guarded UPDATE: only a pending item still carrying
+ * the flag qualifies, so a concurrent decision (or a double click) loses
+ * cleanly and returns null. The spam SIGNAL that produced the flag is
+ * deliberately left in place: one mislabeled match should not silently
+ * un-learn a sender the operator confirmed; removing signals is a
+ * deliberate settings-level act (deleteSpamSignal) rather than a side
+ * effect of triaging one email. The item stays pending and draftless; the
+ * operator can use Redo draft to generate a reply.
+ */
+export async function clearSuspectedSpam(id: string): Promise<Item | null> {
+  const { rows } = await getPool().query<Item>(
+    `UPDATE items
+     SET payload = payload - 'suspected_spam'
+     WHERE id = $1 AND status = 'pending_approval'
+       AND payload ? 'suspected_spam'
+     RETURNING *`,
+    [id],
+  );
+  return rows[0] ?? null;
 }
 
 /**

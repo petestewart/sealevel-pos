@@ -4,13 +4,19 @@ import { revalidatePath } from "next/cache";
 import {
   assignItemAudited,
   enqueueEmailSend,
+  enqueueGmailState,
   getPool,
   getUserSettings,
   gmailSendEnabled,
+  gmailStateActionForDecision,
   markDeliveryQueued,
   recordDeliveryFailed,
+  recordSpamSignal,
   reopenItem,
   ReopenConflictError,
+  restoreTrashedItem,
+  trashItem,
+  type Item,
 } from "@ai-manager/core";
 import { requireDecider } from "../../lib/requireDecider";
 import { assignableUsers } from "../../lib/assignees";
@@ -19,6 +25,7 @@ import { formatRelativeTime } from "../../lib/emailDisplay";
 import {
   archiveAllRejected,
   archiveRejectedItem,
+  clearSuspectedSpam,
   decideItem,
   saveDraftEdits,
   type Decision,
@@ -152,8 +159,9 @@ async function decide(
       signoff = mode === "none" ? { mode } : undefined;
     }
   }
+  let decided: Item;
   try {
-    await decideItem(id, decision, decider, edits, signoff);
+    decided = await decideItem(id, decision, decider, edits, signoff);
   } catch (err) {
     if (isAlreadyDecided(err)) {
       // No revalidate here: refreshing would unmount the stale card and
@@ -163,6 +171,13 @@ async function decide(
     }
     throw err;
   }
+  // Read = decided (locked decision, CLAUDE.md 2026-07-19): every decision
+  // flips the source Gmail message to read, via the worker's
+  // email.gmailState job. The console only enqueues; the worker holds the
+  // Gmail credentials (GH-116 gate split). Best-effort, after the decision
+  // is durably recorded: a queue hiccup leaves the message unread, never
+  // an undone decision.
+  await queueGmailStateForDecision(decided, decision);
   // Outbound send on approval (GH-95, Job B). The operator's Approve click
   // is the send authorization -- this is how sending coexists with the
   // "nothing auto-sends in v1" lock -- and it only happens when a human has
@@ -173,6 +188,46 @@ async function decide(
   if (decision === "approved") await queueSendIfEnabled(id);
   revalidatePath("/", "layout");
   return { error: null };
+}
+
+/** The item's source Gmail message id (payload.email_meta.gmailId), or null. */
+function gmailIdOf(item: Item): string | null {
+  const meta = (item.payload["email_meta"] ?? {}) as Record<string, unknown>;
+  const gmailId = meta["gmailId"];
+  return typeof gmailId === "string" && gmailId.length > 0 ? gmailId : null;
+}
+
+/**
+ * Best-effort Gmail state enqueue for a decision (read = decided). The
+ * decision -> Gmail op mapping is the shared gmailStateActionForDecision
+ * table: approve / reject / no-reply mark the message read; trash moves it
+ * to Gmail's trash (and marks read); spam reports it (and marks read).
+ * Items without a Gmail message id (hand-fired runs, pre-Gmail items) are
+ * a silent no-op. Never throws: the recorded decision is the source of
+ * truth, and a failed enqueue only means the message stays unread/in
+ * place in Gmail. No rollback bookkeeping is needed (unlike the send
+ * path's queued-stamp rollback) because nothing on the item claims the
+ * Gmail state changed; the operations are idempotent and re-enqueueable.
+ */
+async function queueGmailStateForDecision(
+  item: Item,
+  decision: Decision | "trashed" | "spam",
+): Promise<void> {
+  const gmailId = gmailIdOf(item);
+  if (!gmailId) return;
+  try {
+    await enqueueGmailState({
+      itemId: String(item.id),
+      gmailId,
+      action: gmailStateActionForDecision(decision),
+    });
+  } catch (err) {
+    console.error(
+      `[approvals] failed to enqueue gmail state for item ${item.id}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
 }
 
 /**
@@ -399,6 +454,153 @@ export async function clearRejectedAction(
 ): Promise<ClearRejectedState> {
   const decider = await requireDecider();
   await archiveAllRejected(decider);
+  revalidatePath("/", "layout");
+  return { error: null };
+}
+
+/**
+ * Move a pending item to the Trash (GH-115 follow-on): a decision like
+ * approve/reject, recorded by core trashItem in the same audit shape
+ * (payload.decision = {action:"trashed", by, at}) plus the trashed marker
+ * that gives the item a home in the Trash view and hides it everywhere
+ * else. Read = decided: the source Gmail message is moved to Gmail's
+ * trash and marked read (best-effort enqueue). The guarded UPDATE loses
+ * cleanly to a concurrent decision.
+ */
+export async function trashItemAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  const decider = await requireDecider();
+  const id = requireString(formData, "id");
+  const trashed = await trashItem(id, decider, "unwanted");
+  if (!trashed) return staleDecideState(id);
+  await queueGmailStateForDecision(trashed, "trashed");
+  revalidatePath("/", "layout");
+  return { error: null };
+}
+
+/**
+ * Mark a pending item as spam (GH-115 follow-on): the trash decision's
+ * stronger sibling. Records the decision (action:"spam"), moves the item
+ * to the Trash view, enqueues the Gmail spam report + mark-read, AND
+ * feeds the learning loop: the sender (and their domain) are recorded as
+ * confirmed spam signals (recordSpamSignal), so future mail from them is
+ * pre-flagged as suspected spam at ingestion without a draft being made.
+ * The signal write is best-effort after the decision is durable; a
+ * failure only means the system does not learn from this one confirm.
+ */
+export async function spamItemAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  const decider = await requireDecider();
+  const id = requireString(formData, "id");
+  const trashed = await trashItem(
+    id,
+    decider,
+    "spam",
+    "Confirmed as spam by the operator.",
+  );
+  if (!trashed) return staleDecideState(id);
+  const original = (trashed.payload["original_email"] ?? {}) as {
+    from?: unknown;
+  };
+  const from = typeof original.from === "string" ? original.from : undefined;
+  try {
+    await recordSpamSignal(from, decider, "Confirmed spam in the console.");
+  } catch (err) {
+    console.error(
+      `[approvals] failed to record spam signal for item ${id}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+  await queueGmailStateForDecision(trashed, "spam");
+  revalidatePath("/", "layout");
+  return { error: null };
+}
+
+/**
+ * "Not spam" on a suspected-spam item (GH-115 follow-on): clears the
+ * flag; the item stays pending and draftless (drafting was skipped by the
+ * spam gate), and the operator can use Redo draft to generate a reply.
+ * The matched signal is NOT deleted (see clearSuspectedSpam). Not a
+ * decision: nothing resolves and no Gmail state changes.
+ */
+export async function notSpamItemAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  await requireDecider();
+  const id = requireString(formData, "id");
+  const cleared = await clearSuspectedSpam(id);
+  if (!cleared) {
+    return {
+      error:
+        "Could not clear the spam flag. The item may have been decided or changed by another operator.",
+      stale: true,
+    };
+  }
+  revalidatePath("/", "layout");
+  return { error: null };
+}
+
+/**
+ * Restore a trashed item (GH-115 follow-on): back to the status it had
+ * before the trash/spam decision (core restoreTrashedItem, which moves
+ * the decision onto decision_history like Reopen does). The Gmail side is
+ * also restored best-effort: untrash for a trashed message, back out of
+ * Spam for a spam-reported one. The read flag deliberately stays set (a
+ * human looked at it; un-reading would be false).
+ */
+export async function restoreTrashedAction(
+  _prev: ApprovalActionState,
+  formData: FormData,
+): Promise<ApprovalActionState> {
+  await requireDecider();
+  const id = requireString(formData, "id");
+  let restored: Item | null;
+  try {
+    restored = await restoreTrashedItem(id);
+  } catch (err) {
+    if (err instanceof ReopenConflictError) {
+      return {
+        error:
+          "Cannot restore: a newer pending item for the same email already exists. Decide that one first, then try again.",
+      };
+    }
+    throw err;
+  }
+  if (!restored) {
+    return {
+      error:
+        "Could not restore this item. It may have been restored already or changed by another operator.",
+      stale: true,
+    };
+  }
+  // Which discard the item is coming back from lives in the audit trail:
+  // restoreTrashedItem appended the trash/spam decision to
+  // decision_history, so the newest entry names the action to undo.
+  const history = restored.payload["decision_history"];
+  const last = Array.isArray(history) ? history[history.length - 1] : undefined;
+  const lastAction = (last as { action?: unknown } | undefined)?.action;
+  const gmailId = gmailIdOf(restored);
+  if (gmailId) {
+    try {
+      await enqueueGmailState({
+        itemId: String(restored.id),
+        gmailId,
+        action: lastAction === "spam" ? "unspam" : "untrash",
+      });
+    } catch (err) {
+      console.error(
+        `[approvals] failed to enqueue gmail restore for item ${id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
   revalidatePath("/", "layout");
   return { error: null };
 }

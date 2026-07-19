@@ -25,6 +25,10 @@ export {
   enqueueEmailSend,
   emailSendJobId,
   EMAIL_SEND_JOB,
+  enqueueGmailState,
+  gmailStateJobId,
+  EMAIL_GMAIL_STATE_JOB,
+  type GmailStateJobPayload,
   DEFAULT_WORKER_CONCURRENCY,
   workerConcurrency,
   createQueueWorker,
@@ -37,6 +41,7 @@ export {
 export type { Job, Trigger, JobContext, BrainModel } from "./jobs/types.js";
 export { JOBS, jobById } from "./jobs/registry.js";
 export type { InboundEmailPayload, EmailMeta } from "./jobs/emailDraft.js";
+export { suspectedSpamPayload } from "./jobs/emailDraft.js";
 export {
   dispatchInboundEmail,
   jobsForInboundEmail,
@@ -56,6 +61,15 @@ export {
 } from "./gmail/config.js";
 export { ingestInbound, type IngestResult } from "./gmail/ingest.js";
 export { sendApprovedReply, type SendResult } from "./gmail/send.js";
+export {
+  applyGmailState,
+  gmailStateActionForDecision,
+  isGmailStateAction,
+  GMAIL_STATE_ACTIONS,
+  type GmailStateAction,
+  type GmailStateClient,
+  type GmailStateResult,
+} from "./gmail/state.js";
 export {
   gmailClient,
   GmailClient,
@@ -90,6 +104,25 @@ export {
   type RouteDefinition,
   type AssigneeSuggestion,
 } from "./routing.js";
+export {
+  trashItem,
+  restoreTrashedItem,
+  markGmailTrashed,
+  listTrashedItems,
+  countTrashedItems,
+  NOT_TRASHED_SQL,
+  type TrashReason,
+  type TrashRecord,
+  type TrashDecisionAction,
+} from "./db/trash.js";
+export {
+  recordSpamSignal,
+  matchesSpamSignal,
+  listSpamSignals,
+  deleteSpamSignal,
+  type SpamSignal,
+  type SpamSignalKind,
+} from "./db/spamSignals.js";
 export { suggestAssignee } from "./brain/suggestAssignee.js";
 export {
   classifyNoReply,

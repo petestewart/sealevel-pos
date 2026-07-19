@@ -84,6 +84,15 @@ function Glyph({ icon }: { icon: InboxIcon }) {
           <path d="M4 4 L20 20" />
         </svg>
       );
+    case "ban":
+      // Trash / spam (GH-115 follow-on): a slashed circle, "junk lives
+      // here". Distinct from the Rejected inbox's trash-can glyph.
+      return (
+        <svg {...shared}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M5.6 5.6 L18.4 18.4" />
+        </svg>
+      );
     default: {
       const _exhaustive: never = icon;
       throw new Error(`InboxSidebar: unhandled inbox icon ${_exhaustive}`);

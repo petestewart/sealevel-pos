@@ -20,7 +20,15 @@
  *   GMAIL_INGEST_QUERY     Gmail search for the poll (default: unread inbox)
  *   GMAIL_INGEST_MAX       max messages pulled per poll (default 25)
  *   GMAIL_PROCESSED_LABEL  label added after a message is ingested
- *   GMAIL_MARK_READ        "false" to leave ingested mail unread
+ *   GMAIL_MARK_READ        "true" to mark mail read at INGESTION time.
+ *                          Default false (read = decided, locked decision
+ *                          2026-07-19): ingestion stamps only the
+ *                          processed label, and a message flips to read
+ *                          when its item is DECIDED (approve / reject /
+ *                          no-reply / trash / spam), via the
+ *                          email.gmailState worker job. The label means
+ *                          "ingested"; the read flag means "a human (or
+ *                          the no-reply classifier) decided".
  *   GMAIL_POLL_CRON        poll schedule (default every 2 minutes)
  *   GMAIL_SEND_ENABLED     "true" to actually send approved replies
  *   GMAIL_SEND_MODE        "send" (deliver, default) or "draft" (park a
@@ -159,7 +167,11 @@ export function gmailConfig(): GmailConfig {
     // An explicit empty label disables labeling; unset uses the default.
     processedLabel:
       label === undefined ? DEFAULT_PROCESSED_LABEL : label.trim() || null,
-    markRead: process.env["GMAIL_MARK_READ"] !== "false",
+    // Read = decided: ingestion does NOT mark mail read unless explicitly
+    // opted in; the decision-driven email.gmailState job does. The
+    // processed label (excluded from the poll query) is what prevents
+    // re-ingestion, so leaving mail unread costs nothing.
+    markRead: process.env["GMAIL_MARK_READ"] === "true",
     pollCron: process.env["GMAIL_POLL_CRON"]?.trim() || DEFAULT_POLL_CRON,
   };
 }

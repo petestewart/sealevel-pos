@@ -3,7 +3,11 @@ import {
   type InboxSidebarEntry,
 } from "../../components/InboxSidebar";
 import { ToastProvider } from "../../components/Toast";
-import { decisionCounts, itemStatusCounts } from "../../lib/approvals";
+import {
+  decisionCounts,
+  itemStatusCounts,
+  trashedCount,
+} from "../../lib/approvals";
 import { INBOXES, type InboxCounts } from "../../lib/inboxes";
 
 /**
@@ -15,15 +19,23 @@ import { INBOXES, type InboxCounts } from "../../lib/inboxes";
 /** The shell must render even if Postgres is briefly down. */
 async function loadCounts(): Promise<InboxCounts> {
   try {
-    const [statuses, decisions] = await Promise.all([
+    const [statuses, decisions, trashed] = await Promise.all([
       itemStatusCounts(),
       decisionCounts(),
+      trashedCount(),
     ]);
-    return { statuses, decisions };
+    return { statuses, decisions, trashed };
   } catch {
     return {
       statuses: { open: 0, unassigned: 0, pending_approval: 0, resolved: 0 },
-      decisions: { approved: 0, rejected: 0, no_reply_needed: 0 },
+      decisions: {
+        approved: 0,
+        rejected: 0,
+        no_reply_needed: 0,
+        trashed: 0,
+        spam: 0,
+      },
+      trashed: 0,
     };
   }
 }

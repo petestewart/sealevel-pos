@@ -9,20 +9,27 @@ import type { DecisionAction, DecisionCounts } from "./approvals";
  * restructuring routes or the sidebar.
  */
 
-/** Everything the sidebar needs for the two count queries, prefetched once. */
+/** Everything the sidebar needs for the count queries, prefetched once. */
 export interface InboxCounts {
   statuses: ItemStatusCounts;
   decisions: DecisionCounts;
+  /** Trashed items (trash + spam decisions), keyed on payload.trashed. */
+  trashed: number;
 }
 
-export type InboxTone = "pending" | "approved" | "rejected" | "noreply";
+export type InboxTone =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "noreply"
+  | "trashed";
 
 /**
  * Icon shown for the inbox when the sidebar is collapsed to a rail
  * (GH-77). Names map to inline SVGs in InboxSidebar; a new inbox picks an
  * existing glyph or adds one there.
  */
-export type InboxIcon = "clock" | "check" | "x" | "bell-off";
+export type InboxIcon = "clock" | "check" | "x" | "bell-off" | "ban";
 
 /**
  * Each inbox declares HOW its body is fetched and rendered, rather than
@@ -35,6 +42,9 @@ export type InboxIcon = "clock" | "check" | "x" | "bell-off";
  *   recently decided tail.
  * - `decision`: resolved email replies for one decision (Approved or
  *   Rejected), rendered as decided rows.
+ * - `trash`: trashed items (trash + spam decisions, GH-115 follow-on),
+ *   keyed on payload.trashed rather than a decision class so both discard
+ *   flavors share one reviewable view with a Restore affordance.
  *
  * Adding a future source (a new item type, an assignee queue) means adding
  * a variant here and a matching branch in the route -- a TypeScript
@@ -43,7 +53,8 @@ export type InboxIcon = "clock" | "check" | "x" | "bell-off";
  */
 export type InboxSource =
   | { kind: "pending" }
-  | { kind: "decision"; decision: DecisionAction };
+  | { kind: "decision"; decision: DecisionAction }
+  | { kind: "trash" };
 
 export interface InboxDefinition {
   /** URL segment: /items/<slug>. */
@@ -106,6 +117,17 @@ export const INBOXES: readonly InboxDefinition[] = [
       "Emails filed as not needing a reply, like automated notifications and receipts. Nothing was drafted or sent; each shows why it was filed.",
     source: { kind: "decision", decision: "no_reply_needed" },
     count: ({ decisions }) => decisions.no_reply_needed,
+  },
+  {
+    slug: "trash",
+    label: "Trash",
+    tone: "trashed",
+    icon: "ban",
+    title: "Trash",
+    blurb:
+      "Emails you trashed or confirmed as spam. Nothing was sent; items here can be restored. Confirming spam also teaches the system to flag that sender next time.",
+    source: { kind: "trash" },
+    count: ({ trashed }) => trashed,
   },
 ];
 

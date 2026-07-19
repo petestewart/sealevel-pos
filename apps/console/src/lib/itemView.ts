@@ -302,6 +302,7 @@ export function toCardData(item: Item): ApprovalCardData {
     trace: runTraceOf(payload),
     revisions: revisionsOf(payload),
     lastAnswer: lastAnswerOf(payload),
+    suspectedSpam: suspectedSpamOf(item),
   };
 }
 
@@ -313,7 +314,9 @@ export function decisionOf(item: Item): DecisionRecord | null {
     d !== null &&
     (d.action === "approved" ||
       d.action === "rejected" ||
-      d.action === "no_reply_needed") &&
+      d.action === "no_reply_needed" ||
+      d.action === "trashed" ||
+      d.action === "spam") &&
     typeof d.by === "object" &&
     d.by !== null &&
     typeof d.by.name === "string" &&
@@ -340,6 +343,9 @@ export function decisionOf(item: Item): DecisionRecord | null {
  *     (full audit record OR partial, by/at absent) -> rejected
  *   - any object with action === "no_reply_needed"
  *     (GH-115; no legacy bare-string form exists)  -> no_reply_needed
+ *   - any object with action === "trashed"         -> trashed
+ *   - any object with action === "spam"            -> spam
+ *     (GH-115 follow-on; object-only, like no_reply_needed)
  *   - everything else resolved (approved object,
  *     legacy bare "approved", missing decision,
  *     any other partial)                           -> approved
@@ -350,11 +356,17 @@ export function decisionOf(item: Item): DecisionRecord | null {
  *   OR payload->'decision'->>'action'='rejected'
  *   -> the object branch (->> yields NULL for a bare string or missing key,
  *      so only an explicit action='rejected' matches). Then
- *   payload->'decision'->>'action'='no_reply_needed' -> no_reply_needed.
+ *   payload->'decision'->>'action'='no_reply_needed' -> no_reply_needed,
+ *   then ='trashed' -> trashed, then ='spam' -> spam.
  *   coalesce(...,false) makes every other resolved row approved.
  *   DECISION_ACTION_SQL applies the same precedence. Identical to the below.
  */
-export type DecisionClass = "approved" | "rejected" | "no_reply_needed";
+export type DecisionClass =
+  | "approved"
+  | "rejected"
+  | "no_reply_needed"
+  | "trashed"
+  | "spam";
 
 export function classifyDecision(
   payload: Record<string, unknown>,
@@ -365,6 +377,8 @@ export function classifyDecision(
     const action = (d as { action?: unknown }).action;
     if (action === "rejected") return "rejected";
     if (action === "no_reply_needed") return "no_reply_needed";
+    if (action === "trashed") return "trashed";
+    if (action === "spam") return "spam";
   }
   return "approved";
 }
@@ -381,6 +395,10 @@ export function decisionPhrase(action: DecisionClass): string {
       return "rejected";
     case "no_reply_needed":
       return "marked no reply needed";
+    case "trashed":
+      return "moved to Trash";
+    case "spam":
+      return "marked as spam";
   }
 }
 
@@ -399,7 +417,42 @@ export function isArchived(item: Item): boolean {
   return Object.prototype.hasOwnProperty.call(item.payload, "archived");
 }
 
-export type RowTone = "pending" | "approved" | "rejected" | "noreply";
+/**
+ * Whether the item was trashed (trash/spam decision, GH-115 follow-on).
+ * Matches the SQL guard NOT_TRASHED_SQL in @ai-manager/core (presence of
+ * the payload key); keep the two in sync. Trashed items appear ONLY in
+ * the Trash inbox and vanish from every other inbox and tail; the row and
+ * its audit stay in the database and can be restored.
+ */
+export function isTrashed(item: Item): boolean {
+  return Object.prototype.hasOwnProperty.call(item.payload, "trashed");
+}
+
+/**
+ * The suspected-spam flag (payload.suspected_spam, stamped by the
+ * ingestion spam-signal gate), validated, or null. Carries which
+ * confirmed signal matched, for the card's chip tooltip.
+ */
+export function suspectedSpamOf(
+  item: Item,
+): { kind: string; value: string } | null {
+  const raw = item.payload.suspected_spam as
+    | { matched_signal?: { kind?: unknown; value?: unknown } }
+    | undefined;
+  if (typeof raw !== "object" || raw === null) return null;
+  const kind = str(raw.matched_signal?.kind);
+  const value = str(raw.matched_signal?.value);
+  // A malformed flag still shows the chip (the item WAS gated), with a
+  // generic label.
+  return { kind: kind ?? "sender", value: value ?? "" };
+}
+
+export type RowTone =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "noreply"
+  | "trashed";
 
 /** Semantic tone for a row's status dot, derived from item state. */
 export function toneOf(item: Item): RowTone {
@@ -411,6 +464,9 @@ export function toneOf(item: Item): RowTone {
       return "rejected";
     case "no_reply_needed":
       return "noreply";
+    case "trashed":
+    case "spam":
+      return "trashed";
   }
 }
 

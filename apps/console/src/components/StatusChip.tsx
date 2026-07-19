@@ -3,7 +3,9 @@ export type StatusChipVariant =
   | "approved"
   | "rejected"
   | "noreply"
-  | "unassigned";
+  | "unassigned"
+  | "trashed"
+  | "spam";
 
 const LABELS: Record<StatusChipVariant, string> = {
   pending: "Pending",
@@ -11,6 +13,8 @@ const LABELS: Record<StatusChipVariant, string> = {
   rejected: "Rejected",
   noreply: "No reply needed",
   unassigned: "Unassigned",
+  trashed: "In Trash",
+  spam: "Spam",
 };
 
 /**

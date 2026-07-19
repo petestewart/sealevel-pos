@@ -54,6 +54,47 @@ export async function enqueueEmailSend(itemId: string): Promise<string> {
   );
 }
 
+/** The BullMQ job name for Gmail read/trash/spam state mutations. */
+export const EMAIL_GMAIL_STATE_JOB = "email.gmailState";
+
+/**
+ * Deterministic jobId for one Gmail state mutation on one item:
+ * gmailstate-<itemId>-<action>. Item ids are numeric and actions are a
+ * closed lowercase set, so the id is BullMQ-safe (no ":"). Determinism
+ * makes a duplicate enqueue (double decision submit, no-reply preflight
+ * dedupe hit) a windowed no-op; the operations themselves are idempotent
+ * on Gmail's side, so even a re-enqueue past the window is harmless.
+ */
+export function gmailStateJobId(itemId: string, action: string): string {
+  return `gmailstate-${itemId}-${action}`;
+}
+
+/** Payload for an email.gmailState job. */
+export interface GmailStateJobPayload {
+  /** The item whose decision triggered this (for logging + trash stamp). */
+  itemId: string;
+  /** Gmail internal message id (payload.email_meta.gmailId). */
+  gmailId: string;
+  /** One of the GmailStateAction values (gmail/state.ts). */
+  action: string;
+}
+
+/**
+ * Enqueue one Gmail state mutation (read = decided). Callers treat this
+ * as best-effort: a queue failure must never fail or roll back the
+ * recorded decision (the message just stays unread/in place, which the
+ * next decision-side enqueue or a manual Gmail touch can fix), so wrap in
+ * try/catch at the decision site. Default retry policy (5 attempts,
+ * exponential backoff) applies; failed jobs land in the dead-letter set.
+ */
+export async function enqueueGmailState(
+  payload: GmailStateJobPayload,
+): Promise<string> {
+  return enqueue(getSharedQueue(), EMAIL_GMAIL_STATE_JOB, payload, {
+    jobId: gmailStateJobId(payload.itemId, payload.action),
+  });
+}
+
 /** Close the shared producer queue + connection (clean process shutdown). */
 export async function closeSharedQueue(): Promise<void> {
   if (sharedQueue) {

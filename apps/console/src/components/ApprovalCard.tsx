@@ -21,9 +21,12 @@ import { RunTraceSection, type RunTraceData } from "./RunTrace";
 import {
   approveItemAction,
   noReplyItemAction,
+  notSpamItemAction,
   rejectItemAction,
   saveAndApproveItemAction,
   saveEditsItemAction,
+  spamItemAction,
+  trashItemAction,
   type ApprovalActionState,
 } from "../app/approvals/actions";
 
@@ -48,6 +51,12 @@ const SAVE_APPROVE_TOAST =
 const REJECT_TOAST = "Rejected. No reply will be sent.";
 const NO_REPLY_TOAST =
   "Filed as no reply needed. Nothing will be sent for this email.";
+const TRASH_TOAST =
+  "Moved to Trash. The email will be moved to Gmail's trash. You can restore it from the Trash view.";
+const SPAM_TOAST =
+  "Marked as spam. The sender was added to the spam list and the email will be reported to Gmail.";
+const NOT_SPAM_TOAST =
+  "Spam flag cleared. No draft was made for this email; use Redo draft to generate a reply.";
 
 /**
  * When outbound send is enabled for the deployment (GH-95), an Approve
@@ -134,6 +143,13 @@ export interface ApprovalCardData {
   revisions: DraftRevision[];
   /** Stored Q&A note (payload.last_answer), or null. */
   lastAnswer: LastAnswerData | null;
+  /**
+   * Suspected-spam flag (payload.suspected_spam, GH-115 follow-on): the
+   * ingestion spam gate matched a confirmed signal, so no draft was made
+   * and the card leads with one-click Confirm spam / Not spam. Null for
+   * ordinary items.
+   */
+  suspectedSpam: { kind: string; value: string } | null;
 }
 
 export interface DraftRevision {
@@ -289,6 +305,21 @@ export function ApprovalCard({
     saveAndApproveItemAction,
     initialActionState,
   );
+  // Trash and spam (GH-115 follow-on) are decisions like approve/reject:
+  // same no-JS fallback dispatchers, same enhanced flow. Not-spam is not a
+  // decision (the item stays pending) but shares the plumbing.
+  const [trashState, trashAction] = useActionState(
+    trashItemAction,
+    initialActionState,
+  );
+  const [spamState, spamAction] = useActionState(
+    spamItemAction,
+    initialActionState,
+  );
+  const [notSpamState, notSpamAction] = useActionState(
+    notSpamItemAction,
+    initialActionState,
+  );
   // Save edits (non-deciding, GH-25) keeps the item pending, so unlike a
   // decision the card is NOT replaced and its effect can reliably close the
   // editor. It never advances or toasts.
@@ -349,6 +380,30 @@ export function ApprovalCard({
       });
     };
 
+  /**
+   * Enhanced "Not spam" handler (GH-115 follow-on). Unlike decide() it
+   * does not advance: the item STAYS pending (now unflagged and
+   * draftless), so on success the card refreshes in place and the toast
+   * points the operator at Redo draft. Same no-JS fallback posture: the
+   * button's formAction still posts the raw server action.
+   */
+  const notSpam = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const form = formRef.current;
+    if (!form) return; // fall through to the native POST
+    event.preventDefault();
+    const formData = new FormData(form);
+    setDecideError(null);
+    startDeciding(async () => {
+      const result = await notSpamItemAction(initialActionState, formData);
+      if (result.error) {
+        setDecideError(result);
+        return;
+      }
+      toast.show(NOT_SPAM_TOAST);
+      router.refresh();
+    });
+  };
+
   // First state carrying an error wins, from whichever path produced it
   // (enhanced onClick flow or a no-JS useActionState dispatch). Keeping the
   // whole state (not just the message) preserves the stale flag that drives
@@ -361,6 +416,9 @@ export function ApprovalCard({
       noReplyState,
       saveApproveState,
       saveEditsState,
+      trashState,
+      spamState,
+      notSpamState,
     ]
       .filter((s): s is ApprovalActionState => s !== null)
       .find((s) => s.error) ?? null;
@@ -373,6 +431,18 @@ export function ApprovalCard({
       <div className="approval-card-head">
         <span className="approval-card-id">#{item.id.slice(0, 8)}</span>
         <span className="intent-chip">{item.intent}</span>
+        {item.suspectedSpam ? (
+          <span
+            className="tag-chip tag-chip--spam"
+            title={
+              item.suspectedSpam.value
+                ? `Matched confirmed spam ${item.suspectedSpam.kind}: ${item.suspectedSpam.value}`
+                : "Matched a confirmed spam signal"
+            }
+          >
+            Suspected spam
+          </span>
+        ) : null}
         {item.tags.map((t) => (
           <span key={t} className="tag-chip">
             {t}
@@ -578,6 +648,7 @@ export function ApprovalCard({
 
       {canDecide ? (
         <div className="approval-card-actions">
+          {item.suspectedSpam ? null : (
           <label className="signoff-picker">
             <span className="micro-label">Signoff</span>
             <select
@@ -596,6 +667,7 @@ export function ApprovalCard({
               <option value="none">No signoff</option>
             </select>
           </label>
+          )}
           {editing ? (
             <>
               <Button
@@ -632,6 +704,47 @@ export function ApprovalCard({
                 }}
               >
                 Cancel edit
+              </Button>
+            </>
+          ) : item.suspectedSpam ? (
+            // Suspected spam (GH-115 follow-on): the gate skipped drafting,
+            // so the card leads with the one-click confirm. "Confirm spam"
+            // IS the spam decision; "Not spam" clears the flag and leaves a
+            // draftless pending item (Redo draft generates a reply); Trash
+            // remains for junk the operator would rather not teach on.
+            <>
+              <Button
+                key="confirm-spam"
+                type="submit"
+                variant="primary"
+                disabled={!armed || isDeciding}
+                formAction={spamAction}
+                onClick={decide(spamItemAction, SPAM_TOAST, false)}
+                formNoValidate
+              >
+                Confirm spam
+              </Button>
+              <Button
+                key="not-spam"
+                type="submit"
+                variant="outlined"
+                disabled={!armed || isDeciding}
+                formAction={notSpamAction}
+                onClick={notSpam}
+                formNoValidate
+              >
+                Not spam
+              </Button>
+              <Button
+                key="trash"
+                type="submit"
+                variant="outlined"
+                disabled={!armed || isDeciding}
+                formAction={trashAction}
+                onClick={decide(trashItemAction, TRASH_TOAST, false)}
+                formNoValidate
+              >
+                Trash
               </Button>
             </>
           ) : (
@@ -672,6 +785,28 @@ export function ApprovalCard({
                 formNoValidate
               >
                 No reply needed
+              </Button>
+              <Button
+                key="trash"
+                type="submit"
+                variant="outlined"
+                disabled={!armed || isDeciding}
+                formAction={trashAction}
+                onClick={decide(trashItemAction, TRASH_TOAST, false)}
+                formNoValidate
+              >
+                Trash
+              </Button>
+              <Button
+                key="spam"
+                type="submit"
+                variant="outlined"
+                disabled={!armed || isDeciding}
+                formAction={spamAction}
+                onClick={decide(spamItemAction, SPAM_TOAST, false)}
+                formNoValidate
+              >
+                Spam
               </Button>
             </>
           )}

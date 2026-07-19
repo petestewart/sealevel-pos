@@ -390,6 +390,12 @@ textarea {
   background: var(--unas-tx);
 }
 
+/* Trash / spam (GH-115 follow-on): muted like no-reply; these rows are
+   junk, not work. */
+.dot--trashed {
+  background: var(--unas-tx);
+}
+
 .dot--accent {
   background: var(--accent);
 }
@@ -432,6 +438,19 @@ textarea {
 .status-chip--noreply {
   background: var(--unas-bg);
   color: var(--unas-tx);
+}
+
+/* Trash / spam (GH-115 follow-on): trashed is muted (junk, no action);
+   spam borrows the rejected red (it is the harder call, and reversible
+   only via Restore). */
+.status-chip--trashed {
+  background: var(--unas-bg);
+  color: var(--unas-tx);
+}
+
+.status-chip--spam {
+  background: var(--rej-bg);
+  color: var(--rej-tx);
 }
 
 /* ---------- Buttons ---------- */
@@ -2284,6 +2303,13 @@ textarea {
 .item-row .tag-chip {
   font-size: 0.5625rem;
   padding: 1px 6px;
+}
+
+/* Suspected spam chip (GH-115 follow-on): red, so the flagged card reads
+   as "confirm or clear" at a glance. */
+.tag-chip--spam {
+  background: var(--rej-bg);
+  color: var(--rej-tx);
 }
 
 .item-row-tags {

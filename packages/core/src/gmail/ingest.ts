@@ -55,9 +55,11 @@ export async function ingestInbound(queue: Queue): Promise<IngestResult> {
   const client = gmailClient();
 
   // Exclude the processed label from the poll query so an already-ingested
-  // message is never re-fetched -- robust even when GMAIL_MARK_READ=false
-  // (the message stays unread) and past the 24h window where the BullMQ
-  // jobId dedupe expires. Belt-and-suspenders alongside removing UNREAD.
+  // message is never re-fetched. This is what makes read = decided cheap:
+  // by default (GMAIL_MARK_READ=false) ingestion leaves the message UNREAD
+  // -- it stays unread until its item is decided and the email.gmailState
+  // job flips it -- and the label alone keeps the poll from re-ingesting,
+  // robust past the 24h window where the BullMQ jobId dedupe expires.
   const query = config.processedLabel
     ? `${config.ingestQuery} -label:"${config.processedLabel}"`
     : config.ingestQuery;

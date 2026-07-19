@@ -11,9 +11,12 @@ import { ExpressAdapter } from "@bull-board/express";
 import type { Job } from "bullmq";
 import {
   DEFAULT_QUEUE_NAME,
+  EMAIL_GMAIL_STATE_JOB,
   EMAIL_INGEST_JOB,
   EMAIL_SEND_JOB,
   JOBS,
+  applyGmailState,
+  closeSharedQueue,
   createQueue,
   createQueueWorker,
   createRedis,
@@ -21,8 +24,10 @@ import {
   emailIngestSchedule,
   enqueue,
   ingestInbound,
+  isGmailStateAction,
   jobById,
   loadEnv,
+  markGmailTrashed,
   registerSchedules,
   runJob,
   sendApprovedReply,
@@ -76,6 +81,48 @@ const processors: Record<string, (job: Job) => Promise<void>> = {
           : "";
     console.log(
       `[worker] ${EMAIL_SEND_JOB} item ${itemId}: ${result.status}${detail}`,
+    );
+  },
+  // Gmail state on decision (read = decided): mark the source message
+  // read, trash it, report it as spam, or restore it, depending on what
+  // was decided in the console (or by the no-reply classifier). Enqueued
+  // best-effort by every decision path; the console never talks to Gmail
+  // itself (the GH-116 gate split: console enqueues, worker holds creds).
+  // All operations are idempotent, so BullMQ's default retries are safe;
+  // with Gmail unconfigured the job degrades to a logged skip.
+  [EMAIL_GMAIL_STATE_JOB]: async (job) => {
+    const data = (job.data ?? {}) as {
+      itemId?: unknown;
+      gmailId?: unknown;
+      action?: unknown;
+    };
+    const { itemId, gmailId, action } = data;
+    if (typeof gmailId !== "string" || gmailId.length === 0) {
+      throw new Error(
+        `${EMAIL_GMAIL_STATE_JOB}: job ${job.id} has no gmailId in data`,
+      );
+    }
+    if (!isGmailStateAction(action)) {
+      throw new Error(
+        `${EMAIL_GMAIL_STATE_JOB}: job ${job.id} has unknown action "${String(action)}"`,
+      );
+    }
+    const result = await applyGmailState(action, gmailId);
+    // Stamp the item once its Gmail message is actually in the trash
+    // (surfaced in the Trash view). Best-effort metadata, never a failure.
+    if (result.status === "applied" && action === "trash" && typeof itemId === "string") {
+      await markGmailTrashed(itemId).catch((err: unknown) =>
+        console.warn(
+          `[worker] could not stamp gmail_trashed on item ${itemId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
+    }
+    console.log(
+      `[worker] ${EMAIL_GMAIL_STATE_JOB} ${action} message ${gmailId}${
+        typeof itemId === "string" ? ` (item ${itemId})` : ""
+      }: ${result.status}${result.reason ? ` (${result.reason})` : ""}`,
     );
   },
   "test-heartbeat": async (job) => {
@@ -174,6 +221,9 @@ async function shutdown(signal: string): Promise<void> {
   });
   await worker.close();
   await queue.close();
+  // The no-reply preflight enqueues mark-read via the shared producer
+  // queue; close it too (a no-op when it was never created).
+  await closeSharedQueue();
   await connection.quit();
   console.log("[worker] shutdown complete");
   process.exit(0);

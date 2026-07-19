@@ -10,6 +10,10 @@ export {
   enqueueEmailSend,
   emailSendJobId,
   EMAIL_SEND_JOB,
+  enqueueGmailState,
+  gmailStateJobId,
+  EMAIL_GMAIL_STATE_JOB,
+  type GmailStateJobPayload,
 } from "./enqueue.js";
 export {
   DEFAULT_WORKER_CONCURRENCY,

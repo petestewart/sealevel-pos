@@ -3,6 +3,7 @@ import { StatusChip } from "./StatusChip";
 import { DeliveryStatus } from "./DeliveryStatus";
 import { ReopenButton } from "./ReopenButton";
 import { RemoveRejectedButton } from "./RemoveRejectedButton";
+import { RestoreTrashedButton } from "./RestoreTrashedButton";
 import { InboundEmail } from "./InboundEmail";
 import { RunTraceSection } from "./RunTrace";
 import { paragraphsOf, formatDecidedAt } from "../lib/emailDisplay";
@@ -34,6 +35,9 @@ export function DecidedDetail({
   const action = classifyDecision(item.payload);
   const approved = action === "approved";
   const noReply = action === "no_reply_needed";
+  // Trash and spam (GH-115 follow-on) share the Trash view; both suppress
+  // the delivery line (nothing was ever sent) and swap Reopen for Restore.
+  const trashed = action === "trashed" || action === "spam";
   const decision = decisionOf(item);
   const decidedAt = decision
     ? formatDecidedAt(new Date(decision.at))
@@ -46,7 +50,11 @@ export function DecidedDetail({
     ? "Approved"
     : noReply
       ? "Marked no reply needed"
-      : "Rejected";
+      : action === "trashed"
+        ? "Moved to Trash"
+        : action === "spam"
+          ? "Marked as spam"
+          : "Rejected";
   const delivery = deliveryOf(item);
   const sendEnabled = gmailSendEnabled();
   const sendMode = gmailSendMode();
@@ -69,7 +77,17 @@ export function DecidedDetail({
         ) : null}
         <span className="approval-card-status">
           <StatusChip
-            variant={approved ? "approved" : noReply ? "noreply" : "rejected"}
+            variant={
+              approved
+                ? "approved"
+                : noReply
+                  ? "noreply"
+                  : action === "trashed"
+                    ? "trashed"
+                    : action === "spam"
+                      ? "spam"
+                      : "rejected"
+            }
           />
         </span>
       </div>
@@ -101,7 +119,11 @@ export function DecidedDetail({
                 ? "Approved reply"
                 : noReply
                   ? "No reply needed"
-                  : "Rejected draft"}
+                  : action === "trashed"
+                    ? "Trashed"
+                    : action === "spam"
+                      ? "Confirmed spam"
+                      : "Rejected draft"}
             </span>
             {data.edited ? (
               <span className="approval-pane-timestamp">edited</span>
@@ -116,6 +138,18 @@ export function DecidedDetail({
               <span className="delivery-status-dot" aria-hidden="true" />
               <span>
                 Not sent. This email was filed as not needing a reply.
+              </span>
+            </div>
+          ) : trashed ? (
+            // GH-115 follow-on: a trashed/spam item never entered the send
+            // path; a truthful note replaces the delivery line, and says
+            // what happened to the source email in Gmail.
+            <div className="delivery-status" role="note">
+              <span className="delivery-status-dot" aria-hidden="true" />
+              <span>
+                {action === "spam"
+                  ? "Not sent. Reported to Gmail as spam; the sender was added to the spam list."
+                  : "Not sent. The email was moved to Gmail's trash."}
               </span>
             </div>
           ) : (
@@ -157,7 +191,7 @@ export function DecidedDetail({
             </>
           ) : (
             <div className="draft-empty">
-              {noReply
+              {noReply || trashed
                 ? "(no draft generated; drafting was skipped for this email)"
                 : "(no draft generated)"}
             </div>
@@ -195,7 +229,11 @@ export function DecidedDetail({
               }${decision.edited ? " · edited" : ""}`
             : `${decidedLabel}${decidedAt ? ` · ${decidedAt}` : ""}`}
         </span>
-        {canDecide ? <ReopenButton id={data.id} /> : null}
+        {/* Trashed items restore (clearing the trash marker and undoing the
+            Gmail move) instead of reopening: a plain Reopen would leave the
+            item both pending and trashed, an incoherent state. */}
+        {canDecide && trashed ? <RestoreTrashedButton id={data.id} /> : null}
+        {canDecide && !trashed ? <ReopenButton id={data.id} /> : null}
         {canDecide && action === "rejected" ? (
           <RemoveRejectedButton id={data.id} />
         ) : null}

@@ -19,6 +19,7 @@ import {
   decisionCounts,
   pendingApprovals,
   recentlyDecided,
+  trashedItems,
 } from "../../../lib/approvals";
 import { inboxBySlug, type InboxDefinition } from "../../../lib/inboxes";
 import {
@@ -29,6 +30,7 @@ import { assignableUsers, type AssignableUser } from "../../../lib/assignees";
 import {
   classifyDecision,
   isArchived,
+  isTrashed,
   toCardData,
   toRow,
 } from "../../../lib/itemView";
@@ -73,6 +75,10 @@ async function loadInboxItems(inbox: InboxDefinition): Promise<Item[]> {
     }
     case "decision":
       return decidedItems(source.decision);
+    case "trash":
+      // Trashed AND spam items share the Trash view (both carry the
+      // payload.trashed marker), newest discard first.
+      return trashedItems();
     default: {
       const _exhaustive: never = source;
       throw new Error(
@@ -90,7 +96,9 @@ function ListEmpty({ inbox }: { inbox: InboxDefinition }) {
         ? "Replies you approve will appear here."
         : inbox.slug === "no-reply"
           ? "Emails filed as not needing a reply will appear here."
-          : "Drafts you reject will appear here.";
+          : inbox.slug === "trash"
+            ? "Emails you trash or confirm as spam will appear here."
+            : "Drafts you reject will appear here.";
   return (
     <div className="list-empty">
       <div className="list-empty-title">
@@ -139,9 +147,11 @@ function DetailPlaceholder({ hasItems }: { hasItems: boolean }) {
  */
 function belongsToInbox(item: Item, inbox: InboxDefinition): boolean {
   // Archived items (GH-55) are hidden from every inbox; a deep link to
-  // one falls back to the placeholder, never a detail view.
+  // one falls back to the placeholder, never a detail view. Trashed items
+  // (GH-115 follow-on) belong ONLY to the Trash inbox.
   if (isArchived(item)) return false;
   const source = inbox.source;
+  if (source.kind !== "trash" && isTrashed(item)) return false;
   switch (source.kind) {
     case "pending":
       return item.status === "pending_approval";
@@ -153,6 +163,8 @@ function belongsToInbox(item: Item, inbox: InboxDefinition): boolean {
         item.type === "email_reply" &&
         classifyDecision(item.payload) === source.decision
       );
+    case "trash":
+      return isTrashed(item);
     default: {
       const _exhaustive: never = source;
       throw new Error(
