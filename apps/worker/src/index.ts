@@ -10,6 +10,8 @@ import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
 import { ExpressAdapter } from "@bull-board/express";
 import type { Job } from "bullmq";
 import {
+  CAMPAIGNS_SYNC_CONTACTS_JOB,
+  campaignsSyncContactsSchedule,
   DEFAULT_QUEUE_NAME,
   EMAIL_GMAIL_STATE_JOB,
   EMAIL_INGEST_JOB,
@@ -37,6 +39,7 @@ import {
   registerSchedules,
   runJob,
   sendApprovedReply,
+  syncContacts,
   workerVersion,
   writeApprovedKbUpdate,
 } from "@ai-manager/core";
@@ -190,6 +193,22 @@ const processors: Record<string, (job: Job) => Promise<void>> = {
       }: ${result.status}${result.reason ? ` (${result.reason})` : ""}, signals=${result.signals} candidates=${result.candidates} filed=${result.proposalsFiled}`,
     );
   },
+  // Nightly Mindbody contact sync + ID-mapping reconciliation (SEA-81).
+  // Pure code, no brain: pages the Mindbody Public API v6 into contacts,
+  // settles the append-only consent ledger, then reconciles ids against
+  // the analytics mirror (read-only, via the analytics service identity).
+  // Fired by the 05:00 PT schedule below; degrades to a logged skip until
+  // MINDBODY_API_KEY / MINDBODY_SITE_ID are configured. A mid-run error
+  // throws so BullMQ retries; the upsert + append-only ledger make a
+  // re-run safe, and the watermark only advances on success.
+  [CAMPAIGNS_SYNC_CONTACTS_JOB]: async () => {
+    const result = await syncContacts();
+    console.log(
+      `[worker] ${CAMPAIGNS_SYNC_CONTACTS_JOB}: ${result.status}${
+        result.mode ? ` (${result.mode})` : ""
+      } -- ${result.summary}`,
+    );
+  },
   "test-heartbeat": async (job) => {
     console.log(
       `[worker] test-heartbeat ran (job ${job.id}, attempt ${job.attemptsMade + 1})`,
@@ -238,6 +257,9 @@ await registerSchedules(queue, [
   // Nightly learning-loop mine (GH-127): the baseline of the hybrid
   // trigger (cron + threshold + manual). Harmless until signals exist.
   learningMineSchedule(),
+  // Nightly Mindbody contact sync (SEA-81), 05:00 America/Los_Angeles --
+  // clear of the 02:00-03:30 PT analytics-mirror rebuild blackout.
+  campaignsSyncContactsSchedule(),
   ...cronSchedulesFromJobs(JOBS),
   {
     id: "test-heartbeat",

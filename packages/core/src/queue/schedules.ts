@@ -9,6 +9,14 @@ export interface ScheduleSpec {
   id: string;
   /** Cron pattern (five fields), e.g. every 5 minutes. */
   pattern: string;
+  /**
+   * IANA timezone the pattern is evaluated in (BullMQ RepeatOptions.tz).
+   * Omitted = server time (UTC on Railway). Set it when a schedule is
+   * pinned to a wall-clock constraint, e.g. the contact sync's 05:00
+   * America/Los_Angeles, which must stay clear of the 02:30 PT analytics
+   * rebuild across DST shifts.
+   */
+  tz?: string;
   /** Job name each occurrence is enqueued under. */
   jobName: string;
   /** Payload for each occurrence. */
@@ -28,7 +36,7 @@ export async function registerSchedules(
   for (const spec of schedules) {
     await queue.upsertJobScheduler(
       spec.id,
-      { pattern: spec.pattern },
+      { pattern: spec.pattern, ...(spec.tz ? { tz: spec.tz } : {}) },
       { name: spec.jobName, data: spec.data },
     );
   }
@@ -77,6 +85,36 @@ export function learningMineSchedule(): ScheduleSpec {
     id: LEARNING_MINE_SCHEDULE_ID,
     pattern: process.env.LEARNING_MINE_CRON || DEFAULT_LEARNING_MINE_CRON,
     jobName: "learning.mine",
+  };
+}
+
+/** The BullMQ job name (and schedule id stem) for the nightly Mindbody
+ * contact sync (SEA-81). */
+export const CAMPAIGNS_SYNC_CONTACTS_JOB = "campaigns.sync_contacts";
+
+/** The schedule id for the nightly contact sync. */
+export const CAMPAIGNS_SYNC_SCHEDULE_ID = "campaigns.sync_contacts.nightly";
+
+/**
+ * Default cadence: 05:00 America/Los_Angeles (the spec's `0 5 * * *` PT) --
+ * safely clear of the 02:00-03:30 PT analytics-mirror rebuild blackout,
+ * and after the mirror's own nightly refresh so the reconciliation reads
+ * yesterday-fresh data. The tz pin keeps that true across DST.
+ */
+export const DEFAULT_CAMPAIGNS_SYNC_CRON = "0 5 * * *";
+
+/**
+ * The nightly contact sync schedule (SEA-81): pure code, no brain. Runs
+ * harmlessly (a logged skip) until the Mindbody API credentials are
+ * configured, same boot-registration pattern as the Gmail poll and the
+ * learning miner. Cadence override via CAMPAIGNS_SYNC_CRON (still PT).
+ */
+export function campaignsSyncContactsSchedule(): ScheduleSpec {
+  return {
+    id: CAMPAIGNS_SYNC_SCHEDULE_ID,
+    pattern: process.env.CAMPAIGNS_SYNC_CRON || DEFAULT_CAMPAIGNS_SYNC_CRON,
+    tz: "America/Los_Angeles",
+    jobName: CAMPAIGNS_SYNC_CONTACTS_JOB,
   };
 }
 

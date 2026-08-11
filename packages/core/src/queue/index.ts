@@ -38,5 +38,9 @@ export {
   learningMineSchedule,
   LEARNING_MINE_SCHEDULE_ID,
   DEFAULT_LEARNING_MINE_CRON,
+  campaignsSyncContactsSchedule,
+  CAMPAIGNS_SYNC_CONTACTS_JOB,
+  CAMPAIGNS_SYNC_SCHEDULE_ID,
+  DEFAULT_CAMPAIGNS_SYNC_CRON,
   type ScheduleSpec,
 } from "./schedules.js";

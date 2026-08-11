@@ -49,6 +49,10 @@ export {
   learningMineSchedule,
   LEARNING_MINE_SCHEDULE_ID,
   DEFAULT_LEARNING_MINE_CRON,
+  campaignsSyncContactsSchedule,
+  CAMPAIGNS_SYNC_CONTACTS_JOB,
+  CAMPAIGNS_SYNC_SCHEDULE_ID,
+  DEFAULT_CAMPAIGNS_SYNC_CRON,
   type ScheduleSpec,
 } from "./queue/index.js";
 export type { Job, Trigger, JobContext, BrainModel } from "./jobs/types.js";
@@ -282,6 +286,36 @@ export {
   writeApprovedKbUpdate,
 } from "./kb/write.js";
 export type { KbWriteDeps, KbWriteJobResult } from "./kb/write.js";
+export {
+  syncContacts,
+  DUPLICATE_AMBIGUOUS_PREFIX,
+  type SyncContactsDeps,
+  type SyncContactsResult,
+} from "./campaigns/syncContacts.js";
+export {
+  pgCampaignStore,
+  type CampaignStore,
+  type ContactUpsert,
+  type LiveContact,
+  type ConsentState,
+  type ConsentSource,
+} from "./db/campaignContacts.js";
+export {
+  reconcileIdMapping,
+  normalizeSourceId,
+  SYNC_AMBIGUOUS_PREFIX,
+  type ReconcileDeps,
+  type ReconciliationReport,
+} from "./campaigns/reconcile.js";
+export {
+  mindbodyConfigured,
+  fetchAllClients,
+  extractClientRecord,
+  verifyClientFields,
+  MINDBODY_OPT_IN_FIELD,
+  MINDBODY_CONSENT_FIELDS,
+  type MindbodyClientRecord,
+} from "./campaigns/mindbody.js";
 export { createItemTool, toolsByName, toolsForJob } from "./tools/registry.js";
 export {
   TraceRecorder,
