@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Sealevel_Yoga__run_sql",
+      "mcp__Sealevel_Yoga__teacher_performance",
+      "mcp__Sealevel_Yoga__slot_performance",
+      "mcp__Sealevel_Yoga__attendance_heatmap",
+      "mcp__Sealevel_Yoga__monthly_financials",
+      "mcp__Linear__save_issue",
+      "mcp__Linear__list_issues",
+      "mcp__Linear__list_projects",
+      "mcp__Linear__list_teams",
+      "mcp__github__actions_list"
+    ]
+  }
+}
