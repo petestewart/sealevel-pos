@@ -2761,3 +2761,107 @@ button.assignee-suggest:disabled {
   background: var(--rej-bg);
   border-color: transparent;
 }
+
+/* ---------- Campaigns (SEA-90) ---------- */
+
+.page--campaigns {
+  max-width: 860px;
+}
+
+/* In-flight: accent, distinct from the amber "waiting on a human" chip. */
+.status-chip--sending {
+  background: var(--accent-soft);
+  color: var(--accent-tx);
+}
+
+.campaign-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.campaign-row {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 20px;
+}
+
+.campaign-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.campaign-row-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.campaign-name {
+  font: 600 0.9062rem var(--font-ui), sans-serif;
+  color: var(--tx);
+}
+
+.campaign-key {
+  font: 400 0.7188rem var(--font-mono), monospace;
+  color: var(--tx3);
+}
+
+.campaign-row-meta {
+  margin-top: 6px;
+  font: 400 0.7812rem var(--font-ui), sans-serif;
+  color: var(--tx2);
+}
+
+.campaign-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.campaign-result-num {
+  display: block;
+  font: 500 1.0625rem var(--font-mono), monospace;
+  color: var(--tx);
+}
+
+.campaign-result-label {
+  display: block;
+  margin-top: 2px;
+  font: 600 10px var(--font-mono), monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tx3);
+}
+
+/* Multi-run scope note (run_seq > 1): the counts below span every run of
+   the campaign; the note takes over the grid's top border. */
+.campaign-results-scope {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font: 600 10px var(--font-mono), monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tx3);
+}
+
+.campaign-results--multirun {
+  margin-top: 10px;
+  padding-top: 0;
+  border-top: none;
+}
+
+.campaign-results-none {
+  margin-top: 12px;
+  font: 400 0.7812rem var(--font-ui), sans-serif;
+  color: var(--tx3);
+}

@@ -8,7 +8,7 @@ import type { Permission } from "../rbac";
  */
 
 /** Icon tile shown on the widget card; the SVGs live in WidgetCard. */
-export type WidgetIcon = "mail";
+export type WidgetIcon = "mail" | "megaphone";
 
 /** Dot color for a breakdown stat, from the semantic status palette. */
 export type StatusTone =

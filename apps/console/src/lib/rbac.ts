@@ -12,13 +12,22 @@ export type Role = "owner" | "operator" | "viewer";
 
 export type Permission =
   | "items:view"
+  | "campaigns:view"
   | "approvals:decide"
   | "settings:manage";
 
+// campaigns:view gates a READ-ONLY surface (SEA-90), so it follows the
+// items:view precedent: every role holds it. Campaign approve/reject is
+// SEA-83 and will gate on a decide-class permission, not this one.
 const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
-  owner: ["items:view", "approvals:decide", "settings:manage"],
-  operator: ["items:view", "approvals:decide"],
-  viewer: ["items:view"],
+  owner: [
+    "items:view",
+    "campaigns:view",
+    "approvals:decide",
+    "settings:manage",
+  ],
+  operator: ["items:view", "campaigns:view", "approvals:decide"],
+  viewer: ["items:view", "campaigns:view"],
 };
 
 export function hasPermission(role: Role, permission: Permission): boolean {

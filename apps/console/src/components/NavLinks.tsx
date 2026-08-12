@@ -10,9 +10,13 @@ import { usePathname } from "next/navigation";
  */
 export function NavLinks({
   pendingCount,
+  showCampaigns = false,
   showSettings = false,
 }: {
   pendingCount: number;
+  /** Roles with campaigns:view get the Campaigns section link (SEA-90);
+   * the page re-checks RBAC. */
+  showCampaigns?: boolean;
   /** Owners get the Settings link (GH-66); the page re-checks RBAC. */
   showSettings?: boolean;
 }) {
@@ -21,6 +25,7 @@ export function NavLinks({
   // The approvals inbox lives under /items (A1b); /approvals redirects.
   const approvalsActive =
     pathname.startsWith("/items") || pathname.startsWith("/approvals");
+  const campaignsActive = pathname.startsWith("/campaigns");
   const settingsActive = pathname.startsWith("/settings");
 
   return (
@@ -39,6 +44,14 @@ export function NavLinks({
           <span className="nav-pill">{pendingCount}</span>
         ) : null}
       </div>
+      {showCampaigns ? (
+        <Link
+          href="/campaigns"
+          className={`nav-link${campaignsActive ? " is-active" : ""}`}
+        >
+          Campaigns
+        </Link>
+      ) : null}
       {showSettings ? (
         <Link
           href="/settings"

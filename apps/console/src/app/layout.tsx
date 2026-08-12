@@ -64,7 +64,9 @@ export default async function RootLayout({
   const displayName = user?.firstName ?? user?.username ?? null;
   const initialsSource = user?.fullName ?? displayName;
   const count = await pendingCount();
-  const showSettings = hasPermission(await currentRole(), "settings:manage");
+  const role = await currentRole();
+  const showCampaigns = hasPermission(role, "campaigns:view");
+  const showSettings = hasPermission(role, "settings:manage");
 
   return (
     <ClerkProvider>
@@ -83,7 +85,11 @@ export default async function RootLayout({
               <span className="nav-brand-name">Sealevel</span>
               <span className="nav-brand-tag">Ops</span>
             </div>
-            <NavLinks pendingCount={count} showSettings={showSettings} />
+            <NavLinks
+              pendingCount={count}
+              showCampaigns={showCampaigns}
+              showSettings={showSettings}
+            />
             <div className="nav-right">
               <ThemeToggle initialTheme={theme} />
               <div className="nav-divider" />

@@ -324,6 +324,16 @@ export {
   type CampaignRow,
 } from "./db/campaignAudience.js";
 export {
+  campaignOverviewCounts,
+  listCampaignSummaries,
+  CAMPAIGN_STATUSES,
+  CAMPAIGN_EVENT_TYPES,
+  type CampaignOverviewCounts,
+  type CampaignSummary,
+  type CampaignEventCounts,
+  type CampaignStatus,
+} from "./db/campaignStats.js";
+export {
   reconcileIdMapping,
   normalizeSourceId,
   SYNC_AMBIGUOUS_PREFIX,
