@@ -68,6 +68,13 @@ jobs:
         run: npm run smoke:audience --workspace @ai-manager/core
       - name: Campaign monitor offline smoke suite (SEA-92)
         run: npm run smoke:campaignmonitor --workspace @ai-manager/core
+      # The persona fixture suite (SEA-86): every persona in
+      # audienceFixtures.ts runs through the real filter chain; grows
+      # with every audience bug found.
+      - name: Audience persona fixture suite (SEA-86)
+        run: npm run smoke:audiencefixtures --workspace @ai-manager/core
+      - name: Send-diff offline smoke suite (SEA-86)
+        run: npm run smoke:senddiff --workspace @ai-manager/core
       # Same split as the learning smoke below: the offline half (fold +
       # row shaping) runs here; the DB query half self-skips without
       # DATABASE_URL and runs locally against docker compose.

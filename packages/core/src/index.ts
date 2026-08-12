@@ -324,6 +324,30 @@ export {
   type CampaignRow,
 } from "./db/campaignAudience.js";
 export {
+  computeSendDiff,
+  type SendDiffDeps,
+} from "./campaigns/sendDiff.js";
+export {
+  SEND_DIFF_SAMPLE_LIMIT,
+  type SendDiff,
+  type RecipientDelta,
+  type PriorSendInfo,
+} from "./campaigns/sendDiffTypes.js";
+export {
+  pgSendDiffStore,
+  type SendDiffStore,
+  type PriorSendRow,
+} from "./db/sendDiff.js";
+export {
+  AUDIENCE_PERSONAS,
+  FIXTURE_SEGMENT,
+  FixtureAudienceStore,
+  fixtureViewRows,
+  fixtureDeps,
+  type AudiencePersona,
+  type PersonaFate,
+} from "./campaigns/audienceFixtures.js";
+export {
   campaignOverviewCounts,
   listCampaignSummaries,
   CAMPAIGN_STATUSES,
