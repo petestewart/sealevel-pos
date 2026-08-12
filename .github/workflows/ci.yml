@@ -75,6 +75,8 @@ jobs:
         run: npm run smoke:audiencefixtures --workspace @ai-manager/core
       - name: Send-diff offline smoke suite (SEA-86)
         run: npm run smoke:senddiff --workspace @ai-manager/core
+      - name: Fall announcement offline smoke suite (SEA-88)
+        run: npm run smoke:fallannouncement --workspace @ai-manager/core
       # Same split as the learning smoke below: the offline half (fold +
       # row shaping) runs here; the DB query half self-skips without
       # DATABASE_URL and runs locally against docker compose.

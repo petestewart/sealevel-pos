@@ -317,6 +317,25 @@ export {
   type ExclusionReason,
 } from "./campaigns/buildAudience.js";
 export {
+  FALL_ANNOUNCEMENT_CAMPAIGN_KEY,
+  FALL_ANNOUNCEMENT_AUDIENCE_VIEW,
+  FALL_ANNOUNCEMENT_SEGMENTS,
+  FALL_2026_SCHEDULE_FACTS,
+  fallAnnouncementDraftRequest,
+  unverifiedFallFacts,
+  type FallAnnouncementSegment,
+  type CampaignFact,
+  type FactStatus,
+} from "./campaigns/fallAnnouncement.js";
+export {
+  planSegmentVariants,
+  findEmDashes,
+  type SegmentVariant,
+  type SegmentedDraftRequest,
+  type SegmentDraftJob,
+  type VariantPlan,
+} from "./campaigns/draftVariants.js";
+export {
   pgAudienceStore,
   type AudienceStore,
   type AudienceCandidate,

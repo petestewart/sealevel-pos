@@ -27,6 +27,7 @@
     "smoke:resendwebhook": "npm run build && node dist/campaigns/resendWebhook.smoke.js",
     "smoke:audience": "npm run build && node dist/campaigns/buildAudience.smoke.js",
     "smoke:campaignmonitor": "npm run build && node dist/campaigns/monitor.smoke.js",
+    "smoke:fallannouncement": "npm run build && node dist/campaigns/fallAnnouncement.smoke.js",
     "smoke:campaignstats": "npm run build && node dist/db/campaignStats.smoke.js",
     "smoke:audiencefixtures": "npm run build && node dist/campaigns/audienceFixtures.smoke.js",
     "smoke:senddiff": "npm run build && node dist/campaigns/sendDiff.smoke.js",
