@@ -1,4 +1,5 @@
 import type { Job } from "./types.js";
+import { campaignDraft } from "../campaigns/draftCampaign.js";
 import { emailDraft } from "./emailDraft.js";
 import { heartbeat } from "./heartbeat.js";
 import { itemRevise } from "./itemRevise.js";
@@ -8,8 +9,11 @@ import { itemRevise } from "./itemRevise.js";
  * edits: adding = new file + one entry here; removing = delete or
  * enabled: false.
  */
-export const JOBS: Job[] = [heartbeat, emailDraft, itemRevise].filter(
-  (j) => j.enabled,
-);
+export const JOBS: Job[] = [
+  heartbeat,
+  emailDraft,
+  itemRevise,
+  campaignDraft,
+].filter((j) => j.enabled);
 
 export const jobById = new Map(JOBS.map((j) => [j.id, j]));

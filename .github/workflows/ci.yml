@@ -82,6 +82,10 @@ jobs:
       # DATABASE_URL and runs locally against docker compose.
       - name: Campaign stats offline smoke suite
         run: npm run smoke:campaignstats --workspace @ai-manager/core
+      # SEA-83: draft output shape (mocked model), no-em-dash enforcement,
+      # card data assembly, approval transition, RBAC gate.
+      - name: Campaign draft + approval offline smoke suite
+        run: npm run smoke:campaigndraft --workspace @ai-manager/core
 
       # The learning-loop smoke runs its offline half here (signal
       # extraction, digest, dedupe, mocked-model miner); the DB-backed SQL

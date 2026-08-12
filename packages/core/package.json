@@ -29,6 +29,8 @@
     "smoke:campaignmonitor": "npm run build && node dist/campaigns/monitor.smoke.js",
     "smoke:fallannouncement": "npm run build && node dist/campaigns/fallAnnouncement.smoke.js",
     "smoke:campaignstats": "npm run build && node dist/db/campaignStats.smoke.js",
+    "smoke:campaigndraft": "npm run build && node dist/campaigns/draftCampaign.smoke.js",
+    "campaign:draft": "npm run build && node dist/campaigns/runDraftCampaign.js",
     "smoke:audiencefixtures": "npm run build && node dist/campaigns/audienceFixtures.smoke.js",
     "smoke:senddiff": "npm run build && node dist/campaigns/sendDiff.smoke.js",
     "send-diff": "npm run build && node dist/campaigns/runSendDiff.js",

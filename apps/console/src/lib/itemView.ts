@@ -587,6 +587,38 @@ export function toRow(item: Item): RowView {
       assigneeName: assigneeNameOf(item),
     };
   }
+  // campaign_approval items (SEA-83) have no original_email; their row
+  // leads with the campaign name and the audience size.
+  if (item.type === "campaign_approval") {
+    const name = str(item.payload.campaign_name) ?? "(unnamed campaign)";
+    const key = str(item.payload.campaign_key) ?? "";
+    const audience = item.payload.audience as
+      | { recipients?: unknown }
+      | undefined;
+    const recipients =
+      typeof audience?.recipients === "number" ? audience.recipients : null;
+    const tone = toneOf(item);
+    const decided = tone !== "pending";
+    return {
+      id: String(item.id),
+      sender: "Campaign approval",
+      initials: "CA",
+      subject: name,
+      time:
+        decided && item.resolved_at
+          ? formatDecidedAt(item.resolved_at)
+          : formatCardTimestamp(item.created_at),
+      preview:
+        recipients !== null
+          ? `${key ? `${key}: ` : ""}${recipients} recipient${
+              recipients === 1 ? "" : "s"
+            } awaiting one campaign-level approval`
+          : "Campaign awaiting approval",
+      tone,
+      tags: [],
+      assigneeName: assigneeNameOf(item),
+    };
+  }
   // rule_proposal items (learning loop, GH-127) have no original_email;
   // their row leads with the proposed rule text.
   if (item.type === "rule_proposal") {

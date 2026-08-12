@@ -483,3 +483,49 @@ export {
   tagLabel,
 } from "./tags.js";
 export type { TagDefinition, ItemTag } from "./tags.js";
+
+// --- Campaign draft + approval (SEA-83) -------------------------------
+// Kept in one block so merge-time conflicts with parallel campaign lanes
+// (SEA-86, SEA-88) stay one-hunk.
+export {
+  campaignDraft,
+  assembleCampaignDraft,
+  createCampaignApproval,
+  campaignApprovalOf,
+  containsEmDash,
+  renderMergeFields,
+  serializeSendDiff,
+  UnknownMergeFieldError,
+  defaultDraftCampaignDeps,
+  defaultSendDiffProvider,
+  onCampaignApproved,
+  MERGE_FIELDS,
+  EXCLUSION_SAMPLES_PER_REASON,
+} from "./campaigns/draftCampaign.js";
+// NOTE: the canonical SendDiff type is exported above from
+// campaigns/sendDiffTypes.ts (SEA-86); this block adds only the payload
+// (JSON-serialized) form and the provider seam.
+export type {
+  CampaignApprovalPayload,
+  CampaignDraftAssembly,
+  CampaignDraftInput,
+  CreateApprovalResult,
+  DraftCampaignDeps,
+  SendDiffPayload,
+  SendDiffProvider,
+} from "./campaigns/draftCampaign.js";
+export {
+  decideCampaignApproval,
+  listSnapshotRecipients,
+  markCampaignPendingApproval,
+} from "./db/campaignApproval.js";
+export type {
+  CampaignDecision,
+  CampaignDecisionOutcome,
+  CampaignDecisionRecord,
+  SnapshotRecipient,
+  TransactionClient,
+  TransactionPool,
+} from "./db/campaignApproval.js";
+export { hasPermission, isRole } from "./rbac.js";
+export type { Role, Permission } from "./rbac.js";

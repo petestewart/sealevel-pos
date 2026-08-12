@@ -6,6 +6,8 @@ import {
   type Item,
 } from "@ai-manager/core";
 import { ApprovalCard } from "../../../components/ApprovalCard";
+import { CampaignApprovalCard } from "../../../components/CampaignApprovalCard";
+import { CampaignApprovalDecidedDetail } from "../../../components/CampaignApprovalDecidedDetail";
 import { DecidedDetail } from "../../../components/DecidedDetail";
 import { KbDecidedDetail } from "../../../components/KbDecidedDetail";
 import { KbUpdateCard } from "../../../components/KbUpdateCard";
@@ -27,6 +29,7 @@ import {
   stagedApprovedItems,
   trashedItems,
 } from "../../../lib/approvals";
+import { toCampaignApprovalCardData } from "../../../lib/campaignApprovalData";
 import { itemInboxHref, toKbCardData } from "../../../lib/kbView";
 import { toRuleProposalCardData } from "../../../lib/ruleProposalView";
 import { inboxBySlug, type InboxDefinition } from "../../../lib/inboxes";
@@ -258,6 +261,7 @@ async function advanceHrefFor(selected: Item, slug: string): Promise<string> {
 function Detail({
   item,
   canDecide,
+  canDecideCampaigns,
   advanceHref,
   signoffDefault,
   assignees,
@@ -265,12 +269,46 @@ function Detail({
 }: {
   item: Item;
   canDecide: boolean;
+  /** campaigns:decide (SEA-83): a decide-class gate distinct from both
+   * approvals:decide and campaigns:view; owner + operator only. */
+  canDecideCampaigns: boolean;
   advanceHref?: string;
   signoffDefault?: SignoffDefault;
   assignees: AssignableUser[];
   /** Resolved deep links for a kb_update item's provenance (GH-112). */
   kbLinks?: { sourceHref: string | null; revertHref: string | null };
 }) {
+  // campaign_approval items (SEA-83) get their own card pair, gated on
+  // campaigns:decide rather than approvals:decide.
+  if (item.type === "campaign_approval") {
+    if (item.status === "pending_approval") {
+      const data = toCampaignApprovalCardData(item);
+      if (!data) {
+        return (
+          <div className="detail-placeholder">
+            <div className="detail-placeholder-title">
+              Malformed campaign approval
+            </div>
+            <div className="detail-placeholder-sub">
+              This item is missing part of its approval data (audience,
+              exclusion report, rendered preview, or send diff), so it cannot
+              be reviewed or approved. Re-run campaigns.draft for this
+              campaign.
+            </div>
+          </div>
+        );
+      }
+      return (
+        <CampaignApprovalCard
+          key={item.id}
+          item={data}
+          canDecide={canDecideCampaigns}
+          advanceHref={advanceHref}
+        />
+      );
+    }
+    return <CampaignApprovalDecidedDetail key={item.id} item={item} />;
+  }
   // kb_update items (KB write-back, GH-112/GH-113) get their own card
   // pair; everything else keeps the email renderers.
   if (item.type === "kb_update") {
@@ -381,6 +419,9 @@ export default async function InboxPage({
 
   const role = await currentRole();
   const canDecide = hasPermission(role, "approvals:decide");
+  // Campaign approval (SEA-83) gates on its own decide-class permission,
+  // NOT approvals:decide and NOT campaigns:view.
+  const canDecideCampaigns = hasPermission(role, "campaigns:decide");
   const items = await loadInboxItems(inbox);
 
   // Resolve the selection from the loaded rows, or a scoped by-id fetch for
@@ -526,6 +567,7 @@ export default async function InboxPage({
               <Detail
                 item={selected}
                 canDecide={canDecide}
+                canDecideCampaigns={canDecideCampaigns}
                 advanceHref={advanceHref}
                 assignees={assignees}
                 signoffDefault={signoffDefault}
