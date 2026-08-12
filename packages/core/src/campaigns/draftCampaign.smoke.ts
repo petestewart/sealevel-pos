@@ -26,6 +26,17 @@ import {
 } from "./draftCampaign.js";
 import { computeSendDiff } from "./sendDiff.js";
 import { SEND_DIFF_SAMPLE_LIMIT, type SendDiff } from "./sendDiffTypes.js";
+import type { CampaignBriefEntry } from "./campaignBriefs.js";
+import { resolveCampaignBrief } from "./campaignBriefs.js";
+import {
+  FALL_ANNOUNCEMENT_CAMPAIGN_KEY,
+  unverifiedFallFacts,
+  type CampaignFact,
+} from "./fallAnnouncement.js";
+import {
+  containsEmDash as variantsContainsEmDash,
+  type SegmentedDraftRequest,
+} from "./draftVariants.js";
 
 /**
  * Offline smoke for campaigns.draft + the campaign_approval flow
@@ -133,14 +144,20 @@ function fakeDeps(options?: {
   recipients?: SnapshotRecipient[];
   sendDiff?: SendDiff | null;
   dedupeHit?: boolean;
+  brief?: CampaignBriefEntry | null;
+  buildCalls?: string[];
 }): { deps: DraftCampaignDeps; calls: FakeCalls } {
   const calls: FakeCalls = { created: [], emits: [], flips: [] };
   let nextId = 500;
   const existing = new Map<string, Item>();
   const deps: DraftCampaignDeps = {
-    buildAudience: async () => options?.build ?? buildResult(),
+    buildAudience: async ({ campaignKey }) => {
+      options?.buildCalls?.push(campaignKey);
+      return options?.build ?? buildResult();
+    },
     getCampaignByKey: async (key) => (key === CAMPAIGN.key ? CAMPAIGN : null),
     listSnapshotRecipients: async () => options?.recipients ?? RECIPIENTS,
+    resolveBrief: () => options?.brief ?? null,
     sendDiff: async () => options?.sendDiff ?? null,
     createItem: async (input: CreateItemInput): Promise<CreateItemResult> => {
       const key = input.dedupeKey ?? String(nextId);
@@ -200,6 +217,61 @@ const GOOD_INPUT = {
     "Playful follow-up for first-time visitors, matching the studio voice. Facts kept generic; no pricing claims.",
 };
 
+/* --- Briefed-campaign fixtures (SEA-88 integration) ---------------- */
+
+/** A test brief whose facts are all confirmed, shaped to the fake
+ * snapshot's segments (hot_only x2, new_student x1). */
+const TEST_BRIEF: SegmentedDraftRequest = {
+  campaignKey: CAMPAIGN.key,
+  audienceView: CAMPAIGN.audienceView,
+  subjectTheme: "Your second month at the studio.",
+  sharedFacts: ["The studio runs hot classes every day of the week."],
+  copyRules: ["No em dashes anywhere in the copy."],
+  variants: [
+    {
+      segment: "hot_only",
+      audience: "Regulars who only take hot classes.",
+      framing: ["Respect the routine; celebrate the streak."],
+    },
+    {
+      segment: "new_student",
+      audience: "Students inside their first month.",
+      framing: ["Welcoming, low pressure, one concrete next step."],
+    },
+  ],
+  fallbackSegment: "hot_only",
+};
+
+function testBriefEntry(overrides?: {
+  unverified?: CampaignFact[];
+  request?: SegmentedDraftRequest;
+}): CampaignBriefEntry {
+  return {
+    request: () => overrides?.request ?? TEST_BRIEF,
+    unverifiedFacts: () => overrides?.unverified ?? [],
+    factsFile: "packages/core/src/campaigns/testBrief.fixture.ts",
+  };
+}
+
+const GOOD_VARIANTS = {
+  variants: [
+    {
+      segment: "hot_only",
+      subject: "{{first_name}}, the hot room has news",
+      body:
+        "Hey {{first_name}},\n\nYour streak in the hot room has not gone unnoticed. Classes run every day of the week, same heat, same playlist energy.\n\nSee you on the mat,\nSealevel Hot Yoga",
+    },
+    {
+      segment: "new_student",
+      subject: "One month in, {{first_name}}",
+      body:
+        "Hey {{first_name}},\n\nMonth one is the hard part and you did it. Classes run every day of the week, so pick the time that fits and keep going.\n\nWith warmth,\nSealevel Hot Yoga",
+    },
+  ],
+  rationale:
+    "Two variants matching the brief: streak recognition for regulars, gentle momentum for new students.",
+};
+
 /* ------------------------------------------------------------------ *
  * 1. Job registration + shape                                        *
  * ------------------------------------------------------------------ */
@@ -228,6 +300,11 @@ async function smokeCopyContract(): Promise<void> {
   assert.equal(containsEmDash("bad copy — with an em dash"), true);
   assert.equal(containsEmDash("horizontal bar ― too"), true);
   assert.equal(containsEmDash("en dash 6–7pm is fine"), false);
+  assert.equal(containsEmDash("two-em dash ⸺ caught"), true);
+  assert.equal(containsEmDash("three-em dash ⸻ caught"), true);
+  // ONE character class everywhere (SEA-88 unification): the predicate
+  // draftCampaign re-exports IS draftVariants' canonical one, not a fork.
+  assert.equal(containsEmDash, variantsContainsEmDash);
 
   const maria = { email: "maria@example.com", firstName: "Maria" };
   assert.equal(renderMergeFields("Hi {{first_name}}!", maria), "Hi Maria!");
@@ -330,13 +407,15 @@ async function smokeDraftOutputShape(): Promise<void> {
     0,
   );
   assert.equal(payload.audience.recipients + droppedTotal, payload.exclusions.view_rows);
-  // 3. The rendered email with ONE real recipient's merge fields resolved.
-  assert.equal(payload.rendered_preview.recipient.email, "maria@example.com");
-  assert.equal(payload.rendered_preview.subject, "Maria, your mat misses you");
-  assert.ok(payload.rendered_preview.body.startsWith("Hey Maria,"));
-  assert.ok(!payload.rendered_preview.body.includes("{{"));
+  // 3. The rendered email with ONE real recipient's merge fields resolved
+  // (single un-briefed shape: the trio is present, variants absent).
+  assert.equal(payload.variants, undefined);
+  assert.equal(payload.rendered_preview!.recipient.email, "maria@example.com");
+  assert.equal(payload.rendered_preview!.subject, "Maria, your mat misses you");
+  assert.ok(payload.rendered_preview!.body.startsWith("Hey Maria,"));
+  assert.ok(!payload.rendered_preview!.body.includes("{{"));
   // The stored draft keeps the merge fields unresolved for the real send.
-  assert.ok(payload.draft_body.includes("{{first_name}}"));
+  assert.ok(payload.draft_body!.includes("{{first_name}}"));
   // 4. The send-diff: PRESENT and null when no completed prior send
   // exists (first send, or a prior run still mid-flight).
   assert.ok("send_diff" in payload);
@@ -511,6 +590,308 @@ async function smokeDedupe(): Promise<void> {
 }
 
 /* ------------------------------------------------------------------ *
+ * 6b. Facts gate (SEA-88): unverified facts refuse the whole run     *
+ * ------------------------------------------------------------------ */
+
+async function smokeFactsGate(): Promise<void> {
+  // A briefed campaign with unverified facts REFUSES loudly, naming
+  // each unverified fact and the file to fix, BEFORE the audience build
+  // runs (no snapshot side effects behind the refusal).
+  const buildCalls: string[] = [];
+  const gated = fakeDeps({
+    buildCalls,
+    brief: testBriefEntry({
+      unverified: [
+        {
+          fact: "The fall schedule adds roughly 25 new weekly classes.",
+          status: "needs_verification",
+          source: "SEA-88 ticket",
+        },
+      ],
+    }),
+  });
+  await assert.rejects(
+    assembleCampaignDraft(CAMPAIGN.key, gated.deps),
+    (err: Error) => {
+      assert.match(err.message, /REFUSING to draft briefed campaign/);
+      assert.match(err.message, /roughly 25 new weekly classes/);
+      assert.match(err.message, /testBrief\.fixture\.ts/);
+      return true;
+    },
+  );
+  assert.deepEqual(buildCalls, [], "gate fired before the audience build");
+
+  // All facts confirmed: the same campaign assembles, with a plan.
+  const ok = fakeDeps({ brief: testBriefEntry() });
+  const assembly = await assembleCampaignDraft(CAMPAIGN.key, ok.deps);
+  assert.ok(assembly.variantPlan);
+
+  // The REAL registry wires the fall campaign to its real facts file:
+  // while unverifiedFallFacts() is non-empty (it is today, by design:
+  // the rollout is still moving), drafting the fall campaign refuses.
+  assert.ok(resolveCampaignBrief(FALL_ANNOUNCEMENT_CAMPAIGN_KEY));
+  assert.equal(resolveCampaignBrief("post-first-visit"), null);
+  if (unverifiedFallFacts().length > 0) {
+    const real = fakeDeps();
+    real.deps.resolveBrief = resolveCampaignBrief;
+    await assert.rejects(
+      assembleCampaignDraft(FALL_ANNOUNCEMENT_CAMPAIGN_KEY, real.deps),
+      /fallAnnouncement\.ts/,
+    );
+  }
+  console.log(
+    "[smoke] facts gate: unverified facts refuse before any side effect; confirmed facts pass; fall campaign gated via the real registry",
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 6c. Briefed fan-out: N variants, ONE approval item                 *
+ * ------------------------------------------------------------------ */
+
+async function smokeBriefedFanOut(): Promise<void> {
+  const { deps, calls } = fakeDeps({ brief: testBriefEntry() });
+  const assembly = await assembleCampaignDraft(CAMPAIGN.key, deps);
+
+  // The plan: one job per non-empty bucket, counts from the snapshot.
+  assert.ok(assembly.brief);
+  assert.deepEqual(
+    assembly.variantPlan!.jobs.map((j) => [j.segment, j.recipients]),
+    [
+      ["hot_only", 2],
+      ["new_student", 1],
+    ],
+  );
+  // Per-segment deterministic samples (lowest contact id per segment).
+  assert.equal(assembly.samplesBySegment["hot_only"]!.contactId, "101");
+  assert.equal(assembly.samplesBySegment["new_student"]!.contactId, "103");
+
+  const result = await createCampaignApproval(assembly, GOOD_VARIANTS, deps);
+  assert.equal(result.status, "created");
+  assert.equal(calls.created.length, 1);
+  const input = calls.created[0]!;
+  // Still ONE campaign-level approval item, same dedupe key as ever.
+  assert.equal(input.type, "campaign_approval");
+  assert.equal(input.dedupeKey, "campaign-7-run-1");
+
+  const payload = campaignApprovalOf(input.payload ?? {});
+  assert.ok(payload, "briefed payload passes campaignApprovalOf");
+  // Element 3, briefed shape: variants present, single trio absent.
+  assert.ok(payload.variants);
+  assert.equal("draft_subject" in payload, false);
+  assert.equal("rendered_preview" in payload, false);
+  assert.deepEqual(
+    payload.variants.map((v) => [v.segment, v.recipient_count]),
+    [
+      ["hot_only", 2],
+      ["new_student", 1],
+    ],
+  );
+  // Each variant rendered for a sample recipient FROM ITS OWN SEGMENT.
+  const [hot, fresh] = payload.variants;
+  assert.equal(hot!.rendered_preview.recipient.email, "maria@example.com");
+  assert.equal(hot!.rendered_preview.recipient.segment, "hot_only");
+  assert.equal(hot!.rendered_preview.subject, "Maria, the hot room has news");
+  assert.equal(fresh!.rendered_preview.recipient.email, "sam@example.com");
+  assert.equal(fresh!.rendered_preview.recipient.segment, "new_student");
+  assert.equal(fresh!.rendered_preview.subject, "One month in, Sam");
+  assert.ok(!hot!.rendered_preview.body.includes("{{"));
+  // Stored drafts keep merge fields unresolved for the real send.
+  assert.ok(hot!.draft_body.includes("{{first_name}}"));
+
+  // The other three card elements are unchanged by the fan-out.
+  assert.equal(payload.audience.recipients, 3);
+  assert.ok("send_diff" in payload);
+
+  // JSONB round-trip still validates (all-JSON-safe payload).
+  assert.ok(
+    campaignApprovalOf(
+      JSON.parse(JSON.stringify(payload)) as Record<string, unknown>,
+    ),
+  );
+
+  // Dedupe stays airtight: a retried briefed draft reuses the item.
+  const second = await createCampaignApproval(assembly, GOOD_VARIANTS, deps);
+  assert.equal(second.status, "exists");
+  assert.equal(calls.emits.length, 1);
+  console.log(
+    "[smoke] briefed fan-out: N variants in ONE approval item, per-segment samples, dedupe intact",
+  );
+}
+
+/** Unknown snapshot label: drafted via the brief's fallback variant,
+ * and the model must still cover it (it is a planned segment). */
+async function smokeBriefedUnknownSegment(): Promise<void> {
+  const extraRecipient = recipient("104", "week2@example.com", "Wren", "week_two");
+  const build = buildResult({
+    recipients: [...RECIPIENTS, extraRecipient].map((r) => ({
+      contactId: r.contactId,
+      email: r.email,
+      analyticsClientId: `a-${r.contactId}`,
+      segment: r.segment,
+    })),
+    segmentCounts: { hot_only: 2, new_student: 1, week_two: 1 },
+  });
+  const { deps, calls } = fakeDeps({
+    brief: testBriefEntry(),
+    build,
+    recipients: [...RECIPIENTS, extraRecipient],
+  });
+  const assembly = await assembleCampaignDraft(CAMPAIGN.key, deps);
+  assert.deepEqual(assembly.variantPlan!.unknownSegments, ["week_two"]);
+  const weekTwoJob = assembly.variantPlan!.jobs.find(
+    (j) => j.segment === "week_two",
+  )!;
+  // Fallback copy guidance, real segment label.
+  assert.equal(weekTwoJob.variant.segment, "hot_only");
+
+  // Not covering the unknown segment is a rejection...
+  const partial = await createCampaignApproval(assembly, GOOD_VARIANTS, deps);
+  assert.equal(partial.status, "rejected");
+  assert.match(
+    partial.status === "rejected" ? partial.reason : "",
+    /missing variant\(s\) for segment\(s\): week_two/,
+  );
+  // ...and covering it files one item with three variants, the unknown
+  // one rendered for ITS OWN segment's sample recipient.
+  const full = await createCampaignApproval(
+    assembly,
+    {
+      ...GOOD_VARIANTS,
+      variants: [
+        ...GOOD_VARIANTS.variants,
+        {
+          segment: "week_two",
+          subject: "Week two, {{first_name}}",
+          body: "Hey {{first_name}},\n\nKeep the streak alive this week.\n\nSealevel Hot Yoga",
+        },
+      ],
+    },
+    deps,
+  );
+  assert.equal(full.status, "created");
+  const payload = campaignApprovalOf(calls.created[0]!.payload ?? {})!;
+  assert.equal(payload.variants!.length, 3);
+  const weekTwo = payload.variants!.find((v) => v.segment === "week_two")!;
+  assert.equal(weekTwo.recipient_count, 1);
+  assert.equal(weekTwo.rendered_preview.recipient.email, "week2@example.com");
+  assert.equal(weekTwo.rendered_preview.subject, "Week two, Wren");
+  console.log(
+    "[smoke] briefed fan-out: unknown label drafts via fallback, must be covered, gets its own sample",
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 6d. Variant enforcement: copy contract + coverage, per variant     *
+ * ------------------------------------------------------------------ */
+
+async function smokeVariantEnforcement(): Promise<void> {
+  const { deps, calls } = fakeDeps({ brief: testBriefEntry() });
+  const assembly = await assembleCampaignDraft(CAMPAIGN.key, deps);
+
+  const reject = async (
+    input: Parameters<typeof createCampaignApproval>[1],
+    pattern: RegExp,
+  ): Promise<void> => {
+    const result = await createCampaignApproval(assembly, input, deps);
+    assert.equal(result.status, "rejected");
+    assert.match(result.status === "rejected" ? result.reason : "", pattern);
+  };
+
+  // A briefed campaign cannot fall back to the single-draft shape.
+  await reject(
+    { subject: "One size", body: "fits none", rationale: "r" },
+    /per-segment variants/,
+  );
+  // Coverage: missing, unknown, and duplicate segments all rejected.
+  await reject(
+    { variants: GOOD_VARIANTS.variants.slice(0, 1), rationale: "r" },
+    /missing variant\(s\) for segment\(s\): new_student/,
+  );
+  await reject(
+    {
+      variants: [
+        ...GOOD_VARIANTS.variants,
+        { segment: "lapsed", subject: "s", body: "b" },
+      ],
+      rationale: "r",
+    },
+    /unknown variant segment 'lapsed'/,
+  );
+  await reject(
+    {
+      variants: [...GOOD_VARIANTS.variants, GOOD_VARIANTS.variants[0]!],
+      rationale: "r",
+    },
+    /duplicate variant for segment 'hot_only'/,
+  );
+  // Copy contract per variant: em dashes and merge fields, named by
+  // segment so the model can fix the right draft.
+  await reject(
+    {
+      variants: [
+        GOOD_VARIANTS.variants[0]!,
+        {
+          ...GOOD_VARIANTS.variants[1]!,
+          body: "Month one — you did it.",
+        },
+      ],
+      rationale: "r",
+    },
+    /variant 'new_student' body contains an em dash/,
+  );
+  await reject(
+    {
+      variants: [
+        {
+          ...GOOD_VARIANTS.variants[0]!,
+          subject: "Hi {{nickname}}",
+        },
+        GOOD_VARIANTS.variants[1]!,
+      ],
+      rationale: "r",
+    },
+    /variant 'hot_only': unknown merge field/,
+  );
+  await reject(
+    {
+      variants: [
+        { ...GOOD_VARIANTS.variants[0]!, body: "   " },
+        GOOD_VARIANTS.variants[1]!,
+      ],
+      rationale: "r",
+    },
+    /variant 'hot_only': subject and body must be non-empty/,
+  );
+  // Rationale is checked once for the whole set.
+  await reject(
+    { ...GOOD_VARIANTS, rationale: "Two variants — done." },
+    /rationale contains an em dash/,
+  );
+
+  // And the mirror image: an UN-briefed campaign rejects variants.
+  const single = fakeDeps();
+  const singleAssembly = await assembleCampaignDraft(CAMPAIGN.key, single.deps);
+  const wrongShape = await createCampaignApproval(
+    singleAssembly,
+    { variants: GOOD_VARIANTS.variants, rationale: "r" },
+    single.deps,
+  );
+  assert.equal(wrongShape.status, "rejected");
+  assert.match(
+    wrongShape.status === "rejected" ? wrongShape.reason : "",
+    /no segment brief/,
+  );
+
+  // No rejected attempt created an item, flipped status, or emitted.
+  assert.equal(calls.created.length, 0);
+  assert.deepEqual(calls.flips, []);
+  assert.equal(calls.emits.length, 0);
+  console.log(
+    "[smoke] variant enforcement: coverage, per-variant copy contract and shape mismatches rejected with no side effects",
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * 7. Card-data validation (negative cases)                           *
  * ------------------------------------------------------------------ */
 
@@ -581,8 +962,62 @@ async function smokeCardValidation(): Promise<void> {
     (dateDiff["send_diff"] as { priorSend: Record<string, unknown> }).priorSend
   )["sentAt"] = new Date("2026-07-01T17:00:00Z");
   assert.equal(campaignApprovalOf(dateDiff), null);
+
+  // Variant-shape negatives (SEA-88): build a valid briefed payload,
+  // then break its variants one field at a time.
+  const briefed = fakeDeps({ brief: testBriefEntry() });
+  const briefedAssembly = await assembleCampaignDraft(CAMPAIGN.key, briefed.deps);
+  await createCampaignApproval(briefedAssembly, GOOD_VARIANTS, briefed.deps);
+  const goodBriefed = briefed.calls.created[0]!.payload as Record<string, unknown>;
+  assert.ok(campaignApprovalOf(goodBriefed));
+  const breakVariants = (
+    mutate: (variants: Array<Record<string, unknown>>) => void,
+  ): Record<string, unknown> => {
+    const clone = JSON.parse(JSON.stringify(goodBriefed)) as Record<
+      string,
+      unknown
+    >;
+    mutate(clone["variants"] as Array<Record<string, unknown>>);
+    return clone;
+  };
+  // An empty variants array is ceremonial, not a card.
+  assert.equal(
+    campaignApprovalOf(breakVariants((v) => v.splice(0, v.length))),
+    null,
+  );
+  // Every variant must be complete: preview, drafts, count, segment.
+  assert.equal(
+    campaignApprovalOf(breakVariants((v) => delete v[0]!["rendered_preview"])),
+    null,
+  );
+  assert.equal(
+    campaignApprovalOf(breakVariants((v) => delete v[1]!["draft_body"])),
+    null,
+  );
+  assert.equal(
+    campaignApprovalOf(breakVariants((v) => (v[0]!["recipient_count"] = "2"))),
+    null,
+  );
+  assert.equal(
+    campaignApprovalOf(breakVariants((v) => (v[0]!["segment"] = ""))),
+    null,
+  );
+  // Two variants claiming one segment is ambiguous, so malformed.
+  assert.equal(
+    campaignApprovalOf(
+      breakVariants((v) => (v[1]!["segment"] = v[0]!["segment"] as string)),
+    ),
+    null,
+  );
+  // A briefed payload with variants present as a non-array is malformed.
+  const nonArray = JSON.parse(JSON.stringify(goodBriefed)) as Record<
+    string,
+    unknown
+  >;
+  nonArray["variants"] = { hot_only: {} };
+  assert.equal(campaignApprovalOf(nonArray), null);
   console.log(
-    "[smoke] card data: all-four validation rejects partial payloads, drifted diff shapes and unserialized dates",
+    "[smoke] card data: all-four validation rejects partial payloads, drifted diff shapes, unserialized dates and malformed variants",
   );
 }
 
@@ -849,6 +1284,10 @@ async function main(): Promise<void> {
   await smokeSendDiffPresent();
   await smokeEnforcement();
   await smokeDedupe();
+  await smokeFactsGate();
+  await smokeBriefedFanOut();
+  await smokeBriefedUnknownSegment();
+  await smokeVariantEnforcement();
   await smokeCardValidation();
   await smokeApprovalTransition();
   await smokeApprovedSeam();

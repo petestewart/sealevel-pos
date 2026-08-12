@@ -5,6 +5,7 @@ import {
   copyStatusLine,
   sendDiffHeadline,
   totalExcluded,
+  variantHeading,
 } from "../lib/campaignApprovalView";
 import { formatDateTime } from "../lib/emailDisplay";
 import { StatusChip } from "./StatusChip";
@@ -77,17 +78,26 @@ export function CampaignApprovalDecidedDetail({ item }: { item: Item }) {
           </p>
         </div>
 
-        <div className="kb-card-page">
-          <span className="micro-label">
-            The email as rendered for {data.preview.recipient.email}
-          </span>
-          <p className="draft-rationale-text">
-            <strong>Subject:</strong> {data.preview.subject}
-          </p>
-          <p className="draft-rationale-text" style={{ whiteSpace: "pre-wrap" }}>
-            {data.preview.body}
-          </p>
-        </div>
+        {/* Every variant's preview stays reviewable verbatim (SEA-88):
+            one section per segment variant, one for a single draft. */}
+        {data.variants.map((variant) => (
+          <div className="kb-card-page" key={variant.segment || "single"}>
+            <span className="micro-label">
+              {data.variants.length > 1
+                ? variantHeading(variant, data.variants.length)
+                : `The email as rendered for ${variant.preview.recipient.email}`}
+            </span>
+            <p className="draft-rationale-text">
+              <strong>Subject:</strong> {variant.preview.subject}
+            </p>
+            <p
+              className="draft-rationale-text"
+              style={{ whiteSpace: "pre-wrap" }}
+            >
+              {variant.preview.body}
+            </p>
+          </div>
+        ))}
 
         {data.rationale ? (
           <div className="kb-card-page">

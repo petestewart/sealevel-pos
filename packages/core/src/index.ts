@@ -336,11 +336,20 @@ export {
 export {
   planSegmentVariants,
   findEmDashes,
+  EM_DASH_RE,
   type SegmentVariant,
   type SegmentedDraftRequest,
   type SegmentDraftJob,
   type VariantPlan,
 } from "./campaigns/draftVariants.js";
+export {
+  CAMPAIGN_BRIEFS,
+  CAMPAIGN_SEEDS,
+  campaignSeedByKey,
+  resolveCampaignBrief,
+  type CampaignBriefEntry,
+  type CampaignSeed,
+} from "./campaigns/campaignBriefs.js";
 export {
   pgAudienceStore,
   type AudienceStore,
@@ -546,8 +555,11 @@ export {
 // (JSON-serialized) form and the provider seam.
 export type {
   CampaignApprovalPayload,
+  CampaignApprovalVariant,
   CampaignDraftAssembly,
   CampaignDraftInput,
+  CampaignVariantInput,
+  RenderedPreviewPayload,
   CreateApprovalResult,
   DraftCampaignDeps,
   SendDiffPayload,

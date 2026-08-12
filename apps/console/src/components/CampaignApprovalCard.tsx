@@ -12,6 +12,7 @@ import {
   EXCLUSION_REASON_LABELS,
   sendDiffHeadline,
   totalExcluded,
+  variantHeading,
   type CampaignApprovalCardData,
 } from "../lib/campaignApprovalView";
 import {
@@ -242,38 +243,49 @@ export function CampaignApprovalCard({
           )}
         </div>
 
-        {/* 3. The rendered email, one real recipient's merge fields resolved. */}
-        <div className="kb-card-page">
-          <span className="micro-label">
-            Exactly as it will send (rendered for {item.preview.recipient.email})
-          </span>
-          <p className="draft-rationale-text">
-            <strong>Subject:</strong> {item.preview.subject}
-          </p>
-          {item.preview.body.split(/\n{2,}/).map((para, i) => (
-            <p key={i} className="draft-rationale-text">
-              {para.split("\n").map((line, j) => (
-                <span key={j}>
-                  {j > 0 ? <br /> : null}
-                  {line}
-                </span>
-              ))}
-            </p>
-          ))}
-          <details className="draft-rationale">
-            <summary className="draft-rationale-summary">
-              <span className="micro-label">
-                Template with merge fields (what every recipient gets)
-              </span>
-            </summary>
+        {/* 3. The rendered email(s): one variant per segment for briefed
+            campaigns (SEA-88), one whole-audience draft otherwise. Each
+            preview is rendered for a real recipient from its segment. */}
+        {item.variants.map((variant) => (
+          <div className="kb-card-page" key={variant.segment || "single"}>
+            <span className="micro-label">
+              {variantHeading(variant, item.variants.length)}
+            </span>
             <p className="draft-rationale-text">
-              <strong>Subject:</strong> {item.draftSubject}
+              <strong>Subject:</strong> {variant.preview.subject}
             </p>
-            <p className="draft-rationale-text" style={{ whiteSpace: "pre-wrap" }}>
-              {item.draftBody}
-            </p>
-          </details>
-        </div>
+            {variant.preview.body.split(/\n{2,}/).map((para, i) => (
+              <p key={i} className="draft-rationale-text">
+                {para.split("\n").map((line, j) => (
+                  <span key={j}>
+                    {j > 0 ? <br /> : null}
+                    {line}
+                  </span>
+                ))}
+              </p>
+            ))}
+            <details className="draft-rationale">
+              <summary className="draft-rationale-summary">
+                <span className="micro-label">
+                  Template with merge fields (what every{" "}
+                  {item.variants.length > 1
+                    ? `${variant.segment.replace(/_/g, " ")} recipient`
+                    : "recipient"}{" "}
+                  gets)
+                </span>
+              </summary>
+              <p className="draft-rationale-text">
+                <strong>Subject:</strong> {variant.draftSubject}
+              </p>
+              <p
+                className="draft-rationale-text"
+                style={{ whiteSpace: "pre-wrap" }}
+              >
+                {variant.draftBody}
+              </p>
+            </details>
+          </div>
+        ))}
 
         {item.rationale ? (
           <details className="draft-rationale" open>

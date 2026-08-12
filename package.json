@@ -12,6 +12,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "eval": "npm run eval --workspace @ai-manager/core --",
     "send-diff": "npm run send-diff --workspace @ai-manager/core --",
+    "campaign:seed": "npm run campaign:seed --workspace @ai-manager/core --",
     "clean": "npm run clean --workspaces --if-present"
   },
   "engines": {

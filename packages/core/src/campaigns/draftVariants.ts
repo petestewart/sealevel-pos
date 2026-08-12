@@ -70,12 +70,26 @@ export interface VariantPlan {
   unknownSegments: string[];
 }
 
-const EM_DASH = "—";
+/**
+ * THE canonical no-em-dash character class (SEA-88 integration): em dash
+ * plus its lookalikes (horizontal bar, two-em/three-em dash). En dash
+ * (U+2013) stays legal: ranges like 6–7pm are fine. Defined HERE (the
+ * dependency-free module) and re-exported by draftCampaign.ts so every
+ * layer checks the exact same characters; do not fork this class.
+ */
+export const EM_DASH_RE = /[—―⸺⸻]/;
 
-/** Every copy-bearing string in the request that contains an em dash.
- * House rule (CLAUDE.md): no em dashes in outgoing user-facing copy, and
- * guidance that contains one gets echoed into drafts, so the brief itself
- * must be clean. */
+/** True when the text violates the no-em-dash convention (CLAUDE.md:
+ * no em dashes in any outgoing user-facing copy). */
+export function containsEmDash(text: string): boolean {
+  return EM_DASH_RE.test(text);
+}
+
+/** Every copy-bearing string in the request that contains an em dash
+ * (or lookalike; the superset class above, one character class
+ * everywhere). House rule (CLAUDE.md): no em dashes in outgoing
+ * user-facing copy, and guidance that contains one gets echoed into
+ * drafts, so the brief itself must be clean. */
 export function findEmDashes(request: SegmentedDraftRequest): string[] {
   const copyStrings = [
     request.subjectTheme,
@@ -83,7 +97,7 @@ export function findEmDashes(request: SegmentedDraftRequest): string[] {
     ...request.copyRules,
     ...request.variants.flatMap((v) => [v.audience, ...v.framing]),
   ];
-  return copyStrings.filter((s) => s.includes(EM_DASH));
+  return copyStrings.filter((s) => containsEmDash(s));
 }
 
 /**

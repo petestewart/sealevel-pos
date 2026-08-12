@@ -60,6 +60,25 @@ export interface RenderedPreviewView {
   body: string;
 }
 
+/**
+ * One copy variant as the card renders it (SEA-88). Un-briefed campaigns
+ * arrive as exactly one variant (segment "" = the whole audience);
+ * briefed campaigns arrive as one variant per non-empty segment, each
+ * with its own per-segment sample preview.
+ */
+export interface VariantView {
+  /** Segment label; "" for the single whole-audience draft. */
+  segment: string;
+  /** Recipients getting this variant (the whole audience when single). */
+  recipientCount: number;
+  /** The stored draft, merge fields unresolved. */
+  draftSubject: string;
+  draftBody: string;
+  /** The email exactly as it will send, one real recipient's merge
+   * fields resolved (a recipient FROM this variant's segment). */
+  preview: RenderedPreviewView;
+}
+
 /** Serializable card data for a campaign_approval item. */
 export interface CampaignApprovalCardData {
   id: string;
@@ -73,12 +92,12 @@ export interface CampaignApprovalCardData {
   snapshotAt: string;
   /** Element 2: the exclusion report from the audience build. */
   exclusions: ExclusionReportView;
-  /** The stored draft (merge fields unresolved). */
-  draftSubject: string;
-  draftBody: string;
-  /** Element 3: the email exactly as it will send, one real recipient's
-   * merge fields resolved. */
-  preview: RenderedPreviewView;
+  /** Element 3: the drafted copy, one variant per segment for briefed
+   * campaigns (SEA-88), exactly one entry for single-draft campaigns.
+   * Never empty. Each variant carries its stored draft plus the email
+   * exactly as it will send, rendered for a real recipient from that
+   * variant's segment. */
+  variants: VariantView[];
   /** Element 4: diff vs the last send; null = no completed prior send
    * (first send, or the prior run is still mid-flight). */
   sendDiff: SendDiffView | null;
@@ -138,6 +157,23 @@ export function copyStatusLine(diff: SendDiffView): string {
 export function deltaMoreSuffix(delta: RecipientDeltaView): string {
   const more = delta.count - delta.sample.length;
   return more > 0 ? `and ${more} more` : "";
+}
+
+/**
+ * Section heading for one variant's rendered preview. Single-draft
+ * campaigns keep the original wording; multi-variant campaigns name the
+ * segment and its recipient count so the reviewer sees who gets which
+ * copy. No em dashes.
+ */
+export function variantHeading(variant: VariantView, total: number): string {
+  if (total <= 1) {
+    return `Exactly as it will send (rendered for ${variant.preview.recipient.email})`;
+  }
+  const segment = variant.segment.replace(/_/g, " ");
+  const n = variant.recipientCount.toLocaleString("en-US");
+  return `Variant: ${segment} (${n} recipient${
+    variant.recipientCount === 1 ? "" : "s"
+  }, rendered for ${variant.preview.recipient.email})`;
 }
 
 /** Total drops in an exclusion report. */

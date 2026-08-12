@@ -20,6 +20,12 @@ import {
   fallAnnouncementDraftRequest,
   unverifiedFallFacts,
 } from "./fallAnnouncement.js";
+import {
+  CAMPAIGN_SEEDS,
+  campaignSeedByKey,
+  resolveCampaignBrief,
+} from "./campaignBriefs.js";
+import { containsEmDash } from "./draftCampaign.js";
 
 /**
  * Offline smoke for the fall 2026 announcement campaign (SEA-88):
@@ -298,12 +304,53 @@ async function testBriefIntegrity(): Promise<void> {
   );
 }
 
+async function testRegistryAndSeed(): Promise<void> {
+  // The brief registry (SEA-88 integration): campaigns.draft finds this
+  // campaign's brief by key; unknown keys are un-briefed.
+  const entry = resolveCampaignBrief(FALL_ANNOUNCEMENT_CAMPAIGN_KEY);
+  assert.ok(entry, "fall campaign is registered");
+  assert.equal(entry.request().campaignKey, FALL_ANNOUNCEMENT_CAMPAIGN_KEY);
+  assert.equal(
+    entry.unverifiedFacts().length,
+    unverifiedFallFacts().length,
+    "registry exposes the brief's own unverified facts",
+  );
+  assert.match(entry.factsFile, /fallAnnouncement\.ts$/);
+  assert.equal(resolveCampaignBrief("no-such-campaign"), null);
+
+  // The seed registry (npm run campaign:seed): the fall campaign row
+  // carries the same key and audience view the brief drafts against.
+  const seed = campaignSeedByKey(FALL_ANNOUNCEMENT_CAMPAIGN_KEY);
+  assert.ok(seed);
+  assert.equal(seed.audienceView, FALL_ANNOUNCEMENT_AUDIENCE_VIEW);
+  assert.ok(seed.name.length > 0);
+  // Seed keys are unique (one ON CONFLICT target each).
+  assert.equal(
+    new Set(CAMPAIGN_SEEDS.map((s) => s.key)).size,
+    CAMPAIGN_SEEDS.length,
+  );
+  console.log(
+    "[smoke] fall_announcement: brief registry + campaign seed agree on key and audience view",
+  );
+}
+
 async function testEmDashGuard(): Promise<void> {
   const bad: SegmentedDraftRequest = {
     ...fallAnnouncementDraftRequest(),
     subjectTheme: "New classes — this fall",
   };
   assert.equal(findEmDashes(bad).length, 1);
+  // ONE character class everywhere: the guidance check catches the same
+  // lookalikes (horizontal bar, two-em/three-em dash) the draft job's
+  // copy enforcement catches, via the same shared predicate.
+  for (const lookalike of ["bar ― here", "two-em ⸺ here", "three-em ⸻ here"]) {
+    assert.ok(containsEmDash(lookalike));
+    const request: SegmentedDraftRequest = {
+      ...fallAnnouncementDraftRequest(),
+      subjectTheme: lookalike,
+    };
+    assert.equal(findEmDashes(request).length, 1);
+  }
   assert.throws(
     () => planSegmentVariants(bad, { generalist: 1 }),
     /em dash in copy guidance/,
@@ -328,6 +375,7 @@ async function main(): Promise<void> {
   await testVariantFanOut();
   await testEmptyAndUnknownSegments();
   await testBriefIntegrity();
+  await testRegistryAndSeed();
   await testEmDashGuard();
   console.log("[smoke] fall_announcement: all passed");
 }

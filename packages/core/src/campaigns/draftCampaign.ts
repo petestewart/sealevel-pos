@@ -26,6 +26,18 @@ import {
   type ExclusionReason,
   EXCLUSION_REASONS,
 } from "./buildAudience.js";
+import {
+  resolveCampaignBrief,
+  type CampaignBriefEntry,
+} from "./campaignBriefs.js";
+import {
+  containsEmDash,
+  EM_DASH_RE,
+  planSegmentVariants,
+  type SegmentDraftJob,
+  type SegmentedDraftRequest,
+  type VariantPlan,
+} from "./draftVariants.js";
 import { computeSendDiff } from "./sendDiff.js";
 import type { PriorSendInfo, SendDiff } from "./sendDiffTypes.js";
 
@@ -50,20 +62,30 @@ import type { PriorSendInfo, SendDiff } from "./sendDiffTypes.js";
  *    itself refuses campaigns at approved-or-beyond, so this can never
  *    mutate an audience a human already signed off on.
  *
- * 2. The model (claude-opus-4-8, drafting tier) writes the message using
- *    the KB tools for voice/fact reference, and calls
- *    create_campaign_approval exactly once. The tool enforces the copy
- *    contract structurally: NO EM DASHES (CLAUDE.md convention, checked
- *    in code, not prompt-hoped), and every {{merge_field}} must be one
- *    this job can render.
+ * 2. The model (claude-opus-4-8, drafting tier) writes the message and
+ *    calls create_campaign_approval exactly once. For a BRIEFED campaign
+ *    (one registered in campaignBriefs.ts, SEA-88) the prompt carries the
+ *    brief's subject theme, shared facts, copy rules and each segment's
+ *    audience/framing, the model writes ONE VARIANT PER NON-EMPTY
+ *    SEGMENT, and facts come exclusively from the brief (the KB stays
+ *    available for voice reference). Un-briefed campaigns keep the
+ *    original single-draft flow with KB fact sourcing. Either way the
+ *    tool enforces the copy contract structurally: NO EM DASHES
+ *    (CLAUDE.md convention, checked in code, not prompt-hoped), and
+ *    every {{merge_field}} must be one this job can render.
  *
  * 3. The tool assembles the approval-card payload (all four elements:
  *    audience summary from the frozen snapshot, exclusion report from
- *    the build, the rendered email with ONE real recipient's merge
- *    fields resolved, and the send-diff vs the last send of this
- *    campaign key), files the item (deduped: one campaign_approval per
- *    campaign run), moves the campaign to pending_approval, and emits
- *    the campaign_approval Novu event (workflow seeded by 0015).
+ *    the build, the rendered email(s) with a real recipient's merge
+ *    fields resolved (one sample PER SEGMENT for briefed variants), and
+ *    the send-diff vs the last send of this campaign key), files the
+ *    item (deduped: ONE campaign_approval per campaign run, variants and
+ *    all), moves the campaign to pending_approval, and emits the
+ *    campaign_approval Novu event (workflow seeded by 0015).
+ *
+ * SEA-88 facts gate: a briefed campaign REFUSES to draft (loud throw in
+ * assembleCampaignDraft, before any side effect) while its brief still
+ * carries needs_verification facts.
  */
 
 /* ------------------------------------------------------------------ *
@@ -142,15 +164,16 @@ export async function onCampaignApproved(campaign: {
  * Copy contract checks                                               *
  * ------------------------------------------------------------------ */
 
-/** Em dash and its lookalikes (horizontal bar, two-em/three-em dash).
- * En dash (U+2013) stays legal: ranges like 6–7pm are fine. */
-const EM_DASH_RE = /[—―⸺⸻]/;
-
-/** True when the text violates the no-em-dash convention (CLAUDE.md:
- * no em dashes in any outgoing user-facing copy). Exported for the smoke. */
-export function containsEmDash(text: string): boolean {
-  return EM_DASH_RE.test(text);
-}
+/**
+ * The no-em-dash predicate (em dash plus lookalikes: horizontal bar,
+ * two-em/three-em dash; en dash U+2013 stays legal, ranges like 6–7pm
+ * are fine). ONE character class everywhere: the canonical definition
+ * lives in draftVariants.ts (the dependency-free module) and is
+ * re-exported here so existing importers keep working. findEmDashes
+ * (brief guidance) and this job's copy enforcement check the exact
+ * same characters.
+ */
+export { containsEmDash, EM_DASH_RE };
 
 /** Merge fields campaigns.draft can render. first_name falls back to
  * "friend" (playful-voice-safe) when the contact has no first name. */
@@ -198,9 +221,46 @@ export class UnknownMergeFieldError extends Error {
 /** Bounded per-reason samples persisted with the exclusion report. */
 export const EXCLUSION_SAMPLES_PER_REASON = 5;
 
+/** One rendered-preview block: the email exactly as it will send, one
+ * real recipient's merge fields resolved. */
+export interface RenderedPreviewPayload {
+  recipient: {
+    contact_id: string;
+    email: string;
+    first_name: string | null;
+    segment: string;
+  };
+  subject: string;
+  body: string;
+}
+
+/**
+ * One per-segment copy variant in a briefed campaign's approval payload
+ * (SEA-88): the variant's stored draft (merge fields unresolved) plus
+ * its rendered preview for ONE sample recipient FROM THAT SEGMENT,
+ * resolved from the frozen snapshot. recipient_count is the segment's
+ * recipient count in the frozen snapshot, so the reviewer sees exactly
+ * who gets which copy.
+ */
+export interface CampaignApprovalVariant {
+  segment: string;
+  recipient_count: number;
+  draft_subject: string;
+  draft_body: string;
+  rendered_preview: RenderedPreviewPayload;
+}
+
 /** The campaign_approval item payload, under the standard payload keys.
  * Everything the card renders is HERE, durably, so the card never
- * re-derives numbers that could drift from what was approved. */
+ * re-derives numbers that could drift from what was approved.
+ *
+ * Element 3 comes in exactly one of two shapes:
+ *   - un-briefed campaigns: the single draft_subject / draft_body /
+ *     rendered_preview trio (the original SEA-83 shape, still valid);
+ *   - briefed campaigns (SEA-88): `variants`, one entry per non-empty
+ *     audience segment, each with its own draft + per-segment sample
+ *     preview. Still ONE approval item for the whole campaign (the
+ *     locked campaign-level approval design). */
 export interface CampaignApprovalPayload {
   campaign_id: string;
   campaign_key: string;
@@ -228,21 +288,16 @@ export interface CampaignApprovalPayload {
     built_at: string;
     summary: string;
   };
-  /** The draft as it will be stored/sent, merge fields unresolved. */
-  draft_subject: string;
-  draft_body: string;
-  /** Element 3: the email exactly as it will send, ONE real recipient's
-   * merge fields resolved. */
-  rendered_preview: {
-    recipient: {
-      contact_id: string;
-      email: string;
-      first_name: string | null;
-      segment: string;
-    };
-    subject: string;
-    body: string;
-  };
+  /** The draft as it will be stored/sent, merge fields unresolved.
+   * Present exactly when `variants` is absent (un-briefed campaigns). */
+  draft_subject?: string;
+  draft_body?: string;
+  /** Element 3 (un-briefed): the email exactly as it will send, ONE real
+   * recipient's merge fields resolved. */
+  rendered_preview?: RenderedPreviewPayload;
+  /** Element 3 (briefed, SEA-88): one variant per non-empty segment,
+   * each with a per-segment sample preview. Non-empty when present. */
+  variants?: CampaignApprovalVariant[];
   /** Element 4: diff vs the last send of this campaign key, in the
    * JSON-safe serialized form (priorSend.sentAt is an ISO string); null =
    * no completed prior send (first send, or prior run still mid-flight). */
@@ -293,19 +348,24 @@ export function campaignApprovalOf(
   ) {
     return null;
   }
-  // Element 3: rendered preview with a real recipient.
-  const preview = p.rendered_preview;
-  if (
-    !preview ||
-    typeof preview.subject !== "string" ||
-    typeof preview.body !== "string" ||
-    !preview.recipient ||
-    typeof preview.recipient.email !== "string"
-  ) {
-    return null;
-  }
-  if (typeof p.draft_subject !== "string" || typeof p.draft_body !== "string") {
-    return null;
+  // Element 3: either the briefed variants array (every variant complete,
+  // same rigor as the single shape) or the single draft + preview trio.
+  if ("variants" in payload) {
+    const variants = p.variants;
+    if (!Array.isArray(variants) || variants.length === 0) return null;
+    for (const v of variants) {
+      if (!isApprovalVariant(v)) return null;
+    }
+    // Segments must be unique: two variants claiming one bucket would
+    // make "who gets which copy" ambiguous at send time.
+    const segments = new Set(variants.map((v) => v.segment));
+    if (segments.size !== variants.length) return null;
+  } else {
+    const preview = p.rendered_preview;
+    if (!isRenderedPreview(preview)) return null;
+    if (typeof p.draft_subject !== "string" || typeof p.draft_body !== "string") {
+      return null;
+    }
   }
   // Element 4: send_diff must be PRESENT (null is the honest no-completed-
   // prior-send value; ABSENT means the assembler never ran the seam) and,
@@ -345,6 +405,33 @@ export function campaignApprovalOf(
   return payload as CampaignApprovalPayload;
 }
 
+/** Structural check for a rendered preview block. */
+function isRenderedPreview(value: unknown): value is RenderedPreviewPayload {
+  if (typeof value !== "object" || value === null) return false;
+  const preview = value as Partial<RenderedPreviewPayload>;
+  return (
+    typeof preview.subject === "string" &&
+    typeof preview.body === "string" &&
+    typeof preview.recipient === "object" &&
+    preview.recipient !== null &&
+    typeof preview.recipient.email === "string"
+  );
+}
+
+/** Structural check for one briefed-campaign approval variant. */
+function isApprovalVariant(value: unknown): value is CampaignApprovalVariant {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Partial<CampaignApprovalVariant>;
+  return (
+    typeof v.segment === "string" &&
+    v.segment.length > 0 &&
+    typeof v.recipient_count === "number" &&
+    typeof v.draft_subject === "string" &&
+    typeof v.draft_body === "string" &&
+    isRenderedPreview(v.rendered_preview)
+  );
+}
+
 /** Structural check for a serialized RecipientDelta. */
 function isRecipientDelta(value: unknown): value is {
   count: number;
@@ -369,6 +456,9 @@ export interface DraftCampaignDeps {
   }) => Promise<BuildAudienceResult>;
   getCampaignByKey: (key: string) => Promise<CampaignRow | null>;
   listSnapshotRecipients: (campaignId: string) => Promise<SnapshotRecipient[]>;
+  /** Brief registry lookup (SEA-88). null = un-briefed single draft. The
+   * smoke injects test briefs; production is the registry itself. */
+  resolveBrief: (campaignKey: string) => CampaignBriefEntry | null;
   sendDiff: SendDiffProvider;
   createItem: typeof createItem;
   markCampaignPendingApproval: (campaignId: string) => Promise<string | null>;
@@ -383,6 +473,7 @@ export function defaultDraftCampaignDeps(): DraftCampaignDeps {
     getCampaignByKey: (key) => getCampaignByKey(getPool(), key),
     listSnapshotRecipients: (campaignId) =>
       listSnapshotRecipients(getPool(), campaignId),
+    resolveBrief: resolveCampaignBrief,
     sendDiff: defaultSendDiffProvider,
     createItem,
     markCampaignPendingApproval: (campaignId) =>
@@ -404,6 +495,14 @@ export interface CampaignDraftAssembly {
   build: BuildAudienceResult;
   /** Deterministic sample recipient (lowest contact id) for the preview. */
   sampleRecipient: SnapshotRecipient;
+  /** Deterministic sample recipient PER SEGMENT (lowest contact id in
+   * each segment), for briefed campaigns' per-variant previews. */
+  samplesBySegment: Record<string, SnapshotRecipient>;
+  /** The campaign's drafting brief, when registered (SEA-88). */
+  brief: SegmentedDraftRequest | null;
+  /** The per-segment fan-out plan for a briefed campaign; null for
+   * un-briefed campaigns (exactly the original single-draft flow). */
+  variantPlan: VariantPlan | null;
   sendDiff: SendDiff | null;
 }
 
@@ -420,6 +519,27 @@ export async function assembleCampaignDraft(
 ): Promise<CampaignDraftAssembly> {
   if (typeof campaignKey !== "string" || campaignKey.length === 0) {
     throw new Error("campaigns.draft: payload.campaignKey is required");
+  }
+
+  // FACTS GATE (SEA-88): a briefed campaign whose facts file still holds
+  // unverified claims REFUSES to draft, loudly, BEFORE the audience build
+  // runs (no snapshot side effects behind a refusal). This is what makes
+  // merging the brief safe while the real fall rollout is still moving:
+  // the facts file gets rewritten later, and nothing drafts until every
+  // claim in it is confirmed.
+  const briefEntry = deps.resolveBrief(campaignKey);
+  if (briefEntry) {
+    const unverified = briefEntry.unverifiedFacts();
+    if (unverified.length > 0) {
+      const lines = unverified
+        .map((f) => `  - ${f.fact} (${f.source})`)
+        .join("\n");
+      throw new Error(
+        `campaigns.draft: REFUSING to draft briefed campaign '${campaignKey}': ` +
+          `${unverified.length} fact(s) still need verification:\n${lines}\n` +
+          `Verify each claim and mark it 'confirmed' in ${briefEntry.factsFile}, then re-run.`,
+      );
+    }
   }
 
   // The build validates campaign existence and status (draft /
@@ -451,8 +571,27 @@ export async function assembleCampaignDraft(
     );
   }
   const segments: Record<string, number> = {};
+  const samplesBySegment: Record<string, SnapshotRecipient> = {};
   for (const r of recipients) {
     segments[r.segment] = (segments[r.segment] ?? 0) + 1;
+    // Recipients come back ordered by contact id, so the first one seen
+    // per segment is that segment's deterministic sample.
+    samplesBySegment[r.segment] ??= r;
+  }
+
+  // Briefed campaigns: fan the brief out over the snapshot's real
+  // per-segment counts (planSegmentVariants validates the brief and the
+  // fan-out identity; unknown labels degrade to the fallback variant).
+  const brief = briefEntry ? briefEntry.request() : null;
+  const variantPlan = brief ? planSegmentVariants(brief, segments) : null;
+  if (variantPlan) {
+    for (const job of variantPlan.jobs) {
+      if (!samplesBySegment[job.segment]) {
+        throw new Error(
+          `campaigns.draft: no snapshot recipient for planned segment '${job.segment}' (bug)`,
+        );
+      }
+    }
   }
 
   const sendDiff = await deps.sendDiff(campaignKey);
@@ -464,6 +603,9 @@ export async function assembleCampaignDraft(
     snapshotAt: (recipients[0]!.snapshotAt ?? deps.now()).toISOString(),
     build,
     sampleRecipient: recipients[0]!,
+    samplesBySegment,
+    brief,
+    variantPlan,
     sendDiff,
   };
 }
@@ -472,10 +614,20 @@ export async function assembleCampaignDraft(
  * The create tool (the model's only side effect)                     *
  * ------------------------------------------------------------------ */
 
-/** What the model must hand the tool. */
-export interface CampaignDraftInput {
+/** One per-segment variant as the model hands it to the tool. */
+export interface CampaignVariantInput {
+  segment: string;
   subject: string;
   body: string;
+}
+
+/** What the model must hand the tool: subject/body for un-briefed
+ * campaigns, `variants` (one entry per planned segment, in ONE call)
+ * for briefed campaigns. rationale always. */
+export interface CampaignDraftInput {
+  subject?: string;
+  body?: string;
+  variants?: CampaignVariantInput[];
   rationale: string;
 }
 
@@ -499,41 +651,83 @@ export async function createCampaignApproval(
   deps: DraftCampaignDeps = defaultDraftCampaignDeps(),
   kbLog?: KbRunLog,
 ): Promise<CreateApprovalResult> {
-  const subject = input.subject?.trim() ?? "";
-  const body = input.body?.trim() ?? "";
   const rationale = input.rationale?.trim() ?? "";
-  if (subject.length === 0 || body.length === 0) {
-    return { status: "rejected", reason: "subject and body must be non-empty" };
-  }
   // The no-em-dash convention is enforced in code on every outgoing
-  // field. The rationale is operator-facing copy and follows the same
-  // convention (as every operator-facing string in this repo does).
-  for (const [field, text] of [
-    ["subject", subject],
-    ["body", body],
-    ["rationale", rationale],
-  ] as const) {
-    if (containsEmDash(text)) {
-      return {
-        status: "rejected",
-        reason: `${field} contains an em dash; rewrite it without em dashes (project copy convention)`,
-      };
-    }
+  // field (rationale included: operator-facing copy follows the same
+  // convention, as every operator-facing string in this repo does).
+  if (containsEmDash(rationale)) {
+    return {
+      status: "rejected",
+      reason:
+        "rationale contains an em dash; rewrite it without em dashes (project copy convention)",
+    };
   }
 
-  // Element 3: render the exact outgoing email for ONE real recipient.
-  // An unknown merge field is a rejection, not a customer-visible {{typo}}.
-  const sample = assembly.sampleRecipient;
-  let renderedSubject: string;
-  let renderedBody: string;
-  try {
-    renderedSubject = renderMergeFields(subject, sample);
-    renderedBody = renderMergeFields(body, sample);
-  } catch (err) {
-    if (err instanceof UnknownMergeFieldError) {
-      return { status: "rejected", reason: err.message };
+  // Element 3, one of two shapes: the briefed per-segment variants
+  // (SEA-88) or the original single draft. Same rigor either way: every
+  // outgoing field is em-dash-checked, every draft is rendered against a
+  // REAL snapshot recipient so an unknown merge field is a rejection,
+  // never a customer-visible {{typo}}.
+  const plan = assembly.variantPlan;
+  let single: {
+    draft_subject: string;
+    draft_body: string;
+    rendered_preview: RenderedPreviewPayload;
+  } | null = null;
+  let payloadVariants: CampaignApprovalVariant[] | null = null;
+
+  if (plan) {
+    const built = buildVariantPayloads(plan.jobs, assembly, input);
+    if ("rejected" in built) {
+      return { status: "rejected", reason: built.rejected };
     }
-    throw err;
+    payloadVariants = built.variants;
+  } else {
+    if (Array.isArray(input.variants)) {
+      return {
+        status: "rejected",
+        reason:
+          "this campaign has no segment brief; call create_campaign_approval with subject and body (no variants)",
+      };
+    }
+    const subject = input.subject?.trim() ?? "";
+    const body = input.body?.trim() ?? "";
+    if (subject.length === 0 || body.length === 0) {
+      return { status: "rejected", reason: "subject and body must be non-empty" };
+    }
+    for (const [field, text] of [
+      ["subject", subject],
+      ["body", body],
+    ] as const) {
+      if (containsEmDash(text)) {
+        return {
+          status: "rejected",
+          reason: `${field} contains an em dash; rewrite it without em dashes (project copy convention)`,
+        };
+      }
+    }
+    const sample = assembly.sampleRecipient;
+    try {
+      single = {
+        draft_subject: subject,
+        draft_body: body,
+        rendered_preview: {
+          recipient: {
+            contact_id: sample.contactId,
+            email: sample.email,
+            first_name: sample.firstName,
+            segment: sample.segment,
+          },
+          subject: renderMergeFields(subject, sample),
+          body: renderMergeFields(body, sample),
+        },
+      };
+    } catch (err) {
+      if (err instanceof UnknownMergeFieldError) {
+        return { status: "rejected", reason: err.message };
+      }
+      throw err;
+    }
   }
 
   const { campaign, build } = assembly;
@@ -565,18 +759,7 @@ export async function createCampaignApproval(
       built_at: build.snapshotAt?.toISOString() ?? now,
       summary: build.summary,
     },
-    draft_subject: subject,
-    draft_body: body,
-    rendered_preview: {
-      recipient: {
-        contact_id: sample.contactId,
-        email: sample.email,
-        first_name: sample.firstName,
-        segment: sample.segment,
-      },
-      subject: renderedSubject,
-      body: renderedBody,
-    },
+    ...(payloadVariants ? { variants: payloadVariants } : single!),
     send_diff: serializeSendDiff(assembly.sendDiff),
     rationale,
     ...(kbLog && (kbLog.sources.length > 0 || kbLog.unavailable)
@@ -631,9 +814,107 @@ export async function createCampaignApproval(
   // throws.
   const emitted = (await deps.emit(result.item)).sent;
   deps.log(
-    `[campaigns.draft] filed campaign_approval item ${result.item.id} for '${campaign.key}' (${assembly.recipients.length} recipients; notify ${emitted ? "sent" : "skipped"})`,
+    `[campaigns.draft] filed campaign_approval item ${result.item.id} for '${campaign.key}' (${assembly.recipients.length} recipients${
+      payloadVariants ? `, ${payloadVariants.length} segment variants` : ""
+    }; notify ${emitted ? "sent" : "skipped"})`,
   );
   return { status: "created", item: result.item, emitted };
+}
+
+/**
+ * Validate a briefed campaign's variant input against the fan-out plan
+ * and build the payload variants. The model must cover EXACTLY the
+ * planned segments, once each, in one call: missing, extra, or duplicate
+ * segments are rejections (keeping the dedupe airtight: one tool call,
+ * one item, no partial accumulation to reconcile). Each variant's copy
+ * gets the full contract (em dashes, merge fields) and its preview is
+ * rendered for that SEGMENT'S sample recipient from the frozen snapshot.
+ */
+function buildVariantPayloads(
+  jobs: SegmentDraftJob[],
+  assembly: CampaignDraftAssembly,
+  input: CampaignDraftInput,
+): { variants: CampaignApprovalVariant[] } | { rejected: string } {
+  const planned = jobs.map((j) => j.segment);
+  const supplied = input.variants;
+  if (!Array.isArray(supplied) || supplied.length === 0) {
+    return {
+      rejected:
+        `this campaign drafts per-segment variants; call create_campaign_approval ONCE with variants, one entry per segment: ${planned.join(", ")}`,
+    };
+  }
+  const bySegment = new Map<string, CampaignVariantInput>();
+  for (const v of supplied) {
+    const segment = typeof v.segment === "string" ? v.segment : "";
+    if (!planned.includes(segment)) {
+      return {
+        rejected: `unknown variant segment '${segment}'; the segments to draft are: ${planned.join(", ")}`,
+      };
+    }
+    if (bySegment.has(segment)) {
+      return { rejected: `duplicate variant for segment '${segment}'` };
+    }
+    bySegment.set(segment, v);
+  }
+  const missing = planned.filter((s) => !bySegment.has(s));
+  if (missing.length > 0) {
+    return {
+      rejected: `missing variant(s) for segment(s): ${missing.join(", ")}; provide all of ${planned.join(", ")} in one call`,
+    };
+  }
+
+  const variants: CampaignApprovalVariant[] = [];
+  for (const job of jobs) {
+    const v = bySegment.get(job.segment)!;
+    const subject = v.subject?.trim() ?? "";
+    const body = v.body?.trim() ?? "";
+    if (subject.length === 0 || body.length === 0) {
+      return {
+        rejected: `variant '${job.segment}': subject and body must be non-empty`,
+      };
+    }
+    for (const [field, text] of [
+      ["subject", subject],
+      ["body", body],
+    ] as const) {
+      if (containsEmDash(text)) {
+        return {
+          rejected: `variant '${job.segment}' ${field} contains an em dash; rewrite it without em dashes (project copy convention)`,
+        };
+      }
+    }
+    const sample = assembly.samplesBySegment[job.segment];
+    if (!sample) {
+      // assembleCampaignDraft guarantees this; a gap here is a bug.
+      throw new Error(
+        `campaigns.draft: no sample recipient for segment '${job.segment}' (bug)`,
+      );
+    }
+    try {
+      variants.push({
+        segment: job.segment,
+        recipient_count: job.recipients,
+        draft_subject: subject,
+        draft_body: body,
+        rendered_preview: {
+          recipient: {
+            contact_id: sample.contactId,
+            email: sample.email,
+            first_name: sample.firstName,
+            segment: sample.segment,
+          },
+          subject: renderMergeFields(subject, sample),
+          body: renderMergeFields(body, sample),
+        },
+      });
+    } catch (err) {
+      if (err instanceof UnknownMergeFieldError) {
+        return { rejected: `variant '${job.segment}': ${err.message}` };
+      }
+      throw err;
+    }
+  }
+  return { variants };
 }
 
 /* ------------------------------------------------------------------ *
@@ -678,14 +959,39 @@ export function createCampaignApprovalTool(
     name: "create_campaign_approval",
     description:
       "File the drafted campaign for human approval. Call exactly once. " +
-      "subject/body are the outgoing email (merge fields {{first_name}} " +
-      "and {{email}} allowed); rationale is 1-3 plain sentences for the " +
-      "reviewing human. No em dashes anywhere.",
+      "For a single-draft campaign pass subject/body; for a campaign " +
+      "with per-segment variants (the instructions list the segments) " +
+      "pass variants instead, one entry per segment, all in this ONE " +
+      "call. Merge fields {{first_name}} and {{email}} allowed; " +
+      "rationale is 1-3 plain sentences for the reviewing human. No em " +
+      "dashes anywhere.",
     inputSchema: z.object({
-      subject: z.string().describe("The outgoing email subject line."),
+      subject: z
+        .string()
+        .optional()
+        .describe("The outgoing email subject line (single-draft campaigns only)."),
       body: z
         .string()
-        .describe("The outgoing email body, plain text, merge fields allowed."),
+        .optional()
+        .describe(
+          "The outgoing email body, plain text, merge fields allowed (single-draft campaigns only).",
+        ),
+      variants: z
+        .array(
+          z.object({
+            segment: z
+              .string()
+              .describe("The segment label exactly as listed in the instructions."),
+            subject: z.string().describe("This segment's subject line."),
+            body: z
+              .string()
+              .describe("This segment's email body, plain text, merge fields allowed."),
+          }),
+        )
+        .optional()
+        .describe(
+          "Per-segment copy variants (briefed campaigns only): one entry per segment listed in the instructions, all in one call.",
+        ),
       rationale: z
         .string()
         .describe("Why the draft says what it says. 1-3 plain sentences."),
@@ -703,6 +1009,9 @@ export function createCampaignApprovalTool(
         deduped: result.status === "exists",
         campaign: assembly.campaign.key,
         recipients: assembly.recipients.length,
+        ...(assembly.variantPlan
+          ? { variants: assembly.variantPlan.jobs.length }
+          : {}),
       });
     },
   }) as BetaRunnableTool<any>;
@@ -733,22 +1042,65 @@ export const campaignDraft: Job = {
     const assembly = await assembleCampaignDraft(campaignKey, deps);
     if (ctx.runState) ctx.runState[RUN_STATE_ASSEMBLY] = assembly;
 
-    const { campaign, recipients, segments, sendDiff, build } = assembly;
+    const { campaign, recipients, segments, sendDiff, build, brief, variantPlan } =
+      assembly;
     // The canonical diff carries its own ready-made one-liner. null means
     // no COMPLETED prior send (first send, or a prior run still queued).
     const diffLine = sendDiff
       ? sendDiff.summary
       : "No completed prior send of this campaign.";
 
-    return `
-Draft the outgoing email for the campaign below. A human approves (or rejects) it later; nothing sends now, and you do not choose recipients (a separate audited process froze the list).
-
+    const common = `
 Campaign: ${campaign.name} (key ${campaign.key}, run ${campaign.runSeq})
 Audience: ${recipients.length} recipients from ${build.audienceView}: ${segmentLine(segments)}.
 ${diffLine}
 ${kbConfigured() ? KB_PROMPT_GUIDANCE : ""}
 Voice (modeled on Hot Yoga Asheville's emails): playful, personal, and human. Write like a real person at the studio emailing people they know: warm, a little funny, zero marketing gloss. Never "Dear Valued Member", never corporate phrasing, never exclamation-mark spam. Short paragraphs. Sign off warmly with "Sealevel Hot Yoga" as the final line. Never sign as an AI or mention AI authorship, tools, or systems.
+`;
 
+    if (brief && variantPlan) {
+      // Briefed campaign (SEA-88): the model drafts one copy variant per
+      // non-empty segment, and its FACTS come from the brief (the KB
+      // stays available for voice/tone reference only). Every claim in
+      // the brief passed the facts gate before this prompt was built.
+      const variantBlocks = variantPlan.jobs
+        .map((job) => {
+          const framing = job.variant.framing.map((l) => `  - ${l}`).join("\n");
+          return `Segment '${job.segment}' (${job.recipients} recipient${job.recipients === 1 ? "" : "s"}): ${job.variant.audience}\n${framing}`;
+        })
+        .join("\n\n");
+      return `
+Draft the outgoing email for the campaign below, as ONE copy variant per audience segment. A human approves (or rejects) the whole set later; nothing sends now, and you do not choose recipients (a separate audited process froze the list).
+${common}
+Subject theme: ${brief.subjectTheme}
+
+Facts you may state (the ONLY facts allowed; do not add specifics from anywhere else, including the knowledge base):
+${brief.sharedFacts.map((f) => `- ${f}`).join("\n")}
+
+Copy rules for every variant:
+${brief.copyRules.map((r) => `- ${r}`).join("\n")}
+
+Variants to write, one per segment:
+
+${variantBlocks}
+
+Hard rules:
+- NO EM DASHES anywhere in any subject, body, or the rationale (use a comma, a period, or a colon instead). This is enforced; drafts containing one are rejected.
+- Merge fields: you may use {{first_name}} (and {{email}} if truly needed). No other merge fields exist.
+- Facts come exclusively from the shared facts and each segment's framing above. The knowledge base tools are for voice and tone reference only; never pull additional specifics from them.
+- Do not promise follow-ups and do not offer to book anyone; booking is self-service.
+
+Do this:
+1. If the knowledge base tools are available, skim briefly for voice and tone only.
+2. Write every variant: subject plus a short body (roughly 80-160 words each), tailored to that segment's audience and framing.
+3. Call create_campaign_approval exactly ONCE with variants (one entry per segment listed above: ${variantPlan.jobs.map((j) => j.segment).join(", ")}) and a 1-3 sentence rationale covering the set. If it returns an ERROR, fix the drafts and call it again.
+4. Reply with a one-line summary including the created item id.
+`;
+    }
+
+    return `
+Draft the outgoing email for the campaign below. A human approves (or rejects) it later; nothing sends now, and you do not choose recipients (a separate audited process froze the list).
+${common}
 Hard rules:
 - NO EM DASHES anywhere in the subject, body, or rationale (use a comma, a period, or a colon instead). This is enforced; drafts containing one are rejected.
 - Merge fields: you may use {{first_name}} (and {{email}} if truly needed). No other merge fields exist.
