@@ -38,6 +38,29 @@ export interface PriorSendInfo {
   failedCount: number;
 }
 
+/** One stored copy variant: segment '' = the single-copy shape,
+ * otherwise the SEA-88 segment label the copy was sent to. */
+export interface PriorCopyVariant {
+  segment: string;
+  subject: string;
+  body: string;
+}
+
+/**
+ * The durably stored copy SET of the newest prior run
+ * (campaign_copy_snapshots, migration 0018, written by SEA-84's send job
+ * before the first message of a run leaves): one variant per SEA-88
+ * segment, or a single ''-segment variant for the un-briefed shape. The
+ * concrete other side of the copyChanged comparison, carried on the diff
+ * so a renderer or a later patch (draft time knows the current copy;
+ * diff time may not) can compare without another read.
+ */
+export interface PriorCopy {
+  /** The run the stored copy was sent under. */
+  runSeq: number;
+  variants: PriorCopyVariant[];
+}
+
 /**
  * "What changes about this send versus the last one of this campaign
  * key": the contract the SEA-83 approval card renders.
@@ -57,15 +80,24 @@ export interface SendDiff {
   /** Mailed by the prior send, not in the current audience snapshot. */
   recipientsDropped: RecipientDelta;
   /**
-   * Whether the copy changed since the prior send. null = UNKNOWN: no
-   * durable artifact stores the last-sent subject/body yet (the send job
-   * is SEA-84; until it snapshots the copy per run, no honest comparison
-   * exists). Renderers must show null as "copy: unknown", never as
-   * "unchanged".
+   * Whether the copy changed since the prior send. Since SEA-84 the send
+   * job snapshots the copy it sends (campaign_copy_snapshots, 0018), so
+   * this is a REAL comparison whenever a stored prior copy AND a current
+   * draft copy both exist. null = UNKNOWN, which remains honest for two
+   * cases: prior sends that predate the snapshot table (pre-snapshot
+   * history), and a diff computed before the current run has any draft
+   * to compare (the draft job patches the comparison in at draft time).
+   * Renderers must show null as "copy: unknown", never as "unchanged".
    */
   copyChanged: boolean | null;
   /** Compact human-readable line about the copy comparison. */
   copySummary: string;
+  /**
+   * The stored prior copy the comparison ran (or would run) against;
+   * null when no snapshot exists (pre-snapshot history / first send).
+   * Optional because diffs persisted before SEA-84 lack the field.
+   */
+  priorCopy?: PriorCopy | null;
   /** Size of the current campaign_audience snapshot (distinct addresses). */
   currentAudienceCount: number;
   priorSend: PriorSendInfo;

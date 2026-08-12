@@ -44,6 +44,11 @@ export {
   learningMineJobId,
   learningThresholdKind,
   LEARNING_MINE_JOB,
+  enqueueCampaignSend,
+  enqueueCampaignSendResume,
+  campaignSendJobId,
+  CAMPAIGNS_SEND_JOB,
+  type CampaignSendJobPayload,
   type GmailStateJobPayload,
   DEFAULT_WORKER_CONCURRENCY,
   workerConcurrency,
@@ -359,6 +364,12 @@ export {
 } from "./db/campaignAudience.js";
 export {
   computeSendDiff,
+  compareCopy,
+  copyDiffers,
+  withCurrentCopy,
+  type CopyPair,
+  type CurrentCopy,
+  type CurrentCopyVariant,
   type SendDiffDeps,
 } from "./campaigns/sendDiff.js";
 export {
@@ -366,6 +377,8 @@ export {
   type SendDiff,
   type RecipientDelta,
   type PriorSendInfo,
+  type PriorCopy,
+  type PriorCopyVariant,
 } from "./campaigns/sendDiffTypes.js";
 export {
   pgSendDiffStore,
@@ -520,6 +533,7 @@ export type {
   RollingRateStats,
   StuckCampaign,
   ZeroRecipientCampaign,
+  OverdueScheduledCampaign,
 } from "./campaigns/monitor.js";
 export { runJob, DEFAULT_BRAIN_MODEL } from "./brain/run.js";
 export { SYSTEM_PROMPT } from "./brain/prompts.js";
@@ -547,6 +561,8 @@ export {
   defaultDraftCampaignDeps,
   defaultSendDiffProvider,
   onCampaignApproved,
+  type OnCampaignApprovedDeps,
+  type OnCampaignApprovedResult,
   MERGE_FIELDS,
   EXCLUSION_SAMPLES_PER_REASON,
 } from "./campaigns/draftCampaign.js";
@@ -578,5 +594,59 @@ export type {
   TransactionClient,
   TransactionPool,
 } from "./db/campaignApproval.js";
+
+// --- Campaign send + unsubscribe (SEA-84) -----------------------------
+export {
+  sendCampaign,
+  defaultSendCampaignDeps,
+  sendConfigFromEnv,
+  DEFAULT_SEND_CONFIG,
+  deriveDedupeKey,
+  stepForRun,
+  copyForRecipient,
+  resendMailer,
+  unsubscribeFooter,
+  RESEND_API_BASE,
+  RESEND_API_KEY_VAR,
+  CAMPAIGN_FROM_EMAIL_VAR,
+} from "./campaigns/sendCampaign.js";
+export type {
+  Mailer,
+  MailerResult,
+  OutboundMessage,
+  SendCampaignConfig,
+  SendCampaignDeps,
+  SendCampaignResult,
+} from "./campaigns/sendCampaign.js";
+export {
+  processUnsubscribe,
+  generateUnsubscribeToken,
+  verifyUnsubscribeToken,
+  unsubscribeUrl,
+  unsubscribeSecret,
+  unsubscribeBaseUrl,
+  pgUnsubscribeStore,
+  UNSUBSCRIBE_TOKEN_SECRET_VAR,
+  UNSUBSCRIBE_BASE_URL_VAR,
+} from "./campaigns/unsubscribe.js";
+export type {
+  UnsubscribeDeps,
+  UnsubscribeResponse,
+  UnsubscribeStore,
+} from "./campaigns/unsubscribe.js";
+export {
+  pgCampaignSendStore,
+  copyVariantsOf,
+  copyFromApprovalPayload,
+} from "./db/campaignSend.js";
+export type {
+  ApprovedCopy,
+  CampaignSendStore,
+  ClaimedSend,
+  CopySnapshot,
+  CopySnapshotVariant,
+  SendRecipient,
+  SendTimeBlock,
+} from "./db/campaignSend.js";
 export { hasPermission, isRole } from "./rbac.js";
 export type { Role, Permission } from "./rbac.js";

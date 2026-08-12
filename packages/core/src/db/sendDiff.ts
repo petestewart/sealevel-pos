@@ -1,6 +1,12 @@
 import { getPool } from "./client.js";
 import type { Queryable } from "./campaignContacts.js";
 import { getCampaignByKey, type CampaignRow } from "./campaignAudience.js";
+import {
+  getDraftCopy,
+  getLatestCopySnapshot,
+  type ApprovedCopy,
+  type CopySnapshot,
+} from "./campaignSend.js";
 
 /**
  * DB reads for the send-diff tool (SEA-86), over the SEA-80 schema
@@ -83,11 +89,26 @@ export async function listAudienceEmails(
  * The store interface computeSendDiff depends on, so the offline smoke
  * runs every branch against an in-memory fake (same injection pattern as
  * AudienceStore). pgSendDiffStore is the production implementation.
+ *
+ * SEA-84 added the two copy readers: getLatestCopySnapshot reads the
+ * durable per-run copy the send job stores (campaign_copy_snapshots,
+ * 0018), and getDraftCopy reads the current run's draft copy back from
+ * its campaign_approval item -- together they turn copyChanged from
+ * always-null into a real comparison.
  */
 export interface SendDiffStore {
   getCampaignByKey(key: string): Promise<CampaignRow | null>;
   listCampaignSendRows(campaignId: string): Promise<PriorSendRow[]>;
   listAudienceEmails(campaignId: string): Promise<string[]>;
+  /** Newest run's full stored sent-copy set, or null (pre-snapshot
+   * history). */
+  getLatestCopySnapshot(campaignId: string): Promise<CopySnapshot | null>;
+  /** The current run's draft copy (campaign_approval item), in either
+   * the single or the per-segment variants shape, or null. */
+  getDraftCopy(
+    campaignId: string,
+    runSeq: number,
+  ): Promise<ApprovedCopy | null>;
 }
 
 /** Production store over the shared pool. */
@@ -98,5 +119,9 @@ export function pgSendDiffStore(): SendDiffStore {
       listCampaignSendRows(getPool(), campaignId),
     listAudienceEmails: (campaignId) =>
       listAudienceEmails(getPool(), campaignId),
+    getLatestCopySnapshot: (campaignId) =>
+      getLatestCopySnapshot(getPool(), campaignId),
+    getDraftCopy: (campaignId, runSeq) =>
+      getDraftCopy(getPool(), campaignId, runSeq),
   };
 }

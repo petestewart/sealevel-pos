@@ -55,6 +55,7 @@ function testSummaryShaping(): void {
     run_seq: 2,
     created_at: createdAt,
     approved_at: null,
+    send_at: null,
     recipients: "40",
     delivered: "38",
     opened: "20",
@@ -70,6 +71,7 @@ function testSummaryShaping(): void {
     runSeq: 2,
     createdAt,
     approvedAt: null,
+    sendAt: null,
     recipients: 40,
     events: { delivered: 38, opened: 20, clicked: 5, bounced: 2, complained: 0 },
   });
@@ -86,6 +88,7 @@ function testSummaryShaping(): void {
     run_seq: 2,
     created_at: createdAt,
     approved_at: createdAt,
+    send_at: createdAt,
     recipients: "40",
     delivered: "77",
     opened: "31",

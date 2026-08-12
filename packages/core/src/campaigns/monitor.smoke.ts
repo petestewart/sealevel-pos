@@ -21,6 +21,7 @@ import {
   type RollingRateStats,
   type StuckCampaign,
   type ZeroRecipientCampaign,
+  type OverdueScheduledCampaign,
 } from "./monitor.js";
 
 /**
@@ -64,6 +65,7 @@ type FakeRateRow = CampaignRateStats & {
   lastSendAgeDays?: number;
 };
 type FakeZeroRow = ZeroRecipientCampaign & { ageDays?: number };
+type FakeOverdueRow = OverdueScheduledCampaign & { ageDays?: number };
 
 /** In-memory MonitorStore with a controllable clock for dedupe timing. */
 class FakeStore implements MonitorStore {
@@ -71,6 +73,7 @@ class FakeStore implements MonitorStore {
   rolling: RollingRateStats = { sent: 0, complained: 0 };
   stuck: StuckCampaign[] = [];
   zero: FakeZeroRow[] = [];
+  overdue: FakeOverdueRow[] = [];
   /** alert_key -> last_notified_at epoch ms (null = detected, never sent). */
   state = new Map<string, number | null>();
   nowMs = Date.parse("2026-08-11T12:00:00Z");
@@ -95,6 +98,15 @@ class FakeStore implements MonitorStore {
     windowDays: number,
   ): Promise<ZeroRecipientCampaign[]> {
     return this.zero.filter((z) => (z.ageDays ?? 0) <= windowDays);
+  }
+  async overdueScheduledCampaigns(
+    graceMinutes: number,
+    windowDays: number,
+  ): Promise<OverdueScheduledCampaign[]> {
+    // Mirrors the SQL: past the grace, due inside the window.
+    return this.overdue.filter(
+      (o) => o.minutesOverdue >= graceMinutes && (o.ageDays ?? 0) <= windowDays,
+    );
   }
   async shouldNotify(
     key: string,
@@ -334,6 +346,43 @@ async function checkZeroRecipients(): Promise<void> {
   h2.store.zero = [];
   assert.equal((await h2.run()).conditions, 0);
   console.log("zero recipients OK");
+}
+
+async function checkOverdueScheduled(): Promise<void> {
+  // SEA-84: an approved campaign whose due time (send_at, else
+  // approved_at) passed with no send rows -- the scheduled twin of
+  // zero_recipients (a lost enqueue looks exactly like a patient delay).
+  const h = harness();
+  h.store.overdue = [
+    { campaignId: "12", campaignKey: "fall-2026", minutesOverdue: 45, scheduled: true },
+    { campaignId: "13", campaignKey: "welcome", minutesOverdue: 90, scheduled: false },
+  ];
+  const result = await h.run();
+  assert.equal(result.conditions, 2);
+  const scheduled = h.emitted.find((a) => a.campaignKey === "fall-2026")!;
+  assert.equal(scheduled.alertType, "overdue_scheduled");
+  assert.equal(scheduled.threshold, cfg.overdueScheduledGraceMinutes);
+  assert.ok(scheduled.detail.includes("scheduled send time that passed"));
+  assert.ok(scheduled.detail.includes("45 minutes"));
+  const immediate = h.emitted.find((a) => a.campaignKey === "welcome")!;
+  assert.equal(immediate.alertType, "overdue_scheduled");
+  assert.ok(immediate.detail.includes("immediate send"));
+
+  // Inside the grace (store-filtered, mirroring the SQL): silent.
+  const h2 = harness();
+  h2.store.overdue = [
+    { campaignId: "12", campaignKey: "fall-2026", minutesOverdue: 10, scheduled: true },
+  ];
+  assert.equal((await h2.run()).conditions, 0);
+
+  // Aged out of the resolution window: silent (the operator re-fires or
+  // cancels; an abandoned approval must not page forever).
+  const h3 = harness();
+  h3.store.overdue = [
+    { campaignId: "12", campaignKey: "fall-2026", minutesOverdue: 999_999, scheduled: true, ageDays: 30 },
+  ];
+  assert.equal((await h3.run()).conditions, 0);
+  console.log("overdue scheduled OK: scheduled + immediate variants, grace and window respected");
 }
 
 async function checkDedupe(): Promise<void> {
@@ -633,6 +682,7 @@ async function main(): Promise<void> {
   await checkMinSentFloor();
   await checkStuckSending();
   await checkZeroRecipients();
+  await checkOverdueScheduled();
   await checkDedupe();
   await checkFailedEmitRetries();
   await checkResolutionBound();

@@ -101,10 +101,24 @@ export interface CampaignApprovalCardData {
   /** Element 4: diff vs the last send; null = no completed prior send
    * (first send, or the prior run is still mid-flight). */
   sendDiff: SendDiffView | null;
+  /** Scheduled send time (campaigns.send_at, SEA-84), PRE-FORMATTED for
+   * display (PT); null = sends on approval (including items filed before
+   * the field existed). */
+  sendAtDisplay: string | null;
   rationale: string;
   kbUnavailable: boolean;
   receivedTime: string;
   receivedFull: string;
+}
+
+/**
+ * The send-timing line for the approval card (SEA-84): what approving
+ * this campaign actually triggers. No em dashes.
+ */
+export function sendTimingLine(sendAtDisplay: string | null): string {
+  return sendAtDisplay === null
+    ? "Sends on approval."
+    : `Scheduled to send ${sendAtDisplay}.`;
 }
 
 /** Operator-facing labels for exclusion reasons, in filter-chain order.

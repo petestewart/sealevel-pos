@@ -12,6 +12,7 @@ import { getPool } from "../db/client.js";
 import { recordItemUsage } from "../db/itemDrafts.js";
 import { createItem, type CreateItemResult, type Item } from "../db/items.js";
 import { emitItemEvent, type EmitResult } from "../notifications/emit.js";
+import { enqueueCampaignSend } from "../queue/enqueue.js";
 import {
   createKbToolset,
   KB_PROMPT_GUIDANCE,
@@ -38,7 +39,11 @@ import {
   type SegmentedDraftRequest,
   type VariantPlan,
 } from "./draftVariants.js";
-import { computeSendDiff } from "./sendDiff.js";
+import {
+  computeSendDiff,
+  withCurrentCopy,
+  type CurrentCopy,
+} from "./sendDiff.js";
 import type { PriorSendInfo, SendDiff } from "./sendDiffTypes.js";
 
 /**
@@ -46,8 +51,9 @@ import type { PriorSendInfo, SendDiff } from "./sendDiffTypes.js";
  * Claude drafts the campaign message; it NEVER chooses recipients. The
  * recipient list is the pure-code audience build's frozen snapshot, and
  * the model's entire side-effect surface is one private tool that files
- * ONE campaign_approval item pending human approval. Nothing sends: the
- * send job is SEA-84 (see onCampaignApproved below).
+ * ONE campaign_approval item pending human approval. Nothing sends from
+ * THIS job: approval triggers the SEA-84 send (see onCampaignApproved
+ * below, which enqueues campaigns.send, delayed to send_at).
  *
  * Flow (payload: { campaignKey }):
  *
@@ -140,24 +146,103 @@ export function serializeSendDiff(
  * SEA-84 seam: what approval triggers                                *
  * ------------------------------------------------------------------ */
 
+/** Injectable dependencies for onCampaignApproved so the offline smoke
+ * drives both timing branches without Postgres or Redis. */
+export interface OnCampaignApprovedDeps {
+  /** Read the campaign row's scheduling fields (send_at, run_seq). */
+  getSchedule: (
+    campaignId: string,
+  ) => Promise<{ sendAt: Date | null; runSeq: number } | null>;
+  /** Enqueue the (possibly delayed) send job; returns the jobId. */
+  enqueueSend: (options: {
+    campaignKey: string;
+    campaignId: string;
+    runSeq: number;
+    delayMs?: number;
+  }) => Promise<string>;
+  now: () => Date;
+  log: (line: string) => void;
+}
+
+function defaultOnCampaignApprovedDeps(): OnCampaignApprovedDeps {
+  return {
+    getSchedule: async (campaignId) => {
+      const result = await getPool().query(
+        `SELECT send_at, run_seq FROM campaigns WHERE id = $1`,
+        [campaignId],
+      );
+      const row = result.rows[0] as
+        | { send_at: Date | null; run_seq: number }
+        | undefined;
+      return row ? { sendAt: row.send_at, runSeq: Number(row.run_seq) } : null;
+    },
+    enqueueSend: (options) => enqueueCampaignSend(options),
+    now: () => new Date(),
+    log: (line) => console.log(line),
+  };
+}
+
+export interface OnCampaignApprovedResult {
+  enqueued: boolean;
+  reason?: string;
+  jobId?: string;
+  /** Delay applied to the enqueue: 0 = sends now, >0 = scheduled send. */
+  delayMs?: number;
+}
+
 /**
- * SEA-84 SEAM: called by the console after a campaign approval commits
- * (status flipped to 'approved' with approved_by/approved_at). The send
- * job (campaigns.send, SEA-84) is NOT built yet, so this deliberately
- * enqueues NOTHING -- enqueueing a job no processor handles would
- * dead-letter forever. SEA-84 wires the send enqueue here (derive the
- * dedupe keys per 0011 design point 2, enqueue the send job, flip status
- * to 'sending') and nowhere else, so the approval flow itself never
- * changes again.
+ * SEA-84, wired: called by the console after a campaign approval commits
+ * (status flipped to 'approved' with approved_by/approved_at). Enqueues
+ * the campaigns.send BullMQ job -- immediately for send_at NULL, or as a
+ * DELAYED job for max(now, send_at) when the campaign carries a
+ * scheduled send time (0018). The delay is safe because the send job
+ * re-checks suppressions and consent per recipient when it fires.
+ *
+ * Failure posture: NEVER throws. The approval decision is already
+ * committed when this runs, and a Redis hiccup must not surface as a
+ * failed approval; a lost enqueue is caught by the monitor
+ * (overdue_scheduled: an approved campaign past its due time with no
+ * send rows) and can be re-fired by hand. The enqueue itself is
+ * idempotent per campaign run (deterministic jobId), so a double approve
+ * submit enqueues one send.
  */
-export async function onCampaignApproved(campaign: {
-  id: string;
-  key: string;
-}): Promise<{ enqueued: false; reason: string }> {
-  const reason =
-    "campaigns.send (SEA-84) is not built yet; approval stops at the status flip";
-  console.log(`[campaigns.draft] campaign '${campaign.key}' approved: ${reason}`);
-  return { enqueued: false, reason };
+export async function onCampaignApproved(
+  campaign: { id: string; key: string },
+  deps: OnCampaignApprovedDeps = defaultOnCampaignApprovedDeps(),
+): Promise<OnCampaignApprovedResult> {
+  try {
+    const schedule = await deps.getSchedule(campaign.id);
+    if (!schedule) {
+      const reason = `campaign ${campaign.id} not found when scheduling the send`;
+      deps.log(`[campaigns.send] WARNING: ${reason}`);
+      return { enqueued: false, reason };
+    }
+    const nowMs = deps.now().getTime();
+    const delayMs = schedule.sendAt
+      ? Math.max(0, schedule.sendAt.getTime() - nowMs)
+      : 0;
+    const jobId = await deps.enqueueSend({
+      campaignKey: campaign.key,
+      campaignId: campaign.id,
+      runSeq: schedule.runSeq,
+      ...(delayMs > 0 ? { delayMs } : {}),
+    });
+    deps.log(
+      delayMs > 0
+        ? `[campaigns.send] campaign '${campaign.key}' approved; send scheduled for ${schedule.sendAt!.toISOString()} (job ${jobId}, delay ${Math.round(delayMs / 1000)}s)`
+        : `[campaigns.send] campaign '${campaign.key}' approved; send enqueued to fire now (job ${jobId})`,
+    );
+    return { enqueued: true, jobId, delayMs };
+  } catch (err) {
+    // The approval is committed; a failed enqueue must not undo it or
+    // error the operator's decision. The monitor's overdue_scheduled
+    // condition is the backstop for a send that never got enqueued.
+    const reason = err instanceof Error ? err.message : String(err);
+    deps.log(
+      `[campaigns.send] WARNING: could not enqueue send for approved campaign '${campaign.key}': ${reason}. The campaign monitor will flag it as overdue.`,
+    );
+    return { enqueued: false, reason };
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -302,6 +387,10 @@ export interface CampaignApprovalPayload {
    * JSON-safe serialized form (priorSend.sentAt is an ISO string); null =
    * no completed prior send (first send, or prior run still mid-flight). */
   send_diff: SendDiffPayload | null;
+  /** Scheduled send time (campaigns.send_at, 0018) as an ISO string;
+   * null = sends on approval. Optional: items filed before SEA-84 lack
+   * the field, and the card treats absent as "sends on approval". */
+  send_at?: string | null;
   rationale: string;
   sources?: unknown[];
   kb_unavailable?: boolean;
@@ -730,6 +819,25 @@ export async function createCampaignApproval(
     }
   }
 
+  // Complete the copy loop (SEA-84): the diff was computed at assembly
+  // time, before any draft existed; NOW the actual draft copy exists --
+  // the single trio, or the briefed per-segment variants (SEA-88) -- so
+  // re-run the per-segment comparison against the stored prior copy and
+  // persist the real verdict on the card. Pure; the null path survives
+  // when no prior copy snapshot exists (pre-snapshot history).
+  const currentCopy: CurrentCopy = payloadVariants
+    ? {
+        variants: payloadVariants.map((v) => ({
+          segment: v.segment,
+          subject: v.draft_subject,
+          body: v.draft_body,
+        })),
+      }
+    : { subject: single!.draft_subject, body: single!.draft_body };
+  const sendDiffWithCopy = assembly.sendDiff
+    ? withCurrentCopy(assembly.sendDiff, currentCopy)
+    : null;
+
   const { campaign, build } = assembly;
   const samples: CampaignApprovalPayload["exclusions"]["samples"] = [];
   const perReason = new Map<ExclusionReason, number>();
@@ -760,7 +868,8 @@ export async function createCampaignApproval(
       summary: build.summary,
     },
     ...(payloadVariants ? { variants: payloadVariants } : single!),
-    send_diff: serializeSendDiff(assembly.sendDiff),
+    send_diff: serializeSendDiff(sendDiffWithCopy),
+    send_at: campaign.sendAt ? campaign.sendAt.toISOString() : null,
     rationale,
     ...(kbLog && (kbLog.sources.length > 0 || kbLog.unavailable)
       ? {

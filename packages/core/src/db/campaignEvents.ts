@@ -34,7 +34,7 @@ export type CampaignEventType =
   | "bounced"
   | "complained";
 
-export type SuppressionReason = "hard_bounce" | "complaint";
+export type SuppressionReason = "hard_bounce" | "complaint" | "unsubscribe";
 
 /** The campaign_sends row a provider message id resolves to. */
 export interface CampaignSendRef {
@@ -129,6 +129,11 @@ export async function upsertSuppression(
  * the guard together, which is acceptable ledger noise (same state, same
  * provenance) and vanishingly rare given provider retry pacing.
  * INSERT only -- the append-only trigger forbids anything else.
+ *
+ * SEA-84 widened source to include 'unsubscribe_link': the one-click
+ * unsubscribe endpoint appends through this same guard, its detail
+ * embedding the signed token's (campaign, contact) identity so a
+ * replayed click is a no-op, never a double append.
  */
 export async function appendConsentEventOnce(
   db: Queryable,
@@ -136,7 +141,7 @@ export async function appendConsentEventOnce(
     contactId: string;
     email: string;
     state: "subscribed" | "unsubscribed";
-    source: "complaint";
+    source: "complaint" | "unsubscribe_link";
     detail: string;
   },
 ): Promise<boolean> {
@@ -174,7 +179,7 @@ export interface ResendEventStore {
     contactId: string;
     email: string;
     state: "subscribed" | "unsubscribed";
-    source: "complaint";
+    source: "complaint" | "unsubscribe_link";
     detail: string;
   }): Promise<boolean>;
 }

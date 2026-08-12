@@ -29,6 +29,11 @@ export {
   learningMineJobId,
   learningThresholdKind,
   LEARNING_MINE_JOB,
+  enqueueCampaignSend,
+  enqueueCampaignSendResume,
+  campaignSendJobId,
+  CAMPAIGNS_SEND_JOB,
+  type CampaignSendJobPayload,
   type GmailStateJobPayload,
 } from "./enqueue.js";
 export {

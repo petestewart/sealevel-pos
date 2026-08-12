@@ -10,8 +10,9 @@ import type { RecipientDelta } from "./sendDiffTypes.js";
  *
  * Prints a readable "what changes about this send versus the last one":
  * recipients added, recipients dropped (bounded samples, exact counts),
- * the prior send's identity, and the copy-comparison status (unknown
- * until SEA-84 stores the sent copy). Read-only.
+ * the prior send's identity, and the copy comparison (a real verdict
+ * whenever SEA-84's stored per-run copy snapshot and a current draft
+ * both exist; honest "unknown" for pre-snapshot history). Read-only.
  */
 loadEnv();
 

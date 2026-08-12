@@ -21,9 +21,11 @@ import { requireCampaignDecider } from "../../lib/requireDecider";
  * concurrent decision or a campaign that moved on underneath surfaces as
  * an inline stale message, never a half-recorded state.
  *
- * Approval STOPS at the status flip: nothing is enqueued (the send job is
- * SEA-84; core onCampaignApproved is the wiring seam and today records an
- * honest no-op).
+ * After the decision commits, approval triggers the SEA-84 send: core
+ * onCampaignApproved enqueues campaigns.send (immediately, or as a
+ * delayed job for campaigns.send_at). It never throws; a failed enqueue
+ * is logged and caught by the campaign monitor's overdue_scheduled
+ * condition.
  */
 
 export interface CampaignActionState {
@@ -51,10 +53,8 @@ async function decideCampaign(
   switch (outcome.status) {
     case "decided": {
       if (action === "approved") {
-        // SEA-84 SEAM: today this logs an honest "send job not built" and
-        // enqueues nothing. The send enqueue is wired inside
-        // onCampaignApproved when SEA-84 lands; this call site does not
-        // change.
+        // SEA-84: enqueue the send (immediate, or delayed to send_at).
+        // Never throws; the approval is already committed.
         await onCampaignApproved(outcome.campaign);
       }
       revalidatePath("/", "layout");

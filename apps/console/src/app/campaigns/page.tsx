@@ -21,6 +21,14 @@ const DATE_FMT = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/Los_Angeles",
 });
 
+/** Scheduled sends (SEA-84) show the wall-clock PT moment, not just the
+ * date: "sends at 9am" and "sends at 5pm" are different decisions. */
+const DATETIME_FMT = new Intl.DateTimeFormat("en-US", {
+  dateStyle: "medium",
+  timeStyle: "short",
+  timeZone: "America/Los_Angeles",
+});
+
 const RESULT_CELLS = [
   ["delivered", "Delivered"],
   ["opened", "Opened"],
@@ -68,6 +76,15 @@ function CampaignRow({ campaign }: { campaign: CampaignSummary }) {
         {DATE_FMT.format(campaign.createdAt)}
         {campaign.approvedAt
           ? ` · approved ${DATE_FMT.format(campaign.approvedAt)}`
+          : ""}
+        {/* SEA-84: send_at on approved-but-unsent campaigns. The send job
+            (or its scheduled fire) will move this row to sending/sent;
+            until then the schedule is the row's most decision-relevant
+            fact. */}
+        {campaign.status === "approved"
+          ? campaign.sendAt
+            ? ` · scheduled to send ${DATETIME_FMT.format(campaign.sendAt)} PT`
+            : " · sends on approval (send imminent)"
           : ""}
       </div>
       {hasResults(campaign) ? (

@@ -61,6 +61,9 @@ export interface CampaignSummary {
   runSeq: number;
   createdAt: Date;
   approvedAt: Date | null;
+  /** Scheduled send time (campaigns.send_at, 0018); null = sends on
+   * approval. Only meaningful for display on approved-but-unsent rows. */
+  sendAt: Date | null;
   /**
    * Size of the frozen campaign_audience snapshot. The snapshot is keyed
    * (campaign_id, contact_id) with no run column, so after a re-run
@@ -122,6 +125,7 @@ interface CampaignSummaryRow {
   run_seq: number;
   created_at: Date;
   approved_at: Date | null;
+  send_at: Date | null;
   recipients: string;
   delivered: string;
   opened: string;
@@ -140,6 +144,7 @@ export function toCampaignSummary(row: CampaignSummaryRow): CampaignSummary {
     runSeq: row.run_seq,
     createdAt: row.created_at,
     approvedAt: row.approved_at,
+    sendAt: row.send_at,
     recipients: Number(row.recipients),
     events: {
       delivered: Number(row.delivered),
@@ -172,7 +177,7 @@ export function toCampaignSummary(row: CampaignSummaryRow): CampaignSummary {
 export async function listCampaignSummaries(): Promise<CampaignSummary[]> {
   const { rows } = await getPool().query<CampaignSummaryRow>(
     `SELECT c.id, c.key, c.name, c.status, c.run_seq, c.created_at,
-            c.approved_at,
+            c.approved_at, c.send_at,
             coalesce(a.recipients, '0') AS recipients,
             coalesce(e.delivered, '0')  AS delivered,
             coalesce(e.opened, '0')     AS opened,

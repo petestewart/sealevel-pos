@@ -16,8 +16,9 @@ import type { Item } from "./items.js";
  * campaign row in one transaction, so the item's audit trail and the
  * campaign's status can never disagree.
  *
- * Approval STOPS at the status flip. The send job is SEA-84 (not built);
- * see onCampaignApproved in campaigns/draftCampaign.ts for the seam.
+ * Approval ends at the status flip HERE; the caller then invokes
+ * onCampaignApproved (campaigns/draftCampaign.ts), which enqueues the
+ * SEA-84 send job (immediately, or delayed to campaigns.send_at).
  */
 
 /** One frozen-snapshot recipient with the contact fields the card needs. */
@@ -159,8 +160,9 @@ export interface TransactionPool {
  *    rolls the WHOLE transaction back (campaign_conflict), so the item
  *    can never claim a decision the campaign row does not carry.
  *
- * Approval stops here. Nothing is enqueued: the send job is SEA-84 (see
- * onCampaignApproved).
+ * This function only decides. The send enqueue happens in the caller via
+ * onCampaignApproved (SEA-84), AFTER this transaction commits, so a
+ * failed enqueue can never un-decide an approval.
  */
 export async function decideCampaignApproval(
   itemId: string,

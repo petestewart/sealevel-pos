@@ -17,7 +17,7 @@ import {
  * is SEA-85's lane, and the send pipeline is SEA-83/84's. The monitor's
  * only writes are to its own campaign_alert_state dedupe table (0015).
  *
- * Four conditions, thresholds from env (monitorConfigFromEnv, defaults
+ * Five conditions, thresholds from env (monitorConfigFromEnv, defaults
  * from the ticket):
  *
  * 1. complaint_rate: distinct complained sends / sent sends at or above
@@ -37,6 +37,13 @@ import {
  *    campaign_sends rows at all, older than ZERO_RECIPIENT_GRACE_MINUTES
  *    (default 15). The silent no-op: an audience query that quietly
  *    returns nothing looks exactly like success.
+ *
+ * 5. overdue_scheduled (SEA-84): an APPROVED campaign whose due time has
+ *    passed by OVERDUE_SCHEDULED_GRACE_MINUTES (default 30) with no send
+ *    activity at all. Due time = send_at when scheduled (0018), else
+ *    approved_at (an immediate send should have fired on approval). The
+ *    scheduled twin of zero_recipients: a lost/dead-lettered enqueue
+ *    looks exactly like a patient delay unless something is counting.
  *
  * Both rate checks require at least MIN_SENT sends (default 10) so a
  * five-person test send cannot page on a single event; the rolling check
@@ -75,6 +82,9 @@ export interface CampaignMonitorConfig {
   /** How long after approval a sends-less 'sending'/'sent' campaign gets
    * before zero_recipients fires (the enqueue job needs a moment). */
   zeroRecipientGraceMinutes: number;
+  /** How far past its due time (send_at, else approved_at) an 'approved'
+   * campaign with no send rows gets before overdue_scheduled fires. */
+  overdueScheduledGraceMinutes: number;
   /** Rolling complaint-rate window, in days. */
   rollingWindowDays: number;
   /** Minimum sent sends before either rate check applies. */
@@ -88,6 +98,7 @@ export const DEFAULT_MONITOR_CONFIG: CampaignMonitorConfig = {
   hardBounceRateThreshold: 0.02,
   stuckSendingMinutes: 120,
   zeroRecipientGraceMinutes: 15,
+  overdueScheduledGraceMinutes: 30,
   rollingWindowDays: 7,
   minSentForRates: 10,
   realertHours: 24,
@@ -130,6 +141,10 @@ export function monitorConfigFromEnv(): CampaignMonitorConfig {
     zeroRecipientGraceMinutes: numFromEnv(
       "CAMPAIGN_ALERT_ZERO_RECIPIENT_GRACE_MINUTES",
       d.zeroRecipientGraceMinutes,
+    ),
+    overdueScheduledGraceMinutes: numFromEnv(
+      "CAMPAIGN_ALERT_OVERDUE_SCHEDULED_GRACE_MINUTES",
+      d.overdueScheduledGraceMinutes,
     ),
     rollingWindowDays: numFromEnv(
       "CAMPAIGN_ALERT_ROLLING_WINDOW_DAYS",
@@ -174,6 +189,15 @@ export interface ZeroRecipientCampaign {
   minutesSinceApproval: number;
 }
 
+export interface OverdueScheduledCampaign {
+  campaignId: string;
+  campaignKey: string;
+  /** Minutes past the due time (send_at, else approved_at). */
+  minutesOverdue: number;
+  /** Whether the campaign carried an explicit send_at. */
+  scheduled: boolean;
+}
+
 /**
  * The store interface the monitor depends on, so the offline smoke runs
  * every branch against an in-memory fake (same injection pattern as
@@ -195,6 +219,15 @@ export interface MonitorStore {
     graceMinutes: number,
     windowDays: number,
   ): Promise<ZeroRecipientCampaign[]>;
+  /** Approved campaigns past their due time (send_at, else approved_at)
+   * by more than graceMinutes with no campaign_sends rows, due within
+   * the last windowDays (same never-resolves reasoning: an abandoned
+   * approved campaign should stop paging once it ages out; the operator
+   * either re-fires or cancels it). */
+  overdueScheduledCampaigns(
+    graceMinutes: number,
+    windowDays: number,
+  ): Promise<OverdueScheduledCampaign[]>;
   /** Upsert the condition as active and report whether it should notify
    * (no prior notification, or the last one is older than realertHours). */
   shouldNotify(
@@ -346,6 +379,38 @@ export function pgMonitorStore(db?: Queryable): MonitorStore {
         campaignKey: String(r.campaign_key),
         status: String(r.status),
         minutesSinceApproval: Number(r.minutes_since_approval),
+      }));
+    },
+
+    async overdueScheduledCampaigns(
+      graceMinutes: number,
+      windowDays: number,
+    ): Promise<OverdueScheduledCampaign[]> {
+      // Due time: send_at when the campaign is scheduled (0018), else
+      // approved_at (an immediate send should have fired on approval).
+      const { rows } = await q().query(
+        `SELECT c.id::text AS campaign_id,
+                c.key AS campaign_key,
+                (c.send_at IS NOT NULL) AS scheduled,
+                floor(extract(epoch FROM now() -
+                  coalesce(c.send_at, c.approved_at)) / 60)::int
+                  AS minutes_overdue
+         FROM campaigns c
+         WHERE c.status = 'approved'
+           AND NOT EXISTS
+             (SELECT 1 FROM campaign_sends s WHERE s.campaign_id = c.id)
+           AND coalesce(c.send_at, c.approved_at)
+               < now() - make_interval(mins => $1)
+           AND coalesce(c.send_at, c.approved_at)
+               >= now() - make_interval(days => $2)
+         ORDER BY c.id`,
+        [graceMinutes, windowDays],
+      );
+      return (rows as Array<Record<string, unknown>>).map((r) => ({
+        campaignId: String(r.campaign_id),
+        campaignKey: String(r.campaign_key),
+        minutesOverdue: Number(r.minutes_overdue),
+        scheduled: Boolean(r.scheduled),
       }));
     },
 
@@ -577,6 +642,31 @@ export async function runCampaignMonitor(
         numerator: 0,
         denominator: null,
         detail: `Campaign ${z.campaignKey} is '${z.status}' but produced zero recipients (${z.minutesSinceApproval} minutes since approval). The audience query may have quietly returned nothing.`,
+        at,
+      },
+    });
+  }
+
+  // 5. Overdue scheduled/approved sends (SEA-84).
+  for (const o of await d.store.overdueScheduledCampaigns(
+    cfg.overdueScheduledGraceMinutes,
+    cfg.rollingWindowDays,
+  )) {
+    conditions.push({
+      key: alertKey("overdue_scheduled", "campaign", o.campaignId),
+      value: o.minutesOverdue,
+      payload: {
+        alertType: "overdue_scheduled",
+        scope: "campaign",
+        campaignId: o.campaignId,
+        campaignKey: o.campaignKey,
+        rate: null,
+        threshold: cfg.overdueScheduledGraceMinutes,
+        numerator: o.minutesOverdue,
+        denominator: null,
+        detail: o.scheduled
+          ? `Campaign ${o.campaignKey} is approved with a scheduled send time that passed ${o.minutesOverdue} minutes ago, but no send has started (grace ${cfg.overdueScheduledGraceMinutes} min). The send job may not have been enqueued.`
+          : `Campaign ${o.campaignKey} was approved ${o.minutesOverdue} minutes ago for an immediate send, but no send has started (grace ${cfg.overdueScheduledGraceMinutes} min). The send job may not have been enqueued.`,
         at,
       },
     });

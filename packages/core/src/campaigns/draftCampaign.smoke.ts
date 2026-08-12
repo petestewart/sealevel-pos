@@ -24,7 +24,7 @@ import {
   type CampaignDraftAssembly,
   type DraftCampaignDeps,
 } from "./draftCampaign.js";
-import { computeSendDiff } from "./sendDiff.js";
+import { computeSendDiff, withCurrentCopy } from "./sendDiff.js";
 import { SEND_DIFF_SAMPLE_LIMIT, type SendDiff } from "./sendDiffTypes.js";
 import type { CampaignBriefEntry } from "./campaignBriefs.js";
 import { resolveCampaignBrief } from "./campaignBriefs.js";
@@ -60,6 +60,7 @@ const CAMPAIGN: CampaignRow = {
   status: "draft",
   audienceView: "v_campaign_post_first_visit",
   runSeq: 1,
+  sendAt: null,
 };
 
 const SNAPSHOT_AT = new Date("2026-08-10T17:00:00Z");
@@ -488,12 +489,24 @@ async function smokeSendDiffPresent(): Promise<void> {
   assert.ok(payload);
 
   // JSON boundary: the persisted diff is the SERIALIZED form; the Date
-  // became an ISO string at the payload boundary.
+  // became an ISO string at the payload boundary. Since SEA-84 the
+  // create step re-runs the copy comparison with the ACTUAL draft copy
+  // (withCurrentCopy); with no stored prior copy on the diff, the
+  // verdict honestly stays null.
   const stored = payload.send_diff;
   assert.ok(stored);
   assert.equal(stored.priorSend.sentAt, "2026-07-01T17:00:00.000Z");
-  assert.deepEqual(stored, serializeSendDiff(diff));
-  assert.equal(stored.copyChanged, null); // unknown stays null
+  assert.deepEqual(
+    stored,
+    serializeSendDiff(
+      withCurrentCopy(diff, {
+        subject: GOOD_INPUT.subject,
+        body: GOOD_INPUT.body,
+      }),
+    ),
+  );
+  assert.equal(stored.copyChanged, null); // unknown stays null (no prior copy)
+  assert.match(stored.copySummary, /no stored prior copy/);
   assert.equal(stored.recipientsAdded.count, 12);
   assert.equal(stored.recipientsDropped.count, 1);
   // The sample is truncated (2 of 12): the card renders "and 10 more".
@@ -513,8 +526,41 @@ async function smokeSendDiffPresent(): Promise<void> {
   nullSent.priorSend.sentAt = null;
   assert.equal(serializeSendDiff(nullSent)!.priorSend.sentAt, null);
 
+  // SEA-84 loop closure: with a STORED PRIOR COPY on the diff, the
+  // create step compares the model's actual draft against it and the
+  // card gets a REAL boolean, not null.
+  {
+    const withPrior = canonicalDiff();
+    withPrior.priorCopy = {
+      runSeq: 1,
+      variants: [
+        { segment: "", subject: GOOD_INPUT.subject, body: GOOD_INPUT.body },
+      ],
+    };
+    const { deps: d2, calls: c2 } = fakeDeps({ sendDiff: withPrior });
+    const a2 = await assembleCampaignDraft(CAMPAIGN.key, d2);
+    await createCampaignApproval(a2, GOOD_INPUT, d2);
+    const p2 = campaignApprovalOf(c2.created[0]!.payload ?? {});
+    assert.ok(p2);
+    assert.equal(p2.send_diff!.copyChanged, false); // identical copy
+    assert.match(p2.send_diff!.summary, /copy: unchanged/);
+
+    const changedPrior = canonicalDiff();
+    changedPrior.priorCopy = {
+      runSeq: 1,
+      variants: [{ segment: "", subject: "Old subject", body: "Old body" }],
+    };
+    const { deps: d3, calls: c3 } = fakeDeps({ sendDiff: changedPrior });
+    const a3 = await assembleCampaignDraft(CAMPAIGN.key, d3);
+    await createCampaignApproval(a3, GOOD_INPUT, d3);
+    const p3 = campaignApprovalOf(c3.created[0]!.payload ?? {});
+    assert.ok(p3);
+    assert.equal(p3.send_diff!.copyChanged, true);
+    assert.match(p3.send_diff!.summary, /copy: CHANGED/);
+  }
+
   console.log(
-    "[smoke] send-diff: canonical re-send diff flows assembly -> payload -> validator (JSON-safe, copy unknown preserved)",
+    "[smoke] send-diff: canonical re-send diff flows assembly -> payload -> validator (JSON-safe; copy unknown preserved without a prior copy, REAL boolean with one)",
   );
 }
 
@@ -1249,14 +1295,69 @@ async function smokeApprovalTransition(): Promise<void> {
 }
 
 /* ------------------------------------------------------------------ *
- * 9. SEA-84 seam: approval stops at the flip                         *
+ * 9. SEA-84 seam: approval enqueues the send                          *
  * ------------------------------------------------------------------ */
 
 async function smokeApprovedSeam(): Promise<void> {
-  const result = await onCampaignApproved({ id: "7", key: CAMPAIGN.key });
+  const NOW = new Date("2026-08-12T17:00:00Z");
+  const enqueues: Array<{
+    campaignKey: string;
+    campaignId: string;
+    runSeq: number;
+    delayMs?: number;
+  }> = [];
+  const deps = (sendAt: Date | null, failEnqueue = false) => ({
+    getSchedule: async () => ({ sendAt, runSeq: 1 }),
+    enqueueSend: async (options: {
+      campaignKey: string;
+      campaignId: string;
+      runSeq: number;
+      delayMs?: number;
+    }) => {
+      if (failEnqueue) throw new Error("redis unavailable");
+      enqueues.push(options);
+      return `job-${enqueues.length}`;
+    },
+    now: () => NOW,
+    log: () => {},
+  });
+
+  // send_at null: enqueued to fire immediately (no delay).
+  let result = await onCampaignApproved(
+    { id: "7", key: CAMPAIGN.key },
+    deps(null),
+  );
+  assert.equal(result.enqueued, true);
+  assert.equal(result.delayMs, 0);
+  assert.equal(enqueues[0]!.delayMs, undefined);
+
+  // Future send_at: DELAYED for exactly (send_at - now).
+  const sendAt = new Date(NOW.getTime() + 90 * 60 * 1000);
+  result = await onCampaignApproved({ id: "7", key: CAMPAIGN.key }, deps(sendAt));
+  assert.equal(result.enqueued, true);
+  assert.equal(result.delayMs, 90 * 60 * 1000);
+  assert.equal(enqueues[1]!.delayMs, 90 * 60 * 1000);
+
+  // PAST send_at (approval landed after the scheduled time): fires now,
+  // never a negative delay.
+  const past = new Date(NOW.getTime() - 60_000);
+  result = await onCampaignApproved({ id: "7", key: CAMPAIGN.key }, deps(past));
+  assert.equal(result.enqueued, true);
+  assert.equal(result.delayMs, 0);
+
+  // Enqueue failure NEVER throws (the approval is already committed);
+  // it reports honestly and leaves the monitor's overdue backstop to
+  // catch the lost send.
+  result = await onCampaignApproved(
+    { id: "7", key: CAMPAIGN.key },
+    deps(null, true),
+  );
   assert.equal(result.enqueued, false);
-  assert.match(result.reason, /SEA-84/);
-  console.log("[smoke] SEA-84 seam: onCampaignApproved enqueues nothing");
+  assert.match(result.reason ?? "", /redis unavailable/);
+
+  console.log(
+    "[smoke] SEA-84 seam: approval enqueues the send (immediate, delayed to send_at, past send_at fires now, enqueue failure contained)",
+  );
 }
 
 /* ------------------------------------------------------------------ *

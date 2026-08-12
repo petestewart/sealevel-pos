@@ -18,6 +18,15 @@ import type {
  * shape becomes one whole-audience variant, so the components render
  * exactly one code path.
  */
+/** Format the payload's send_at (ISO string or null/absent) for display
+ * (PT via formatDateTime); null = sends on approval. Items filed before
+ * SEA-84 lack the field, which reads the same as null. */
+function sendAtDisplay(sendAt: string | null | undefined): string | null {
+  if (typeof sendAt !== "string" || sendAt.length === 0) return null;
+  const date = new Date(sendAt);
+  return Number.isNaN(date.getTime()) ? sendAt : formatDateTime(date);
+}
+
 export function toCampaignApprovalCardData(
   item: Item,
 ): CampaignApprovalCardData | null {
@@ -60,6 +69,7 @@ export function toCampaignApprovalCardData(
     exclusions: payload.exclusions,
     variants,
     sendDiff: payload.send_diff,
+    sendAtDisplay: sendAtDisplay(payload.send_at),
     rationale: payload.rationale,
     kbUnavailable: payload.kb_unavailable === true,
     receivedTime: formatCardTimestamp(item.created_at),

@@ -13,9 +13,11 @@ import {
   buildAudience,
   CAMPAIGNS_BUILD_AUDIENCE_JOB,
   CAMPAIGNS_MONITOR_JOB,
+  CAMPAIGNS_SEND_JOB,
   campaignsMonitorSchedule,
   CAMPAIGNS_SYNC_CONTACTS_JOB,
   campaignsSyncContactsSchedule,
+  enqueueCampaignSendResume,
   DEFAULT_QUEUE_NAME,
   EMAIL_GMAIL_STATE_JOB,
   EMAIL_INGEST_JOB,
@@ -41,11 +43,13 @@ import {
   markGmailTrashed,
   mineOperatorLessons,
   processResendWebhook,
+  processUnsubscribe,
   registerJobs,
   registerSchedules,
   runCampaignMonitor,
   runJob,
   sendApprovedReply,
+  sendCampaign,
   syncContacts,
   workerVersion,
   writeApprovedKbUpdate,
@@ -244,6 +248,44 @@ const processors: Record<string, (job: Job) => Promise<void>> = {
       `[worker] ${CAMPAIGNS_BUILD_AUDIENCE_JOB}: ${result.status} -- ${result.summary}`,
     );
   },
+  // Campaign send on approval (SEA-84). Pure code, no brain: delivers the
+  // frozen audience snapshot the approved copy through Resend, batched
+  // and rate-limited under the warmup ramp, with per-recipient
+  // suppression/consent re-checks at send time and the signed one-click
+  // unsubscribe in every message. Enqueued by onCampaignApproved (the
+  // console's approve action), immediately or DELAYED to campaigns.
+  // send_at. Idempotent under retries via campaign_sends.dedupe_key +
+  // per-send Resend Idempotency-Keys. Degrades to a logged skip without
+  // RESEND_API_KEY / CAMPAIGN_FROM_EMAIL, and REFUSES (loudly) without a
+  // working unsubscribe config. A ramp pause re-enqueues itself delayed.
+  [CAMPAIGNS_SEND_JOB]: async (job) => {
+    const campaignKey = (job.data as { campaignKey?: unknown }).campaignKey;
+    if (typeof campaignKey !== "string" || campaignKey === "") {
+      throw new Error(
+        `${CAMPAIGNS_SEND_JOB} requires { campaignKey } in the job data`,
+      );
+    }
+    const result = await sendCampaign(campaignKey);
+    console.log(
+      `[worker] ${CAMPAIGNS_SEND_JOB}: ${result.status} -- ${result.summary}`,
+    );
+    if (
+      result.status === "ramp_paused" &&
+      result.campaignId &&
+      result.runSeq !== null
+    ) {
+      await enqueueCampaignSendResume({
+        campaignKey,
+        campaignId: result.campaignId,
+        runSeq: result.runSeq,
+        resumeDelayMs: result.resumeDelayMs ?? 60 * 60 * 1000,
+        queue,
+      });
+      console.log(
+        `[worker] ${CAMPAIGNS_SEND_JOB}: resume enqueued for '${campaignKey}' in ${Math.round((result.resumeDelayMs ?? 3_600_000) / 60_000)} min`,
+      );
+    }
+  },
   // Campaign health monitor (SEA-92). Pure code, no brain: complaint
   // rate, hard bounce rate, stuck 'sending' campaigns, zero-recipient
   // runs, read from the campaign tables and alerted through the Novu
@@ -382,6 +424,38 @@ app.post(
       });
   },
 );
+
+// One-click unsubscribe (SEA-84): the CAN-SPAM endpoint, on this worker
+// because it is the public inbound edge that already serves HTTP here
+// (healthz + /webhooks/resend) and holds the DB. All logic is in core
+// (processUnsubscribe); these routes only adapt Express. GET is the
+// human click from the email footer (tiny confirmation page); POST is
+// the RFC 8058 one-click that mail providers fire from the
+// List-Unsubscribe-Post header. Config-gated inside core: with
+// UNSUBSCRIBE_TOKEN_SECRET unset both routes answer 404 as if they did
+// not exist. A store failure returns 500 so the client retries; every
+// write is idempotent, so retries and double clicks are harmless.
+const unsubscribeRoute = (req: express.Request, res: express.Response): void => {
+  const token = typeof req.query.token === "string" ? req.query.token : undefined;
+  void processUnsubscribe({
+    method: req.method === "POST" ? "POST" : "GET",
+    token,
+  })
+    .then((result) => {
+      res
+        .status(result.status)
+        .type(result.contentType === "html" ? "text/html" : "application/json")
+        .send(result.body);
+    })
+    .catch((err: unknown) => {
+      console.error(
+        `[worker] unsubscribe failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      if (!res.headersSent) res.status(500).json({ error: "internal error" });
+    });
+};
+app.get("/unsubscribe", unsubscribeRoute);
+app.post("/unsubscribe", express.urlencoded({ extended: false }), unsubscribeRoute);
 
 // Railway injects PORT and points its healthcheck at it; locally
 // BULL_BOARD_PORT (default 3010) keeps the existing dev behavior.

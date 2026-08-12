@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 
 import type { CampaignRow } from "../db/campaignAudience.js";
 import type { PriorSendRow, SendDiffStore } from "../db/sendDiff.js";
-import { computeSendDiff } from "./sendDiff.js";
+import type { ApprovedCopy, CopySnapshot } from "../db/campaignSend.js";
+import { computeSendDiff, withCurrentCopy } from "./sendDiff.js";
 import { SEND_DIFF_SAMPLE_LIMIT } from "./sendDiffTypes.js";
 
 /**
@@ -19,6 +20,11 @@ class FakeSendDiffStore implements SendDiffStore {
   campaigns = new Map<string, CampaignRow>();
   sendRows = new Map<string, PriorSendRow[]>(); // campaignId -> rows
   audienceEmails = new Map<string, string[]>(); // campaignId -> emails
+  /** SEA-84: durable per-run sent-copy snapshots, campaignId -> newest. */
+  copySnapshots = new Map<string, CopySnapshot>();
+  /** SEA-84: draft copy per "campaignId:runSeq" (campaign_approval item),
+   * in either the single or the SEA-88 variants shape. */
+  draftCopies = new Map<string, ApprovedCopy>();
 
   async getCampaignByKey(key: string): Promise<CampaignRow | null> {
     return this.campaigns.get(key) ?? null;
@@ -28,6 +34,15 @@ class FakeSendDiffStore implements SendDiffStore {
   }
   async listAudienceEmails(campaignId: string): Promise<string[]> {
     return this.audienceEmails.get(campaignId) ?? [];
+  }
+  async getLatestCopySnapshot(campaignId: string): Promise<CopySnapshot | null> {
+    return this.copySnapshots.get(campaignId) ?? null;
+  }
+  async getDraftCopy(
+    campaignId: string,
+    runSeq: number,
+  ): Promise<ApprovedCopy | null> {
+    return this.draftCopies.get(`${campaignId}:${runSeq}`) ?? null;
   }
 }
 
@@ -39,6 +54,7 @@ function campaign(id: string, key: string, runSeq = 1): CampaignRow {
     status: "pending_approval",
     audienceView: "v_campaign_post_first_visit",
     runSeq,
+    sendAt: null,
   };
 }
 
@@ -114,9 +130,11 @@ async function testAddedDroppedDetection(): Promise<void> {
     skippedSuppressedCount: 1,
     failedCount: 1,
   });
-  // Copy is UNKNOWN until SEA-84 stores the sent copy: null, never false.
+  // No stored prior copy (pre-snapshot history) and no current draft:
+  // copy stays UNKNOWN -- null, never false.
   assert.equal(diff.copyChanged, null);
-  assert.match(diff.copySummary, /SEA-84/);
+  assert.match(diff.copySummary, /no stored prior copy/);
+  assert.equal(diff.priorCopy, null);
   assert.match(diff.summary, /1 added, 1 dropped, 2 now in audience/);
   assert.match(diff.summary, /copy: unknown/);
   console.log(
@@ -164,12 +182,156 @@ async function testIdenticalAudienceIsEmptyDiff(): Promise<void> {
   );
 }
 
+/**
+ * SEA-84 loop closure: with a stored copy snapshot (the send job writes
+ * one per run) and a current draft copy, copyChanged is a REAL boolean;
+ * each side missing keeps the honest null.
+ */
+async function testCopyComparison(): Promise<void> {
+  const store = new FakeSendDiffStore();
+  store.campaigns.set("copy", campaign("11", "copy", 2));
+  store.sendRows.set("11", [sent("a@example.com", "2026-07-01T00:00:00Z")]);
+  store.audienceEmails.set("11", ["a@example.com"]);
+  store.copySnapshots.set("11", {
+    runSeq: 1,
+    variants: [
+      { segment: "", subject: "August at Sealevel", body: "Old body copy." },
+    ],
+  });
+
+  // Prior copy stored, no current draft yet: still unknown, and the
+  // stored prior copy rides on the diff for the draft-time comparison.
+  let diff = await computeSendDiff("copy", { store });
+  assert.ok(diff);
+  assert.equal(diff.copyChanged, null);
+  assert.match(diff.copySummary, /no current draft/);
+  assert.deepEqual(diff.priorCopy, {
+    runSeq: 1,
+    variants: [
+      { segment: "", subject: "August at Sealevel", body: "Old body copy." },
+    ],
+  });
+
+  // Current draft read back from the run's campaign_approval item:
+  // identical copy -> false.
+  store.draftCopies.set("11:2", {
+    subject: "August at Sealevel",
+    body: "Old body copy.\n",
+  }); // trailing whitespace is not a copy change
+  diff = await computeSendDiff("copy", { store });
+  assert.ok(diff);
+  assert.equal(diff.copyChanged, false);
+  assert.match(diff.summary, /copy: unchanged/);
+
+  // Explicit currentCopy option (the draft job's path) wins over the
+  // stored item and detects a change.
+  diff = await computeSendDiff(
+    "copy",
+    { store },
+    { currentCopy: { subject: "September at Sealevel", body: "Old body copy." } },
+  );
+  assert.ok(diff);
+  assert.equal(diff.copyChanged, true);
+  assert.match(diff.summary, /copy: CHANGED/);
+
+  // withCurrentCopy: the pure draft-time patch recomputes verdict +
+  // summary on an existing diff without mutating it.
+  const base = await computeSendDiff("copy", { store });
+  assert.ok(base);
+  const patched = withCurrentCopy(base, {
+    subject: "Completely new",
+    body: "Completely new body",
+  });
+  assert.equal(patched.copyChanged, true);
+  assert.equal(base.copyChanged, false); // untouched
+  assert.match(patched.summary, /copy: CHANGED/);
+
+  console.log(
+    "[smoke] send_diff: copyChanged is a real comparison against the stored prior copy (null path preserved for pre-snapshot history)",
+  );
+}
+
+/**
+ * Per-segment comparison (SEA-88 x SEA-84): copyChanged is true iff any
+ * segment's copy differs OR the segment set changed, and copySummary
+ * names the changed segments.
+ */
+async function testPerSegmentCopyComparison(): Promise<void> {
+  const store = new FakeSendDiffStore();
+  store.campaigns.set("seg", campaign("13", "seg", 2));
+  store.sendRows.set("13", [sent("a@example.com", "2026-07-01T00:00:00Z")]);
+  store.audienceEmails.set("13", ["a@example.com"]);
+  store.copySnapshots.set("13", {
+    runSeq: 1,
+    variants: [
+      { segment: "hot_only", subject: "Hot", body: "Hot body" },
+      { segment: "lapsed", subject: "Lapsed", body: "Lapsed body" },
+    ],
+  });
+
+  // Identical variant set: unchanged.
+  store.draftCopies.set("13:2", {
+    variants: [
+      { segment: "hot_only", subject: "Hot", body: "Hot body\n" },
+      { segment: "lapsed", subject: "Lapsed", body: "Lapsed body" },
+    ],
+  });
+  let diff = await computeSendDiff("seg", { store });
+  assert.ok(diff);
+  assert.equal(diff.copyChanged, false);
+  assert.match(diff.copySummary, /all 2 segments/);
+
+  // One segment edited: changed, and the summary NAMES it.
+  store.draftCopies.set("13:2", {
+    variants: [
+      { segment: "hot_only", subject: "Hot NEW", body: "Hot body" },
+      { segment: "lapsed", subject: "Lapsed", body: "Lapsed body" },
+    ],
+  });
+  diff = await computeSendDiff("seg", { store });
+  assert.ok(diff);
+  assert.equal(diff.copyChanged, true);
+  assert.match(diff.copySummary, /edited: hot_only/);
+  assert.ok(!diff.copySummary.includes("lapsed"));
+
+  // Segment set changed (variant added, one removed): changed even with
+  // every shared segment's copy identical.
+  store.draftCopies.set("13:2", {
+    variants: [
+      { segment: "hot_only", subject: "Hot", body: "Hot body" },
+      { segment: "new_students", subject: "Welcome", body: "Welcome body" },
+    ],
+  });
+  diff = await computeSendDiff("seg", { store });
+  assert.ok(diff);
+  assert.equal(diff.copyChanged, true);
+  assert.match(diff.copySummary, /segments added: new_students/);
+  assert.match(diff.copySummary, /segments removed: lapsed/);
+
+  // Shape transition (prior single '' copy, current briefed variants):
+  // a copy change by definition, named as base removed.
+  store.copySnapshots.set("13", {
+    runSeq: 1,
+    variants: [{ segment: "", subject: "One", body: "One body" }],
+  });
+  diff = await computeSendDiff("seg", { store });
+  assert.ok(diff);
+  assert.equal(diff.copyChanged, true);
+  assert.match(diff.copySummary, /segments removed: base/);
+
+  console.log(
+    "[smoke] send_diff: per-segment copy comparison (edited names segments; set changes count as changes)",
+  );
+}
+
 async function main(): Promise<void> {
   await testUnknownCampaignThrows();
   await testFirstSendIsNull();
   await testAddedDroppedDetection();
   await testBoundedSamples();
   await testIdenticalAudienceIsEmptyDiff();
+  await testCopyComparison();
+  await testPerSegmentCopyComparison();
   console.log("[smoke] send_diff: all passed");
 }
 

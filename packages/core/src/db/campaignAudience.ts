@@ -93,6 +93,8 @@ export interface CampaignRow {
   status: string;
   audienceView: string;
   runSeq: number;
+  /** Scheduled send time (0018). null = send on approval. */
+  sendAt: Date | null;
 }
 
 /** Look a campaign up by its stable human-facing key. */
@@ -101,7 +103,7 @@ export async function getCampaignByKey(
   key: string,
 ): Promise<CampaignRow | null> {
   const result = await db.query(
-    `SELECT id, key, name, status, audience_view, run_seq
+    `SELECT id, key, name, status, audience_view, run_seq, send_at
      FROM campaigns WHERE key = $1`,
     [key],
   );
@@ -113,6 +115,7 @@ export async function getCampaignByKey(
     status: string;
     audience_view: string;
     run_seq: number;
+    send_at: Date | null;
   };
   return {
     id: String(row.id),
@@ -121,6 +124,7 @@ export async function getCampaignByKey(
     status: row.status,
     audienceView: row.audience_view,
     runSeq: Number(row.run_seq),
+    sendAt: row.send_at,
   };
 }
 

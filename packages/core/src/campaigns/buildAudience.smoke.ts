@@ -275,6 +275,7 @@ async function testRealBuildSnapshots(): Promise<void> {
       status: "draft",
       audienceView: "v_campaign_post_first_visit",
       runSeq: 1,
+      sendAt: null,
     });
     const queries: string[] = [];
     const result = await buildAudience(
@@ -329,6 +330,7 @@ async function testRealBuildGuards(): Promise<void> {
       status: "sent",
       audienceView: "v_campaign_post_first_visit",
       runSeq: 1,
+      sendAt: null,
     });
     await assert.rejects(
       buildAudience({ campaignKey: "done" }, depsWith(store, [])),
@@ -344,6 +346,7 @@ async function testRealBuildGuards(): Promise<void> {
       status: "approved",
       audienceView: "v_campaign_post_first_visit",
       runSeq: 1,
+      sendAt: null,
     });
     await assert.rejects(
       buildAudience({ campaignKey: "signed-off" }, depsWith(store, [])),
@@ -358,6 +361,7 @@ async function testRealBuildGuards(): Promise<void> {
       status: "pending_approval",
       audienceView: "v_campaign_post_first_visit",
       runSeq: 1,
+      sendAt: null,
     });
     const pending = await buildAudience(
       { campaignKey: "pending" },
@@ -380,6 +384,7 @@ async function testRealBuildGuards(): Promise<void> {
       status: "draft",
       audienceView: "v_campaign_post_first_visit",
       runSeq: 1,
+      sendAt: null,
     });
     store.candidates = [
       candidate({ contactId: "1", analyticsClientId: "101" }),
@@ -468,6 +473,7 @@ async function testEmptyAudience(): Promise<void> {
       status: "draft",
       audienceView: "v_campaign_post_first_visit",
       runSeq: 1,
+      sendAt: null,
     });
     const result = await buildAudience(
       { campaignKey: "empty" },

@@ -271,6 +271,74 @@ export async function enqueueLearningMine(kind: string): Promise<string> {
   return enqueueOutboundAction(LEARNING_MINE_JOB, { kind });
 }
 
+/** The BullMQ job name for the campaign send (SEA-84). */
+export const CAMPAIGNS_SEND_JOB = "campaigns.send";
+
+/**
+ * Deterministic jobId for one campaign run's send:
+ * campaignsend-<campaignId>-run-<runSeq>. Ids are numeric, so the id is
+ * BullMQ-safe. Determinism gives windowed idempotency for the APPROVAL
+ * enqueue (a double approve submit cannot enqueue two sends); the durable
+ * double-send guard is campaign_sends.dedupe_key (0011 design point 2),
+ * which holds even after the job record is pruned from Redis.
+ */
+export function campaignSendJobId(campaignId: string, runSeq: number): string {
+  return `campaignsend-${campaignId}-run-${runSeq}`;
+}
+
+/** Payload for a campaigns.send job. */
+export interface CampaignSendJobPayload {
+  campaignKey: string;
+}
+
+/**
+ * Enqueue one campaign run's send, optionally DELAYED (scheduled sends:
+ * campaigns.send_at, 0018). delayMs uses BullMQ's delayed-job machinery,
+ * the same mechanism the repeatable schedules ride on; the send job
+ * re-checks suppressions and consent per recipient when it actually
+ * fires, which is what makes the delay safe. Low attempts, like the
+ * email send: a run that keeps failing surfaces in the dead-letter set
+ * and via the monitor (stuck_sending / overdue_scheduled) rather than
+ * retrying forever.
+ */
+export async function enqueueCampaignSend(options: {
+  campaignKey: string;
+  campaignId: string;
+  runSeq: number;
+  delayMs?: number;
+  /** Override the shared producer queue (worker re-enqueue path). */
+  queue?: Queue;
+}): Promise<string> {
+  const payload: CampaignSendJobPayload = { campaignKey: options.campaignKey };
+  return enqueue(options.queue ?? getSharedQueue(), CAMPAIGNS_SEND_JOB, payload, {
+    jobId: campaignSendJobId(options.campaignId, options.runSeq),
+    attempts: 3,
+    ...(options.delayMs && options.delayMs > 0 ? { delay: options.delayMs } : {}),
+  });
+}
+
+/**
+ * Re-enqueue a ramp-paused send to resume after resumeDelayMs. The jobId
+ * carries a resume timestamp because the ORIGINAL deterministic id may
+ * still be held by the just-completed job record in Redis (windowed
+ * idempotency would otherwise swallow the resume); harmless duplicates
+ * are absorbed by the dedupe_key guard when the job runs.
+ */
+export async function enqueueCampaignSendResume(options: {
+  campaignKey: string;
+  campaignId: string;
+  runSeq: number;
+  resumeDelayMs: number;
+  queue?: Queue;
+}): Promise<string> {
+  const payload: CampaignSendJobPayload = { campaignKey: options.campaignKey };
+  return enqueue(options.queue ?? getSharedQueue(), CAMPAIGNS_SEND_JOB, payload, {
+    jobId: `${campaignSendJobId(options.campaignId, options.runSeq)}-resume-${Date.now()}`,
+    attempts: 3,
+    delay: options.resumeDelayMs,
+  });
+}
+
 /** Close the shared producer queues + connection (clean process shutdown). */
 export async function closeSharedQueue(): Promise<void> {
   for (const queue of sharedQueues.values()) {

@@ -27,6 +27,24 @@ export async function runMigrations(): Promise<string[]> {
     .filter((f) => f.endsWith(".sql"))
     .sort();
 
+  // Guard against parallel-lane number collisions (two branches both
+  // minting the next NNNN, e.g. the 0016_payroll / 0016_campaign_send
+  // near-miss): two migrations sharing a number have an UNDEFINED apply
+  // order across environments, so refuse to run at all until one is
+  // renumbered. Cheap, and it turns a silent ordering hazard into a
+  // loud deploy failure.
+  const byNumber = new Map<string, string>();
+  for (const file of files) {
+    const number = file.slice(0, file.indexOf("_"));
+    const existing = byNumber.get(number);
+    if (existing) {
+      throw new Error(
+        `duplicate migration number ${number}: ${existing} and ${file} -- renumber one before migrating`,
+      );
+    }
+    byNumber.set(number, file);
+  }
+
   const pool = getPool();
   const client = await pool.connect();
   const applied: string[] = [];

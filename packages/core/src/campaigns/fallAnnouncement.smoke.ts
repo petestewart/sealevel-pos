@@ -196,6 +196,7 @@ async function testRealBuildUsesCampaignRowView(): Promise<void> {
       status: "draft",
       audienceView: FALL_ANNOUNCEMENT_AUDIENCE_VIEW,
       runSeq: 1,
+      sendAt: null,
     });
     const queries: string[] = [];
     const result = await buildAudience(

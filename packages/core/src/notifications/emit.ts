@@ -58,7 +58,8 @@ export interface CampaignAlertPayload {
     | "complaint_rate"
     | "hard_bounce_rate"
     | "stuck_sending"
-    | "zero_recipients";
+    | "zero_recipients"
+    | "overdue_scheduled";
   /** "campaign" = one campaign's numbers; "rolling" = across campaigns
    * over the monitor's rolling window. */
   scope: "campaign" | "rolling";

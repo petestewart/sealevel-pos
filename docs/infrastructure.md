@@ -39,6 +39,16 @@ App behavior -> Railway. Live schedule/pricing -> Cloudflare. Nightly analytics 
 | `CAMPAIGN_ALERT_ROLLING_WINDOW_DAYS` | no | Rolling complaint-rate window in days; default `7`. Also bounds which campaigns the per-campaign rate and zero-recipient checks evaluate, so a terminal campaign's frozen rate ages out of alerting instead of re-paging forever |
 | `CAMPAIGN_ALERT_MIN_SENT` | no | Minimum sent sends before either rate alert applies (keeps a 5-person test send from paging on one event); default `10` |
 | `CAMPAIGN_ALERT_REALERT_HOURS` | no | Cooldown before a still-active alert condition pages again; default `24` |
+| `CAMPAIGN_ALERT_OVERDUE_SCHEDULED_GRACE_MINUTES` | no | Grace past a campaign's due time (`send_at`, else `approved_at`) before an approved campaign with no send rows trips the overdue-scheduled alert (SEA-84); default `30` |
+| `RESEND_API_KEY` | for sending | Resend API key for `campaigns.send` (SEA-84); unset = the send job is a logged skip. Worker only, never the console |
+| `RESEND_WEBHOOK_SECRET` | for sending | Svix signing secret for `/webhooks/resend` (SEA-85); unset = the endpoint answers 404 |
+| `CAMPAIGN_FROM_EMAIL` | for sending | The From header, e.g. `Sealevel Hot Yoga <hello@mail.sealevelhotyoga.com>`; MUST be on the verified dedicated sending subdomain, never the transactional Gmail identity; unset = the send job is a logged skip |
+| `UNSUBSCRIBE_TOKEN_SECRET` | for sending | HMAC secret signing one-click unsubscribe tokens; unset = the `/unsubscribe` endpoint answers 404 AND `campaigns.send` REFUSES to fire (never send without a working unsubscribe, CAN-SPAM) |
+| `UNSUBSCRIBE_BASE_URL` | for sending | Public base URL of the worker (e.g. `https://worker.sealevelhotyoga.com`) that unsubscribe links point at; unset = same refusal as the token secret |
+| `CAMPAIGN_SEND_RAMP_PER_DAY` | no | Warmup ramp: max provider-accepted sends per trailing 24h ACROSS ALL campaigns; default `200` (conservative for a cold subdomain; raise week by week per docs/campaigns/sending.md) |
+| `CAMPAIGN_SEND_BATCH_SIZE` | no | Recipients per send batch (also the granularity of the per-batch suppression re-check); default `25`, capped at 100 |
+| `CAMPAIGN_SEND_INTERVAL_MS` | no | Milliseconds between individual Resend requests; default `600` (under Resend's 2 req/s allowance) |
+| `CAMPAIGN_SEND_RAMP_RETRY_MINUTES` | no | How long a ramp-paused send waits before resuming; default `60` (keep below `CAMPAIGN_ALERT_STUCK_SENDING_MINUTES` so a paused ramp does not page) |
 | `SEALEVEL_BOOKING_URL` | no | The one canonical self-service booking link, interpolated verbatim into drafts; unset = booking rule absent |
 | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_USER` | no | Gmail layer (all four or it is inert); worker only, never the console |
 | `GMAIL_SEND_ENABLED` | no | `true` opts the deployment into outbound; default off (ingestion-only) |

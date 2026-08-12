@@ -11,6 +11,7 @@ import {
   deltaMoreSuffix,
   EXCLUSION_REASON_LABELS,
   sendDiffHeadline,
+  sendTimingLine,
   totalExcluded,
   variantHeading,
   type CampaignApprovalCardData,
@@ -24,7 +25,7 @@ import {
 const initialActionState: CampaignActionState = { error: null };
 
 const APPROVE_TOAST =
-  "Campaign approved. Sending is a separate step and has not started.";
+  "Campaign approved. The send fires per its schedule (immediately when none is set).";
 const REJECT_TOAST =
   "Rejected. The campaign is back in draft; rebuild or redraft it any time.";
 
@@ -135,9 +136,10 @@ export function CampaignApprovalCard({
         <div className="kb-card-meta">
           <p className="kb-card-summary">
             {item.campaignName}: one approval for the whole campaign. Nothing
-            has been sent, and approving does not send anything yet either; it
-            marks the campaign approved for the separate send step. Rejecting
-            returns it to draft.
+            has been sent yet. Approving triggers the send.{" "}
+            {/* SEA-84: the send-timing display line (send_at, 0018). */}
+            {sendTimingLine(item.sendAtDisplay)} Rejecting returns it to
+            draft.
           </p>
         </div>
 

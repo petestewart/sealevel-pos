@@ -86,6 +86,15 @@ jobs:
       # card data assembly, approval transition, RBAC gate.
       - name: Campaign draft + approval offline smoke suite
         run: npm run smoke:campaigndraft --workspace @ai-manager/core
+      # SEA-84: approval -> enqueue (immediate + delayed send_at),
+      # send-time suppression re-check, dedupe on retry, warmup ramp,
+      # copy snapshot, config gates, mocked Resend HTTP.
+      - name: Campaign send offline smoke suite (SEA-84)
+        run: npm run smoke:campaignsend --workspace @ai-manager/core
+      # SEA-84: unsubscribe token round-trip (valid/tampered/replayed),
+      # idempotent suppression + consent writes, config gate.
+      - name: Unsubscribe endpoint offline smoke suite (SEA-84)
+        run: npm run smoke:unsubscribe --workspace @ai-manager/core
 
       # The learning-loop smoke runs its offline half here (signal
       # extraction, digest, dedupe, mocked-model miner); the DB-backed SQL
