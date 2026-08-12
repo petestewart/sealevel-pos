@@ -36,6 +36,7 @@ import {
   loadEnv,
   markGmailTrashed,
   mineOperatorLessons,
+  processResendWebhook,
   registerSchedules,
   runJob,
   sendApprovedReply,
@@ -292,6 +293,45 @@ app.use("/admin/queues", serverAdapter.getRouter());
 app.get("/healthz", (_req, res) => {
   res.json({ ok: true });
 });
+
+// Resend delivery webhook (SEA-85): delivered/opened/clicked/bounced/
+// complained -> campaign_events, with hard-bounce/complaint suppression
+// written synchronously in the handler. Lives on this worker because it is
+// the async inbound edge that already serves HTTP here (healthz + Bull
+// Board) and holds the DB. All logic is in core (processResendWebhook);
+// this route only adapts Express. express.raw is essential: the Svix
+// signature covers the exact request bytes, so the body must reach
+// verification unparsed. Config-gated inside core: with
+// RESEND_WEBHOOK_SECRET unset the route answers 404 as if it did not
+// exist. A store failure returns 500 so Resend retries the delivery (the
+// 0014 provider_event_id dedupe makes that retry harmless).
+app.post(
+  "/webhooks/resend",
+  express.raw({ type: "*/*", limit: "1mb" }),
+  (req, res) => {
+    const header = (name: string): string | undefined => {
+      const value = req.headers[name];
+      return typeof value === "string" ? value : undefined;
+    };
+    void processResendWebhook({
+      rawBody: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0),
+      headers: {
+        svixId: header("svix-id"),
+        svixTimestamp: header("svix-timestamp"),
+        svixSignature: header("svix-signature"),
+      },
+    })
+      .then((result) => {
+        res.status(result.status).json(result.body);
+      })
+      .catch((err: unknown) => {
+        console.error(
+          `[worker] resend webhook failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        if (!res.headersSent) res.status(500).json({ error: "internal error" });
+      });
+  },
+);
 
 // Railway injects PORT and points its healthcheck at it; locally
 // BULL_BOARD_PORT (default 3010) keeps the existing dev behavior.

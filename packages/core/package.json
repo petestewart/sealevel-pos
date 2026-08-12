@@ -24,6 +24,7 @@
     "smoke:kbwriteback": "npm run build && node dist/kb/kbWriteBack.smoke.js",
     "smoke:analytics": "npm run build && node dist/tools/analytics.smoke.js",
     "smoke:synccontacts": "npm run build && node dist/campaigns/syncContacts.smoke.js",
+    "smoke:resendwebhook": "npm run build && node dist/campaigns/resendWebhook.smoke.js",
     "sync:contacts": "npm run build && node dist/campaigns/runSync.js",
     "mindbody:verify": "npm run build && node dist/campaigns/verifyFields.js",
     "smoke:learning": "npm run build && node dist/db/learning.smoke.js",

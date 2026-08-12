@@ -308,6 +308,31 @@ export {
   type ReconciliationReport,
 } from "./campaigns/reconcile.js";
 export {
+  processResendWebhook,
+  verifyResendSignature,
+  resendWebhookSecret,
+  isHardBounce,
+  RESEND_EVENT_TYPES,
+  RESEND_WEBHOOK_SECRET_VAR,
+  SIGNATURE_TOLERANCE_MS,
+  type ResendWebhookRequest,
+  type ResendWebhookResponse,
+  type ResendWebhookDeps,
+  type ResendWebhookPayload,
+  type SvixHeaders,
+} from "./campaigns/resendWebhook.js";
+export {
+  pgResendEventStore,
+  findSendByProviderMessageId,
+  insertCampaignEvent,
+  upsertSuppression,
+  appendConsentEventOnce,
+  type ResendEventStore,
+  type CampaignEventType,
+  type CampaignSendRef,
+  type SuppressionReason,
+} from "./db/campaignEvents.js";
+export {
   mindbodyConfigured,
   fetchAllClients,
   extractClientRecord,

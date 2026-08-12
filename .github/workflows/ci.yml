@@ -61,6 +61,9 @@ jobs:
       - name: Contact sync offline smoke suite
         run: npm run smoke:synccontacts --workspace @ai-manager/core
 
+      - name: Resend webhook offline smoke suite
+        run: npm run smoke:resendwebhook --workspace @ai-manager/core
+
       # The learning-loop smoke runs its offline half here (signal
       # extraction, digest, dedupe, mocked-model miner); the DB-backed SQL
       # guard half self-skips without DATABASE_URL and runs locally
