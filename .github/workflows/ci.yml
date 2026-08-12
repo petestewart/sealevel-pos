@@ -66,6 +66,8 @@ jobs:
 
       - name: Audience build offline smoke suite
         run: npm run smoke:audience --workspace @ai-manager/core
+      - name: Campaign monitor offline smoke suite (SEA-92)
+        run: npm run smoke:campaignmonitor --workspace @ai-manager/core
 
       # The learning-loop smoke runs its offline half here (signal
       # extraction, digest, dedupe, mocked-model miner); the DB-backed SQL

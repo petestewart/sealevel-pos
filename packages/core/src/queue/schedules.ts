@@ -123,6 +123,36 @@ export function campaignsSyncContactsSchedule(): ScheduleSpec {
   };
 }
 
+/** The BullMQ job name for the campaign health monitor (SEA-92). */
+export const CAMPAIGNS_MONITOR_JOB = "campaigns.monitor";
+
+/** The schedule id for the campaign health monitor. */
+export const CAMPAIGNS_MONITOR_SCHEDULE_ID = "campaigns.monitor.15min";
+
+/**
+ * Default cadence: every 15 minutes. Frequent enough that a stuck send or
+ * a complaint spike surfaces within one operator coffee break; the
+ * dedupe table (campaign_alert_state, migration 0015) keeps a persistent
+ * condition from paging on every run.
+ */
+export const DEFAULT_CAMPAIGNS_MONITOR_CRON = "*/15 * * * *";
+
+/**
+ * The campaign health-check schedule (SEA-92): pure code, no brain.
+ * Complaint rate, hard bounce rate, stuck sends, zero-recipient runs;
+ * alerts through the Novu path with dedupe. Runs harmlessly (a logged
+ * skip) until DATABASE_URL is configured, same boot-registration pattern
+ * as the Gmail poll and the contact sync. Cadence override via
+ * CAMPAIGNS_MONITOR_CRON.
+ */
+export function campaignsMonitorSchedule(): ScheduleSpec {
+  return {
+    id: CAMPAIGNS_MONITOR_SCHEDULE_ID,
+    pattern: process.env.CAMPAIGNS_MONITOR_CRON || DEFAULT_CAMPAIGNS_MONITOR_CRON,
+    jobName: CAMPAIGNS_MONITOR_JOB,
+  };
+}
+
 /**
  * Derive repeatable schedules from the registry's cron triggers (GH-95):
  * reads Job.triggers -- the path that had been declared and never read --

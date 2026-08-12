@@ -12,6 +12,8 @@ import type { Job } from "bullmq";
 import {
   buildAudience,
   CAMPAIGNS_BUILD_AUDIENCE_JOB,
+  CAMPAIGNS_MONITOR_JOB,
+  campaignsMonitorSchedule,
   CAMPAIGNS_SYNC_CONTACTS_JOB,
   campaignsSyncContactsSchedule,
   DEFAULT_QUEUE_NAME,
@@ -40,6 +42,7 @@ import {
   mineOperatorLessons,
   processResendWebhook,
   registerSchedules,
+  runCampaignMonitor,
   runJob,
   sendApprovedReply,
   syncContacts,
@@ -233,6 +236,19 @@ const processors: Record<string, (job: Job) => Promise<void>> = {
       `[worker] ${CAMPAIGNS_BUILD_AUDIENCE_JOB}: ${result.status} -- ${result.summary}`,
     );
   },
+  // Campaign health monitor (SEA-92). Pure code, no brain: complaint
+  // rate, hard bounce rate, stuck 'sending' campaigns, zero-recipient
+  // runs, read from the campaign tables and alerted through the Novu
+  // path (event type campaign_alert) with dedupe in campaign_alert_state.
+  // Fired every 15 minutes by the schedule below; degrades to a logged
+  // skip without DATABASE_URL. A mid-run Postgres error throws so BullMQ
+  // retries; every step is idempotent.
+  [CAMPAIGNS_MONITOR_JOB]: async () => {
+    const result = await runCampaignMonitor();
+    console.log(
+      `[worker] ${CAMPAIGNS_MONITOR_JOB}: ${result.status} -- ${result.summary}`,
+    );
+  },
   "test-heartbeat": async (job) => {
     console.log(
       `[worker] test-heartbeat ran (job ${job.id}, attempt ${job.attemptsMade + 1})`,
@@ -284,6 +300,9 @@ await registerSchedules(queue, [
   // Nightly Mindbody contact sync (SEA-81), 05:00 America/Los_Angeles --
   // clear of the 02:00-03:30 PT analytics-mirror rebuild blackout.
   campaignsSyncContactsSchedule(),
+  // Campaign health monitor (SEA-92), every 15 minutes; harmless (a
+  // logged skip) until DATABASE_URL is configured.
+  campaignsMonitorSchedule(),
   ...cronSchedulesFromJobs(JOBS),
   {
     id: "test-heartbeat",

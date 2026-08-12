@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { loadEnv } from "../env.js";
 import type { Item } from "../db/items.js";
-import { emitItemEvent, type ItemEventPayload } from "./emit.js";
+import { emitItemEvent, type EventPayload } from "./emit.js";
 
 /**
  * Notifications smoke check (no Novu account required).
@@ -44,7 +44,7 @@ async function main(): Promise<void> {
   process.env.NOVU_SECRET_KEY = "smoke-test-key";
   process.env.NOVU_SUBSCRIBER_PETE ??= "pete";
   process.env.NOVU_SUBSCRIBER_ALISON ??= "alison";
-  const calls: Array<{ workflowId: string; subscriberIds: string[]; payload: ItemEventPayload }> = [];
+  const calls: Array<{ workflowId: string; subscriberIds: string[]; payload: EventPayload }> = [];
   const stubbed = await emitItemEvent("item.pending_approval", item, "brain", async (args) => {
     calls.push(args);
   });

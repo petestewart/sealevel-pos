@@ -31,6 +31,14 @@ App behavior -> Railway. Live schedule/pricing -> Cloudflare. Nightly analytics 
 | `MINDBODY_API_KEY`, `MINDBODY_SITE_ID` | no | Mindbody Public API v6 for the nightly `campaigns.sync_contacts` job (SEA-81) — the same credential pair the sealevel-mcp-server Worker holds as wrangler secrets, duplicated here because the sync calls Mindbody directly; unset = the sync is a logged skip. Worker only, never the console |
 | `MINDBODY_STAFF_USERNAME`, `MINDBODY_STAFF_PASSWORD` | no | Staff credentials for the Mindbody user token (`/usertoken/issue`); optional but recommended — permission level governs how much client data `/client/clients` returns. Worker only, never the console |
 | `CAMPAIGNS_SYNC_CRON` | no | Contact sync cadence override; default `0 5 * * *`, evaluated in America/Los_Angeles (clear of the 02:00–03:30 PT analytics rebuild) |
+| `CAMPAIGNS_MONITOR_CRON` | no | Campaign health monitor cadence (SEA-92); default `*/15 * * * *` |
+| `CAMPAIGN_ALERT_COMPLAINT_RATE` | no | Complaint-rate alert threshold as a fraction; default `0.001` (0.1%), applied per campaign and rolling |
+| `CAMPAIGN_ALERT_HARD_BOUNCE_RATE` | no | Hard-bounce-rate alert threshold as a fraction; default `0.02` (2%) |
+| `CAMPAIGN_ALERT_STUCK_SENDING_MINUTES` | no | Minutes a `sending` campaign may sit with no send activity before the stuck alert; default `120` |
+| `CAMPAIGN_ALERT_ZERO_RECIPIENT_GRACE_MINUTES` | no | Grace after approval before a sends-less `sending`/`sent` campaign trips the zero-recipient alert; default `15` |
+| `CAMPAIGN_ALERT_ROLLING_WINDOW_DAYS` | no | Rolling complaint-rate window in days; default `7`. Also bounds which campaigns the per-campaign rate and zero-recipient checks evaluate, so a terminal campaign's frozen rate ages out of alerting instead of re-paging forever |
+| `CAMPAIGN_ALERT_MIN_SENT` | no | Minimum sent sends before either rate alert applies (keeps a 5-person test send from paging on one event); default `10` |
+| `CAMPAIGN_ALERT_REALERT_HOURS` | no | Cooldown before a still-active alert condition pages again; default `24` |
 | `SEALEVEL_BOOKING_URL` | no | The one canonical self-service booking link, interpolated verbatim into drafts; unset = booking rule absent |
 | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_USER` | no | Gmail layer (all four or it is inert); worker only, never the console |
 | `GMAIL_SEND_ENABLED` | no | `true` opts the deployment into outbound; default off (ingestion-only) |

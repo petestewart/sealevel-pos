@@ -54,6 +54,10 @@ export {
   CAMPAIGNS_SYNC_SCHEDULE_ID,
   DEFAULT_CAMPAIGNS_SYNC_CRON,
   CAMPAIGNS_BUILD_AUDIENCE_JOB,
+  campaignsMonitorSchedule,
+  CAMPAIGNS_MONITOR_JOB,
+  CAMPAIGNS_MONITOR_SCHEDULE_ID,
+  DEFAULT_CAMPAIGNS_MONITOR_CRON,
   type ScheduleSpec,
 } from "./queue/index.js";
 export type { Job, Trigger, JobContext, BrainModel } from "./jobs/types.js";
@@ -387,13 +391,35 @@ export type {
   TraceCallInput,
   TraceOutcome,
 } from "./tools/trace.js";
-export { emitItemEvent } from "./notifications/emit.js";
+export { emitItemEvent, emitCampaignAlert, WORKFLOW_IDS } from "./notifications/emit.js";
 export type {
   ItemEventType,
+  AlertEventType,
+  EventType,
   ItemEventPayload,
+  CampaignAlertPayload,
+  EventPayload,
   EmitResult,
   TriggerFn,
 } from "./notifications/emit.js";
+export {
+  runCampaignMonitor,
+  monitorConfigFromEnv,
+  pgMonitorStore,
+  alertKey,
+  DEFAULT_MONITOR_CONFIG,
+  HARD_BOUNCE_PREDICATE,
+} from "./campaigns/monitor.js";
+export type {
+  CampaignMonitorConfig,
+  CampaignMonitorResult,
+  MonitorDeps,
+  MonitorStore,
+  CampaignRateStats,
+  RollingRateStats,
+  StuckCampaign,
+  ZeroRecipientCampaign,
+} from "./campaigns/monitor.js";
 export { runJob, DEFAULT_BRAIN_MODEL } from "./brain/run.js";
 export { SYSTEM_PROMPT } from "./brain/prompts.js";
 export type { UsageTotals } from "./brain/budget.js";
