@@ -53,6 +53,7 @@ export {
   CAMPAIGNS_SYNC_CONTACTS_JOB,
   CAMPAIGNS_SYNC_SCHEDULE_ID,
   DEFAULT_CAMPAIGNS_SYNC_CRON,
+  CAMPAIGNS_BUILD_AUDIENCE_JOB,
   type ScheduleSpec,
 } from "./queue/index.js";
 export type { Job, Trigger, JobContext, BrainModel } from "./jobs/types.js";
@@ -300,6 +301,24 @@ export {
   type ConsentState,
   type ConsentSource,
 } from "./db/campaignContacts.js";
+export {
+  buildAudience,
+  DEFAULT_AUDIENCE_VIEW,
+  EXCLUSION_REASONS,
+  type BuildAudienceDeps,
+  type BuildAudienceOptions,
+  type BuildAudienceResult,
+  type AudienceRecipient,
+  type AudienceExclusion,
+  type ExclusionReason,
+} from "./campaigns/buildAudience.js";
+export {
+  pgAudienceStore,
+  type AudienceStore,
+  type AudienceCandidate,
+  type AudienceEntry,
+  type CampaignRow,
+} from "./db/campaignAudience.js";
 export {
   reconcileIdMapping,
   normalizeSourceId,

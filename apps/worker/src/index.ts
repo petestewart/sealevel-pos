@@ -10,6 +10,8 @@ import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
 import { ExpressAdapter } from "@bull-board/express";
 import type { Job } from "bullmq";
 import {
+  buildAudience,
+  CAMPAIGNS_BUILD_AUDIENCE_JOB,
   CAMPAIGNS_SYNC_CONTACTS_JOB,
   campaignsSyncContactsSchedule,
   DEFAULT_QUEUE_NAME,
@@ -208,6 +210,27 @@ const processors: Record<string, (job: Job) => Promise<void>> = {
       `[worker] ${CAMPAIGNS_SYNC_CONTACTS_JOB}: ${result.status}${
         result.mode ? ` (${result.mode})` : ""
       } -- ${result.summary}`,
+    );
+  },
+  // On-demand campaign audience build (SEA-82). Pure code, no brain:
+  // pages WHO qualifies out of the analytics view (client_id + segment,
+  // no PII crosses that boundary), resolves contacts via the SEA-81
+  // reconciliation's analytics_client_id stamp, runs the consent/
+  // suppression/ambiguity filter chain, and freezes the survivors into
+  // campaign_audience. NOT scheduled -- enqueued deliberately per
+  // campaign with { campaignKey } in the job data. Throws on a mid-run
+  // error so BullMQ retries; the snapshot replace is transactional and
+  // idempotent, so a retry lands identical rows.
+  [CAMPAIGNS_BUILD_AUDIENCE_JOB]: async (job) => {
+    const campaignKey = (job.data as { campaignKey?: unknown }).campaignKey;
+    if (typeof campaignKey !== "string" || campaignKey === "") {
+      throw new Error(
+        `${CAMPAIGNS_BUILD_AUDIENCE_JOB} requires { campaignKey } in the job data`,
+      );
+    }
+    const result = await buildAudience({ campaignKey });
+    console.log(
+      `[worker] ${CAMPAIGNS_BUILD_AUDIENCE_JOB}: ${result.status} -- ${result.summary}`,
     );
   },
   "test-heartbeat": async (job) => {

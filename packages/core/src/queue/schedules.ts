@@ -95,6 +95,11 @@ export const CAMPAIGNS_SYNC_CONTACTS_JOB = "campaigns.sync_contacts";
 /** The schedule id for the nightly contact sync. */
 export const CAMPAIGNS_SYNC_SCHEDULE_ID = "campaigns.sync_contacts.nightly";
 
+/** The BullMQ job name for the on-demand audience build (SEA-82). Not
+ * scheduled: a build is enqueued deliberately per campaign, with
+ * { campaignKey } in the job data. */
+export const CAMPAIGNS_BUILD_AUDIENCE_JOB = "campaigns.build_audience";
+
 /**
  * Default cadence: 05:00 America/Los_Angeles (the spec's `0 5 * * *` PT) --
  * safely clear of the 02:00-03:30 PT analytics-mirror rebuild blackout,
