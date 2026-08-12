@@ -15,7 +15,7 @@ Always-on AI ops system for Sealevel Hot Yoga (Seattle). The full system design 
 - Models: claude-sonnet-5 for triage/classification jobs, claude-opus-4-8 for drafting.
 
 ## Phasing
-Phase 0 (skeleton) and Phase 1 (email triage + assignment/routing) are unblocked. Phase 2 (Mindbody analytics) is gated on Mindbody production API access. Task tracking lives on GitHub Project 2 "Sealevel Ops" (owner petestewart); the epic is sealevel-knowledge-base issue #17.
+Phase 0 (skeleton) and Phase 1 (email triage + assignment/routing) are unblocked. Phase 2 (Mindbody analytics) is unblocked: production API access exists and the sealevel-analytics nightly sync runs green; ai-manager reads the mirror through the analytics MCP identity (packages/core/src/tools/analytics.ts). Task tracking lives on GitHub Project 2 "Sealevel Ops" (owner petestewart); the epic is sealevel-knowledge-base issue #17.
 
 ## Evals
 Golden-case drafting evals live in evals/ (cases + cached outputs); run with `npm run eval`. CI runs them on PRs that touch prompt-affecting paths (drafting job, booking, KB tools, prompts, eval code) when the ANTHROPIC_API_KEY repo secret is present; manual dispatch from the Actions tab runs the full suite on demand. Any prompt-affecting change must keep the evals green.

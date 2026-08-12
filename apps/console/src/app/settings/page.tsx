@@ -137,6 +137,15 @@ export default async function SettingsPage() {
       </section>
 
       <section className="settings-section">
+        <h2 className="section-label">Teacher pay rates</h2>
+        <p className="settings-help">
+          Per-class payroll rates, training payback balances, and rate
+          history live on{" "}
+          <a href="/settings/pay-rates">their own page</a>.
+        </p>
+      </section>
+
+      <section className="settings-section">
         <h2 className="section-label">Signature</h2>
         <SignatureForm settings={settings} defaultName={defaultName} />
       </section>

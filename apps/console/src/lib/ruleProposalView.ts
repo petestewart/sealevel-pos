@@ -61,23 +61,7 @@ export function toRuleProposalCardData(
   };
 }
 
-/** Operator-facing label for an evidence entry's kind. No em dashes. */
-export function evidenceKindLabel(kind: RuleEvidence["kind"]): string {
-  switch (kind) {
-    case "edit":
-      return "Edited before approval";
-    case "revision":
-      return "Redo requested";
-    case "rejection":
-      return "Rejected";
-    case "no_reply":
-      return "Marked no reply";
-    case "spam":
-      return "Confirmed spam";
-    case "trash":
-      return "Trashed";
-  }
-}
+export { evidenceKindLabel } from "./ruleProposalDisplay";
 
 /**
  * Operator-facing copy for a rule-insert outcome on a decided proposal

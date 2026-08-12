@@ -151,7 +151,7 @@ async function testBlackoutGate(): Promise<void> {
     );
     assert.equal(forced.status, "dry_run");
   });
-  console.log("[smoke] build_audience: blackout gate (02:00-03:30 PT skip)");
+  console.log("[smoke] build_audience: blackout gate (02:15-06:00 PT skip)");
 }
 
 /** Store + view fixture covering EVERY exclusion reason plus survivors. */

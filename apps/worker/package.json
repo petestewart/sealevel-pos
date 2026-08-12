@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@ai-manager/core": "0.0.1",
+    "@ai-manager/features": "0.0.1",
     "@bull-board/api": "^8.1.2",
     "@bull-board/express": "^8.1.2",
     "express": "^5.2.1"

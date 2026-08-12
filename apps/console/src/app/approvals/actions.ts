@@ -4,9 +4,8 @@ import { revalidatePath } from "next/cache";
 import {
   assignItemAudited,
   createKbRevertProposal,
-  enqueueEmailSend,
   enqueueGmailState,
-  enqueueKbWrite,
+  enqueueItemOutbound,
   getActiveRules,
   getItemById,
   getPool,
@@ -297,8 +296,10 @@ async function queueSendIfEnabled(
     // markDeliveryQueued returns null when the item is not a fresh-approved
     // deliverable (already sent, in flight, rejected, archived); in that
     // case do not enqueue a redundant send.
+    // Outbound routing via the action map (SEA-102): email_reply -> the
+    // email.send entry, so this path never hardcodes a job name.
     queued = Boolean(await markDeliveryQueued(id));
-    if (queued) await enqueueEmailSend(id);
+    if (queued) await enqueueItemOutbound("email_reply", id);
     return queued ? "queued" : "ineligible";
   } catch (err) {
     console.error(
@@ -789,8 +790,9 @@ async function queueKbWrite(
 ): Promise<"queued" | "ineligible" | "error"> {
   let queued = false;
   try {
+    // Outbound routing via the action map (SEA-102), as in queueSendIfEnabled.
     queued = Boolean(await markKbWriteQueued(id));
-    if (queued) await enqueueKbWrite(id);
+    if (queued) await enqueueItemOutbound("kb_update", id);
     return queued ? "queued" : "ineligible";
   } catch (err) {
     console.error(

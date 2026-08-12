@@ -11,10 +11,8 @@ import { useRouter } from "next/navigation";
 import { Button } from "./Button";
 import { StatusChip } from "./StatusChip";
 import { useToast } from "./Toast";
-import {
-  evidenceKindLabel,
-  type RuleProposalCardData,
-} from "../lib/ruleProposalView";
+import { evidenceKindLabel } from "../lib/ruleProposalDisplay";
+import { type RuleProposalCardData } from "../lib/ruleProposalView";
 import {
   approveRuleProposalAction,
   rejectRuleProposalAction,

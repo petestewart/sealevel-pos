@@ -34,6 +34,7 @@
     "smoke:audiencefixtures": "npm run build && node dist/campaigns/audienceFixtures.smoke.js",
     "smoke:senddiff": "npm run build && node dist/campaigns/sendDiff.smoke.js",
     "send-diff": "npm run build && node dist/campaigns/runSendDiff.js",
+    "smoke:payroll": "npm run build && node dist/payroll/payroll.smoke.js",
     "sync:contacts": "npm run build && node dist/campaigns/runSync.js",
     "audience:dry-run": "npm run build && node dist/campaigns/runBuildAudience.js dry-run",
     "audience:build": "npm run build && node dist/campaigns/runBuildAudience.js build",

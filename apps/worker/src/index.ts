@@ -41,6 +41,7 @@ import {
   markGmailTrashed,
   mineOperatorLessons,
   processResendWebhook,
+  registerJobs,
   registerSchedules,
   runCampaignMonitor,
   runJob,
@@ -49,8 +50,15 @@ import {
   workerVersion,
   writeApprovedKbUpdate,
 } from "@ai-manager/core";
+import { featureJobs } from "@ai-manager/features";
 
 loadEnv();
+
+// Feature-module jobs (SEA-101) join the registry BEFORE anything reads
+// it. Ordering is load-bearing: the schedule sweep below derives cron
+// schedules from JOBS and prunes schedulers not in that derived set, so a
+// job registered after the sweep would have its schedule deleted.
+registerJobs(featureJobs);
 
 // Deploy-version stamp (GH-122 first slice): make "which code is this
 // worker running?" a grep of the boot log, matching the generated_by
@@ -298,7 +306,7 @@ await registerSchedules(queue, [
   // trigger (cron + threshold + manual). Harmless until signals exist.
   learningMineSchedule(),
   // Nightly Mindbody contact sync (SEA-81), 05:00 America/Los_Angeles --
-  // clear of the 02:00-03:30 PT analytics-mirror rebuild blackout.
+  // clear of the analytics-mirror rebuild blackout (02:15-06:00 PT, SEA-105).
   campaignsSyncContactsSchedule(),
   // Campaign health monitor (SEA-92), every 15 minutes; harmless (a
   // logged skip) until DATABASE_URL is configured.

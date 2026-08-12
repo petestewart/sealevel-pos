@@ -101,12 +101,15 @@ export const CAMPAIGNS_SYNC_SCHEDULE_ID = "campaigns.sync_contacts.nightly";
 export const CAMPAIGNS_BUILD_AUDIENCE_JOB = "campaigns.build_audience";
 
 /**
- * Default cadence: 05:00 America/Los_Angeles (the spec's `0 5 * * *` PT) --
- * safely clear of the 02:00-03:30 PT analytics-mirror rebuild blackout,
- * and after the mirror's own nightly refresh so the reconciliation reads
- * yesterday-fresh data. The tz pin keeps that true across DST.
+ * Default cadence: 06:15 America/Los_Angeles -- clear of the corrected
+ * analytics-mirror rebuild blackout (SEA-105: observed D1 imports land
+ * 04:00-05:32 PT, guarded 02:15-06:00), and after the mirror's refresh so
+ * the reconciliation reads yesterday-fresh data. The original 05:00 PT
+ * default sat inside the real rebuild window; the sync's reconciliation
+ * pass reads the mirror, so it had to move with the corrected guard. The
+ * tz pin keeps this true across DST.
  */
-export const DEFAULT_CAMPAIGNS_SYNC_CRON = "0 5 * * *";
+export const DEFAULT_CAMPAIGNS_SYNC_CRON = "15 6 * * *";
 
 /**
  * The nightly contact sync schedule (SEA-81): pure code, no brain. Runs

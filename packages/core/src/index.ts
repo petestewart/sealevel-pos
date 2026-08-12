@@ -22,6 +22,12 @@ export {
   enqueue,
   getSharedQueue,
   closeSharedQueue,
+  OUTBOUND_ACTIONS,
+  ITEM_TYPE_OUTBOUND,
+  enqueueOutboundAction,
+  enqueueItemOutbound,
+  type OutboundAction,
+  type OutboundActionName,
   enqueueEmailSend,
   emailSendJobId,
   EMAIL_SEND_JOB,
@@ -61,7 +67,7 @@ export {
   type ScheduleSpec,
 } from "./queue/index.js";
 export type { Job, Trigger, JobContext, BrainModel } from "./jobs/types.js";
-export { JOBS, jobById } from "./jobs/registry.js";
+export { JOBS, jobById, registerJobs } from "./jobs/registry.js";
 export type { InboundEmailPayload, EmailMeta } from "./jobs/emailDraft.js";
 export { suspectedSpamPayload } from "./jobs/emailDraft.js";
 export {
@@ -418,6 +424,39 @@ export {
   type MindbodyClientRecord,
 } from "./campaigns/mindbody.js";
 export { createItemTool, toolsByName, toolsForJob } from "./tools/registry.js";
+export {
+  PAYROLL_ANCHOR,
+  PERIOD_DAYS,
+  periodContaining,
+  parsePeriodLabel,
+  nextPeriodStart,
+  isInOpenPeriod,
+  isPeriodClosed,
+  studioToday,
+  type PayPeriod,
+} from "./payroll/period.js";
+export {
+  listPayRates,
+  ratesInEffectOn,
+  changePayRate,
+  PayRateChangeError,
+  listUnpaidQuotas,
+  type PayRate,
+  type UnpaidQuota,
+} from "./db/payRates.js";
+export {
+  analyticsConfigured,
+  analyticsToolCall,
+  analyticsBlackout,
+  pageSelect,
+} from "./tools/analytics.js";
+export {
+  replayQuota,
+  type QuotaClass,
+  type QuotaArrangement,
+  type QuotaClassOutcome,
+  type QuotaReplayResult,
+} from "./payroll/quota.js";
 export {
   TraceRecorder,
   TRACE_MAX_CALLS,

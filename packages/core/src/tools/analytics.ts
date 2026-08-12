@@ -19,9 +19,10 @@
  *   in application code, never by id.
  * - run_sql caps results at 200 rows, so audience reads must paginate —
  *   use pageSelect() below.
- * - The mirror is dropped and recreated nightly around 02:30
- *   America/Los_Angeles: no campaign job may run between 02:00 and 03:30
- *   PT (see analyticsBlackout()).
+ * - The mirror is dropped and recreated nightly by nightly-sync.yml (cron
+ *   30 10 * * * UTC) and GitHub delays scheduled runs under load: no
+ *   analytics job may run between 02:15 and 06:00 PT (see
+ *   analyticsBlackout()).
  */
 
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
@@ -185,14 +186,24 @@ export async function* pageSelect(
 }
 
 /**
- * Nightly rebuild blackout (SEA-79): the D1 mirror is dropped and recreated
- * around 02:30 America/Los_Angeles. No campaign job may run between 02:00
- * and 03:30 PT — mid-rebuild reads see a missing or half-loaded database.
+ * Nightly rebuild blackout (SEA-79, window corrected in SEA-105): the D1
+ * mirror is dropped and recreated by nightly-sync.yml, and mid-rebuild
+ * reads see a missing or half-loaded database. The workflow cron is
+ * 30 10 * * * UTC — 02:30 PT in winter (PST) but 03:30 PT in summer (PDT),
+ * and GitHub delays scheduled runs under load: observed starts over three
+ * weeks ranged 11:00 to 12:32 UTC with import completion landing 04:00 to
+ * 05:32 PT. The guard therefore covers 02:15 (the PST-offset cron start,
+ * with margin) through 06:00 PT (latest observed completion plus margin).
  * Schedulers should check this (or simply not schedule inside the window;
  * remember worker crons run in UTC and the PT offset shifts with DST).
+ *
+ * Wall-clock guessing is inherently approximate; the correct shape is a
+ * completion marker published by the D1 import that this function reads
+ * instead (SEA-105 option 2). That needs an upstream sealevel-analytics
+ * change first; until it lands, this window errs wide.
  */
-export const ANALYTICS_BLACKOUT_START_MINUTES = 2 * 60; // 02:00 PT
-export const ANALYTICS_BLACKOUT_END_MINUTES = 3 * 60 + 30; // 03:30 PT
+export const ANALYTICS_BLACKOUT_START_MINUTES = 2 * 60 + 15; // 02:15 PT
+export const ANALYTICS_BLACKOUT_END_MINUTES = 6 * 60; // 06:00 PT
 
 export function analyticsBlackout(now: Date = new Date()): boolean {
   const parts = new Intl.DateTimeFormat("en-US", {

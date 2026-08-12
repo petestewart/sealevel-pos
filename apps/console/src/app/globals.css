@@ -2865,3 +2865,29 @@ button.assignee-suggest:disabled {
   font: 400 0.7812rem var(--font-ui), sans-serif;
   color: var(--tx3);
 }
+
+/* Teacher pay rates (SEA-106) */
+.payrate-row {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--surface);
+}
+.payrate-row--no_rate {
+  border-color: var(--pend-tx);
+  background: var(--pend-bg);
+}
+.payrate-row--unpayable {
+  border-color: var(--rej-tx);
+}
+.payrate-row .settings-help,
+.payrate-row .settings-error {
+  margin-bottom: 6px;
+}
+.payrate-form {
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}

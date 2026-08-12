@@ -249,14 +249,19 @@ async function testToolCallFailureDegrades(): Promise<void> {
 }
 
 function testBlackoutWindow(): void {
-  // PDT (UTC-7): 09:30Z = 02:30 PT — mid-rebuild.
-  assert.equal(analyticsBlackout(new Date("2026-08-08T09:30:00Z")), true);
-  assert.equal(analyticsBlackout(new Date("2026-08-08T09:00:00Z")), true); // 02:00 inclusive
-  assert.equal(analyticsBlackout(new Date("2026-08-08T08:59:00Z")), false); // 01:59
-  assert.equal(analyticsBlackout(new Date("2026-08-08T10:30:00Z")), false); // 03:30 exclusive
+  // Window corrected in SEA-105: 02:15 to 06:00 PT, covering the cron's
+  // PST-offset start through the latest observed D1 import completion
+  // (05:32 PT) with margin.
+  // PDT (UTC-7): observed import completions 04:00 to 05:32 PT.
+  assert.equal(analyticsBlackout(new Date("2026-08-08T11:30:00Z")), true); // 04:30 PT
+  assert.equal(analyticsBlackout(new Date("2026-08-08T12:32:00Z")), true); // 05:32 PT
+  assert.equal(analyticsBlackout(new Date("2026-08-08T09:15:00Z")), true); // 02:15 inclusive
+  assert.equal(analyticsBlackout(new Date("2026-08-08T09:14:00Z")), false); // 02:14
+  assert.equal(analyticsBlackout(new Date("2026-08-08T13:00:00Z")), false); // 06:00 exclusive
   // PST (UTC-8): the same wall-clock window shifts in UTC.
   assert.equal(analyticsBlackout(new Date("2026-01-08T10:30:00Z")), true); // 02:30 PST
-  assert.equal(analyticsBlackout(new Date("2026-01-08T09:30:00Z")), false); // 01:30 PST
+  assert.equal(analyticsBlackout(new Date("2026-01-08T10:14:00Z")), false); // 02:14 PST
+  assert.equal(analyticsBlackout(new Date("2026-01-08T14:00:00Z")), false); // 06:00 PST
   console.log("[smoke] analytics: blackout window tracks PT wall-clock across DST");
 }
 

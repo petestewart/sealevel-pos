@@ -190,7 +190,7 @@ export async function buildAudience(
   }
   if (!options.ignoreBlackout && analyticsBlackout(deps.now())) {
     const summary =
-      "campaigns.build_audience skipped: inside the 02:00-03:30 PT analytics-mirror rebuild blackout; re-run after 03:30 PT";
+      "campaigns.build_audience skipped: inside the analytics-mirror rebuild blackout (02:15-06:00 PT, SEA-105); re-run after 06:00 PT";
     log(`[build_audience] ${summary}`);
     return skipped(
       "analytics_blackout",

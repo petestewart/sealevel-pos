@@ -7,6 +7,12 @@ export {
 export {
   getSharedQueue,
   closeSharedQueue,
+  OUTBOUND_ACTIONS,
+  ITEM_TYPE_OUTBOUND,
+  enqueueOutboundAction,
+  enqueueItemOutbound,
+  type OutboundAction,
+  type OutboundActionName,
   enqueueEmailSend,
   emailSendJobId,
   EMAIL_SEND_JOB,
