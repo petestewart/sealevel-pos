@@ -181,7 +181,10 @@ function depsWith(
   return {
     fetchAllClients: async function* (options = {}) {
       if (captured) captured.modifiedSince = options.modifiedSince;
-      for (const page of pages) yield page.map(extractClientRecord);
+      for (const page of pages)
+        yield page
+          .map(extractClientRecord)
+          .filter((r): r is NonNullable<typeof r> => r !== null);
     },
     store,
     reconcile: () => {
@@ -205,7 +208,7 @@ async function testConfigGate(): Promise<void> {
 }
 
 function testExtractClientRecord(): void {
-  const record = extractClientRecord(mbClient("100000171", "a@b.com", true));
+  const record = extractClientRecord(mbClient("100000171", "a@b.com", true))!;
   assert.equal(record.mbClientId, "100000171");
   assert.equal(record.subscribed, true);
   assert.equal(record.optInFieldName, MINDBODY_OPT_IN_FIELD);
@@ -224,8 +227,24 @@ function testExtractClientRecord(): void {
     () => extractClientRecord(mbClient("8", "a@b.com", "yes" as never)),
     /no boolean SendPromotionalEmails/,
   );
-  assert.throws(() => extractClientRecord({ Email: "x@y.z" }), /no usable Id/);
-  console.log("[smoke] sync_contacts: extractClientRecord (consent fails loudly)");
+  // The live API returns Id as a NUMBER on some sites: coerced, not thrown.
+  const numeric = mbClient("999", "n@b.com", true);
+  numeric["Id"] = 100000999;
+  const numericRecord = extractClientRecord(numeric);
+  assert.ok(numericRecord !== null);
+  assert.equal(numericRecord.mbClientId, "100000999");
+  // Truly idless rows (missing/null/empty Id) are unusable-but-skippable:
+  // null, never a throw -- one ancient junk row must not abort the sync.
+  assert.equal(extractClientRecord({ Email: "x@y.z" }), null);
+  const nullId = mbClient("0", "x@y.z", true);
+  nullId["Id"] = null;
+  assert.equal(extractClientRecord(nullId), null);
+  const emptyId = mbClient("0", "x@y.z", true);
+  emptyId["Id"] = "";
+  assert.equal(extractClientRecord(emptyId), null);
+  console.log(
+    "[smoke] sync_contacts: extractClientRecord (consent fails loudly, numeric Id coerced, idless rows skipped)",
+  );
 }
 
 async function testSyncFlow(): Promise<void> {

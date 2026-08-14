@@ -151,7 +151,13 @@ export async function issueStaffToken(
 }
 
 /**
- * Reduce one raw Client object to a MindbodyClientRecord.
+ * Reduce one raw Client object to a MindbodyClientRecord, or null when the
+ * record carries no usable Id (live sites hold ancient rows with a null
+ * Id; they cannot become contacts -- contacts key on mb_client_id -- so
+ * they can never be emailed, and the caller skips-and-counts them).
+ *
+ * The live API returns Id as a string on some sites and a number on
+ * others; both are accepted, numbers coerced to their decimal string.
  *
  * Fails LOUDLY when the opt-in field is absent or non-boolean: consent is
  * a legal question, and a surprise field shape must stop the sync (a fix
@@ -159,13 +165,15 @@ export async function issueStaffToken(
  */
 export function extractClientRecord(
   raw: Record<string, unknown>,
-): MindbodyClientRecord {
-  const id = raw["Id"];
-  if (typeof id !== "string" || id.length === 0) {
-    throw new Error(
-      `Mindbody client has no usable Id: ${JSON.stringify(raw).slice(0, 200)}`,
-    );
-  }
+): MindbodyClientRecord | null {
+  const rawId = raw["Id"];
+  const id =
+    typeof rawId === "string" && rawId.length > 0
+      ? rawId
+      : typeof rawId === "number" && Number.isFinite(rawId)
+        ? String(rawId)
+        : null;
+  if (id === null) return null;
   const optInValue = raw[MINDBODY_OPT_IN_FIELD];
   if (typeof optInValue !== "boolean") {
     const present = Object.keys(raw)
@@ -245,9 +253,23 @@ export async function* fetchAllClients(
         `Mindbody client/clients returned no Clients array: ${JSON.stringify(body).slice(0, 200)}`,
       );
     }
-    const records = (clients as Array<Record<string, unknown>>).map(
-      extractClientRecord,
+    const extracted = (clients as Array<Record<string, unknown>>).map(
+      (c) => [c, extractClientRecord(c)] as const,
     );
+    const records = extracted
+      .map(([, r]) => r)
+      .filter((r): r is MindbodyClientRecord => r !== null);
+    const skipped = extracted.filter(([, r]) => r === null);
+    if (skipped.length > 0) {
+      // Not a silent drop: idless rows can never be contacts (nothing to
+      // key on), but the operator should see how many exist and roughly
+      // how old they are.
+      const sample = skipped[0]![0];
+      console.warn(
+        `[sync_contacts] skipped ${skipped.length} client record(s) with no usable Id on this page ` +
+          `(sample CreationDate: ${JSON.stringify(sample["CreationDate"] ?? null)})`,
+      );
+    }
     if (records.length > 0) yield records;
 
     const pagination = (body["PaginationResponse"] ?? {}) as PaginationResponse;
