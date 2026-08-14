@@ -91,6 +91,13 @@ export const RESEND_API_KEY_VAR = "RESEND_API_KEY";
  * verified sending subdomain; unset = sending disabled (logged skip). */
 export const CAMPAIGN_FROM_EMAIL_VAR = "CAMPAIGN_FROM_EMAIL";
 
+/** Env var holding an OPTIONAL Reply-To address, e.g.
+ * "hello@sealevelhotyoga.com". The sending subdomain has no inbound mail
+ * (no MX for receiving), so without this a human's reply bounces; set it
+ * to the monitored studio inbox. Unset = no reply_to field on the Resend
+ * request at all (today's behavior). Not a gate: never blocks a send. */
+export const CAMPAIGN_REPLY_TO_VAR = "CAMPAIGN_REPLY_TO";
+
 /** Ramp/batch/pacing configuration, env-overridable with sane defaults. */
 export interface SendCampaignConfig {
   /** Max provider-accepted sends per trailing 24h, across ALL campaigns
@@ -216,6 +223,8 @@ export function copyForRecipient(
 export interface OutboundMessage {
   from: string;
   to: string;
+  /** Optional Reply-To; omitted from the Resend request when absent. */
+  replyTo?: string;
   subject: string;
   text: string;
   headers: Record<string, string>;
@@ -260,6 +269,9 @@ export function resendMailer(
         body: JSON.stringify({
           from: message.from,
           to: [message.to],
+          // reply_to only when configured: an absent Reply-To must be an
+          // absent field, not an empty string Resend could choke on.
+          ...(message.replyTo ? { reply_to: message.replyTo } : {}),
           subject: message.subject,
           text: message.text,
           headers: message.headers,
@@ -299,6 +311,10 @@ export interface SendCampaignDeps {
   mailer: Mailer | null;
   /** null = CAMPAIGN_FROM_EMAIL unset (logged skip). */
   fromEmail: string | null;
+  /** Optional Reply-To (CAMPAIGN_REPLY_TO, raw from env). null = header
+   * omitted entirely. NOT a gate: an unset or malformed value never
+   * blocks a send (malformed = loud warning + omitted). */
+  replyTo: string | null;
   /** null = unsubscribe unconfigured (REFUSE, loudly). */
   unsubscribe: { secret: string; baseUrl: string } | null;
   config: SendCampaignConfig;
@@ -310,12 +326,14 @@ export interface SendCampaignDeps {
 export function defaultSendCampaignDeps(): SendCampaignDeps {
   const apiKey = process.env[RESEND_API_KEY_VAR]?.trim() || null;
   const fromEmail = process.env[CAMPAIGN_FROM_EMAIL_VAR]?.trim() || null;
+  const replyTo = process.env[CAMPAIGN_REPLY_TO_VAR]?.trim() || null;
   const secret = unsubscribeSecret();
   const baseUrl = unsubscribeBaseUrl();
   return {
     store: pgCampaignSendStore(),
     mailer: apiKey ? resendMailer(apiKey) : null,
     fromEmail,
+    replyTo,
     unsubscribe: secret && baseUrl ? { secret, baseUrl } : null,
     config: sendConfigFromEnv(),
     now: () => new Date(),
@@ -443,6 +461,20 @@ export async function sendCampaign(
       "from_unconfigured",
       summary,
     );
+  }
+
+  // Optional Reply-To: light validation only. A typo'd value must NEVER
+  // block a send (this is not a gate like the unsubscribe secret) --
+  // warn loudly and omit rather than sending garbage to Resend.
+  let replyTo: string | undefined;
+  if (deps.replyTo) {
+    if (deps.replyTo.includes("@")) {
+      replyTo = deps.replyTo;
+    } else {
+      log(
+        `[campaigns.send] WARNING: ${CAMPAIGN_REPLY_TO_VAR}="${deps.replyTo}" does not look like an email address (no '@'); omitting Reply-To and sending anyway`,
+      );
+    }
   }
 
   // The copy a human approved, byte for byte. Its absence for an
@@ -585,6 +617,7 @@ export async function sendCampaign(
       const message: OutboundMessage = {
         from: deps.fromEmail,
         to: recipient.email,
+        ...(replyTo ? { replyTo } : {}),
         subject: renderMergeFields(recipientCopy.subject, {
           email: recipient.email,
           firstName: recipient.firstName,

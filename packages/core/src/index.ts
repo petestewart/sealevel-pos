@@ -609,6 +609,7 @@ export {
   RESEND_API_BASE,
   RESEND_API_KEY_VAR,
   CAMPAIGN_FROM_EMAIL_VAR,
+  CAMPAIGN_REPLY_TO_VAR,
 } from "./campaigns/sendCampaign.js";
 export type {
   Mailer,

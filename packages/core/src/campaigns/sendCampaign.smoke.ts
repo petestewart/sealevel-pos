@@ -222,9 +222,10 @@ interface Harness {
 function harness(options: {
   campaign?: Partial<CampaignRow>;
   config?: Partial<typeof DEFAULT_SEND_CONFIG>;
-  mailer?: FakeMailer | null;
+  mailer?: Mailer | null;
   unsubscribe?: { secret: string; baseUrl: string } | null;
   fromEmail?: string | null;
+  replyTo?: string | null;
 } = {}): Harness {
   const store = new FakeSendStore(campaignRow(options.campaign));
   store.approvedCopy = {
@@ -245,6 +246,7 @@ function harness(options: {
       options.fromEmail === undefined
         ? "Sealevel Hot Yoga <hello@mail.example.com>"
         : options.fromEmail,
+    replyTo: options.replyTo ?? null,
     unsubscribe:
       options.unsubscribe === undefined
         ? { secret: SECRET, baseUrl: BASE_URL }
@@ -570,10 +572,21 @@ async function mockedResendHttp(): Promise<void> {
   assert.equal(headers["Idempotency-Key"], "idem-key-1");
   const body = JSON.parse(String(requests[0]!.init.body)) as Record<string, unknown>;
   assert.deepEqual(body.to, ["maria@example.com"]);
+  // No replyTo on the message = NO reply_to field in the request at all
+  // (not an empty string).
+  assert.ok(!("reply_to" in body), "reply_to must be absent when unset");
   assert.equal(
     (body.headers as Record<string, string>)["List-Unsubscribe"],
     "<https://x/unsubscribe?token=t>",
   );
+
+  // replyTo on the message = reply_to in the request, exact value.
+  await mailer.sendOne(
+    { ...message, replyTo: "hello@sealevelhotyoga.com" },
+    "idem-key-1b",
+  );
+  const withReplyTo = JSON.parse(String(requests[1]!.init.body)) as Record<string, unknown>;
+  assert.equal(withReplyTo.reply_to, "hello@sealevelhotyoga.com");
 
   // 422 = permanent: { ok: false }, never a throw.
   respond = () => new Response("unprocessable", { status: 422 });
@@ -587,6 +600,78 @@ async function mockedResendHttp(): Promise<void> {
   respond = () => new Response("boom", { status: 500 });
   await assert.rejects(mailer.sendOne(message, "idem-key-4"), /500 \(retryable\)/);
   console.log("[smoke] campaigns.send: Resend HTTP mailer (mocked) sends the right shape and classifies failures");
+}
+
+/**
+ * CAMPAIGN_REPLY_TO end to end: the news subdomain has no inbound mail,
+ * so a configured Reply-To routes replies to the monitored studio inbox.
+ * Optional and NEVER a gate: unset = no reply_to field in the Resend
+ * request at all; malformed = loud warning + omitted, send still fires.
+ */
+async function replyToEndToEnd(): Promise<void> {
+  const REPLY_TO = "hello@sealevelhotyoga.com";
+
+  /** Real resendMailer over a mocked Resend HTTP layer, capturing every
+   * request body sendCampaign produces. */
+  function httpHarness(replyTo: string | null) {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init!.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify({ id: `re_http_${bodies.length}` }), {
+        status: 200,
+      });
+    }) as typeof fetch;
+    const h = harness({
+      mailer: resendMailer("re_test_key", "https://resend.mock", fetchImpl),
+      replyTo,
+    });
+    return { ...h, bodies };
+  }
+
+  // (a) Configured: every mocked Resend request body carries reply_to
+  // with the exact value.
+  {
+    const { deps, bodies } = httpHarness(REPLY_TO);
+    const result = await sendCampaign("post-first-visit", deps);
+    assert.equal(result.status, "sent");
+    assert.equal(result.sentNow, 3);
+    assert.equal(bodies.length, 3);
+    for (const body of bodies) assert.equal(body.reply_to, REPLY_TO);
+  }
+
+  // (b) Unset: the field is ABSENT from every request (not "").
+  {
+    const { deps, bodies } = httpHarness(null);
+    const result = await sendCampaign("post-first-visit", deps);
+    assert.equal(result.status, "sent");
+    assert.equal(result.sentNow, 3);
+    assert.equal(bodies.length, 3);
+    for (const body of bodies) {
+      assert.ok(!("reply_to" in body), "reply_to must be absent when unset");
+    }
+  }
+
+  // (c) Malformed (no '@'): loud warning, reply_to omitted, and the send
+  // still succeeds -- a typo'd reply-to must never block a send.
+  {
+    const { deps, bodies } = httpHarness("not-an-email");
+    const lines: string[] = [];
+    deps.log = (line) => lines.push(line);
+    const result = await sendCampaign("post-first-visit", deps);
+    assert.equal(result.status, "sent");
+    assert.equal(result.sentNow, 3);
+    assert.equal(bodies.length, 3);
+    for (const body of bodies) {
+      assert.ok(!("reply_to" in body), "malformed reply_to must be omitted");
+    }
+    const joined = lines.join("\n");
+    assert.match(joined, /WARNING/);
+    assert.match(joined, /CAMPAIGN_REPLY_TO="not-an-email"/);
+  }
+
+  console.log(
+    "[smoke] campaigns.send: CAMPAIGN_REPLY_TO (configured = exact reply_to; unset = field absent; malformed = warned + omitted, send unblocked)",
+  );
 }
 
 async function unsubscribeFooterShape(): Promise<void> {
@@ -775,6 +860,7 @@ async function main(): Promise<void> {
   await retryableProviderTroubleThrows();
   await copySnapshotFirstWriteWins();
   await mockedResendHttp();
+  await replyToEndToEnd();
   await unsubscribeFooterShape();
   console.log("[smoke] campaigns.send: all passed");
 }

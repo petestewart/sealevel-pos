@@ -39,6 +39,17 @@ copy a human approved, through Resend.
   stays `approved` (the monitor flags it as overdue).
 - Campaign cancelled/draft underneath the job: the job dead-letters.
 
+## Reply-To (optional, recommended)
+
+`CAMPAIGN_FROM_EMAIL` lives on the dedicated news/sending subdomain,
+which has no inbound mail (no MX for receiving) -- a human hitting Reply
+would bounce. `CAMPAIGN_REPLY_TO` routes replies to the monitored studio
+inbox instead:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `CAMPAIGN_REPLY_TO` | no | Reply-To on every campaign email, e.g. `hello@sealevelhotyoga.com` (the monitored studio inbox). Unset = no `reply_to` field on the Resend request at all (today's behavior). NOT a gate: a value without `@` is warned about loudly and omitted -- a typo'd reply-to never blocks a send |
+
 ## The unsubscribe endpoint
 
 `GET/POST /unsubscribe?token=...` on the worker (same surface as
@@ -76,7 +87,9 @@ already covers any single campaign.
    `UNSUBSCRIBE_TOKEN_SECRET` (long random string, e.g.
    `openssl rand -hex 32`), `UNSUBSCRIBE_BASE_URL` (the worker's public
    https URL), `RESEND_WEBHOOK_SECRET` (from the Resend webhook config,
-   SEA-85). Optional tuning: `CAMPAIGN_SEND_RAMP_PER_DAY` etc.
+   SEA-85). Optional but recommended: `CAMPAIGN_REPLY_TO` (see the
+   Reply-To section above). Optional tuning:
+   `CAMPAIGN_SEND_RAMP_PER_DAY` etc.
 3. **Migrate**: deploy runs `npm run migrate` (0018 adds
    `campaigns.send_at` + `campaign_copy_snapshots`).
 4. **Resend webhook**: point Resend's webhook at
