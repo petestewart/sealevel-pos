@@ -42,6 +42,21 @@ import {
   loadEnv,
   markGmailTrashed,
   mineOperatorLessons,
+  MONEY_QUEUE_NAME,
+  PAYROLL_MONITOR_JOB,
+  PAYROLL_PUSH_JOB,
+  payrollInvoiceForItem,
+  payrollMonitorSchedule,
+  runPayrollMonitor,
+  claimPayrollPush,
+  emitPayrollAlert,
+  getItemById,
+  qboClient,
+  qboConfigured,
+  QboError,
+  recordPayrollPushed,
+  recordPayrollPushFailed,
+  revertPayrollPushClaim,
   processResendWebhook,
   processUnsubscribe,
   registerJobs,
@@ -54,7 +69,7 @@ import {
   workerVersion,
   writeApprovedKbUpdate,
 } from "@ai-manager/core";
-import { featureJobs } from "@ai-manager/features";
+import { featureJobs, payrollPrepare } from "@ai-manager/features";
 
 loadEnv();
 
@@ -71,6 +86,9 @@ console.log(`[worker] starting, commit ${workerVersion()}`);
 
 const connection = createRedis();
 const queue = createQueue(DEFAULT_QUEUE_NAME, connection);
+// Isolated money queue (SEA-104, plan §7b step 6): payroll and invoice
+// forwarding run here so a stuck QBO call never starves email triage.
+const moneyQueue = createQueue(MONEY_QUEUE_NAME, connection);
 
 /**
  * Plain-function processors, keyed by job name, for inbound-edge plumbing
@@ -299,6 +317,20 @@ const processors: Record<string, (job: Job) => Promise<void>> = {
       `[worker] ${CAMPAIGNS_MONITOR_JOB}: ${result.status} -- ${result.summary}`,
     );
   },
+  // Payroll stuck-row sweeper (SEA-111 fix 2b). Pure code, no brain: any
+  // payroll_invoices row sitting 'queued' or 'pushing' past the threshold
+  // alerts through the Novu path (event type payroll_alert, alertType
+  // stuck_push). The net that does not depend on any handler firing, and
+  // the summons-a-human mechanism for rows deliberately parked 'pushing'
+  // after a crash. Fired every 30 minutes by the schedule below; degrades
+  // to a logged skip without DATABASE_URL. A mid-run Postgres error
+  // throws so BullMQ retries; the sweep is read-only.
+  [PAYROLL_MONITOR_JOB]: async () => {
+    const result = await runPayrollMonitor();
+    console.log(
+      `[worker] ${PAYROLL_MONITOR_JOB}: ${result.status} -- ${result.summary}`,
+    );
+  },
   "test-heartbeat": async (job) => {
     console.log(
       `[worker] test-heartbeat ran (job ${job.id}, attempt ${job.attemptsMade + 1})`,
@@ -329,6 +361,231 @@ const worker = createQueueWorker(
   connection,
 );
 
+/**
+ * payroll.push (SEA-104, Job B): write one approved invoice's QBO Bill.
+ * Runs on the money queue. Idempotency layers (plan §2.8): the ledger's
+ * UNIQUE (period, mb_staff_id), the deterministic jobId, the atomic
+ * claim below (queued -> pushing; a concurrent retry claims null and
+ * skips), and the DocNumber pre-check against QBO itself. The worker
+ * re-checks its own credential gate before acting (the
+ * gmailSendConfigured pattern); the console only enqueued.
+ */
+/**
+ * A guarded ledger UPDATE that matched nothing (SEA-111 fix 2c): the
+ * push outcome and the ledger disagree, and until now the only trace was
+ * a log line. Alert loudly; the core/db functions report the miss (they
+ * stay notification-free, like every db module) and the worker owns the
+ * paging. Never throws: the alert must not fail the push it describes.
+ */
+async function alertPayrollLedgerMiss(
+  itemId: string,
+  period: string,
+  detail: string,
+): Promise<void> {
+  console.error(`[worker] ${PAYROLL_PUSH_JOB} item ${itemId}: LEDGER MISS: ${detail}`);
+  await emitPayrollAlert({
+    alertType: "push_failed",
+    period,
+    detail,
+    teachers: [],
+    at: new Date().toISOString(),
+  });
+}
+
+async function processPayrollPush(itemId: string): Promise<void> {
+  if (!qboConfigured()) {
+    const recorded = await recordPayrollPushFailed(itemId);
+    if (!recorded) {
+      await alertPayrollLedgerMiss(
+        itemId,
+        "unknown",
+        `Payroll push for item ${itemId} was skipped (QBO not configured) but the ledger row could not be marked failed (not queued or pushing). Check the payroll_invoices row for item ${itemId} by hand.`,
+      );
+      return;
+    }
+    // A ledger row parked 'failed' with only a log line is an approved
+    // invoice that silently pays nothing: an operator can approve a
+    // whole period against a deconfigured QBO and nobody is paged. Page
+    // through the same alert path as every other push failure. Fire and
+    // forget with a caught rejection, like the exhausted-retries handler:
+    // the alert must never fail the job that describes it.
+    void (async () => {
+      const row = await payrollInvoiceForItem(itemId);
+      await emitPayrollAlert({
+        alertType: "push_failed",
+        period: row?.period ?? "unknown",
+        detail: `Payroll push for item ${itemId}${
+          row ? ` (staff ${row.mb_staff_id}, period ${row.period})` : ""
+        } was skipped because QuickBooks is not configured (QBO_CLIENT_ID / QBO_CLIENT_SECRET / QBO_REFRESH_TOKEN / QBO_REALM_ID missing on the worker). No Bill was written and the ledger row is marked failed. Restore the QBO_* environment on the worker, then reopen and re-approve the invoice to push it.`,
+        teachers: [],
+        at: new Date().toISOString(),
+      });
+    })().catch((alertErr: unknown) =>
+      console.error(
+        `[worker] could not alert on unconfigured-QBO payroll push for item ${itemId}: ${
+          alertErr instanceof Error ? alertErr.message : String(alertErr)
+        }`,
+      ),
+    );
+    console.log(
+      `[worker] ${PAYROLL_PUSH_JOB} item ${itemId}: skipped (QBO not configured); ledger marked failed, reopen + re-approve after configuring`,
+    );
+    return;
+  }
+  const claim = await claimPayrollPush(itemId);
+  if (!claim) {
+    console.log(
+      `[worker] ${PAYROLL_PUSH_JOB} item ${itemId}: no claim (already pushed, in flight, or not queued), skipping`,
+    );
+    return;
+  }
+  const docNumber = `${claim.period}-${claim.mb_staff_id}`;
+  try {
+    const item = await getItemById(itemId);
+    if (!item) throw new QboError(`item ${itemId} not found`, false);
+    const payload = item.payload as Record<string, unknown>;
+    const teacherName = String(payload["teacher_name"] ?? "");
+    const totalCents = Number(payload["total_cents"] ?? NaN);
+    const summary = String(payload["summary"] ?? "");
+    const period = String(payload["period"] ?? claim.period);
+    if (!teacherName || !Number.isInteger(totalCents) || totalCents <= 0) {
+      throw new QboError(
+        `item ${itemId} payload is not a pushable invoice (teacher "${teacherName}", total ${totalCents})`,
+        false,
+      );
+    }
+
+    const client = qboClient();
+    // QBO-side idempotency: a Bill already carrying this DocNumber means
+    // a prior attempt landed; record it and stop.
+    const existing = await client.findBillByDocNumber(docNumber);
+    if (existing) {
+      const recorded = await recordPayrollPushed(itemId, existing);
+      if (!recorded) {
+        await alertPayrollLedgerMiss(
+          itemId,
+          claim.period,
+          `Bill ${existing} exists in QuickBooks for ${docNumber} but the ledger row for item ${itemId} could not be marked pushed (no longer in 'pushing'). Reconcile the payroll_invoices row against QuickBooks by hand before any retry.`,
+        );
+        return;
+      }
+      console.log(
+        `[worker] ${PAYROLL_PUSH_JOB} item ${itemId}: Bill ${existing} already exists for ${docNumber}, recorded`,
+      );
+      return;
+    }
+    const vendorId = await client.findVendor(teacherName);
+    if (!vendorId) {
+      throw new QboError(
+        `no QBO Vendor named "${teacherName}"; create the vendor record (policy 10 bookkeeper question), then reopen + re-approve`,
+        false,
+      );
+    }
+    const bill = await client.createBill({
+      vendorId,
+      docNumber,
+      txnDate: claim.period.slice(-10),
+      lines: [{ description: `${summary} (period ${period})`, amountCents: totalCents }],
+      memo: `ai-manager payroll ${period}, staff ${claim.mb_staff_id}`,
+    });
+    const recorded = await recordPayrollPushed(itemId, bill.billId);
+    if (!recorded) {
+      await alertPayrollLedgerMiss(
+        itemId,
+        claim.period,
+        `Bill ${bill.billId} was written to QuickBooks for ${docNumber} but the ledger row for item ${itemId} could not be marked pushed (no longer in 'pushing'). Reconcile the payroll_invoices row against QuickBooks by hand before any retry.`,
+      );
+      return;
+    }
+    console.log(
+      `[worker] ${PAYROLL_PUSH_JOB} item ${itemId}: Bill ${bill.billId} written (${docNumber})`,
+    );
+  } catch (err) {
+    const retryable = err instanceof QboError ? err.retryable : true;
+    const message = err instanceof Error ? err.message : String(err);
+    if (retryable) {
+      // Release the claim so the BullMQ retry can re-claim, then throw
+      // for the retry/backoff machinery.
+      await revertPayrollPushClaim(itemId);
+      throw err;
+    }
+    const recordedFailed = await recordPayrollPushFailed(itemId);
+    if (!recordedFailed) {
+      await alertPayrollLedgerMiss(
+        itemId,
+        claim.period,
+        `Payroll push for item ${itemId} (${docNumber}) failed terminally (${message}) but the ledger row could not be marked failed (not queued or pushing). Check the payroll_invoices row and QuickBooks by hand.`,
+      );
+      return;
+    }
+    await emitPayrollAlert({
+      alertType: "push_failed",
+      period: claim.period,
+      detail: `QBO push failed for staff ${claim.mb_staff_id}, period ${claim.period}: ${message}. Reopen and re-approve to retry once resolved.`,
+      teachers: [],
+      at: new Date().toISOString(),
+    });
+    console.error(
+      `[worker] ${PAYROLL_PUSH_JOB} item ${itemId}: terminal failure (${message})`,
+    );
+  }
+}
+
+// The money-queue worker: only outbound money actions run here.
+const moneyWorker = createQueueWorker(
+  MONEY_QUEUE_NAME,
+  async (job) => {
+    if (job.name !== PAYROLL_PUSH_JOB) {
+      throw new Error(`No money processor for job name "${job.name}"`);
+    }
+    const itemId = (job.data as { itemId?: unknown })?.itemId;
+    if (typeof itemId !== "string" || itemId.length === 0) {
+      throw new Error(`${PAYROLL_PUSH_JOB}: job ${job.id} has no itemId in data`);
+    }
+    await processPayrollPush(itemId);
+  },
+  connection,
+);
+moneyWorker.on("failed", (job, err) => {
+  console.error(
+    `[worker] money failed ${job?.name} (${job?.id}) attempt ${job?.attemptsMade}: ${err.message}`,
+  );
+  // Exhausted retries (SEA-111 fix 2a): the retryable path reverts the
+  // claim (pushing -> queued) and rethrows for BullMQ backoff; after the
+  // final attempt BullMQ gives up, the row sits 'queued' forever, and
+  // nothing else on this path pages. Terminal failures already alert in
+  // processPayrollPush; this closes the dark half. Fire-and-forget: the
+  // event handler must never throw, and emitPayrollAlert never does.
+  if (
+    job &&
+    job.name === PAYROLL_PUSH_JOB &&
+    job.attemptsMade >= (job.opts.attempts ?? 1)
+  ) {
+    const itemId = (job.data as { itemId?: unknown })?.itemId;
+    void (async () => {
+      const row =
+        typeof itemId === "string" ? await payrollInvoiceForItem(itemId) : null;
+      await emitPayrollAlert({
+        alertType: "push_failed",
+        period: row?.period ?? "unknown",
+        detail: `QuickBooks push for item ${String(itemId)}${
+          row ? ` (staff ${row.mb_staff_id}, period ${row.period})` : ""
+        } gave up after ${job.attemptsMade} attempts: ${err.message}. The invoice is parked '${
+          row?.status ?? "unknown"
+        }' and will not retry on its own; the stuck-push sweeper keeps paging until it is resolved.`,
+        teachers: [],
+        at: new Date().toISOString(),
+      });
+    })().catch((alertErr: unknown) =>
+      console.error(
+        `[worker] could not alert on exhausted payroll push retries for item ${String(itemId)}: ${
+          alertErr instanceof Error ? alertErr.message : String(alertErr)
+        }`,
+      ),
+    );
+  }
+});
+
 worker.on("completed", (job) => {
   console.log(`[worker] completed ${job.name} (${job.id})`);
 });
@@ -336,6 +593,34 @@ worker.on("failed", (job, err) => {
   console.error(
     `[worker] failed ${job?.name} (${job?.id}) attempt ${job?.attemptsMade}: ${err.message}`,
   );
+  // payroll.prepare exhausting its retries is a payday that did not
+  // happen (SEA-111 fix 2a, extended): the run filed nothing (or filed
+  // partially), so the stuck-push sweeper is structurally blind to it,
+  // and the in-job catch-all alert may itself have been what failed.
+  // Page here as the outermost net. Fire-and-forget: the event handler
+  // must never throw, and emitPayrollAlert never does.
+  if (
+    job &&
+    job.name === payrollPrepare.id &&
+    job.attemptsMade >= (job.opts.attempts ?? 1)
+  ) {
+    void emitPayrollAlert({
+      alertType: "run_blocked",
+      period:
+        typeof (job.data as { period?: unknown })?.period === "string"
+          ? String((job.data as { period?: unknown }).period)
+          : "unknown",
+      detail: `payroll.prepare gave up after ${job.attemptsMade} attempts: ${err.message}. The run filed nothing or filed partially and will not retry on its own. Fix the cause and re-fire payroll.prepare for the period; filing is idempotent per invoice, so a re-run is safe.`,
+      teachers: [],
+      at: new Date().toISOString(),
+    }).catch((alertErr: unknown) =>
+      console.error(
+        `[worker] could not alert on exhausted payroll.prepare retries: ${
+          alertErr instanceof Error ? alertErr.message : String(alertErr)
+        }`,
+      ),
+    );
+  }
 });
 
 // Register the declared repeatable schedules idempotently on every boot:
@@ -353,6 +638,9 @@ await registerSchedules(queue, [
   // Campaign health monitor (SEA-92), every 15 minutes; harmless (a
   // logged skip) until DATABASE_URL is configured.
   campaignsMonitorSchedule(),
+  // Payroll stuck-row sweeper (SEA-111), every 30 minutes; harmless (a
+  // logged skip) until DATABASE_URL is configured.
+  payrollMonitorSchedule(),
   ...cronSchedulesFromJobs(JOBS),
   {
     id: "test-heartbeat",
@@ -376,7 +664,7 @@ await enqueue(
 const serverAdapter = new ExpressAdapter();
 serverAdapter.setBasePath("/admin/queues");
 createBullBoard({
-  queues: [new BullMQAdapter(queue)],
+  queues: [new BullMQAdapter(queue), new BullMQAdapter(moneyQueue)],
   serverAdapter,
 });
 
@@ -474,7 +762,9 @@ async function shutdown(signal: string): Promise<void> {
     server.closeAllConnections();
   });
   await worker.close();
+  await moneyWorker.close();
   await queue.close();
+  await moneyQueue.close();
   // The no-reply preflight enqueues mark-read via the shared producer
   // queue; close it too (a no-op when it was never created).
   await closeSharedQueue();

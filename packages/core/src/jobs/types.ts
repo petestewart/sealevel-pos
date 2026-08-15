@@ -68,7 +68,10 @@ export interface Job {
 }
 
 export type Trigger =
-  | { kind: "cron"; expr: string }
+  /** tz: IANA zone the expr is evaluated in (ScheduleSpec.tz). Set it
+   * when the cadence is a wall-clock commitment, e.g. payroll's Sunday
+   * 20:30 America/Los_Angeles, which must survive DST. */
+  | { kind: "cron"; expr: string; tz?: string }
   | { kind: "webhook"; eventType: string }
   | { kind: "email"; match: RegExp }
   | { kind: "manual" }; // fire by hand (CLI/dashboard)

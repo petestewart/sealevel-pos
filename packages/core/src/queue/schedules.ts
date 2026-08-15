@@ -156,6 +156,38 @@ export function campaignsMonitorSchedule(): ScheduleSpec {
   };
 }
 
+/** The BullMQ job name for the payroll stuck-row sweeper (SEA-111). */
+export const PAYROLL_MONITOR_JOB = "payroll.monitor";
+
+/** The schedule id for the payroll stuck-row sweeper. */
+export const PAYROLL_MONITOR_SCHEDULE_ID = "payroll.monitor.30min";
+
+/**
+ * Default cadence: every 30 minutes. A push normally completes in
+ * seconds, so a row stuck past the sweeper's threshold is unambiguous;
+ * the sweep has no dedupe state (deliberately, see payroll/monitor.ts),
+ * so the cadence is also the re-page interval for an unresolved stuck
+ * row. Half the campaign monitor's noise, still fast enough that a
+ * parked money row summons a human within the hour.
+ */
+export const DEFAULT_PAYROLL_MONITOR_CRON = "*/30 * * * *";
+
+/**
+ * The payroll stuck-row sweep schedule (SEA-111 fix 2b): pure code, no
+ * brain. Any payroll_invoices row sitting 'queued' or 'pushing' past
+ * the threshold alerts through the Novu path, the net that does not
+ * depend on any handler firing. Runs harmlessly (a logged skip) until
+ * DATABASE_URL is configured, same boot-registration pattern as the
+ * campaign monitor. Cadence override via PAYROLL_MONITOR_CRON.
+ */
+export function payrollMonitorSchedule(): ScheduleSpec {
+  return {
+    id: PAYROLL_MONITOR_SCHEDULE_ID,
+    pattern: process.env.PAYROLL_MONITOR_CRON || DEFAULT_PAYROLL_MONITOR_CRON,
+    jobName: PAYROLL_MONITOR_JOB,
+  };
+}
+
 /**
  * Derive repeatable schedules from the registry's cron triggers (GH-95):
  * reads Job.triggers -- the path that had been declared and never read --
@@ -168,12 +200,14 @@ export function cronSchedulesFromJobs(jobs: Job[]): ScheduleSpec[] {
   for (const job of jobs) {
     if (!job.enabled) continue;
     const crons = job.triggers.filter(
-      (t): t is { kind: "cron"; expr: string } => t.kind === "cron",
+      (t): t is { kind: "cron"; expr: string; tz?: string } =>
+        t.kind === "cron",
     );
     crons.forEach((trigger, i) => {
       specs.push({
         id: crons.length > 1 ? `${job.id}#${i}` : job.id,
         pattern: trigger.expr,
+        ...(trigger.tz ? { tz: trigger.tz } : {}),
         jobName: job.id,
       });
     });

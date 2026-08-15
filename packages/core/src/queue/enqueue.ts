@@ -2,7 +2,12 @@ import type { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 
 import { createRedis } from "../redis.js";
-import { createQueue, DEFAULT_QUEUE_NAME, enqueue } from "./queue.js";
+import {
+  createQueue,
+  DEFAULT_QUEUE_NAME,
+  enqueue,
+  MONEY_QUEUE_NAME,
+} from "./queue.js";
 
 /**
  * Process-shared producer queues (GH-95, generalized for SEA-102). The
@@ -68,6 +73,22 @@ export const KB_WRITE_JOB = "kb.write";
 export const EVAL_CAPTURE_JOB = "eval.capture";
 /** The BullMQ job name for the learning-loop miner (GH-127). */
 export const LEARNING_MINE_JOB = "learning.mine";
+/** The BullMQ job name for the QBO Bill write on approval (SEA-104). */
+export const PAYROLL_PUSH_JOB = "payroll.push";
+
+/**
+ * Arguments for enqueueing one payroll.push (SEA-113). period and
+ * mbStaffId come from the payroll_invoices ledger row (the caller gets
+ * them back from markPayrollPushQueued) and build the deterministic
+ * jobId; itemId scopes the worker's processing and rides in the payload.
+ */
+export interface PayrollPushArgs {
+  itemId: string;
+  /** Ledger period label, e.g. "2026-08-03..2026-08-16". */
+  period: string;
+  /** Ledger mb_staff_id (integer column). */
+  mbStaffId: number;
+}
 
 /** Payload for an email.gmailState job. */
 export interface GmailStateJobPayload {
@@ -135,6 +156,26 @@ export const OUTBOUND_ACTIONS = {
     payload: ({ kind }) => ({ requested: kind }),
     attempts: 2,
   } satisfies OutboundAction<{ kind: string }>,
+  // payroll.push (SEA-104): the QBO Bill write, on the isolated money
+  // queue (plan §7b step 6) so a stuck QBO call never starves email
+  // triage. The jobId is payroll-<period>-<mbStaffId> (SEA-113), NOT
+  // keyed on the item id: item ids are only unique per teacher+period
+  // through the partial dedupe index (WHERE status <> 'resolved'), so a
+  // resolved card frees the key and a later prepare mints a NEW item id,
+  // which would mint a new jobId and slip past BullMQ's windowed dedupe.
+  // (period, mbStaffId) is the ledger's durable UNIQUE key and the QBO
+  // DocNumber, so the id stays stable across re-minted cards. The
+  // payload still carries the item id: the worker's processing is
+  // item-scoped. Low attempts: failures surface on the ledger row
+  // ('failed'); reopen + re-approve is the retry path, like a failed
+  // email send.
+  [PAYROLL_PUSH_JOB]: {
+    jobName: PAYROLL_PUSH_JOB,
+    jobId: ({ period, mbStaffId }) => payrollPushJobId(period, mbStaffId),
+    payload: ({ itemId }) => ({ itemId }),
+    attempts: 3,
+    queue: MONEY_QUEUE_NAME,
+  } satisfies OutboundAction<PayrollPushArgs>,
 } as const;
 
 export type OutboundActionName = keyof typeof OUTBOUND_ACTIONS;
@@ -170,16 +211,17 @@ export async function enqueueOutboundAction<K extends OutboundActionName>(
  * plan §2.6): the console's approve path consults this instead of
  * hardcoding job names, so a new approval-gated integration is one entry
  * here (plus its worker processor), not a new console path. Item types
- * with no entry have no outbound action on approval (reports, proposals
- * whose action is elsewhere).
+ * with no entry have no outbound action THROUGH THIS ROUTER: reports and
+ * proposals act elsewhere, and payroll_invoice enqueues through the
+ * dedicated enqueuePayrollPush (SEA-113) because its jobId needs ledger
+ * fields (period, mb_staff_id) beyond the item id this router carries.
  */
 export const ITEM_TYPE_OUTBOUND: Partial<
   Record<string, OutboundActionName>
 > = {
   email_reply: EMAIL_SEND_JOB,
   kb_update: KB_WRITE_JOB,
-  // payroll_invoice -> payroll.push and invoice_forward -> invoice.forward
-  // land here with their jobs (SEA-104, invoice forwarding).
+  // invoice_forward -> invoice.forward lands here with its job.
 };
 
 /**
@@ -199,7 +241,9 @@ export async function enqueueItemOutbound(
     );
   }
   // Every item-type-mapped action takes { itemId } (the map above only
-  // routes approval actions, which are keyed on the item).
+  // routes approval actions whose jobId needs nothing but the item;
+  // actions needing more args, like payroll.push, get a dedicated
+  // typed enqueuer instead of an entry here).
   return enqueueOutboundAction(name as "email.send" | "kb.write", { itemId });
 }
 
@@ -258,6 +302,80 @@ export async function enqueueEvalCapture(itemId: string): Promise<string> {
 /** JobId for one mine request: learnmine-<kind>. */
 export function learningMineJobId(kind: string): string {
   return `learnmine-${kind}`;
+}
+
+/**
+ * Deterministic jobId for one invoice's QBO push (SEA-104, keyed per
+ * SEA-113): payroll-<period>-<mbStaffId>, from the ledger row's durable
+ * UNIQUE (period, mb_staff_id) key — the same convention as the QBO
+ * Bill's DocNumber <period>-<mb_staff_id> and the item dedupe_key.
+ * Period labels are YYYY-MM-DD..YYYY-MM-DD and staff ids integers, so
+ * the id is BullMQ-safe (no ":").
+ */
+export function payrollPushJobId(period: string, mbStaffId: number): string {
+  return `payroll-${period}-${mbStaffId}`;
+}
+
+/** The slice of a BullMQ Queue the stale-record sweep needs; the smoke
+ * injects a fake, production passes the real Queue. */
+export interface StaleJobLookup {
+  getJob(
+    jobId: string,
+  ): Promise<
+    | { getState(): Promise<string>; remove(): Promise<unknown> }
+    | undefined
+    | null
+  >;
+}
+
+/**
+ * Remove a RETAINED terminal job record holding a deterministic jobId,
+ * so a deliberate re-enqueue is not a silent no-op. The queue defaults
+ * keep failed jobs forever and completed jobs for 24h; with the
+ * deterministic payroll jobId (payroll-<period>-<mbStaffId>) a retained
+ * failed/completed record made every reopen + re-approve dedupe into
+ * nothing: the ledger row sat 'queued' with no live job behind it, an
+ * operational dead end that either showed a false SUCCESS or waited for
+ * the sweeper to page an hour later.
+ *
+ * Only 'failed' and 'completed' records are removed. Active, waiting,
+ * delayed, or prioritized jobs are LIVE: their dedupe is genuine
+ * double-push protection and they are never touched (the ledger claim is
+ * the durable guard anyway). Returns what happened so callers and the
+ * smoke can assert it. Errors propagate: failing loudly at enqueue time
+ * beats a silent no-op enqueue.
+ */
+export async function removeStaleJobRecord(
+  queue: StaleJobLookup,
+  jobId: string,
+): Promise<"removed" | "kept" | "absent"> {
+  const job = await queue.getJob(jobId);
+  if (!job) return "absent";
+  const state = await job.getState();
+  if (state === "failed" || state === "completed") {
+    await job.remove();
+    return "removed";
+  }
+  return "kept";
+}
+
+/**
+ * Enqueue one approved invoice's QBO push (see map notes, SEA-113).
+ * Sweeps any retained failed/completed record under the deterministic
+ * jobId first (removeStaleJobRecord), so a reopen + re-approve reliably
+ * enqueues a fresh push instead of deduping against a dead record, while
+ * a live (waiting/active/delayed) job still dedupes as genuine
+ * double-push protection.
+ */
+export async function enqueuePayrollPush(
+  args: PayrollPushArgs,
+): Promise<string> {
+  const jobId = payrollPushJobId(args.period, args.mbStaffId);
+  await removeStaleJobRecord(
+    getSharedQueue(MONEY_QUEUE_NAME) as unknown as StaleJobLookup,
+    jobId,
+  );
+  return enqueueOutboundAction(PAYROLL_PUSH_JOB, args);
 }
 
 /** Deterministic threshold-trigger kind for one high-water-mark window. */

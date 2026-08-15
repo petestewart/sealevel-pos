@@ -50,6 +50,10 @@ App behavior -> Railway. Live schedule/pricing -> Cloudflare. Nightly analytics 
 | `CAMPAIGN_SEND_BATCH_SIZE` | no | Recipients per send batch (also the granularity of the per-batch suppression re-check); default `25`, capped at 100 |
 | `CAMPAIGN_SEND_INTERVAL_MS` | no | Milliseconds between individual Resend requests; default `600` (under Resend's 2 req/s allowance) |
 | `CAMPAIGN_SEND_RAMP_RETRY_MINUTES` | no | How long a ramp-paused send waits before resuming; default `60` (keep below `CAMPAIGN_ALERT_STUCK_SENDING_MINUTES` so a paused ramp does not page) |
+| `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`, `QBO_REFRESH_TOKEN`, `QBO_REALM_ID` | no | QuickBooks Online for `payroll.push` (SEA-104): all four or the push records an honest failed skip. Worker only, never the console (the Gmail gate split; the refresh token never sits on the web-facing service) |
+| `QBO_ENV` | no | `sandbox` (default) or `production`; switches Intuit API hosts. Keep sandbox until the Intuit app assessment clears (SEA-99) |
+| `QBO_EXPENSE_ACCOUNT_ID` | no | Expense account for Bill lines; unset = QBO default resolution (open bookkeeper question, policy 10) |
+| `ANALYTICS_SYNC_GH_TOKEN` | no | GitHub token with `actions:write` on petestewart/sealevel-analytics, used by `payroll.prepare` to dispatch the on-demand payday sync (policy 6). Worker only, never the console. Unset = dispatch skipped; the freshness gate still blocks a stale run |
 | `SEALEVEL_BOOKING_URL` | no | The one canonical self-service booking link, interpolated verbatim into drafts; unset = booking rule absent |
 | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_USER` | no | Gmail layer (all four or it is inert); worker only, never the console |
 | `GMAIL_SEND_ENABLED` | no | `true` opts the deployment into outbound; default off (ingestion-only) |

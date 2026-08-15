@@ -619,6 +619,29 @@ export function toRow(item: Item): RowView {
       assigneeName: assigneeNameOf(item),
     };
   }
+  // payroll_invoice items (SEA-104) have no original_email; their row
+  // leads with the teacher and the invoice arithmetic summary.
+  if (item.type === "payroll_invoice") {
+    const teacher = str(item.payload.teacher_name) ?? "(unknown teacher)";
+    const period = str(item.payload.period) ?? "";
+    const summary = str(item.payload.summary) ?? "Payroll invoice";
+    const tone = toneOf(item);
+    const decided = tone !== "pending";
+    return {
+      id: String(item.id),
+      sender: "Payroll",
+      initials: "PY",
+      subject: `${teacher}${period ? ` (${period})` : ""}`,
+      time:
+        decided && item.resolved_at
+          ? formatDecidedAt(item.resolved_at)
+          : formatCardTimestamp(item.created_at),
+      preview: summary,
+      tone,
+      tags: [],
+      assigneeName: assigneeNameOf(item),
+    };
+  }
   // rule_proposal items (learning loop, GH-127) have no original_email;
   // their row leads with the proposed rule text.
   if (item.type === "rule_proposal") {

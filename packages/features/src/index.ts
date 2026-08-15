@@ -8,7 +8,32 @@
  */
 import type { Job } from "@ai-manager/core";
 
+import { payrollPrepare } from "./payroll/prepare.js";
+
 export const FEATURES_PACKAGE = "@ai-manager/features";
 
-/** Every job contributed by feature modules. Payroll et al. land here. */
-export const featureJobs: Job[] = [];
+/** Every job contributed by feature modules. */
+export const featureJobs: Job[] = [payrollPrepare];
+
+export { payrollPrepare, type PayrollPreparePayload } from "./payroll/prepare.js";
+export {
+  computePayroll,
+  type PayrollComputation,
+  type TeacherInvoice,
+  type TeacherPeriodInput,
+  type InvoiceClassLine,
+  type PeriodClass,
+  type QuotaInput,
+  type RunBlocker,
+} from "./payroll/compute.js";
+export {
+  checkFreshness,
+  readPeriodTeachers,
+  readQuotaHistory,
+  rateForClassDate,
+} from "./payroll/reads.js";
+export {
+  dispatchSyncAndWait,
+  syncDispatchConfigured,
+  type SyncDispatchResult,
+} from "./payroll/sync.js";

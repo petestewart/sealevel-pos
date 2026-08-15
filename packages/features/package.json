@@ -9,7 +9,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "smoke:payrollcompute": "npm run build && node dist/payroll/compute.smoke.js",
+    "smoke:payrollfiling": "npm run build && node dist/payroll/filing.smoke.js",
+    "smoke:payrollfreshness": "npm run build && node dist/payroll/freshness.smoke.js",
+    "smoke:payrollprepare": "npm run build && node dist/payroll/prepare.smoke.js",
+    "smoke:payrollsync": "npm run build && node dist/payroll/sync.smoke.js"
   },
   "dependencies": {
     "@ai-manager/core": "0.0.1"

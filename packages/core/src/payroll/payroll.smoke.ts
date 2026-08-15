@@ -6,6 +6,13 @@
 import assert from "node:assert/strict";
 
 import {
+  OUTBOUND_ACTIONS,
+  PAYROLL_PUSH_JOB,
+  payrollPushJobId,
+  removeStaleJobRecord,
+  type StaleJobLookup,
+} from "../queue/enqueue.js";
+import {
   isInOpenPeriod,
   isPeriodClosed,
   nextPeriodStart,
@@ -154,7 +161,91 @@ function testQuotaGuards(): void {
   console.log("[smoke] payroll: replay guards and dollar denomination hold");
 }
 
-function main(): void {
+function testPushJobId(): void {
+  // SEA-113: the push jobId derives from the ledger's durable identity
+  // (period, mb_staff_id), matching the QBO DocNumber convention and the
+  // item dedupe_key — NEVER from the item id, which is re-minted when a
+  // resolved card frees the partial dedupe index.
+  assert.equal(
+    payrollPushJobId("2026-08-03..2026-08-16", 100000106),
+    "payroll-2026-08-03..2026-08-16-100000106",
+  );
+  // The outbound-action map builds the same id from its args, and the
+  // payload still carries only the item id for the worker.
+  const action = OUTBOUND_ACTIONS[PAYROLL_PUSH_JOB];
+  const args = {
+    itemId: "42",
+    period: "2026-08-03..2026-08-16",
+    mbStaffId: 100000106,
+  };
+  assert.equal(action.jobId(args), "payroll-2026-08-03..2026-08-16-100000106");
+  assert.deepEqual(action.payload(args), { itemId: "42" });
+  // BullMQ-safe: deterministic ids must never contain ":".
+  assert.ok(!action.jobId(args).includes(":"));
+  console.log("[smoke] payroll: push jobId derives from period + staff id");
+}
+
+/** Fake queue for removeStaleJobRecord: one job record in a given state,
+ * recording whether remove() was called. */
+function fakeQueueWith(state: string | null): {
+  queue: StaleJobLookup;
+  removed: () => boolean;
+} {
+  let removed = false;
+  const queue: StaleJobLookup = {
+    getJob: async () =>
+      state === null
+        ? undefined
+        : {
+            getState: async () => state,
+            remove: async () => {
+              removed = true;
+            },
+          },
+  };
+  return { queue, removed: () => removed };
+}
+
+async function testStaleJobRecordSweep(): Promise<void> {
+  // A retained terminal record under the deterministic payroll jobId
+  // makes every re-enqueue a silent no-op (queue defaults keep failed
+  // jobs forever, completed 24h). The sweep must remove exactly the
+  // terminal states and never touch a live job.
+  for (const state of ["failed", "completed"]) {
+    const { queue, removed } = fakeQueueWith(state);
+    assert.equal(await removeStaleJobRecord(queue, "payroll-x-1"), "removed");
+    assert.equal(removed(), true, `${state} record must be removed`);
+  }
+  // Live jobs are genuine double-push dedupe: kept, remove() never called.
+  for (const state of ["active", "waiting", "delayed", "prioritized", "waiting-children"]) {
+    const { queue, removed } = fakeQueueWith(state);
+    assert.equal(await removeStaleJobRecord(queue, "payroll-x-1"), "kept");
+    assert.equal(removed(), false, `${state} job must never be removed`);
+  }
+  // No record at all: nothing to sweep, the add proceeds normally.
+  const { queue, removed } = fakeQueueWith(null);
+  assert.equal(await removeStaleJobRecord(queue, "payroll-x-1"), "absent");
+  assert.equal(removed(), false);
+  // A failing remove() must propagate: a loud enqueue-time failure beats
+  // a silent no-op enqueue against a stale record.
+  const throwing: StaleJobLookup = {
+    getJob: async () => ({
+      getState: async () => "failed",
+      remove: async () => {
+        throw new Error("locked");
+      },
+    }),
+  };
+  await assert.rejects(
+    () => removeStaleJobRecord(throwing, "payroll-x-1"),
+    /locked/,
+  );
+  console.log(
+    "[smoke] payroll: stale terminal job records are swept, live jobs kept",
+  );
+}
+
+async function main(): Promise<void> {
   testPeriodMath();
   testPeriodLabels();
   testEffectiveDateRules();
@@ -162,7 +253,9 @@ function main(): void {
   testQuotaNoRollover();
   testQuotaTail();
   testQuotaGuards();
+  testPushJobId();
+  await testStaleJobRecordSweep();
   console.log("[smoke] payroll: all passed");
 }
 
-main();
+await main();

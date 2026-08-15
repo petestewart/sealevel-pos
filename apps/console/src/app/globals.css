@@ -2891,3 +2891,48 @@ button.assignee-suggest:disabled {
   gap: 8px;
   margin-top: 6px;
 }
+
+/* Payroll invoice card (SEA-104) */
+.payroll-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 20px;
+}
+.payroll-card-head h2 {
+  margin: 0 0 4px;
+}
+.payroll-summary {
+  font: 500 0.875rem/1.5 var(--font-ui), sans-serif;
+  color: var(--txb);
+  margin: 0 0 14px;
+}
+.payroll-lines {
+  width: 100%;
+  border-collapse: collapse;
+  font: 400 0.8125rem/1.5 var(--font-ui), sans-serif;
+  margin-bottom: 10px;
+}
+.payroll-lines th {
+  text-align: left;
+  font: 600 10px var(--font-mono), monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tx3);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.payroll-lines td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line2);
+}
+.payroll-lines tfoot td {
+  font-weight: 600;
+  border-bottom: none;
+  border-top: 1px solid var(--line);
+}
+.payroll-card-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}

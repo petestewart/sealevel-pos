@@ -7,6 +7,9 @@ import {
 } from "@ai-manager/core";
 import { ApprovalCard } from "../../../components/ApprovalCard";
 import { CampaignApprovalCard } from "../../../components/CampaignApprovalCard";
+import { PayrollInvoiceCard } from "../../../components/PayrollInvoiceCard";
+import { PayrollInvoiceDecidedDetail } from "../../../components/PayrollInvoiceDecidedDetail";
+import { toPayrollInvoiceCardData } from "../../../lib/payrollInvoiceData";
 import { CampaignApprovalDecidedDetail } from "../../../components/CampaignApprovalDecidedDetail";
 import { DecidedDetail } from "../../../components/DecidedDetail";
 import { KbDecidedDetail } from "../../../components/KbDecidedDetail";
@@ -308,6 +311,36 @@ function Detail({
       );
     }
     return <CampaignApprovalDecidedDetail key={item.id} item={item} />;
+  }
+  // payroll_invoice items (SEA-104) get their own card, gated on the
+  // standard approvals:decide (the state machine's decider gate).
+  if (item.type === "payroll_invoice") {
+    if (item.status === "pending_approval") {
+      const data = toPayrollInvoiceCardData(item);
+      if (!data) {
+        return (
+          <div className="detail-placeholder">
+            <div className="detail-placeholder-title">
+              Malformed payroll invoice
+            </div>
+            <div className="detail-placeholder-sub">
+              This invoice's visible arithmetic does not reproduce its
+              total, so it cannot be approved. Re-run payroll.prepare for
+              the period.
+            </div>
+          </div>
+        );
+      }
+      return (
+        <PayrollInvoiceCard
+          key={item.id}
+          item={data}
+          canDecide={canDecide}
+          advanceHref={advanceHref}
+        />
+      );
+    }
+    return <PayrollInvoiceDecidedDetail key={item.id} item={item} />;
   }
   // kb_update items (KB write-back, GH-112/GH-113) get their own card
   // pair; everything else keeps the email renderers.

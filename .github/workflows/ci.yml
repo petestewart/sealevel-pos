@@ -103,6 +103,15 @@ jobs:
       - name: Learning loop offline smoke suite
         run: npm run smoke:learning --workspace @ai-manager/core
 
+      # SEA-112: the money machinery, not just the arithmetic. The
+      # freshness gate is the only guard against permanently shorting
+      # Sunday classes; the sync dispatch is what Sunday-evening payday
+      # depends on. Both run fully offline (faked analytics seam / fetch).
+      - name: Payroll freshness gate offline smoke suite (SEA-112)
+        run: npm run smoke:payrollfreshness --workspace @ai-manager/features
+      - name: Payroll sync dispatch offline smoke suite (SEA-112)
+        run: npm run smoke:payrollsync --workspace @ai-manager/features
+
   # Golden-case drafting evals (evals/cases). Live drafting costs real API
   # tokens, so this job only spends them when a prompt-affecting path
   # changed AND the ANTHROPIC_API_KEY secret is present; otherwise it

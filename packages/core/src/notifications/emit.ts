@@ -30,7 +30,7 @@ export type ItemEventType = "item.pending_approval" | "campaign_approval";
  * Non-item event names: operational alerts from the campaign monitor
  * (SEA-92). These carry a CampaignAlertPayload, not an item.
  */
-export type AlertEventType = "campaign_alert";
+export type AlertEventType = "campaign_alert" | "payroll_alert";
 
 /** Every event type this module can emit. */
 export type EventType = ItemEventType | AlertEventType;
@@ -77,8 +77,30 @@ export interface CampaignAlertPayload {
   [key: string]: unknown;
 }
 
+/**
+ * Payload for a payroll_alert event (SEA-104): a blocked payroll.prepare
+ * run (policy 7: unrated or unresolved teachers, a stale mirror, a failed
+ * sync dispatch), a failed QBO push, a stuck ledger row (SEA-111): an
+ * invoice sitting 'queued' or 'pushing' past the sweeper threshold, the
+ * net that does not depend on any handler firing, or a missed run: a
+ * period that ended recently with zero ledger rows because the Sunday
+ * 20:30 tick never fired (worker down over the weekend), detected by the
+ * next tick. detail is the ready-made human line for the SMS/email
+ * templates; no em dashes (project convention).
+ */
+export interface PayrollAlertPayload {
+  alertType: "run_blocked" | "push_failed" | "stuck_push" | "missed_run";
+  period: string;
+  /** One human-readable sentence. */
+  detail: string;
+  /** Blocked-teacher names for a run_blocked alert, else empty. */
+  teachers: string[];
+  at: string;
+  [key: string]: unknown;
+}
+
 /** Any payload this module sends to Novu. */
-export type EventPayload = ItemEventPayload | CampaignAlertPayload;
+export type EventPayload = ItemEventPayload | CampaignAlertPayload | PayrollAlertPayload;
 
 export interface EmitResult {
   /** True when a Novu trigger was actually sent. */
@@ -98,6 +120,7 @@ export const WORKFLOW_IDS: Record<EventType, string> = {
   "item.pending_approval": "item.pending_approval",
   campaign_approval: "campaign_approval",
   campaign_alert: "campaign_alert",
+  payroll_alert: "payroll_alert",
 };
 
 /** Signature of the low-level trigger call; injectable for tests. */
@@ -194,6 +217,21 @@ export async function emitItemEvent(
  * posture as emitItemEvent; the monitor decides WHETHER to alert (dedupe,
  * thresholds), this decides only HOW.
  */
+/** Emit one payroll alert (SEA-104). A blocked payroll must be noticed:
+ * this is the "files a blocking notification" from policy 6/7. Degrades
+ * to a logged no-op when Novu is unconfigured, like every emitter. */
+export async function emitPayrollAlert(
+  payload: PayrollAlertPayload,
+  trigger: TriggerFn = defaultTrigger,
+): Promise<EmitResult> {
+  return emitEvent(
+    "payroll_alert",
+    payload,
+    `${payload.alertType} (${payload.period})`,
+    trigger,
+  );
+}
+
 export async function emitCampaignAlert(
   payload: CampaignAlertPayload,
   trigger: TriggerFn = defaultTrigger,

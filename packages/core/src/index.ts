@@ -18,8 +18,13 @@ export { createRedis } from "./redis.js";
 export {
   DEFAULT_QUEUE_NAME,
   DEFAULT_JOB_OPTIONS,
+  MONEY_QUEUE_NAME,
   createQueue,
   enqueue,
+  PAYROLL_PUSH_JOB,
+  payrollPushJobId,
+  enqueuePayrollPush,
+  type PayrollPushArgs,
   getSharedQueue,
   closeSharedQueue,
   OUTBOUND_ACTIONS,
@@ -69,6 +74,10 @@ export {
   CAMPAIGNS_MONITOR_JOB,
   CAMPAIGNS_MONITOR_SCHEDULE_ID,
   DEFAULT_CAMPAIGNS_MONITOR_CRON,
+  payrollMonitorSchedule,
+  PAYROLL_MONITOR_JOB,
+  PAYROLL_MONITOR_SCHEDULE_ID,
+  DEFAULT_PAYROLL_MONITOR_CRON,
   type ScheduleSpec,
 } from "./queue/index.js";
 export type { Job, Trigger, JobContext, BrainModel } from "./jobs/types.js";
@@ -458,6 +467,40 @@ export {
   type PayPeriod,
 } from "./payroll/period.js";
 export {
+  filePayrollInvoice,
+  type FilePayrollInvoiceResult,
+  countPayrollInvoicesForPeriod,
+  payrollInvoiceForItem,
+  markPayrollPushQueued,
+  revertPayrollPushQueued,
+  revertPayrollPushClaim,
+  claimPayrollPush,
+  recordPayrollPushed,
+  recordPayrollPushFailed,
+  type PayrollInvoiceRow,
+} from "./db/payrollInvoices.js";
+export {
+  runPayrollMonitor,
+  payrollMonitorConfigFromEnv,
+  pgPayrollMonitorStore,
+  DEFAULT_PAYROLL_MONITOR_CONFIG,
+  type PayrollMonitorConfig,
+  type PayrollMonitorStore,
+  type PayrollMonitorDeps,
+  type PayrollMonitorResult,
+  type StuckPayrollRow,
+} from "./payroll/monitor.js";
+export {
+  qboConfigured,
+  qboConfig,
+  qboClient,
+  QboClient,
+  QboError,
+  type QboConfig,
+  type QboBillLine,
+  type QboBillResult,
+} from "./tools/qbo.js";
+export {
   listPayRates,
   ratesInEffectOn,
   changePayRate,
@@ -505,13 +548,14 @@ export type {
   TraceCallInput,
   TraceOutcome,
 } from "./tools/trace.js";
-export { emitItemEvent, emitCampaignAlert, WORKFLOW_IDS } from "./notifications/emit.js";
+export { emitItemEvent, emitCampaignAlert, emitPayrollAlert, WORKFLOW_IDS } from "./notifications/emit.js";
 export type {
   ItemEventType,
   AlertEventType,
   EventType,
   ItemEventPayload,
   CampaignAlertPayload,
+  PayrollAlertPayload,
   EventPayload,
   EmitResult,
   TriggerFn,

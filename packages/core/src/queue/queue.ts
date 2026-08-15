@@ -6,6 +6,13 @@ import type { Redis } from "ioredis";
 export const DEFAULT_QUEUE_NAME = "jobs";
 
 /**
+ * The isolated money queue (SEA-104, plan §7b step 6): payroll and
+ * invoice-forwarding jobs run here so a stuck QBO call never starves
+ * email triage. Same Redis, separate BullMQ queue + worker.
+ */
+export const MONEY_QUEUE_NAME = "money";
+
+/**
  * Default job options for every queue:
  * - retries with exponential backoff (5 attempts: ~1s, 2s, 4s, 8s);
  * - completed jobs pruned after a day / 1000 entries;
