@@ -127,21 +127,83 @@ async function readJson(
   }
 }
 
+const MINDBODY_FETCH_TIMEOUT_MS = 60_000;
+const MINDBODY_RETRY_DELAYS_MS = [2_000, 8_000];
+
+/**
+ * fetch with a hard timeout and a small retry envelope. The first live
+ * full pull stalled silently for hours mid-paging: a request that hangs
+ * past MINDBODY_FETCH_TIMEOUT_MS is aborted, and timeouts / network
+ * errors / 429s / 5xx get backoff retries before a LOUD error naming the
+ * request -- a stall must never again be indistinguishable from work.
+ * Non-retryable 4xx responses pass through to readJson's error path.
+ */
+async function mindbodyFetch(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit,
+  what: string,
+): Promise<Response> {
+  let lastFailure = "";
+  for (
+    let attempt = 0;
+    attempt <= MINDBODY_RETRY_DELAYS_MS.length;
+    attempt++
+  ) {
+    if (attempt > 0) {
+      const delay = MINDBODY_RETRY_DELAYS_MS[attempt - 1]!;
+      console.warn(
+        `[sync_contacts] Mindbody ${what}: ${lastFailure}; retrying in ${delay / 1000}s ` +
+          `(attempt ${attempt + 1}/${MINDBODY_RETRY_DELAYS_MS.length + 1})`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    let res: Response;
+    try {
+      res = await fetchImpl(url, {
+        ...init,
+        signal: AbortSignal.timeout(MINDBODY_FETCH_TIMEOUT_MS),
+      });
+    } catch (err) {
+      lastFailure =
+        err instanceof Error && err.name === "TimeoutError"
+          ? `no response within ${MINDBODY_FETCH_TIMEOUT_MS / 1000}s`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      continue;
+    }
+    if (res.status === 429 || res.status >= 500) {
+      lastFailure = `HTTP ${res.status}`;
+      continue;
+    }
+    return res;
+  }
+  throw new Error(
+    `Mindbody ${what} failed after ${MINDBODY_RETRY_DELAYS_MS.length + 1} attempts: ${lastFailure}`,
+  );
+}
+
 /** Issue a staff user token. Returns null when staff creds are not set. */
 export async function issueStaffToken(
   env: MindbodyEnv,
   fetchImpl: typeof fetch = fetch,
 ): Promise<string | null> {
   if (!env.username || !env.password) return null;
-  const res = await fetchImpl(`${env.baseUrl}/usertoken/issue`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "Api-Key": env.apiKey,
-      SiteId: env.siteId,
+  const res = await mindbodyFetch(
+    fetchImpl,
+    `${env.baseUrl}/usertoken/issue`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "Api-Key": env.apiKey,
+        SiteId: env.siteId,
+      },
+      body: JSON.stringify({ Username: env.username, Password: env.password }),
     },
-    body: JSON.stringify({ Username: env.username, Password: env.password }),
-  });
+    "usertoken/issue",
+  );
   const body = await readJson(res, "usertoken/issue");
   const token = body["AccessToken"];
   if (typeof token !== "string" || token.length === 0) {
@@ -242,9 +304,11 @@ export async function* fetchAllClients(
     if (options.modifiedSince) {
       params.set("request.lastModifiedDate", options.modifiedSince);
     }
-    const res = await fetchImpl(
+    const res = await mindbodyFetch(
+      fetchImpl,
       `${env.baseUrl}/client/clients?${params.toString()}`,
       { headers },
+      `client/clients (offset ${offset})`,
     );
     const body = await readJson(res, "client/clients");
     const clients = body["Clients"];
@@ -270,11 +334,17 @@ export async function* fetchAllClients(
           `(sample CreationDate: ${JSON.stringify(sample["CreationDate"] ?? null)})`,
       );
     }
-    if (records.length > 0) yield records;
-
     const pagination = (body["PaginationResponse"] ?? {}) as PaginationResponse;
     const pageSize = pagination.PageSize ?? clients.length;
     const total = pagination.TotalResults;
+    // Progress is part of correctness here: the first live pull stalled
+    // silently and was indistinguishable from work for hours.
+    console.log(
+      `[sync_contacts] page done: ${records.length} records ` +
+        `(offset ${offset + pageSize}/${typeof total === "number" ? total : "?"})`,
+    );
+    if (records.length > 0) yield records;
+
     offset += pageSize;
     if (pageSize === 0) return;
     if (typeof total === "number" && offset >= total) return;
@@ -305,9 +375,11 @@ export async function verifyClientFields(
     SiteId: env.siteId,
   };
   if (token) headers["Authorization"] = token;
-  const res = await fetchImpl(
+  const res = await mindbodyFetch(
+    fetchImpl,
     `${env.baseUrl}/client/clients?request.limit=1&request.offset=0`,
     { headers },
+    "client/clients (verify)",
   );
   const body = await readJson(res, "client/clients");
   const clients = body["Clients"];
