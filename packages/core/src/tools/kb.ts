@@ -106,6 +106,10 @@ export class KbClient {
           : {}),
       },
       body: JSON.stringify(body),
+      // A stalled connection must become a loud error, never an indefinite
+      // hang (the same failure class that silently froze the first
+      // Mindbody pull -- see campaigns/mindbody.ts mindbodyFetch).
+      signal: AbortSignal.timeout(60_000),
     });
   }
 

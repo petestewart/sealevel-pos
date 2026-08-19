@@ -81,7 +81,11 @@ function defaultDeps(): ReconcileDeps {
 async function loadAnalyticsClients(
   deps: ReconcileDeps,
 ): Promise<Map<string, AnalyticsClient>> {
+  // Progress is part of correctness here (a quiet phase reads as a hang):
+  // one line every PROGRESS_EVERY pages while the mirror streams in.
+  const PROGRESS_EVERY = 20;
   const clients = new Map<string, AnalyticsClient>();
+  let pages = 0;
   for await (const rows of deps.pageSelect(
     "SELECT client_id, is_ambiguous FROM clients ORDER BY client_id",
     { maxRows: 100_000 },
@@ -94,7 +98,16 @@ async function loadAnalyticsClients(
         sourceIds: [],
       });
     }
+    pages += 1;
+    if (pages % PROGRESS_EVERY === 0) {
+      console.log(
+        `[reconcile] loading mirror clients: ${clients.size} so far...`,
+      );
+    }
   }
+  console.log(`[reconcile] mirror clients loaded: ${clients.size}`);
+  let sourceIds = 0;
+  pages = 0;
   for await (const rows of deps.pageSelect(
     "SELECT source_id, client_id FROM client_source_ids ORDER BY source_id",
     { maxRows: 100_000 },
@@ -104,8 +117,16 @@ async function loadAnalyticsClients(
       // A source id pointing at an unknown client would be a mirror bug;
       // skip rather than crash, the zero-match count will surface it.
       client?.sourceIds.push(normalizeSourceId(String(row["source_id"])));
+      sourceIds += 1;
+    }
+    pages += 1;
+    if (pages % PROGRESS_EVERY === 0) {
+      console.log(
+        `[reconcile] loading mirror source ids: ${sourceIds} so far...`,
+      );
     }
   }
+  console.log(`[reconcile] mirror source ids loaded: ${sourceIds}`);
   return clients;
 }
 
@@ -118,6 +139,9 @@ const SAMPLE_LIMIT = 10;
 export async function reconcileIdMapping(
   deps: ReconcileDeps = defaultDeps(),
 ): Promise<ReconciliationReport> {
+  console.log(
+    "[reconcile] starting: paging the analytics mirror (~150 small queries, a couple of minutes)...",
+  );
   const clients = await loadAnalyticsClients(deps);
   const contacts = await deps.store.listLiveContacts();
 

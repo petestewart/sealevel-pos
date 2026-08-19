@@ -273,6 +273,9 @@ export async function syncContacts(
   let reconciliation: ReconciliationReport | null = null;
   if (analyticsConfigured()) {
     try {
+      log(
+        "[sync_contacts] pull done; reconciling the id mapping against the analytics mirror...",
+      );
       reconciliation = await deps.reconcile();
     } catch (err) {
       log(
