@@ -215,6 +215,16 @@ END`;
  */
 const NOT_ARCHIVED_SQL = `NOT (payload ? 'archived')`;
 
+/**
+ * Item types that live in the Approved / Rejected decision inboxes once
+ * resolved. email_reply is the original inhabitant; payroll_invoice joined
+ * after the first payday exposed that decided payroll cards vanished from
+ * every list, leaving the decided detail (and its Reopen control, the QBO
+ * push retry path) unreachable. kb_update, campaign_approval, and
+ * rule_proposal keep their own dedicated views and stay excluded here.
+ */
+const DECIDED_TYPES_SQL = `type IN ('email_reply', 'payroll_invoice')`;
+
 export type DecisionAction =
   | "approved"
   | "rejected"
@@ -252,7 +262,7 @@ export const decisionCounts = cache(async (): Promise<DecisionCounts> => {
   }>(
     `SELECT ${DECISION_ACTION_SQL} AS action, count(*)::text AS count
      FROM items
-     WHERE status = 'resolved' AND type = 'email_reply' AND ${NOT_ARCHIVED_SQL}
+     WHERE status = 'resolved' AND ${DECIDED_TYPES_SQL} AND ${NOT_ARCHIVED_SQL}
      GROUP BY 1`,
   );
   const counts: DecisionCounts = {
@@ -359,7 +369,7 @@ export async function decidedItems(
   }
   const { rows } = await getPool().query<Item>(
     `SELECT * FROM items
-     WHERE status = 'resolved' AND type = 'email_reply' AND ${NOT_ARCHIVED_SQL}
+     WHERE status = 'resolved' AND ${DECIDED_TYPES_SQL} AND ${NOT_ARCHIVED_SQL}
        AND ${DECISION_ACTION_SQL} = $3
      ORDER BY resolved_at DESC NULLS LAST, id DESC
      LIMIT $1 OFFSET $2`,
@@ -379,7 +389,7 @@ export async function recentlyDecided(limit = 10): Promise<Item[]> {
   // pending-inbox tail.
   const { rows } = await getPool().query<Item>(
     `SELECT * FROM items
-     WHERE status = 'resolved' AND type = 'email_reply' AND ${NOT_ARCHIVED_SQL}
+     WHERE status = 'resolved' AND ${DECIDED_TYPES_SQL} AND ${NOT_ARCHIVED_SQL}
        AND ${NOT_TRASHED_SQL}
      ORDER BY resolved_at DESC NULLS LAST, id DESC
      LIMIT $1`,
