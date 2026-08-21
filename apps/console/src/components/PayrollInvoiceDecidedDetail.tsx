@@ -1,14 +1,24 @@
 import type { Item } from "@ai-manager/core";
 import { payrollInvoiceForItem } from "@ai-manager/core";
 import { payrollDollars } from "../lib/payrollInvoiceView";
+import { ReopenButton } from "./ReopenButton";
 
 /**
  * Decided view for a payroll_invoice item (SEA-104): the summary, who
  * decided, and the live push status from the payroll_invoices ledger
  * (prepared / queued / pushing / pushed with the QBO Bill reference /
- * failed). Server component; reads the ledger directly.
+ * failed). Server component; reads the ledger directly. Reopen is the
+ * human-gated QBO push retry path (the ledger's failed -> queued
+ * transition only fires on a re-approve of a reopened card), same
+ * control as the other decided views.
  */
-export async function PayrollInvoiceDecidedDetail({ item }: { item: Item }) {
+export async function PayrollInvoiceDecidedDetail({
+  item,
+  canDecide,
+}: {
+  item: Item;
+  canDecide: boolean;
+}) {
   const p = item.payload as Record<string, unknown>;
   const decision = p["decision"] as
     | { action?: string; by?: { name?: string }; at?: string }
@@ -49,6 +59,7 @@ export async function PayrollInvoiceDecidedDetail({ item }: { item: Item }) {
         {decision?.action === "rejected" ? "Rejected" : "Approved"}
         {decision?.by?.name ? ` by ${decision.by.name}` : ""}. {pushLine}
       </p>
+      {canDecide ? <ReopenButton id={String(item.id)} /> : null}
     </div>
   );
 }

@@ -340,7 +340,13 @@ function Detail({
         />
       );
     }
-    return <PayrollInvoiceDecidedDetail key={item.id} item={item} />;
+    return (
+      <PayrollInvoiceDecidedDetail
+        key={item.id}
+        item={item}
+        canDecide={canDecide}
+      />
+    );
   }
   // kb_update items (KB write-back, GH-112/GH-113) get their own card
   // pair; everything else keeps the email renderers.
