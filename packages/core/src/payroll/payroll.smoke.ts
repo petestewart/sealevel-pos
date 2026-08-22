@@ -163,8 +163,9 @@ function testQuotaGuards(): void {
 
 function testPushJobId(): void {
   // SEA-113: the push jobId derives from the ledger's durable identity
-  // (period, mb_staff_id), matching the QBO DocNumber convention and the
-  // item dedupe_key — NEVER from the item id, which is re-minted when a
+  // (period, mb_staff_id) — the same identity the QBO DocNumber
+  // compresses (PR<period-end>-<staff>, QBO's 21-char cap) and the
+  // item dedupe_key carries — NEVER from the item id, which is re-minted when a
   // resolved card frees the partial dedupe index.
   assert.equal(
     payrollPushJobId("2026-08-03..2026-08-16", 100000106),

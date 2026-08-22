@@ -4,7 +4,8 @@
  * is the code that writes real Bills, so the contract is asserted
  * literally: the OAuth2 refresh flow and token cache, lookup-only vendor
  * resolution (a miss NEVER creates a vendor), the DocNumber pre-check
- * shape, the createBill body (VendorRef, DocNumber <period>-<mb_staff_id>,
+ * shape, the createBill body (VendorRef, DocNumber, the required
+ * per-line AccountRef resolved from id or Chart of Accounts name,
  * and above all cents -> dollars on line amounts, where an error pays
  * 100x off), and the retryable/terminal error split the worker's
  * revert-vs-fail branch keys off.
@@ -200,12 +201,14 @@ async function testCreateBillBody(): Promise<void> {
   const seam = fakeFetch((call) =>
     call.url === TOKEN_URL
       ? tokenResponse("tok1")
-      : json({ Bill: { Id: "B77", DocNumber: "2026-08-03..2026-08-16-990003" } }),
+      : json({ Bill: { Id: "B77", DocNumber: "PR20260816-990003" } }),
   );
-  const client = new QboClient(CONFIG, seam.impl);
+  const client = new QboClient({ ...CONFIG, expenseAccountId: "61" }, seam.impl);
   const result = await client.createBill({
     vendorId: "V9",
-    docNumber: "2026-08-03..2026-08-16-990003",
+    // The worker's convention: PR<period-end>-<mb_staff_id>, which must
+    // stay within QBO's 21-character DocNumber cap (fault 2050).
+    docNumber: "PR20260816-990003",
     txnDate: "2026-08-16",
     lines: [
       // 12345 CENTS. The Bill line must carry DOLLARS: 123.45, not 12345
@@ -216,7 +219,7 @@ async function testCreateBillBody(): Promise<void> {
     memo: "ai-manager payroll 2026-08-03..2026-08-16, staff 990003",
   });
   assert.equal(result.billId, "B77");
-  assert.equal(result.docNumber, "2026-08-03..2026-08-16-990003");
+  assert.equal(result.docNumber, "PR20260816-990003");
 
   const post = seam.calls.find((c) => c.method === "POST" && c.url.includes("/bill"));
   assert.ok(post, "createBill must POST to /bill");
@@ -234,7 +237,8 @@ async function testCreateBillBody(): Promise<void> {
     }>;
   };
   assert.equal(body.VendorRef?.value, "V9");
-  assert.equal(body.DocNumber, "2026-08-03..2026-08-16-990003");
+  assert.equal(body.DocNumber, "PR20260816-990003");
+  assert.ok((body.DocNumber ?? "").length <= 21, "DocNumber within QBO's 21-char cap");
   assert.equal(body.TxnDate, "2026-08-16");
   assert.equal(body.PrivateNote, "ai-manager payroll 2026-08-03..2026-08-16, staff 990003");
   assert.equal(body.Line?.length, 2);
@@ -245,31 +249,68 @@ async function testCreateBillBody(): Promise<void> {
     body.Line?.[0]?.Description,
     "6 classes taught (period 2026-08-03..2026-08-16)",
   );
-  // No expenseAccountId configured: detail stays empty (QBO's default
-  // account resolution), no invented AccountRef.
-  assert.deepEqual(body.Line?.[0]?.AccountBasedExpenseLineDetail, {});
+  // QBO requires an AccountRef on every account-based line (fault 2050
+  // family): the configured id rides on each line, never an empty detail.
+  assert.deepEqual(body.Line?.[0]?.AccountBasedExpenseLineDetail, {
+    AccountRef: { value: "61" },
+  });
 
-  // With an expense account configured, every line carries the ref.
+  // Name-based configuration: the account is resolved by exact Chart of
+  // Accounts Name lookup, then every line carries the resolved ref.
   const seam2 = fakeFetch((call) =>
-    call.url === TOKEN_URL ? tokenResponse("tok1") : json({ Bill: { Id: "B78" } }),
+    call.url === TOKEN_URL
+      ? tokenResponse("tok1")
+      : call.method === "GET"
+        ? json({ QueryResponse: { Account: [{ Id: "88" }] } })
+        : json({ Bill: { Id: "B78" } }),
   );
-  await new QboClient({ ...CONFIG, expenseAccountId: "61" }, seam2.impl).createBill({
+  await new QboClient(
+    { ...CONFIG, expenseAccountName: "Contract labor" },
+    seam2.impl,
+  ).createBill({
     vendorId: "V9",
     docNumber: "D-1",
     txnDate: "2026-08-16",
     lines: [{ description: "x", amountCents: 100 }],
   });
+  const accountQuery = seam2.calls.find(
+    (c) => c.method === "GET" && c.url.includes("from%20Account"),
+  );
+  assert.ok(accountQuery, "name-based config must query the Account by Name");
   const body2 = JSON.parse(
     seam2.calls.find((c) => c.method === "POST" && c.url.includes("/bill"))?.body ?? "{}",
   ) as { PrivateNote?: string; Line?: Array<{ Amount?: number; AccountBasedExpenseLineDetail?: { AccountRef?: { value?: string } } }> };
-  assert.equal(body2.Line?.[0]?.AccountBasedExpenseLineDetail?.AccountRef?.value, "61");
+  assert.equal(body2.Line?.[0]?.AccountBasedExpenseLineDetail?.AccountRef?.value, "88");
   assert.equal(body2.Line?.[0]?.Amount, 1);
   assert.equal(body2.PrivateNote, undefined, "no memo, no PrivateNote key");
+
+  // No account configured at all: terminal error BEFORE any write, so a
+  // misconfigured worker can never post an unpostable Bill.
+  const noAccountSeam = fakeFetch((call) =>
+    call.url === TOKEN_URL ? tokenResponse("tok1") : json({ Bill: { Id: "B79" } }),
+  );
+  await assert.rejects(
+    new QboClient(CONFIG, noAccountSeam.impl).createBill({
+      vendorId: "V9",
+      docNumber: "D-3",
+      txnDate: "2026-08-16",
+      lines: [{ description: "x", amountCents: 100 }],
+    }),
+    (err: unknown) => {
+      assert.ok(err instanceof QboError);
+      assert.equal(err.retryable, false);
+      return true;
+    },
+  );
+  assert.ok(
+    !noAccountSeam.calls.some((c) => c.method === "POST" && c.url.includes("/bill")),
+    "no expense account: nothing may POST to /bill",
+  );
 
   // A write that comes back without a Bill.Id is a terminal error, never
   // a silent success.
   const noId = new QboClient(
-    CONFIG,
+    { ...CONFIG, expenseAccountId: "61" },
     fakeFetch((call) =>
       call.url === TOKEN_URL ? tokenResponse("tok1") : json({ Bill: {} }),
     ).impl,

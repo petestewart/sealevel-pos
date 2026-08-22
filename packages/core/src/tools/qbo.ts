@@ -4,7 +4,10 @@
  * flow, sandbox first (QBO_ENV=sandbox is the default; "production"
  * switches hosts). Env, worker only, NEVER the console (the Gmail gate
  * split): QBO_CLIENT_ID, QBO_CLIENT_SECRET, QBO_REFRESH_TOKEN,
- * QBO_REALM_ID, optional QBO_ENV and QBO_EXPENSE_ACCOUNT_ID.
+ * QBO_REALM_ID, optional QBO_ENV; Bill pushes additionally need an
+ * expense account via QBO_EXPENSE_ACCOUNT_ID or QBO_EXPENSE_ACCOUNT_NAME
+ * (QBO rejects account-based lines without an AccountRef, fault 2050
+ * family; there is no server-side default).
  *
  * Teacher pay is accounts payable, so the artifact is a BILL against a
  * Vendor (policy §10) with DocNumber <period>-<mb_staff_id>, the
@@ -20,9 +23,14 @@ export interface QboConfig {
   refreshToken: string;
   realmId: string;
   env: "sandbox" | "production";
-  /** Expense account for Bill lines; unset = QBO's default account
-   * resolution (an open bookkeeper question, policy §10). */
+  /** Expense account for Bill lines, by QBO Account id. QBO requires an
+   * AccountRef on every account-based line, so one of id or name must be
+   * configured before any push can succeed (which account: the open
+   * bookkeeper question, policy §10). */
   expenseAccountId?: string;
+  /** Expense account by exact Chart of Accounts Name, resolved via a
+   * lookup when no id is configured. */
+  expenseAccountName?: string;
 }
 
 /** Whether the QBO connection is configured in the environment. */
@@ -50,6 +58,9 @@ export function qboConfig(): QboConfig {
     env,
     ...(process.env["QBO_EXPENSE_ACCOUNT_ID"]
       ? { expenseAccountId: process.env["QBO_EXPENSE_ACCOUNT_ID"] }
+      : {}),
+    ...(process.env["QBO_EXPENSE_ACCOUNT_NAME"]
+      ? { expenseAccountName: process.env["QBO_EXPENSE_ACCOUNT_NAME"] }
       : {}),
   };
 }
@@ -99,6 +110,7 @@ interface FetchLike {
 export class QboClient {
   private accessToken: string | undefined;
   private accessTokenExpiresAt = 0;
+  private resolvedAccountId: string | undefined;
 
   constructor(
     private readonly config: QboConfig,
@@ -187,6 +199,45 @@ export class QboClient {
     return typeof id === "string" && id.length > 0 ? id : null;
   }
 
+  /** Account id by exact Chart of Accounts Name, or null. Lookup-only,
+   * same posture as findVendor. */
+  async findAccount(name: string): Promise<string | null> {
+    const query = `select Id from Account where Name = '${name.replace(/'/g, "\\'")}'`;
+    const data = (await this.api(
+      "GET",
+      `/query?query=${encodeURIComponent(query)}`,
+    )) as { QueryResponse?: { Account?: Array<{ Id?: string }> } };
+    const id = data.QueryResponse?.Account?.[0]?.Id;
+    return typeof id === "string" && id.length > 0 ? id : null;
+  }
+
+  /**
+   * The expense account every Bill line must carry. QBO rejects
+   * account-based lines without an AccountRef (fault 2050 family), so no
+   * configured account is a terminal error, never a silent default. The
+   * name-based path resolves once per client instance.
+   */
+  private async expenseAccount(): Promise<string> {
+    if (this.config.expenseAccountId) return this.config.expenseAccountId;
+    if (this.resolvedAccountId) return this.resolvedAccountId;
+    const name = this.config.expenseAccountName;
+    if (!name) {
+      throw new QboError(
+        "no expense account configured for Bill lines (QBO requires an AccountRef on every line): set QBO_EXPENSE_ACCOUNT_ID or QBO_EXPENSE_ACCOUNT_NAME",
+        false,
+      );
+    }
+    const id = await this.findAccount(name);
+    if (!id) {
+      throw new QboError(
+        `no QBO Account named "${name}" (QBO_EXPENSE_ACCOUNT_NAME); check the Chart of Accounts spelling`,
+        false,
+      );
+    }
+    this.resolvedAccountId = id;
+    return id;
+  }
+
   /** Any Bill already carrying this DocNumber (the QBO-side idempotency
    * check payroll.push runs before writing). */
   async findBillByDocNumber(docNumber: string): Promise<string | null> {
@@ -207,6 +258,7 @@ export class QboClient {
     lines: QboBillLine[];
     memo?: string;
   }): Promise<QboBillResult> {
+    const accountId = await this.expenseAccount();
     const body = {
       VendorRef: { value: input.vendorId },
       DocNumber: input.docNumber,
@@ -216,9 +268,7 @@ export class QboClient {
         DetailType: "AccountBasedExpenseLineDetail",
         Amount: line.amountCents / 100,
         Description: line.description,
-        AccountBasedExpenseLineDetail: this.config.expenseAccountId
-          ? { AccountRef: { value: this.config.expenseAccountId } }
-          : {},
+        AccountBasedExpenseLineDetail: { AccountRef: { value: accountId } },
       })),
     };
     const data = (await this.api("POST", "/bill", body)) as {
@@ -238,7 +288,7 @@ let sharedClientKey: string | undefined;
 /** Keyed-singleton client, same idiom as tools/kb.ts and analytics. */
 export function qboClient(): QboClient {
   const config = qboConfig();
-  const key = `${config.clientId}\n${config.realmId}\n${config.env}`;
+  const key = `${config.clientId}\n${config.realmId}\n${config.env}\n${config.expenseAccountId ?? ""}\n${config.expenseAccountName ?? ""}`;
   if (!sharedClient || sharedClientKey !== key) {
     sharedClient = new QboClient(config);
     sharedClientKey = key;

@@ -439,7 +439,11 @@ async function processPayrollPush(itemId: string): Promise<void> {
     );
     return;
   }
-  const docNumber = `${claim.period}-${claim.mb_staff_id}`;
+  // QBO caps DocNumber at 21 characters (fault 2050), so the idempotency
+  // reference compresses the period to its end date: PR<yyyymmdd>-<staff>.
+  // Periods are disjoint and end on distinct Sundays, so (end date,
+  // staff id) identifies the invoice as uniquely as the full period did.
+  const docNumber = `PR${claim.period.slice(-10).replace(/-/g, "")}-${claim.mb_staff_id}`;
   try {
     const item = await getItemById(itemId);
     if (!item) throw new QboError(`item ${itemId} not found`, false);
