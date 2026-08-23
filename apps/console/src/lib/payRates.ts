@@ -5,12 +5,14 @@ import {
   pageSelect,
   listPayRates,
   listUnpaidQuotas,
+  listVendorLinks,
   PAYROLL_ANCHOR,
   periodContaining,
   ratesInEffectOn,
   replayQuota,
   studioToday,
   type PayRate,
+  type QboVendorLink,
   type QuotaClass,
   type UnpaidQuota,
 } from "@ai-manager/core";
@@ -70,6 +72,8 @@ export interface PayRatesPageData {
   /** Every stored rate, newest window first per teacher (history view). */
   history: PayRate[];
   quotas: QuotaView[];
+  /** QuickBooks vendor links by mb_staff_id (SEA-119). */
+  vendorLinks: Map<number, QboVendorLink>;
 }
 
 /**
@@ -227,10 +231,11 @@ async function quotaView(
 /** Assemble everything the pay-rates page renders. */
 export async function payRatesPageData(): Promise<PayRatesPageData> {
   const today = studioToday();
-  const [history, current, quotas] = await Promise.all([
+  const [history, current, quotas, vendorLinks] = await Promise.all([
     listPayRates(),
     ratesInEffectOn(today),
     listUnpaidQuotas(),
+    listVendorLinks(),
   ]);
 
   let rows: TeacherRateRow[] | null = null;
@@ -274,5 +279,5 @@ export async function payRatesPageData(): Promise<PayRatesPageData> {
     quotas.map((q) => quotaView(q, history, nameOf(q.mb_staff_id), analyticsUp)),
   );
 
-  return { rows, analyticsNote, history, quotas: quotaViews };
+  return { rows, analyticsNote, history, quotas: quotaViews, vendorLinks };
 }

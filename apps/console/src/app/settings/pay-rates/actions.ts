@@ -3,7 +3,10 @@
 import { revalidatePath } from "next/cache";
 import {
   changePayRate,
+  clearVendorLink,
   PayRateChangeError,
+  setVendorLink,
+  VendorLinkError,
 } from "@ai-manager/core";
 import { requireSettingsManager } from "../../../lib/requireDecider";
 
@@ -69,6 +72,55 @@ export async function setPayRateAction(
     if (err instanceof PayRateChangeError) return { error: err.message };
     throw err;
   }
+  revalidatePath("/settings/pay-rates");
+  return { error: null, saved: true };
+}
+
+/**
+ * Link a teacher to a QuickBooks vendor (SEA-119). The push job pays the
+ * linked vendor id, never a name match; validation and the two-teachers-
+ * one-vendor refusal live in core setVendorLink.
+ */
+export async function setVendorLinkAction(
+  _prev: PayRateActionState,
+  formData: FormData,
+): Promise<PayRateActionState> {
+  const who = await requireSettingsManager();
+
+  const mbStaffId = Number(fieldString(formData, "mb_staff_id"));
+  if (!Number.isInteger(mbStaffId) || mbStaffId <= 0) {
+    return { error: "Missing teacher identity." };
+  }
+  const vendorId = fieldString(formData, "vendor_id");
+  const vendorName = fieldString(formData, "vendor_name").trim() || null;
+
+  try {
+    await setVendorLink({
+      mbStaffId,
+      vendorId,
+      vendorName,
+      updatedBy: who.id,
+    });
+  } catch (err) {
+    if (err instanceof VendorLinkError) return { error: err.message };
+    throw err;
+  }
+  revalidatePath("/settings/pay-rates");
+  return { error: null, saved: true };
+}
+
+/** Remove a teacher's vendor link; pushes fail honestly until relinked. */
+export async function clearVendorLinkAction(
+  _prev: PayRateActionState,
+  formData: FormData,
+): Promise<PayRateActionState> {
+  await requireSettingsManager();
+
+  const mbStaffId = Number(fieldString(formData, "mb_staff_id"));
+  if (!Number.isInteger(mbStaffId) || mbStaffId <= 0) {
+    return { error: "Missing teacher identity." };
+  }
+  await clearVendorLink(mbStaffId);
   revalidatePath("/settings/pay-rates");
   return { error: null, saved: true };
 }

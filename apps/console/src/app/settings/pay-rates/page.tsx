@@ -1,5 +1,5 @@
 import { nextPeriodStart, periodContaining, studioToday } from "@ai-manager/core";
-import { SetRateForm } from "../../../components/PayRateForms";
+import { SetRateForm, VendorLinkForm } from "../../../components/PayRateForms";
 import { currentRole, hasPermission } from "../../../lib/rbac";
 import { payRatesPageData } from "../../../lib/payRates";
 
@@ -58,7 +58,9 @@ export default async function PayRatesPage() {
           ones appear here after their first class. A teacher without a
           rate blocks the payroll run for any period they taught in, so
           highlighted rows need a decision. A $0 rate is a decision too
-          (a trade arrangement) and needs a note.
+          (a trade arrangement) and needs a note. Payroll pushes pay the
+          QuickBooks vendor linked on each row; vendor records are created
+          in QuickBooks by a person, never by this system.
         </p>
         {data.analyticsNote ? (
           <p className="settings-help" role="status">
@@ -67,6 +69,10 @@ export default async function PayRatesPage() {
         ) : null}
         {data.rows?.map((row) => {
           const key = row.teacher.mbStaffId ?? `name:${row.teacher.name}`;
+          const link =
+            row.teacher.mbStaffId !== null
+              ? data.vendorLinks.get(row.teacher.mbStaffId) ?? null
+              : null;
           return (
             <div
               key={key}
@@ -97,6 +103,21 @@ export default async function PayRatesPage() {
                     be repaired from the console.
                   </p>
                 )}
+                {row.teacher.mbStaffId !== null ? (
+                  link ? (
+                    <p className="settings-help">
+                      Pays QuickBooks vendor{" "}
+                      {link.qbo_vendor_name ?? `id ${link.qbo_vendor_id}`}
+                      {link.qbo_vendor_name ? ` (id ${link.qbo_vendor_id})` : ""}.
+                    </p>
+                  ) : (
+                    <p className="settings-help">
+                      No QuickBooks vendor linked. Approved invoices for
+                      this teacher will fail to push until one is linked
+                      here.
+                    </p>
+                  )
+                ) : null}
               </div>
               {row.teacher.mbStaffId !== null ? (
                 <SetRateForm
@@ -114,6 +135,13 @@ export default async function PayRatesPage() {
                   minEffectiveFrom={
                     row.state === "rated" ? defaultEffectiveFrom : undefined
                   }
+                />
+              ) : null}
+              {row.teacher.mbStaffId !== null ? (
+                <VendorLinkForm
+                  mbStaffId={row.teacher.mbStaffId}
+                  currentVendorId={link?.qbo_vendor_id ?? null}
+                  currentVendorName={link?.qbo_vendor_name ?? null}
                 />
               ) : null}
             </div>

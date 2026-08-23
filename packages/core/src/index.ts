@@ -510,6 +510,15 @@ export {
   type UnpaidQuota,
 } from "./db/payRates.js";
 export {
+  listVendorLinks,
+  vendorLinkFor,
+  setVendorLink,
+  clearVendorLink,
+  parseVendorId,
+  VendorLinkError,
+  type QboVendorLink,
+} from "./db/qboVendorMap.js";
+export {
   analyticsConfigured,
   analyticsToolCall,
   analyticsBlackout,

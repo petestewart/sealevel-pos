@@ -42,6 +42,7 @@
     "smoke:payrollledger": "npm run build && node dist/db/payrollLedger.smoke.js",
     "smoke:payrollclaimrace": "npm run build && node dist/db/payrollClaimRace.smoke.js",
     "smoke:qbo": "npm run build && node dist/tools/qbo.smoke.js",
+    "smoke:qbovendormap": "npm run build && node dist/db/qboVendorMap.smoke.js",
     "sync:contacts": "npm run build && node dist/campaigns/runSync.js",
     "audience:dry-run": "npm run build && node dist/campaigns/runBuildAudience.js dry-run",
     "audience:build": "npm run build && node dist/campaigns/runBuildAudience.js build",

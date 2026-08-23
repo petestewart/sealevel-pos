@@ -57,6 +57,7 @@ import {
   recordPayrollPushed,
   recordPayrollPushFailed,
   revertPayrollPushClaim,
+  vendorLinkFor,
   processResendWebhook,
   processUnsubscribe,
   registerJobs,
@@ -478,15 +479,19 @@ async function processPayrollPush(itemId: string): Promise<void> {
       );
       return;
     }
-    const vendorId = await client.findVendor(teacherName);
-    if (!vendorId) {
+    // SEA-119: the payee comes from the explicit mb_staff_id -> vendor
+    // link, never from a name match — two teachers sharing a display name
+    // must not silently post to one vendor. No link is terminal-honest,
+    // the same posture as a missing pay rate.
+    const link = await vendorLinkFor(claim.mb_staff_id);
+    if (!link) {
       throw new QboError(
-        `no QBO Vendor named "${teacherName}"; create the vendor record (policy 10 bookkeeper question), then reopen + re-approve`,
+        `no QuickBooks vendor linked for "${teacherName}" (staff ${claim.mb_staff_id}); link the teacher to a vendor on the Teacher pay rates page (creating the vendor in QuickBooks first if needed), then reopen + re-approve`,
         false,
       );
     }
     const bill = await client.createBill({
-      vendorId,
+      vendorId: link.qbo_vendor_id,
       docNumber,
       txnDate: claim.period.slice(-10),
       lines: [{ description: `${summary} (period ${period})`, amountCents: totalCents }],
