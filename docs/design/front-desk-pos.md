@@ -292,70 +292,24 @@ items, 24 services and 33 products, cheapest LMNT Electrolytes at $1.81. Client
 lookup and stored-card detection both work.
 
 Rung 2b reads the account's permission group as **"API Sales"**, not IP
-restricted, and it does carry `MakeSales`, `AddProductsOnRetailScreen` and
-`BookClassesAndEventsWithoutPayment`. (An earlier reading of "empty" was a
-parser bug: the documented schema wraps this in `UserGroup`, the live API
-returns the fields at the top level.) So the permission group is largely
-correct and sales still fail, which points away from permissions.
+restricted, 103 permissions allowed and 80 denied. Five of the six permissions
+this POS needs are allowed. One is **explicitly denied: `CreateRetailTickets`**,
+the permission to create a retail ticket, which is exactly what
+`POST /sale/checkoutshoppingcart` does. That is the blocker: every payment type
+fails identically because the cart itself cannot be created, and an explicit
+deny overrides anything ticked on the staff member, which is why editing the
+staff profile changed nothing.
 
-Remaining suspects, in order:
+Fix: move `CreateRetailTickets` from denied to allowed in the **API Sales**
+group. A group-level change, not a staff-profile one.
 
-1. **The `Desk staff` setting on the staff profile is unticked.** It sits in
-   Settings on the staff record, separate from the permission group entirely,
-   and is the front-desk-selling flag. Cheapest thing to try.
-2. **The API key's scope for sale endpoints.** The key was provisioned for the
-   contact sync, which only ever needed to read clients. Widening it is a
-   request to Mindbody, not a studio setting.
-
-Rung 5 stops with `You do not have permission to perform sales.` **That is a
-staff permission, not a missing entitlement** — the request shape and the API
-access are fine, the service account simply is not allowed to sell. The fix is
-in Mindbody's staff permission settings for that account, and while in there it
-should also get:
-
-- `MakeSales` — ring a sale at all
-- `UseStoredCreditCards` — charge a card on file. **This is the one that gets
-  missed**: it is filed with the credit-card permissions, not with the retail
-  and sales ones, so working through everything that looks sales-related does
-  not reach it.
-- `AddProductsOnRetailScreen` and `CreateRetailTickets` — build the cart and put
-  a retail item in it
-- `LaunchSignInScreen`, required by `POST /class/addarrival` — **Phase 1 needs
-  this**, so it is not merely a payments concern
-- `BookClassesAndEventsWithoutPayment` — book a walk-in into a class before they
-  have paid
-
-(Names are from v6's `AllowedPermissionEnum`; the studio UI labels them in
-prose, but the grouping above is what to look for.)
-
-If granting all of those still fails, the probe narrows it further: on a
-permission error it retries the same Test cart **paid with cash**. Cash needs
-only the general sales permissions, while a stored-card payment additionally
-needs `UseStoredCreditCards`. Cash validates and card does not: the blocker is
-exactly that credit-card permission. Cash fails too: the account cannot ring any
-sale, so look at `MakeSales` and `CreateRetailTickets`, at whether the staff
-member's permission *group* rather than individual toggles allows sales, and at
-whether they are assigned to the Fremont location.
-
-Better still, the probe reads the account's actual permission group rather than
-inferring it from error messages. `GET /staff/staffpermissions?StaffId=<id>`
-returns `PermissionGroupName`, `AllowedPermissions`, `DeniedPermissions` and
-`IpRestricted`, so rung 2b prints exactly which of the six required permissions
-are missing or explicitly denied. **`IpRestricted` is its own trap**: a group
-limited to the studio's IP addresses denies everything from a laptop or from
-Railway, and the refusal looks like an ordinary permission error. If that flag
-is set, no amount of ticking permissions will help until the API account is
-moved to an unrestricted group or the calling IP is allowed.
-
-(The legacy owner-token trick, issuing a token as `Siteowner` with the API key
-as the password, returns 403 "Staff identity authentication failed" on this
-site. It is not available as a diagnostic.)
-
-If every permission is granted and cash still fails (it does, as of this
-run: cash and stored card fail identically, so this is not a card-specific
-problem), the remaining explanation is that the API key lacks scope for the sale
-endpoints, which is a request to
-Mindbody rather than anything settable in the studio app.
+Two notes for whoever reads this later. The permission read-back was worth
+building: the error message named sales, the actual denial was on cart
+creation, and no amount of reading error text would have found it. And an
+earlier reading of this same endpoint reported an empty group, which was a
+parser bug (the documented schema wraps the fields in `UserGroup`, the live API
+returns them at the top level) that sent the investigation down a wrong path
+for a round.
 
 Until those are granted, the gateway question stays formally open: the probe
 cannot reach it. Nothing so far suggests it will fail.
