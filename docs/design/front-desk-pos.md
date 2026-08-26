@@ -314,7 +314,18 @@ Mindbody client Id directly, for the ambiguous case.
 
 `--live` is not fire-and-forget. It prints the client, card last four, item and
 amount, then waits for you to type `charge` before anything moves. Anything
-else aborts, and it refuses to run at all outside an interactive terminal.
+else aborts, and it refuses to run at all outside an interactive terminal. The
+amount it shows is the total the server came back with on the Test run, not one
+we computed, so what you confirm is what Mindbody will actually charge.
+
+Controlling that amount: it defaults to the cheapest priced service in the
+catalog. `--service <id>` picks a different item and `--discount <amount>` tries
+to knock money off, but v6's request-side `CheckoutItem` carries only `Type` and
+`Metadata` with no documented price override, so the discount may simply be
+ignored (the probe says so when the server total disagrees). **To charge exactly
+$1, create a $1 "API test" item in Mindbody, not sold at the desk, and point
+`--service` at it.** That is reliable, reusable, and does not depend on
+undocumented behavior.
 
 Rung by rung: `GET /site/sites` (is a merchant account wired up at all),
 `POST /usertoken/issue` (do the staff credentials work), `GET /sale/services`

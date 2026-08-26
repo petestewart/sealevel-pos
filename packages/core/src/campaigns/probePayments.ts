@@ -17,6 +17,12 @@ import { loadEnv } from "../env.js";
  * --email looks the client up for you; --client <id> names one directly,
  * which is what you need if two records share an email.
  *
+ * The charge defaults to the cheapest priced service in the catalog.
+ * --service <id> picks a different one, --discount <amount> tries to knock
+ * money off it. To charge exactly $1, make a $1 "API test" item in
+ * Mindbody and point --service at it; that always works, whereas the
+ * discount depends on Mindbody honoring it in item metadata.
+ *
  * "Card not present enabled" in the payments.mindbody.io portal is not
  * literally the same entitlement as "API card processing enabled for this
  * Site ID", and the only way to be sure is to ask the API. This walks the
@@ -232,22 +238,34 @@ if (!card?.LastFour) {
 }
 console.log(`5. Client ${CLIENT_ID} has a card on file ending ${card.LastFour}`);
 
+/**
+ * The item price is whatever Mindbody has configured; the v6 request-side
+ * CheckoutItem carries only Type and Metadata, with no documented price
+ * override. `DiscountAmount` appears on the RESPONSE cart item, and the
+ * item metadata may or may not honor it on the way in, so --discount is
+ * offered but never assumed: the amount we print for confirmation is
+ * always the total the SERVER came back with on the Test run, not one we
+ * computed. If the discount is ignored, you will see that before paying.
+ *
+ * To charge exactly $1, the reliable route is a $1 item in Mindbody
+ * ("API test", not sold at the desk) passed with --service <id>.
+ */
+const DISCOUNT = Number(argValue("--discount") ?? 0);
+const charge = Math.max(0, chosen.Price - DISCOUNT);
+
 function cart(test: boolean) {
+  const metadata: Record<string, unknown> = { Id: String(chosen.Id) };
+  if (DISCOUNT > 0) metadata["DiscountAmount"] = DISCOUNT;
   return {
     ClientId: String(CLIENT_ID),
     Test: test,
     InStore: true,
     SendEmail: false,
-    Items: [
-      {
-        Item: { Type: "Service", Metadata: { Id: String(chosen.Id) } },
-        Quantity: 1,
-      },
-    ],
+    Items: [{ Item: { Type: "Service", Metadata: metadata }, Quantity: 1 }],
     Payments: [
       {
         Type: "StoredCard",
-        Metadata: { Amount: chosen.Price, LastFour: card.LastFour },
+        Metadata: { Amount: charge, LastFour: card.LastFour },
       },
     ],
   };
@@ -261,8 +279,19 @@ console.log(`   Test-mode checkout: HTTP ${dry.status}`);
 if (!dry.ok) {
   fail("5. POST /sale/checkoutshoppingcart (Test:true)", dry.body);
 }
+const serverTotal = dry.body?.ShoppingCart?.GrandTotal;
 console.log(
-  "   Cart validates. Necessary but NOT sufficient: Test:true may not reach the gateway.",
+  `   Cart validates. Server-computed total: ${
+    typeof serverTotal === "number" ? `$${serverTotal}` : "(not reported)"
+  }`,
+);
+if (DISCOUNT > 0 && typeof serverTotal === "number" && serverTotal !== charge) {
+  console.log(
+    `   NOTE: --discount ${DISCOUNT} did not take. Expected $${charge}, server says $${serverTotal}.`,
+  );
+}
+console.log(
+  "   Necessary but NOT sufficient: Test:true may not reach the gateway.",
 );
 
 // --- 6. Live charge ---------------------------------------------------
@@ -278,7 +307,13 @@ console.log("\n6. LIVE CHARGE. This moves real money:");
 console.log(`     client   ${client.FirstName} ${client.LastName} (${CLIENT_ID})`);
 console.log(`     card     ending ${card.LastFour}`);
 console.log(`     item     ${chosen.Name}`);
-console.log(`     amount   $${chosen.Price}`);
+console.log(
+  `     amount   ${
+    typeof serverTotal === "number"
+      ? `$${serverTotal} (as the server priced it on the Test run)`
+      : `$${charge} (server did not report a total; this is our figure)`
+  }`,
+);
 console.log("   Refundable in Mindbody afterwards.");
 
 if (!process.stdin.isTTY) {
