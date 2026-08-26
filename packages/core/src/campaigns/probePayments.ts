@@ -17,11 +17,12 @@ import { loadEnv } from "../env.js";
  * --email looks the client up for you; --client <id> names one directly,
  * which is what you need if two records share an email.
  *
- * The charge defaults to the cheapest priced service in the catalog.
- * --service <id> picks a different one, --discount <amount> tries to knock
- * money off it. To charge exactly $1, make a $1 "API test" item in
- * Mindbody and point --service at it; that always works, whereas the
- * discount depends on Mindbody honoring it in item metadata.
+ * The charge defaults to the cheapest priced thing in the catalog, across
+ * both services and retail products. At this studio that lands around a
+ * dollar on its own (parking token $1, Liquid IV $1.81, boxed water $2,
+ * towel rental $2.72), so there is rarely any need to reach for
+ * --discount. --service <id> picks a specific item; the probe prints the
+ * cheapest five with their ids so you can.
  *
  * "Card not present enabled" in the payments.mindbody.io portal is not
  * literally the same entitlement as "API card processing enabled for this
@@ -149,21 +150,61 @@ console.log(`2. Staff token issued for ${tokenRes.body?.User?.Id ?? "?"}`);
 
 // --- 3. Catalog -------------------------------------------------------
 
+/**
+ * Both halves of the catalog, because the cheap things at this studio are
+ * retail products and rentals (towel $2.72, boxed water $2, Liquid IV
+ * $1.81, parking token $1), not pricing options. Services alone would
+ * make the smallest possible live charge a class pass.
+ */
 const services = await call("GET", "/sale/services?limit=200", { token });
 if (!services.ok) fail("3. GET /sale/services", services.body);
-const sellable = (services.body?.Services ?? []).filter(
-  (s: any) => typeof s.Price === "number" && s.Price > 0,
+const products = await call("GET", "/sale/products?limit=200", { token });
+if (!products.ok) fail("3. GET /sale/products", products.body);
+
+interface Sellable {
+  type: "Service" | "Product";
+  id: string;
+  name: string;
+  price: number;
+}
+const priced = (rows: any[], type: "Service" | "Product"): Sellable[] =>
+  (rows ?? [])
+    .filter((r) => typeof r.Price === "number" && r.Price > 0)
+    .map((r) => ({
+      type,
+      id: String(r.Id ?? r.ProductId),
+      name: String(r.Name ?? "(unnamed)"),
+      price: r.Price,
+    }));
+
+const catalog = [
+  ...priced(services.body?.Services, "Service"),
+  ...priced(products.body?.Products, "Product"),
+].sort((a, b) => a.price - b.price);
+
+console.log(
+  `3. Catalog: ${catalog.length} priced items readable ` +
+    `(${catalog.filter((c) => c.type === "Service").length} services, ` +
+    `${catalog.filter((c) => c.type === "Product").length} products)`,
 );
-console.log(`3. Catalog: ${sellable.length} priced services readable`);
-const cheapest = [...sellable].sort((a, b) => a.Price - b.Price)[0];
-const chosen = SERVICE_ID
-  ? sellable.find((s: any) => String(s.Id) === SERVICE_ID)
-  : cheapest;
-if (!chosen) {
-  fail("3. GET /sale/services", "No priced service found to build a cart with.");
+if (catalog.length === 0) {
+  fail("3. catalog", "Nothing priced to build a cart with.");
 }
 console.log(
-  `   Using "${chosen.Name}" (id ${chosen.Id}, $${chosen.Price}) as the probe item`,
+  `   Cheapest five: ${catalog
+    .slice(0, 5)
+    .map((c) => `${c.name} $${c.price} (${c.type} ${c.id})`)
+    .join(", ")}`,
+);
+
+const chosen = SERVICE_ID
+  ? catalog.find((c) => c.id === SERVICE_ID)
+  : catalog[0];
+if (!chosen) {
+  fail("3. catalog", `No priced item with id ${SERVICE_ID}.`);
+}
+console.log(
+  `   Using "${chosen.name}" (${chosen.type} ${chosen.id}, $${chosen.price}) as the probe item`,
 );
 
 // --- 4. Custom payment types -----------------------------------------
@@ -251,17 +292,18 @@ console.log(`5. Client ${CLIENT_ID} has a card on file ending ${card.LastFour}`)
  * ("API test", not sold at the desk) passed with --service <id>.
  */
 const DISCOUNT = Number(argValue("--discount") ?? 0);
-const charge = Math.max(0, chosen.Price - DISCOUNT);
+const item: Sellable = chosen;
+const charge = Math.max(0, item.price - DISCOUNT);
 
 function cart(test: boolean) {
-  const metadata: Record<string, unknown> = { Id: String(chosen.Id) };
+  const metadata: Record<string, unknown> = { Id: item.id };
   if (DISCOUNT > 0) metadata["DiscountAmount"] = DISCOUNT;
   return {
     ClientId: String(CLIENT_ID),
     Test: test,
     InStore: true,
     SendEmail: false,
-    Items: [{ Item: { Type: "Service", Metadata: metadata }, Quantity: 1 }],
+    Items: [{ Item: { Type: item.type, Metadata: metadata }, Quantity: 1 }],
     Payments: [
       {
         Type: "StoredCard",
@@ -306,7 +348,7 @@ if (!LIVE) {
 console.log("\n6. LIVE CHARGE. This moves real money:");
 console.log(`     client   ${client.FirstName} ${client.LastName} (${CLIENT_ID})`);
 console.log(`     card     ending ${card.LastFour}`);
-console.log(`     item     ${chosen.Name}`);
+console.log(`     item     ${chosen.name} (${chosen.type} ${chosen.id})`);
 console.log(
   `     amount   ${
     typeof serverTotal === "number"

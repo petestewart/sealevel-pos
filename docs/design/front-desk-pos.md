@@ -318,14 +318,16 @@ else aborts, and it refuses to run at all outside an interactive terminal. The
 amount it shows is the total the server came back with on the Test run, not one
 we computed, so what you confirm is what Mindbody will actually charge.
 
-Controlling that amount: it defaults to the cheapest priced service in the
-catalog. `--service <id>` picks a different item and `--discount <amount>` tries
-to knock money off, but v6's request-side `CheckoutItem` carries only `Type` and
-`Metadata` with no documented price override, so the discount may simply be
-ignored (the probe says so when the server total disagrees). **To charge exactly
-$1, create a $1 "API test" item in Mindbody, not sold at the desk, and point
-`--service` at it.** That is reliable, reusable, and does not depend on
-undocumented behavior.
+Controlling that amount: it defaults to the cheapest priced thing in the
+catalog, reading both `/sale/services` and `/sale/products` so retail counts.
+The studio's own cheap items make this easy, no special test SKU needed:
+parking token $1.00, Liquid IV $1.81, boxed water $2.00, towel and mat rental
+$2.72. The probe prints the cheapest five with their ids so `--service <id>` can
+name one. `--discount <amount>` also exists, but v6's request-side
+`CheckoutItem` carries only `Type` and `Metadata` with no documented price
+override, so it may be ignored; the probe says so when the server's total
+disagrees with what the discount implied. Prefer picking a cheap real item over
+relying on the discount.
 
 Rung by rung: `GET /site/sites` (is a merchant account wired up at all),
 `POST /usertoken/issue` (do the staff credentials work), `GET /sale/services`
