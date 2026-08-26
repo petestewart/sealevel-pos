@@ -430,51 +430,41 @@ if (!dry.ok) {
     );
 
     /**
-     * Mindbody accepts an owner-level token issued as Username
-     * "Siteowner" with the API key as the password. It carries the
-     * owner's permissions, so it sidesteps staff permission settings
-     * entirely. If the same cart validates under it, the blocker is
-     * permissions on the service account and no amount of API-key work
-     * will help; if it fails there too, the API key itself lacks the
-     * scope for sale endpoints and no checkbox in the studio will help.
+     * Same cart, paid with Cash instead of StoredCard, still in Test
+     * mode. Cash needs only the general sales permissions; StoredCard
+     * additionally needs UseStoredCreditCards, which lives with the
+     * credit-card permissions rather than the retail ones and so is the
+     * one most often missed. Which of the two fails tells us which
+     * permission family is actually blocking.
+     *
+     * (The old Siteowner trick -- issuing an owner token with the API key
+     * as the password -- is legacy and returns 403 "Staff identity
+     * authentication failed" on this site, so it is not used.)
      */
-    const ownerToken = await call("POST", "/usertoken/issue", {
-      body: { Username: "Siteowner", Password: apiKey },
+    const asCash = await call("POST", "/sale/checkoutshoppingcart", {
+      token,
+      body: { ...cart(true), Payments: [{ Type: "Cash", Metadata: { Amount: charge } }] },
     });
-    if (!ownerToken.ok || !ownerToken.body?.AccessToken) {
+    if (asCash.ok) {
       console.error(
-        "   Could not issue an owner-level token, so this stays ambiguous.",
+        "\n   DIAGNOSIS: the same cart validates when paid with CASH.\n" +
+          "   So the account can ring a sale, and what it cannot do is charge a\n" +
+          "   stored card. The missing permission is UseStoredCreditCards, which\n" +
+          "   is filed with the credit-card permissions, NOT the retail/sales ones.\n" +
+          "   That is why working through everything sales-shaped did not find it.",
       );
-      console.error(`   ${render(ownerToken.body, 500)}`);
     } else {
-      const asOwner = await call("POST", "/sale/checkoutshoppingcart", {
-        token: ownerToken.body.AccessToken,
-        body: cart(true),
-      });
-      if (asOwner.ok) {
-        console.error(
-          "\n   DIAGNOSIS: the same cart validates under an owner-level token.\n" +
-            `   So the API key and entitlement are fine, and ${username} is\n` +
-            "   simply missing permissions. The exact names in Mindbody's permission\n" +
-            "   set (they are not all filed under 'sales'):\n" +
-            "     MakeSales                        ring a sale at all\n" +
-            "     UseStoredCreditCards             charge a card on file  <-- easy to miss,\n" +
-            "                                      it sits with the credit-card permissions\n" +
-            "     AddProductsOnRetailScreen        put a retail item in the cart\n" +
-            "     CreateRetailTickets              build the cart\n" +
-            "     LaunchSignInScreen               check-in arrivals (Phase 1 needs this)\n" +
-            "     BookClassesAndEventsWithoutPayment   book a walk-in before they pay",
-        );
-      } else {
-        console.error(
-          "\n   DIAGNOSIS: it fails under an owner-level token too.\n" +
-            "   This is NOT a staff permission, so stop editing them. Either the API\n" +
-            "   key lacks the scope for sale endpoints, or sales are not enabled for\n" +
-            "   this key on this site. That is a request to Mindbody, not a setting\n" +
-            "   in the studio's app.",
-        );
-        console.error(`   Owner-token response: ${render(asOwner.body, 800)}`);
-      }
+      const cashMessage = String(asCash.body?.Error?.Message ?? "");
+      console.error(
+        `\n   DIAGNOSIS: cash fails too (${cashMessage || asCash.status}).\n` +
+          "   So this is not about stored cards; the account cannot ring any sale.\n" +
+          "   Look for MakeSales and CreateRetailTickets, and check that the staff\n" +
+          "   member's permission GROUP (not just individual toggles) allows sales,\n" +
+          "   and that they are assigned to the Fremont location. If everything is\n" +
+          "   granted and it still fails, the API key itself likely lacks scope for\n" +
+          "   sale endpoints, which is a request to Mindbody rather than a studio\n" +
+          "   setting.",
+      );
     }
   }
   fail("5. POST /sale/checkoutshoppingcart (Test:true)", dry.body);

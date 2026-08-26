@@ -312,14 +312,22 @@ should also get:
 (Names are from v6's `AllowedPermissionEnum`; the studio UI labels them in
 prose, but the grouping above is what to look for.)
 
-If granting all of those still fails, the probe now settles the question
-itself. On a permission error it re-issues an **owner-level token** (Mindbody
-accepts `Username: "Siteowner"` with the API key as the password, which carries
-the owner's permissions and bypasses staff settings) and retries the same Test
-cart. Validates under the owner token: the blocker is permissions on the service
-account, keep going there. Fails under it too: this is not a staff permission at
-all, it is the API key lacking scope for sale endpoints, which is a request to
-Mindbody rather than a setting in the studio app.
+If granting all of those still fails, the probe narrows it further: on a
+permission error it retries the same Test cart **paid with cash**. Cash needs
+only the general sales permissions, while a stored-card payment additionally
+needs `UseStoredCreditCards`. Cash validates and card does not: the blocker is
+exactly that credit-card permission. Cash fails too: the account cannot ring any
+sale, so look at `MakeSales` and `CreateRetailTickets`, at whether the staff
+member's permission *group* rather than individual toggles allows sales, and at
+whether they are assigned to the Fremont location.
+
+(The legacy owner-token trick, issuing a token as `Siteowner` with the API key
+as the password, returns 403 "Staff identity authentication failed" on this
+site. It is not available as a diagnostic.)
+
+If every permission is granted and cash still fails, the remaining explanation
+is that the API key lacks scope for the sale endpoints, which is a request to
+Mindbody rather than anything settable in the studio app.
 
 Until those are granted, the gateway question stays formally open: the probe
 cannot reach it. Nothing so far suggests it will fail.
