@@ -88,7 +88,12 @@ if (!apiKey || !siteId) {
   process.exit(1);
 }
 
-const VERBOSE = process.argv.includes("--verbose");
+/**
+ * `--dump`, not `--verbose`: npm owns --verbose as a loglevel flag and
+ * eats it before the script sees it, the same way it eats --email.
+ */
+const VERBOSE =
+  process.argv.includes("--dump") || process.argv.includes("--verbose");
 
 /** Long API error bodies (HTML error pages especially) get truncated. */
 function render(detail: unknown, limit = 2000): string {
@@ -277,6 +282,22 @@ if (!perms.ok) {
     `2b. Permission group "${group.PermissionGroupName ?? "(unnamed)"}" ` +
       `(${allowed.length} allowed, ${denied.length} denied)`,
   );
+  /**
+   * An empty group is a finding, not a formatting quirk: Mindbody grants
+   * staff permissions through groups, so a staff member in no group can
+   * do nothing at all, and ticking individual permissions elsewhere
+   * changes nothing. Print the raw body so an empty result can be told
+   * apart from this parser reading the wrong keys.
+   */
+  if (!group.PermissionGroupName && allowed.length === 0) {
+    console.log(
+      "    EMPTY. Either this account belongs to no permission group (which\n" +
+        "    would explain why granting permissions changed nothing -- the fix is\n" +
+        "    to assign it to a group that has them), or the response is shaped\n" +
+        "    differently than parsed. The raw body, so you can tell which:",
+    );
+    console.log(`    ${render(perms.body, 1500)}`);
+  }
   if (group.IpRestricted) {
     console.log(
       "    IP RESTRICTED. This group only works from allowed IP addresses, so\n" +

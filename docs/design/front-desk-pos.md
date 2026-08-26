@@ -291,6 +291,15 @@ reports on the wrong studio). Staff token issues fine for
 items, 24 services and 33 products, cheapest LMNT Electrolytes at $1.81. Client
 lookup and stored-card detection both work.
 
+Rung 2b reads the service account's permission group as **empty**:
+`PermissionGroupName` unset, zero allowed permissions, zero denied. Mindbody
+grants staff permissions through groups, so an account in no group can do
+nothing at all, and ticking individual permissions elsewhere has no effect.
+That matches the observed behaviour exactly. The fix is to assign
+`sealevelapiuser@gmail.com` to a permission group that carries the six
+permissions below, or create an "API" group for it, rather than to keep
+editing permissions on the staff member.
+
 Rung 5 stops with `You do not have permission to perform sales.` **That is a
 staff permission, not a missing entitlement** — the request shape and the API
 access are fine, the service account simply is not allowed to sell. The fix is
@@ -335,8 +344,10 @@ moved to an unrestricted group or the calling IP is allowed.
 as the password, returns 403 "Staff identity authentication failed" on this
 site. It is not available as a diagnostic.)
 
-If every permission is granted and cash still fails, the remaining explanation
-is that the API key lacks scope for the sale endpoints, which is a request to
+If every permission is granted and cash still fails (it does, as of this
+run: cash and stored card fail identically, so this is not a card-specific
+problem), the remaining explanation is that the API key lacks scope for the sale
+endpoints, which is a request to
 Mindbody rather than anything settable in the studio app.
 
 Until those are granted, the gateway question stays formally open: the probe
