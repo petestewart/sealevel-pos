@@ -286,9 +286,22 @@ app and worth bookmarking.
 
 One residual: "card-not-present enabled" on the payments account is not
 literally the same entitlement as "API credit-card processing enabled for the
-Site ID." The cheap confirmation is a $1 `StoredCard` sale to a test client once
-we have credentials, which tests the exact code path rather than a claim about
-it. Do that before building the cart. `GET /site/sites` (returns `AcceptsVisa`,
+Site ID." There is a probe script for exactly this, which walks from free to
+definitive and stops at the first rung that fails:
+
+    npm run mindbody:probe-payments -w @sealevel/core
+    npm run mindbody:probe-payments -w @sealevel/core -- --client <id>
+    npm run mindbody:probe-payments -w @sealevel/core -- --client <id> --live
+
+Rung by rung: `GET /site/sites` (is a merchant account wired up at all),
+`POST /usertoken/issue` (do the staff credentials work), `GET /sale/services`
+(catalog readable), `GET /sale/alternativepaymentmethods`, then a `StoredCard`
+cart posted with `Test: true`, which validates cart contents without moving
+money. That last one is necessary but not sufficient: Test mode may never reach
+the payment gateway, so only `--live` (a real charge on the cheapest service,
+refunded afterwards in Mindbody) proves the gateway accepts an API-originated
+sale. Run the live rung once against a client who has a card on file, ideally
+Pete'"'"'s own account. `GET /site/sites` (returns `AcceptsVisa`,
 `AcceptsMasterCard`, `AcceptsDiscover`, `AcceptsAmericanExpress`,
 `AcceptsDirectDebit`) and `GET /sale/alternativepaymentmethods` are worth
 calling on day one too; neither names a processor, but they confirm the merchant
