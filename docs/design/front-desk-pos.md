@@ -46,8 +46,9 @@ effectively already unused; whatever teachers are doing at the counter, they are
 not dipping cards. Every dollar of in-studio card revenue except $1,377 came
 through a card-not-present charge, which is exactly what the Public API is good at. Apple Pay shows up 5 times in the whole year, all of them Online Store.
 
-So: **Swift buys Bluetooth to a reader that handles 0.4% of transactions.** That
-settles it. Build the web app.
+So: **Swift would buy Bluetooth to a reader that handles 0.4% of transactions**
+and, as it turns out, the studio's reader is not even a Bluetooth device. Build
+the web app.
 
 Narrowing further, of the 2,411 in-studio keyed sales, 355 (15%) were that
 client's first-ever purchase, so roughly one a day is a genuinely new person who
@@ -65,39 +66,39 @@ counter rushes, so they do not change the picture.
 
 ## The card-present problem (the honest answer)
 
-**Correction to an earlier draft of this doc: the API does have a swipe path.**
-The v6 `CheckoutPaymentInfo` model's `Type` field accepts, among others:
+**Confirmed 2026-08-26 from the payments portal at payments.mindbody.io:** the
+account is on **Mindbody Payments** (Stripe underneath), status Account Live,
+card-not-present enabled. The front desk reader is a **WisePOS E** named "Front
+Desk", serial WSC513208040935, status Connected. That closes the processor
+question and settles three things at once.
 
-- `CreditCard` - keyed card (number, exp, cvv, billing address in `Metadata`)
-- `StoredCard` - card on the client's account (`amount`, `lastFour`)
-- `EncryptedTrackData` - "indicates that this payment item is a swiped credit
-  card", with `trackData` in `Metadata`
-- `TrackData` - same, unencrypted
-- `DebitAccount`, `Custom`, `Comp`, direct debit, gift card
+**Card-not-present over the API is available.** The portal states the account
+can accept card-not-present payments, which is exactly what
+`POST /sale/checkoutshoppingcart` does with a `StoredCard` payment. The whole
+payment half of this design is live.
 
-So a magstripe swipe *can* be pushed through the API, if we can get track data
-into our app. Three large caveats, in descending order of how likely each is to
-kill it:
+**The swipe path in the API is dead for us.** The v6 `CheckoutPaymentInfo.Type`
+field does list `EncryptedTrackData` and `TrackData` ("indicates that this
+payment item is a swiped credit card"), which is worth knowing exists. But
+`EncryptedTrackData` means track data encrypted under a key *the processor* can
+decrypt, and it dates from the era when Mindbody sold P2PE magstripe swipers.
+Stripe will not decrypt a swipe injected for a Bluefin or TSYS key, and this
+account is on Stripe. `TrackData` unencrypted would put our iPad in PCI scope,
+so it is off the table regardless. And it is magstripe only: no chip, no
+contactless, no Apple Pay, worse fraud liability than a dip. Do not pursue it.
 
-1. **It probably does not work on Mindbody Payments.** `EncryptedTrackData`
-   comes from the era when Mindbody sold P2PE magstripe swipers, and it means
-   "track data encrypted under a key the processor can decrypt." Mindbody
-   Payments settles through Stripe, and Stripe will not decrypt a swipe injected
-   for a Bluefin or TSYS key. The field existing in the model is not evidence
-   that this account can use it. This is now the single most important thing the
-   processor question decides.
-2. **`TrackData` unencrypted is not an option.** Raw track data flowing through
-   our iPad and our server puts the whole thing in PCI scope. Off the table
-   regardless of whether it works.
-3. **Magstripe only.** No EMV chip, no contactless, no Apple Pay, and swiped
-   transactions carry worse fraud liability than a dipped chip. We would be
-   building 2014 in 2026.
+**The reader cannot be driven from the Mindbody API.** The WisePOS E belongs to
+Mindbody's Stripe platform account, with the studio as a connected account. We
+get no Stripe keys for it, and Mindbody exposes no card-present endpoint. Inside
+the Mindbody app it works fine ("look for the Card Reader button at checkout");
+from our app it is invisible.
 
-What is definitely still true: the Stripe Terminal readers Mindbody sells today
-are paired to the Mindbody business app and cannot be driven from the API, and
-there is no Apple Pay token field on checkout. And the data below says the swipe
-path is worth 25 transactions a year regardless of whether it is technically
-reachable. Noted for completeness, not recommended.
+**But it kills the last argument for Swift.** The WisePOS E is a networked smart
+reader over wifi or ethernet, driven server-side, not a Bluetooth accessory like
+the M2 or Chipper. There is no Bluetooth in this studio's payment stack at all.
+A web app can drive a reader of this class as well as a native app can, which
+matters if option C ever comes up. Nothing about the hardware here favors
+native.
 
 Over the API we can reliably take: stored card on file, cash, gift card and
 account credit, comp, and custom payment types.
@@ -129,19 +130,20 @@ $25-$200 yoga sale with a known member, that is a fair trade. It also requires
 Payments API access on the account, which is the single thing to confirm before
 committing to this path.
 
-### C. Our own Stripe Terminal reader (ruled out by the data)
+### C. Our own Stripe Terminal reader (ruled out by the data, not by the tech)
 
-The idea: buy a WisePad 3 or S700 on the studio's own Stripe account, take a
-real card-present tap in our app, then post the Mindbody sale with
-`CustomPaymentInfo` so the pass and check-in still land in Mindbody while the
-money lands in Stripe. It would be the fastest new-card path and would bring
-Apple Pay to the counter.
+Buy a second WisePOS E on the studio's own Stripe account, drive it from our web
+app server-side (`/v1/terminal/readers/:id/process_payment_intent`), then post
+the Mindbody sale with a `Custom` payment so the pass and check-in still land in
+Mindbody while the money lands in Stripe. Technically clean, and now clearly
+buildable as a web app, since the reader we would buy is the same networked
+model already sitting on the desk.
 
-It is not worth it. It would serve about 25 transactions a year and $1,377 of
-revenue, and the cost is two deposit streams, a nightly Stripe-to-Mindbody
-reconciliation job, and a payment type the bookkeeping has to learn to read.
-Keep the payment layer behind one interface so this stays possible, and do not
-build it.
+It is still not worth it. It would serve about 25 transactions a year and $1,377
+of revenue, and the cost is two deposit streams, a nightly Stripe-to-Mindbody
+reconciliation job, a second reader on the counter, and a payment type the
+bookkeeping has to learn to read. Keep the payment layer behind one interface so
+this stays possible. Do not build it.
 
 ## Shape of the thing
 
@@ -276,44 +278,21 @@ payment interface, plus the nightly Stripe-to-Mindbody reconciliation job.
 
 ## Open questions to settle first
 
-**1. Which merchant processor is the account on, and is Payments API access
-enabled?** Still open, and it gates options A and B. Mindbody has reorganized
-its settings more than once and there is no "Merchant Account" menu in the
-current UI, so lead with the routes that do not depend on finding a screen:
+**1. Which merchant processor, and is API card processing enabled?** Answered.
+Mindbody Payments (Stripe), account live, card-not-present enabled, per
+payments.mindbody.io. That portal is also where the reader inventory, disputes
+and payout reports live; it is a separate login surface from the main Mindbody
+app and worth bookmarking.
 
-- **The bank deposits.** The ACH descriptor on the studio's bank statement names
-  whoever is actually settling the money. If it reads Mindbody, the account is
-  on Mindbody Payments (Stripe underneath) and options A and B are both live. If
-  it names TSYS, Elavon, Paysafe, Bluefin, Ezidebit or Adyen, still supported for
-  API processing. Anything else means no API card processing at all, and the
-  whole payment half of this design collapses to cash plus handoff. This costs
-  one look at a statement and answers the question outright.
-- **Ask Mindbody support or the account rep**, in one message, two questions:
-  which processor is the merchant account on, and is API credit-card processing
-  enabled for our Site ID. Those are separate entitlements and support has to
-  answer the second one regardless, so ask both at once.
-- **Empirically, once we have API credentials.** A $1 sale to a test client with
-  a stored card either clears or comes back with a processor-not-supported
-  error. Definitive, costs a dollar, and it tests the exact code path we care
-  about rather than a claim about it.
-- **Is there an API endpoint that just tells us?** No. Nothing in v6 names the
-  merchant processor. The closest signals: `GET /site/sites` returns
-  `AcceptsVisa`, `AcceptsMasterCard`, `AcceptsDiscover`,
-  `AcceptsAmericanExpress` and `AcceptsDirectDebit`, which tell us whether a
-  merchant account is wired up at all and for which brands (all false means no
-  card processing, full stop), and `GET /sale/alternativepaymentmethods`
-  enumerates the custom payment types configured for the site. Neither names the
-  processor. Worth calling both on day one anyway, since they are cheap and they
-  bound the problem.
-- **In the app, if you want to look:** the payments/payouts area of the newer
-  Mindbody dashboard is where Mindbody Payments account details live. I could
-  not verify the current menu path, so treat this as "poke around Payments"
-  rather than a recipe.
-
-The reporting vocabulary in the export (Keyed-vs-Swiped tagging, Apple Pay as
-its own payment method) is the newer Mindbody Payments stack rather than a
-legacy gateway, which is a hint the account is already on Mindbody Payments. A
-hint is not a confirmation. Confirm before writing payment code.
+One residual: "card-not-present enabled" on the payments account is not
+literally the same entitlement as "API credit-card processing enabled for the
+Site ID." The cheap confirmation is a $1 `StoredCard` sale to a test client once
+we have credentials, which tests the exact code path rather than a claim about
+it. Do that before building the cart. `GET /site/sites` (returns `AcceptsVisa`,
+`AcceptsMasterCard`, `AcceptsDiscover`, `AcceptsAmericanExpress`,
+`AcceptsDirectDebit`) and `GET /sale/alternativepaymentmethods` are worth
+calling on day one too; neither names a processor, but they confirm the merchant
+account is wired up and enumerate any custom payment types.
 
 **2. What fraction of transactions involve a card not on file?** Answered above:
 0.4% of in-studio sales were swiped, and ~15% of in-studio card sales were a
