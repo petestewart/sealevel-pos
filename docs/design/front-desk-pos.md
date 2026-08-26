@@ -304,12 +304,13 @@ The credentials (`MINDBODY_API_KEY`, `MINDBODY_SITE_ID`,
 Then the three rungs:
 
     npm run mindbody:probe-payments -w @ai-manager/core
-    npm run mindbody:probe-payments -w @ai-manager/core -- --client <id>
-    npm run mindbody:probe-payments -w @ai-manager/core -- --client <id> --live
+    npm run mindbody:probe-payments -w @ai-manager/core -- --email you@example.com
+    npm run mindbody:probe-payments -w @ai-manager/core -- --email you@example.com --live
 
-The client id is a Mindbody client Id (the business-facing one, same id space
-`contacts.mb_client_id` uses), findable in the Mindbody app on the client's
-profile.
+`--email` looks the client up and prints which record it resolved to, and
+refuses to guess when two records share the address. Use Pete's own account:
+the `--live` rung charges whatever card is on file. `--client <id>` names a
+Mindbody client Id directly, for the ambiguous case.
 
 Rung by rung: `GET /site/sites` (is a merchant account wired up at all),
 `POST /usertoken/issue` (do the staff credentials work), `GET /sale/services`
