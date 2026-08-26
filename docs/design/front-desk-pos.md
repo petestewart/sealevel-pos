@@ -289,9 +289,27 @@ literally the same entitlement as "API credit-card processing enabled for the
 Site ID." There is a probe script for exactly this, which walks from free to
 definitive and stops at the first rung that fails:
 
-    npm run mindbody:probe-payments -w @sealevel/core
-    npm run mindbody:probe-payments -w @sealevel/core -- --client <id>
-    npm run mindbody:probe-payments -w @sealevel/core -- --client <id> --live
+The credentials (`MINDBODY_API_KEY`, `MINDBODY_SITE_ID`,
+`MINDBODY_STAFF_USERNAME`, `MINDBODY_STAFF_PASSWORD`) live on the Railway
+**worker** service, not the console. Two ways to get them to the script:
+
+    # A. Railway CLI, no secrets on disk
+    railway link                     # pick the ai-manager project, worker service
+    railway run npm run mindbody:probe-payments -w @ai-manager/core
+
+    # B. Local .env (it is gitignored), copied from Railway > worker > Variables
+    npm ci
+    npm run mindbody:probe-payments -w @ai-manager/core
+
+Then the three rungs:
+
+    npm run mindbody:probe-payments -w @ai-manager/core
+    npm run mindbody:probe-payments -w @ai-manager/core -- --client <id>
+    npm run mindbody:probe-payments -w @ai-manager/core -- --client <id> --live
+
+The client id is a Mindbody client Id (the business-facing one, same id space
+`contacts.mb_client_id` uses), findable in the Mindbody app on the client's
+profile.
 
 Rung by rung: `GET /site/sites` (is a merchant account wired up at all),
 `POST /usertoken/issue` (do the staff credentials work), `GET /sale/services`

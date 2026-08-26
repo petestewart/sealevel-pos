@@ -4,8 +4,13 @@ import { loadEnv } from "../env.js";
  * The POS pre-flight: does this Site ID actually allow credit-card
  * processing through the Public API?
  *
- *   npm run mindbody:probe-payments            (read-only + Test-mode cart)
- *   npm run mindbody:probe-payments -- --live  (charges a real $1-ish sale)
+ * Credentials live on the Railway worker service, so either use the
+ * Railway CLI (`railway link`, then `railway run <cmd>`) or copy the four
+ * MINDBODY_* variables into a local .env, which is gitignored.
+ *
+ *   npm run mindbody:probe-payments -w @ai-manager/core
+ *   npm run mindbody:probe-payments -w @ai-manager/core -- --client <id>
+ *   npm run mindbody:probe-payments -w @ai-manager/core -- --client <id> --live
  *
  * "Card not present enabled" in the payments.mindbody.io portal is not
  * literally the same entitlement as "API card processing enabled for this
