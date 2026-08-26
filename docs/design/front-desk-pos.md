@@ -300,8 +300,25 @@ fails identically because the cart itself cannot be created, and an explicit
 deny overrides anything ticked on the staff member, which is why editing the
 staff profile changed nothing.
 
-Fix: move `CreateRetailTickets` from denied to allowed in the **API Sales**
-group. A group-level change, not a staff-profile one.
+`CreateRetailTickets` was explicitly denied at first and moving it to allowed
+was necessary but not sufficient. With all six permissions allowed (105 allowed,
+78 denied) and `Desk staff` ticked on the staff profile, the call still fails
+identically. **Permissions are therefore exhausted as an explanation.**
+
+The probe now tries the remaining request-shape variables automatically before
+anyone escalates: `LocationId` (the cart sent none, and Mindbody documents the
+default as the online store rather than a physical location) crossed with
+`InStore` true and false, all in Test mode. If any shape is accepted, the
+permissions were fine all along and the cart was simply addressed to the wrong
+place. If none is, the request shape is ruled out too.
+
+At that point the remaining explanation is the **API key's scope for the sale
+endpoints**. The key was provisioned for the contact sync, which only ever
+needed to read clients, and every symptom fits: reads work, writes are refused,
+the refusal is invariant across payment type, location, and permission changes.
+Widening it is a support request to Mindbody, not a studio setting. Ask them
+directly whether API key ...f86b is authorized for `POST
+/sale/checkoutshoppingcart` on site 471, and quote the exact error.
 
 Two notes for whoever reads this later. The permission read-back was worth
 building: the error message named sales, the actual denial was on cart

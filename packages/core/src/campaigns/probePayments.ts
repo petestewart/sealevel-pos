@@ -530,6 +530,63 @@ if (!dry.ok) {
      * as the password -- is legacy and returns 403 "Staff identity
      * authentication failed" on this site, so it is not used.)
      */
+    /**
+     * With every permission granted and the call still refused, the
+     * remaining variables are in the request itself. The default cart
+     * sends no LocationId, which Mindbody documents as defaulting to the
+     * online store rather than a physical location, and InStore: true.
+     * A sales permission scoped to the physical location would refuse
+     * that combination and say exactly what we are seeing. Rather than
+     * guess one at a time, try the matrix in Test mode and report which
+     * shape (if any) is accepted.
+     */
+    const locations = await call("GET", "/site/locations", { token });
+    const locationIds: number[] = (locations.body?.Locations ?? [])
+      .map((l: any) => l.Id)
+      .filter((id: unknown) => typeof id === "number");
+    console.log(
+      `   Locations: ${locationIds.length ? locationIds.join(", ") : "(none readable)"}`,
+    );
+
+    const variants: { label: string; body: Record<string, unknown> }[] = [];
+    for (const inStore of [true, false]) {
+      variants.push({
+        label: `InStore=${inStore}, no LocationId`,
+        body: { ...cart(true), InStore: inStore },
+      });
+      for (const locationId of locationIds) {
+        variants.push({
+          label: `InStore=${inStore}, LocationId=${locationId}`,
+          body: { ...cart(true), InStore: inStore, LocationId: locationId },
+        });
+      }
+    }
+
+    console.log(`   Trying ${variants.length} request shapes in Test mode:`);
+    let anyWorked = false;
+    for (const variant of variants) {
+      const attempt = await call("POST", "/sale/checkoutshoppingcart", {
+        token,
+        body: variant.body,
+      });
+      const note = attempt.ok
+        ? "ACCEPTED"
+        : String(attempt.body?.Error?.Message ?? attempt.status);
+      console.log(`     ${variant.label}: ${note}`);
+      if (attempt.ok) anyWorked = true;
+    }
+    if (anyWorked) {
+      console.error(
+        "\n   DIAGNOSIS: at least one request shape above is ACCEPTED. The\n" +
+          "   permissions are fine and the default cart shape was wrong; adopt the\n" +
+          "   shape that worked (almost certainly the LocationId one) and re-run.",
+      );
+      fail("5. POST /sale/checkoutshoppingcart (Test:true)", dry.body);
+    }
+    console.log(
+      "   No request shape is accepted, so this is not about location or InStore.",
+    );
+
     const asCash = await call("POST", "/sale/checkoutshoppingcart", {
       token,
       body: { ...cart(true), Payments: [{ Type: "Cash", Metadata: { Amount: charge } }] },
