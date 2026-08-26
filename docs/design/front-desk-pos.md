@@ -284,6 +284,32 @@ payments.mindbody.io. That portal is also where the reader inventory, disputes
 and payout reports live; it is a separate login surface from the main Mindbody
 app and worth bookmarking.
 
+**Probe run 2026-08-26.** Rungs 1-4 pass against Sealevel Hot Yoga (site 471;
+the key also reaches Mindbody's sandbox, id -99, so anything reading `Sites[0]`
+reports on the wrong studio). Staff token issues fine for
+`sealevelapiuser@gmail.com`, staff id 100000140. The catalog reads: 57 priced
+items, 24 services and 33 products, cheapest LMNT Electrolytes at $1.81. Client
+lookup and stored-card detection both work.
+
+Rung 5 stops with `You do not have permission to perform sales.` **That is a
+staff permission, not a missing entitlement** — the request shape and the API
+access are fine, the service account simply is not allowed to sell. The fix is
+in Mindbody's staff permission settings for that account, and while in there it
+should also get:
+
+- the sale / point-of-sale permission (unblocks rungs 5 and 6, and all of
+  Phase 2 of this design)
+- `LaunchSignInScreen`, required by `POST /class/addarrival` — **Phase 1 needs
+  this**, so it is not merely a payments concern
+- Make Unpaid Reservation, required to book a walk-in into a class before they
+  have paid
+
+Until those are granted, the gateway question stays formally open: the probe
+cannot reach it. Nothing so far suggests it will fail.
+
+`GET /sale/alternativepaymentmethods` returns HTTP 400, cause not yet chased.
+It only matters for option C, which is ruled out, so it is noise for now.
+
 One residual: "card-not-present enabled" on the payments account is not
 literally the same entitlement as "API credit-card processing enabled for the
 Site ID." There is a probe script for exactly this, which walks from free to

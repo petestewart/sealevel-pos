@@ -416,6 +416,23 @@ const dry = await call("POST", "/sale/checkoutshoppingcart", {
 });
 console.log(`   Test-mode checkout: HTTP ${dry.status}`);
 if (!dry.ok) {
+  /**
+   * A permission rejection is good news wearing a bad hat: the request
+   * shape and the entitlement are fine, the staff account just is not
+   * allowed to do it. Say so, rather than letting it read as "the API
+   * cannot do sales".
+   */
+  const message = String(dry.body?.Error?.Message ?? "");
+  if (/permission/i.test(message)) {
+    console.error(`\n   Mindbody says: ${message}`);
+    console.error(
+      `   That is a staff permission on ${username} (id ${tokenRes.body?.User?.Id}), not a\n` +
+        "   missing API entitlement. Grant that staff account the sale permission in\n" +
+        "   Mindbody's staff permission settings and re-run. The POS will also need\n" +
+        "   'LaunchSignInScreen' (for check-in arrivals) and 'Make Unpaid Reservation'\n" +
+        "   (for booking a walk-in), so grant all three while you are in there.",
+    );
+  }
   fail("5. POST /sale/checkoutshoppingcart (Test:true)", dry.body);
 }
 const serverCart = dry.body?.ShoppingCart;
