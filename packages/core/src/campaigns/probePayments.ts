@@ -75,6 +75,17 @@ if (!apiKey || !siteId) {
   process.exit(1);
 }
 
+const VERBOSE = process.argv.includes("--verbose");
+
+/** Long API error bodies (HTML error pages especially) get truncated. */
+function render(detail: unknown, limit = 2000): string {
+  const text =
+    typeof detail === "string" ? detail : JSON.stringify(detail, null, 2);
+  return text.length > limit
+    ? `${text.slice(0, limit)}\n   ... [${text.length - limit} more chars, re-run with --verbose]`
+    : text;
+}
+
 async function call(
   method: "GET" | "POST",
   path: string,
@@ -86,12 +97,29 @@ async function call(
     "content-type": "application/json",
   };
   if (opts.token) headers["Authorization"] = opts.token;
-  const res = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-    signal: AbortSignal.timeout(30_000),
-  });
+  if (VERBOSE && opts.body) {
+    console.log(`   > ${method} ${path}\n${render(opts.body)}`);
+  }
+  const started = Date.now();
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (err) {
+    const why =
+      err instanceof Error && err.name === "TimeoutError"
+        ? "no response within 30s"
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    console.error(`   ${method} ${path} -> network error after ${Date.now() - started}ms: ${why}`);
+    throw err;
+  }
+  const ms = Date.now() - started;
   const text = await res.text();
   let body: any = text;
   try {
@@ -99,16 +127,33 @@ async function call(
   } catch {
     /* leave as text */
   }
+  console.log(`   ${method} ${path} -> ${res.status} in ${ms}ms`);
+  if (VERBOSE) console.log(`   < ${render(body, 4000)}`);
   return { ok: res.ok, status: res.status, body };
 }
 
 function fail(rung: string, detail: unknown): never {
   console.error(`\nFAILED at ${rung}`);
+  console.error(VERBOSE ? render(detail, 100_000) : render(detail));
   console.error(
-    typeof detail === "string" ? detail : JSON.stringify(detail, null, 2),
+    "\nRungs passed before this: " +
+      (passed.length ? passed.join(", ") : "none"),
   );
   process.exit(1);
 }
+
+/** Rungs cleared so far, so a failure says how far it got. */
+const passed: string[] = [];
+
+console.log("Mindbody payments probe");
+console.log(`  base url   ${baseUrl}`);
+console.log(`  site id    ${siteId}`);
+console.log(`  api key    ...${apiKey.slice(-4)}`);
+console.log(`  staff user ${username || "(none set)"}`);
+console.log(
+  `  mode       ${LIVE ? "LIVE (rung 6 will ask before charging)" : "read-only (no money moves)"}`,
+);
+console.log("");
 
 // --- 1. Merchant account wired up? -----------------------------------
 
@@ -164,6 +209,8 @@ if (!brandValues.some((v) => v === true)) {
   );
 }
 
+passed.push("1 site");
+
 // --- 2. Staff token ---------------------------------------------------
 
 if (!username || !password) {
@@ -180,6 +227,7 @@ if (!tokenRes.ok || !tokenRes.body?.AccessToken) {
 }
 const token: string = tokenRes.body.AccessToken;
 console.log(`2. Staff token issued for ${tokenRes.body?.User?.Id ?? "?"}`);
+passed.push("2 staff token");
 
 // --- 3. Catalog -------------------------------------------------------
 
@@ -242,6 +290,7 @@ console.log(
 
 // --- 4. Custom payment types -----------------------------------------
 
+passed.push("3 catalog");
 const alt = await call("GET", "/sale/alternativepaymentmethods", { token });
 console.log(
   `4. Custom payment methods: ${
@@ -292,6 +341,7 @@ if (!CLIENT_ID) {
     "   Use someone with a card on file. Your own account is the obvious pick,",
   );
   console.log("   since --live later puts a real charge on it.");
+  console.log(`\nRungs passed: ${passed.join(", ")}`);
   process.exit(0);
 }
 
@@ -310,6 +360,7 @@ if (!card?.LastFour) {
     `Client ${CLIENT_ID} has no card on file, so the StoredCard path cannot be tested with them. Pick a client who does.`,
   );
 }
+passed.push("4 payment methods");
 console.log(`5. Client ${CLIENT_ID} has a card on file ending ${card.LastFour}`);
 
 /**
@@ -354,12 +405,24 @@ console.log(`   Test-mode checkout: HTTP ${dry.status}`);
 if (!dry.ok) {
   fail("5. POST /sale/checkoutshoppingcart (Test:true)", dry.body);
 }
-const serverTotal = dry.body?.ShoppingCart?.GrandTotal;
+const serverCart = dry.body?.ShoppingCart;
+const serverTotal = serverCart?.GrandTotal;
 console.log(
   `   Cart validates. Server-computed total: ${
     typeof serverTotal === "number" ? `$${serverTotal}` : "(not reported)"
   }`,
 );
+for (const line of serverCart?.CartItems ?? []) {
+  console.log(
+    `     line: ${line?.Item?.Name ?? "(unnamed)"} x${line?.Quantity ?? "?"}` +
+      `${line?.DiscountAmount ? ` less $${line.DiscountAmount}` : ""}`,
+  );
+}
+if (serverCart && typeof serverTotal !== "number") {
+  console.log(
+    "     (no GrandTotal in the response; re-run with --verbose to see the full cart)",
+  );
+}
 if (DISCOUNT > 0 && typeof serverTotal === "number" && serverTotal !== charge) {
   console.log(
     `   NOTE: --discount ${DISCOUNT} did not take. Expected $${charge}, server says $${serverTotal}.`,
@@ -368,6 +431,7 @@ if (DISCOUNT > 0 && typeof serverTotal === "number" && serverTotal !== charge) {
 console.log(
   "   Necessary but NOT sufficient: Test:true may not reach the gateway.",
 );
+passed.push("5 cart validates");
 
 // --- 6. Live charge ---------------------------------------------------
 
@@ -375,6 +439,7 @@ if (!LIVE) {
   console.log(
     "\n6. Skipped. Re-run with --live to put a real charge through and prove the gateway accepts an API-originated sale. Refund it in Mindbody afterwards.",
   );
+  console.log(`\nRungs passed: ${passed.join(", ")}`);
   process.exit(0);
 }
 
@@ -402,6 +467,7 @@ const answer = (await rl.question("\n   Type 'charge' to proceed: ")).trim();
 rl.close();
 if (answer !== "charge") {
   console.log("   Aborted. Nothing was charged.");
+  console.log(`\nRungs passed: ${passed.join(", ")}`);
   process.exit(0);
 }
 
@@ -409,11 +475,17 @@ const live = await call("POST", "/sale/checkoutshoppingcart", {
   token,
   body: cart(false),
 });
-console.log(`   HTTP ${live.status}`);
 if (!live.ok) fail("6. POST /sale/checkoutshoppingcart (live)", live.body);
+passed.push("6 live charge");
+const soldCart = live.body?.ShoppingCart;
+console.log(`   SALE COMPLETED.`);
+console.log(`     sale id  ${soldCart?.Id ?? "(not in response)"}`);
+console.log(`     charged  $${soldCart?.GrandTotal ?? charge}`);
+for (const p of soldCart?.Payments ?? []) {
+  console.log(`     payment  ${p?.Type ?? "?"} $${p?.Amount ?? "?"}`);
+}
+console.log("   Refund it in Mindbody.");
+console.log(`\nRungs passed: ${passed.join(", ")}`);
 console.log(
-  `   SALE COMPLETED. Sale id ${live.body?.ShoppingCart?.Id ?? "(see payload)"}. Refund it in Mindbody.`,
-);
-console.log(
-  "\nAPI credit-card processing is enabled for this Site ID. The POS payment design is unblocked.",
+  "API credit-card processing is enabled for this Site ID. The POS payment design is unblocked.",
 );
