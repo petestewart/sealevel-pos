@@ -297,12 +297,29 @@ access are fine, the service account simply is not allowed to sell. The fix is
 in Mindbody's staff permission settings for that account, and while in there it
 should also get:
 
-- the sale / point-of-sale permission (unblocks rungs 5 and 6, and all of
-  Phase 2 of this design)
+- `MakeSales` — ring a sale at all
+- `UseStoredCreditCards` — charge a card on file. **This is the one that gets
+  missed**: it is filed with the credit-card permissions, not with the retail
+  and sales ones, so working through everything that looks sales-related does
+  not reach it.
+- `AddProductsOnRetailScreen` and `CreateRetailTickets` — build the cart and put
+  a retail item in it
 - `LaunchSignInScreen`, required by `POST /class/addarrival` — **Phase 1 needs
   this**, so it is not merely a payments concern
-- Make Unpaid Reservation, required to book a walk-in into a class before they
+- `BookClassesAndEventsWithoutPayment` — book a walk-in into a class before they
   have paid
+
+(Names are from v6's `AllowedPermissionEnum`; the studio UI labels them in
+prose, but the grouping above is what to look for.)
+
+If granting all of those still fails, the probe now settles the question
+itself. On a permission error it re-issues an **owner-level token** (Mindbody
+accepts `Username: "Siteowner"` with the API key as the password, which carries
+the owner's permissions and bypasses staff settings) and retries the same Test
+cart. Validates under the owner token: the blocker is permissions on the service
+account, keep going there. Fails under it too: this is not a staff permission at
+all, it is the API key lacking scope for sale endpoints, which is a request to
+Mindbody rather than a setting in the studio app.
 
 Until those are granted, the gateway question stays formally open: the probe
 cannot reach it. Nothing so far suggests it will fail.

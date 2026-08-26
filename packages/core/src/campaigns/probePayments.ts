@@ -426,12 +426,56 @@ if (!dry.ok) {
   if (/permission/i.test(message)) {
     console.error(`\n   Mindbody says: ${message}`);
     console.error(
-      `   That is a staff permission on ${username} (id ${tokenRes.body?.User?.Id}), not a\n` +
-        "   missing API entitlement. Grant that staff account the sale permission in\n" +
-        "   Mindbody's staff permission settings and re-run. The POS will also need\n" +
-        "   'LaunchSignInScreen' (for check-in arrivals) and 'Make Unpaid Reservation'\n" +
-        "   (for booking a walk-in), so grant all three while you are in there.",
+      "   Two very different causes look identical here, so distinguishing them:",
     );
+
+    /**
+     * Mindbody accepts an owner-level token issued as Username
+     * "Siteowner" with the API key as the password. It carries the
+     * owner's permissions, so it sidesteps staff permission settings
+     * entirely. If the same cart validates under it, the blocker is
+     * permissions on the service account and no amount of API-key work
+     * will help; if it fails there too, the API key itself lacks the
+     * scope for sale endpoints and no checkbox in the studio will help.
+     */
+    const ownerToken = await call("POST", "/usertoken/issue", {
+      body: { Username: "Siteowner", Password: apiKey },
+    });
+    if (!ownerToken.ok || !ownerToken.body?.AccessToken) {
+      console.error(
+        "   Could not issue an owner-level token, so this stays ambiguous.",
+      );
+      console.error(`   ${render(ownerToken.body, 500)}`);
+    } else {
+      const asOwner = await call("POST", "/sale/checkoutshoppingcart", {
+        token: ownerToken.body.AccessToken,
+        body: cart(true),
+      });
+      if (asOwner.ok) {
+        console.error(
+          "\n   DIAGNOSIS: the same cart validates under an owner-level token.\n" +
+            `   So the API key and entitlement are fine, and ${username} is\n` +
+            "   simply missing permissions. The exact names in Mindbody's permission\n" +
+            "   set (they are not all filed under 'sales'):\n" +
+            "     MakeSales                        ring a sale at all\n" +
+            "     UseStoredCreditCards             charge a card on file  <-- easy to miss,\n" +
+            "                                      it sits with the credit-card permissions\n" +
+            "     AddProductsOnRetailScreen        put a retail item in the cart\n" +
+            "     CreateRetailTickets              build the cart\n" +
+            "     LaunchSignInScreen               check-in arrivals (Phase 1 needs this)\n" +
+            "     BookClassesAndEventsWithoutPayment   book a walk-in before they pay",
+        );
+      } else {
+        console.error(
+          "\n   DIAGNOSIS: it fails under an owner-level token too.\n" +
+            "   This is NOT a staff permission, so stop editing them. Either the API\n" +
+            "   key lacks the scope for sale endpoints, or sales are not enabled for\n" +
+            "   this key on this site. That is a request to Mindbody, not a setting\n" +
+            "   in the studio's app.",
+        );
+        console.error(`   Owner-token response: ${render(asOwner.body, 800)}`);
+      }
+    }
   }
   fail("5. POST /sale/checkoutshoppingcart (Test:true)", dry.body);
 }
