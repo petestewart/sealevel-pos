@@ -275,7 +275,12 @@ if (!perms.ok) {
     `2b. Could not read the permission group (HTTP ${perms.status}); continuing.`,
   );
 } else {
-  const group = perms.body?.UserGroup ?? {};
+  /**
+   * The documented schema wraps this in `UserGroup`, but the live API
+   * returns PermissionGroupName / AllowedPermissions / DeniedPermissions
+   * at the top level. Accept either.
+   */
+  const group = perms.body?.UserGroup ?? perms.body ?? {};
   const allowed: string[] = group.AllowedPermissions ?? [];
   const denied: string[] = group.DeniedPermissions ?? [];
   console.log(
@@ -315,6 +320,13 @@ if (!perms.ok) {
   }
   if (REQUIRED.every((r) => allowed.includes(r))) {
     console.log("    All permissions this POS needs are present.");
+    console.log(
+      "    So if sales still fail, the permission group is not the problem.\n" +
+        "    Next suspects, in order: the staff member's 'Desk staff' setting on\n" +
+        "    the staff profile (unticked, it can bar front-desk selling however\n" +
+        "    the permission group reads), then the API key's own scope for sale\n" +
+        "    endpoints, which only Mindbody can widen.",
+    );
   }
   if (VERBOSE) console.log(`    allowed: ${allowed.join(", ")}`);
 }

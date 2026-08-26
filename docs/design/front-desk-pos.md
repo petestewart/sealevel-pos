@@ -291,14 +291,21 @@ reports on the wrong studio). Staff token issues fine for
 items, 24 services and 33 products, cheapest LMNT Electrolytes at $1.81. Client
 lookup and stored-card detection both work.
 
-Rung 2b reads the service account's permission group as **empty**:
-`PermissionGroupName` unset, zero allowed permissions, zero denied. Mindbody
-grants staff permissions through groups, so an account in no group can do
-nothing at all, and ticking individual permissions elsewhere has no effect.
-That matches the observed behaviour exactly. The fix is to assign
-`sealevelapiuser@gmail.com` to a permission group that carries the six
-permissions below, or create an "API" group for it, rather than to keep
-editing permissions on the staff member.
+Rung 2b reads the account's permission group as **"API Sales"**, not IP
+restricted, and it does carry `MakeSales`, `AddProductsOnRetailScreen` and
+`BookClassesAndEventsWithoutPayment`. (An earlier reading of "empty" was a
+parser bug: the documented schema wraps this in `UserGroup`, the live API
+returns the fields at the top level.) So the permission group is largely
+correct and sales still fail, which points away from permissions.
+
+Remaining suspects, in order:
+
+1. **The `Desk staff` setting on the staff profile is unticked.** It sits in
+   Settings on the staff record, separate from the permission group entirely,
+   and is the front-desk-selling flag. Cheapest thing to try.
+2. **The API key's scope for sale endpoints.** The key was provisioned for the
+   contact sync, which only ever needed to read clients. Widening it is a
+   request to Mindbody, not a studio setting.
 
 Rung 5 stops with `You do not have permission to perform sales.` **That is a
 staff permission, not a missing entitlement** — the request shape and the API
