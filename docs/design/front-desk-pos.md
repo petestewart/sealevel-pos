@@ -321,6 +321,16 @@ sale, so look at `MakeSales` and `CreateRetailTickets`, at whether the staff
 member's permission *group* rather than individual toggles allows sales, and at
 whether they are assigned to the Fremont location.
 
+Better still, the probe reads the account's actual permission group rather than
+inferring it from error messages. `GET /staff/staffpermissions?StaffId=<id>`
+returns `PermissionGroupName`, `AllowedPermissions`, `DeniedPermissions` and
+`IpRestricted`, so rung 2b prints exactly which of the six required permissions
+are missing or explicitly denied. **`IpRestricted` is its own trap**: a group
+limited to the studio's IP addresses denies everything from a laptop or from
+Railway, and the refusal looks like an ordinary permission error. If that flag
+is set, no amount of ticking permissions will help until the API account is
+moved to an unrestricted group or the calling IP is allowed.
+
 (The legacy owner-token trick, issuing a token as `Siteowner` with the API key
 as the password, returns 403 "Staff identity authentication failed" on this
 site. It is not available as a diagnostic.)

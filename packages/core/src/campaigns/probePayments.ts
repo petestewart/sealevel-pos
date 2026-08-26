@@ -242,6 +242,62 @@ const token: string = tokenRes.body.AccessToken;
 console.log(`2. Staff token issued for ${tokenRes.body?.User?.Id ?? "?"}`);
 passed.push("2 staff token");
 
+/**
+ * Read the service account's actual permission group rather than
+ * guessing from error messages. GetStaffPermissions returns the group
+ * name, the allowed and denied permission lists, and IpRestricted --
+ * which is its own trap: a group limited to the studio's IP addresses
+ * denies everything from a laptop or from Railway, and the denial reads
+ * as an ordinary permission error.
+ */
+const staffId = tokenRes.body?.User?.Id;
+const perms = await call(
+  "GET",
+  `/staff/staffpermissions?StaffId=${encodeURIComponent(String(staffId))}`,
+  { token },
+);
+const REQUIRED = [
+  "MakeSales",
+  "UseStoredCreditCards",
+  "CreateRetailTickets",
+  "AddProductsOnRetailScreen",
+  "LaunchSignInScreen",
+  "BookClassesAndEventsWithoutPayment",
+] as const;
+
+if (!perms.ok) {
+  console.log(
+    `2b. Could not read the permission group (HTTP ${perms.status}); continuing.`,
+  );
+} else {
+  const group = perms.body?.UserGroup ?? {};
+  const allowed: string[] = group.AllowedPermissions ?? [];
+  const denied: string[] = group.DeniedPermissions ?? [];
+  console.log(
+    `2b. Permission group "${group.PermissionGroupName ?? "(unnamed)"}" ` +
+      `(${allowed.length} allowed, ${denied.length} denied)`,
+  );
+  if (group.IpRestricted) {
+    console.log(
+      "    IP RESTRICTED. This group only works from allowed IP addresses, so\n" +
+        "    calls from a laptop or from Railway are denied no matter which\n" +
+        "    permissions are ticked. This alone would explain a sales failure.",
+    );
+  }
+  for (const need of REQUIRED) {
+    const state = denied.includes(need)
+      ? "DENIED"
+      : allowed.includes(need)
+        ? "ok"
+        : "missing";
+    if (state !== "ok") console.log(`    ${state.padEnd(7)} ${need}`);
+  }
+  if (REQUIRED.every((r) => allowed.includes(r))) {
+    console.log("    All permissions this POS needs are present.");
+  }
+  if (VERBOSE) console.log(`    allowed: ${allowed.join(", ")}`);
+}
+
 // --- 3. Catalog -------------------------------------------------------
 
 /**
