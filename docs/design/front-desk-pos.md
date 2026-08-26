@@ -23,6 +23,47 @@ The five actions, in rough frequency order:
 Actions 1-3 and 5 are fully doable over the Mindbody Public API v6. Action 4 is
 where the hardware question bites, and it gets its own section.
 
+## What the data says (answers open question 2)
+
+Pulled from the analytics mirror, `sales` table. The detailed Mindbody export
+covering 2025-07-01 to 2026-07-01 tags each card sale as Keyed or Swiped and
+splits in-studio from Online Store, so it answers the hardware question
+directly. In-studio sales for those twelve months:
+
+| Payment | Sales | Revenue |
+|---|---:|---:|
+| Keyed card (stored card on file or manually entered) | 2,411 | $211,762 |
+| Comp / trade | 2,530 | $215 |
+| Account credit | 969 | $8,757 |
+| Cash | 169 | $1,882 |
+| Other / misc | 76 | $297 |
+| **Swiped card (card present)** | **25** | **$1,377** |
+| Gift card | 2 | $184 |
+| Check | 1 | $6 |
+
+**25 swiped sales in a year. Four tenths of one percent.** The reader is
+effectively already unused; whatever teachers are doing at the counter, they are
+not dipping cards. Every dollar of in-studio card revenue except $1,377 came
+through a card-not-present charge, which is exactly the thing the Public API can
+do. Apple Pay shows up 5 times in the whole year, all of them Online Store.
+
+So: **Swift buys Bluetooth to a reader that handles 0.4% of transactions.** That
+settles it. Build the web app.
+
+Narrowing further, of the 2,411 in-studio keyed sales, 355 (15%) were that
+client's first-ever purchase, so roughly one a day is a genuinely new person who
+plausibly has no card on file. The other 2,056 are returning clients who almost
+certainly do. That is the real shape of the problem: the "tricky case" is about
+one transaction per day, not the main flow.
+
+One caveat the data cannot resolve: "Keyed" covers both *charge the card on
+file* and *staff typed a card number in*. Mindbody reports them identically. If
+a meaningful share of those 2,056 returning-client sales are staff re-typing a
+card every time, that is itself a finding worth fixing (get the card stored),
+and the fix is option B below either way. The daily peaks in the data
+(60 sales on 2026-03-01, 56 on the 15th) are membership autopay batches, not
+counter rushes, so they do not change the picture.
+
 ## The card-present problem (the honest answer)
 
 **The physical reader cannot be driven from the API.** Mindbody Payments runs on
@@ -75,56 +116,74 @@ $25-$200 yoga sale with a known member, that is a fair trade. It also requires
 Payments API access on the account, which is the single thing to confirm before
 committing to this path.
 
-### C. Our own Stripe Terminal reader, recorded in Mindbody as a custom payment
+### C. Our own Stripe Terminal reader (ruled out by the data)
 
-Buy a WisePad 3 or S700 against the studio's own Stripe account, take a real
-card-present tap in our app, then post the Mindbody sale with
-`CustomPaymentInfo` ("Stripe Terminal") so revenue, pass, and check-in all land
-correctly in Mindbody while the money lands in Stripe. Fastest possible new-card
-path, real card-present rates, Apple Pay works.
+The idea: buy a WisePad 3 or S700 on the studio's own Stripe account, take a
+real card-present tap in our app, then post the Mindbody sale with
+`CustomPaymentInfo` so the pass and check-in still land in Mindbody while the
+money lands in Stripe. It would be the fastest new-card path and would bring
+Apple Pay to the counter.
 
-Cost is real: two deposit streams to reconcile, a nightly job to match Stripe
-payouts against Mindbody custom-payment lines, and Mindbody's own reporting shows
-those sales under a payment type the studio has to learn to read. Do not build
-this in v1. Build it only if, after a month of A + B, new-card sales are still
-the bottleneck. The design below keeps the payment layer behind one interface so
-C is an addition, not a rewrite.
+It is not worth it. It would serve about 25 transactions a year and $1,377 of
+revenue, and the cost is two deposit streams, a nightly Stripe-to-Mindbody
+reconciliation job, and a payment type the bookkeeping has to learn to read.
+Keep the payment layer behind one interface so this stays possible, and do not
+build it.
 
 ## Shape of the thing
 
-**iPad web app (PWA), not Swift.** Reasons, in order: we ship from the same
-Next.js console we already run on Railway, so there is no App Store review
-between a bug and its fix; teachers get it by opening a bookmark, no MDM, no
-provisioning profiles, no device enrollment for a rotating cast of contractors;
-and everything the POS needs (Mindbody v6, our Postgres, Clerk) is already
-server-side in this monorepo. Add to Home Screen gives it a full-screen icon
-that is indistinguishable from a native app at the counter. The one thing a
-PWA costs us is direct Bluetooth to a Stripe reader — which only matters in
-option C, and Stripe's S700 is a networked smart reader that a web app can drive
-over the internet, so even that is covered.
+**Its own app, its own repo, its own Railway service.** This does not belong in
+ai-manager. ai-manager is an always-on back-office worker: queues, jobs,
+approvals, a console Pete looks at. The POS is a hard-realtime surface a teacher
+touches with a line of people waiting, and it needs to be deployable, restartable
+and debuggable without any chance of taking the ops system down with it, or vice
+versa. Different uptime story, different users, different release cadence, no
+shared data model beyond "talks to Mindbody."
 
-If option C ever becomes the main path and we want the M2 over Bluetooth, that
-is the moment to consider a thin Swift shell around the same web UI, not before.
+Proposal: a new repo `sealevel-pos`, one Railway service in its own project.
+
+**iPad web app (PWA), not Swift.** The data settles the only real argument for
+native: direct Bluetooth to a card reader, for 0.4% of transactions. What the
+web app buys instead: we ship a fix in two minutes with no App Store review;
+teachers get it by opening a bookmark, so there is no MDM, no provisioning
+profiles, and no device enrollment for a rotating cast of contractors; and Add
+to Home Screen gives a full-screen icon indistinguishable from a native app at
+the counter.
+
+**Deliberately lightweight.** One Next.js app, no worker, no queue, no Postgres
+if we can avoid it:
 
 ```
-apps/console/src/app/pos/          # the counter UI, its own layout, no console chrome
-packages/features/src/pos/
-  roster.ts                        # class + roster read model, cached
-  clients.ts                       # local fuzzy search over the synced client mirror
-  checkin.ts                       # arrival + booking
-  cart.ts                          # line items, pricing, totals
-  payment/
-    index.ts                       # PaymentMethod interface -- the seam for option C
-    stored-card.ts                 # StoredCardInfo
-    cash.ts                        # CashInfo
-    handoff.ts                     # option A deep link + sale confirmation poll
-    capture-link.ts                # option B hosted card capture
-packages/core/src/mindbody/        # promote the existing campaigns/mindbody.ts client here
+sealevel-pos/
+  app/                    # the counter UI, one route, one screen
+  lib/
+    mindbody/             # v6 client: Api-Key + SiteId, staff token cache
+    roster.ts             # class + roster read model, prefetched
+    clients.ts            # in-memory client index for type-ahead search
+    cart.ts               # line items, pricing, totals
+    payment/
+      index.ts            # PaymentMethod interface (the seam option C would use)
+      stored-card.ts      # StoredCardInfo
+      cash.ts             # CashInfo
+      handoff.ts          # option A deep link + sale confirmation poll
+      capture-link.ts     # option B hosted card capture
 ```
 
-The Mindbody client in `packages/core/src/campaigns/mindbody.ts` already handles
-Api-Key + SiteId headers and staff user tokens. Promote it to
-`packages/core/src/mindbody/` and grow it; do not write a second one.
+No database. The client list is on the order of thousands of rows, so the server
+pulls it from Mindbody at boot and on a timer and holds it in memory for
+type-ahead search. If we later want it to survive restarts without a cold pull,
+Railway gives us Redis or a volume for a JSON snapshot; that is a detail, not an
+architecture. Rosters are prefetched per class and held for minutes, not
+persisted.
+
+The Mindbody v6 client in ai-manager's `packages/core/src/campaigns/mindbody.ts`
+(auth headers, staff user tokens, paging) is worth copying into the new repo as
+a starting point. Copy it, do not try to share it: a published package between
+two repos for ~200 lines of HTTP is more coupling than it saves. If a third
+consumer ever appears, extract it then.
+
+Auth: Clerk if we want teacher-level attribution, or a single studio device
+session with a PIN if we do not. See open question 3.
 
 ## The speed argument
 
@@ -204,13 +263,37 @@ payment interface, plus the nightly Stripe-to-Mindbody reconciliation job.
 
 ## Open questions to settle first
 
-1. Which merchant processor is the account on, and is Payments API access
-   enabled for the Site ID? This decides whether B is available at all.
-2. What fraction of front-desk transactions actually involve a card not on
-   file? Pull it from the analytics mirror before deciding how hard to fight
-   for option C.
-3. Do teachers each get their own Mindbody staff login, or does the POS act as
-   one service account and attribute the sale to the signed-in Clerk user? The
-   second is simpler; confirm it does not break commission or payroll reporting.
-4. Studio wifi at the counter: what happens mid-sale when it drops? Phase 1
-   can queue arrivals offline; a sale must not be queued.
+**1. Which merchant processor is the account on, and is Payments API access
+enabled?** Still open, and it is the gating question for options A and B. Four
+ways to find out, cheapest first:
+
+- Mindbody web app, Manager Tools / Settings, Merchant Account. The processor
+  is named on that screen. Thirty seconds if you have owner access.
+- The bank deposits. The ACH descriptor on the studio's account names who is
+  actually settling the money (Mindbody Payments, TSYS, Elavon, and so on).
+- Mindbody support or the account rep, who will also confirm whether API
+  credit-card processing is enabled for the Site ID, which is a separate
+  entitlement from having a supported processor.
+- Empirically: once we have API credentials, a $1 sale to a test client with a
+  stored card either goes through or comes back with a processor-not-supported
+  error. Fastest definitive answer, and it costs a dollar.
+
+The reporting labels in the export ("Credit card (Visa/MC-Keyed)", a separate
+"Apple Pay" method, Keyed-vs-Swiped tagging) are the vocabulary of the newer
+Mindbody Payments stack rather than a legacy gateway, which is a hint the
+account is on Mindbody Payments. A hint is not a confirmation. Check the
+settings screen before writing payment code.
+
+**2. What fraction of transactions involve a card not on file?** Answered above:
+0.4% of in-studio sales were swiped, and ~15% of in-studio card sales were a
+client's first-ever purchase, about one a day. Option C is dead; options A and B
+cover the rest.
+
+**3. Teacher identity.** Do teachers each get a Mindbody staff login, or does
+the POS act as one service account? The service account is much simpler, and the
+POS can still record who was on shift on its own side. Confirm with Pete that it
+does not break commission or payroll reporting first.
+
+**4. Wifi at the counter.** What happens mid-sale when it drops? Phase 1 can
+queue arrivals offline and replay them. A sale must never be queued: if the
+network is gone, the POS says so and the teacher falls back to the Mindbody app.
