@@ -312,6 +312,10 @@ refuses to guess when two records share the address. Use Pete's own account:
 the `--live` rung charges whatever card is on file. `--client <id>` names a
 Mindbody client Id directly, for the ambiguous case.
 
+`--live` is not fire-and-forget. It prints the client, card last four, item and
+amount, then waits for you to type `charge` before anything moves. Anything
+else aborts, and it refuses to run at all outside an interactive terminal.
+
 Rung by rung: `GET /site/sites` (is a merchant account wired up at all),
 `POST /usertoken/issue` (do the staff credentials work), `GET /sale/services`
 (catalog readable), `GET /sale/alternativepaymentmethods`, then a `StoredCard`

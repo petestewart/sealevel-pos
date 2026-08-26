@@ -1,3 +1,5 @@
+import { createInterface } from "node:readline/promises";
+
 import { loadEnv } from "../env.js";
 
 /**
@@ -35,8 +37,9 @@ import { loadEnv } from "../env.js";
  * client with a card on file (use your own account), then refund it in
  * Mindbody.
  *
- * Nothing here is destructive without --live. No PII is printed beyond a
- * card's last four.
+ * Nothing here is destructive without --live, and --live prints the client,
+ * card, item and amount and waits for you to type "charge" before it moves
+ * any money. No PII is printed beyond a name and a card's last four.
  */
 loadEnv();
 
@@ -271,7 +274,27 @@ if (!LIVE) {
   process.exit(0);
 }
 
-console.log(`\n6. LIVE: charging $${chosen.Price} to card ending ${card.LastFour}`);
+console.log("\n6. LIVE CHARGE. This moves real money:");
+console.log(`     client   ${client.FirstName} ${client.LastName} (${CLIENT_ID})`);
+console.log(`     card     ending ${card.LastFour}`);
+console.log(`     item     ${chosen.Name}`);
+console.log(`     amount   $${chosen.Price}`);
+console.log("   Refundable in Mindbody afterwards.");
+
+if (!process.stdin.isTTY) {
+  fail(
+    "6. confirmation",
+    "Not an interactive terminal, so the charge cannot be confirmed. Run this from a real shell.",
+  );
+}
+const rl = createInterface({ input: process.stdin, output: process.stdout });
+const answer = (await rl.question("\n   Type 'charge' to proceed: ")).trim();
+rl.close();
+if (answer !== "charge") {
+  console.log("   Aborted. Nothing was charged.");
+  process.exit(0);
+}
+
 const live = await call("POST", "/sale/checkoutshoppingcart", {
   token,
   body: cart(false),
