@@ -11,11 +11,13 @@ import { loadEnv } from "../env.js";
  * MINDBODY_* variables into a local .env, which is gitignored.
  *
  *   npm run mindbody:probe-payments -w @ai-manager/core
- *   npm run mindbody:probe-payments -w @ai-manager/core -- --email you@example.com
- *   npm run mindbody:probe-payments -w @ai-manager/core -- --email you@example.com --live
+ *   npm run mindbody:probe-payments -w @ai-manager/core -- you@example.com
+ *   npm run mindbody:probe-payments -w @ai-manager/core -- you@example.com --live
  *
- * --email looks the client up for you; --client <id> names one directly,
- * which is what you need if two records share an email.
+ * The email looks the client up for you and can be passed bare, as above
+ * (npm swallows a literal --email, since npm has an email config of its
+ * own; --client-email works too). --client <id> names one directly, which
+ * is what you need if two records share an email.
  *
  * The charge defaults to the cheapest priced thing in the catalog, across
  * both services and retail products. At this studio that lands around a
@@ -51,9 +53,20 @@ import { loadEnv } from "../env.js";
 loadEnv();
 
 const LIVE = process.argv.includes("--live");
-const EMAIL = argValue("--email");
 const SERVICE_ID = argValue("--service");
 let CLIENT_ID = argValue("--client");
+
+/**
+ * `--email` cannot be relied on: npm has its own `email` config, so
+ * `npm run ... -- --email you@x` is swallowed by npm and never reaches
+ * here (the value arrives as a bare positional instead). So take the
+ * email from --client-email, from --email if it did survive, or from any
+ * bare argument that looks like an address.
+ */
+const EMAIL =
+  argValue("--client-email") ??
+  argValue("--email") ??
+  process.argv.slice(2).find((a) => !a.startsWith("-") && a.includes("@"));
 
 function argValue(flag: string): string | undefined {
   const i = process.argv.indexOf(flag);
@@ -335,7 +348,7 @@ if (!CLIENT_ID) {
   console.log(
     "\n5. Skipped: name a client to validate a StoredCard cart against.",
   );
-  console.log("   --email you@example.com   (looked up for you), or");
+  console.log("   you@example.com          (bare, looked up for you), or");
   console.log("   --client <mindbody client id>");
   console.log(
     "   Use someone with a card on file. Your own account is the obvious pick,",

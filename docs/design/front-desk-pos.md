@@ -304,10 +304,11 @@ The credentials (`MINDBODY_API_KEY`, `MINDBODY_SITE_ID`,
 Then the three rungs:
 
     npm run mindbody:probe-payments -w @ai-manager/core
-    npm run mindbody:probe-payments -w @ai-manager/core -- --email you@example.com
-    npm run mindbody:probe-payments -w @ai-manager/core -- --email you@example.com --live
+    npm run mindbody:probe-payments -w @ai-manager/core -- you@example.com
+    npm run mindbody:probe-payments -w @ai-manager/core -- you@example.com --live
 
-`--email` looks the client up and prints which record it resolved to, and
+The email is passed bare, not as `--email`: npm has an `email` config of its
+own and swallows the flag before the script sees it. It looks the client up and prints which record it resolved to, and
 refuses to guess when two records share the address. Use Pete's own account:
 the `--live` rung charges whatever card is on file. `--client <id>` names a
 Mindbody client Id directly, for the ambiguous case.
