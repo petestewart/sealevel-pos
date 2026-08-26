@@ -114,20 +114,53 @@ function fail(rung: string, detail: unknown): never {
 
 const sites = await call("GET", "/site/sites");
 if (!sites.ok) fail("1. GET /site/sites", sites.body);
-const site = sites.body?.Sites?.[0] ?? {};
-const brands = {
+const allSites: any[] = sites.body?.Sites ?? [];
+console.log(
+  `1. /site/sites returned ${allSites.length}: ${allSites
+    .map((s) => `${s.Name} (${s.Id})`)
+    .join(", ")}`,
+);
+
+/**
+ * Pick the site the credentials are actually configured for, not
+ * Sites[0]. The list can include Mindbody's sandbox (id -99, "LastSpot"),
+ * and reading the first entry silently reports on the wrong studio.
+ */
+const site = allSites.find((s) => String(s.Id) === String(siteId));
+if (!site) {
+  fail(
+    "1. GET /site/sites",
+    `MINDBODY_SITE_ID is ${siteId}, but the API key only reaches: ${allSites
+      .map((s) => `${s.Id}`)
+      .join(", ")}. Either the Site ID or the API key is wrong for this studio.`,
+  );
+}
+const brands: Record<string, unknown> = {
   Visa: site.AcceptsVisa,
   MasterCard: site.AcceptsMasterCard,
   Discover: site.AcceptsDiscover,
   AmericanExpress: site.AcceptsAmericanExpress,
   DirectDebit: site.AcceptsDirectDebit,
 };
-console.log(`1. Site: ${site.Name} (id ${site.Id})`);
+console.log(`   Site ${siteId}: ${site.Name}`);
 console.log(`   Accepts: ${JSON.stringify(brands)}`);
-if (!Object.values(brands).some(Boolean)) {
+
+/**
+ * null means "not reported", which is not the same as false. Only an
+ * explicit false on every card brand proves there is no merchant account;
+ * nulls are inconclusive and must not stop the probe, since the later
+ * rungs answer the question far more directly anyway.
+ */
+const brandValues = Object.values(brands);
+if (brandValues.every((v) => v === false)) {
   fail(
     "1. GET /site/sites",
-    "No card brands accepted. There is no merchant account behind this Site ID, so API card processing cannot work. Stop here.",
+    "Every card brand is explicitly false. There is no merchant account behind this Site ID, so API card processing cannot work. Stop here.",
+  );
+}
+if (!brandValues.some((v) => v === true)) {
+  console.log(
+    "   Inconclusive (no brand reported true, none explicitly false). Continuing: the checkout rungs answer this directly.",
   );
 }
 
