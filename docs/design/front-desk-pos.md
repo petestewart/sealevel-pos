@@ -44,8 +44,7 @@ directly. In-studio sales for those twelve months:
 **25 swiped sales in a year. Four tenths of one percent.** The reader is
 effectively already unused; whatever teachers are doing at the counter, they are
 not dipping cards. Every dollar of in-studio card revenue except $1,377 came
-through a card-not-present charge, which is exactly the thing the Public API can
-do. Apple Pay shows up 5 times in the whole year, all of them Online Store.
+through a card-not-present charge, which is exactly what the Public API is good at. Apple Pay shows up 5 times in the whole year, all of them Online Store.
 
 So: **Swift buys Bluetooth to a reader that handles 0.4% of transactions.** That
 settles it. Build the web app.
@@ -66,28 +65,42 @@ counter rushes, so they do not change the picture.
 
 ## The card-present problem (the honest answer)
 
-**The physical reader cannot be driven from the API.** Mindbody Payments runs on
-Stripe Terminal underneath, and the supported readers (Stripe Reader M2,
-WisePad 3, BBPOS Chipper 2x) are paired to the Mindbody business app. Mindbody's
-own support docs say the mobile reader "can only be used to process payments
-using the Mindbody business app; it can't be used as a card reader from the
-Point of Sale screen." There is no card-present endpoint in the Public API, no
-way to hand a Stripe Terminal `PaymentIntent` to Mindbody's merchant account,
-and no Apple Pay token field on checkout. Anyone who tells you otherwise is
-describing card-not-present entry with a keyed PAN, which we will not do
-(it drags the iPad into PCI scope).
+**Correction to an earlier draft of this doc: the API does have a swipe path.**
+The v6 `CheckoutPaymentInfo` model's `Type` field accepts, among others:
 
-So a POS we build can take, over the API:
+- `CreditCard` - keyed card (number, exp, cvv, billing address in `Metadata`)
+- `StoredCard` - card on the client's account (`amount`, `lastFour`)
+- `EncryptedTrackData` - "indicates that this payment item is a swiped credit
+  card", with `trackData` in `Metadata`
+- `TrackData` - same, unencrypted
+- `DebitAccount`, `Custom`, `Comp`, direct debit, gift card
 
-- stored card on file (`StoredCardInfo` on `POST /sale/checkoutshoppingcart`)
-- cash / check
-- gift card and account credit
-- comp
-- custom payment types, if enabled for the site
+So a magstripe swipe *can* be pushed through the API, if we can get track data
+into our app. Three large caveats, in descending order of how likely each is to
+kill it:
 
-and it cannot take a tap/dip/swipe of a card that is not already on file.
+1. **It probably does not work on Mindbody Payments.** `EncryptedTrackData`
+   comes from the era when Mindbody sold P2PE magstripe swipers, and it means
+   "track data encrypted under a key the processor can decrypt." Mindbody
+   Payments settles through Stripe, and Stripe will not decrypt a swipe injected
+   for a Bluefin or TSYS key. The field existing in the model is not evidence
+   that this account can use it. This is now the single most important thing the
+   processor question decides.
+2. **`TrackData` unencrypted is not an option.** Raw track data flowing through
+   our iPad and our server puts the whole thing in PCI scope. Off the table
+   regardless of whether it works.
+3. **Magstripe only.** No EMV chip, no contactless, no Apple Pay, and swiped
+   transactions carry worse fraud liability than a dipped chip. We would be
+   building 2014 in 2026.
 
-Three ways to close that gap. Recommendation is A + B for v1.
+What is definitely still true: the Stripe Terminal readers Mindbody sells today
+are paired to the Mindbody business app and cannot be driven from the API, and
+there is no Apple Pay token field on checkout. And the data below says the swipe
+path is worth 25 transactions a year regardless of whether it is technically
+reachable. Noted for completeness, not recommended.
+
+Over the API we can reliably take: stored card on file, cash, gift card and
+account credit, comp, and custom payment types.
 
 ### A. Fall back to Mindbody for new-card sales (recommended, v1)
 
@@ -283,6 +296,15 @@ current UI, so lead with the routes that do not depend on finding a screen:
   a stored card either clears or comes back with a processor-not-supported
   error. Definitive, costs a dollar, and it tests the exact code path we care
   about rather than a claim about it.
+- **Is there an API endpoint that just tells us?** No. Nothing in v6 names the
+  merchant processor. The closest signals: `GET /site/sites` returns
+  `AcceptsVisa`, `AcceptsMasterCard`, `AcceptsDiscover`,
+  `AcceptsAmericanExpress` and `AcceptsDirectDebit`, which tell us whether a
+  merchant account is wired up at all and for which brands (all false means no
+  card processing, full stop), and `GET /sale/alternativepaymentmethods`
+  enumerates the custom payment types configured for the site. Neither names the
+  processor. Worth calling both on day one anyway, since they are cheap and they
+  bound the problem.
 - **In the app, if you want to look:** the payments/payouts area of the newer
   Mindbody dashboard is where Mindbody Payments account details live. I could
   not verify the current menu path, so treat this as "poke around Payments"
