@@ -312,8 +312,27 @@ default as the online store rather than a physical location) crossed with
 permissions were fine all along and the cart was simply addressed to the wrong
 place. If none is, the request shape is ruled out too.
 
-At that point the remaining explanation is the **API key's scope for the sale
-endpoints**. The key was provisioned for the contact sync, which only ever
+**The matrix answered it: the sales permission is scoped per location.** Site
+471 has two locations, 1 (physical, Fremont) and 98 (the online store). Against
+location 1 the call is refused with "You do not have permission to perform
+sales". Against location 98 it is refused with "Products cannot be sold through
+the online store" -- a *business rule*, which means the access check passed and
+the request got all the way to the item validation. The account can sell at the
+online store and not at the physical one.
+
+So the fix is to grant the API account sales at **location 1**, since in
+Mindbody permission groups and staff assignments are per location. It was never
+about which permissions were ticked; all six were correct for several runs while
+this was still failing.
+
+(Reading that from the output needs care, and the probe initially got it wrong:
+it treated every non-200 as an equivalent rejection and printed "this is not
+about location" directly above the evidence that it was. It now classifies a
+permission refusal separately from any other error, since only the former means
+the access check blocked the call.)
+
+If the location grant does not resolve it, the remaining explanation is the
+**API key's scope for the sale endpoints**. The key was provisioned for the contact sync, which only ever
 needed to read clients, and every symptom fits: reads work, writes are refused,
 the refusal is invariant across payment type, location, and permission changes.
 Widening it is a support request to Mindbody, not a studio setting. Ask them

@@ -562,30 +562,96 @@ if (!dry.ok) {
       }
     }
 
+    /**
+     * Not every rejection means the same thing. A permission error means
+     * the request never got past the access check; ANY OTHER error means
+     * it did, and stumbled on a business rule instead. That distinction
+     * is the whole point of the matrix: if one location refuses on
+     * permissions and another refuses on a business rule, the sales
+     * permission is scoped per location.
+     */
+    /**
+     * "Products cannot be sold through the online store" is a rule about
+     * the ITEM, not about us. A service (a class pass) is exactly what
+     * the online store exists to sell, so pairing the cheapest service
+     * with the online-store location can clear both the permission check
+     * and the business rule, which would validate a complete cart and
+     * settle the entitlement question without waiting on the location
+     * fix.
+     */
+    const cheapestService = catalog.find((c) => c.type === "Service");
+    if (cheapestService) {
+      for (const locationId of locationIds) {
+        variants.push({
+          label: `service "${cheapestService.name}" $${cheapestService.price}, LocationId=${locationId}`,
+          body: {
+            ...cart(true),
+            InStore: false,
+            LocationId: locationId,
+            Items: [
+              {
+                Item: {
+                  Type: "Service",
+                  Metadata: { Id: cheapestService.id },
+                },
+                Quantity: 1,
+              },
+            ],
+            Payments: [
+              {
+                Type: "StoredCard",
+                Metadata: {
+                  Amount: cheapestService.price,
+                  LastFour: card.LastFour,
+                },
+              },
+            ],
+          },
+        });
+      }
+    }
+
     console.log(`   Trying ${variants.length} request shapes in Test mode:`);
+    const passedAccessCheck: string[] = [];
     let anyWorked = false;
     for (const variant of variants) {
       const attempt = await call("POST", "/sale/checkoutshoppingcart", {
         token,
         body: variant.body,
       });
-      const note = attempt.ok
-        ? "ACCEPTED"
-        : String(attempt.body?.Error?.Message ?? attempt.status);
-      console.log(`     ${variant.label}: ${note}`);
+      const message = String(attempt.body?.Error?.Message ?? attempt.status);
+      const isPermission = /permission/i.test(message);
       if (attempt.ok) anyWorked = true;
+      if (attempt.ok || !isPermission) passedAccessCheck.push(variant.label);
+      console.log(
+        `     ${variant.label}: ${
+          attempt.ok
+            ? "ACCEPTED"
+            : `${isPermission ? "[blocked] " : "[allowed, business rule] "}${message}`
+        }`,
+      );
     }
     if (anyWorked) {
       console.error(
-        "\n   DIAGNOSIS: at least one request shape above is ACCEPTED. The\n" +
-          "   permissions are fine and the default cart shape was wrong; adopt the\n" +
-          "   shape that worked (almost certainly the LocationId one) and re-run.",
+        "\n   DIAGNOSIS: a request shape above is ACCEPTED. Adopt it and re-run.",
       );
       fail("5. POST /sale/checkoutshoppingcart (Test:true)", dry.body);
     }
-    console.log(
-      "   No request shape is accepted, so this is not about location or InStore.",
-    );
+    if (passedAccessCheck.length > 0) {
+      console.error(
+        "\n   DIAGNOSIS: the sales permission is scoped PER LOCATION.\n" +
+          `   These shapes got past the access check and failed on a business rule:\n` +
+          passedAccessCheck.map((l) => `     ${l}`).join("\n") +
+          "\n   Everything else was refused on permissions. So the account can sell at\n" +
+          "   some locations and not others, and the fix is to grant it sales at the\n" +
+          "   physical location rather than to keep editing the permission list.\n" +
+          "   In Mindbody, permission groups and staff are assigned per location.",
+      );
+    } else {
+      console.log(
+        "   Every shape was refused on permissions, so this is not location-scoped.",
+      );
+    }
 
     const asCash = await call("POST", "/sale/checkoutshoppingcart", {
       token,
