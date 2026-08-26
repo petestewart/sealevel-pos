@@ -264,25 +264,34 @@ payment interface, plus the nightly Stripe-to-Mindbody reconciliation job.
 ## Open questions to settle first
 
 **1. Which merchant processor is the account on, and is Payments API access
-enabled?** Still open, and it is the gating question for options A and B. Four
-ways to find out, cheapest first:
+enabled?** Still open, and it gates options A and B. Mindbody has reorganized
+its settings more than once and there is no "Merchant Account" menu in the
+current UI, so lead with the routes that do not depend on finding a screen:
 
-- Mindbody web app, Manager Tools / Settings, Merchant Account. The processor
-  is named on that screen. Thirty seconds if you have owner access.
-- The bank deposits. The ACH descriptor on the studio's account names who is
-  actually settling the money (Mindbody Payments, TSYS, Elavon, and so on).
-- Mindbody support or the account rep, who will also confirm whether API
-  credit-card processing is enabled for the Site ID, which is a separate
-  entitlement from having a supported processor.
-- Empirically: once we have API credentials, a $1 sale to a test client with a
-  stored card either goes through or comes back with a processor-not-supported
-  error. Fastest definitive answer, and it costs a dollar.
+- **The bank deposits.** The ACH descriptor on the studio's bank statement names
+  whoever is actually settling the money. If it reads Mindbody, the account is
+  on Mindbody Payments (Stripe underneath) and options A and B are both live. If
+  it names TSYS, Elavon, Paysafe, Bluefin, Ezidebit or Adyen, still supported for
+  API processing. Anything else means no API card processing at all, and the
+  whole payment half of this design collapses to cash plus handoff. This costs
+  one look at a statement and answers the question outright.
+- **Ask Mindbody support or the account rep**, in one message, two questions:
+  which processor is the merchant account on, and is API credit-card processing
+  enabled for our Site ID. Those are separate entitlements and support has to
+  answer the second one regardless, so ask both at once.
+- **Empirically, once we have API credentials.** A $1 sale to a test client with
+  a stored card either clears or comes back with a processor-not-supported
+  error. Definitive, costs a dollar, and it tests the exact code path we care
+  about rather than a claim about it.
+- **In the app, if you want to look:** the payments/payouts area of the newer
+  Mindbody dashboard is where Mindbody Payments account details live. I could
+  not verify the current menu path, so treat this as "poke around Payments"
+  rather than a recipe.
 
-The reporting labels in the export ("Credit card (Visa/MC-Keyed)", a separate
-"Apple Pay" method, Keyed-vs-Swiped tagging) are the vocabulary of the newer
-Mindbody Payments stack rather than a legacy gateway, which is a hint the
-account is on Mindbody Payments. A hint is not a confirmation. Check the
-settings screen before writing payment code.
+The reporting vocabulary in the export (Keyed-vs-Swiped tagging, Apple Pay as
+its own payment method) is the newer Mindbody Payments stack rather than a
+legacy gateway, which is a hint the account is already on Mindbody Payments. A
+hint is not a confirmation. Confirm before writing payment code.
 
 **2. What fraction of transactions involve a card not on file?** Answered above:
 0.4% of in-studio sales were swiped, and ~15% of in-studio card sales were a
