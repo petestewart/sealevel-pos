@@ -9,8 +9,11 @@ import { loadEnv } from "../env.js";
  * MINDBODY_* variables into a local .env, which is gitignored.
  *
  *   npm run mindbody:probe-payments -w @ai-manager/core
- *   npm run mindbody:probe-payments -w @ai-manager/core -- --client <id>
- *   npm run mindbody:probe-payments -w @ai-manager/core -- --client <id> --live
+ *   npm run mindbody:probe-payments -w @ai-manager/core -- --email you@example.com
+ *   npm run mindbody:probe-payments -w @ai-manager/core -- --email you@example.com --live
+ *
+ * --email looks the client up for you; --client <id> names one directly,
+ * which is what you need if two records share an email.
  *
  * "Card not present enabled" in the payments.mindbody.io portal is not
  * literally the same entitlement as "API card processing enabled for this
@@ -38,8 +41,9 @@ import { loadEnv } from "../env.js";
 loadEnv();
 
 const LIVE = process.argv.includes("--live");
-const CLIENT_ID = argValue("--client");
+const EMAIL = argValue("--email");
 const SERVICE_ID = argValue("--service");
+let CLIENT_ID = argValue("--client");
 
 function argValue(flag: string): string | undefined {
   const i = process.argv.indexOf(flag);
@@ -168,13 +172,43 @@ console.log(
 
 // --- 5. Test-mode checkout -------------------------------------------
 
+if (!CLIENT_ID && EMAIL) {
+  const found = await call(
+    "GET",
+    `/client/clients?searchText=${encodeURIComponent(EMAIL)}`,
+    { token },
+  );
+  if (!found.ok) fail("5. GET /client/clients (by email)", found.body);
+  const matches = (found.body?.Clients ?? []).filter(
+    (c: any) => String(c.Email ?? "").toLowerCase() === EMAIL.toLowerCase(),
+  );
+  if (matches.length === 0) {
+    fail("5. lookup", `No client found with email ${EMAIL}`);
+  }
+  if (matches.length > 1) {
+    console.log(
+      `5. ${matches.length} clients share that email: ${matches
+        .map((c: any) => `${c.Id} (${c.FirstName} ${c.LastName})`)
+        .join(", ")}`,
+    );
+    fail("5. lookup", "Ambiguous. Re-run with --client <id> naming one of them.");
+  }
+  CLIENT_ID = String(matches[0].Id);
+  console.log(
+    `5. Resolved ${EMAIL} to client ${CLIENT_ID} (${matches[0].FirstName} ${matches[0].LastName})`,
+  );
+}
+
 if (!CLIENT_ID) {
   console.log(
-    "\n5. Skipped: pass --client <mindbody client id> to validate a StoredCard cart.",
+    "\n5. Skipped: name a client to validate a StoredCard cart against.",
   );
+  console.log("   --email you@example.com   (looked up for you), or");
+  console.log("   --client <mindbody client id>");
   console.log(
-    "   Use a real client who has a card on file (your own account is ideal).",
+    "   Use someone with a card on file. Your own account is the obvious pick,",
   );
+  console.log("   since --live later puts a real charge on it.");
   process.exit(0);
 }
 
