@@ -77,7 +77,10 @@ undo them without reading the design doc's speed argument.
 1. **The roster is prefetched** for the classes around now, so tapping a name
    hits memory rather than the API.
 2. **Search goes straight to Mindbody's `searchText`.** One call, 400-900ms,
-   always current. There was an in-memory index of every client here and it
+   always current. Debounced at 350ms with the in-flight request aborted on
+   the next keystroke, and a three-letter minimum: at 120ms and two letters,
+   typing "dennis" fired four requests in 220ms, which is more calls than the
+   index it replaced would have made, and "de" matched 209 people. There was an in-memory index of every client here and it
    was deleted deliberately: the warm-up cost ~30 metered calls per server
    start to save calls on maybe a hundred searches a day, and a six-hour-old
    index cannot contain a client created ten minutes ago, who is exactly the

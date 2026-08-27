@@ -42,6 +42,15 @@ function clockTime(iso: string): string {
   return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+/**
+ * Long enough that a normal typing rhythm produces one request, short
+ * enough not to feel laggy. Mindbody answers in 400-900ms, so the total
+ * wait is about a second.
+ */
+const SEARCH_DEBOUNCE_MS = 350;
+/** Two letters matches hundreds of people and helps nobody. */
+const MIN_QUERY = 3;
+
 export default function FrontDesk() {
   const [classes, setClasses] = useState<ClassSummary[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -62,6 +71,7 @@ export default function FrontDesk() {
   const [confirming, setConfirming] = useState<string[]>([]);
   /** Rows with a check-in in flight. */
   const [busy, setBusy] = useState<string[]>([]);
+  const [searching, setSearching] = useState(false);
 
   useEffect(() => {
     fetch("/api/config")
@@ -92,20 +102,44 @@ export default function FrontDesk() {
       .catch((e) => setError(String(e)));
   }, [activeId]);
 
-  /** Search is local to the server's in-memory index, so a short debounce
-   *  is enough; the round trip is milliseconds, not a Mindbody call. */
+  /**
+   * Search hits Mindbody, so it is debounced properly and cancelled on the
+   * next keystroke.
+   *
+   * The first version used a 120ms debounce, tuned for a local index. Once
+   * search became a network call that meant typing "dennis" fired four
+   * requests inside 220ms -- more calls than the index it replaced would
+   * have made. It also raced: a slow "de" could land after a fast
+   * "dennis" and overwrite the better answer.
+   *
+   * Three letters minimum, because two returns hundreds of matches that
+   * nobody scrolls, at the cost of a metered call.
+   */
   useEffect(() => {
-    if (query.trim().length < 2) {
+    const q = query.trim();
+    if (q.length < MIN_QUERY) {
       setFound([]);
+      setSearching(false);
       return;
     }
+    setSearching(true);
+    const controller = new AbortController();
     const t = setTimeout(() => {
-      fetch(`/api/search?q=${encodeURIComponent(query)}`)
+      fetch(`/api/search?q=${encodeURIComponent(q)}`, {
+        signal: controller.signal,
+      })
         .then((r) => r.json())
         .then((d) => setFound(d.results ?? []))
-        .catch(() => setFound([]));
-    }, 120);
-    return () => clearTimeout(t);
+        .catch(() => {
+          /* aborted by the next keystroke, or failed; either way keep the
+           * previous results rather than blanking the list mid-type. */
+        })
+        .finally(() => setSearching(false));
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(t);
+      controller.abort();
+    };
   }, [query]);
 
   /**
@@ -228,7 +262,9 @@ export default function FrontDesk() {
         className="search"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search for a walk-in"
+        placeholder={
+          searching ? "Searching..." : "Search for a walk-in (3+ letters)"
+        }
         autoComplete="off"
         autoCorrect="off"
         spellCheck={false}
