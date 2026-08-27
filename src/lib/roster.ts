@@ -17,6 +17,16 @@ export interface RosterEntry {
   pricingOption: string | null;
   paid: boolean;
   checkedIn: boolean;
+  /**
+   * Liability waiver state, from `Liability.IsReleased` on the client
+   * record (the visit payload does not carry it). `true` means released,
+   * `false` means Mindbody says there is no released waiver and check-in
+   * must not happen on reflex, `null` means the lookup failed and the row
+   * FAILS OPEN: the design doc's concern is reflex check-ins, not outages,
+   * and blocking every row because one batched read timed out would stop
+   * the counter.
+   */
+  waiverSigned: boolean | null;
 }
 
 export interface ClassSummary {
@@ -30,6 +40,11 @@ export interface ClassSummary {
 
 export interface ClassRoster extends ClassSummary {
   entries: RosterEntry[];
+  /**
+   * Set when the batched client lookup failed, in which case every entry's
+   * `waiverSigned` is null (fail open). The UI surfaces this quietly.
+   */
+  waiverError: string | null;
 }
 
 /**
@@ -91,28 +106,72 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
        */
       paid: Boolean(v.ServiceName),
       checkedIn: Boolean(v.SignedIn),
+      /** Filled by classRoster's batched client lookup; a bare visit list
+       *  knows nothing about waivers. */
+      waiverSigned: null,
     }),
   );
 }
 
 /**
- * Names for a specific set of client ids, in one call. Mindbody accepts a
- * repeated clientIds parameter, which keeps this to a single round trip
- * regardless of class size.
+ * The slice of the client record a roster row needs: the name, and the
+ * waiver state (`Liability.IsReleased` per the vendored spec,
+ * docs/mindbody-openapi/client.yml). One `GET /client/clients?clientIds=`
+ * round trip for the whole set -- Mindbody accepts a repeated clientIds
+ * parameter -- so this stays one batched call per roster load, never one
+ * per client.
+ *
+ * Ids are chunked defensively: the old name-only lookup sent every id in a
+ * single query string, which was fine for the handful of nameless visits it
+ * served but a full hot-room roster is 40+ ids and query strings have
+ * practical length limits. A chunk of 40 keeps the URL under ~1KB; a normal
+ * class fits in one chunk, so the "one call" property holds where it
+ * matters.
  */
+interface ClientBrief {
+  name: string;
+  waiverSigned: boolean;
+}
+
+const CLIENT_LOOKUP_CHUNK = 40;
+
+async function briefsForIds(ids: string[]): Promise<Map<string, ClientBrief>> {
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += CLIENT_LOOKUP_CHUNK) {
+    chunks.push(ids.slice(i, i + CLIENT_LOOKUP_CHUNK));
+  }
+  const bodies = await Promise.all(
+    chunks.map((chunk) => {
+      const query = chunk
+        .map((id) => `clientIds=${encodeURIComponent(id)}`)
+        .join("&");
+      return mindbody(`/client/clients?${query}&limit=200`);
+    }),
+  );
+  const out = new Map<string, ClientBrief>();
+  for (const body of bodies) {
+    for (const c of body?.Clients ?? []) {
+      if (c?.Id === undefined || c?.Id === null) continue;
+      out.set(String(c.Id), {
+        name: `${c.FirstName ?? ""} ${c.LastName ?? ""}`.trim(),
+        /** Absent Liability or IsReleased means no released waiver. */
+        waiverSigned: Boolean(c?.Liability?.IsReleased),
+      });
+    }
+  }
+  return out;
+}
+
+/** Name-only view of the same lookup, for the waiting list. Swallows
+ *  errors: a list with ids but no names still beats no list at all. */
 async function namesForIds(ids: string[]): Promise<Map<string, string>> {
-  const query = ids
-    .map((id) => `clientIds=${encodeURIComponent(id)}`)
-    .join("&");
   const out = new Map<string, string>();
   try {
-    const body = await mindbody(`/client/clients?${query}&limit=200`);
-    for (const c of body?.Clients ?? []) {
-      const name = `${c.FirstName ?? ""} ${c.LastName ?? ""}`.trim();
-      if (c.Id !== undefined && name) out.set(String(c.Id), name);
+    for (const [id, brief] of await briefsForIds(ids)) {
+      if (brief.name) out.set(id, brief.name);
     }
   } catch {
-    /* A roster with ids but no names still beats no roster at all. */
+    /* fall through with whatever resolved */
   }
   return out;
 }
@@ -124,23 +183,40 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
   ]);
 
   /**
-   * Fill any name the visit payload did not carry, with ONE batched
-   * lookup of just the ids on this roster.
+   * ONE batched client lookup for ALL ids on this roster. It used to run
+   * only for nameless visits and keep only names; the waiver state widened
+   * it to every row, because a blocked state that only appears after a row
+   * is opened is not a blocked state, it is a surprise. Still one round
+   * trip per roster load (chunked past 40 ids), still just the ids on this
+   * roster -- never the whole client list, which was deleted deliberately.
    *
-   * The obvious move is to read them out of the search index, but that
-   * index is built by paging the whole client list, and making a roster
-   * wait on it turns a sub-second screen into a multi-second one. A
-   * roster is at most a few dozen people, so ask for exactly those.
+   * A failed lookup fails OPEN: names fall back, waiverSigned stays null on
+   * every row, and waiverError says so, quietly. Blocking the whole roster
+   * on a lookup outage would stop the counter, and the design doc's worry
+   * is reflex check-ins, not outages.
    */
-  const missing = [
-    ...new Set(rawEntries.filter((e) => !e.name && e.clientId).map((e) => e.clientId)),
+  const ids = [
+    ...new Set(rawEntries.map((e) => e.clientId).filter((id) => id)),
   ];
-  const names = missing.length > 0 ? await namesForIds(missing) : new Map();
-  const entries = rawEntries.map((entry) =>
-    entry.name
-      ? entry
-      : { ...entry, name: names.get(entry.clientId) ?? "(unknown client)" },
-  );
+  let briefs = new Map<string, ClientBrief>();
+  let waiverError: string | null = null;
+  if (ids.length > 0) {
+    try {
+      briefs = await briefsForIds(ids);
+    } catch (err) {
+      waiverError = err instanceof Error ? err.message : String(err);
+    }
+  }
+  const entries = rawEntries.map((entry): RosterEntry => {
+    const brief = briefs.get(entry.clientId);
+    return {
+      ...entry,
+      name: entry.name || brief?.name || "(unknown client)",
+      /** A client the successful lookup did not return stays null: unknown
+       *  is not "unsigned", and null fails open. */
+      waiverSigned: brief ? brief.waiverSigned : null,
+    };
+  });
   const summary = classes.find((c) => c.classId === classId);
   return {
     classId,
@@ -150,6 +226,7 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
     capacity: summary?.capacity ?? null,
     booked: summary?.booked ?? null,
     entries,
+    waiverError,
   };
 }
 

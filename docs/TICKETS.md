@@ -104,10 +104,31 @@ roster rows. The design doc wants RedAlert on the walk-in panel too.
 
 ## T6. Waiver state (PLAN 1.6)
 
-- [ ] `Liability.IsReleased` / `AgreementDate` surfaced on the row (joins the
+- [x] `Liability.IsReleased` / `AgreementDate` surfaced on the row (joins the
       batched client lookup; `/class/classvisits` does not carry it)
-- [ ] Unmissable blocked state; **no tap path marks a waiver signed**
-- [ ] A student without a waiver cannot be checked in by reflex
+- [x] Unmissable blocked state; **no tap path marks a waiver signed**
+- [x] A student without a waiver cannot be checked in by reflex
+
+Spec confirmed (`docs/mindbody-openapi/client.yml`): `Liability` on the
+Client record is `{IsReleased: boolean, AgreementDate: date-time,
+ReleasedBy: int}`; `LiabilityRelease: true` on `POST /client/updateclient`
+is the one-line write the design doc forbids, and nothing in this app sends
+it. The roster's batched `/client/clients?clientIds=` lookup now runs for
+ALL roster ids (it was nameless-visits-only) and carries `waiverSigned`
+onto every entry; still one round trip per roster load, chunked at 40 ids
+because the old single-URL form would not survive a full room. A row with
+`IsReleased` false or absent shows a stop-red "no waiver" chip and its tap
+opens an explanation with only a Close button, short-circuiting BEFORE the
+red-alert and unpaid gates; check-out of an already-checked-in person is
+untouched. A failed lookup fails OPEN (null, no badge, quiet notice):
+blocking every row on an outage would stop the counter, and the risk being
+managed is reflex check-ins.
+
+Still owed live verification (Pete, drawer open): that a real client with
+no waiver comes back with `Liability.IsReleased: false` (not omitted) and
+shows the blocked row; that a released client shows a normal row; and that
+the batched lookup returns `Liability` at all under our staff credentials
+(the spec says it is on the record, nobody has watched it live).
 
 ## T7. Studio banner (PLAN 1.7)
 

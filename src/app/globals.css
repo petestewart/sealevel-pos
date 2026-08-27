@@ -396,6 +396,15 @@ button {
   color: var(--stop);
 }
 
+/* The blocked state: no released waiver on file. Same stop pairing as a
+ * failure, because to a teacher mid-queue it means the same thing: this tap
+ * does not check anyone in. Both halves are tokens, defined in both
+ * palettes. */
+.chip.stop {
+  background: var(--stop-bg);
+  color: var(--stop);
+}
+
 .note {
   margin: 16px 0;
   padding: 12px 16px;

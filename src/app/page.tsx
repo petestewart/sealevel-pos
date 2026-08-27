@@ -29,6 +29,8 @@ interface RosterEntry {
   pricingOption: string | null;
   paid: boolean;
   checkedIn: boolean;
+  /** true = waiver on file, false = blocked, null = unknown (fails open). */
+  waiverSigned: boolean | null;
 }
 
 interface SearchResult {
@@ -346,6 +348,20 @@ export default function FrontDesk() {
   const [redAlertPrompt, setRedAlertPrompt] = useState<RosterEntry | null>(
     null,
   );
+  /**
+   * The row a teacher tapped that has no released waiver. The dialog it
+   * opens explains and closes; deliberately, there is no confirm button
+   * and no path anywhere in this app that marks a waiver signed. The API
+   * could do it in one line (`LiabilityRelease: true`), and that line is
+   * exactly what the design doc forbids: a staff tap would manufacture a
+   * legal record of an agreement the student may never have read. Signing
+   * happens in the Mindbody app until Phase 3 puts the real waiver text on
+   * the student's own phone.
+   */
+  const [waiverPrompt, setWaiverPrompt] = useState<RosterEntry | null>(null);
+  /** Set when the roster's batched client lookup failed: waiver state is
+   *  unknown on every row and rows fail open. Shown quietly. */
+  const [waiverError, setWaiverError] = useState<string | null>(null);
   const skipDebounce = useRef(false);
   /** The class currently on screen, readable from inside an async fetch:
    *  a waitlist response that comes back after the teacher has switched
@@ -392,6 +408,7 @@ export default function FrontDesk() {
       if (activeIdRef.current !== classId) return;
       if (d.error) return setError(d.error);
       setEntries(d.entries ?? []);
+      setWaiverError(d.waiverError ?? null);
       setClasses((cs) =>
         cs.map((c) =>
           c.classId === classId
@@ -544,6 +561,18 @@ export default function FrontDesk() {
   const tapRow = useCallback(
     (entry: RosterEntry) => {
       if (busy.includes(entry.clientId) || entry.checkedIn) return;
+      /**
+       * No released waiver stops everything, before the red alert and
+       * before the unpaid confirm: the tap opens the explanation and goes
+       * no further. There is no override and no acknowledgement that lets
+       * the tap through, unlike the red alert below, because reading past
+       * a warning is a judgement call and signing a legal waiver is not.
+       * Unknown (null, lookup failed) fails open and is not this branch.
+       */
+      if (entry.waiverSigned === false) {
+        setWaiverPrompt(entry);
+        return;
+      }
       /**
        * A known red alert stops the tap until it is read. "Known" is the
        * operative word: context is only fetched when a row is opened, so an
@@ -782,6 +811,15 @@ export default function FrontDesk() {
 
       {error ? <p className="note">{error}</p> : null}
 
+      {/* Quiet on purpose: waiver state failing open must not read like the
+          counter is broken, only like one column of it is missing. */}
+      {waiverError ? (
+        <p className="muted">
+          Waiver status could not be checked ({waiverError}). Rows check in as
+          normal; verify new students in the Mindbody app.
+        </p>
+      ) : null}
+
       <nav className="classbar">
         {classes.map((c) => (
           <button
@@ -887,13 +925,18 @@ export default function FrontDesk() {
       <ul className="roster">
         {entries.map((entry) => {
           const working = busy.includes(entry.clientId);
+          /* False only. Null is unknown (lookup failed) and fails open:
+             no badge, normal check-in. */
+          const noWaiver = entry.waiverSigned === false && !entry.checkedIn;
           const detail = working
             ? "Talking to Mindbody..."
             : failed[entry.clientId]
               ? failed[entry.clientId]
-              : confirming.includes(entry.clientId)
-                ? "No pass on this booking. Tap again to check in for free."
-                : (entry.pricingOption ?? "No pass on this booking");
+              : noWaiver
+                ? "Needs the liability waiver. Sign it in the Mindbody app."
+                : confirming.includes(entry.clientId)
+                  ? "No pass on this booking. Tap again to check in for free."
+                  : (entry.pricingOption ?? "No pass on this booking");
 
           const open = expandedId === entry.clientId;
           /* The context toggle: its own control, so opening details never
@@ -966,23 +1009,30 @@ export default function FrontDesk() {
                     {entry.name}
                     <span className="detail">{detail}</span>
                   </span>
+                  {/* The no-waiver chip outranks everything but an
+                      in-flight call or a failure: it is the blocked state
+                      the teacher must see before their thumb lands. */}
                   <span
                     className={
                       working
                         ? "chip busy"
                         : failed[entry.clientId]
                           ? "chip failed"
-                          : confirming.includes(entry.clientId)
-                            ? "chip unpaid"
-                            : entry.paid
-                              ? "chip action"
-                              : "chip unpaid"
+                          : noWaiver
+                            ? "chip stop"
+                            : confirming.includes(entry.clientId)
+                              ? "chip unpaid"
+                              : entry.paid
+                                ? "chip action"
+                                : "chip unpaid"
                     }
                   >
                     {working ? (
                       <span className="spinner" aria-label="working" />
                     ) : failed[entry.clientId] ? (
                       "failed"
+                    ) : noWaiver ? (
+                      "no waiver"
                     ) : confirming.includes(entry.clientId) ? (
                       "confirm"
                     ) : entry.paid ? (
@@ -1257,6 +1307,50 @@ export default function FrontDesk() {
                 }}
               >
                 I have read it, check in
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* No released waiver: the tap ends here. One button, Close. There is
+          deliberately no "mark it signed" and no "check in anyway": a staff
+          tap that flips LiabilityRelease manufactures a legal record of an
+          agreement the student may never have read (design doc, "Waiver
+          status"). Phase 3 puts the actual waiver on the student's own
+          phone; until then it is signed in the Mindbody app, outside this
+          screen. */}
+      {waiverPrompt ? (
+        <div
+          className="modal-scrim"
+          onClick={() => setWaiverPrompt(null)}
+          role="presentation"
+        >
+          <div
+            className="modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Liability waiver needed"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">
+              {waiverPrompt.name} has not signed the waiver
+            </p>
+            <p className="ctx-alert modal-alert">
+              No liability waiver on file. They cannot be checked in from
+              here until it is signed.
+            </p>
+            <p className="muted">
+              Have them sign it in the Mindbody app first. This screen cannot
+              mark a waiver signed on their behalf, and once it is signed the
+              row will check in normally.
+            </p>
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                onClick={() => setWaiverPrompt(null)}
+              >
+                Close
               </button>
             </div>
           </div>
