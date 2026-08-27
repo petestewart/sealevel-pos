@@ -24,7 +24,9 @@ export interface CounterCategory {
   /**
    * Mindbody category ids this button covers. Usually one; empty means the
    * entry is not backed by category ids at all (see `passes` below).
-   * Negative ids are Mindbody's service categories, positive are retail.
+   * Sign does not encode the service/retail split: the design doc's live
+   * dump has "Classes 1" as a Service:true category with a positive id, so
+   * the `Service` flag on each record is the real discriminator.
    */
   categoryIds: number[];
 }
