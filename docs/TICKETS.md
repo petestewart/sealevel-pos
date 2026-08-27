@@ -144,9 +144,16 @@ doc's option (1).
 
 ## T8. Categories config (PLAN 1.8)
 
-- [ ] Five hardcoded entries ordered by counter frequency: Towel and Mat
+- [x] Five hardcoded entries ordered by counter frequency: Towel and Mat
       (-14), Food/Drink (36), passes, Accessories (32), Clothing (26);
       everything else behind "more". Not fetched.
+
+`src/lib/categories.ts`: config plus types, no UI (Phase 2 groundwork; the
+sale screen will be its first consumer). "Passes" carries no category id:
+per the design doc's live dump, pass-like items span several Service:true
+categories (ClassPass -12, Vinyasa -15, Classes 1, Course -11), and passes
+sell as pricing options via /sale/services rather than as retail products
+filtered by category, so that entry's `categoryIds` is deliberately empty.
 
 ## T9. Deployment, minus auth (PLAN Phase 1.5)
 
