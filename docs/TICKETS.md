@@ -47,6 +47,10 @@ audit (same visit plumbing).
       `docs/mindbody-openapi/class.yml`)
 - [ ] Pete: book a write-guarded dummy client for real, then check them in
 
+Watch live: whether `/class/waitlistentries` with `HidePastEntries=true`
+counts an in-progress class's entries as "past". If it does, the promote list
+goes empty exactly when a teacher needs it, and the flag has to go.
+
 ## T3. Header counters (PLAN 1.3)
 
 - [ ] Signed up, checked in, capacity from data already on hand (roster
