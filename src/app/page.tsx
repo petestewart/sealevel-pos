@@ -115,6 +115,11 @@ export default function FrontDesk() {
   const [promoting, setPromoting] = useState<number[]>([]);
   const [promoteMsg, setPromoteMsg] = useState<Record<number, string>>({});
   const skipDebounce = useRef(false);
+  /** The class currently on screen, readable from inside an async fetch:
+   *  a waitlist response that comes back after the teacher has switched
+   *  classes must be dropped, not written into state under the new class. */
+  const activeIdRef = useRef<number | null>(null);
+  activeIdRef.current = activeId;
 
   useEffect(() => {
     fetch("/api/config")
@@ -335,9 +340,16 @@ export default function FrontDesk() {
       const d = await fetch(`/api/waitlist?classId=${classId}`).then((r) =>
         r.json(),
       );
+      /* The teacher switched classes while this was in flight: the reset
+       * effect already cleared the waitlist state for the new class, and
+       * this response would repopulate it with the OLD class's entries --
+       * a wrong counter, and promote buttons carrying entry ids from a
+       * different class. Drop it. */
+      if (activeIdRef.current !== classId) return;
       if (d.error) return setWaitlistError(d.error);
       setWaitlist(d.entries ?? []);
     } catch (e) {
+      if (activeIdRef.current !== classId) return;
       setWaitlistError(String(e));
     }
   }, []);
