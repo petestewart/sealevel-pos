@@ -24,8 +24,14 @@ an actual counter.
 Phase 2 (sales) is unblocked but not started. The sale path was verified with
 ai-manager's `npm run mindbody:probe-payments`.
 
-**The design doc's phasing section is current and authoritative.** Read it
-before picking up work; it carries the reasoning for every item above.
+**`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
+done when, the probes still to run, and the questions blocked on Pete. Start
+there. `docs/design/front-desk-pos.md` carries the reasoning behind every item
+in it; read the relevant section before building, since most items have a
+constraint that cost real time to establish.
+
+When the two disagree, the design doc is the reasoning of record and PLAN.md is
+stale. Fix PLAN.md, and check items off in the same commit that ships them.
 
 ## Safety: nothing writes by accident
 
