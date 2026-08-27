@@ -84,6 +84,19 @@ undo them without reading the design doc's speed argument.
 3. **Check-in is optimistic.** The row goes green on tap and rolls back with
    an error if the call fails. Nobody watches a spinner with a queue waiting.
 
+## Dev drawer
+
+A pill in the bottom-right opens a drawer listing every Mindbody call the
+server made: method, path, status, latency, request body, response body,
+newest first. Suppressed calls appear too, labelled `dry-run` or
+`write-guard`, so it is visible when a write did not go out and why.
+
+It is recorded server-side in `src/lib/calllog.ts`, which matters: it shows
+what Mindbody actually received and returned, not what our API routes chose
+to forward. Enabled by `POS_DEVTOOLS=true` or a dev build; `/api/devlog`
+404s otherwise, because the records carry client names and booking details
+and must not be reachable from the counter iPad.
+
 ## The API spec is vendored. Use it.
 
 `docs/mindbody-openapi/` holds the full v6 OpenAPI specification, split by

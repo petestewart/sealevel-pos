@@ -11,6 +11,8 @@
  * ~400ms and the counter cannot afford that on a check-in.
  */
 
+import { record } from "./calllog";
+
 export interface MindbodyEnv {
   apiKey: string;
   siteId: string;
@@ -207,6 +209,15 @@ export async function mindbody<T = any>(
       console.warn(
         `[dry-run] suppressed ${method} ${path} ${JSON.stringify(opts.body ?? {})}`,
       );
+      record({
+        method,
+        path,
+        status: null,
+        ms: 0,
+        outcome: "dry-run",
+        requestBody: opts.body ?? null,
+        responseBody: "suppressed: POS_DRY_RUN is on",
+      });
       return { DryRun: true } as T;
     }
     const allowed = allowedWriteClientIds();
@@ -216,6 +227,17 @@ export async function mindbody<T = any>(
         `[write-guard] suppressed ${method} ${path} for client ${client ?? "(none named)"}; ` +
           `POS_WRITE_CLIENT_IDS allows only ${[...allowed].join(", ")}`,
       );
+      record({
+        method,
+        path,
+        status: null,
+        ms: 0,
+        outcome: "write-guard",
+        requestBody: opts.body ?? null,
+        responseBody:
+          `suppressed: client ${client ?? "(none named)"} is not in ` +
+          `POS_WRITE_CLIENT_IDS (${[...allowed].join(", ")})`,
+      });
       return { WriteSuppressed: true } as T;
     }
   }
@@ -227,6 +249,7 @@ export async function mindbody<T = any>(
   };
   if (!opts.anonymous) headers["Authorization"] = await staffToken(env);
 
+  const started = Date.now();
   const res = await fetch(`${env.baseUrl}${path}`, {
     method,
     headers,
@@ -234,6 +257,15 @@ export async function mindbody<T = any>(
     signal: AbortSignal.timeout(20_000),
   });
   const text = await res.text();
+  record({
+    method,
+    path,
+    status: res.status,
+    ms: Date.now() - started,
+    outcome: "sent",
+    requestBody: opts.body ?? null,
+    responseBody: text,
+  });
   let body: any = text;
   try {
     body = JSON.parse(text);

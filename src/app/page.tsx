@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import DevDrawer from "./DevDrawer";
+
 /**
  * The counter screen. One class selector, one roster, one search box.
  *
@@ -286,6 +288,7 @@ export default function FrontDesk() {
           </li>
         ))}
       </ul>
+      <DevDrawer />
     </main>
   );
 }
