@@ -622,9 +622,30 @@ and the easiest to explain to a student. This needs Pete's answer before
 implementation, because it determines whether the upgrade is a property of a
 roster row or a property of the client.
 
-**A $21 SKU has to exist in Mindbody.** The POS cannot invent a price: v6's
-request-side `CheckoutItem` carries only `Type` and `Metadata`, with no price
-override. So the $21 upgrade must be either
+**Can the POS set a price directly? Unresolved, and worth resolving.** The
+Mindbody web app lets staff edit a price in the cart, so the underlying system
+clearly supports it. Whether the *Public API* exposes that is a separate
+question, since the web app runs on internal endpoints and the public surface
+is routinely a subset.
+
+What the spec actually shows: the request-side `CheckoutItem` carries only
+`Type` and `Metadata`, and **the key set for `Metadata` is not enumerated in
+the vendored spec** -- it links out to a "Cart Item Metadata" page we cannot
+reach. That is a gap in our knowledge, not a proven absence, and it should not
+be quoted as "the API cannot do this". Two things suggest it might: the
+response model `CartItem` carries `DiscountAmount`, so a discount is
+representable in a cart, and `CheckoutShoppingCartRequest` accepts
+`PromotionCode` at the cart level.
+
+**Settle it with a Test-mode probe**, which costs nothing: post a cart with a
+candidate discount or price key in the item metadata and compare the server's
+returned total against the undiscounted one. If the total moves, the key works
+and the $21 upgrade needs no new SKU at all. The existing payments probe
+already has a `--discount` flag built for exactly this comparison. Do this
+before creating anything in Mindbody, since a working price override makes the
+whole SKU question moot.
+
+If it turns out the override does not work, the $21 upgrade must be either
 
 - **its own service** priced at $21 in Mindbody, selected like any other item.
   Simplest, and keeps reporting readable, since an upgrade is visibly distinct
@@ -633,11 +654,11 @@ override. So the $21 upgrade must be either
   and `GET /site/promocodes` lists what exists (it needs the "Set up
   promotions" staff permission, which the API account may not currently hold).
 
-Recommendation: the dedicated $21 service. A promo code is a discount the API
-applies to a $49 sale, which is more moving parts and leaves the sale looking
-like a discounted special rather than an upgrade. Either way **this is a
-studio-side setup task that blocks the feature**, not something the POS can
-work around.
+Of those two, the dedicated $21 service is better: a promo code leaves the sale
+looking like a discounted special rather than an upgrade, and is more moving
+parts. But **run the probe before setting either up.** Creating a SKU to work
+around a limit that may not exist is the expensive mistake here, and it is one
+metered Test call to find out.
 
 ### Detecting eligibility
 

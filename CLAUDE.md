@@ -193,6 +193,15 @@ while `git clone` works, so clone the repo rather than fetching files.
 - **Categories live in `site.yml`, not `sale.yml`.** `GET /site/categories`
   exists; grepping only the Sale tag missed it once. `/site/liabilitywaiver`
   (the waiver's actual text) and `/site/paymenttypes` are next to it.
+- **The spec's `Metadata` fields are holes, not answers.** `CheckoutItem` has
+  only `Type` and `Metadata`, and the vendored spec does not enumerate that
+  metadata's keys; it links to a docs page that needs a login. Absence there is
+  absence of *documentation*, not proof the capability is missing, and it has
+  already been quoted once as "the API cannot set a price in a cart" when the
+  Mindbody web app plainly can. When a question lands on an unenumerated
+  `Metadata`, answer it with a `Test: true` call and compare the server's
+  returned total, rather than by reading. Test mode prices a cart without
+  moving money, which makes this cheap.
 - **`/class/classvisits` puts the CLASS name in the visit's `Name` field.**
   Reading it showed every roster row as "bikram yoga". Names come from
   explicit client fields, and otherwise from the client index by id.
