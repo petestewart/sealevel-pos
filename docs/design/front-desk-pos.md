@@ -581,6 +581,81 @@ amount, but confirm against how the desk does it today rather than assuming.
 The seam only exists on the third path, the sub-$10 card sale. The other two are
 single calls and cannot half-complete.
 
+## The $49 two-week special, and the $28 drop-in upgrade
+
+The studio's conversion path for a brand new student, and the one offer where
+the POS earns its keep by remembering something a teacher would otherwise have
+to know and say out loud.
+
+**The offer is new students only.** The $49 two-week special must not appear as
+a purchase option for anyone else, and that eligibility is hardcoded rather
+than read from Mindbody. Showing it to a member is worse than not showing it at
+all: it is a price a teacher might honour by mistake.
+
+**The upgrade.** A student whose very first visit is a $28 drop-in may put that
+$28 toward the special, paying the $21 difference. So the offer a teacher
+should be making, in order:
+
+- *Before class*, to a new student paying anyway: the $49 special outright.
+- *After that first drop-in*: the same special for $21, because they have
+  already paid $28.
+
+The POS prompts for both. This is the single most valuable prompt on the
+screen, because the moment passes: a new student who walks out having paid $28
+for one class is a student who may not come back, and $21 on the way out is the
+difference between a drop-in and a two-week habit.
+
+### What has to be settled first
+
+**How long does the $21 upgrade last?** The rule as given says the $28 applies
+"only on the spot", and also that a teacher can pull it up before class or
+after, from that class's roster. Those describe a window, but not its edge.
+Three candidates, and they behave very differently at the counter:
+
+1. **That visit only.** The offer lives as long as that class's roster is on
+   screen, and expires when the teacher moves on.
+2. **That day.**
+3. **Some longer period**, a week say, after which they pay the full $49.
+
+(1) is the strictest reading and matches "on the spot". (2) is the most humane
+and the easiest to explain to a student. This needs Pete's answer before
+implementation, because it determines whether the upgrade is a property of a
+roster row or a property of the client.
+
+**A $21 SKU has to exist in Mindbody.** The POS cannot invent a price: v6's
+request-side `CheckoutItem` carries only `Type` and `Metadata`, with no price
+override. So the $21 upgrade must be either
+
+- **its own service** priced at $21 in Mindbody, selected like any other item.
+  Simplest, and keeps reporting readable, since an upgrade is visibly distinct
+  from a fresh $49 sale; or
+- **a promotion code.** `CheckoutShoppingCartRequest` accepts `PromotionCode`,
+  and `GET /site/promocodes` lists what exists (it needs the "Set up
+  promotions" staff permission, which the API account may not currently hold).
+
+Recommendation: the dedicated $21 service. A promo code is a discount the API
+applies to a $49 sale, which is more moving parts and leaves the sale looking
+like a discounted special rather than an upgrade. Either way **this is a
+studio-side setup task that blocks the feature**, not something the POS can
+work around.
+
+### Detecting eligibility
+
+"New student" needs a definition the POS can evaluate in one call. The client
+record carries `FirstClassDate` and `FirstAppointmentDate`, and
+`GET /client/clientpurchases` gives purchase history. The safe test is *no
+prior purchases and no prior visits*, evaluated before the current one is
+counted, which avoids the trap of a student becoming ineligible for the upgrade
+the instant their drop-in is recorded.
+
+The $28 drop-in itself is recognised from that purchase: their only purchase,
+made today, at the drop-in price. Note this ties to the visit, not the class, so
+a student who drops in twice in one day is an edge case worth deciding on
+rather than discovering.
+
+All three prices sit above the $10 card minimum, so the payment paths above
+apply unchanged.
+
 ## Everything on account: what shows when a student comes up
 
 Account credit is one of the facts that should be on screen the moment a
@@ -736,6 +811,11 @@ option.
 The other thing Phase 2 completes is the **last-class prompt** from Phase 1:
 Phase 1 can tell the teacher the pack is empty, and Phase 2 can do something
 about it in the same gesture.
+
+Phase 2 also carries the **$49 two-week special and its $21 upgrade**, with the
+new-student gate hardcoded. That one needs a studio-side prerequisite (a $21
+SKU in Mindbody) and an unresolved policy detail (how long the upgrade lasts),
+both noted in its own section above.
 
 **Option A, the Mindbody handoff, is cut.** It was scoped here, and it is a
 deep link plus a polling loop to confirm an out-of-band sale, for the roughly
