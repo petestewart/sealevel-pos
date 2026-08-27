@@ -142,12 +142,22 @@ button {
   color: var(--muted);
 }
 
+/* One width for every chip, whatever the label. The chip is the rightmost
+ * thing on every row, so ragged widths make the column edge zigzag and the
+ * eye has to re-find the target on each row. Wide enough for the longest
+ * label ("checked in") so nothing wraps or truncates. */
 .chip {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 104px;
+  min-height: 32px;
   padding: 6px 12px;
   border-radius: 999px;
   font-size: 14px;
   font-weight: 600;
+  text-align: center;
 }
 
 .chip.in {
