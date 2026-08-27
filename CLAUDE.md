@@ -116,6 +116,19 @@ undo them without reading the design doc's speed argument.
 
 ## Known gaps
 
+- **`AddArrival` may be the wrong endpoint.** The v6 request carries
+  `ClientId`, `LocationId`, `ArrivalTypeId`, `LeadChannelId` and `Test`, and
+  **no `ClassId`**. It logs that a client arrived at the studio, which is not
+  obviously the same as signing them into a specific class, and the `ClassId`
+  the app sends is probably ignored. Settle this in the sandbox before the app
+  goes near a counter: check a client in, then see whether that visit's
+  `SignedIn` flag actually flipped. If it did not, the roster's check-in needs
+  a different call.
+- **Arrivals cannot be reversed.** v6 has `AddArrival` and no counterpart, so
+  undo in the UI holds the call for a few seconds and cancels it, rather than
+  sending and retracting. A mistake noticed after that window has to be fixed
+  in Mindbody itself.
+
 - **The live charge has never fully settled.** The probe reached payment
   handling and was refused with "Credit card is expired", which proves
   authorization but not that a charge reaches Stripe. Re-run

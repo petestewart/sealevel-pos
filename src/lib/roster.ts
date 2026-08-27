@@ -156,6 +156,20 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
  * LaunchSignInScreen; without it Mindbody returns "Authorization Required"
  * and the check-in silently does nothing, so the caller must surface a
  * failure rather than assume success.
+ *
+ * UNRESOLVED, and worth settling before this is trusted at a counter: the
+ * v6 AddArrival request carries ClientId, LocationId, ArrivalTypeId,
+ * LeadChannelId and Test -- and NO ClassId. It logs "this client arrived at
+ * the studio", which is not the same as "this client is signed into this
+ * class", and the ClassId passed below is very likely ignored. If what we
+ * want is the class roster's signed-in flag, this may be the wrong endpoint
+ * entirely. Verify against a sandbox class before relying on it: check in a
+ * sandbox client here, then look at whether the visit's SignedIn flag
+ * actually flipped.
+ *
+ * There is also no counterpart to reverse an arrival anywhere in v6, which
+ * is why undo in the UI holds the call briefly rather than sending and
+ * retracting.
  */
 export async function checkIn(
   clientId: string,

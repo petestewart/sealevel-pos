@@ -36,6 +36,9 @@ body {
 
 button {
   font: inherit;
+  /* Buttons inherit neither color nor background, so rows rendered black-on-
+   * dark until this was set explicitly. */
+  color: inherit;
   cursor: pointer;
 }
 
@@ -146,6 +149,11 @@ button {
 .chip.unpaid {
   background: var(--warn-bg);
   color: var(--warn);
+}
+
+.chip.undo {
+  background: var(--accent);
+  color: var(--surface);
 }
 
 .chip.walkin {

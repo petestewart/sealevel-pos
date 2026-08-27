@@ -34,6 +34,13 @@ interface SearchResult {
   email: string | null;
 }
 
+/**
+ * How long a tapped check-in is held before it is sent. Long enough to
+ * catch a wrong row, short enough that nobody waits on it: the send is
+ * invisible to the teacher either way, since the row already shows green.
+ */
+const UNDO_WINDOW_MS = 6000;
+
 function clockTime(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -56,6 +63,10 @@ export default function FrontDesk() {
   } | null>(null);
   /** Rows whose check-in call failed after going green optimistically. */
   const [failed, setFailed] = useState<Record<string, string>>({});
+  /** Check-ins tapped but not yet sent, by client id -> timer handle. */
+  const [pending, setPending] = useState<Record<string, number>>({});
+  /** Unpaid rows tapped once, awaiting a deliberate second tap. */
+  const [confirming, setConfirming] = useState<string[]>([]);
 
   useEffect(() => {
     fetch("/api/config")
@@ -103,22 +114,13 @@ export default function FrontDesk() {
   }, [query]);
 
   /**
-   * Optimistic: the row goes green on tap and the API call runs behind it.
-   * A failure rolls the row back and marks it, rather than making the
-   * teacher watch a spinner with a queue waiting.
+   * Send the arrival. Optimistic already: the row went green when tapped.
+   * A failure rolls it back and says why, rather than making the teacher
+   * watch a spinner with a queue waiting.
    */
-  const markArrived = useCallback(
+  const send = useCallback(
     async (clientId: string) => {
       if (activeId === null) return;
-      setEntries((rows) =>
-        rows.map((r) =>
-          r.clientId === clientId ? { ...r, checkedIn: true } : r,
-        ),
-      );
-      setFailed((f) => {
-        const { [clientId]: _drop, ...rest } = f;
-        return rest;
-      });
       try {
         const res = await fetch("/api/checkin", {
           method: "POST",
@@ -140,6 +142,68 @@ export default function FrontDesk() {
       }
     },
     [activeId],
+  );
+
+  /**
+   * Mindbody has no way to reverse an arrival: v6 offers AddArrival and no
+   * counterpart. So undo cannot mean "take it back", it has to mean "do not
+   * send it yet". The row goes green immediately and the call is held for a
+   * few seconds, during which the chip reads "undo" and cancels it outright.
+   * A mistaken tap costs nothing as long as it is noticed in that window.
+   */
+  const markArrived = useCallback(
+    (clientId: string) => {
+      if (activeId === null) return;
+      setEntries((rows) =>
+        rows.map((r) =>
+          r.clientId === clientId ? { ...r, checkedIn: true } : r,
+        ),
+      );
+      setFailed((f) => {
+        const { [clientId]: _drop, ...rest } = f;
+        return rest;
+      });
+      setConfirming((c) => c.filter((id) => id !== clientId));
+
+      const timer = window.setTimeout(() => {
+        setPending((p) => {
+          const { [clientId]: _done, ...rest } = p;
+          return rest;
+        });
+        void send(clientId);
+      }, UNDO_WINDOW_MS);
+      setPending((p) => ({ ...p, [clientId]: timer }));
+    },
+    [activeId, send],
+  );
+
+  const undo = useCallback((clientId: string) => {
+    setPending((p) => {
+      const timer = p[clientId];
+      if (timer !== undefined) window.clearTimeout(timer);
+      const { [clientId]: _dropped, ...rest } = p;
+      return rest;
+    });
+    setEntries((rows) =>
+      rows.map((r) => (r.clientId === clientId ? { ...r, checkedIn: false } : r)),
+    );
+  }, []);
+
+  /**
+   * An unpaid booking has no pricing option attached, so checking it in
+   * hands over a class for free. Phase 2 will sell them a pass here; until
+   * then the least it can do is refuse to be a single careless tap.
+   */
+  const tapRow = useCallback(
+    (entry: { clientId: string; paid: boolean }) => {
+      if (pending[entry.clientId] !== undefined) return undo(entry.clientId);
+      if (!entry.paid && !confirming.includes(entry.clientId)) {
+        setConfirming((c) => [...c, entry.clientId]);
+        return;
+      }
+      markArrived(entry.clientId);
+    },
+    [confirming, markArrived, pending, undo],
   );
 
   const rosterIds = useMemo(
@@ -201,35 +265,45 @@ export default function FrontDesk() {
           <li key={entry.clientId}>
             <button
               className="row"
-              onClick={() => markArrived(entry.clientId)}
-              disabled={entry.checkedIn}
+              onClick={() => tapRow(entry)}
+              disabled={entry.checkedIn && pending[entry.clientId] === undefined}
             >
               <span className="name">
                 {entry.name}
                 <span className="detail">
                   {failed[entry.clientId]
                     ? failed[entry.clientId]
-                    : (entry.pricingOption ?? "No pass on this booking")}
+                    : confirming.includes(entry.clientId)
+                      ? "No pass on this booking. Tap again to check in for free."
+                      : (entry.pricingOption ?? "No pass on this booking")}
                 </span>
               </span>
               <span
                 className={
                   failed[entry.clientId]
                     ? "chip failed"
-                    : entry.checkedIn
-                      ? "chip in"
-                      : entry.paid
-                        ? "chip walkin"
-                        : "chip unpaid"
+                    : pending[entry.clientId] !== undefined
+                      ? "chip undo"
+                      : entry.checkedIn
+                        ? "chip in"
+                        : confirming.includes(entry.clientId)
+                          ? "chip unpaid"
+                          : entry.paid
+                            ? "chip walkin"
+                            : "chip unpaid"
                 }
               >
                 {failed[entry.clientId]
                   ? "failed"
-                  : entry.checkedIn
-                    ? "in"
-                    : entry.paid
-                      ? "check in"
-                      : "unpaid"}
+                  : pending[entry.clientId] !== undefined
+                    ? "undo"
+                    : entry.checkedIn
+                      ? "in"
+                      : confirming.includes(entry.clientId)
+                        ? "confirm"
+                        : entry.paid
+                          ? "check in"
+                          : "unpaid"}
               </span>
             </button>
           </li>
