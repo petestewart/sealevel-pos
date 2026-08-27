@@ -33,15 +33,15 @@ something they forgot to prevent.
   with `POS_DRY_RUN=false` every write for anyone else is still suppressed
   (`[write-guard] suppressed ...`). Empty means no restriction, which is what
   production wants.
-- **`MINDBODY_TARGET`** picks the studio: `prod` (default) or `sandbox`,
-  reading `MINDBODY_PROD_*` or `MINDBODY_SANDBOX_*`; the unprefixed
+- **`MINDBODY_TARGET`** picks the studio: `sandbox` (default) or `prod`,
+  reading `MINDBODY_SANDBOX_*` or `MINDBODY_PROD_*`; the unprefixed
   `MINDBODY_*` names remain the production fallback.
 
-**Do not spend time on Mindbody's sandbox.** Site -99 answers "Site is
-deactivated" and their sandbox signup flow fails. That is why the target
-defaults to prod rather than to a studio that is not there, and why the two
-guards above carry the safety instead. The plumbing is in place if a working
-sandbox ever appears.
+Mindbody's site -99 sandbox works, but **only with credentials issued for
+it**: staff accounts belong to a site, so the studio's own API login
+(`sealevelapiuser@gmail.com`, site 471) authenticates against 471 and nothing
+else. If the sandbox returns "Site is deactivated" or "Staff identity
+authentication failed", that is the credentials, not the site being down.
 
 The screen shows which mode it is in at all times, and `GET /api/config`
 reports it. Never remove that banner: a teacher must not have to wonder

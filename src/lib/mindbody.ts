@@ -24,24 +24,21 @@ export type Target = "sandbox" | "prod";
 /**
  * Which studio the app is pointed at.
  *
- * Defaults to prod, which reads oddly for a safety-conscious app and is
- * deliberate: Mindbody's shared sandbox (site -99) answers
- * "Site is deactivated", and their sandbox signup does not work, so
- * defaulting to sandbox means defaulting to an app that cannot start.
- * Safety comes from POS_DRY_RUN (on by default, suppresses every write)
- * and POS_WRITE_CLIENT_IDS, not from pointing at a studio that is not
- * there. Set MINDBODY_TARGET=sandbox if a working sandbox ever appears.
+ * Defaults to sandbox. Mindbody's site -99 works given credentials issued
+ * for it -- the studio's own staff login is not one, since staff accounts
+ * belong to a site -- so the safe default is also a usable one. Reaching
+ * the real studio's classes and students stays a deliberate act.
  */
 export function target(): Target {
-  return process.env["MINDBODY_TARGET"] === "sandbox" ? "sandbox" : "prod";
+  return process.env["MINDBODY_TARGET"] === "prod" ? "prod" : "sandbox";
 }
 
 /**
  * Two credential sets, selected by MINDBODY_TARGET.
  *
  * PROD_* falls back to the unprefixed MINDBODY_* names, so an existing
- * .env keeps working. SANDBOX_* is kept for the day Mindbody has a
- * sandbox that works; site -99 currently reports "Site is deactivated".
+ * .env keeps working. SANDBOX_* needs credentials issued for site -99;
+ * the studio's own staff login will not authenticate there.
  */
 export function mindbodyEnv(): MindbodyEnv {
   const sandbox = target() === "sandbox";
@@ -161,10 +158,10 @@ function isWrite(method: string, path: string): boolean {
 /**
  * Client ids that writes are allowed to touch, when set.
  *
- * Mindbody's shared sandbox (site -99) is unreliable and their sandbox
- * signup is broken, so the practical way to test a write end to end is to
- * do it against the real studio aimed at a client who is not a real
- * student. Create a "Test Test" client in Mindbody, put its id here, and
+ * The sandbox covers most testing, but some things can only be checked
+ * against the real studio's data. For those, aim writes at a client who is
+ * not a real student: create a "Test Test" client in Mindbody, put its id
+ * here, and
  * every write for anyone else is suppressed exactly as dry run suppresses
  * it -- even with POS_DRY_RUN=false.
  *
