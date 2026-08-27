@@ -37,6 +37,18 @@ interface SearchResult {
   email: string | null;
 }
 
+/** Material's undo arrow. Grey and unlabelled: it is the quiet action. */
+function UndoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"
+      />
+    </svg>
+  );
+}
+
 function clockTime(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -340,11 +352,12 @@ export default function FrontDesk() {
                   </span>
                   <span className="chip in">checked in</span>
                   <button
-                    className="checkout"
+                    className="undo-btn"
                     onClick={() => setCheckingOut(entry)}
                     aria-label={`Check out ${entry.name}`}
+                    title={`Check out ${entry.name}`}
                   >
-                    check out
+                    <UndoIcon />
                   </button>
                 </div>
               </li>
@@ -383,6 +396,9 @@ export default function FrontDesk() {
                     "unpaid"
                   )}
                 </span>
+                {/* Holds the space the undo control occupies on a checked-in
+                    row, so chips stay in one column down the list. */}
+                <span className="undo-spacer" aria-hidden="true" />
               </button>
             </li>
           );

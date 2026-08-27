@@ -448,16 +448,29 @@ button {
 /* Check-out: deliberately quieter than the check-in chip, and a separate
  * target, so reversing a check-in is never the same gesture that made it. */
 
-.checkout {
+.undo-btn {
   flex: 0 0 auto;
-  min-height: 44px;
-  margin-left: 8px;
-  padding: 8px 14px;
-  border: 1px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-left: 12px;
+  border: 0;
   border-radius: 999px;
   background: transparent;
   color: var(--muted);
-  font-size: 14px;
+}
+
+.undo-btn:active {
+  background: var(--line);
+}
+
+/* Same footprint on rows that have no undo, so the chips line up. */
+.undo-spacer {
+  flex: 0 0 auto;
+  width: 44px;
+  margin-left: 12px;
 }
 
 /* Confirmation dialog. */
