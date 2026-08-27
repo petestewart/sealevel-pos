@@ -106,9 +106,13 @@ export default function FrontDesk() {
   const [waitlistPrompt, setWaitlistPrompt] = useState<SearchResult | null>(
     null,
   );
-  /** The waiting list panel: only offered for a full class, fetched on
-   *  open, because a class with room cannot have a queue. */
-  const [waitlistOpen, setWaitlistOpen] = useState(false);
+  /** Which counter's modal is open, if any. The lists behind "signed up"
+   *  and "checked in" render from roster state already in memory; only the
+   *  waitlist one can ever cost a call, and that call is shared with the
+   *  counter itself. */
+  const [counterModal, setCounterModal] = useState<
+    "signedUp" | "checkedIn" | "waitlist" | null
+  >(null);
   const [waitlist, setWaitlist] = useState<WaitlistRow[] | null>(null);
   const [waitlistError, setWaitlistError] = useState<string | null>(null);
   /** Waitlist promotions in flight, by entry id. Also non-optimistic. */
@@ -169,7 +173,7 @@ export default function FrontDesk() {
 
   useEffect(() => {
     if (activeId === null) return;
-    setWaitlistOpen(false);
+    setCounterModal(null);
     setWaitlist(null);
     setWaitlistError(null);
     setPromoteMsg({});
@@ -514,11 +518,16 @@ export default function FrontDesk() {
           class: is everyone here, is anyone missing, is there room. Signed
           up and checked in come from the roster already in memory, capacity
           from the class summary; only the waitlist ever costs a call, and
-          only for a full class. Not tappable yet: T4 puts the lists behind
-          them. */}
+          only for a full class. Each one taps open to the list behind it,
+          which is where "is Dennis here yet" gets answered without
+          scrolling the roster. */}
       {activeClass ? (
         <header className="counters" aria-label="Counts for the selected class">
-          <div className="counter">
+          <button
+            className="counter"
+            onClick={() => setCounterModal("signedUp")}
+            aria-haspopup="dialog"
+          >
             <span className="counter-num">
               {entries.length}
               {activeClass.capacity !== null ? (
@@ -526,14 +535,31 @@ export default function FrontDesk() {
               ) : null}
             </span>
             <span className="counter-label">signed up</span>
-          </div>
-          <div className="counter">
+          </button>
+          <button
+            className="counter"
+            onClick={() => setCounterModal("checkedIn")}
+            aria-haspopup="dialog"
+          >
             <span className="counter-num">
               {entries.filter((e) => e.checkedIn).length}
             </span>
             <span className="counter-label">checked in</span>
-          </div>
-          <div className="counter">
+          </button>
+          <button
+            className="counter"
+            onClick={() => {
+              setCounterModal("waitlist");
+              /* Opening the modal is the retry path after a failed fetch,
+               * and the first fetch if the auto-fetch has not fired. Still
+               * gated on the class being full: a class with room cannot
+               * have a queue, so the metered call never fires for one. */
+              if (activeId !== null && classFull && waitlist === null) {
+                void loadWaitlist(activeId);
+              }
+            }}
+            aria-haspopup="dialog"
+          >
             <span className="counter-num">
               {waitlist !== null
                 ? waitlist.length
@@ -544,7 +570,7 @@ export default function FrontDesk() {
                   : 0}
             </span>
             <span className="counter-label">waitlist</span>
-          </div>
+          </button>
         </header>
       ) : null}
 
@@ -697,76 +723,157 @@ export default function FrontDesk() {
         })}
       </ul>
 
-      {/* The waiting list, offered only for a full class: a class with
-          room cannot have a queue, so the metered call never fires for
-          one. T4 turns this into the counter modal; this is the minimal
-          affordance that makes promotion reachable. A loaded, non-empty
-          list keeps the section visible even after a spot opens up,
-          because that is exactly the moment promotion is useful. */}
-      {activeId !== null &&
-      (classFull || (waitlist !== null && waitlist.length > 0)) ? (
-        <section className="waitlist-section">
-          <button
-            className="waitlist-toggle"
-            aria-expanded={waitlistOpen}
-            onClick={() => {
-              const opening = !waitlistOpen;
-              setWaitlistOpen(opening);
-              if (opening && waitlist === null) void loadWaitlist(activeId);
-            }}
+      {/* The lists behind the counters. Signed up and checked in render
+          from roster state already in memory, so opening them costs no
+          call. The waitlist modal is the ONE place the queue appears as
+          rows, reading the same `waitlist` state the counter shows, and it
+          is where promotion lives: the waiting list panel this replaced
+          had a second toggle for the same state, which was one source of
+          truth too many. */}
+      {counterModal && activeClass ? (
+        <div
+          className="modal-scrim"
+          onClick={() => setCounterModal(null)}
+          role="presentation"
+        >
+          <div
+            className="modal modal-list"
+            role="dialog"
+            aria-modal="true"
+            aria-label={
+              counterModal === "signedUp"
+                ? "Everyone signed up"
+                : counterModal === "checkedIn"
+                  ? "Everyone checked in"
+                  : "The waiting list"
+            }
+            onClick={(e) => e.stopPropagation()}
           >
-            {waitlistOpen ? "Hide waiting list" : "Show waiting list"}
-          </button>
-          {waitlistOpen ? (
-            <>
-              {waitlistError ? <p className="note">{waitlistError}</p> : null}
-              {waitlist === null && !waitlistError ? (
-                <p className="muted">Loading the waiting list...</p>
-              ) : null}
-              {waitlist !== null && waitlist.length === 0 ? (
-                <p className="muted">Nobody is waiting.</p>
-              ) : null}
-            </>
-          ) : null}
-          {waitlistOpen && waitlist !== null && waitlist.length > 0 ? (
-            <ul className="roster">
-              {waitlist.map((row) => {
-                const working = promoting.includes(row.entryId);
-                const msg = promoteMsg[row.entryId];
-                return (
-                  <li key={`wl-${row.entryId}`}>
-                    <button
-                      className="row"
-                      disabled={working}
-                      onClick={() => void promote(row)}
-                    >
-                      <span className="name">
-                        {row.name}
-                        <span className="detail">
-                          {working
-                            ? "Talking to Mindbody..."
-                            : msg ??
-                              (row.requestedAt
-                                ? `Waiting since ${clockTime(row.requestedAt)}`
-                                : "On the waiting list")}
+            <p className="modal-title">
+              {counterModal === "signedUp"
+                ? `Signed up (${entries.length}${
+                    activeClass.capacity !== null
+                      ? ` of ${activeClass.capacity}`
+                      : ""
+                  })`
+                : counterModal === "checkedIn"
+                  ? `Checked in (${entries.filter((e) => e.checkedIn).length} of ${entries.length})`
+                  : `Waiting list${waitlist !== null ? ` (${waitlist.length})` : ""}`}
+            </p>
+
+            {counterModal === "signedUp" ? (
+              entries.length === 0 ? (
+                <p className="muted">Nobody is signed up yet.</p>
+              ) : (
+                <ul className="roster modal-roster">
+                  {entries.map((entry) => (
+                    <li key={`m-su-${entry.clientId}`}>
+                      <div className="row">
+                        <span className="name">
+                          {entry.name}
+                          <span className="detail">
+                            {entry.pricingOption ?? "No pass on this booking"}
+                          </span>
                         </span>
-                      </span>
-                      <span className={working ? "chip busy" : "chip action"}>
-                        {working ? (
-                          <span className="spinner" aria-label="working" />
-                        ) : (
-                          "promote"
-                        )}
-                      </span>
-                      <span className="undo-spacer" aria-hidden="true" />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : null}
-        </section>
+                        <span
+                          className={entry.checkedIn ? "chip in" : "chip out"}
+                        >
+                          {entry.checkedIn ? "checked in" : "not yet"}
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )
+            ) : null}
+
+            {counterModal === "checkedIn" ? (
+              entries.filter((e) => e.checkedIn).length === 0 ? (
+                <p className="muted">Nobody is checked in yet.</p>
+              ) : (
+                <ul className="roster modal-roster">
+                  {entries
+                    .filter((e) => e.checkedIn)
+                    .map((entry) => (
+                      <li key={`m-ci-${entry.clientId}`}>
+                        <div className="row">
+                          <span className="name">
+                            {entry.name}
+                            <span className="detail">
+                              {entry.pricingOption ?? "No pass on this booking"}
+                            </span>
+                          </span>
+                          <span className="chip in">checked in</span>
+                        </div>
+                      </li>
+                    ))}
+                </ul>
+              )
+            ) : null}
+
+            {counterModal === "waitlist" ? (
+              <>
+                {waitlistError ? <p className="note">{waitlistError}</p> : null}
+                {waitlist === null && !waitlistError && classFull ? (
+                  <p className="muted">Loading the waiting list...</p>
+                ) : null}
+                {(waitlist !== null && waitlist.length === 0) ||
+                (waitlist === null && !classFull && !waitlistError) ? (
+                  <p className="muted">Nobody is waiting.</p>
+                ) : null}
+                {waitlist !== null && waitlist.length > 0 ? (
+                  <ul className="roster modal-roster">
+                    {waitlist.map((row) => {
+                      const working = promoting.includes(row.entryId);
+                      const msg = promoteMsg[row.entryId];
+                      return (
+                        <li key={`m-wl-${row.entryId}`}>
+                          <button
+                            className="row"
+                            disabled={working}
+                            onClick={() => void promote(row)}
+                          >
+                            <span className="name">
+                              {row.name}
+                              <span className="detail">
+                                {working
+                                  ? "Talking to Mindbody..."
+                                  : msg ??
+                                    (row.requestedAt
+                                      ? `Waiting since ${clockTime(row.requestedAt)}`
+                                      : "On the waiting list")}
+                              </span>
+                            </span>
+                            <span
+                              className={working ? "chip busy" : "chip action"}
+                            >
+                              {working ? (
+                                <span className="spinner" aria-label="working" />
+                              ) : (
+                                "promote"
+                              )}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : null}
+              </>
+            ) : null}
+
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                onClick={() => setCounterModal(null)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
+
       {checkingOut ? (
         <div
           className="modal-scrim"

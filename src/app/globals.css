@@ -93,9 +93,10 @@ button {
 }
 
 /* Header counters for the selected class: three numbers a teacher reads at
- * arm's length. Plain surfaces for now; T4 makes them tappable, at which
- * point they become buttons and inherit the 64px tap-target rule. All
- * colours are tokens, defined in both palettes above and below. */
+ * arm's length. Each is a button that opens the list behind it, so it keeps
+ * the 72px tap target and gets honest button affordance: a chevron, and a
+ * pressed state. All colours are tokens, defined in both palettes above and
+ * below. */
 
 .counters {
   display: flex;
@@ -104,12 +105,29 @@ button {
 }
 
 .counter {
+  position: relative;
   flex: 1;
   min-height: 72px;
-  padding: 10px 16px;
+  padding: 10px 36px 10px 16px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
+  text-align: left;
+}
+
+.counter::after {
+  content: "\203A"; /* a single right chevron */
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 26px;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.counter:active {
+  background: var(--action-bg);
 }
 
 .counter-num {
@@ -213,6 +231,13 @@ button {
   color: var(--muted);
 }
 
+/* Someone signed up but not here yet, in the counter modals. Quiet on
+ * purpose: the green "checked in" chip is the state worth noticing. */
+.chip.out {
+  background: var(--line);
+  color: var(--muted);
+}
+
 /* A spinner rather than a frozen row: the wait for Mindbody is 300-900ms,
  * which is long enough to look broken if nothing moves. */
 .spinner {
@@ -287,29 +312,6 @@ button {
     --accent: #7ea2ff;
     --action-bg: #464036;
   }
-}
-
-/* The waiting list behind a full class. Same row and chip components as
- * the roster; only the toggle is new, and it is a full tap target because
- * it gets hit from across a counter like everything else. */
-
-.waitlist-section {
-  margin-top: 16px;
-  display: grid;
-  gap: 8px;
-}
-
-.waitlist-toggle {
-  width: 100%;
-  min-height: 64px;
-  padding: 12px 16px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--warn-bg);
-  color: var(--warn);
-  font-size: 18px;
-  font-weight: 600;
-  text-align: left;
 }
 
 /* A confirming action that is not destructive: adding someone to the
@@ -592,6 +594,18 @@ button {
   border-radius: 16px;
   background: var(--surface);
   box-shadow: 0 12px 48px rgb(0 0 0 / 0.4);
+}
+
+/* Counter modals hold a list, so they run wider than a confirmation and
+ * scroll the list rather than the screen. */
+.modal-list {
+  width: min(600px, 100%);
+}
+
+.modal-roster {
+  max-height: min(55vh, 520px);
+  overflow-y: auto;
+  margin-bottom: 20px;
 }
 
 .modal-title {

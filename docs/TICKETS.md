@@ -62,11 +62,11 @@ goes empty exactly when a teacher needs it, and the flag has to go.
 
 ## T4. Counter modals (PLAN 1.4) — after T3
 
-- [ ] Tapping a counter lists the people behind it
-- [ ] Waitlist entries are stubs (`ClassId`/`ClientId` only): names resolve
+- [x] Tapping a counter lists the people behind it
+- [x] Waitlist entries are stubs (`ClassId`/`ClientId` only): names resolve
       through the same batched client lookup the roster uses, not the row
       component
-- [ ] "Is Dennis here yet" answerable without scrolling the roster
+- [x] "Is Dennis here yet" answerable without scrolling the roster
 
 ## T5. Client context on the expanded row (PLAN 1.5)
 
