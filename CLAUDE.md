@@ -81,8 +81,12 @@ undo them without reading the design doc's speed argument.
 2. **Search runs against an in-memory client index**, not Mindbody. A
    per-keystroke API call would be one metered call per letter at 400-900ms
    each.
-3. **Check-in is optimistic.** The row goes green on tap and rolls back with
-   an error if the call fails. Nobody watches a spinner with a queue waiting.
+3. **Check-in is NOT optimistic**, and this is the one place the speed
+   argument was deliberately overruled. An optimistic row goes green on tap
+   and corrects itself when the failure returns, by which time a teacher with
+   a queue has looked away believing someone is checked in who is not.
+   Attendance is worth 300-900ms, so the row spins until Mindbody answers.
+   Everything else here stays optimistic.
 
 ## Dev drawer
 
@@ -90,6 +94,12 @@ A pill in the bottom-right opens a drawer listing every Mindbody call the
 server made: method, path, status, latency, request body, response body,
 newest first. Suppressed calls appear too, labelled `dry-run` or
 `write-guard`, so it is visible when a write did not go out and why.
+
+Cmd+D (Ctrl+D elsewhere) toggles it, each call has a `copy` button and the
+header has `copy all`, so a payload can be lifted off an iPad where there is
+no console. Clipboard falls back to a hidden textarea, since
+`navigator.clipboard` needs a secure context and `http://<lan-ip>:3000` is not
+one.
 
 It is recorded server-side in `src/lib/calllog.ts`, which matters: it shows
 what Mindbody actually received and returned, not what our API routes chose

@@ -60,6 +60,8 @@ export default function FrontDesk() {
   const [failed, setFailed] = useState<Record<string, string>>({});
   /** Unpaid rows tapped once, awaiting a deliberate second tap. */
   const [confirming, setConfirming] = useState<string[]>([]);
+  /** Rows with a check-in in flight. */
+  const [busy, setBusy] = useState<string[]>([]);
 
   useEffect(() => {
     fetch("/api/config")
@@ -107,9 +109,14 @@ export default function FrontDesk() {
   }, [query]);
 
   /**
-   * Set a visit's signed-in state. Optimistic: the row flips immediately
-   * and the call runs behind it, because nobody should watch a spinner
-   * with a queue waiting. A failure rolls the row back and says why.
+   * Set a visit's signed-in state, and wait for Mindbody before showing it
+   * as done.
+   *
+   * This was optimistic, which is faster and was wrong: the row went green
+   * on tap and only corrected itself when the failure came back, by which
+   * time a teacher with a queue has looked away and believes someone is
+   * checked in who is not. Attendance is worth the 300-900ms. The row shows
+   * a spinner meanwhile, so the wait is visible rather than mysterious.
    */
   const setSignedIn = useCallback(
     async (entry: RosterEntry, signedIn: boolean) => {
@@ -120,9 +127,7 @@ export default function FrontDesk() {
         }));
         return;
       }
-      setEntries((rows) =>
-        rows.map((r) => (r.clientId === entry.clientId ? { ...r, checkedIn: signedIn } : r)),
-      );
+      setBusy((b) => [...b, entry.clientId]);
       setFailed((f) => {
         const { [entry.clientId]: _drop, ...rest } = f;
         return rest;
@@ -136,16 +141,18 @@ export default function FrontDesk() {
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
-      } catch (err) {
         setEntries((rows) =>
           rows.map((r) =>
-            r.clientId === entry.clientId ? { ...r, checkedIn: !signedIn } : r,
+            r.clientId === entry.clientId ? { ...r, checkedIn: signedIn } : r,
           ),
         );
+      } catch (err) {
         setFailed((f) => ({
           ...f,
           [entry.clientId]: err instanceof Error ? err.message : String(err),
         }));
+      } finally {
+        setBusy((b) => b.filter((id) => id !== entry.clientId));
       }
     },
     [],
@@ -162,6 +169,7 @@ export default function FrontDesk() {
    */
   const tapRow = useCallback(
     (entry: RosterEntry) => {
+      if (busy.includes(entry.clientId)) return;
       if (entry.checkedIn) return void setSignedIn(entry, false);
       if (!entry.paid && !confirming.includes(entry.clientId)) {
         setConfirming((c) => [...c, entry.clientId]);
@@ -169,7 +177,7 @@ export default function FrontDesk() {
       }
       void setSignedIn(entry, true);
     },
-    [confirming, setSignedIn],
+    [busy, confirming, setSignedIn],
   );
 
   const rosterIds = useMemo(
@@ -237,7 +245,9 @@ export default function FrontDesk() {
               <span className="name">
                 {entry.name}
                 <span className="detail">
-                  {failed[entry.clientId]
+                  {busy.includes(entry.clientId)
+                    ? "Talking to Mindbody..."
+                    : failed[entry.clientId]
                     ? failed[entry.clientId]
                     : confirming.includes(entry.clientId)
                       ? "No pass on this booking. Tap again to check in for free."
@@ -248,7 +258,9 @@ export default function FrontDesk() {
               </span>
               <span
                 className={
-                  failed[entry.clientId]
+                  busy.includes(entry.clientId)
+                    ? "chip busy"
+                    : failed[entry.clientId]
                     ? "chip failed"
                     : entry.checkedIn
                       ? "chip in"
@@ -259,7 +271,9 @@ export default function FrontDesk() {
                           : "chip unpaid"
                 }
               >
-                {failed[entry.clientId]
+                {busy.includes(entry.clientId)
+                  ? <span className="spinner" aria-label="working" />
+                  : failed[entry.clientId]
                   ? "failed"
                   : entry.checkedIn
                     ? "in"

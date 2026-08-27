@@ -151,6 +151,32 @@ button {
   color: var(--warn);
 }
 
+.chip.busy {
+  background: var(--line);
+  color: var(--muted);
+}
+
+/* A spinner rather than a frozen row: the wait for Mindbody is 300-900ms,
+ * which is long enough to look broken if nothing moves. */
+.spinner {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  vertical-align: -2px;
+  border: 2px solid var(--muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2s; }
+}
+
 .chip.undo {
   background: var(--accent);
   color: var(--surface);
@@ -330,6 +356,23 @@ button {
 
 .dev-detail {
   padding: 8px 0 16px;
+}
+
+.dev-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dev-detail-head button {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
 }
 
 .dev-label {

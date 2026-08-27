@@ -36,6 +36,8 @@ export default function DevDrawer() {
   const [open, setOpen] = useState(false);
   const [calls, setCalls] = useState<CallRecord[]>([]);
   const [expanded, setExpanded] = useState<number | null>(null);
+  /** Which call id was just copied, for the momentary "copied" label. */
+  const [copied, setCopied] = useState<number | "all" | null>(null);
 
   const poll = useCallback(async () => {
     try {
@@ -61,6 +63,59 @@ export default function DevDrawer() {
     return () => clearInterval(t);
   }, [open, poll]);
 
+  /**
+   * Cmd+D (Ctrl+D elsewhere) toggles the drawer. Both are taken by the
+   * browser -- bookmark on Mac, bookmark-or-delete elsewhere -- so this
+   * has to preventDefault, which is acceptable for a tool that only
+   * exists in dev builds.
+   */
+  useEffect(() => {
+    if (!available) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        setOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [available]);
+
+  /**
+   * navigator.clipboard needs a secure context, which http://<lan-ip>:3000
+   * on an iPad is not, so fall back to a hidden textarea and execCommand.
+   * Copying a payload off the tablet is exactly when this matters most.
+   */
+  const copy = useCallback(async (text: string, id: number | "all") => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const el = document.createElement("textarea");
+      el.value = text;
+      el.style.position = "fixed";
+      el.style.opacity = "0";
+      document.body.appendChild(el);
+      el.select();
+      try {
+        document.execCommand("copy");
+      } finally {
+        document.body.removeChild(el);
+      }
+    }
+    setCopied(id);
+    setTimeout(() => setCopied((c) => (c === id ? null : c)), 1500);
+  }, []);
+
+  const asText = (call: CallRecord): string =>
+    [
+      `${call.method} ${call.path}`,
+      `${call.outcome} ${call.status ?? ""} ${call.ms}ms  ${call.at}`,
+      call.requestBody ? `\n--- request ---\n${call.requestBody}` : "",
+      `\n--- response ---\n${call.responseBody ?? "(empty)"}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
   if (!available) return null;
 
   const failures = calls.filter(
@@ -82,6 +137,11 @@ export default function DevDrawer() {
         <header className="dev-head">
           <strong>Mindbody calls</strong>
           <span className="muted">newest first, server-side</span>
+          <button
+            onClick={() => copy(calls.map(asText).join("\n\n====\n\n"), "all")}
+          >
+            {copied === "all" ? "copied" : "copy all"}
+          </button>
           <button
             onClick={async () => {
               await fetch("/api/devlog", { method: "DELETE" });
@@ -113,7 +173,12 @@ export default function DevDrawer() {
                 </button>
                 {expanded === call.id ? (
                   <div className="dev-detail">
-                    <div className="muted">{call.at}</div>
+                    <div className="dev-detail-head">
+                      <span className="muted">{call.at}</span>
+                      <button onClick={() => copy(asText(call), call.id)}>
+                        {copied === call.id ? "copied" : "copy"}
+                      </button>
+                    </div>
                     {call.requestBody ? (
                       <>
                         <div className="dev-label">request</div>
