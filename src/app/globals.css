@@ -17,6 +17,7 @@
   --stop: #a32020;
   --stop-bg: #fbe9e9;
   --accent: #1d4ed8;
+  --action-bg: #e0d9cc;
 }
 
 * {
@@ -183,11 +184,17 @@ button {
 }
 
 /* The primary action on a row: "check in" on a paid booking, "add" on a
- * search result. Full-strength ink, not --muted. This chip is the thing a
- * teacher is aiming at across a counter in a hot room, so it gets the
- * highest-contrast text in the palette rather than the quietest. */
+ * search result. This chip is the thing a teacher is aiming at across a
+ * counter in a hot room, so it gets the highest-contrast pairing in the
+ * palette rather than the quietest.
+ *
+ * Both halves are tokens, deliberately. This chip previously hardcoded its
+ * background while taking its text from a token, so in dark mode the text
+ * flipped and the background did not: first grey on near-white, then
+ * near-white on near-white. A hardcoded colour next to a themed one is the
+ * bug, not the particular shade. */
 .chip.action {
-  background: #eee9e1;
+  background: var(--action-bg);
   color: var(--ink);
 }
 
@@ -222,6 +229,7 @@ button {
     --stop: #f08a8a;
     --stop-bg: #341616;
     --accent: #7ea2ff;
+    --action-bg: #464036;
   }
 }
 

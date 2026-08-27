@@ -499,20 +499,41 @@ charge $10 and put the difference on account credit.** Cash, account credit and
 comp are unaffected; the minimum exists because of card processing fees, so it
 applies only to cards.
 
-Two mechanisms are available and the choice matters:
+**There is only one available shape, and it is two calls.** The tempting
+alternative, a single cart carrying the goods and the account credit together,
+does not exist: `CheckoutItem.Type` accepts only `Service`, `Product`,
+`Package` and `Tip`. Account credit cannot be a line item, so it cannot be made
+atomic with the sale.
 
-1. **Two calls.** `POST /sale/purchaseaccountcredit` for $10 against the card,
-   then `POST /sale/checkoutshoppingcart` for the actual items paid with
-   `DebitAccount`. Clean, uses documented endpoints for exactly their purpose,
-   and leaves precisely the right balance behind.
-2. **One cart**, with the account credit carried as a line item alongside the
-   goods.
+So:
 
-(1) is the better model but has a failure seam: if the credit purchase succeeds
-and the checkout fails, the student has $10 of credit and no towel. That is
-recoverable rather than lost, since the credit persists and the sale can be
-retried, but the POS has to say so clearly rather than reporting a flat
-failure. Worth testing both with `Test: true` before committing to either.
+1. `POST /sale/purchaseaccountcredit`, card payment, for the $10.
+2. `POST /sale/checkoutshoppingcart` for the actual items, paid `DebitAccount`.
+
+**The amount is dynamic, not a preconfigured SKU.** `PurchaseAccountCreditRequest`
+carries no `Amount` field at all; the figure travels in `PaymentInfo.Metadata`
+under the `amount` key, so any value can be charged. We are not forced to $10 by
+the API, only by the studio's policy, and if that floor ever changes it is a
+config value rather than a rebuild.
+
+That leaves a genuine failure seam: if step 1 succeeds and step 2 fails, the
+student has $10 of credit and no towel. Nothing is lost, since the credit
+persists and the sale can be retried, but the POS must say exactly that rather
+than reporting a flat failure, or a teacher will run the whole thing again and
+charge a second $10.
+
+The mitigation is `Test: true`, which exists on checkout: **validate the real
+cart before buying any credit.** If the test checkout is rejected, nothing has
+been charged and the failure is free. It does not close the window completely,
+since the live call can still fail after a passing test, but it turns the
+common failure (a cart Mindbody will not accept) into one that costs nothing.
+
+Order of operations, then: test the cart, buy the credit, run the cart for
+real, and on a step 2 failure report the credit balance explicitly.
+
+Worth noting the happy path this creates: after a student's first sub-$10 card
+sale they carry a balance, so the next one is a single `DebitAccount` checkout
+with no card, no minimum, and no seam at all.
 
 Open detail: **is the $10 measured before or after tax?** A $2.72 item is $3.00
 charged. The minimum is a card-processing floor, so it should be the charged
