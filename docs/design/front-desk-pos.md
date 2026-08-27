@@ -494,21 +494,60 @@ automatic in the POS.** It is arithmetic a teacher should never do at a counter
 with a line, and getting it wrong is either a policy breach or a student
 short-changed.
 
-The rule: **when the payment method is a card and the total is under $10,
-charge $10 and put the difference on account credit.** Cash, account credit and
-comp are unaffected; the minimum exists because of card processing fees, so it
-applies only to cards.
+**The rule, and it is not a default the teacher can talk themselves out of:**
 
-**There is only one available shape, and it is two calls.** The tempting
-alternative, a single cart carrying the goods and the account credit together,
-does not exist: `CheckoutItem.Type` accepts only `Service`, `Product`,
-`Package` and `Tip`. Account credit cannot be a line item, so it cannot be made
-atomic with the sale.
+1. **If account credit covers the total, the sale is paid entirely with account
+   credit.** No card, no minimum, nothing to decide.
+2. **Otherwise it is a card, and the card is charged at least $10** -- that is,
+   `max(total, 10)`. Anything above the total lands on the account as credit.
 
-So:
+Cash and comp are unaffected: the minimum exists because of card processing
+fees, so it binds only cards.
 
-1. `POST /sale/purchaseaccountcredit`, card payment, for the $10.
-2. `POST /sale/checkoutshoppingcart` for the actual items, paid `DebitAccount`.
+The two halves are one mechanism rather than two rules. Rule 2 creates credit
+whenever a card runs for a small sale, and rule 1 spends it on the next small
+sale. A student who buys a $3 towel is charged $10 once and then covered for
+their next two towels with no card at all. Without rule 1 the POS would
+accumulate credit it never spends and charge $10 every single time, which is
+the failure mode to design against.
+
+This is why the payment chooser does not get to treat account credit as merely
+the recommended option. When the balance covers the sale, credit is *the*
+method, not the default; the card is not offered.
+
+Open question: **partial credit.** A $12 sale against a $4 balance satisfies
+neither branch cleanly. Two readings, both defensible:
+
+- Ignore the balance, charge $12 to the card. Simple, no split tender, but the
+  $4 sits there until a sale small enough to consume it comes along.
+- Spend the $4, card covers the remaining $8, which the floor lifts to $10, so
+  $2 returns to credit. Consistent with the spirit of the rule, but it is split
+  tender and it can leave a balance behind on the very transaction meant to
+  clear one.
+
+The literal reading of the rule as stated is the first. Worth confirming with
+Pete, since partial balances will be common once rule 2 is running.
+
+**The sub-$10 case cannot be made atomic.** The tempting shape, a single cart
+carrying the goods and the account credit together, does not exist:
+`CheckoutItem.Type` accepts only `Service`, `Product`, `Package` and `Tip`.
+Account credit cannot be a line item, so topping up and spending are always two
+separate calls.
+
+So there are three paths, and only the third is awkward:
+
+- **Credit covers it.** One call: `checkoutshoppingcart` paid `DebitAccount`.
+- **Card, total already $10 or more.** One call: `checkoutshoppingcart` paid
+  `StoredCard`. The floor is satisfied by the total itself, so nothing special
+  happens.
+- **Card, total under $10.** Two calls: `purchaseaccountcredit` for $10 against
+  the card, then `checkoutshoppingcart` for the items paid `DebitAccount`.
+
+It is tempting to collapse the last two by always routing the card through
+`purchaseaccountcredit`, giving one card path and one place to enforce the
+floor. Do not: it would record a $150 membership as a credit purchase followed
+by a credit redemption rather than as a card sale, and quietly wreck the
+reporting Pete actually reads. The branch is worth keeping.
 
 **The amount is dynamic, not a preconfigured SKU.** `PurchaseAccountCreditRequest`
 carries no `Amount` field at all; the figure travels in `PaymentInfo.Metadata`
@@ -539,11 +578,8 @@ Open detail: **is the $10 measured before or after tax?** A $2.72 item is $3.00
 charged. The minimum is a card-processing floor, so it should be the charged
 amount, but confirm against how the desk does it today rather than assuming.
 
-Consequence for the payment chooser: because this policy *creates* account
-credit routinely, many students will carry a balance. **Account credit should be
-the default payment method whenever the balance covers the sale**, not an option
-buried behind the card. Otherwise the POS quietly accumulates credit it never
-spends.
+The seam only exists on the third path, the sub-$10 card sale. The other two are
+single calls and cannot half-complete.
 
 ## Everything on account: what shows when a student comes up
 
