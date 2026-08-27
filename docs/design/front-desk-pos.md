@@ -475,12 +475,66 @@ Three details from the live response worth keeping:
   throughout.** The subcategory tree that `/sale/products` can filter on is not
   populated at this studio, so that level does not need building.
 - **"sales tax exempt" (100000) is the one `IsSecondary: true` record**, which
-  is what `SecondaryCategoryId` on a product refers to. It is also the
-  exception to the 10.35% tax invariant above: do not assert that invariant
-  against an item carrying this secondary category.
-- **"CC purchase under $10" (-13)** looks like a card-minimum workaround. If
-  that is a live desk policy, the POS should know it rather than rediscover it
-  in a failed sale. Worth asking about before Phase 2.
+  is what `SecondaryCategoryId` on a product refers to. It is the exception to
+  the 10.35% tax invariant above, so do not assert that invariant against an
+  item carrying it. Note that the obvious candidate is not exempt: parking is
+  priced to land on a round $3.00 *including* tax, which is only true if it is
+  taxed. That back-solved pricing is itself a useful signal, since an odd price
+  like $2.72 or $1.81 is evidence the studio worked backwards from a round
+  charged total, and `2.72 x 1.1035 = 3.00` exactly.
+- **"CC purchase under $10" (-13)** is the card-minimum policy, and it is live.
+  It gets its own section below.
+
+## The $10 card minimum
+
+The studio does not put a card through for less than $10. Under that, the card
+is charged $10 and the difference lands on the student's account as credit,
+which is what the "CC purchase under $10" category records. **This must be
+automatic in the POS.** It is arithmetic a teacher should never do at a counter
+with a line, and getting it wrong is either a policy breach or a student
+short-changed.
+
+The rule: **when the payment method is a card and the total is under $10,
+charge $10 and put the difference on account credit.** Cash, account credit and
+comp are unaffected; the minimum exists because of card processing fees, so it
+applies only to cards.
+
+Two mechanisms are available and the choice matters:
+
+1. **Two calls.** `POST /sale/purchaseaccountcredit` for $10 against the card,
+   then `POST /sale/checkoutshoppingcart` for the actual items paid with
+   `DebitAccount`. Clean, uses documented endpoints for exactly their purpose,
+   and leaves precisely the right balance behind.
+2. **One cart**, with the account credit carried as a line item alongside the
+   goods.
+
+(1) is the better model but has a failure seam: if the credit purchase succeeds
+and the checkout fails, the student has $10 of credit and no towel. That is
+recoverable rather than lost, since the credit persists and the sale can be
+retried, but the POS has to say so clearly rather than reporting a flat
+failure. Worth testing both with `Test: true` before committing to either.
+
+Open detail: **is the $10 measured before or after tax?** A $2.72 item is $3.00
+charged. The minimum is a card-processing floor, so it should be the charged
+amount, but confirm against how the desk does it today rather than assuming.
+
+Consequence for the payment chooser: because this policy *creates* account
+credit routinely, many students will carry a balance. **Account credit should be
+the default payment method whenever the balance covers the sale**, not an option
+buried behind the card. Otherwise the POS quietly accumulates credit it never
+spends.
+
+## Everything on account: what shows when a student comes up
+
+Account credit is one of the facts that should be on screen the moment a
+student's row expands, not something a teacher goes looking for. It is one call
+(`GET /client/clientaccountbalances`), and after the $10 rule above it will
+frequently be non-zero.
+
+So the expanded row shows, together: the pass and how many classes remain,
+account credit balance, recent visits, habitual add-ons, notes and `RedAlert`.
+A teacher should be able to answer "what do I need to know about this person"
+without a second tap.
 
 ## Studio banner
 
@@ -586,8 +640,9 @@ time saved at the door.
   waiting list by `WaitlistEntryId`.
 - **Header counters** with the conditional waitlist fetch, and the lists behind
   them.
-- **Client context on the expanded row**: last-class-in-the-pack prompt, recent
-  visits, habitual add-ons, notes and `RedAlert`.
+- **Client context on the expanded row**: last-class-in-the-pack prompt,
+  account credit balance, recent visits, habitual add-ons, notes and
+  `RedAlert`. All of it visible on one tap, with no second lookup.
 - **Waiver state**, shown and blocking. The QR that resolves it is Phase 3;
   Phase 1 shows the problem and hands off to Mindbody.
 - **Studio banner.**
@@ -604,7 +659,11 @@ against live student data and, later, live cards.
 
 **Phase 2 — sales.** Cart, catalog with the hardcoded categories, and a payment
 chooser covering stored card, account credit, cash, gift card and comp, with
-balances read before each is offered. Priced at the in-studio rate, with
+balances read before each is offered and account credit defaulted whenever it
+covers the sale. **The $10 card minimum is part of this phase, not a refinement
+of it**: a chooser that can charge a card is incomplete until it handles the
+floor automatically, and the rule creates the account credit that the default
+above then spends. Priced at the in-studio rate, with
 `LocationId` and `InStore` set so the server agrees with the screen. Receipt by
 email through Mindbody.
 
