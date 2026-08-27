@@ -72,13 +72,28 @@ goes empty exactly when a teacher needs it, and the flag has to go.
 
 Fetched on row open, never per roster.
 
-- [ ] Pass and `Remaining` from `/client/clientservices`; `Remaining: 1`
+- [x] Pass and `Remaining` from `/client/clientservices`; `Remaining: 1`
       surfaced loudly (highest-value prompt in the app)
-- [ ] Account credit from `/client/clientaccountbalances`
-- [ ] Recent visits from `/client/clientvisits`
-- [ ] Habitual add-ons from `/client/clientpurchases`, shown only on a real
+- [x] Account credit from `/client/clientaccountbalances`
+- [x] Recent visits from `/client/clientvisits`
+- [x] Habitual add-ons from `/client/clientpurchases`, shown only on a real
       pattern (3 of last 5), otherwise suppressed
-- [ ] `Notes` shown; `RedAlert` treated as blocking, not decorative
+- [x] `Notes` shown; `RedAlert` treated as blocking, not decorative
+
+Spec traps found while building (all in `docs/mindbody-openapi/client.yml`
+and now compensated for in `src/lib/clientcontext.ts`): `clientservices`
+defaults StartDate AND EndDate to today, `clientvisits` defaults StartDate
+to the END date, and `clientpurchases` defaults StartDate to **now** -- all
+three return an empty window unless StartDate is sent explicitly.
+`clientaccountbalances` takes plural `ClientIds` and returns Client records
+with `AccountBalance` on each. `Notes`/`RedAlert` are top-level Client
+fields, fetched per row open via `/client/clients?clientIds=` (the roster's
+batched name lookup runs only for nameless visits and keeps only names, so
+there was nothing to reuse).
+
+Still owed live verification (Pete, drawer open): that the four context
+calls return real data for a real client, and that a red-alert client
+actually shows the blocking dialog.
 
 ## T6. Waiver state (PLAN 1.6)
 

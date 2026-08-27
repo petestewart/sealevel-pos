@@ -44,6 +44,34 @@ interface WaitlistRow {
   requestedAt: string | null;
 }
 
+/** Mirrors src/lib/clientcontext.ts, which is where the shapes are derived
+ *  from the vendored spec. */
+interface CtxSection<T> {
+  data: T | null;
+  error: string | null;
+}
+
+interface PassInfo {
+  name: string;
+  remaining: number | null;
+  count: number | null;
+  expires: string | null;
+}
+
+interface VisitInfo {
+  at: string;
+  name: string | null;
+  signedIn: boolean;
+}
+
+interface ClientContext {
+  passes: CtxSection<PassInfo[]>;
+  balance: CtxSection<number>;
+  visits: CtxSection<VisitInfo[]>;
+  habits: CtxSection<string[]>;
+  profile: CtxSection<{ notes: string | null; redAlert: string | null }>;
+}
+
 /** Grey and unlabelled: checking out is the quiet action on the row. */
 function CloseIcon() {
   return (
@@ -58,10 +86,193 @@ function CloseIcon() {
   );
 }
 
+/** Chevron for the per-row context toggle; rotates when the row is open. */
+function ChevronIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M6 9l6 6 6-6"
+      />
+    </svg>
+  );
+}
+
 function clockTime(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function shortDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+const ORDINALS = [
+  "First",
+  "Second",
+  "Third",
+  "Fourth",
+  "Fifth",
+  "Sixth",
+  "Seventh",
+];
+
+function ordinal(n: number): string {
+  return ORDINALS[n - 1] ?? `${n}th`;
+}
+
+/**
+ * "Third visit this week", computed in the browser so "this week" means the
+ * iPad's local week (Monday start), not the server's timezone. The server
+ * returns only past visits, so this check-in is visit N+1.
+ */
+function visitLines(visits: VisitInfo[], now = new Date()): string[] {
+  const weekStart = new Date(now);
+  weekStart.setHours(0, 0, 0, 0);
+  const day = weekStart.getDay(); /* 0 = Sunday */
+  weekStart.setDate(weekStart.getDate() - ((day + 6) % 7));
+  const thisWeek = visits.filter((v) => new Date(v.at) >= weekStart).length;
+  const monthCount = visits.length; /* window is ~a month, set server-side */
+  const lines: string[] = [];
+  if (thisWeek >= 1) lines.push(`${ordinal(thisWeek + 1)} visit this week.`);
+  const latest = visits[0];
+  if (monthCount === 0) {
+    lines.push("First visit in over a month.");
+  } else if (latest) {
+    lines.push(
+      `${monthCount} visit${monthCount === 1 ? "" : "s"} in the last month, ` +
+        `last here ${shortDate(latest.at)}.`,
+    );
+  }
+  return lines;
+}
+
+function money(n: number): string {
+  return n.toLocaleString([], {
+    style: "currency",
+    currency: "USD",
+  });
+}
+
+/**
+ * What the teacher should know about the person in front of them, on one
+ * open row: red alert, notes, the pass and what remains on it, account
+ * credit, recent visits, habitual add-ons. Opens instantly with a spinner;
+ * each section renders its own error as text, because a purchases outage
+ * must not hide the red alert, and no error here ever blocks check-in.
+ */
+function ContextPanel({
+  ctx,
+  loading,
+  error,
+}: {
+  ctx: ClientContext | undefined;
+  loading: boolean;
+  error: string | undefined;
+}) {
+  if (loading || (!ctx && !error)) {
+    return (
+      <div className="context">
+        <span className="ctx-line muted">
+          <span className="spinner" aria-label="working" /> Looking them up...
+        </span>
+      </div>
+    );
+  }
+  if (!ctx) {
+    return (
+      <div className="context">
+        <span className="ctx-line ctx-err">Could not load details: {error}</span>
+      </div>
+    );
+  }
+
+  const passes = ctx.passes.data ?? [];
+  const lastClass = passes.some((p) => p.remaining === 1);
+  const balance = ctx.balance.data;
+  const visits = ctx.visits.data;
+  const habits = ctx.habits.data ?? [];
+  const profile = ctx.profile.data;
+
+  return (
+    <div className="context">
+      {profile?.redAlert ? (
+        <span className="ctx-alert">Red alert: {profile.redAlert}</span>
+      ) : null}
+      {ctx.profile.error ? (
+        <span className="ctx-line ctx-err">
+          Notes and alerts unavailable: {ctx.profile.error}
+        </span>
+      ) : null}
+      {profile?.notes ? (
+        <span className="ctx-line">Notes: {profile.notes}</span>
+      ) : null}
+
+      {/* Remaining: 1 is the highest-value prompt in the app: the renewal
+          conversation happens now or not at all. It gets the loud warn
+          treatment, not a line in a list. */}
+      {lastClass ? (
+        <span className="ctx-warn">
+          This is the last class on their pass. Offer the renewal now.
+        </span>
+      ) : null}
+      {ctx.passes.error ? (
+        <span className="ctx-line ctx-err">
+          Passes unavailable: {ctx.passes.error}
+        </span>
+      ) : passes.length === 0 ? (
+        <span className="ctx-line muted">No active pass.</span>
+      ) : (
+        passes.map((p, i) => (
+          <span className="ctx-line" key={`${p.name}-${i}`}>
+            {p.name}
+            {p.remaining !== null
+              ? `: ${p.remaining}${p.count !== null ? ` of ${p.count}` : ""} left`
+              : ""}
+            {p.expires ? `, expires ${shortDate(p.expires)}` : ""}
+          </span>
+        ))
+      )}
+
+      {ctx.balance.error ? (
+        <span className="ctx-line ctx-err">
+          Account credit unavailable: {ctx.balance.error}
+        </span>
+      ) : balance !== null && balance !== 0 ? (
+        <span className="ctx-line">Account credit: {money(balance)}.</span>
+      ) : null}
+
+      {ctx.visits.error ? (
+        <span className="ctx-line ctx-err">
+          Visits unavailable: {ctx.visits.error}
+        </span>
+      ) : visits ? (
+        visitLines(visits).map((line) => (
+          <span className="ctx-line" key={line}>
+            {line}
+          </span>
+        ))
+      ) : null}
+
+      {/* Habitual add-ons need a real pattern (3 of the last 5 sales) or
+          they are noise; with no pattern this whole section is nothing. */}
+      {ctx.habits.error ? (
+        <span className="ctx-line ctx-err">
+          Purchase history unavailable: {ctx.habits.error}
+        </span>
+      ) : habits.length > 0 ? (
+        <span className="ctx-line ctx-habit">
+          Usually adds: {habits.join(", ")}. Worth asking.
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 export default function FrontDesk() {
@@ -118,6 +329,23 @@ export default function FrontDesk() {
   /** Waitlist promotions in flight, by entry id. Also non-optimistic. */
   const [promoting, setPromoting] = useState<number[]>([]);
   const [promoteMsg, setPromoteMsg] = useState<Record<number, string>>({});
+  /** The one roster row whose context panel is open. One at a time: the
+   *  panel answers "who is in front of me", and one person is in front. */
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  /** Fetched context per client id, kept for the session so re-opening a
+   *  row is free. Four metered calls per entry is why this is per-open,
+   *  never per-roster. */
+  const [contexts, setContexts] = useState<Record<string, ClientContext>>({});
+  const [ctxLoading, setCtxLoading] = useState<string[]>([]);
+  const [ctxError, setCtxError] = useState<Record<string, string>>({});
+  /** Red alerts a teacher has explicitly read past, by client id. UI state
+   *  only, deliberately: acknowledging an alert must never write anything
+   *  back to Mindbody. */
+  const [acked, setAcked] = useState<string[]>([]);
+  /** The row whose check-in is held behind an unread red alert. */
+  const [redAlertPrompt, setRedAlertPrompt] = useState<RosterEntry | null>(
+    null,
+  );
   const skipDebounce = useRef(false);
   /** The class currently on screen, readable from inside an async fetch:
    *  a waitlist response that comes back after the teacher has switched
@@ -179,6 +407,7 @@ export default function FrontDesk() {
 
   useEffect(() => {
     if (activeId === null) return;
+    setExpandedId(null);
     setCounterModal(null);
     setWaitlist(null);
     setWaitlistError(null);
@@ -315,6 +544,19 @@ export default function FrontDesk() {
   const tapRow = useCallback(
     (entry: RosterEntry) => {
       if (busy.includes(entry.clientId) || entry.checkedIn) return;
+      /**
+       * A known red alert stops the tap until it is read. "Known" is the
+       * operative word: context is only fetched when a row is opened, so an
+       * unopened row checks in at full speed, and once the alert has been
+       * seen it must be explicitly read past, once, before this row will
+       * check in. The acknowledgement lives in this browser session only;
+       * nothing is ever written back.
+       */
+      const redAlert = contexts[entry.clientId]?.profile.data?.redAlert;
+      if (redAlert && !acked.includes(entry.clientId)) {
+        setRedAlertPrompt(entry);
+        return;
+      }
       if (
         settings.confirmUnpaid &&
         !entry.paid &&
@@ -325,7 +567,47 @@ export default function FrontDesk() {
       }
       void setSignedIn(entry, true);
     },
-    [busy, confirming, setSignedIn, settings.confirmUnpaid],
+    [busy, confirming, contexts, acked, setSignedIn, settings.confirmUnpaid],
+  );
+
+  /**
+   * Open or close the context panel on a row. Its own 64px control, NOT the
+   * row tap: check-in is the app's whole point and stays one tap on the row
+   * body. The panel opens instantly with a spinner and the batched fetch
+   * fills it in; a failure renders as text in the panel and never blocks
+   * check-in, because the fallback for "context is down" is the counter
+   * working exactly as it did before this feature existed.
+   */
+  const toggleContext = useCallback(
+    (clientId: string) => {
+      if (expandedId === clientId) {
+        setExpandedId(null);
+        return;
+      }
+      setExpandedId(clientId);
+      if (contexts[clientId] || ctxLoading.includes(clientId)) return;
+      setCtxLoading((l) => [...l, clientId]);
+      setCtxError((e) => {
+        const { [clientId]: _drop, ...rest } = e;
+        return rest;
+      });
+      fetch(`/api/client-context?clientId=${encodeURIComponent(clientId)}`)
+        .then(async (r) => {
+          const body = await r.json();
+          if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+          setContexts((c) => ({ ...c, [clientId]: body as ClientContext }));
+        })
+        .catch((err) => {
+          setCtxError((e) => ({
+            ...e,
+            [clientId]: err instanceof Error ? err.message : String(err),
+          }));
+        })
+        .finally(() => {
+          setCtxLoading((l) => l.filter((id) => id !== clientId));
+        });
+    },
+    [expandedId, contexts, ctxLoading],
   );
 
   const rosterIds = useMemo(
@@ -613,6 +895,32 @@ export default function FrontDesk() {
                 ? "No pass on this booking. Tap again to check in for free."
                 : (entry.pricingOption ?? "No pass on this booking");
 
+          const open = expandedId === entry.clientId;
+          /* The context toggle: its own control, so opening details never
+             costs the check-in tap a second gesture. */
+          const infoBtn = (
+            <button
+              className="info-btn"
+              onClick={() => toggleContext(entry.clientId)}
+              aria-expanded={open}
+              aria-label={
+                open
+                  ? `Hide details for ${entry.name}`
+                  : `Show details for ${entry.name}`
+              }
+              title={open ? "Hide details" : "Show details"}
+            >
+              <ChevronIcon />
+            </button>
+          );
+          const panel = open ? (
+            <ContextPanel
+              ctx={contexts[entry.clientId]}
+              loading={ctxLoading.includes(entry.clientId)}
+              error={ctxError[entry.clientId]}
+            />
+          ) : null;
+
           /**
            * A checked-in row is NOT a button. Undoing a check-in used to be
            * a tap anywhere on the row, which is the same gesture that made
@@ -624,11 +932,14 @@ export default function FrontDesk() {
             return (
               <li key={entry.clientId}>
                 <div className="row">
-                  <span className="name">
-                    {entry.name}
-                    <span className="detail">{detail}</span>
+                  <span className="row-main">
+                    <span className="name">
+                      {entry.name}
+                      <span className="detail">{detail}</span>
+                    </span>
+                    <span className="chip in">checked in</span>
                   </span>
-                  <span className="chip in">checked in</span>
+                  {infoBtn}
                   <button
                     className="undo-btn"
                     onClick={() => setCheckingOut(entry)}
@@ -638,46 +949,55 @@ export default function FrontDesk() {
                     <CloseIcon />
                   </button>
                 </div>
+                {panel}
               </li>
             );
           }
 
           return (
             <li key={entry.clientId}>
-              <button className="row" onClick={() => tapRow(entry)}>
-                <span className="name">
-                  {entry.name}
-                  <span className="detail">{detail}</span>
-                </span>
-                <span
-                  className={
-                    working
-                      ? "chip busy"
-                      : failed[entry.clientId]
-                        ? "chip failed"
-                        : confirming.includes(entry.clientId)
-                          ? "chip unpaid"
-                          : entry.paid
-                            ? "chip action"
-                            : "chip unpaid"
-                  }
-                >
-                  {working ? (
-                    <span className="spinner" aria-label="working" />
-                  ) : failed[entry.clientId] ? (
-                    "failed"
-                  ) : confirming.includes(entry.clientId) ? (
-                    "confirm"
-                  ) : entry.paid ? (
-                    "check in"
-                  ) : (
-                    "unpaid"
-                  )}
-                </span>
+              <div className="row">
+                {/* Check-in stays ONE tap on the row body. The context
+                    toggle sits outside this button, so knowing more about
+                    someone is optional and checking them in never waits
+                    on it. */}
+                <button className="row-main" onClick={() => tapRow(entry)}>
+                  <span className="name">
+                    {entry.name}
+                    <span className="detail">{detail}</span>
+                  </span>
+                  <span
+                    className={
+                      working
+                        ? "chip busy"
+                        : failed[entry.clientId]
+                          ? "chip failed"
+                          : confirming.includes(entry.clientId)
+                            ? "chip unpaid"
+                            : entry.paid
+                              ? "chip action"
+                              : "chip unpaid"
+                    }
+                  >
+                    {working ? (
+                      <span className="spinner" aria-label="working" />
+                    ) : failed[entry.clientId] ? (
+                      "failed"
+                    ) : confirming.includes(entry.clientId) ? (
+                      "confirm"
+                    ) : entry.paid ? (
+                      "check in"
+                    ) : (
+                      "unpaid"
+                    )}
+                  </span>
+                </button>
+                {infoBtn}
                 {/* Holds the space the undo control occupies on a checked-in
                     row, so chips stay in one column down the list. */}
                 <span className="undo-spacer" aria-hidden="true" />
-              </button>
+              </div>
+              {panel}
             </li>
           );
         })}
@@ -874,6 +1194,69 @@ export default function FrontDesk() {
                 onClick={() => setCounterModal(null)}
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* A red alert is Mindbody's own "stop and read this" flag, so a
+          row known to carry one does not check in on reflex: the tap stops
+          here until the teacher has read the alert and chosen to continue.
+          The acknowledgement is this browser session's state only; nothing
+          is written back to Mindbody, and cancelling leaves the row
+          exactly as it was. */}
+      {redAlertPrompt ? (
+        <div
+          className="modal-scrim"
+          onClick={() => setRedAlertPrompt(null)}
+          role="presentation"
+        >
+          <div
+            className="modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Red alert on this client"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">
+              Red alert on {redAlertPrompt.name}
+            </p>
+            <p className="ctx-alert modal-alert">
+              {contexts[redAlertPrompt.clientId]?.profile.data?.redAlert ??
+                "The studio flagged this client."}
+            </p>
+            <p className="muted">
+              The studio flagged this deliberately. Read it before letting
+              them into class.
+            </p>
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                onClick={() => setRedAlertPrompt(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="modal-confirm"
+                onClick={() => {
+                  const entry = redAlertPrompt;
+                  setRedAlertPrompt(null);
+                  setAcked((a) =>
+                    a.includes(entry.clientId) ? a : [...a, entry.clientId],
+                  );
+                  /* Past the alert, the normal rules resume: an unpaid
+                     booking still takes its own confirming tap. */
+                  if (settings.confirmUnpaid && !entry.paid) {
+                    setConfirming((c) =>
+                      c.includes(entry.clientId) ? c : [...c, entry.clientId],
+                    );
+                    return;
+                  }
+                  void setSignedIn(entry, true);
+                }}
+              >
+                I have read it, check in
               </button>
             </div>
           </div>
