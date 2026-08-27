@@ -152,31 +152,27 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
 }
 
 /**
- * Mark someone as arrived. Requires the staff account to hold
- * LaunchSignInScreen; without it Mindbody returns "Authorization Required"
- * and the check-in silently does nothing, so the caller must surface a
- * failure rather than assume success.
+ * Sign a visit in or out.
  *
- * UNRESOLVED, and worth settling before this is trusted at a counter: the
- * v6 AddArrival request carries ClientId, LocationId, ArrivalTypeId,
- * LeadChannelId and Test -- and NO ClassId. It logs "this client arrived at
- * the studio", which is not the same as "this client is signed into this
- * class", and the ClassId passed below is very likely ignored. If what we
- * want is the class roster's signed-in flag, this may be the wrong endpoint
- * entirely. Verify against a sandbox class before relying on it: check in a
- * sandbox client here, then look at whether the visit's SignedIn flag
- * actually flipped.
+ * This is `POST /client/updateclientvisit` with `{VisitId, SignedIn}`, and
+ * getting here took vendoring the OpenAPI spec (docs/mindbody-openapi).
+ * Two things were wrong before that:
  *
- * There is also no counterpart to reverse an arrival anywhere in v6, which
- * is why undo in the UI holds the call briefly rather than sending and
- * retracting.
+ * 1. The endpoint was `/class/addarrival`. There is no such path. Arrival
+ *    lives at `/client/addarrival`, under the Client tag rather than Class.
+ * 2. Arrival is the wrong operation anyway. It logs "this client turned up
+ *    at the studio" and carries no ClassId at all. Signing someone into a
+ *    specific class is a property of their VISIT, which is what this sets.
+ *
+ * And unlike arrival, it reverses: `SignedIn: false` undoes a check-in, so
+ * a mistake is recoverable rather than permanent.
  */
-export async function checkIn(
-  clientId: string,
-  classId: number,
+export async function setSignedIn(
+  visitId: number,
+  signedIn: boolean,
 ): Promise<void> {
-  await mindbody("/class/addarrival", {
+  await mindbody("/client/updateclientvisit", {
     method: "POST",
-    body: { ClientId: clientId, ClassId: classId },
+    body: { VisitId: visitId, SignedIn: signedIn },
   });
 }

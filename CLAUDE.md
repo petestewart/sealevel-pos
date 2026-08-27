@@ -23,7 +23,10 @@ removed; this app checks real students into real classes and will later charge
 real cards, so reaching production has to be a choice someone made rather than
 something they forgot to prevent.
 
-- **`POS_DRY_RUN`** (default `true`) lets reads through to Mindbody and
+- **Dry run is forced OFF in the sandbox.** Suppressing writes there hides
+  whether the write works, which is the one question a sandbox exists to
+  answer. `POS_DRY_RUN` only applies to prod.
+- **`POS_DRY_RUN`** (default `true`, prod only) lets reads through to Mindbody and
   suppresses every write, logging it as `[dry-run] suppressed POST ...`. That
   exercises the whole flow -- roster, tap, optimistic row, response handling
   -- against real data without touching an account. **This is the mode to
@@ -81,6 +84,34 @@ undo them without reading the design doc's speed argument.
 3. **Check-in is optimistic.** The row goes green on tap and rolls back with
    an error if the call fails. Nobody watches a spinner with a queue waiting.
 
+## The API spec is vendored. Use it.
+
+`docs/mindbody-openapi/` holds the full v6 OpenAPI specification, split by
+tag (class, client, sale, site, staff, ...), 148 operations with every
+parameter and schema. **Grep it before writing any Mindbody call.** Mindbody's
+own docs portal requires a login and is unreachable from a sandboxed agent,
+which is how this project spent an afternoon inferring endpoint shapes and got
+two of them wrong.
+
+    grep -n "^  /" docs/mindbody-openapi/client.yml     # every client endpoint
+    grep -n -A40 "updateclientvisit" docs/mindbody-openapi/client.yml
+
+What that spec immediately corrected, after the guesses had already shipped:
+
+- **There is no `/class/addarrival`.** Arrival is `/client/addarrival`, filed
+  under Client rather than Class.
+- **Arrival is not class check-in.** It logs that a client turned up at the
+  studio and takes no `ClassId`. Signing someone into a class is
+  `POST /client/updateclientvisit` with `{VisitId, SignedIn}`.
+- **Check-in reverses.** `SignedIn: false` undoes it, which the guessed
+  design had assumed impossible.
+- `/class/removeclientfromclass` and `/class/removeclientsfromclasses` exist,
+  for when a booking rather than a sign-in needs undoing.
+
+Refresh it from `github.com/api-evangelist/mindbody` (`openapi/`) if it drifts.
+Note that plain `curl` to raw.githubusercontent is blocked by the agent proxy
+while `git clone` works, so clone the repo rather than fetching files.
+
 ## Mindbody notes that cost real time to learn
 
 - **Permission errors lie about their cause.** "You do not have permission to
@@ -116,18 +147,11 @@ undo them without reading the design doc's speed argument.
 
 ## Known gaps
 
-- **`AddArrival` may be the wrong endpoint.** The v6 request carries
-  `ClientId`, `LocationId`, `ArrivalTypeId`, `LeadChannelId` and `Test`, and
-  **no `ClassId`**. It logs that a client arrived at the studio, which is not
-  obviously the same as signing them into a specific class, and the `ClassId`
-  the app sends is probably ignored. Settle this in the sandbox before the app
-  goes near a counter: check a client in, then see whether that visit's
-  `SignedIn` flag actually flipped. If it did not, the roster's check-in needs
-  a different call.
-- **Arrivals cannot be reversed.** v6 has `AddArrival` and no counterpart, so
-  undo in the UI holds the call for a few seconds and cancels it, rather than
-  sending and retracting. A mistake noticed after that window has to be fixed
-  in Mindbody itself.
+- **Check-in is not verified against a real class yet.** It now calls
+  `updateclientvisit`, which the spec says is right, but nobody has watched a
+  `SignedIn` flag actually flip. Do that in the sandbox first.
+- **Walk-in booking is not implemented.** Search finds people, but adding one
+  to a class needs `/class/addclienttoclass` and is Phase 2.
 
 - **The live charge has never fully settled.** The probe reached payment
   handling and was refused with "Credit card is expired", which proves

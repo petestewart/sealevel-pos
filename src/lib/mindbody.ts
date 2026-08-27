@@ -144,6 +144,12 @@ export interface MindbodyCallOptions {
  * consequence of forgetting to set something.
  */
 export function isDryRun(): boolean {
+  /**
+   * Never in the sandbox. The whole point of a sandbox is that writes are
+   * free, and suppressing them there just hides whether the write works --
+   * which is exactly the question the sandbox exists to answer.
+   */
+  if (target() === "sandbox") return false;
   return (process.env["POS_DRY_RUN"] ?? "true").toLowerCase() !== "false";
 }
 

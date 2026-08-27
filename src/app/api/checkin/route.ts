@@ -1,24 +1,25 @@
 import { NextResponse } from "next/server";
 
-import { checkIn } from "@/lib/roster";
+import { setSignedIn } from "@/lib/roster";
 
 export const dynamic = "force-dynamic";
 
 /**
- * The only write this app performs in Phase 1. It moves no money, and it
- * is idempotent enough at Mindbody's end that a double tap is harmless,
- * which is what lets the UI go green optimistically.
+ * The only write this app performs in Phase 1. It moves no money, it is
+ * idempotent (setting SignedIn to a value it already holds is harmless),
+ * and it reverses, which is what makes the undo in the UI real rather
+ * than a race against a delayed send.
  */
 export async function POST(request: Request) {
   try {
-    const { clientId, classId } = await request.json();
-    if (!clientId || !classId) {
+    const { visitId, signedIn } = await request.json();
+    if (typeof visitId !== "number") {
       return NextResponse.json(
-        { error: "clientId and classId are required" },
+        { error: "visitId (number) is required" },
         { status: 400 },
       );
     }
-    await checkIn(String(clientId), Number(classId));
+    await setSignedIn(visitId, signedIn !== false);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(

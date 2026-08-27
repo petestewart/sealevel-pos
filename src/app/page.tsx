@@ -34,13 +34,6 @@ interface SearchResult {
   email: string | null;
 }
 
-/**
- * How long a tapped check-in is held before it is sent. Long enough to
- * catch a wrong row, short enough that nobody waits on it: the send is
- * invisible to the teacher either way, since the row already shows green.
- */
-const UNDO_WINDOW_MS = 6000;
-
 function clockTime(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -63,8 +56,6 @@ export default function FrontDesk() {
   } | null>(null);
   /** Rows whose check-in call failed after going green optimistically. */
   const [failed, setFailed] = useState<Record<string, string>>({});
-  /** Check-ins tapped but not yet sent, by client id -> timer handle. */
-  const [pending, setPending] = useState<Record<string, number>>({});
   /** Unpaid rows tapped once, awaiting a deliberate second tap. */
   const [confirming, setConfirming] = useState<string[]>([]);
 
@@ -114,96 +105,69 @@ export default function FrontDesk() {
   }, [query]);
 
   /**
-   * Send the arrival. Optimistic already: the row went green when tapped.
-   * A failure rolls it back and says why, rather than making the teacher
-   * watch a spinner with a queue waiting.
+   * Set a visit's signed-in state. Optimistic: the row flips immediately
+   * and the call runs behind it, because nobody should watch a spinner
+   * with a queue waiting. A failure rolls the row back and says why.
    */
-  const send = useCallback(
-    async (clientId: string) => {
-      if (activeId === null) return;
+  const setSignedIn = useCallback(
+    async (entry: RosterEntry, signedIn: boolean) => {
+      if (entry.visitId === null) {
+        setFailed((f) => ({
+          ...f,
+          [entry.clientId]: "No visit id on this booking, so it cannot be signed in.",
+        }));
+        return;
+      }
+      setEntries((rows) =>
+        rows.map((r) => (r.clientId === entry.clientId ? { ...r, checkedIn: signedIn } : r)),
+      );
+      setFailed((f) => {
+        const { [entry.clientId]: _drop, ...rest } = f;
+        return rest;
+      });
+      setConfirming((c) => c.filter((id) => id !== entry.clientId));
       try {
         const res = await fetch("/api/checkin", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ clientId, classId: activeId }),
+          body: JSON.stringify({ visitId: entry.visitId, signedIn }),
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
       } catch (err) {
         setEntries((rows) =>
           rows.map((r) =>
-            r.clientId === clientId ? { ...r, checkedIn: false } : r,
+            r.clientId === entry.clientId ? { ...r, checkedIn: !signedIn } : r,
           ),
         );
         setFailed((f) => ({
           ...f,
-          [clientId]: err instanceof Error ? err.message : String(err),
+          [entry.clientId]: err instanceof Error ? err.message : String(err),
         }));
       }
     },
-    [activeId],
+    [],
   );
 
   /**
-   * Mindbody has no way to reverse an arrival: v6 offers AddArrival and no
-   * counterpart. So undo cannot mean "take it back", it has to mean "do not
-   * send it yet". The row goes green immediately and the call is held for a
-   * few seconds, during which the chip reads "undo" and cancels it outright.
-   * A mistaken tap costs nothing as long as it is noticed in that window.
-   */
-  const markArrived = useCallback(
-    (clientId: string) => {
-      if (activeId === null) return;
-      setEntries((rows) =>
-        rows.map((r) =>
-          r.clientId === clientId ? { ...r, checkedIn: true } : r,
-        ),
-      );
-      setFailed((f) => {
-        const { [clientId]: _drop, ...rest } = f;
-        return rest;
-      });
-      setConfirming((c) => c.filter((id) => id !== clientId));
-
-      const timer = window.setTimeout(() => {
-        setPending((p) => {
-          const { [clientId]: _done, ...rest } = p;
-          return rest;
-        });
-        void send(clientId);
-      }, UNDO_WINDOW_MS);
-      setPending((p) => ({ ...p, [clientId]: timer }));
-    },
-    [activeId, send],
-  );
-
-  const undo = useCallback((clientId: string) => {
-    setPending((p) => {
-      const timer = p[clientId];
-      if (timer !== undefined) window.clearTimeout(timer);
-      const { [clientId]: _dropped, ...rest } = p;
-      return rest;
-    });
-    setEntries((rows) =>
-      rows.map((r) => (r.clientId === clientId ? { ...r, checkedIn: false } : r)),
-    );
-  }, []);
-
-  /**
-   * An unpaid booking has no pricing option attached, so checking it in
-   * hands over a class for free. Phase 2 will sell them a pass here; until
-   * then the least it can do is refuse to be a single careless tap.
+   * One tap does the obvious thing, with one exception: an unpaid booking
+   * has no pricing option attached, so checking it in hands over a class
+   * for free. Phase 2 will sell them a pass here; until then it at least
+   * takes a deliberate second tap.
+   *
+   * Checking someone in is reversible (updateclientvisit takes
+   * SignedIn: false), so a tap on an already-checked-in row undoes it.
    */
   const tapRow = useCallback(
-    (entry: { clientId: string; paid: boolean }) => {
-      if (pending[entry.clientId] !== undefined) return undo(entry.clientId);
+    (entry: RosterEntry) => {
+      if (entry.checkedIn) return void setSignedIn(entry, false);
       if (!entry.paid && !confirming.includes(entry.clientId)) {
         setConfirming((c) => [...c, entry.clientId]);
         return;
       }
-      markArrived(entry.clientId);
+      void setSignedIn(entry, true);
     },
-    [confirming, markArrived, pending, undo],
+    [confirming, setSignedIn],
   );
 
   const rosterIds = useMemo(
@@ -266,7 +230,7 @@ export default function FrontDesk() {
             <button
               className="row"
               onClick={() => tapRow(entry)}
-              disabled={entry.checkedIn && pending[entry.clientId] === undefined}
+
             >
               <span className="name">
                 {entry.name}
@@ -275,35 +239,33 @@ export default function FrontDesk() {
                     ? failed[entry.clientId]
                     : confirming.includes(entry.clientId)
                       ? "No pass on this booking. Tap again to check in for free."
-                      : (entry.pricingOption ?? "No pass on this booking")}
+                      : entry.checkedIn
+                        ? `${entry.pricingOption ?? "No pass"} - tap to undo`
+                        : (entry.pricingOption ?? "No pass on this booking")}
                 </span>
               </span>
               <span
                 className={
                   failed[entry.clientId]
                     ? "chip failed"
-                    : pending[entry.clientId] !== undefined
-                      ? "chip undo"
-                      : entry.checkedIn
-                        ? "chip in"
-                        : confirming.includes(entry.clientId)
-                          ? "chip unpaid"
-                          : entry.paid
-                            ? "chip walkin"
-                            : "chip unpaid"
+                    : entry.checkedIn
+                      ? "chip in"
+                      : confirming.includes(entry.clientId)
+                        ? "chip unpaid"
+                        : entry.paid
+                          ? "chip walkin"
+                          : "chip unpaid"
                 }
               >
                 {failed[entry.clientId]
                   ? "failed"
-                  : pending[entry.clientId] !== undefined
-                    ? "undo"
-                    : entry.checkedIn
-                      ? "in"
-                      : confirming.includes(entry.clientId)
-                        ? "confirm"
-                        : entry.paid
-                          ? "check in"
-                          : "unpaid"}
+                  : entry.checkedIn
+                    ? "in"
+                    : confirming.includes(entry.clientId)
+                      ? "confirm"
+                      : entry.paid
+                        ? "check in"
+                        : "unpaid"}
               </span>
             </button>
           </li>
@@ -311,11 +273,12 @@ export default function FrontDesk() {
 
         {walkIns.map((client) => (
           <li key={`walkin-${client.id}`}>
-            <button className="row" onClick={() => markArrived(client.id)}>
+            <button className="row" disabled>
               <span className="name">
                 {client.name}
                 <span className="detail">
-                  Not booked into this class{client.email ? ` - ${client.email}` : ""}
+                  Not booked into this class{client.email ? ` - ${client.email}` : ""}.
+                  Booking a walk-in arrives in Phase 2.
                 </span>
               </span>
               <span className="chip walkin">add</span>
