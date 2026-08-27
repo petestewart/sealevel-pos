@@ -78,9 +78,18 @@ undo them without reading the design doc's speed argument.
 
 1. **The roster is prefetched** for the classes around now, so tapping a name
    hits memory rather than the API.
-2. **Search runs against an in-memory client index**, not Mindbody. A
-   per-keystroke API call would be one metered call per letter at 400-900ms
-   each.
+2. **Search has two paths.** Mindbody's own `searchText` answers in one call
+   (400-900ms) and needs no warm-up; the in-memory client index answers
+   instantly and costs no API call, but has to be built by paging every
+   client first. The index warms in the background from server start, and
+   any search arriving before it is ready goes to Mindbody. Whichever
+   answered is reported as `source` in the response.
+
+   The first version had only the index, which meant the first search of a
+   session blocked on dozens of sequential pages while a teacher watched an
+   empty box. If the index turns out not to earn its complexity, deleting it
+   and always calling `searchText` is a fair simplification: it is about a
+   hundred lines and search is the only thing using it.
 3. **Check-in is NOT optimistic**, and this is the one place the speed
    argument was deliberately overruled. An optimistic row goes green on tap
    and corrects itself when the failure returns, by which time a teacher with
