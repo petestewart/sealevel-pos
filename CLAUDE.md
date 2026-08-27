@@ -63,9 +63,7 @@ sandbox token against production.
   is a back-office worker with a different uptime story and different users.
   The two share an API, not a codebase: `src/lib/mindbody.ts` is adapted from
   ai-manager's client and deliberately not imported from it.
-- **No database.** The client index lives in memory and rebuilds on boot.
-  Redis or a volume-backed snapshot is a detail if cold starts get annoying,
-  not an architecture change.
+- **No database, and no client cache.** Reads go to Mindbody when needed.
 - **Nothing auto-charges.** Phase 2 will move money only on an explicit tap.
 - **Sandbox and dry run are the defaults.** See above.
 - **Pricing and schedule come from the live Mindbody API**, never from a cache
@@ -78,18 +76,13 @@ undo them without reading the design doc's speed argument.
 
 1. **The roster is prefetched** for the classes around now, so tapping a name
    hits memory rather than the API.
-2. **Search has two paths.** Mindbody's own `searchText` answers in one call
-   (400-900ms) and needs no warm-up; the in-memory client index answers
-   instantly and costs no API call, but has to be built by paging every
-   client first. The index warms in the background from server start, and
-   any search arriving before it is ready goes to Mindbody. Whichever
-   answered is reported as `source` in the response.
-
-   The first version had only the index, which meant the first search of a
-   session blocked on dozens of sequential pages while a teacher watched an
-   empty box. If the index turns out not to earn its complexity, deleting it
-   and always calling `searchText` is a fair simplification: it is about a
-   hundred lines and search is the only thing using it.
+2. **Search goes straight to Mindbody's `searchText`.** One call, 400-900ms,
+   always current. There was an in-memory index of every client here and it
+   was deleted deliberately: the warm-up cost ~30 metered calls per server
+   start to save calls on maybe a hundred searches a day, and a six-hour-old
+   index cannot contain a client created ten minutes ago, who is exactly the
+   walk-in a teacher is searching for. Do not rebuild it by reflex. If search
+   ever needs to be instant, cache RECENT clients, not all of them.
 3. **Check-in is NOT optimistic**, and this is the one place the speed
    argument was deliberately overruled. An optimistic row goes green on tap
    and corrects itself when the failure returns, by which time a teacher with

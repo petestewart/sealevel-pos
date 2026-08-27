@@ -39,9 +39,8 @@ Only setting `POS_DRY_RUN=false` lets a tap actually check someone in.
 - **The roster is prefetched.** At 6:29pm we already know who is about to walk
   in, so the classes around now are fetched once and held. Tapping a name hits
   memory.
-- **Search is local.** The client list is pulled into memory once and searched
-  there. Per-keystroke Mindbody calls would cost one metered API call per
-  letter and 400-900ms each.
+- **Search is debounced, then goes to Mindbody.** One call per lookup rather
+  than one per keystroke, and always current.
 - **Check-in is optimistic.** The row goes green on tap, the API call runs
   behind it, and a failure rolls the row back and says why. Nobody watches a
   spinner with a queue waiting.
@@ -50,13 +49,11 @@ Only setting `POS_DRY_RUN=false` lets a tap actually check someone in.
 
     src/lib/mindbody.ts   v6 client: auth headers, cached staff token, 401 retry
     src/lib/roster.ts     classes, rosters, arrivals
-    src/lib/clients.ts    in-memory client index and search
+    src/lib/clients.ts    client search
     src/app/api/          roster, search, checkin
     src/app/page.tsx      the counter screen
 
-No database. The client index lives in memory and rebuilds on boot; if a cold
-start ever gets annoying, Redis or a volume-backed snapshot is a detail, not an
-architecture change.
+No database and no client cache: reads go to Mindbody when needed.
 
 ## Mindbody permissions
 
