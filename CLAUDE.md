@@ -23,15 +23,25 @@ removed; this app checks real students into real classes and will later charge
 real cards, so reaching production has to be a choice someone made rather than
 something they forgot to prevent.
 
-- **`MINDBODY_TARGET`** picks the studio: `sandbox` (default) or `prod`.
-  Mindbody publishes a sandbox site, id -99 "LastSpot", that an ordinary
-  developer key can reach, so sandbox needs no second key. Credentials are
-  read from `MINDBODY_SANDBOX_*` or `MINDBODY_PROD_*`; the unprefixed
-  `MINDBODY_*` names still work as the production fallback.
 - **`POS_DRY_RUN`** (default `true`) lets reads through to Mindbody and
   suppresses every write, logging it as `[dry-run] suppressed POST ...`. That
   exercises the whole flow -- roster, tap, optimistic row, response handling
-  -- against real data without touching an account.
+  -- against real data without touching an account. **This is the mode to
+  develop in.**
+- **`POS_WRITE_CLIENT_IDS`** is how a write gets tested for real without
+  risking a student: create a dummy client in Mindbody, put its id here, and
+  with `POS_DRY_RUN=false` every write for anyone else is still suppressed
+  (`[write-guard] suppressed ...`). Empty means no restriction, which is what
+  production wants.
+- **`MINDBODY_TARGET`** picks the studio: `prod` (default) or `sandbox`,
+  reading `MINDBODY_PROD_*` or `MINDBODY_SANDBOX_*`; the unprefixed
+  `MINDBODY_*` names remain the production fallback.
+
+**Do not spend time on Mindbody's sandbox.** Site -99 answers "Site is
+deactivated" and their sandbox signup flow fails. That is why the target
+defaults to prod rather than to a studio that is not there, and why the two
+guards above carry the safety instead. The plumbing is in place if a working
+sandbox ever appears.
 
 The screen shows which mode it is in at all times, and `GET /api/config`
 reports it. Never remove that banner: a teacher must not have to wonder

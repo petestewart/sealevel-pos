@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { isDryRun, mindbodyEnv, target } from "@/lib/mindbody";
+import {
+  allowedWriteClientIds,
+  isDryRun,
+  mindbodyEnv,
+  target,
+} from "@/lib/mindbody";
 
 export const dynamic = "force-dynamic";
 
@@ -22,5 +27,6 @@ export async function GET() {
     target: target(),
     siteId,
     configError,
+    writeClientIds: [...allowedWriteClientIds()],
   });
 }

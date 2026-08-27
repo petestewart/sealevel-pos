@@ -22,22 +22,26 @@ export interface MindbodyEnv {
 export type Target = "sandbox" | "prod";
 
 /**
- * Which studio the app is pointed at. Defaults to sandbox: reaching the
- * real studio's live classes and real students has to be something someone
- * chose, never something they forgot to prevent.
+ * Which studio the app is pointed at.
+ *
+ * Defaults to prod, which reads oddly for a safety-conscious app and is
+ * deliberate: Mindbody's shared sandbox (site -99) answers
+ * "Site is deactivated", and their sandbox signup does not work, so
+ * defaulting to sandbox means defaulting to an app that cannot start.
+ * Safety comes from POS_DRY_RUN (on by default, suppresses every write)
+ * and POS_WRITE_CLIENT_IDS, not from pointing at a studio that is not
+ * there. Set MINDBODY_TARGET=sandbox if a working sandbox ever appears.
  */
 export function target(): Target {
-  return process.env["MINDBODY_TARGET"] === "prod" ? "prod" : "sandbox";
+  return process.env["MINDBODY_TARGET"] === "sandbox" ? "sandbox" : "prod";
 }
 
 /**
  * Two credential sets, selected by MINDBODY_TARGET.
  *
- * Mindbody publishes a sandbox site (id -99, "LastSpot") that a normal
- * developer key can reach, so this needs no second key unless you want
- * one: SANDBOX_* falls back to the same key with the sandbox site id.
  * PROD_* falls back to the unprefixed MINDBODY_* names, so an existing
- * .env keeps working.
+ * .env keeps working. SANDBOX_* is kept for the day Mindbody has a
+ * sandbox that works; site -99 currently reports "Site is deactivated".
  */
 export function mindbodyEnv(): MindbodyEnv {
   const sandbox = target() === "sandbox";
@@ -154,6 +158,40 @@ function isWrite(method: string, path: string): boolean {
   return method === "POST" && !path.startsWith("/usertoken/");
 }
 
+/**
+ * Client ids that writes are allowed to touch, when set.
+ *
+ * Mindbody's shared sandbox (site -99) is unreliable and their sandbox
+ * signup is broken, so the practical way to test a write end to end is to
+ * do it against the real studio aimed at a client who is not a real
+ * student. Create a "Test Test" client in Mindbody, put its id here, and
+ * every write for anyone else is suppressed exactly as dry run suppresses
+ * it -- even with POS_DRY_RUN=false.
+ *
+ * Empty (the default in production) means no restriction, so this cannot
+ * quietly break the real counter.
+ */
+export function allowedWriteClientIds(): Set<string> {
+  return new Set(
+    (process.env["POS_WRITE_CLIENT_IDS"] ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+}
+
+/**
+ * Pull whatever client the request is about out of the body. Arrivals and
+ * carts both name one, under Mindbody's usual casing.
+ */
+function bodyClientId(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const b = body as Record<string, unknown>;
+  const id = b["ClientId"] ?? b["ClientIds"] ?? b["UniqueClientId"];
+  if (Array.isArray(id)) return id.length === 1 ? String(id[0]) : null;
+  return id === undefined || id === null ? null : String(id);
+}
+
 export async function mindbody<T = any>(
   path: string,
   opts: MindbodyCallOptions = {},
@@ -161,11 +199,22 @@ export async function mindbody<T = any>(
   const env = mindbodyEnv();
   const method = opts.method ?? "GET";
 
-  if (isDryRun() && isWrite(method, path)) {
-    console.warn(
-      `[dry-run] suppressed ${method} ${path} ${JSON.stringify(opts.body ?? {})}`,
-    );
-    return { DryRun: true } as T;
+  if (isWrite(method, path)) {
+    if (isDryRun()) {
+      console.warn(
+        `[dry-run] suppressed ${method} ${path} ${JSON.stringify(opts.body ?? {})}`,
+      );
+      return { DryRun: true } as T;
+    }
+    const allowed = allowedWriteClientIds();
+    const client = bodyClientId(opts.body);
+    if (allowed.size > 0 && (client === null || !allowed.has(client))) {
+      console.warn(
+        `[write-guard] suppressed ${method} ${path} for client ${client ?? "(none named)"}; ` +
+          `POS_WRITE_CLIENT_IDS allows only ${[...allowed].join(", ")}`,
+      );
+      return { WriteSuppressed: true } as T;
+    }
   }
 
   const headers: Record<string, string> = {

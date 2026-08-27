@@ -52,6 +52,7 @@ export default function FrontDesk() {
     target: string;
     siteId: string | null;
     configError: string | null;
+    writeClientIds: string[];
   } | null>(null);
   /** Rows whose check-in call failed after going green optimistically. */
   const [failed, setFailed] = useState<Record<string, string>>({});
@@ -157,6 +158,9 @@ export default function FrontDesk() {
             ? "Dry run. Nothing is written to Mindbody."
             : "LIVE. Taps check real students in."}{" "}
           {config.target === "prod" ? "Production" : "Sandbox"} site {config.siteId}.
+          {!config.dryRun && config.writeClientIds.length > 0
+            ? ` Writes limited to client ${config.writeClientIds.join(", ")}.`
+            : ""}
         </p>
       ) : null}
 
