@@ -157,6 +157,11 @@ export default function FrontDesk() {
       const d = await fetch(`/api/roster?classId=${classId}`).then((r) =>
         r.json(),
       );
+      /* Same staleness rule as loadWaitlist: a roster that comes back after
+       * the teacher has switched classes must not overwrite the new class's
+       * entries. The capacity update below is keyed by classId and stays
+       * correct either way, so only the entries write is at stake. */
+      if (activeIdRef.current !== classId) return;
       if (d.error) return setError(d.error);
       setEntries(d.entries ?? []);
       setClasses((cs) =>
@@ -167,6 +172,7 @@ export default function FrontDesk() {
         ),
       );
     } catch (e) {
+      if (activeIdRef.current !== classId) return;
       setError(String(e));
     }
   }, []);
