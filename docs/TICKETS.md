@@ -37,12 +37,14 @@ Mindbody is a Pete task.
 `POST /class/addclienttoclass`, permission already held. Depends on T1's code
 audit (same visit plumbing).
 
-- [ ] Book a searched client into a class from the UI
-- [ ] `Waitlist: true` offered when `TotalBooked >= MaxCapacity`, never a bare
+- [x] Book a searched client into a class from the UI
+- [x] `Waitlist: true` offered when `TotalBooked >= MaxCapacity`, never a bare
       failure
-- [ ] Waitlist promotion via `WaitlistEntryId`
+- [x] Waitlist promotion via `WaitlistEntryId`
 - [ ] Rehearsed with `Test: true` where credentials allow; shapes
-      spec-verified regardless
+      spec-verified regardless (no `.env` in the build container, so the
+      rehearsal is still owed; payload shapes verified against
+      `docs/mindbody-openapi/class.yml`)
 - [ ] Pete: book a write-guarded dummy client for real, then check them in
 
 ## T3. Header counters (PLAN 1.3)

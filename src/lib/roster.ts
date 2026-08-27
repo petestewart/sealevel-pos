@@ -154,6 +154,106 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
 }
 
 /**
+ * Book a client into a class, onto its waiting list, or off the waiting
+ * list into the class. All three are the same endpoint:
+ * `POST /class/addclienttoclass` (spec: docs/mindbody-openapi/class.yml,
+ * `AddClientToClassRequest`).
+ *
+ * - Plain booking sends `{ClientId, ClassId}`. `RequirePayment` is omitted
+ *   deliberately: per the spec, omitted means an active pricing option is
+ *   NOT required, which is exactly the money-free half of walk-in booking.
+ *   Phase 2 sells the pass; Phase 1 gets the person a visit to sign in.
+ * - `Waitlist: true` adds them to the waiting list instead, for a class
+ *   at capacity. The caller decides; Mindbody will refuse a plain booking
+ *   on a full class rather than queueing it silently.
+ * - `WaitlistEntryId` promotes: it names the waiting list entry the client
+ *   is being moved out of, which is the documented way to move someone off
+ *   a waiting list rather than double-booking them.
+ * - `SendEmail: false` explicitly: a counter tap with the person standing
+ *   there should not fire a booking-confirmation email at them.
+ *
+ * The response is `{Visit}` (an `AddClientToClassVisit`), whose `Id` is the
+ * visit id check-in needs. Under dry run or the write guard the call never
+ * goes out and there is no visit; the caller gets told which guard fired so
+ * the UI can say so instead of showing a booking that did not happen.
+ */
+export interface BookingResult {
+  visitId: number | null;
+  suppressed: "dry-run" | "write-guard" | null;
+}
+
+export async function bookClientIntoClass(opts: {
+  clientId: string;
+  classId: number;
+  waitlist?: boolean;
+  waitlistEntryId?: number;
+}): Promise<BookingResult> {
+  const body: Record<string, unknown> = {
+    ClientId: opts.clientId,
+    ClassId: opts.classId,
+    SendEmail: false,
+  };
+  if (opts.waitlist) body["Waitlist"] = true;
+  if (opts.waitlistEntryId !== undefined) {
+    body["WaitlistEntryId"] = opts.waitlistEntryId;
+  }
+  const res = await mindbody("/class/addclienttoclass", {
+    method: "POST",
+    body,
+    clientId: opts.clientId,
+  });
+  if (res?.DryRun) return { visitId: null, suppressed: "dry-run" };
+  if (res?.WriteSuppressed) return { visitId: null, suppressed: "write-guard" };
+  const id = res?.Visit?.Id;
+  return { visitId: typeof id === "number" ? id : null, suppressed: null };
+}
+
+/**
+ * The waiting list for one class, in queue order.
+ *
+ * `GET /class/waitlistentries` filtered by class id. The entries carry a
+ * `Client` reference that live data may populate thinly (the design doc's
+ * stub warning), so any missing name is filled from the same batched
+ * client lookup the roster uses.
+ */
+export interface WaitlistRow {
+  entryId: number;
+  clientId: string;
+  name: string;
+  requestedAt: string | null;
+}
+
+export async function waitlistFor(classId: number): Promise<WaitlistRow[]> {
+  const body = await mindbody(
+    `/class/waitlistentries?ClassIds=${classId}&HidePastEntries=true&limit=100`,
+  );
+  const rows: WaitlistRow[] = (body?.WaitlistEntries ?? [])
+    .filter((e: any) => typeof e?.Id === "number")
+    .map(
+      (e: any): WaitlistRow => ({
+        entryId: e.Id,
+        clientId:
+          e.Client?.Id !== undefined && e.Client?.Id !== null
+            ? String(e.Client.Id)
+            : "",
+        name: `${e.Client?.FirstName ?? ""} ${e.Client?.LastName ?? ""}`.trim(),
+        requestedAt: e.RequestDateTime ?? null,
+      }),
+    );
+  const missing = [
+    ...new Set(rows.filter((r) => !r.name && r.clientId).map((r) => r.clientId)),
+  ];
+  const names = missing.length > 0 ? await namesForIds(missing) : new Map();
+  const named = rows.map((r) =>
+    r.name ? r : { ...r, name: names.get(r.clientId) ?? "(unknown client)" },
+  );
+  /** Queue order: first asked, first offered the spot. */
+  return named.sort((a, b) =>
+    (a.requestedAt ?? "").localeCompare(b.requestedAt ?? ""),
+  );
+}
+
+/**
  * Sign a visit in or out.
  *
  * This is `POST /client/updateclientvisit` with `{VisitId, SignedIn}`, and

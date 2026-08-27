@@ -37,6 +37,13 @@ interface SearchResult {
   email: string | null;
 }
 
+interface WaitlistRow {
+  entryId: number;
+  clientId: string;
+  name: string;
+  requestedAt: string | null;
+}
+
 /** Grey and unlabelled: checking out is the quiet action on the row. */
 function CloseIcon() {
   return (
@@ -89,6 +96,24 @@ export default function FrontDesk() {
   const [searchNow, setSearchNow] = useState(0);
   /** The row awaiting a confirmed check-out, if any. */
   const [checkingOut, setCheckingOut] = useState<RosterEntry | null>(null);
+  /** Walk-in bookings in flight, by client id. Like check-in, booking is
+   *  NOT optimistic: a booking is attendance-adjacent, so the row spins
+   *  until Mindbody answers rather than faking success. */
+  const [bookingIds, setBookingIds] = useState<string[]>([]);
+  /** Per-walk-in outcome text: a failure, or "suppressed by dry run". */
+  const [bookMsg, setBookMsg] = useState<Record<string, string>>({});
+  /** A walk-in tapped on a full class, awaiting the explicit waitlist yes. */
+  const [waitlistPrompt, setWaitlistPrompt] = useState<SearchResult | null>(
+    null,
+  );
+  /** The waiting list panel: only offered for a full class, fetched on
+   *  open, because a class with room cannot have a queue. */
+  const [waitlistOpen, setWaitlistOpen] = useState(false);
+  const [waitlist, setWaitlist] = useState<WaitlistRow[] | null>(null);
+  const [waitlistError, setWaitlistError] = useState<string | null>(null);
+  /** Waitlist promotions in flight, by entry id. Also non-optimistic. */
+  const [promoting, setPromoting] = useState<number[]>([]);
+  const [promoteMsg, setPromoteMsg] = useState<Record<number, string>>({});
   const skipDebounce = useRef(false);
 
   useEffect(() => {
@@ -111,16 +136,40 @@ export default function FrontDesk() {
       .catch((e) => setError(String(e)));
   }, [settings.hoursBack, settings.hoursForward]);
 
+  /**
+   * The roster for one class, also called after a booking so the new visit
+   * appears with its visit id. The response carries fresh capacity and
+   * booked counts, which update the class summary too: a booking that
+   * fills the class must flip the walk-in action to "waitlist" without
+   * waiting for a page reload.
+   */
+  const refreshRoster = useCallback(async (classId: number) => {
+    try {
+      const d = await fetch(`/api/roster?classId=${classId}`).then((r) =>
+        r.json(),
+      );
+      if (d.error) return setError(d.error);
+      setEntries(d.entries ?? []);
+      setClasses((cs) =>
+        cs.map((c) =>
+          c.classId === classId
+            ? { ...c, capacity: d.capacity ?? c.capacity, booked: d.booked ?? c.booked }
+            : c,
+        ),
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
   useEffect(() => {
     if (activeId === null) return;
-    fetch(`/api/roster?classId=${activeId}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.error) return setError(d.error);
-        setEntries(d.entries ?? []);
-      })
-      .catch((e) => setError(String(e)));
-  }, [activeId]);
+    setWaitlistOpen(false);
+    setWaitlist(null);
+    setWaitlistError(null);
+    setPromoteMsg({});
+    void refreshRoster(activeId);
+  }, [activeId, refreshRoster]);
 
   /**
    * Search hits Mindbody, so it is debounced properly and cancelled on the
@@ -270,6 +319,128 @@ export default function FrontDesk() {
   );
   const walkIns = found.filter((f) => !rosterIds.has(f.id));
 
+  const activeClass = classes.find((c) => c.classId === activeId) ?? null;
+  /** Full means TotalBooked has reached MaxCapacity. Unknown counts are
+   *  treated as room: Mindbody is the arbiter and will refuse a booking a
+   *  stale count would have allowed. */
+  const classFull =
+    activeClass !== null &&
+    activeClass.capacity !== null &&
+    activeClass.booked !== null &&
+    activeClass.booked >= activeClass.capacity;
+
+  const loadWaitlist = useCallback(async (classId: number) => {
+    setWaitlistError(null);
+    try {
+      const d = await fetch(`/api/waitlist?classId=${classId}`).then((r) =>
+        r.json(),
+      );
+      if (d.error) return setWaitlistError(d.error);
+      setWaitlist(d.entries ?? []);
+    } catch (e) {
+      setWaitlistError(String(e));
+    }
+  }, []);
+
+  /**
+   * Book a walk-in into the active class, or onto its waiting list. Not
+   * optimistic, same reasoning as check-in: a booking the teacher believes
+   * in and Mindbody refused is someone standing in a class with no visit.
+   * The row spins until the answer comes back; on success the person
+   * simply appears on the roster, one tap from checked in.
+   */
+  const bookWalkIn = useCallback(
+    async (client: SearchResult, waitlist: boolean) => {
+      if (activeId === null || bookingIds.includes(client.id)) return;
+      setBookingIds((b) => [...b, client.id]);
+      setBookMsg((m) => {
+        const { [client.id]: _drop, ...rest } = m;
+        return rest;
+      });
+      try {
+        const res = await fetch("/api/book", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clientId: client.id, classId: activeId, waitlist }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        if (body.suppressed) {
+          setBookMsg((m) => ({
+            ...m,
+            [client.id]:
+              body.suppressed === "dry-run"
+                ? "Dry run: booking suppressed, nothing was written."
+                : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
+          }));
+          return;
+        }
+        if (waitlist) {
+          setBookMsg((m) => ({ ...m, [client.id]: "On the waiting list." }));
+          if (waitlistOpen) void loadWaitlist(activeId);
+        }
+        await refreshRoster(activeId);
+      } catch (err) {
+        setBookMsg((m) => ({
+          ...m,
+          [client.id]: err instanceof Error ? err.message : String(err),
+        }));
+      } finally {
+        setBookingIds((b) => b.filter((id) => id !== client.id));
+      }
+    },
+    [activeId, bookingIds, refreshRoster, waitlistOpen, loadWaitlist],
+  );
+
+  /**
+   * Promote a waiting client into the class: the same booking endpoint
+   * carrying the WaitlistEntryId, which is the documented way to move
+   * someone off a waiting list rather than double-booking them. Also
+   * non-optimistic; the entry spins until Mindbody answers.
+   */
+  const promote = useCallback(
+    async (row: WaitlistRow) => {
+      if (activeId === null || promoting.includes(row.entryId)) return;
+      setPromoting((p) => [...p, row.entryId]);
+      setPromoteMsg((m) => {
+        const { [row.entryId]: _drop, ...rest } = m;
+        return rest;
+      });
+      try {
+        const res = await fetch("/api/book", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            clientId: row.clientId,
+            classId: activeId,
+            waitlistEntryId: row.entryId,
+          }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        if (body.suppressed) {
+          setPromoteMsg((m) => ({
+            ...m,
+            [row.entryId]:
+              body.suppressed === "dry-run"
+                ? "Dry run: promotion suppressed, nothing was written."
+                : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
+          }));
+          return;
+        }
+        await Promise.all([refreshRoster(activeId), loadWaitlist(activeId)]);
+      } catch (err) {
+        setPromoteMsg((m) => ({
+          ...m,
+          [row.entryId]: err instanceof Error ? err.message : String(err),
+        }));
+      } finally {
+        setPromoting((p) => p.filter((id) => id !== row.entryId));
+      }
+    },
+    [activeId, promoting, refreshRoster, loadWaitlist],
+  );
+
   return (
     <main className="shell">
       {config?.configError ? <p className="note">{config.configError}</p> : null}
@@ -410,21 +581,123 @@ export default function FrontDesk() {
           );
         })}
 
-        {walkIns.map((client) => (
-          <li key={`walkin-${client.id}`}>
-            <button className="row" disabled>
-              <span className="name">
-                {client.name}
-                <span className="detail">
-                  Not booked into this class{client.email ? ` - ${client.email}` : ""}.
-                  Booking a walk-in arrives in Phase 2.
+        {walkIns.map((client) => {
+          const working = bookingIds.includes(client.id);
+          const msg = bookMsg[client.id];
+          const detail = working
+            ? "Talking to Mindbody..."
+            : msg ??
+              `Not booked into this class${client.email ? ` - ${client.email}` : ""}.` +
+                (classFull ? " Class is full." : "");
+          return (
+            <li key={`walkin-${client.id}`}>
+              <button
+                className="row"
+                disabled={working}
+                onClick={() =>
+                  classFull
+                    ? setWaitlistPrompt(client)
+                    : void bookWalkIn(client, false)
+                }
+              >
+                <span className="name">
+                  {client.name}
+                  <span className="detail">{detail}</span>
                 </span>
-              </span>
-              <span className="chip action">add</span>
-            </button>
-          </li>
-        ))}
+                <span
+                  className={
+                    working
+                      ? "chip busy"
+                      : classFull
+                        ? "chip unpaid"
+                        : "chip action"
+                  }
+                >
+                  {working ? (
+                    <span className="spinner" aria-label="working" />
+                  ) : classFull ? (
+                    "waitlist"
+                  ) : (
+                    "add"
+                  )}
+                </span>
+                <span className="undo-spacer" aria-hidden="true" />
+              </button>
+            </li>
+          );
+        })}
       </ul>
+
+      {/* The waiting list, offered only for a full class: a class with
+          room cannot have a queue, so the metered call never fires for
+          one. T4 turns this into the counter modal; this is the minimal
+          affordance that makes promotion reachable. A loaded, non-empty
+          list keeps the section visible even after a spot opens up,
+          because that is exactly the moment promotion is useful. */}
+      {activeId !== null &&
+      (classFull || (waitlist !== null && waitlist.length > 0)) ? (
+        <section className="waitlist-section">
+          <button
+            className="waitlist-toggle"
+            aria-expanded={waitlistOpen}
+            onClick={() => {
+              const opening = !waitlistOpen;
+              setWaitlistOpen(opening);
+              if (opening && waitlist === null) void loadWaitlist(activeId);
+            }}
+          >
+            {waitlistOpen ? "Hide waiting list" : "Show waiting list"}
+          </button>
+          {waitlistOpen ? (
+            <>
+              {waitlistError ? <p className="note">{waitlistError}</p> : null}
+              {waitlist === null && !waitlistError ? (
+                <p className="muted">Loading the waiting list...</p>
+              ) : null}
+              {waitlist !== null && waitlist.length === 0 ? (
+                <p className="muted">Nobody is waiting.</p>
+              ) : null}
+            </>
+          ) : null}
+          {waitlistOpen && waitlist !== null && waitlist.length > 0 ? (
+            <ul className="roster">
+              {waitlist.map((row) => {
+                const working = promoting.includes(row.entryId);
+                const msg = promoteMsg[row.entryId];
+                return (
+                  <li key={`wl-${row.entryId}`}>
+                    <button
+                      className="row"
+                      disabled={working}
+                      onClick={() => void promote(row)}
+                    >
+                      <span className="name">
+                        {row.name}
+                        <span className="detail">
+                          {working
+                            ? "Talking to Mindbody..."
+                            : msg ??
+                              (row.requestedAt
+                                ? `Waiting since ${clockTime(row.requestedAt)}`
+                                : "On the waiting list")}
+                        </span>
+                      </span>
+                      <span className={working ? "chip busy" : "chip action"}>
+                        {working ? (
+                          <span className="spinner" aria-label="working" />
+                        ) : (
+                          "promote"
+                        )}
+                      </span>
+                      <span className="undo-spacer" aria-hidden="true" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
       {checkingOut ? (
         <div
           className="modal-scrim"
@@ -456,6 +729,54 @@ export default function FrontDesk() {
                 }}
               >
                 Check out
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {waitlistPrompt ? (
+        <div
+          className="modal-scrim"
+          onClick={() => setWaitlistPrompt(null)}
+          role="presentation"
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirm waiting list"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">
+              This class is full
+              {activeClass &&
+              activeClass.capacity !== null &&
+              activeClass.booked !== null
+                ? ` (${activeClass.booked} of ${activeClass.capacity})`
+                : ""}
+              .
+            </p>
+            <p className="muted">
+              Add {waitlistPrompt.name} to the waiting list? They get the next
+              spot that opens up.
+            </p>
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                onClick={() => setWaitlistPrompt(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="modal-confirm go"
+                onClick={() => {
+                  const client = waitlistPrompt;
+                  setWaitlistPrompt(null);
+                  void bookWalkIn(client, true);
+                }}
+              >
+                Add to waiting list
               </button>
             </div>
           </div>

@@ -251,6 +251,36 @@ button {
   }
 }
 
+/* The waiting list behind a full class. Same row and chip components as
+ * the roster; only the toggle is new, and it is a full tap target because
+ * it gets hit from across a counter like everything else. */
+
+.waitlist-section {
+  margin-top: 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.waitlist-toggle {
+  width: 100%;
+  min-height: 64px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 18px;
+  font-weight: 600;
+  text-align: left;
+}
+
+/* A confirming action that is not destructive: adding someone to the
+ * waiting list gets the action pairing, not the stop pairing. */
+.modal-confirm.go {
+  background: var(--action-bg);
+  color: var(--ink);
+}
+
 /* Mode banner. The counter must never wonder whether a tap was real. */
 .banner {
   margin: 0 0 12px;
