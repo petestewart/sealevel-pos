@@ -312,46 +312,39 @@ default as the online store rather than a physical location) crossed with
 permissions were fine all along and the cart was simply addressed to the wrong
 place. If none is, the request shape is ruled out too.
 
-**The matrix answered it: the sales permission is scoped per location.** Site
-471 has two locations, 1 (physical, Fremont) and 98 (the online store). Against
-location 1 the call is refused with "You do not have permission to perform
-sales". Against location 98 it is refused with "Products cannot be sold through
-the online store" -- a *business rule*, which means the access check passed and
-the request got all the way to the item validation. The account can sell at the
-online store and not at the physical one.
+**Rung 6 reaches the payment layer.** The live charge was rejected with
+`Credit card is expired` -- a card validation error, not an authorization one.
+The request passed the permission check, built the cart, and got into payment
+handling before being turned away on the state of that particular stored card.
+So the account is authorized to perform sales through the API and the design's
+payment half is sound. The one thing still not strictly proven is that the
+charge reaches Stripe and settles, since Mindbody appears to reject an expired
+card before sending anything to the processor. Update the card on file (or use
+a client with a current one) and re-run `--live` to close that last gap.
 
-So the fix is to grant the API account sales at **location 1**, since in
-Mindbody permission groups and staff assignments are per location. It was never
-about which permissions were ticked; all six were correct for several runs while
-this was still failing.
+**Rung 5 passes.** `POST /sale/checkoutshoppingcart` with
+`Test: true` returns HTTP 200 and the server prices the cart at $2.00 for a
+$1.81 item. Getting there took granting the API service account, via its "API
+Sales" permission group, the six permissions this POS needs -- `MakeSales`,
+`UseStoredCreditCards`, `CreateRetailTickets` (which was explicitly *denied*
+initially), `AddProductsOnRetailScreen`, `LaunchSignInScreen` and
+`BookClassesAndEventsWithoutPayment` -- plus ticking `Desk staff` on the staff
+profile. The exact change that flipped it was not isolated.
 
-(Reading that from the output needs care, and the probe initially got it wrong:
-it treated every non-200 as an equivalent rejection and printed "this is not
-about location" directly above the evidence that it was. It now classifies a
-permission refusal separately from any other error, since only the former means
-the access check blocked the call.)
+Two wrong turns worth recording, because both cost a round and both were
+reasoning errors rather than missing information:
 
-If the location grant does not resolve it, the remaining explanation is the
-**API key's scope for the sale endpoints**. The key was provisioned for the contact sync, which only ever
-needed to read clients, and every symptom fits: reads work, writes are refused,
-the refusal is invariant across payment type, location, and permission changes.
-Widening it is a support request to Mindbody, not a studio setting. Ask them
-directly whether API key ...f86b is authorized for `POST
-/sale/checkoutshoppingcart` on site 471, and quote the exact error.
-
-Two notes for whoever reads this later. The permission read-back was worth
-building: the error message named sales, the actual denial was on cart
-creation, and no amount of reading error text would have found it. And an
-earlier reading of this same endpoint reported an empty group, which was a
-parser bug (the documented schema wraps the fields in `UserGroup`, the live API
-returns them at the top level) that sent the investigation down a wrong path
-for a round.
-
-Until those are granted, the gateway question stays formally open: the probe
-cannot reach it. Nothing so far suggests it will fail.
-
-`GET /sale/alternativepaymentmethods` returns HTTP 400, cause not yet chased.
-It only matters for option C, which is ruled out, so it is noise for now.
+1. The probe read the permission group as empty and sent us hunting for group
+   membership. That was a parser bug: the documented schema wraps the fields in
+   `UserGroup`, the live API returns them at the top level.
+2. Seeing a product refused at the physical location on permissions but refused
+   at the online store on a business rule, the probe concluded the sales
+   permission was location-scoped. It is not. Mindbody validates the **item
+   first**: a product against the online store is rejected as unsellable there
+   before permissions are consulted, so that path never reached the access
+   check. The sound comparison holds the item fixed, and a *service* (sellable
+   at every location) was refused on permissions at both. A business-rule error
+   is not evidence that the access check passed.
 
 One residual: "card-not-present enabled" on the payments account is not
 literally the same entitlement as "API credit-card processing enabled for the

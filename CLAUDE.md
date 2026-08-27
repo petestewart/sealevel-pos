@@ -1,29 +1,95 @@
-# AI Manager — Sealevel Hot Yoga
+# sealevel-pos
 
-Always-on AI ops system for Sealevel Hot Yoga (Seattle). The full system design is in ARCHITECTURE.md — read it before any build work; its "First build checklist" is the Phase 0 implementation plan.
+Front-desk check-in for Sealevel Hot Yoga teachers. An iPad web app over the
+Mindbody Public API v6. Read `docs/design/front-desk-pos.md` before any build
+work: it carries the reasoning, the studio's real numbers, and a long list of
+Mindbody constraints that were expensive to establish and are not obvious from
+the API docs.
 
-## Locked decisions (2026-07-08)
-- Hosting: Railway, Pro plan. One project: worker, Next.js console, Postgres, Redis. Build an automated nightly off-platform pg_dump into Phase 0.
-- Auth: Clerk.
-- Assignment: AI suggests an assignee, human confirms. No auto-assign in v1.
-- Auto-send: nothing auto-sends in v1. Every outbound reply is an approval item.
-- Outbound email is draft-mode by default: with GMAIL_SEND_MODE=draft an approval parks a Gmail draft for a human to send from Gmail. The operator's Approve click is the only trigger either way; nothing auto-sends.
-- Read state (2026-07-19): read = decided. A message stays unread in Gmail until its item is decided (approve/reject/no-reply/trash/spam); the decision enqueues a worker job that marks it read. Ingestion marks only the processed label (GMAIL_MARK_READ stays false); the label means ingested, the read flag means a human decided.
-- Pricing and schedule come EXCLUSIVELY from the live Mindbody tools (class_pricing, upcoming_classes), never from the wiki. The wiki is for policies and studio info only.
-- Customer drafts never narrate the assistant's knowledge, tools, or access; never promise follow-ups; never invite a reply for information the tools could not provide.
-- Booking is self-service: customers book themselves at SEALEVEL_BOOKING_URL. Drafts never offer to book for the customer.
-- Models: claude-sonnet-5 for triage/classification jobs, claude-opus-4-8 for drafting.
+## Status
 
-## Phasing
-Phase 0 (skeleton) and Phase 1 (email triage + assignment/routing) are unblocked. Phase 2 (Mindbody analytics) is unblocked: production API access exists and the sealevel-analytics nightly sync runs green; ai-manager reads the mirror through the analytics MCP identity (packages/core/src/tools/analytics.ts). Task tracking lives on GitHub Project 2 "Sealevel Ops" (owner petestewart); the epic is sealevel-knowledge-base issue #17.
+**Phase 1: check-in only.** Roster for the classes around now, local
+type-ahead search for walk-ins, one-tap optimistic arrival. **No cart, no
+payment, no money.** Verified working against live Mindbody on 2026-08-27:
+classes, teachers, and pricing options all render from real data.
 
-## Evals
-Golden-case drafting evals live in evals/ (cases + cached outputs); run with `npm run eval`. CI runs them on PRs that touch prompt-affecting paths (drafting job, booking, KB tools, prompts, eval code) when the ANTHROPIC_API_KEY repo secret is present; manual dispatch from the Actions tab runs the full suite on demand. Any prompt-affecting change must keep the evals green.
+Phase 2 (stored-card sales and cash) is unblocked but not started. The sale
+path was verified with ai-manager's `npm run mindbody:probe-payments`.
 
-## Configuration
-Where config lives (Railway, Clerk, Cloudflare, GitHub Actions) is mapped in docs/infrastructure.md.
+## Locked decisions
+
+- **Web app, not Swift.** Card-present is 0.4% of counter transactions (25
+  sales in a year), and the studio's reader is a networked WisePOS E rather
+  than a Bluetooth accessory, so native buys nothing. Full argument in the
+  design doc.
+- **Its own repo, its own Railway service.** Separate from ai-manager, which
+  is a back-office worker with a different uptime story and different users.
+  The two share an API, not a codebase: `src/lib/mindbody.ts` is adapted from
+  ai-manager's client and deliberately not imported from it.
+- **No database.** The client index lives in memory and rebuilds on boot.
+  Redis or a volume-backed snapshot is a detail if cold starts get annoying,
+  not an architecture change.
+- **Nothing auto-charges.** Phase 2 will move money only on an explicit tap.
+- **Pricing and schedule come from the live Mindbody API**, never from a cache
+  that could go stale.
+
+## Why it is fast
+
+These three are the point of the app, not incidental optimizations. Do not
+undo them without reading the design doc's speed argument.
+
+1. **The roster is prefetched** for the classes around now, so tapping a name
+   hits memory rather than the API.
+2. **Search runs against an in-memory client index**, not Mindbody. A
+   per-keystroke API call would be one metered call per letter at 400-900ms
+   each.
+3. **Check-in is optimistic.** The row goes green on tap and rolls back with
+   an error if the call fails. Nobody watches a spinner with a queue waiting.
+
+## Mindbody notes that cost real time to learn
+
+- **Permission errors lie about their cause.** "You do not have permission to
+  perform sales" is what you get for a missing *cart* permission too. Read the
+  group back with `GET /staff/staffpermissions?StaffId=<id>` rather than
+  guessing. The live response returns `PermissionGroupName`,
+  `AllowedPermissions`, `DeniedPermissions` and `IpRestricted` **at the top
+  level**, not wrapped in `UserGroup` as the schema documents.
+- **An explicit deny overrides everything.** `CreateRetailTickets` was denied
+  in the "API Sales" group while every sales permission was allowed, and no
+  amount of ticking boxes moved it.
+- **Mindbody validates the item before permissions.** A product refused at the
+  online store short-circuits before the access check runs, so a business-rule
+  error is *not* evidence that permissions passed. Compare like with like: a
+  service is sellable at every location, so service calls are the sound test.
+- **`/site/sites` returns the sandbox too** (id -99, "LastSpot") alongside the
+  real studio (471). Never read `Sites[0]`; select by configured site id.
+- **`/class/classvisits` puts the CLASS name in the visit's `Name` field.**
+  Reading it showed every roster row as "bikram yoga". Names come from
+  explicit client fields, and otherwise from the client index by id.
+- The permissions this app needs: `LaunchSignInScreen` (arrivals),
+  `BookClassesAndEventsWithoutPayment` (booking a walk-in), and for Phase 2
+  `MakeSales`, `CreateRetailTickets`, `UseStoredCreditCards`,
+  `AddProductsOnRetailScreen`. Plus `Desk staff` ticked on the staff profile.
 
 ## Conventions
-- Node + TypeScript monorepo per ARCHITECTURE.md repo structure (apps/worker, apps/console, packages/core, packages/features, analytics/dbt).
-- Secrets in .env, gitignored. Never commit credentials.
-- No em dashes in any outgoing user-facing copy (emails, SMS, notifications).
+
+- Next.js App Router, TypeScript strict with `noUncheckedIndexedAccess`.
+- Secrets in `.env`, gitignored. Never commit credentials.
+- No em dashes in user-facing copy.
+- Sized for a hot room and a queue: nothing under 16px, tap targets at least
+  64px tall.
+
+## Known gaps
+
+- **The live charge has never fully settled.** The probe reached payment
+  handling and was refused with "Credit card is expired", which proves
+  authorization but not that a charge reaches Stripe. Re-run
+  `mindbody:probe-payments --live` in ai-manager against a client with a
+  current card to close this.
+- **No teacher identity.** The app acts as one service account; a shared PIN
+  is stubbed in `.env.example` but not implemented. See the design doc's open
+  question 3, which needs confirming against payroll reporting.
+- **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
+  a Phase 2 sale must never queue.
+- `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It
+  only matters for a payment option the design ruled out.

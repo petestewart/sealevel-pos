@@ -1,13 +1,6 @@
 node_modules/
-.env
-.env.*
-dist/
 .next/
-*.log
-.DS_Store
+.env
+.env.local
 *.tsbuildinfo
-!.env.example
-backups/
-
-# per-pipeline review artifact (never committed)
-.pipeline-review.md
+next-env.d.ts

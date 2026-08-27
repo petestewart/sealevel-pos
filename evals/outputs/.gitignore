@@ -1,5 +1,0 @@
-# Cached eval draft outputs are machine-local API products (see
-# packages/core/src/evals/cache.ts); only this file is tracked so the
-# directory exists.
-*
-!.gitignore
