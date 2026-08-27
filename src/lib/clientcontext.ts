@@ -175,10 +175,15 @@ export function habitsFromPurchases(purchases: unknown[]): string[] {
 
 async function fetchHabits(clientId: string, now: Date): Promise<string[]> {
   const start = new Date(now.getTime() - 365 * DAY_MS);
+  /* Limit defaults to 100 and the spec does not document the sort order,
+   * so a regular with three line items a visit overflows the year window
+   * and "the last five sales" could be computed from whichever hundred
+   * rows Mindbody chose to return. 200 is the API's maximum page. */
   const body = await mindbody(
     `/client/clientpurchases?ClientId=${encodeURIComponent(clientId)}` +
       `&StartDate=${encodeURIComponent(start.toISOString())}` +
-      `&EndDate=${encodeURIComponent(now.toISOString())}`,
+      `&EndDate=${encodeURIComponent(now.toISOString())}` +
+      `&Limit=200`,
   );
   return habitsFromPurchases(body?.Purchases ?? []);
 }
