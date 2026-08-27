@@ -396,17 +396,28 @@ on the client record say whether they have.
 
 The API *can* set it: `LiabilityRelease: true` on `POST /client/updateclient`
 flips `IsReleased`, stamps the agreement date, and records the staff member as
-`ReleasedBy`. That is a one-line implementation and it is the wrong one. A
-liability waiver is a legal artifact, and a teacher tapping "signed" on an
-iPad on someone else's behalf produces a record that says the student agreed
-when the student may never have read it. What that flag is for is recording an
-agreement that actually happened, not manufacturing one.
+`ReleasedBy`. That is a one-line implementation and it is the wrong one *if the
+teacher taps it*. A liability waiver is a legal artifact, and a staff member
+confirming agreement on someone else's behalf produces a record saying the
+student agreed when the student may never have read it. That flag is for
+recording an agreement that happened, not manufacturing one.
 
-So: the row shows an unmissable waiver-missing state, and the action behind it
-puts the waiver **in front of the student** rather than the teacher, on their
-own phone by QR or on a handed-over device. `LiabilityRelease: true` is then
-written on the strength of a real agreement. That is the same QR mechanism as
-card capture, which is a good reason to build the two together.
+But we can do better than handing off, because **`GET /site/liabilitywaiver`
+returns the studio's actual waiver text.** So the whole thing can happen live:
+show the real waiver on the student's own phone by QR (or a handed-over
+device), they read and agree, and `LiabilityRelease: true` is written on the
+strength of a genuine agreement. No Mindbody-hosted page needed, and the
+student is signing off the critical path while the teacher serves the next
+person. Same QR mechanism as card capture, which is why the two build together.
+
+One gap to design around: **Mindbody does not snapshot what they agreed to.**
+It stores `IsReleased`, `AgreementDate` and `ReleasedBy`, and nothing about the
+waiver's content or version. If the waiver text is ever edited, there is no
+record of which wording any given student accepted, which is precisely the
+question that would matter if a waiver were ever tested. So keep our own
+receipt: client id, timestamp, and a hash of the exact text displayed. That is
+cheap, and it is the first thing in this app that genuinely needs durable
+storage of its own.
 
 ## Studio banner
 
@@ -432,9 +443,27 @@ options, cheapest first:
    works and nothing new is stored. Nothing in the API is meant for this, so it
    would mean abusing some other field, which tends to be regretted.
 
-Recommendation: start with (1), because the banner is worth having before it is
-worth an admin UI, and move to (2) the first time someone other than Pete needs
-to change it.
+Decided: **start with (1)**, because the banner is worth having before it is
+worth an admin UI, and move to (2) when someone other than Pete needs to change
+it, or when the database arrives for the waiver receipts, whichever is first.
+
+### On adding a database at all
+
+"No database" was a good default, not a principle, and the cost of breaking it
+is smaller than it looks. Railway Postgres is usage-based and a store holding a
+banner string, waiver receipts and perhaps shift records runs to a few dollars
+a month. The real cost is operational: something to back up, migrate, and keep
+from quietly becoming the source of truth for things that belong in Mindbody.
+
+So the rule when it arrives, and it should be enforced rather than assumed:
+**the database holds what Mindbody has no home for, and never a copy of what it
+does.** Banner text, waiver receipts, shift records, our own settings: yes.
+Clients, classes, passes, prices, visits: never, at any point, for any reason
+including speed. The client index was already deleted once for exactly this
+reason, and a database makes rebuilding it tempting in a way that in-memory
+caching did not.
+
+On current planning that lands in Phase 3, alongside the waiver flow.
 
 ## API mechanics worth knowing before building
 
