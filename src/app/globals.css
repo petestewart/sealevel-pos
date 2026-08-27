@@ -182,9 +182,13 @@ button {
   color: var(--surface);
 }
 
-.chip.walkin {
+/* The primary action on a row: "check in" on a paid booking, "add" on a
+ * search result. Full-strength ink, not --muted. This chip is the thing a
+ * teacher is aiming at across a counter in a hot room, so it gets the
+ * highest-contrast text in the palette rather than the quietest. */
+.chip.action {
   background: #eee9e1;
-  color: var(--muted);
+  color: var(--ink);
 }
 
 .chip.failed {

@@ -382,7 +382,7 @@ export default function FrontDesk() {
                         : confirming.includes(entry.clientId)
                           ? "chip unpaid"
                           : entry.paid
-                            ? "chip walkin"
+                            ? "chip action"
                             : "chip unpaid"
                   }
                 >
@@ -416,7 +416,7 @@ export default function FrontDesk() {
                   Booking a walk-in arrives in Phase 2.
                 </span>
               </span>
-              <span className="chip walkin">add</span>
+              <span className="chip action">add</span>
             </button>
           </li>
         ))}
