@@ -93,7 +93,14 @@ there was nothing to reuse).
 
 Still owed live verification (Pete, drawer open): that the four context
 calls return real data for a real client, and that a red-alert client
-actually shows the blocking dialog.
+actually shows the blocking dialog. Also check live: the sign convention of
+`AccountBalance` (credit vs owed -- the spec does not say), and that a
+check-in made after the class start time does not overstate the visit count
+by one (the current class's visit can appear in the window).
+
+Follow-up (new ticket when reached): a red-alert walk-in can be booked from
+the search panel without the alert ever showing -- context only renders on
+roster rows. The design doc wants RedAlert on the walk-in panel too.
 
 ## T6. Waiver state (PLAN 1.6)
 
