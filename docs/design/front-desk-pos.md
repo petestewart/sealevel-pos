@@ -269,6 +269,15 @@ month. Ship it, watch a teacher use it during a 6pm rush, fix what they hit.
 `CashInfo` checkout, receipt by email through Mindbody. Handoff (option A) for
 everything else.
 
+The concrete place this lands in the UI is **the unpaid row**. A booking with
+no pricing option attached is action 2 from the list above, and Phase 1 can
+only offer to let them in for free behind a confirming tap, which is a
+stopgap, not the answer. In Phase 2 that row should offer what the moment
+actually calls for: sell them the pass their booking is missing, charge the
+card on file, and check them in, in one gesture. Free entry stays available
+for the genuine comp, but as the deliberate exception rather than the only
+option.
+
 **Phase 3 — card capture (option B).** The QR/SMS hosted capture flow, so
 "no card on file" becomes a 20-second self-service step off the critical path
 instead of a queue.

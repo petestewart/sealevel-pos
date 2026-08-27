@@ -194,6 +194,11 @@ while `git clone` works, so clone the repo rather than fetching files.
   `SignedIn` flag actually flip. Do that in the sandbox first.
 - **Walk-in booking is not implemented.** Search finds people, but adding one
   to a class needs `/class/addclienttoclass` and is Phase 2.
+- **The unpaid row only offers free entry.** A booking with no pricing option
+  attached currently gets a confirming tap and goes in for nothing. That is a
+  Phase 1 stopgap: Phase 2 should sell the missing pass against the card on
+  file and check them in together, keeping free entry as the deliberate
+  exception. See the phasing section of the design doc.
 
 - **The live charge has never fully settled.** The probe reached payment
   handling and was refused with "Credit card is expired", which proves
