@@ -39,6 +39,12 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 
 No money moves. Most of the time saved at the door lives here.
 
+**Status: 1.1-1.8 are code-complete on `feature/phase-1`**, each behind an
+adversarial review pass; `docs/TICKETS.md` tracks the per-item state and the
+live verifications still owed (watching a `SignedIn` flag flip, a real
+booking, waiver and red-alert fields under live credentials). The done-when
+criteria below that require live Mindbody remain open until those pass.
+
 - [x] Roster for the classes around now
 - [x] Walk-in search via `searchText`, debounced, abortable
 - [x] Pessimistic check-in with a spinner
