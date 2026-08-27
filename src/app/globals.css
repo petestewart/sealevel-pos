@@ -92,6 +92,44 @@ button {
   font-size: 16px;
 }
 
+/* Header counters for the selected class: three numbers a teacher reads at
+ * arm's length. Plain surfaces for now; T4 makes them tappable, at which
+ * point they become buttons and inherit the 64px tap-target rule. All
+ * colours are tokens, defined in both palettes above and below. */
+
+.counters {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.counter {
+  flex: 1;
+  min-height: 72px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.counter-num {
+  display: block;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.counter-cap {
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.counter-label {
+  display: block;
+  font-size: 16px;
+  color: var(--muted);
+}
+
 .search {
   width: 100%;
   min-height: 64px;

@@ -53,11 +53,12 @@ goes empty exactly when a teacher needs it, and the flag has to go.
 
 ## T3. Header counters (PLAN 1.3)
 
-- [ ] Signed up, checked in, capacity from data already on hand (roster
+- [x] Signed up, checked in, capacity from data already on hand (roster
       length, `SignedIn` count, `MaxCapacity`/`TotalBooked`)
-- [ ] Waitlist count via `GET /class/waitlistentries`, fetched **only** when
-      `TotalBooked >= MaxCapacity`
-- [ ] A class with room renders all counters with zero extra calls
+- [x] Waitlist count via `GET /class/waitlistentries`, fetched **only** when
+      `TotalBooked >= MaxCapacity` (one fetch, shared with the T2 waiting
+      list panel)
+- [x] A class with room renders all counters with zero extra calls
 
 ## T4. Counter modals (PLAN 1.4) — after T3
 

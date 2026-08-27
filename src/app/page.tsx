@@ -343,6 +343,23 @@ export default function FrontDesk() {
   }, []);
 
   /**
+   * The waitlist counter needs the entries, and only a full class can have
+   * any: `TotalBooked < MaxCapacity` means nobody is queued, so for a class
+   * with room the counter renders zero without any request going out. For a
+   * full class the entries are fetched ONCE here, into the same state the
+   * waiting list panel reads, so opening the panel costs nothing extra.
+   *
+   * No loop: a successful fetch makes `waitlist` non-null, and a failed one
+   * leaves the deps untouched (the error lives in `waitlistError`, which is
+   * deliberately not a dep). Opening the panel is the retry path.
+   */
+  useEffect(() => {
+    if (activeId !== null && classFull && waitlist === null) {
+      void loadWaitlist(activeId);
+    }
+  }, [activeId, classFull, waitlist, loadWaitlist]);
+
+  /**
    * Book a walk-in into the active class, or onto its waiting list. Not
    * optimistic, same reasoning as check-in: a booking the teacher believes
    * in and Mindbody refused is someone standing in a class with no visit.
@@ -377,7 +394,9 @@ export default function FrontDesk() {
         }
         if (waitlist) {
           setBookMsg((m) => ({ ...m, [client.id]: "On the waiting list." }));
-          if (waitlistOpen) void loadWaitlist(activeId);
+          /* Refresh unconditionally: the header counter shows this list's
+           * length even when the panel is closed, and it just grew. */
+          void loadWaitlist(activeId);
         }
         await refreshRoster(activeId);
       } catch (err) {
@@ -389,7 +408,7 @@ export default function FrontDesk() {
         setBookingIds((b) => b.filter((id) => id !== client.id));
       }
     },
-    [activeId, bookingIds, refreshRoster, waitlistOpen, loadWaitlist],
+    [activeId, bookingIds, refreshRoster, loadWaitlist],
   );
 
   /**
@@ -478,6 +497,44 @@ export default function FrontDesk() {
           <p className="muted">No classes in the next few hours.</p>
         ) : null}
       </nav>
+
+      {/* Three numbers, read at arm's length in the ninety seconds before
+          class: is everyone here, is anyone missing, is there room. Signed
+          up and checked in come from the roster already in memory, capacity
+          from the class summary; only the waitlist ever costs a call, and
+          only for a full class. Not tappable yet: T4 puts the lists behind
+          them. */}
+      {activeClass ? (
+        <header className="counters" aria-label="Counts for the selected class">
+          <div className="counter">
+            <span className="counter-num">
+              {entries.length}
+              {activeClass.capacity !== null ? (
+                <span className="counter-cap"> of {activeClass.capacity}</span>
+              ) : null}
+            </span>
+            <span className="counter-label">signed up</span>
+          </div>
+          <div className="counter">
+            <span className="counter-num">
+              {entries.filter((e) => e.checkedIn).length}
+            </span>
+            <span className="counter-label">checked in</span>
+          </div>
+          <div className="counter">
+            <span className="counter-num">
+              {waitlist !== null
+                ? waitlist.length
+                : classFull
+                  ? waitlistError
+                    ? "?"
+                    : "..."
+                  : 0}
+            </span>
+            <span className="counter-label">waitlist</span>
+          </div>
+        </header>
+      ) : null}
 
       <input
         className="search"
