@@ -112,6 +112,20 @@ to forward. Enabled by `POS_DEVTOOLS=true` or a dev build; `/api/devlog`
 404s otherwise, because the records carry client names and booking details
 and must not be reachable from the counter iPad.
 
+### Settings tab
+
+The drawer's second tab holds the tunables that have already been wrong once
+each: search debounce, minimum query length, result limit, how many hours of
+schedule to show either side of now, whether check-in is optimistic, and
+whether an unpaid booking needs a confirming tap. They live in the browser's
+localStorage, apply immediately, and need no restart. Testing a number should
+not cost a commit.
+
+Anything that decides whether a write reaches Mindbody -- dry run, target,
+the write guard -- is deliberately NOT here. Those stay in the server
+environment where a browser cannot reach them; a settings panel that could
+switch off dry run would defeat the point of dry run.
+
 ## The API spec is vendored. Use it.
 
 `docs/mindbody-openapi/` holds the full v6 OpenAPI specification, split by

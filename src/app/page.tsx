@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import DevDrawer from "./DevDrawer";
+import { useSettings } from "./settings";
 
 /**
  * The counter screen. One class selector, one roster, one search box.
@@ -42,15 +43,6 @@ function clockTime(iso: string): string {
   return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-/**
- * Long enough that a normal typing rhythm produces one request, short
- * enough not to feel laggy. Mindbody answers in 400-900ms, so the total
- * wait is about a second.
- */
-const SEARCH_DEBOUNCE_MS = 350;
-/** Two letters matches hundreds of people and helps nobody. */
-const MIN_QUERY = 3;
-
 export default function FrontDesk() {
   const [classes, setClasses] = useState<ClassSummary[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -72,6 +64,16 @@ export default function FrontDesk() {
   /** Rows with a check-in in flight. */
   const [busy, setBusy] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
+  /** Tunables live in the dev drawer's settings tab, so the ones that have
+   *  already been wrong once can be adjusted without a commit. */
+  const { settings } = useSettings();
+  /**
+   * Enter searches now rather than waiting out the debounce. The debounce
+   * exists to avoid a call per keystroke; someone who has pressed Enter has
+   * finished typing and should not be made to wait for a timer to agree.
+   */
+  const [searchNow, setSearchNow] = useState(0);
+  const skipDebounce = useRef(false);
 
   useEffect(() => {
     fetch("/api/config")
@@ -81,7 +83,9 @@ export default function FrontDesk() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/roster")
+    fetch(
+      `/api/roster?hoursBack=${settings.hoursBack}&hoursForward=${settings.hoursForward}`,
+    )
       .then((r) => r.json())
       .then((d) => {
         if (d.error) return setError(d.error);
@@ -89,7 +93,7 @@ export default function FrontDesk() {
         setActiveId(d.classes?.[0]?.classId ?? null);
       })
       .catch((e) => setError(String(e)));
-  }, []);
+  }, [settings.hoursBack, settings.hoursForward]);
 
   useEffect(() => {
     if (activeId === null) return;
@@ -112,20 +116,22 @@ export default function FrontDesk() {
    * have made. It also raced: a slow "de" could land after a fast
    * "dennis" and overwrite the better answer.
    *
-   * Three letters minimum, because two returns hundreds of matches that
-   * nobody scrolls, at the cost of a metered call.
+   * Three letters minimum by default, because two returns hundreds of
+   * matches that nobody scrolls, at the cost of a metered call.
    */
   useEffect(() => {
     const q = query.trim();
-    if (q.length < MIN_QUERY) {
+    if (q.length < settings.minQueryLength) {
       setFound([]);
       setSearching(false);
       return;
     }
     setSearching(true);
     const controller = new AbortController();
+    const delay = skipDebounce.current ? 0 : settings.searchDebounceMs;
+    skipDebounce.current = false;
     const t = setTimeout(() => {
-      fetch(`/api/search?q=${encodeURIComponent(q)}`, {
+      fetch(`/api/search?q=${encodeURIComponent(q)}&limit=${settings.searchLimit}`, {
         signal: controller.signal,
       })
         .then((r) => r.json())
@@ -135,12 +141,18 @@ export default function FrontDesk() {
            * previous results rather than blanking the list mid-type. */
         })
         .finally(() => setSearching(false));
-    }, SEARCH_DEBOUNCE_MS);
+    }, delay);
     return () => {
       clearTimeout(t);
       controller.abort();
     };
-  }, [query]);
+  }, [
+    query,
+    searchNow,
+    settings.minQueryLength,
+    settings.searchDebounceMs,
+    settings.searchLimit,
+  ]);
 
   /**
    * Set a visit's signed-in state, and wait for Mindbody before showing it
@@ -162,6 +174,13 @@ export default function FrontDesk() {
         return;
       }
       setBusy((b) => [...b, entry.clientId]);
+      if (settings.optimisticCheckIn) {
+        setEntries((rows) =>
+          rows.map((r) =>
+            r.clientId === entry.clientId ? { ...r, checkedIn: signedIn } : r,
+          ),
+        );
+      }
       setFailed((f) => {
         const { [entry.clientId]: _drop, ...rest } = f;
         return rest;
@@ -181,6 +200,13 @@ export default function FrontDesk() {
           ),
         );
       } catch (err) {
+        if (settings.optimisticCheckIn) {
+          setEntries((rows) =>
+            rows.map((r) =>
+              r.clientId === entry.clientId ? { ...r, checkedIn: !signedIn } : r,
+            ),
+          );
+        }
         setFailed((f) => ({
           ...f,
           [entry.clientId]: err instanceof Error ? err.message : String(err),
@@ -189,7 +215,7 @@ export default function FrontDesk() {
         setBusy((b) => b.filter((id) => id !== entry.clientId));
       }
     },
-    [],
+    [settings.optimisticCheckIn],
   );
 
   /**
@@ -205,13 +231,17 @@ export default function FrontDesk() {
     (entry: RosterEntry) => {
       if (busy.includes(entry.clientId)) return;
       if (entry.checkedIn) return void setSignedIn(entry, false);
-      if (!entry.paid && !confirming.includes(entry.clientId)) {
+      if (
+        settings.confirmUnpaid &&
+        !entry.paid &&
+        !confirming.includes(entry.clientId)
+      ) {
         setConfirming((c) => [...c, entry.clientId]);
         return;
       }
       void setSignedIn(entry, true);
     },
-    [busy, confirming, setSignedIn],
+    [busy, confirming, setSignedIn, settings.confirmUnpaid],
   );
 
   const rosterIds = useMemo(
@@ -262,8 +292,18 @@ export default function FrontDesk() {
         className="search"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            skipDebounce.current = true;
+            setSearchNow((n) => n + 1);
+          }
+        }}
+        enterKeyHint="search"
         placeholder={
-          searching ? "Searching..." : "Search for a walk-in (3+ letters)"
+          searching
+            ? "Searching..."
+            : `Search for a walk-in (${settings.minQueryLength}+ letters)`
         }
         autoComplete="off"
         autoCorrect="off"

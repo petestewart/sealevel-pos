@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { DEFAULT_SETTINGS, type Settings, useSettings } from "./settings";
+
 /**
  * A drawer that slides up from the bottom showing the Mindbody traffic this
  * app actually generated: method, path, status, latency, request body,
@@ -38,6 +40,8 @@ export default function DevDrawer() {
   const [expanded, setExpanded] = useState<number | null>(null);
   /** Which call id was just copied, for the momentary "copied" label. */
   const [copied, setCopied] = useState<number | "all" | null>(null);
+  const [tab, setTab] = useState<"calls" | "settings">("calls");
+  const { settings, set, reset } = useSettings();
 
   const poll = useCallback(async () => {
     try {
@@ -135,25 +139,45 @@ export default function DevDrawer() {
 
       <section className={open ? "dev-drawer open" : "dev-drawer"}>
         <header className="dev-head">
-          <strong>Mindbody calls</strong>
-          <span className="muted">newest first, server-side</span>
           <button
-            onClick={() => copy(calls.map(asText).join("\n\n====\n\n"), "all")}
+            className={tab === "calls" ? "dev-tab on" : "dev-tab"}
+            onClick={() => setTab("calls")}
           >
-            {copied === "all" ? "copied" : "copy all"}
+            calls
           </button>
           <button
-            onClick={async () => {
-              await fetch("/api/devlog", { method: "DELETE" });
-              setCalls([]);
-            }}
+            className={tab === "settings" ? "dev-tab on" : "dev-tab"}
+            onClick={() => setTab("settings")}
           >
-            clear
+            settings
           </button>
+          {tab === "calls" ? (
+            <>
+              <button
+                onClick={() =>
+                  copy(calls.map(asText).join("\n\n====\n\n"), "all")
+                }
+              >
+                {copied === "all" ? "copied" : "copy all"}
+              </button>
+              <button
+                onClick={async () => {
+                  await fetch("/api/devlog", { method: "DELETE" });
+                  setCalls([]);
+                }}
+              >
+                clear
+              </button>
+            </>
+          ) : (
+            <button onClick={reset}>reset to defaults</button>
+          )}
         </header>
 
         <div className="dev-body">
-          {calls.length === 0 ? (
+          {tab === "settings" ? (
+            <SettingsPanel settings={settings} set={set} />
+          ) : calls.length === 0 ? (
             <p className="muted">No calls yet.</p>
           ) : (
             calls.map((call) => (
@@ -195,5 +219,87 @@ export default function DevDrawer() {
         </div>
       </section>
     </>
+  );
+}
+
+const NUMBERS: {
+  key: keyof Settings;
+  label: string;
+  hint: string;
+  min: number;
+  max: number;
+  step: number;
+}[] = [
+  { key: "searchDebounceMs", label: "Search debounce", hint: "ms", min: 0, max: 1500, step: 50 },
+  { key: "minQueryLength", label: "Minimum query", hint: "letters", min: 1, max: 6, step: 1 },
+  { key: "searchLimit", label: "Search results", hint: "max", min: 3, max: 50, step: 1 },
+  { key: "hoursBack", label: "Schedule back", hint: "hours", min: 0, max: 12, step: 1 },
+  { key: "hoursForward", label: "Schedule forward", hint: "hours", min: 1, max: 24, step: 1 },
+];
+
+const FLAGS: { key: keyof Settings; label: string; hint: string }[] = [
+  {
+    key: "optimisticCheckIn",
+    label: "Optimistic check-in",
+    hint: "flip the row before Mindbody answers (faster, can show a check-in that failed)",
+  },
+  {
+    key: "confirmUnpaid",
+    label: "Confirm unpaid check-in",
+    hint: "require a second tap for a booking with no pass attached",
+  },
+];
+
+function SettingsPanel({
+  settings,
+  set,
+}: {
+  settings: Settings;
+  set: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+}) {
+  return (
+    <div className="dev-settings">
+      <p className="muted">
+        Stored in this browser. Applies immediately, no restart. Dry run,
+        target and the write guard are server settings and deliberately not
+        here.
+      </p>
+      {NUMBERS.map((field) => (
+        <label key={field.key} className="dev-setting">
+          <span className="dev-setting-label">
+            {field.label}
+            <span className="muted"> {field.hint}</span>
+          </span>
+          <input
+            type="number"
+            min={field.min}
+            max={field.max}
+            step={field.step}
+            value={String(settings[field.key])}
+            onChange={(e) =>
+              set(field.key, Number(e.target.value) as never)
+            }
+          />
+          {settings[field.key] !== DEFAULT_SETTINGS[field.key] ? (
+            <span className="dev-changed">
+              default {String(DEFAULT_SETTINGS[field.key])}
+            </span>
+          ) : null}
+        </label>
+      ))}
+      {FLAGS.map((field) => (
+        <label key={field.key} className="dev-setting">
+          <span className="dev-setting-label">
+            {field.label}
+            <span className="muted"> {field.hint}</span>
+          </span>
+          <input
+            type="checkbox"
+            checked={Boolean(settings[field.key])}
+            onChange={(e) => set(field.key, e.target.checked as never)}
+          />
+        </label>
+      ))}
+    </div>
   );
 }

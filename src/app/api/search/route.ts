@@ -5,9 +5,13 @@ import { search } from "@/lib/clients";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const q = new URL(request.url).searchParams.get("q") ?? "";
+  const params = new URL(request.url).searchParams;
+  const q = params.get("q") ?? "";
+  const limit = Number(params.get("limit") ?? 12);
   try {
-    return NextResponse.json(await search(q));
+    return NextResponse.json(
+      await search(q, Number.isFinite(limit) ? limit : 12),
+    );
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },

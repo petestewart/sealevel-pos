@@ -39,9 +39,11 @@ export interface ClassRoster extends ClassSummary {
  */
 export async function classesAroundNow(
   now = new Date(),
+  hoursBack = 2,
+  hoursForward = 4,
 ): Promise<ClassSummary[]> {
-  const start = new Date(now.getTime() - 2 * 60 * 60 * 1000);
-  const end = new Date(now.getTime() + 4 * 60 * 60 * 1000);
+  const start = new Date(now.getTime() - hoursBack * 60 * 60 * 1000);
+  const end = new Date(now.getTime() + hoursForward * 60 * 60 * 1000);
   const body = await mindbody(
     `/class/classes?StartDateTime=${encodeURIComponent(start.toISOString())}` +
       `&EndDateTime=${encodeURIComponent(end.toISOString())}`,
