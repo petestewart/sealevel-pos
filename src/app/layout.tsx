@@ -14,6 +14,15 @@ export const viewport: Viewport = {
   // The counter is not a place to accidentally pinch-zoom mid-check-in.
   maximumScale: 1,
   userScalable: false,
+  /**
+   * Browser chrome follows the theme too, so an Add to Home Screen install
+   * does not frame a dark screen in a light status bar. These two must stay
+   * equal to --bg in the matching :root block in globals.css.
+   */
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#fbfaf8" },
+    { media: "(prefers-color-scheme: dark)", color: "#14130f" },
+  ],
 };
 
 export default function RootLayout({

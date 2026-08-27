@@ -5,6 +5,14 @@
  */
 
 :root {
+  /* Tells the browser both themes are supported, which is what themes the
+   * things CSS variables cannot reach: the number-input spinners and
+   * checkboxes in the settings panel, the search field's caret and autofill
+   * shading, scrollbars, and default focus rings. Without it those render
+   * light on a dark screen no matter how carefully the palette below is
+   * written. */
+  color-scheme: light dark;
+
   --bg: #fbfaf8;
   --surface: #ffffff;
   --line: #e3ded6;
@@ -450,6 +458,7 @@ button {
 .dev-setting input[type="checkbox"] {
   width: 22px;
   height: 22px;
+  accent-color: var(--accent);
 }
 
 .dev-changed {

@@ -208,6 +208,15 @@ while `git clone` works, so clone the repo rather than fetching files.
 - No em dashes in user-facing copy.
 - Sized for a hot room and a queue: nothing under 16px, tap targets at least
   64px tall.
+- **Every colour is a token, in both palettes.** `globals.css` defines the
+  palette twice, in `:root` and in the `prefers-color-scheme: dark` block, and
+  no hex belongs anywhere else in the CSS or in a component. A hardcoded colour
+  sitting next to a themed one is the bug that made the check-in chip
+  unreadable twice: the text flipped with the theme and the background did not.
+  `color-scheme: light dark` on `:root` covers what variables cannot reach
+  (input spinners, checkboxes, carets, scrollbars, focus rings), and the two
+  `themeColor` entries in `layout.tsx` must stay equal to `--bg` in the
+  matching palette.
 
 ## Known gaps
 
