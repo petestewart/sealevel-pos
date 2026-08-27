@@ -12,14 +12,18 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(request: Request) {
   try {
-    const { visitId, signedIn } = await request.json();
+    const { visitId, signedIn, clientId } = await request.json();
     if (typeof visitId !== "number") {
       return NextResponse.json(
         { error: "visitId (number) is required" },
         { status: 400 },
       );
     }
-    await setSignedIn(visitId, signedIn !== false);
+    await setSignedIn(
+      visitId,
+      signedIn !== false,
+      typeof clientId === "string" ? clientId : undefined,
+    );
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(

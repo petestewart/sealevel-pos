@@ -172,9 +172,16 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
 export async function setSignedIn(
   visitId: number,
   signedIn: boolean,
+  /**
+   * Who the visit belongs to, for the POS_WRITE_CLIENT_IDS guard only.
+   * The Mindbody payload does not name a client, so without this the
+   * guard would suppress every check-in whenever it is armed.
+   */
+  clientId?: string,
 ): Promise<void> {
   await mindbody("/client/updateclientvisit", {
     method: "POST",
     body: { VisitId: visitId, SignedIn: signedIn },
+    clientId,
   });
 }

@@ -22,7 +22,7 @@ Rules of the board:
 The one call everything else scaffolds around: `POST /client/updateclientvisit`
 `{VisitId, SignedIn}`.
 
-- [ ] Code audit: confirm the implemented call matches the vendored spec
+- [x] Code audit: confirm the implemented call matches the vendored spec
       exactly (payload shape, response handling, `SignedIn: false` reversal)
 - [ ] Pete: flip a `SignedIn` flag on and off against a write-guarded dummy
       client, drawer open, and see it change in Mindbody

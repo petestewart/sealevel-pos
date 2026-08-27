@@ -206,7 +206,11 @@ export default function FrontDesk() {
         const res = await fetch("/api/checkin", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ visitId: entry.visitId, signedIn }),
+          body: JSON.stringify({
+            visitId: entry.visitId,
+            signedIn,
+            clientId: entry.clientId,
+          }),
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);

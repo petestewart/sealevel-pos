@@ -131,6 +131,16 @@ export interface MindbodyCallOptions {
   body?: unknown;
   /** Skip the staff token. Only for endpoints that genuinely do not need it. */
   anonymous?: boolean;
+  /**
+   * The client this write is about, for the POS_WRITE_CLIENT_IDS guard,
+   * when the Mindbody payload itself does not name one.
+   * `/client/updateclientvisit` takes only `{VisitId, SignedIn}`, so without
+   * this every check-in would be suppressed under the write guard -- including
+   * the allowed dummy client's, which is exactly the write the guard exists
+   * to let through. Never merged into the request body: the payload stays
+   * spec-shaped.
+   */
+  clientId?: string;
 }
 
 /**
@@ -221,7 +231,7 @@ export async function mindbody<T = any>(
       return { DryRun: true } as T;
     }
     const allowed = allowedWriteClientIds();
-    const client = bodyClientId(opts.body);
+    const client = bodyClientId(opts.body) ?? opts.clientId ?? null;
     if (allowed.size > 0 && (client === null || !allowed.has(client))) {
       console.warn(
         `[write-guard] suppressed ${method} ${path} for client ${client ?? "(none named)"}; ` +
