@@ -140,13 +140,33 @@ Doable, and Mindbody models it directly. Every priced item comes back with
 sold at a physical location", and `OnlinePrice`. So the iPad reads `Price` and
 the in-studio number is what a teacher sees, with no mapping table of our own.
 
-Displaying it is only half. The cart is priced **by the server**, not by us:
-the probe asked for a $1.81 item and Mindbody came back with a $2.00 total. So
-the checkout has to be addressed to the physical location, with `LocationId`
-set to the studio and `InStore: true`, or the server will price the sale at the
-online rate no matter what the screen said. Any mismatch between the total we
-displayed and the total the server returns should be treated as a bug and
-surfaced, never quietly accepted.
+Displaying it is only half. The cart is priced **by the server**, not by us, so
+the checkout has to be addressed to the physical location with `LocationId: 1`
+and `InStore: true`. Any mismatch between the total we displayed and the total
+the server returns should be treated as a bug and surfaced, never quietly
+accepted.
+
+**The two locations** (`GET /site/locations`, 2026-08-27):
+
+| Id | Name | Tax |
+|---:|---|---:|
+| 1 | Fremont neighborhood, Seattle | 10.35% |
+| 98 | Online Store | 0% |
+
+There is exactly one physical location, so there is no location-picking UI to
+build: `LocationId: 1` is a constant.
+
+Those tax rates also close a question the probe left open. The probe bought a
+$1.81 item and the server returned $2.00, and `1.81 x 1.1035 = 2.00`, so that
+cart was priced at the **studio's** tax rate despite sending no `LocationId`.
+The spec's "defaults to the online store" note is therefore per-endpoint rather
+than universal, and checkout appears to default to the site's real location.
+Send `LocationId` explicitly anyway: an undocumented default is not a thing to
+build pricing on.
+
+It does hand us a cheap invariant, though. An in-studio total should always be
+`Price x 1.1035`, so a total that disagrees means the cart was addressed to the
+wrong location, and that check costs nothing to assert.
 
 Note the tension this creates with alternative payments: those endpoints only
 support `LocationId = 98`, the online store. **Apple Pay therefore charges the
@@ -419,6 +439,49 @@ receipt: client id, timestamp, and a hash of the exact text displayed. That is
 cheap, and it is the first thing in this app that genuinely needs durable
 storage of its own.
 
+## Categories
+
+Hardcoded as config in the app, not fetched. `GET /site/categories` does exist
+(filed under Site rather than Sale), so this is a choice, and the live response
+is what makes it the right one.
+
+**51 categories come back, and the counter needs about five.** Eighteen are
+literal placeholders named `Service Category3` through `Service Category20`.
+Others are inactive, or accounting artifacts that are categories in Mindbody's
+model but never things a teacher sells: Tip, Fees, Shipping & Handling,
+Payments on Account, Gift Certificate. Rendering that list at a counter would be
+worse than useless.
+
+The meaningful split is `Service` on each record: `true` for passes, classes
+and policy items, `false` for retail.
+
+- **Active retail** (`Service: false`): Food/Drink 36, Accessories 32,
+  Clothing 26, Skin/Body 27, Books 29, Jewelry 28, Music 31,
+  Videos/Instructional 30, Other Products 49.
+- **Active service** (`Service: true`): Towel and Mat -14, ClassPass -12,
+  Vinyasa -15, Classes 1, Course -11, Teacher Training -5, Posture Clinic -1,
+  Virtual Classes -6. Plus policy categories that are never counter items:
+  Late Cancel/No Show -7, Auto Monthly Early Cancellation Fee -10, Trade -3,
+  and the two "In Studio N Limit" entries.
+
+Proposed counter set, ordered by how often a teacher reaches for it: **Towel and
+Mat, Food/Drink, passes, Accessories, Clothing**, with the rest behind a "more".
+Five entries of config against 51 fetched, in an order Mindbody's response
+cannot express, at no metered cost and with no way to be empty at boot.
+
+Three details from the live response worth keeping:
+
+- **`SubCategories` is empty on every category, and `TotalCount` is 0
+  throughout.** The subcategory tree that `/sale/products` can filter on is not
+  populated at this studio, so that level does not need building.
+- **"sales tax exempt" (100000) is the one `IsSecondary: true` record**, which
+  is what `SecondaryCategoryId` on a product refers to. It is also the
+  exception to the 10.35% tax invariant above: do not assert that invariant
+  against an item carrying this secondary category.
+- **"CC purchase under $10" (-13)** looks like a card-minimum workaround. If
+  that is a live desk policy, the POS should know it rather than rediscover it
+  in a failed sale. Worth asking about before Phase 2.
+
 ## Studio banner
 
 A single line across the top that an admin sets: upcoming workshops, a teacher
@@ -528,14 +591,7 @@ time saved at the door.
 - **Waiver state**, shown and blocking. The QR that resolves it is Phase 3;
   Phase 1 shows the problem and hands off to Mindbody.
 - **Studio banner.**
-- **Categories, hardcoded.** Config in the app, not fetched. `GET
-  /site/categories` does exist (filed under Site, not Sale, which is why an
-  earlier pass through the spec missed it), so this is a choice rather than a
-  constraint: the studio's categories effectively never change, and a config
-  file costs no metered call, cannot be empty at boot, and lets the counter
-  order categories by how often a teacher reaches for them rather than by
-  whatever order Mindbody returns. Call `/site/categories` once by hand when
-  writing the config, then leave it alone.
+- **Categories, hardcoded.** Config in the app, not fetched. See below.
 
 **Phase 1.5 — put it at the counter.** Not a feature, and it is the step that
 turns this from a laptop demo into something teachers use. Auth (see open
@@ -740,7 +796,12 @@ genuinely unreliable in practice.
 "no database" decision intact; anything richer probably breaks it. Unresolved,
 and worth resolving before Phase 1 rather than bolting a database on later.
 
-**6. Two unchased probes, both prerequisites for Phase 3.**
+**6. One unchased probe, a prerequisite for Phase 3.**
 `GET /sale/alternativepaymentmethods` returned HTTP 400 and was never
-diagnosed (likely the missing `LocationId=98`), and nobody has confirmed a
-per-client Mindbody-hosted card page exists and is reachable by URL.
+diagnosed; the likely cause is the missing `LocationId=98`. Until it answers,
+Apple Pay cannot be scoped honestly.
+
+(The other Phase 3 prerequisite, a Mindbody-hosted card page, matters less than
+it did: the waiver half of that flow is fully ours to build now that
+`/site/liabilitywaiver` returns the text. Card capture still needs a hosted
+surface, since we can never take a PAN.)

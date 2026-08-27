@@ -182,6 +182,17 @@ while `git clone` works, so clone the repo rather than fetching files.
   service is sellable at every location, so service calls are the sound test.
 - **`/site/sites` returns the sandbox too** (id -99, "LastSpot") alongside the
   real studio (471). Never read `Sites[0]`; select by configured site id.
+- **The studio's `LocationId` is 1** ("Fremont neighborhood, Seattle", tax
+  10.35%). `98` is the virtual "Online Store" location, tax 0%, and it is a
+  reserved id meaning the same thing on every Mindbody site. There is only one
+  physical location, so `LocationId: 1` is a constant, not a choice. Items
+  carry both `Price` (in studio) and `OnlinePrice`; carts must be sent with
+  `LocationId: 1` and `InStore: true` so the server prices what the screen
+  showed. Alternative payments (Apple Pay) support only location 98, and
+  therefore only online pricing.
+- **Categories live in `site.yml`, not `sale.yml`.** `GET /site/categories`
+  exists; grepping only the Sale tag missed it once. `/site/liabilitywaiver`
+  (the waiver's actual text) and `/site/paymenttypes` are next to it.
 - **`/class/classvisits` puts the CLASS name in the visit's `Name` field.**
   Reading it showed every roster row as "bikram yoga". Names come from
   explicit client fields, and otherwise from the client index by id.
