@@ -625,7 +625,7 @@ button {
 
 .modal-actions button {
   flex: 1;
-  min-height: 56px;
+  min-height: 64px;
   border-radius: 12px;
   font-size: 17px;
   font-weight: 600;
