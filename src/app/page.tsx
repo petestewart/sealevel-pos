@@ -73,6 +73,8 @@ export default function FrontDesk() {
    * finished typing and should not be made to wait for a timer to agree.
    */
   const [searchNow, setSearchNow] = useState(0);
+  /** The row awaiting a confirmed check-out, if any. */
+  const [checkingOut, setCheckingOut] = useState<RosterEntry | null>(null);
   const skipDebounce = useRef(false);
 
   useEffect(() => {
@@ -224,13 +226,13 @@ export default function FrontDesk() {
    * for free. Phase 2 will sell them a pass here; until then it at least
    * takes a deliberate second tap.
    *
-   * Checking someone in is reversible (updateclientvisit takes
-   * SignedIn: false), so a tap on an already-checked-in row undoes it.
+   * Checking OUT is not here: it has its own control and its own
+   * confirmation, because undoing a check-in by the same gesture that made
+   * it is too easy to do by accident.
    */
   const tapRow = useCallback(
     (entry: RosterEntry) => {
-      if (busy.includes(entry.clientId)) return;
-      if (entry.checkedIn) return void setSignedIn(entry, false);
+      if (busy.includes(entry.clientId) || entry.checkedIn) return;
       if (
         settings.confirmUnpaid &&
         !entry.paid &&
@@ -311,57 +313,80 @@ export default function FrontDesk() {
       />
 
       <ul className="roster">
-        {entries.map((entry) => (
-          <li key={entry.clientId}>
-            <button
-              className="row"
-              onClick={() => tapRow(entry)}
+        {entries.map((entry) => {
+          const working = busy.includes(entry.clientId);
+          const detail = working
+            ? "Talking to Mindbody..."
+            : failed[entry.clientId]
+              ? failed[entry.clientId]
+              : confirming.includes(entry.clientId)
+                ? "No pass on this booking. Tap again to check in for free."
+                : (entry.pricingOption ?? "No pass on this booking");
 
-            >
-              <span className="name">
-                {entry.name}
-                <span className="detail">
-                  {busy.includes(entry.clientId)
-                    ? "Talking to Mindbody..."
-                    : failed[entry.clientId]
-                    ? failed[entry.clientId]
-                    : confirming.includes(entry.clientId)
-                      ? "No pass on this booking. Tap again to check in for free."
-                      : entry.checkedIn
-                        ? `${entry.pricingOption ?? "No pass"} - tap to undo`
-                        : (entry.pricingOption ?? "No pass on this booking")}
+          /**
+           * A checked-in row is NOT a button. Undoing a check-in used to be
+           * a tap anywhere on the row, which is the same gesture that made
+           * it -- far too easy to reverse someone by accident while scanning
+           * a list. It now takes a small deliberate control, and then a
+           * confirmation.
+           */
+          if (entry.checkedIn && !working) {
+            return (
+              <li key={entry.clientId}>
+                <div className="row">
+                  <span className="name">
+                    {entry.name}
+                    <span className="detail">{detail}</span>
+                  </span>
+                  <span className="chip in">checked in</span>
+                  <button
+                    className="checkout"
+                    onClick={() => setCheckingOut(entry)}
+                    aria-label={`Check out ${entry.name}`}
+                  >
+                    check out
+                  </button>
+                </div>
+              </li>
+            );
+          }
+
+          return (
+            <li key={entry.clientId}>
+              <button className="row" onClick={() => tapRow(entry)}>
+                <span className="name">
+                  {entry.name}
+                  <span className="detail">{detail}</span>
                 </span>
-              </span>
-              <span
-                className={
-                  busy.includes(entry.clientId)
-                    ? "chip busy"
-                    : failed[entry.clientId]
-                    ? "chip failed"
-                    : entry.checkedIn
-                      ? "chip in"
-                      : confirming.includes(entry.clientId)
-                        ? "chip unpaid"
-                        : entry.paid
-                          ? "chip walkin"
-                          : "chip unpaid"
-                }
-              >
-                {busy.includes(entry.clientId)
-                  ? <span className="spinner" aria-label="working" />
-                  : failed[entry.clientId]
-                  ? "failed"
-                  : entry.checkedIn
-                    ? "in"
-                    : confirming.includes(entry.clientId)
-                      ? "confirm"
-                      : entry.paid
-                        ? "check in"
-                        : "unpaid"}
-              </span>
-            </button>
-          </li>
-        ))}
+                <span
+                  className={
+                    working
+                      ? "chip busy"
+                      : failed[entry.clientId]
+                        ? "chip failed"
+                        : confirming.includes(entry.clientId)
+                          ? "chip unpaid"
+                          : entry.paid
+                            ? "chip walkin"
+                            : "chip unpaid"
+                  }
+                >
+                  {working ? (
+                    <span className="spinner" aria-label="working" />
+                  ) : failed[entry.clientId] ? (
+                    "failed"
+                  ) : confirming.includes(entry.clientId) ? (
+                    "confirm"
+                  ) : entry.paid ? (
+                    "check in"
+                  ) : (
+                    "unpaid"
+                  )}
+                </span>
+              </button>
+            </li>
+          );
+        })}
 
         {walkIns.map((client) => (
           <li key={`walkin-${client.id}`}>
@@ -378,6 +403,43 @@ export default function FrontDesk() {
           </li>
         ))}
       </ul>
+      {checkingOut ? (
+        <div
+          className="modal-scrim"
+          onClick={() => setCheckingOut(null)}
+          role="presentation"
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirm check out"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">Check out {checkingOut.name}?</p>
+            <p className="muted">
+              This marks them as not having attended. Only do it if the
+              check-in was a mistake.
+            </p>
+            <div className="modal-actions">
+              <button className="modal-cancel" onClick={() => setCheckingOut(null)}>
+                Cancel
+              </button>
+              <button
+                className="modal-confirm"
+                onClick={() => {
+                  const entry = checkingOut;
+                  setCheckingOut(null);
+                  void setSignedIn(entry, false);
+                }}
+              >
+                Check out
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <DevDrawer />
     </main>
   );

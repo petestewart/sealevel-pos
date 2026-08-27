@@ -444,3 +444,75 @@ button {
   color: var(--warn);
   font-size: 12px;
 }
+
+/* Check-out: deliberately quieter than the check-in chip, and a separate
+ * target, so reversing a check-in is never the same gesture that made it. */
+
+.checkout {
+  flex: 0 0 auto;
+  min-height: 44px;
+  margin-left: 8px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Confirmation dialog. */
+
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 0.5);
+}
+
+.modal {
+  width: min(460px, 100%);
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 12px 48px rgb(0 0 0 / 0.4);
+}
+
+.modal-title {
+  margin: 0 0 8px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.modal p.muted {
+  margin: 0 0 20px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.modal-actions button {
+  flex: 1;
+  min-height: 56px;
+  border-radius: 12px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.modal-cancel {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+}
+
+.modal-confirm {
+  border: 1px solid transparent;
+  background: var(--stop-bg);
+  color: var(--stop);
+}
