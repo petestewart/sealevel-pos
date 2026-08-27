@@ -8,13 +8,24 @@ the API docs.
 
 ## Status
 
-**Phase 1: check-in only.** Roster for the classes around now, local
-type-ahead search for walk-ins, one-tap optimistic arrival. **No cart, no
-payment, no money.** Verified working against live Mindbody on 2026-08-27:
-classes, teachers, and pricing options all render from real data.
+**Phase 1: check-in, and knowing who you are talking to.** **No cart, no
+payment, no money.**
 
-Phase 2 (stored-card sales and cash) is unblocked but not started. The sale
-path was verified with ai-manager's `npm run mindbody:probe-payments`.
+Built: roster for the classes around now, `searchText` walk-in search,
+pessimistic check-in, gated check-out. Verified against live Mindbody on
+2026-08-27: classes, teachers, and pricing options all render from real data.
+
+**Phase 1 is not finished.** Still to build: verifying check-in against a real
+class, walk-in booking (`/class/addclienttoclass`), the header counters,
+per-client context on the expanded row, waiver state, and the studio banner.
+Then Phase 1.5, which is auth plus deployment and is what makes this usable at
+an actual counter.
+
+Phase 2 (sales) is unblocked but not started. The sale path was verified with
+ai-manager's `npm run mindbody:probe-payments`.
+
+**The design doc's phasing section is current and authoritative.** Read it
+before picking up work; it carries the reasoning for every item above.
 
 ## Safety: nothing writes by accident
 

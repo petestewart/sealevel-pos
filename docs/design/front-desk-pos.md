@@ -103,6 +103,87 @@ native.
 Over the API we can reliably take: stored card on file, cash, gift card and
 account credit, comp, and custom payment types.
 
+### Choosing a payment method
+
+Everything needed for a payment-method chooser is present:
+
+| Method | Mechanism |
+|---|---|
+| Stored card | `StoredCard` |
+| Account credit | `DebitAccount`, balance from `GET /client/clientaccountbalances` |
+| Cash | `Custom` / cash payment info |
+| Gift card | balance from `GET /sale/giftcardbalance` |
+| Comp | `Comp` |
+| Anything the studio defined | `GET /sale/custompaymentmethods` |
+
+Read the balance before offering the method. A chooser that lists "account
+credit" and then fails because the balance is $12 against a $140 membership is
+worse than one that shows "account credit ($12)" greyed out, and the balance
+is one call.
+
+### We can never build our own add-a-card form
+
+The spec settles this. There is no endpoint for attaching a payment method to a
+client that does not involve a raw card number: it is either `ClientCreditCard`
+on `POST /client/updateclient`, or `saveInfo: true` in `CreditCard` checkout
+metadata, and **both take the PAN**. Either one puts our iPad, our server and
+our logs in PCI scope.
+
+So storing a card must go through a surface Mindbody hosts, not one we write.
+The design already preferred that; the spec now requires it. Do not revisit
+this in six months on the theory that a small form would be simpler.
+
+### In-studio price vs online price
+
+Doable, and Mindbody models it directly. Every priced item comes back with
+**both** numbers: `Price`, documented as "the cost of the pricing option when
+sold at a physical location", and `OnlinePrice`. So the iPad reads `Price` and
+the in-studio number is what a teacher sees, with no mapping table of our own.
+
+Displaying it is only half. The cart is priced **by the server**, not by us:
+the probe asked for a $1.81 item and Mindbody came back with a $2.00 total. So
+the checkout has to be addressed to the physical location, with `LocationId`
+set to the studio and `InStore: true`, or the server will price the sale at the
+online rate no matter what the screen said. Any mismatch between the total we
+displayed and the total the server returns should be treated as a bug and
+surfaced, never quietly accepted.
+
+Note the tension this creates with alternative payments: those endpoints only
+support `LocationId = 98`, the online store. **Apple Pay therefore charges the
+online price**, which for any item priced differently in studio is the wrong
+number. That is a second reason Apple Pay is not a general counter payment
+method, and if it is ever offered for an item with split pricing, the
+difference has to be deliberate rather than a surprise in the month-end
+numbers.
+
+### Apple Pay is real, and it is not a button at the counter
+
+`GET /sale/alternativepaymentmethods` lists it (type code **801**, alongside
+iDEAL at 997), and it requires Mindbody Payments on Stripe, which is exactly
+what this account is. So it is available to us. But three constraints decide
+where it belongs:
+
+- **Online store only.** These endpoints support `LocationId = 98` and default
+  to it. The sale lands at the online store, not the studio, which the
+  bookkeeping will see.
+- **It is a redirect flow.** `POST /sale/initiatecheckoutshoppingcart` returns
+  a URL, the customer authenticates on their own device, Mindbody calls back to
+  a `PaymentAuthenticationCallbackUrl`, and then
+  `POST /sale/completecheckoutshoppingcart` finishes the sale.
+- **There is therefore no counter tap.** Nothing lets a teacher press Apple Pay
+  on the studio iPad and have a customer's phone respond.
+
+Apple Pay is not a fourth entry in the payment chooser. It is structurally the
+same gesture as card capture: **put a link or QR in front of the customer and
+let them finish on their phone.** That makes it part of option B rather than a
+thing of its own, and it means one QR mechanism yields three outcomes: store a
+card, pay now with Apple Pay, sign the waiver.
+
+Note that the probe got HTTP 400 from `/sale/alternativepaymentmethods` and it
+was never chased. That endpoint is the gate for all of the above, and the
+likely cause is the missing `LocationId=98`. Re-probe it before planning this
+work in detail.
+
 ### A. Fall back to Mindbody for new-card sales (recommended, v1)
 
 The POS builds the cart, then for a student with no card on file it deep-links
@@ -230,10 +311,114 @@ Row states and what one tap does:
 | amber | booked, unpaid, has card on file | sell the pass + check in, one confirm |
 | amber-outline | booked, unpaid, no card on file | opens capture link / handoff |
 | grey | not booked (walk-in, found by search) | book + price + check in |
-| red | waiver missing or account issue | opens the blocking detail |
+| grey, class full | not booked, no room | add to the waiting list |
+| red | waiver missing, or `RedAlert` set | opens the blocking detail |
+
+Two of these carry a nudge rather than a different action: a row whose pass has
+`Remaining: 1` says so and offers the renewal, and a row whose history shows a
+habitual mat or towel rental says that too.
 
 The target: check-in one tap, pass-renewal check-in two taps, and no path that
 requires reading anything smaller than 16px in a hot room.
+
+## The header: counters, and what is behind them
+
+Across the top, three numbers for the selected class: **signed up**, **checked
+in**, **waitlist**. A teacher reads these at a glance in the ninety seconds
+before a class starts, and they answer the three questions actually being
+asked: is everyone here, is anyone missing, is there room.
+
+Two of the three are free. The roster we already fetch gives signed-up (its
+length) and checked-in (the count of `SignedIn`), and the class summary
+already carries `MaxCapacity` and `TotalBooked`, so capacity costs nothing
+either.
+
+**Waitlist costs a call**, and it is not in the roster: it needs
+`GET /class/waitlistentries` filtered by `ClassIds`. So it is fetched
+conditionally: **if `TotalBooked < MaxCapacity`, there is no waiting list, and
+we do not ask.** A class with room cannot have people waiting for it. That
+threshold turns the waitlist counter from a per-class call into a call that
+only happens for full classes, which at this studio is the minority of slots.
+The counter still renders, showing zero, without any request going out.
+
+**Tapping a counter opens the list behind it** in a modal: tap "checked in"
+and see who, tap "waitlist" and see the names in queue order. This is where a
+teacher answers "is Dennis here yet" without scrolling the roster, and it is
+also the only place waitlisted people appear as rows.
+
+One trap: a visit carrying a `WaitlistEntryId` is a **stub**. Mindbody
+populates only `ClassId` and `ClientId` on those records, so a waitlisted
+person cannot be rendered with the normal row component. Names come from the
+same batched client lookup the roster uses.
+
+From the waitlist modal, a name promotes into the class with
+`POST /class/addclienttoclass` carrying that `WaitlistEntryId`, which is the
+documented way to move someone off a waiting list rather than double-booking
+them. And when a walk-in arrives at a class that is already full, the same
+endpoint with `Waitlist: true` puts them in the queue instead of failing.
+
+## What the teacher should know about the person in front of them
+
+The counter is a thirty-second conversation, and Mindbody is holding the three
+facts that make it a good one. The row expands to show them.
+
+- **"This is your last class."** `GET /client/clientservices` returns `Count`
+  and `Remaining` on each pricing option. When `Remaining` is 1, the teacher
+  should be told so, and offered the renewal right there, before the student
+  walks into the room and the moment is gone. This is the single highest-value
+  thing on this list: it converts an expiring pack at the exact moment the
+  student is most engaged, and today it is invisible unless someone goes
+  looking.
+- **"They usually rent a mat."** `GET /client/clientpurchases` is the history.
+  If the last several visits carry a towel or mat rental, surface it as a
+  prompt so the teacher asks rather than the student having to. This is a
+  habit hint, not an upsell: get it wrong and it is noise, so it should need a
+  real pattern (say, three of the last five visits) before it shows.
+- **"Third visit this week."** `GET /client/clientvisits` gives recent
+  attendance. A visit count is a conversation opener and a retention signal
+  both, and it costs one call.
+- **Notes and alerts.** The client record carries `Notes` and, separately,
+  `RedAlert`. `RedAlert` is Mindbody's own "stop and read this" field and
+  should be treated as blocking rather than decorative: injury, account
+  problem, anything the studio flagged deliberately. Show it on the walk-in
+  panel and on the expanded row.
+
+All four are per-client calls, so they are fetched when a row is opened, never
+for a whole roster at once. The exception worth considering later is the
+last-class prompt, which is valuable enough that prefetching it for the
+roster may earn its calls.
+
+## Waiver status
+
+A new student who has not signed the liability waiver is the one case where
+the fast path must stop. `Liability.IsReleased` and `Liability.AgreementDate`
+on the client record say whether they have.
+
+The API *can* set it: `LiabilityRelease: true` on `POST /client/updateclient`
+flips `IsReleased`, stamps the agreement date, and records the staff member as
+`ReleasedBy`. That is a one-line implementation and it is the wrong one. A
+liability waiver is a legal artifact, and a teacher tapping "signed" on an
+iPad on someone else's behalf produces a record that says the student agreed
+when the student may never have read it. What that flag is for is recording an
+agreement that actually happened, not manufacturing one.
+
+So: the row shows an unmissable waiver-missing state, and the action behind it
+puts the waiver **in front of the student** rather than the teacher, on their
+own phone by QR or on a handed-over device. `LiabilityRelease: true` is then
+written on the strength of a real agreement. That is the same QR mechanism as
+card capture, which is a good reason to build the two together.
+
+## Studio banner
+
+A single line across the top that an admin sets: upcoming workshops, a teacher
+training, a schedule change, a special. It exists because the front desk is the
+only moment the studio reliably has a student's attention, and right now
+whether anything gets mentioned depends on which teacher is on shift.
+
+Deliberately dumb. It is text, set somewhere an admin can reach, shown until it
+is changed. No scheduling, no targeting, no per-student logic. Where the text
+lives is an open question: a Mindbody field would avoid a database, but this
+may be the first thing in this app that genuinely wants one.
 
 ## API mechanics worth knowing before building
 
@@ -242,32 +427,81 @@ requires reading anything smaller than 16px in a hot room.
   `LaunchSignInScreen` permission, and unpaid reservations require the
   "Make Unpaid Reservation" permission. Provision one dedicated API staff
   account with exactly these permissions rather than reusing a person's login.
-- **Endpoints.** `POST /class/addclienttoclass` (book), `POST /class/addarrival`
-  (check in), `POST /sale/checkoutshoppingcart` (sell),
+- **Endpoints.** `POST /class/addclienttoclass` (book, and with `Waitlist: true`
+  waitlist, and with `WaitlistEntryId` promote off the waiting list),
+  `POST /client/updateclientvisit` `{VisitId, SignedIn}` (check in, and
+  reversible), `POST /sale/checkoutshoppingcart` (sell),
   `GET /sale/services` + `/sale/products` (catalog),
-  `GET /client/clientcompleteinfo` (pass status, cards on file),
-  `GET /class/classes` (roster).
+  `GET /client/clientcompleteinfo` (pass status, cards on file, waiver,
+  notes, `RedAlert`), `GET /client/clientservices` (`Remaining` on each pass),
+  `GET /client/clientpurchases` and `/client/clientvisits` (history),
+  `GET /client/clientaccountbalances` (account credit),
+  `GET /class/classes` (roster), `GET /class/waitlistentries` (waiting list).
+  Note that `/class/addarrival` does not exist and arrival is not class
+  check-in; see the vendored spec notes in CLAUDE.md.
+- **`Test: true` exists on writes too**, not just checkout.
+  `addclienttoclass` validates without committing, which is a free rehearsal
+  for booking work.
 - **Metering.** The API is billed per call, per location, with a modest free
   daily allowance. A naive POS that polls rosters every few seconds will run up
   a bill. Prefetch once per class, refresh on an explicit pull-to-refresh, and
   serve search from our own mirror.
-- **Merchant processor.** API credit-card processing only works on
-  API-supported processors (TSYS, Bluefin, Elavon, Paysafe, Ezidebit, Adyen).
-  Confirm which one Sealevel is on before writing a line of payment code.
+- **Merchant processor.** Answered: Mindbody Payments on Stripe, which is also
+  the precondition for the alternative-payment (Apple Pay) endpoints.
 - **Never touch a PAN.** No card number, CVV, or expiry may enter our UI, our
-  logs, or our database, in any option. That constraint is what makes A, B, and
-  C the only three designs on the table.
+  logs, or our database, in any option. This is not a preference: the only two
+  API paths that store a card both take the raw number, so honoring this rule
+  is exactly what makes a Mindbody-hosted capture surface mandatory rather than
+  merely preferable.
+- **Metered calls have a shape.** Per-client detail (services, purchases,
+  visits, balances) is fetched on row open, never per roster. Waitlist is
+  fetched only when a class is at capacity. These are not micro-optimizations,
+  they are the difference between one call per counter interaction and thirty.
 
 ## Phasing
 
-**Phase 1 — check-in only.** Roster, search, one-tap arrival, waiver flag. No
-money moves, so there is nothing to reconcile and nothing to break. This alone
-is most of the time saved at the door, and it is a week of work rather than a
-month. Ship it, watch a teacher use it during a 6pm rush, fix what they hit.
+**Phase 1 — check-in, and knowing who you are talking to.** No money moves, so
+there is nothing to reconcile and nothing to break. This alone is most of the
+time saved at the door.
 
-**Phase 2 — sales on file + cash.** Cart, catalog, `StoredCardInfo` and
-`CashInfo` checkout, receipt by email through Mindbody. Handoff (option A) for
-everything else.
+- Roster for the classes around now, walk-in search, one-tap check-in and a
+  gated check-out. *Built.*
+- **Verify check-in against a real class.** `updateclientvisit` is what the
+  spec says, but nobody has watched a `SignedIn` flag actually flip. Everything
+  else here is scaffolding around this one call, so it is the next thing done,
+  in the sandbox, drawer open.
+- **Walk-in booking, the money-free half.** `POST /class/addclienttoclass`,
+  which needs only `BookClassesAndEventsWithoutPayment`, a permission the
+  account already holds. Without it Phase 1 ships a search box that cannot
+  complete its own action: it finds a person and then has no visit to sign in.
+  Including `Waitlist: true` when the class is full, and promotion off the
+  waiting list by `WaitlistEntryId`.
+- **Header counters** with the conditional waitlist fetch, and the lists behind
+  them.
+- **Client context on the expanded row**: last-class-in-the-pack prompt, recent
+  visits, habitual add-ons, notes and `RedAlert`.
+- **Waiver state**, shown and blocking. The QR that resolves it is Phase 3;
+  Phase 1 shows the problem and hands off to Mindbody.
+- **Studio banner.**
+- **Categories, hardcoded.** Config in the app, not fetched. There is no
+  `GET /sale/categories` in v6 despite the spec referring to one, and the
+  studio's categories do not change. A config file is both simpler and the only
+  thing that actually works.
+
+**Phase 1.5 — put it at the counter.** Not a feature, and it is the step that
+turns this from a laptop demo into something teachers use. Auth (see open
+question 3), Railway, `POS_DEVTOOLS=false`, `POS_DRY_RUN=false`, the mode
+banner verified, Add to Home Screen on the studio iPad. Then watch a teacher
+work a 6pm rush and fix what they actually hit, before building any of Phase 2.
+
+Until auth exists this app must not sit at the counter: it is an open endpoint
+against live student data and, later, live cards.
+
+**Phase 2 — sales.** Cart, catalog with the hardcoded categories, and a payment
+chooser covering stored card, account credit, cash, gift card and comp, with
+balances read before each is offered. Priced at the in-studio rate, with
+`LocationId` and `InStore` set so the server agrees with the screen. Receipt by
+email through Mindbody.
 
 The concrete place this lands in the UI is **the unpaid row**. A booking with
 no pricing option attached is action 2 from the list above, and Phase 1 can
@@ -278,12 +512,31 @@ card on file, and check them in, in one gesture. Free entry stays available
 for the genuine comp, but as the deliberate exception rather than the only
 option.
 
-**Phase 3 — card capture (option B).** The QR/SMS hosted capture flow, so
-"no card on file" becomes a 20-second self-service step off the critical path
-instead of a queue.
+The other thing Phase 2 completes is the **last-class prompt** from Phase 1:
+Phase 1 can tell the teacher the pack is empty, and Phase 2 can do something
+about it in the same gesture.
+
+**Option A, the Mindbody handoff, is cut.** It was scoped here, and it is a
+deep link plus a polling loop to confirm an out-of-band sale, for the roughly
+one person a day with no card on file. Phase 3 solves that person better and
+permanently. Until then the fallback is that the teacher uses the Mindbody app,
+exactly as they do today, which costs no code and is exactly as fast.
+
+**Phase 3 — the customer's own phone (option B, plus Apple Pay, plus the
+waiver).** One QR mechanism, three outcomes: store a card, pay now with Apple
+Pay, sign the waiver. These were three separate ideas and they turn out to be
+one piece of work, because all three are structurally the same gesture: put
+something in front of the student on their own device, off the critical path,
+while the teacher serves the next person.
+
+Prerequisite: re-probe `/sale/alternativepaymentmethods` with `LocationId=98`,
+and establish that a per-client hosted card page actually exists and is
+reachable. Both are unproven, and Phase 3 cannot be scoped honestly until they
+are.
 
 **Phase 4 — only if needed (option C).** Stripe Terminal behind the existing
 payment interface, plus the nightly Stripe-to-Mindbody reconciliation job.
+Ruled out by the data. Keep the seam, do not build it.
 
 ## Open questions to settle first
 
@@ -420,11 +673,25 @@ account is wired up and enumerate any custom payment types.
 client's first-ever purchase, about one a day. Option C is dead; options A and B
 cover the rest.
 
-**3. Teacher identity.** Do teachers each get a Mindbody staff login, or does
-the POS act as one service account? The service account is much simpler, and the
-POS can still record who was on shift on its own side. Confirm with Pete that it
-does not break commission or payroll reporting first.
+**3. Teacher identity. STILL OPEN, and it gates Phase 1.5.** Do teachers each
+get a Mindbody staff login, or does the POS act as one service account? The
+service account is much simpler, and the POS can still record who was on shift
+on its own side. The cost is that Mindbody attributes every check-in and every
+sale to `sealevelapiuser`. Confirm that does not break commission or payroll
+reporting before choosing it.
 
-**4. Wifi at the counter.** What happens mid-sale when it drops? Phase 1 can
-queue arrivals offline and replay them. A sale must never be queued: if the
-network is gone, the POS says so and the teacher falls back to the Mindbody app.
+**4. Wifi at the counter. Proposed answer: do not build offline.** The design
+already forbids queuing a sale. And a queued check-in is exactly the failure
+mode that optimistic check-in was overruled to avoid: a teacher looks away
+believing someone is in who is not. If the network is gone, say so loudly and
+fall back to the Mindbody app. Revisit only if the counter wifi turns out to be
+genuinely unreliable in practice.
+
+**5. Where the studio banner's text lives.** A Mindbody field would keep the
+"no database" decision intact; anything richer probably breaks it. Unresolved,
+and worth resolving before Phase 1 rather than bolting a database on later.
+
+**6. Two unchased probes, both prerequisites for Phase 3.**
+`GET /sale/alternativepaymentmethods` returned HTTP 400 and was never
+diagnosed (likely the missing `LocationId=98`), and nobody has confirmed a
+per-client Mindbody-hosted card page exists and is reachable by URL.
