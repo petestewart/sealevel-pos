@@ -416,9 +416,25 @@ only moment the studio reliably has a student's attention, and right now
 whether anything gets mentioned depends on which teacher is on shift.
 
 Deliberately dumb. It is text, set somewhere an admin can reach, shown until it
-is changed. No scheduling, no targeting, no per-student logic. Where the text
-lives is an open question: a Mindbody field would avoid a database, but this
-may be the first thing in this app that genuinely wants one.
+is changed. No scheduling, no targeting, no per-student logic.
+
+The open question is only **where the text is stored and how an admin edits
+it**, and it matters because this app deliberately has no database. Three
+options, cheapest first:
+
+1. **An environment variable on Railway.** Zero new machinery. Changing the
+   banner means editing a Railway variable and a redeploy, which is a minute of
+   work but not something to ask a studio admin to do.
+2. **A small admin page in this app**, writing to a file or a single Redis key.
+   Needs somewhere to persist, which is the first crack in "no database", but a
+   very small one.
+3. **A field borrowed from Mindbody**, so it is edited where the studio already
+   works and nothing new is stored. Nothing in the API is meant for this, so it
+   would mean abusing some other field, which tends to be regretted.
+
+Recommendation: start with (1), because the banner is worth having before it is
+worth an admin UI, and move to (2) the first time someone other than Pete needs
+to change it.
 
 ## API mechanics worth knowing before building
 
@@ -483,10 +499,14 @@ time saved at the door.
 - **Waiver state**, shown and blocking. The QR that resolves it is Phase 3;
   Phase 1 shows the problem and hands off to Mindbody.
 - **Studio banner.**
-- **Categories, hardcoded.** Config in the app, not fetched. There is no
-  `GET /sale/categories` in v6 despite the spec referring to one, and the
-  studio's categories do not change. A config file is both simpler and the only
-  thing that actually works.
+- **Categories, hardcoded.** Config in the app, not fetched. `GET
+  /site/categories` does exist (filed under Site, not Sale, which is why an
+  earlier pass through the spec missed it), so this is a choice rather than a
+  constraint: the studio's categories effectively never change, and a config
+  file costs no metered call, cannot be empty at boot, and lets the counter
+  order categories by how often a teacher reaches for them rather than by
+  whatever order Mindbody returns. Call `/site/categories` once by hand when
+  writing the config, then leave it alone.
 
 **Phase 1.5 — put it at the counter.** Not a feature, and it is the step that
 turns this from a laptop demo into something teachers use. Auth (see open
@@ -673,12 +693,12 @@ account is wired up and enumerate any custom payment types.
 client's first-ever purchase, about one a day. Option C is dead; options A and B
 cover the rest.
 
-**3. Teacher identity. STILL OPEN, and it gates Phase 1.5.** Do teachers each
-get a Mindbody staff login, or does the POS act as one service account? The
-service account is much simpler, and the POS can still record who was on shift
-on its own side. The cost is that Mindbody attributes every check-in and every
-sale to `sealevelapiuser`. Confirm that does not break commission or payroll
-reporting before choosing it.
+**3. Teacher identity. Decided for now: one service account.** The POS acts as
+`sealevelapiuser` and records who was on shift on its own side if we ever want
+that. Mindbody will attribute every check-in and sale to the service account.
+Pete is checking whether that disturbs commission or payroll reporting; if it
+does, the fallback is per-teacher staff logins, which is why auth in Phase 1.5
+should not assume a single identity is permanent.
 
 **4. Wifi at the counter. Proposed answer: do not build offline.** The design
 already forbids queuing a sale. And a queued check-in is exactly the failure
