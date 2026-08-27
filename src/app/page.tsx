@@ -290,6 +290,7 @@ export default function FrontDesk() {
     siteId: string | null;
     configError: string | null;
     writeClientIds: string[];
+    banner: string | null;
   } | null>(null);
   /** Rows whose check-in call failed after going green optimistically. */
   const [failed, setFailed] = useState<Record<string, string>>({});
@@ -808,6 +809,12 @@ export default function FrontDesk() {
             : ""}
         </p>
       ) : null}
+
+      {/* Studio banner: an announcement, never a status. It renders BELOW
+          the mode banner and in a deliberately different shape (quiet
+          surface, accent rail, no fill colour) so it cannot crowd out or be
+          mistaken for the dry-run/live line above it. */}
+      {config?.banner ? <p className="studio-banner">{config.banner}</p> : null}
 
       {error ? <p className="note">{error}</p> : null}
 

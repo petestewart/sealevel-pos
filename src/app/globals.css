@@ -457,6 +457,22 @@ button {
   color: var(--warn);
 }
 
+/* Studio banner: the announcement an admin set (POS_BANNER_TEXT). A
+ * different shape from the mode banner on purpose -- plain surface with an
+ * accent rail instead of a filled status pill -- so a workshop notice can
+ * never read as, or crowd out, the dry-run/live line. Tokens only, both
+ * palettes. */
+.studio-banner {
+  margin: 0 0 12px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--accent);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 17px;
+}
+
 /* --- Dev drawer -----------------------------------------------------
  * Only rendered when /api/devlog answers, which needs POS_DEVTOOLS or a
  * dev build. Deliberately dense and monospaced: this is for reading

@@ -132,7 +132,15 @@ the batched lookup returns `Liability` at all under our staff credentials
 
 ## T7. Studio banner (PLAN 1.7)
 
-- [ ] Text from an env var, shown until changed. No scheduling, no targeting.
+- [x] Text from an env var, shown until changed. No scheduling, no targeting.
+
+`POS_BANNER_TEXT` (commented in `.env.example`), exposed through the existing
+`GET /api/config` rather than a new endpoint. Empty or unset renders nothing.
+Rendered below the mode banner in a deliberately different shape (surface with
+an accent rail, not a filled status pill) so an announcement can never crowd
+out or be mistaken for the dry-run/live line. Tokens only, both palettes,
+17px. Changing it is a Railway variable edit plus redeploy, per the design
+doc's option (1).
 
 ## T8. Categories config (PLAN 1.8)
 
