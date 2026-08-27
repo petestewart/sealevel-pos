@@ -186,3 +186,18 @@ button {
     --accent: #7ea2ff;
   }
 }
+
+/* Mode banner. The counter must never wonder whether a tap was real. */
+.banner {
+  margin: 0 0 12px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-weight: 600;
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.banner.live {
+  background: var(--warn-bg);
+  color: var(--warn);
+}

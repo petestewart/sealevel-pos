@@ -29,6 +29,11 @@ path was verified end to end with `ai-manager`'s `mindbody:probe-payments`.
     npm install
     npm run dev
 
+It starts pointed at Mindbody's sandbox site with writes suppressed, and says
+so in a banner across the top. To work against the real studio's data while
+still writing nothing, set `MINDBODY_TARGET=prod` and leave `POS_DRY_RUN=true`.
+Only setting `POS_DRY_RUN=false` lets a tap actually check someone in.
+
 ## How it earns its speed
 
 - **The roster is prefetched.** At 6:29pm we already know who is about to walk

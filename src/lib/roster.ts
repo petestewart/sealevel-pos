@@ -1,4 +1,3 @@
-import { ensureIndex, nameFor } from "./clients";
 import { mindbody } from "./mindbody";
 
 /**
@@ -94,6 +93,28 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
   );
 }
 
+/**
+ * Names for a specific set of client ids, in one call. Mindbody accepts a
+ * repeated clientIds parameter, which keeps this to a single round trip
+ * regardless of class size.
+ */
+async function namesForIds(ids: string[]): Promise<Map<string, string>> {
+  const query = ids
+    .map((id) => `clientIds=${encodeURIComponent(id)}`)
+    .join("&");
+  const out = new Map<string, string>();
+  try {
+    const body = await mindbody(`/client/clients?${query}&limit=200`);
+    for (const c of body?.Clients ?? []) {
+      const name = `${c.FirstName ?? ""} ${c.LastName ?? ""}`.trim();
+      if (c.Id !== undefined && name) out.set(String(c.Id), name);
+    }
+  } catch {
+    /* A roster with ids but no names still beats no roster at all. */
+  }
+  return out;
+}
+
 export async function classRoster(classId: number): Promise<ClassRoster> {
   const [classes, rawEntries] = await Promise.all([
     classesAroundNow(),
@@ -101,16 +122,22 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
   ]);
 
   /**
-   * Fill any name the visit payload did not carry from the client index.
-   * The index is already loaded for search, so this costs a map lookup,
-   * and it means a roster is never at the mercy of which name fields
-   * Mindbody decides to include on a visit.
+   * Fill any name the visit payload did not carry, with ONE batched
+   * lookup of just the ids on this roster.
+   *
+   * The obvious move is to read them out of the search index, but that
+   * index is built by paging the whole client list, and making a roster
+   * wait on it turns a sub-second screen into a multi-second one. A
+   * roster is at most a few dozen people, so ask for exactly those.
    */
-  await ensureIndex();
+  const missing = [
+    ...new Set(rawEntries.filter((e) => !e.name && e.clientId).map((e) => e.clientId)),
+  ];
+  const names = missing.length > 0 ? await namesForIds(missing) : new Map();
   const entries = rawEntries.map((entry) =>
     entry.name
       ? entry
-      : { ...entry, name: nameFor(entry.clientId) ?? "(unknown client)" },
+      : { ...entry, name: names.get(entry.clientId) ?? "(unknown client)" },
   );
   const summary = classes.find((c) => c.classId === classId);
   return {

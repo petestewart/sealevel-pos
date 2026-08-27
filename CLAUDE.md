@@ -16,6 +16,30 @@ classes, teachers, and pricing options all render from real data.
 Phase 2 (stored-card sales and cash) is unblocked but not started. The sale
 path was verified with ai-manager's `npm run mindbody:probe-payments`.
 
+## Safety: nothing writes by accident
+
+Two independent guards, both defaulting to safe. Neither is a nuisance to be
+removed; this app checks real students into real classes and will later charge
+real cards, so reaching production has to be a choice someone made rather than
+something they forgot to prevent.
+
+- **`MINDBODY_TARGET`** picks the studio: `sandbox` (default) or `prod`.
+  Mindbody publishes a sandbox site, id -99 "LastSpot", that an ordinary
+  developer key can reach, so sandbox needs no second key. Credentials are
+  read from `MINDBODY_SANDBOX_*` or `MINDBODY_PROD_*`; the unprefixed
+  `MINDBODY_*` names still work as the production fallback.
+- **`POS_DRY_RUN`** (default `true`) lets reads through to Mindbody and
+  suppresses every write, logging it as `[dry-run] suppressed POST ...`. That
+  exercises the whole flow -- roster, tap, optimistic row, response handling
+  -- against real data without touching an account.
+
+The screen shows which mode it is in at all times, and `GET /api/config`
+reports it. Never remove that banner: a teacher must not have to wonder
+whether the tap they just made was real.
+
+The cached staff token is keyed by site id, so switching target cannot reuse a
+sandbox token against production.
+
 ## Locked decisions
 
 - **Web app, not Swift.** Card-present is 0.4% of counter transactions (25
@@ -30,6 +54,7 @@ path was verified with ai-manager's `npm run mindbody:probe-payments`.
   Redis or a volume-backed snapshot is a detail if cold starts get annoying,
   not an architecture change.
 - **Nothing auto-charges.** Phase 2 will move money only on an explicit tap.
+- **Sandbox and dry run are the defaults.** See above.
 - **Pricing and schedule come from the live Mindbody API**, never from a cache
   that could go stale.
 

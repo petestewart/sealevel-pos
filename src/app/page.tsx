@@ -47,8 +47,21 @@ export default function FrontDesk() {
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<SearchResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [config, setConfig] = useState<{
+    dryRun: boolean;
+    target: string;
+    siteId: string | null;
+    configError: string | null;
+  } | null>(null);
   /** Rows whose check-in call failed after going green optimistically. */
   const [failed, setFailed] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then(setConfig)
+      .catch(() => setConfig(null));
+  }, []);
 
   useEffect(() => {
     fetch("/api/roster")
@@ -136,6 +149,17 @@ export default function FrontDesk() {
 
   return (
     <main className="shell">
+      {config?.configError ? <p className="note">{config.configError}</p> : null}
+
+      {config && !config.configError ? (
+        <p className={config.dryRun ? "banner" : "banner live"}>
+          {config.dryRun
+            ? "Dry run. Nothing is written to Mindbody."
+            : "LIVE. Taps check real students in."}{" "}
+          {config.target === "prod" ? "Production" : "Sandbox"} site {config.siteId}.
+        </p>
+      ) : null}
+
       {error ? <p className="note">{error}</p> : null}
 
       <nav className="classbar">
