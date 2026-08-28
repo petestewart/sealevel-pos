@@ -27,6 +27,17 @@ interface RosterEntry {
   name: string;
   visitId: number | null;
   pricingOption: string | null;
+  /** The pass paying for this visit, from Visit.Service on the roster
+   *  fetch. All null when the booking carries no service. */
+  passRemaining: number | null;
+  passCount: number | null;
+  passExpires: string | null;
+  /** Purchase-instance id of the pass, what a payment change posts. */
+  clientServiceId: number | null;
+  /** AccountBalance from the batched client lookup; null when unknown. */
+  balance: number | null;
+  /** MembershipIcon nonzero on the client record; null when unknown. */
+  member: boolean | null;
   paid: boolean;
   checkedIn: boolean;
   /** true = waiver on file, false = blocked, null = unknown (fails open). */
@@ -190,44 +201,114 @@ function shortDate(iso: string): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-const ORDINALS = [
-  "First",
-  "Second",
-  "Third",
-  "Fourth",
-  "Fifth",
-  "Sixth",
-  "Seventh",
-];
-
-function ordinal(n: number): string {
-  return ORDINALS[n - 1] ?? `${n}th`;
+/** "3rd", "21st". Plain numeric ordinals, no lookup table to run out of. */
+function nth(n: number): string {
+  const rem10 = n % 10;
+  const rem100 = n % 100;
+  const suffix =
+    rem100 >= 11 && rem100 <= 13
+      ? "th"
+      : rem10 === 1
+        ? "st"
+        : rem10 === 2
+          ? "nd"
+          : rem10 === 3
+            ? "rd"
+            : "th";
+  return `${n}${suffix}`;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
- * "Third visit this week", computed in the browser so "this week" means the
- * iPad's local week (Monday start), not the server's timezone. The server
- * returns only past visits, so this check-in is visit N+1.
+ * The visit history as ONE line, highest signal first: a streak this week
+ * beats a monthly count beats a last-seen date. Computed in the browser so
+ * "this week" means the iPad's local week (Monday start), not the server's
+ * timezone. The server window is ~35 days; the monthly count re-filters to
+ * a strict 30 so "in the last month" is not quietly five weeks.
  */
-function visitLines(visits: VisitInfo[], now = new Date()): string[] {
+function historyLine(visits: VisitInfo[], now = new Date()): string {
   const weekStart = new Date(now);
   weekStart.setHours(0, 0, 0, 0);
   const day = weekStart.getDay(); /* 0 = Sunday */
   weekStart.setDate(weekStart.getDate() - ((day + 6) % 7));
   const thisWeek = visits.filter((v) => new Date(v.at) >= weekStart).length;
-  const monthCount = visits.length; /* window is ~a month, set server-side */
-  const lines: string[] = [];
-  if (thisWeek >= 1) lines.push(`${ordinal(thisWeek + 1)} visit this week.`);
+  if (thisWeek >= 2) return `${nth(thisWeek)} class this week.`;
+  const monthStart = new Date(now.getTime() - 30 * DAY_MS);
+  const month = visits.filter((v) => new Date(v.at) >= monthStart).length;
+  if (month >= 2) return `${month} visits in the last month.`;
   const latest = visits[0];
-  if (monthCount === 0) {
-    lines.push("First visit in over a month.");
-  } else if (latest) {
-    lines.push(
-      `${monthCount} visit${monthCount === 1 ? "" : "s"} in the last month, ` +
-        `last here ${shortDate(latest.at)}.`,
-    );
-  }
-  return lines;
+  if (latest) return `Last here ${shortDate(latest.at)}.`;
+  return "No visits in the last month.";
+}
+
+/** Numeric date for row copy, e.g. 8/22/27. */
+function slashDate(iso: string): string {
+  return new Date(iso).toLocaleDateString([], {
+    month: "numeric",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
+
+/**
+ * Mindbody fakes "unlimited" with absurd counters (99999, 99988, 1000).
+ * Any pass whose original Count is 100 or more is one of them: show no
+ * numbers rather than telling a teacher someone has 99987 classes left.
+ */
+function fakeUnlimited(count: number | null): boolean {
+  return count !== null && count >= 100;
+}
+
+/**
+ * What the person is paying with, on the row itself: pass name, remaining,
+ * expiry, balance. Secondary details, scannable at arm's length -- except
+ * "1 left", which is the renewal conversation that happens now or never
+ * and gets the loud warn treatment.
+ */
+function PassLine({ entry }: { entry: RosterEntry }) {
+  const unlimited = fakeUnlimited(entry.passCount);
+  const showRemaining =
+    entry.pricingOption !== null && !unlimited && entry.passRemaining !== null;
+  const balance =
+    entry.balance !== null && entry.balance !== 0 ? entry.balance : null;
+  return (
+    <>
+      {entry.pricingOption ?? "No pass on this booking"}
+      {showRemaining ? (
+        <span className={entry.passRemaining === 1 ? "detail-last" : undefined}>
+          {" "}
+          &middot; {entry.passRemaining} left
+        </span>
+      ) : null}
+      {entry.pricingOption !== null && entry.passExpires ? (
+        <> &middot; exp {slashDate(entry.passExpires)}</>
+      ) : null}
+      {balance !== null ? <> &middot; {money(balance)} balance</> : null}
+    </>
+  );
+}
+
+/**
+ * Badges beside the name: the membership chip, and the red alert's icon so
+ * a flagged row is visibly flagged before anyone taps it (the tap gate
+ * already existed; this makes it not a surprise).
+ */
+function NameBadges({ entry }: { entry: RosterEntry }) {
+  return (
+    <>
+      {entry.member ? (
+        <span className="m-chip" title="Member" aria-label="Member">
+          M
+        </span>
+      ) : null}
+      {entry.redAlert ? (
+        <span className="row-alert" title="Red alert" aria-label="Red alert">
+          <AlertIcon />
+        </span>
+      ) : null}
+    </>
+  );
 }
 
 /**
@@ -402,11 +483,12 @@ function ContextPanel({
           Visits unavailable: {ctx.visits.error}
         </span>
       ) : visits ? (
-        visitLines(visits).map((line) => (
-          <span className="ctx-line ctx-iconed" key={line}>
-            <HistoryIcon /> {line}
-          </span>
-        ))
+        /* ONE line, highest signal wins: streak this week, else monthly
+           count, else last seen, else nothing recent. One line means one
+           line. */
+        <span className="ctx-line ctx-iconed">
+          <HistoryIcon /> {historyLine(visits)}
+        </span>
       ) : null}
 
       {/* Habitual add-ons need a real pattern (3 of the last 5 sales) or
@@ -1112,7 +1194,9 @@ export default function FrontDesk() {
                 ? "Needs the liability waiver. Sign it in the Mindbody app."
                 : confirming.includes(entry.clientId)
                   ? "No pass on this booking. Tap again to check in for free."
-                  : (entry.pricingOption ?? "No pass on this booking");
+                  : /* The quiet case: what the Mindbody sign-in screen
+                       shows per row, with no extra taps. */
+                    <PassLine entry={entry} />;
 
           const open = expandedId === entry.clientId;
           /* The context toggle: its own control, so opening details never
@@ -1156,6 +1240,7 @@ export default function FrontDesk() {
                   <span className="row-main">
                     <span className="name">
                       {entry.name}
+                      <NameBadges entry={entry} />
                       <span className="detail">{detail}</span>
                     </span>
                     <span className="chip in">checked in</span>
@@ -1185,6 +1270,7 @@ export default function FrontDesk() {
                 <button className="row-main" onClick={() => tapRow(entry)}>
                   <span className="name">
                     {entry.name}
+                    <NameBadges entry={entry} />
                     <span className="detail">{detail}</span>
                   </span>
                   {/* The no-waiver chip outranks everything but an

@@ -192,22 +192,22 @@ balance, payment type, expiration, and remaining per row with no extra taps,
 and the app must not feel like more work than the tool it replaces. All of
 this is data the app already holds, so the ticket is surfacing, not fetching:
 
-- [ ] Parse `Visit.Service` (Name, Remaining, Count, ExpirationDate, Id) out
+- [x] Parse `Visit.Service` (Name, Remaining, Count, ExpirationDate, Id) out
       of the `/class/classvisits` response into each roster entry. Zero new
       calls; the pass name replaces the bare `ServiceName` string.
-- [ ] Show remaining classes and expiry on the row, but never print
+- [x] Show remaining classes and expiry on the row, but never print
       Mindbody's absurd unlimited counters (99999, 99988, 1000): when the
       pass's original `Count` is 100 or more, treat it as unlimited and show
       no number. `Remaining: 1` stays loud (the renewal prompt from T5's
       follow-up lands here).
-- [ ] `AccountBalance` and `MembershipIcon` join the batched
+- [x] `AccountBalance` and `MembershipIcon` join the batched
       `/client/clients` roster lookup (both are top-level Client fields, so
       the same one round trip). Balance shows on the row only when nonzero;
       membership shows as a small M chip. No S chip: the balance itself
       replaces it, per Pete.
-- [ ] Red alert gets a visible icon on the row (the gate already exists;
+- [x] Red alert gets a visible icon on the row (the gate already exists;
       the icon makes it visible before the tap).
-- [ ] The context panel's visit list collapses to ONE line, highest signal
+- [x] The context panel's visit list collapses to ONE line, highest signal
       wins: "3rd class this week", else "2 visits in the last month", else
       "Last here May 28". Never more than one of those.
 

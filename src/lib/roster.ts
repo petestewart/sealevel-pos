@@ -15,6 +15,32 @@ export interface RosterEntry {
   visitId: number | null;
   /** What they booked against: a pass, a membership, unpaid. */
   pricingOption: string | null;
+  /**
+   * The pass paying for this visit, parsed from `Visit.Service` on the
+   * `/class/classvisits` response (a ClientService per the vendored spec,
+   * docs/mindbody-openapi/class.yml). Zero extra calls: the visit payload
+   * already embeds the whole object. All null when the visit carries no
+   * service, i.e. the unpaid case.
+   */
+  passRemaining: number | null;
+  /** Sessions the pass held when purchased. Mindbody fakes "unlimited" with
+   *  absurd counts (99999, 1000); the UI treats Count >= 100 as unlimited
+   *  and shows no number. */
+  passCount: number | null;
+  /** ISO date-time the pass expires, if it does. */
+  passExpires: string | null;
+  /** The purchase-instance id of the pass (`Service.Id`), which is what
+   *  `POST /client/updateclientvisit` takes as ClientServiceId to change
+   *  how the visit is paid. */
+  clientServiceId: number | null;
+  /**
+   * `AccountBalance` from the batched client lookup. null when the lookup
+   * failed (fail open, like waiverSigned); 0 renders as nothing.
+   */
+  balance: number | null;
+  /** Whether the client has a membership (`MembershipIcon` nonzero on the
+   *  client record). null when the lookup failed. */
+  member: boolean | null;
   paid: boolean;
   checkedIn: boolean;
   /**
@@ -97,19 +123,36 @@ function personName(v: any): string | null {
 export async function rosterFor(classId: number): Promise<RosterEntry[]> {
   const body = await mindbody(`/class/classvisits?ClassId=${classId}`);
   const visits = body?.Class?.Visits ?? body?.Visits ?? [];
-  return visits.map(
-    (v: any): RosterEntry => ({
+  return visits.map((v: any): RosterEntry => {
+    /* The visit embeds the full pass (`Service`, a ClientService). Its
+     * Name is the same pricing option ServiceName carries, but the object
+     * also has Remaining/Count/ExpirationDate/Id, which is everything the
+     * row shows without a single extra call. */
+    const service = v.Service ?? null;
+    const num = (x: unknown): number | null =>
+      typeof x === "number" && Number.isFinite(x) ? x : null;
+    return {
       clientId: String(v.ClientId ?? v.Client?.Id ?? ""),
       name: personName(v) ?? "",
       visitId: typeof v.Id === "number" ? v.Id : null,
-      pricingOption: v.ServiceName ?? null,
+      pricingOption: service?.Name ?? v.ServiceName ?? null,
+      passRemaining: num(service?.Remaining),
+      passCount: num(service?.Count),
+      passExpires:
+        typeof service?.ExpirationDate === "string" && service.ExpirationDate
+          ? service.ExpirationDate
+          : null,
+      clientServiceId: num(service?.Id),
+      /** Filled by classRoster's batched client lookup. */
+      balance: null,
+      member: null,
       /**
        * Mindbody does not expose a single "is this paid" flag on a visit.
        * A visit booked against a pricing option is paid; one with no
        * service attached is the unpaid reservation case, which is exactly
        * the amber row in the design doc.
        */
-      paid: Boolean(v.ServiceName),
+      paid: Boolean(service?.Name ?? v.ServiceName),
       checkedIn: Boolean(v.SignedIn),
       /** Filled by classRoster's batched client lookup; a bare visit list
        *  knows nothing about waivers. */
@@ -117,8 +160,8 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
       redAlert: null,
       mindbodyId:
         typeof v.ClientUniqueId === "number" ? v.ClientUniqueId : null,
-    }),
-  );
+    };
+  });
 }
 
 /**
@@ -142,6 +185,12 @@ interface ClientBrief {
   uniqueId: number | null;
   name: string;
   waiverSigned: boolean;
+  /** `AccountBalance`, a top-level Client field; null when Mindbody
+   *  omitted it. */
+  balance: number | null;
+  /** `MembershipIcon` nonzero means the client holds a membership; 0 or
+   *  absent means none. */
+  member: boolean;
 }
 
 const CLIENT_LOOKUP_CHUNK = 40;
@@ -172,6 +221,13 @@ async function briefsForIds(ids: string[]): Promise<Map<string, ClientBrief>> {
             ? c.RedAlert.trim()
             : null,
         uniqueId: typeof c?.UniqueId === "number" ? c.UniqueId : null,
+        balance:
+          typeof c?.AccountBalance === "number" &&
+          Number.isFinite(c.AccountBalance)
+            ? c.AccountBalance
+            : null,
+        member:
+          typeof c?.MembershipIcon === "number" && c.MembershipIcon !== 0,
       });
     }
   }
@@ -235,6 +291,11 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
        * a reflex tap, not only after a row has been opened. Null when the
        * lookup failed or the client has none. */
       redAlert: brief?.redAlert ?? null,
+      /* Balance and membership ride the same batch. Null when the lookup
+       * failed or missed this client: unknown renders as nothing, which is
+       * the same fail-open posture as waiverSigned. */
+      balance: brief ? brief.balance : null,
+      member: brief ? brief.member : null,
       mindbodyId: entry.mindbodyId ?? brief?.uniqueId ?? null,
     };
   });

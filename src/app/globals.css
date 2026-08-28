@@ -369,6 +369,42 @@ button {
   color: var(--muted);
 }
 
+/* "1 left" on a real (non-unlimited) pass: the renewal prompt, loud on
+ * purpose. Same warn pairing as the context panel's last-class banner, so
+ * one colour means one thing everywhere. Tokens only, both palettes. */
+.detail-last {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-weight: 700;
+}
+
+/* Membership chip beside the name. Small but never under 16px. */
+.m-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  min-height: 26px;
+  margin-left: 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 16px;
+  font-weight: 700;
+  vertical-align: 2px;
+}
+
+/* The red alert's icon on the row itself: the tap gate already exists,
+ * this makes the flag visible before a thumb lands on it. */
+.row-alert {
+  display: inline-flex;
+  margin-left: 8px;
+  color: var(--stop);
+  vertical-align: -2px;
+}
+
 /* One width for every chip, whatever the label. The chip is the rightmost
  * thing on every row, so ragged widths make the column edge zigzag and the
  * eye has to re-find the target on each row. Wide enough for the longest
