@@ -1065,8 +1065,9 @@ export default function FrontDesk() {
           const detail = working
             ? "Talking to Mindbody..."
             : msg ??
-              `Not booked into this class${client.email ? ` - ${client.email}` : ""}.` +
-                (classFull ? " Class is full." : "");
+              [client.email, classFull ? "Class is full." : null]
+                .filter(Boolean)
+                .join(" - ");
           return (
             <li key={`walkin-${client.id}`}>
               <button
@@ -1080,7 +1081,7 @@ export default function FrontDesk() {
               >
                 <span className="name">
                   {client.name}
-                  <span className="detail">{detail}</span>
+                  {detail ? <span className="detail">{detail}</span> : null}
                 </span>
                 <span
                   className={
@@ -1099,6 +1100,10 @@ export default function FrontDesk() {
                     "add"
                   )}
                 </span>
+                {/* Walk-in rows have no info button, so the chip needs its
+                    width made up or the pill drifts out of the chip column
+                    the roster rows establish. */}
+                <span className="info-spacer" aria-hidden="true" />
                 <span className="undo-spacer" aria-hidden="true" />
               </button>
             </li>

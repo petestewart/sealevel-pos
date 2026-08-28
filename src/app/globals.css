@@ -108,22 +108,11 @@ button {
   position: relative;
   flex: 1;
   min-height: 72px;
-  padding: 10px 36px 10px 16px;
+  padding: 10px 16px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
   text-align: left;
-}
-
-.counter::after {
-  content: "\203A"; /* a single right chevron */
-  position: absolute;
-  right: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 26px;
-  line-height: 1;
-  color: var(--muted);
 }
 
 .counter:active {
@@ -208,6 +197,13 @@ button {
  * 64px-tall target rather than a second meaning for the row tap: check-in
  * is the app's whole point and stays one tap. The chevron flips when the
  * panel is open. */
+/* Holds the info button's width on rows that have no info button (walk-in
+ * search results), so every chip lands in the same column. */
+.info-spacer {
+  flex: 0 0 auto;
+  width: 48px;
+}
+
 .info-btn {
   flex: 0 0 auto;
   display: inline-flex;
