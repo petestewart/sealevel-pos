@@ -1759,6 +1759,8 @@ export default function FrontDesk() {
       {sortedEntries.length > 0 ? (
         <div className="roster-head">
           <span aria-hidden="true">Name</span>
+          {/* The icon-slot column: no label needed. */}
+          <span aria-hidden="true" />
           <span aria-hidden="true">Payment</span>
           <span className="cell-bal" aria-hidden="true">
             Balance
@@ -1879,11 +1881,36 @@ export default function FrontDesk() {
                 <div className="cell-name">
                   <span className="name-line">
                     <span className="name-text">{entry.name}</span>
+                  </span>
+                  {statusMsg ? (
+                    <span
+                      className={
+                        failed[entry.clientId] || noWaiver
+                          ? "subline stop-text"
+                          : "subline"
+                      }
+                    >
+                      {statusMsg}
+                    </span>
+                  ) : history ? (
+                    <span className="subline">{history}</span>
+                  ) : null}
+                </div>
+
+                {/* Fixed icon slots in a set order (M | alert | notes), the
+                    same width on every row, so each marker lines up as its
+                    own column down the roster instead of trailing the name
+                    at whatever x the name ends. A row without the marker
+                    keeps the empty slot. */}
+                <div className="cell-icons">
+                  <span className="icon-slot">
                     {entry.member ? (
                       <span className="m-chip" title="Member" aria-label="Member">
                         M
                       </span>
                     ) : null}
+                  </span>
+                  <span className="icon-slot">
                     {entry.redAlert ? (
                       <button
                         className="row-icon row-alert"
@@ -1901,6 +1928,8 @@ export default function FrontDesk() {
                         <AlertIcon />
                       </button>
                     ) : null}
+                  </span>
+                  <span className="icon-slot">
                     {/* On EVERY row: dimmed when there is nothing behind
                         it yet, because adding a note starts here too. */}
                     <button
@@ -1926,19 +1955,6 @@ export default function FrontDesk() {
                       <NotesIcon />
                     </button>
                   </span>
-                  {statusMsg ? (
-                    <span
-                      className={
-                        failed[entry.clientId] || noWaiver
-                          ? "subline stop-text"
-                          : "subline"
-                      }
-                    >
-                      {statusMsg}
-                    </span>
-                  ) : history ? (
-                    <span className="subline">{history}</span>
-                  ) : null}
                 </div>
 
                 <div className="cell-pay">
