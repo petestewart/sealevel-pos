@@ -2440,6 +2440,12 @@ function FrontDesk() {
               <CloseIcon />
             </button>
             <p className="modal-title">{`Results for "${searchTitle}"`}</p>
+            {/* A class-level fact, said once here rather than stamped on
+                every result row: with the class full, every add offers
+                the waiting list instead. */}
+            {classFull && walkIns.length > 0 ? (
+              <p className="muted">Class is full. Adding goes to the waiting list.</p>
+            ) : null}
             {searching ? (
               <p className="muted">
                 <span className="spinner" aria-label="working" /> Searching
@@ -2477,12 +2483,11 @@ function FrontDesk() {
                     const working = bookingIds.includes(client.id);
                     const msg = bookMsg[client.id];
                     /* Under the markers: an in-flight call or an outcome
-                     * message, else the full-class notice. Email is gone
-                     * from the row entirely (T17): it never helped pick a
-                     * person at the counter and it crowded the name. */
-                    const subline = working
-                      ? "Talking to Mindbody..."
-                      : (msg ?? (classFull ? "Class is full." : null));
+                     * message only. Email is gone from the row entirely
+                     * (T17), and the full-class notice is a class-level
+                     * fact said ONCE under the modal title, not stamped on
+                     * every row. */
+                    const subline = working ? "Talking to Mindbody..." : (msg ?? null);
                     /* The pass summary, once the background fetch has
                      * landed: the same two-line format as the roster's
                      * payment cell. With more than one current pass the
