@@ -94,7 +94,30 @@ async function fetchPasses(clientId: string, now: Date): Promise<PassInfo[]> {
       `&EndDate=${encodeURIComponent(now.toISOString())}` +
       `&ShowActiveOnly=true`,
   );
-  return (body?.ClientServices ?? [])
+  const all: any[] = body?.ClientServices ?? [];
+  /* Mindbody quirk, seen live: when ClientId does not resolve (inactive or
+   * unknown client), clientservices does not 400 like its sibling endpoints.
+   * It IGNORES the filter and returns pricing options site-wide -- observed
+   * as ~90 strangers' memberships on one row, any of which with Remaining: 1
+   * fires the last-class banner falsely. Each item carries its own ClientID,
+   * so scope the response ourselves and treat "entries came back but none
+   * are this client's" as the lookup failure it is. Items with no ClientID
+   * at all are kept only when nothing indicates a site-wide spill (every
+   * spilled item observed carried a foreign id). */
+  const scoped = all.filter((s: any) => {
+    const owner = s?.ClientID ?? s?.ClientId;
+    return owner === undefined || owner === null
+      ? true
+      : String(owner) === clientId;
+  });
+  if (all.length > 0 && scoped.length === 0) {
+    throw new Error(
+      "Mindbody returned pricing options, but none belong to this client. " +
+        "The client id may be inactive or unknown, and Mindbody ignores the " +
+        "filter instead of failing.",
+    );
+  }
+  return scoped
     .filter((s: any) => s?.Current !== false)
     .map(
       (s: any): PassInfo => ({

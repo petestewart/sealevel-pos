@@ -102,6 +102,17 @@ Follow-up (new ticket when reached): a red-alert walk-in can be booked from
 the search panel without the alert ever showing -- context only renders on
 roster rows. The design doc wants RedAlert on the walk-in panel too.
 
+Found in live testing (2026-08-28): for a client id Mindbody considers
+inactive or unknown, `clientaccountbalances` and `clientpurchases` 400
+("Client with Custom ID ... is inactive or does not exist") but
+`clientservices` silently IGNORES the filter and returns pricing options
+site-wide -- ~90 strangers' passes rendered on one row, and any of them
+with `Remaining: 1` fired the last-class banner falsely. Fixed by scoping
+the response client-side on each item's `ClientID` and treating a non-empty
+response with zero matches as a lookup error. Check in the drawer that live
+items actually carry `ClientID`; if they come back without it, the scope
+check cannot bite and this needs a different guard.
+
 ## T6. Waiver state (PLAN 1.6)
 
 - [x] `Liability.IsReleased` / `AgreementDate` surfaced on the row (joins the
