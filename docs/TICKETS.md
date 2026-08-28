@@ -237,6 +237,36 @@ endpoint check-in already uses, with the same write-guard clientId threading.
 Buy button from the MB screen: deliberately NOT here. That is Phase 2's
 sale path (sell the missing pass and check in together), already planned.
 
+## T14. Rows are the whole story: no dropdown, aligned columns (Pete, 2026-08-28)
+
+Pete's screenshot review of T11-T13: the expandable row is the friction he
+asked to remove, and detail moved INTO it missed the point. Rework:
+
+- [ ] The roster row expando is gone. Everything renders on the row, in
+      aligned columns (CSS grid shared across rows, like MB's table): name
+      with M / alert / notes icons, payment type, expiration, remaining,
+      balance. A one-line history sits with the row too.
+- [ ] Exactly ONE form of payment shows: the pass paying for this visit, or
+      "No pass on this booking". "Change" is the only way to see the others,
+      and it is an inline dropdown (not a modal): other current passes as
+      options, current one marked, pick one to post the existing
+      /api/visit-payment write. An unpaid booking with available passes gets
+      the same dropdown to assign one.
+- [ ] Fake-unlimited suppression applies EVERYWHERE a pass renders,
+      including the change dropdown options ("99993 of 99999" leaked in the
+      old panel pass list).
+- [ ] Negative account balance renders in the danger colour (token, both
+      palettes).
+- [ ] History one-liner needs `/client/clientvisits` per client, so it is
+      fetched in a background sweep AFTER the roster renders and cached per
+      client for the session; rows fill in as answers land. The roster
+      itself never waits on it.
+- [ ] Notes ride the existing batched `/client/clients` lookup (`Notes` is
+      a top-level Client field); the notes icon tap shows the text. Red
+      alert icon tap shows the alert. Open in Mindbody becomes a small
+      per-row affordance. The old context panel and its five-call fetch
+      retire; the change dropdown fetches `clientservices` on demand.
+
 ## T9. Deployment, minus auth (PLAN Phase 1.5)
 
 Not blocked by T10. Ships behind the existing safety rails.
