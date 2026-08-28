@@ -381,11 +381,12 @@ From live testing after T14 and the five-fix polish pass:
       refresh returns to the same class instead of the default. Reading it
       back tolerates a class no longer in the window (falls back quietly
       and corrects the param).
-- [ ] Tapping the ROW no longer checks anyone in. The check-in chip is the
+- [x] Tapping the ROW no longer checks anyone in. The check-in chip is the
       only trigger; all gates (waiver, red alert, unpaid confirm) move to
       the chip tap. DECISION REVERSAL, Pete's call: the original design
       made the whole row the target for speed; live use showed accidental
-      check-ins. Do not restore row-tap check-in.
+      check-ins. Do not restore row-tap check-in. Walk-in rows got the
+      same treatment: the add chip is the only action.
 - [ ] Search results move into their own modal, formatted with the SAME
       row layout as the roster list (grid columns, icon slots, pass
       sub-line, balance column), with an X close button that closes with

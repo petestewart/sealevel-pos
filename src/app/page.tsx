@@ -1098,16 +1098,20 @@ function FrontDesk() {
   );
 
   /**
-   * One tap does the obvious thing, with one exception: an unpaid booking
+   * The check-in CHIP's tap. The chip is the ONLY check-in trigger: the
+   * row body used to be the target too, for speed, and live use showed
+   * accidental check-ins -- a deliberate reversal (T16, Pete's call), so
+   * do not restore row-tap check-in. Every gate lives here, in order:
+   * waiver block, red alert, then the unpaid confirm -- an unpaid booking
    * has no pricing option attached, so checking it in hands over a class
-   * for free. Phase 2 will sell them a pass here; until then it at least
-   * takes a deliberate second tap.
+   * for free, and until Phase 2 sells them a pass it at least takes a
+   * deliberate second tap of this same chip.
    *
    * Checking OUT is not here: it has its own control and its own
    * confirmation, because undoing a check-in by the same gesture that made
    * it is too easy to do by accident.
    */
-  const tapRow = useCallback(
+  const tapCheckIn = useCallback(
     (entry: RosterEntry) => {
       if (busy.includes(entry.clientId) || entry.checkedIn) return;
       /**
@@ -1615,9 +1619,8 @@ function FrontDesk() {
         <div
           className="pass-scrim"
           onClick={(e) => {
-            /* The scrim and dropdown live INSIDE the tappable row, so
-             * without this the closing tap (or any tap in the dropdown)
-             * bubbles into the row's onClick and fires a check-in. */
+            /* The row body is no longer a check-in target (T16), so this
+             * stopPropagation is belt and braces, not load-bearing. */
             e.stopPropagation();
             if (passSavingId === null) setPickerFor(null);
           }}
@@ -1990,12 +1993,11 @@ function FrontDesk() {
             : failed[entry.clientId]
               ? failed[entry.clientId]
               : confirming.includes(entry.clientId)
-                ? "No pass on this booking. Tap again to check in for free."
+                ? "No pass on this booking. Tap confirm to check in for free."
                 : null;
           const visits = histories[entry.clientId];
           const history =
             statusMsg === null && visits ? historyLine(visits) : "";
-          const canTap = !entry.checkedIn && !working;
 
           const chipClass = entry.checkedIn
             ? "chip in"
@@ -2028,14 +2030,12 @@ function FrontDesk() {
 
           return (
             <li key={entry.clientId}>
-              {/* The whole row is the check-in target, same as before the
-                  rework; the chip is the button a keyboard reaches. The
-                  inline controls (icons, Change, undo, the Mindbody link)
-                  stop the tap from bubbling into a check-in. */}
-              <div
-                className={canTap ? "rrow tappable" : "rrow"}
-                onClick={canTap ? () => tapRow(entry) : undefined}
-              >
+              {/* The row body is NOT a check-in target (T16 reversal:
+                  accidental check-ins): the chip in the actions cell is
+                  the only trigger. The inline controls' stopPropagation
+                  calls are harmless leftovers; nothing depends on them
+                  for check-in safety anymore. */}
+              <div className="rrow">
                 <div className="cell-name">
                   <span className="name-line">
                     <span className="name-text">{entry.name}</span>
@@ -2205,10 +2205,8 @@ function FrontDesk() {
                   ) : (
                     <button
                       className={chipClass}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        tapRow(entry);
-                      }}
+                      disabled={working}
+                      onClick={() => tapCheckIn(entry)}
                       aria-label={`Check in ${entry.name}`}
                     >
                       {chipLabel}
@@ -2216,7 +2214,7 @@ function FrontDesk() {
                   )}
                   {/* The undo renders on EVERY checked-in row, waiver state
                       included (audited for T15): the waiver gate lives in
-                      tapRow, which returns early for checked-in rows, so it
+                      tapCheckIn, which returns early for checked-in rows, so it
                       applies to check-IN only. A no-waiver client checked in
                       by mistake must be sign-out-able, or the mistake is
                       permanent. */}
@@ -2297,13 +2295,9 @@ function FrontDesk() {
           const firstPass = passList?.[0] ?? null;
           return (
             <li key={`walkin-${client.id}`}>
-              {/* A div, not a button: the row carries its own inner
-                  controls (the alert icon), and the chip is the button a
-                  keyboard reaches -- same pattern as the roster rows. */}
-              <div
-                className={working ? "row" : "row tappable"}
-                onClick={working ? undefined : () => tapWalkIn(client)}
-              >
+              {/* The row body is not an add target (T16, same principle
+                  as roster check-in): the add chip is the only action. */}
+              <div className="row">
                 <span className="name">
                   <span className="name-line">
                     <span className="name-text">{client.name}</span>
@@ -2384,10 +2378,7 @@ function FrontDesk() {
                         : "chip action"
                   }
                   disabled={working}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    tapWalkIn(client);
-                  }}
+                  onClick={() => tapWalkIn(client)}
                   aria-label={
                     classFull
                       ? `Add ${client.name} to the waiting list`

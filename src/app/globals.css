@@ -287,12 +287,10 @@ button {
   background: var(--surface);
 }
 
-/* The row body is the tap target (check-in on roster rows, add on walk-in
- * rows); the inline controls stop the tap from bubbling. */
-.rrow.tappable,
-.row.tappable {
-  cursor: pointer;
-}
+/* The row body is deliberately NOT a tap target (T16 reversal: row-tap
+ * check-in caused accidental check-ins in live use). The chip in the
+ * actions cell is the one check-in/add trigger; the row keeps the
+ * default cursor. */
 
 /* "no waiver" pill riding a walk-in result's name line: same stop pairing
  * as the roster's blocked chip, sized to the line. Tokens, both palettes. */
