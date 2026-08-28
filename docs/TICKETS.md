@@ -398,9 +398,10 @@ From live testing after T14 and the five-fix polish pass:
       slot, add chip only in the actions column. A successful add closes
       the modal and clears the search; suppressed writes, errors and
       waitlist adds keep it open with the feedback on the row.)
-- [ ] Balance column: no ellipsis. Widen the column to fit real
+- [x] Balance column: no ellipsis. Widen the column to fit real
       four-figure balances, right-aligned with tabular figures so the
-      decimal points line up down the roster.
+      decimal points line up down the roster. (7em, sized for a
+      five-figure negative; the search modal's balance column matches.)
 
 ## Noted for later: waiver signing at the counter (Pete, 2026-08-28)
 
