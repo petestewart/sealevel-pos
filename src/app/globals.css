@@ -275,6 +275,27 @@ button {
   gap: 8px;
 }
 
+/* Opens the client in the Mindbody staff web app, new tab. A real button
+ * visually: it sits among tap targets and gets hit from the same distance. */
+.mb-link {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  min-height: 64px;
+  padding: 0 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--action-bg);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.mb-link:active {
+  background: var(--line);
+}
+
 .ctx-line {
   font-size: 16px;
 }

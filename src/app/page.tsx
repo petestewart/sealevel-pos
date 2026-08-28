@@ -33,6 +33,8 @@ interface RosterEntry {
   waiverSigned: boolean | null;
   /** RedAlert text from the client record; null when none or lookup failed. */
   redAlert: string | null;
+  /** Mindbody's numeric UniqueId, for staff web app links. */
+  mindbodyId: number | null;
 }
 
 interface SearchResult {
@@ -175,17 +177,33 @@ function ContextPanel({
   ctx,
   loading,
   error,
+  mindbodyId,
 }: {
   ctx: ClientContext | undefined;
   loading: boolean;
   error: string | undefined;
+  mindbodyId: number | null;
 }) {
+  /* The one thing this app deliberately does not do (edit a client) is a
+   * tap away in the tool that does. Opens the staff web app; the teacher
+   * must already be signed in to Mindbody there. */
+  const mbLink = mindbodyId ? (
+    <a
+      className="mb-link"
+      href={`https://clients.mindbodyonline.com/app/clients/${mindbodyId}/client-info`}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      Open in Mindbody
+    </a>
+  ) : null;
   if (loading || (!ctx && !error)) {
     return (
       <div className="context">
         <span className="ctx-line muted">
           <span className="spinner" aria-label="working" /> Looking them up...
         </span>
+        {mbLink}
       </div>
     );
   }
@@ -193,6 +211,7 @@ function ContextPanel({
     return (
       <div className="context">
         <span className="ctx-line ctx-err">Could not load details: {error}</span>
+        {mbLink}
       </div>
     );
   }
@@ -275,6 +294,7 @@ function ContextPanel({
           Usually adds: {habits.join(", ")}. Worth asking.
         </span>
       ) : null}
+      {mbLink}
     </div>
   );
 }
@@ -991,6 +1011,7 @@ export default function FrontDesk() {
               ctx={contexts[entry.clientId]}
               loading={ctxLoading.includes(entry.clientId)}
               error={ctxError[entry.clientId]}
+              mindbodyId={entry.mindbodyId}
             />
           ) : null;
 

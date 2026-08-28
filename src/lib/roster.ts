@@ -28,6 +28,10 @@ export interface RosterEntry {
    */
   waiverSigned: boolean | null;
   redAlert: string | null;
+  /** Mindbody's numeric UniqueId, which the staff web app's client URLs
+   *  use (the API's ClientId is the editable custom id and 404s there).
+   *  null when neither the visit nor the client lookup carried it. */
+  mindbodyId: number | null;
 }
 
 export interface ClassSummary {
@@ -111,6 +115,8 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
        *  knows nothing about waivers. */
       waiverSigned: null,
       redAlert: null,
+      mindbodyId:
+        typeof v.ClientUniqueId === "number" ? v.ClientUniqueId : null,
     }),
   );
 }
@@ -133,6 +139,7 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
 interface ClientBrief {
   /** RedAlert free text from the client record; null when none. */
   redAlert: string | null;
+  uniqueId: number | null;
   name: string;
   waiverSigned: boolean;
 }
@@ -164,6 +171,7 @@ async function briefsForIds(ids: string[]): Promise<Map<string, ClientBrief>> {
           typeof c?.RedAlert === "string" && c.RedAlert.trim()
             ? c.RedAlert.trim()
             : null,
+        uniqueId: typeof c?.UniqueId === "number" ? c.UniqueId : null,
       });
     }
   }
@@ -227,6 +235,7 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
        * a reflex tap, not only after a row has been opened. Null when the
        * lookup failed or the client has none. */
       redAlert: brief?.redAlert ?? null,
+      mindbodyId: entry.mindbodyId ?? brief?.uniqueId ?? null,
     };
   });
   const summary = classes.find((c) => c.classId === classId);
