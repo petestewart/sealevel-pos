@@ -92,6 +92,77 @@ function CloseIcon() {
   );
 }
 
+/** Warning triangle for the red alert line; the dialog spells it out. */
+function AlertIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        fill="none"
+        d="M12 3.5 22 20.5H2Z"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        d="M12 9.5v5M12 17.6v.1"
+      />
+    </svg>
+  );
+}
+
+/** Note sheet for the client's Notes field. */
+function NotesIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        fill="none"
+        d="M6 3.5h9L19.5 8v12.5H6Z"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        d="M9 12h7M9 15.5h7"
+      />
+    </svg>
+  );
+}
+
+/** Clock with a counter-clockwise arrow for the recent-visits lines. */
+function HistoryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        fill="none"
+        d="M4.5 5.5v4h4"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        fill="none"
+        d="M4.9 9.2a8 8 0 1 1-.4 4"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        fill="none"
+        d="M12 8v4.4l3 1.8"
+      />
+    </svg>
+  );
+}
+
 /** Chevron for the per-row context toggle; rotates when the row is open. */
 function ChevronIcon() {
   return (
@@ -226,7 +297,9 @@ function ContextPanel({
   return (
     <div className="context">
       {profile?.redAlert ? (
-        <span className="ctx-alert">Red alert: {profile.redAlert}</span>
+        <span className="ctx-alert">
+          <AlertIcon /> {profile.redAlert}
+        </span>
       ) : null}
       {ctx.profile.error ? (
         <span className="ctx-line ctx-err">
@@ -234,7 +307,9 @@ function ContextPanel({
         </span>
       ) : null}
       {profile?.notes ? (
-        <span className="ctx-line">Notes: {profile.notes}</span>
+        <span className="ctx-line ctx-iconed">
+          <NotesIcon /> {profile.notes}
+        </span>
       ) : null}
 
       {/* Remaining: 1 is the highest-value prompt in the app: the renewal
@@ -277,8 +352,8 @@ function ContextPanel({
         </span>
       ) : visits ? (
         visitLines(visits).map((line) => (
-          <span className="ctx-line" key={line}>
-            {line}
+          <span className="ctx-line ctx-iconed" key={line}>
+            <HistoryIcon /> {line}
           </span>
         ))
       ) : null}

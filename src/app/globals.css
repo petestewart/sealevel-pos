@@ -302,6 +302,21 @@ button {
   font-size: 16px;
 }
 
+/* Lines led by an icon: the icon keeps its size and the text wraps beside
+ * it, not under it. Also applies to the red alert via .ctx-alert below. */
+.ctx-iconed,
+.ctx-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ctx-iconed svg,
+.ctx-alert svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
 .ctx-line .spinner {
   margin-right: 8px;
 }
