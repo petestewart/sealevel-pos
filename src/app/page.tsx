@@ -224,6 +224,30 @@ function NotesIcon() {
   );
 }
 
+/** Paired up/down arrows: opens the roster-order menu. */
+function SortIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M8 19V5M8 5 4.5 8.5M8 5l3.5 3.5"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M16 5v14M16 19l-3.5-3.5M16 19l3.5-3.5"
+      />
+    </svg>
+  );
+}
+
 /** Pencil: switches the notes modal into its editing state. */
 function PencilIcon() {
   return (
@@ -596,6 +620,9 @@ export default function FrontDesk() {
    * an effect so the server render and first client render agree.
    */
   const [rosterSort, setRosterSort] = useState<RosterSort>("signin");
+  /** Whether the sort menu (anchored under the header's sort icon) is
+   *  open. Pure UI state; the choice itself is rosterSort. */
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const skipDebounce = useRef(false);
   /** The class currently on screen, readable from inside an async fetch:
    *  a waitlist response that comes back after the teacher has switched
@@ -792,6 +819,17 @@ export default function FrontDesk() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [pickerFor, passSavingId]);
+
+  /** Escape closes the sort menu (outside taps close it via its scrim).
+   *  Nothing here ever writes, so no in-flight guard is needed. */
+  useEffect(() => {
+    if (!sortMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSortMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sortMenuOpen]);
 
   /** Escape closes the cancel-booking dialog too, except mid-write: once
    *  the removal is on the wire the dialog waits for the answer, because a
@@ -1710,33 +1748,68 @@ export default function FrontDesk() {
       ) : null}
       </div>
 
-      {/* Roster order, above the list it orders. Teacher-facing, so it is
-          on the page (not the dev drawer), 16px+, 64px targets. */}
-      {activeClass ? (
-        <div className="sortbar" role="group" aria-label="Roster order">
-          {ROSTER_SORTS.map((s) => (
-            <button
-              key={s.value}
-              aria-pressed={rosterSort === s.value}
-              onClick={() => pickRosterSort(s.value)}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
       {/* The roster as a table, like Mindbody's own sign-in screen: one
-          shared grid template so the payment, expiry, remaining and
-          balance columns line up down the list, and NOTHING is behind a
-          tap. The expandable row this replaced was the friction Pete asked
-          to remove; detail moved into it missed the point. */}
+          shared grid template so the payment and balance columns line up
+          down the list, and NOTHING is behind a tap. The expandable row
+          this replaced was the friction Pete asked to remove; detail
+          moved into it missed the point. The right end of the header row
+          carries the sort control: a quiet 44px icon over the actions
+          column, opening an anchored menu -- it superseded the pill bar
+          (T15), which crowded the roster it ordered. */}
       {sortedEntries.length > 0 ? (
-        <div className="roster-head" aria-hidden="true">
-          <span>Name</span>
-          <span>Payment</span>
-          <span className="cell-bal">Balance</span>
-          <span />
+        <div className="roster-head">
+          <span aria-hidden="true">Name</span>
+          <span aria-hidden="true">Payment</span>
+          <span className="cell-bal" aria-hidden="true">
+            Balance
+          </span>
+          <span className="head-actions">
+            <button
+              className="row-icon"
+              aria-haspopup="dialog"
+              aria-expanded={sortMenuOpen}
+              aria-label="Roster order"
+              title="Roster order"
+              onClick={() => setSortMenuOpen((o) => !o)}
+            >
+              <SortIcon />
+            </button>
+            {sortMenuOpen ? (
+              <>
+                <div
+                  className="pass-scrim"
+                  role="presentation"
+                  onClick={() => setSortMenuOpen(false)}
+                />
+                <div
+                  className="sort-dd"
+                  role="dialog"
+                  aria-label="Roster order"
+                >
+                  {ROSTER_SORTS.map((s) => (
+                    <button
+                      key={s.value}
+                      className={
+                        rosterSort === s.value ? "pass-opt current" : "pass-opt"
+                      }
+                      aria-pressed={rosterSort === s.value}
+                      onClick={() => {
+                        pickRosterSort(s.value);
+                        setSortMenuOpen(false);
+                      }}
+                    >
+                      <span className="pass-check">
+                        {rosterSort === s.value ? <CheckIcon /> : null}
+                      </span>
+                      <span className="pass-opt-text">
+                        <span className="pass-opt-name">{s.label}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </span>
         </div>
       ) : null}
 

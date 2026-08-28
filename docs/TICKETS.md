@@ -313,10 +313,13 @@ this container):
 
 From live testing after T14 and the five-fix polish pass:
 
-- [x] Sort bar (sign-in order / last name / first name) rendered much
-      smaller: compact pills, quiet weight. Deliberate exception to the
-      64px floor, recorded here: sorting is an occasional deliberate tap,
-      not a queue-speed action.
+- [x] Sorting control (sign-in order / last name / first name). First
+      shipped as a compact pill bar; SUPERSEDED same day by Pete: it is
+      now a single quiet 44px sort icon at the right end of the roster
+      column-header row, over the actions column, opening an anchored
+      menu with the active order checked. Same 44px standing as the undo
+      control (occasional deliberate tap, the recorded exception to the
+      64px floor); the choice still persists in localStorage.
 - [x] Walk-in search results carry context: waiver, red alert, balance and
       membership come free (searchText returns full Client records; this
       also closes the T5 follow-up about red-alert walk-ins booking without

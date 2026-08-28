@@ -137,37 +137,35 @@ button {
   color: var(--muted);
 }
 
-/* Roster order: compact pills above the list, same visual language as the
- * class bar (aria-pressed gets the accent ring), 16px text, tokens only in
- * both palettes.
- *
- * DELIBERATE EXCEPTION to the 64px tap-target floor (T15): sorting is an
- * occasional deliberate tap, like the 44px undo control, not something hit
- * at speed with a queue -- and at 64px the bar crowded the roster it
- * orders. 40px, quiet weight until selected. */
-.sortbar {
+/* Roster order: ONE quiet 44px icon at the right end of the column-header
+ * row (it superseded the pill bar, which crowded the roster it orders),
+ * opening an anchored menu with the active order checked. Same 44px
+ * standing as the undo control: an occasional deliberate tap, recorded as
+ * the deliberate exception to the 64px floor. */
+.head-actions {
+  position: relative;
   display: flex;
-  gap: 8px;
-  margin: 10px 0 6px;
+  justify-content: flex-end;
 }
 
-.sortbar button {
-  flex: 0 0 auto;
-  min-height: 40px;
-  padding: 6px 14px;
+.sort-dd {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 25;
+  min-width: 240px;
+  padding: 8px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 12px;
   background: var(--surface);
-  color: var(--muted);
-  font-size: 16px;
-  font-weight: 400;
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
+  display: grid;
+  gap: 2px;
 }
 
-.sortbar button[aria-pressed="true"] {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
-  color: var(--ink);
-  font-weight: 600;
+/* Sort options reuse the dropdown-option idiom minus the fact columns. */
+.sort-dd .pass-opt {
+  grid-template-columns: 20px minmax(0, 1fr);
 }
 
 .search-wrap {
