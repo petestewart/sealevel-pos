@@ -371,9 +371,12 @@ From live testing after T14 and the five-fix polish pass:
 
 ## T16. Counter flow round three (Pete, 2026-08-28)
 
-- [ ] Pass dropdown: names never ellipsize. The name column gets real
+- [x] Pass dropdown: names never ellipsize. The name column gets real
       width (wider dropdown, flexible name column, wrap to a second line
       before ever truncating); the left/exp fact columns stay aligned.
+      The dropdown now anchors to the ROW's right edge (it was
+      left-anchored under the payment cell), so at its new width it can
+      never overflow the viewport's right side.
 - [ ] The selected class id lives in the URL as a query param, so a
       refresh returns to the same class instead of the default. Reading it
       back tolerates a class no longer in the window (falls back quietly).

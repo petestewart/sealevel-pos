@@ -278,6 +278,8 @@ button {
 }
 
 .rrow {
+  /* Anchors the payment-change dropdown (see .pass-dd). */
+  position: relative;
   min-height: 72px;
   padding: 8px 16px;
   border: 1px solid var(--line);
@@ -423,9 +425,12 @@ button {
 }
 
 /* The payment cell: the ONE pass paying for this visit, truncating rather
- * than wrapping, plus the quiet change chevron. Anchors the dropdown. */
+ * than wrapping, plus the quiet change chevron. The dropdown anchors to
+ * the ROW (.rrow is position: relative), not this cell: the cell sits in
+ * the right half of the grid, and a dropdown wide enough to never
+ * ellipsize a pass name would overflow the viewport's right edge if it
+ * opened leftward from here. */
 .cell-pay {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -521,13 +526,18 @@ button {
   background: transparent;
 }
 
+/* Wide enough that a pass name never ellipsizes (it WRAPS past this, see
+ * .pass-opt-name), and anchored to the row's RIGHT edge: the anchor row
+ * always ends inside the viewport, so opening leftward from its right
+ * edge can never overflow the right side of the screen the way a
+ * left-anchored dropdown under the payment cell could. */
 .pass-dd {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  right: 0;
   z-index: 25;
-  min-width: min(360px, 82vw);
-  max-width: min(440px, 92vw);
+  min-width: min(520px, 92vw);
+  max-width: min(520px, 92vw);
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -539,16 +549,19 @@ button {
 
 /* One grid shared by every option row, so the facts line up as COLUMNS
  * down the list instead of floating at each row's own x: check | name
- * (truncating, with its optional full-name second line) | left | expiry.
- * The fact columns are fixed-width and right-aligned; an empty value
- * keeps its slot so the alignment holds. */
+ * (flexible width, WRAPPING to a second line rather than ever truncating,
+ * with its optional full-name line under it) | left | expiry. The fact
+ * columns are fixed-width and right-aligned; an empty value keeps its
+ * slot so the alignment holds. Start-aligned so a wrapped name's first
+ * line, the check and the facts all sit on one line; the vertical
+ * padding is what centers a single-line row inside the 64px floor. */
 .pass-opt {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) 4.5em 7.5em;
-  align-items: center;
+  align-items: start;
   gap: 10px;
   min-height: 64px;
-  padding: 0 12px;
+  padding: 20px 12px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -588,18 +601,18 @@ button.pass-opt:disabled {
   flex-direction: column;
 }
 
+/* Names WRAP, never truncate: a teacher choosing which pass a class
+ * burns has to read the whole name, so "Monthly Membersh..." is not an
+ * option here. The dropdown is wide (see .pass-dd) so wrapping is rare;
+ * when it happens the row grows and stays tidy via align-items: start. */
 .pass-opt-name {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .pass-opt-full {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: 16px;
   font-weight: 400;
   color: var(--muted);
