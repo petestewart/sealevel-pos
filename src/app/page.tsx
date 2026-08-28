@@ -508,12 +508,15 @@ function FrontDesk() {
   /** Tunables live in the dev drawer's settings tab, so the ones that have
    *  already been wrong once can be adjusted without a commit. */
   const { settings } = useSettings();
-  /**
-   * Enter searches now rather than waiting out the debounce. The debounce
-   * exists to avoid a call per keystroke; someone who has pressed Enter has
-   * finished typing and should not be made to wait for a timer to agree.
-   */
-  const [searchNow, setSearchNow] = useState(0);
+  /** Whether the search-results modal is open. */
+  const [searchOpen, setSearchOpen] = useState(false);
+  /** The query as submitted, for the modal's title: `query` keeps moving
+   *  with the input while the modal shows what was actually searched. */
+  const [searchTitle, setSearchTitle] = useState("");
+  /** The quiet under-the-input message when a submit is too short. */
+  const [searchMsg, setSearchMsg] = useState<string | null>(null);
+  /** A failed search, shown inside the modal. */
+  const [searchError, setSearchError] = useState<string | null>(null);
   /** The row awaiting a confirmed check-out, if any. */
   const [checkingOut, setCheckingOut] = useState<RosterEntry | null>(null);
   /** The row awaiting a confirmed booking cancellation, if any, WITH the
@@ -650,7 +653,6 @@ function FrontDesk() {
   /** Whether the class picker (behind the header's "Change class") is
    *  open. Pure UI state; the selection itself is activeId. */
   const [classPickerOpen, setClassPickerOpen] = useState(false);
-  const skipDebounce = useRef(false);
   /** The class currently on screen, readable from inside an async fetch:
    *  a waitlist response that comes back after the teacher has switched
    *  classes must be dropped, not written into state under the new class. */
@@ -982,52 +984,59 @@ function FrontDesk() {
   );
 
   /**
-   * Search hits Mindbody, so it is debounced properly and cancelled on the
-   * next keystroke.
+   * Search fires on SUBMIT only (Enter, or the Search button), never
+   * while typing: the debounced live search this replaces still cost a
+   * metered call per pause, and results appearing under a moving cursor
+   * were easy to mis-tap (T16). One submit, one call, and the results
+   * open in their own modal titled with the query.
    *
-   * The first version used a 120ms debounce, tuned for a local index. Once
-   * search became a network call that meant typing "dennis" fired four
-   * requests inside 220ms -- more calls than the index it replaced would
-   * have made. It also raced: a slow "de" could land after a fast
-   * "dennis" and overwrite the better answer.
-   *
-   * Three letters minimum by default, because two returns hundreds of
-   * matches that nobody scrolls, at the cost of a metered call.
+   * The minimum length applies at submit, quietly, under the input.
+   * Three letters by default, because two returns hundreds of matches
+   * that nobody scrolls, at the cost of a metered call.
    */
-  useEffect(() => {
+  const submitSearch = useCallback(() => {
+    if (searching) return;
     const q = query.trim();
     if (q.length < settings.minQueryLength) {
-      setFound([]);
-      setSearching(false);
+      setSearchMsg(
+        `Type at least ${settings.minQueryLength} letters, then search.`,
+      );
       return;
     }
+    setSearchMsg(null);
+    setSearchTitle(q);
+    setSearchOpen(true);
     setSearching(true);
-    const controller = new AbortController();
-    const delay = skipDebounce.current ? 0 : settings.searchDebounceMs;
-    skipDebounce.current = false;
-    const t = setTimeout(() => {
-      fetch(`/api/search?q=${encodeURIComponent(q)}&limit=${settings.searchLimit}`, {
-        signal: controller.signal,
+    setSearchError(null);
+    setFound([]);
+    fetch(`/api/search?q=${encodeURIComponent(q)}&limit=${settings.searchLimit}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error) return setSearchError(String(d.error));
+        setFound(d.results ?? []);
       })
-        .then((r) => r.json())
-        .then((d) => setFound(d.results ?? []))
-        .catch(() => {
-          /* aborted by the next keystroke, or failed; either way keep the
-           * previous results rather than blanking the list mid-type. */
-        })
-        .finally(() => setSearching(false));
-    }, delay);
-    return () => {
-      clearTimeout(t);
-      controller.abort();
+      .catch((e) => setSearchError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setSearching(false));
+  }, [query, searching, settings.minQueryLength, settings.searchLimit]);
+
+  /** Escape closes the search-results modal, unless a dialog is stacked
+   *  on top of it (red alert, waitlist confirm, an info modal): Escape
+   *  should peel the top layer, and those close on their own scrims. */
+  useEffect(() => {
+    if (!searchOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        e.key === "Escape" &&
+        !waitlistPrompt &&
+        !walkinAlertPrompt &&
+        !infoModal
+      ) {
+        setSearchOpen(false);
+      }
     };
-  }, [
-    query,
-    searchNow,
-    settings.minQueryLength,
-    settings.searchDebounceMs,
-    settings.searchLimit,
-  ]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [searchOpen, waitlistPrompt, walkinAlertPrompt, infoModal]);
 
   /**
    * Set a visit's signed-in state, and wait for Mindbody before showing it
@@ -1286,10 +1295,10 @@ function FrontDesk() {
   );
 
   /**
-   * Forms of payment for the DISPLAYED walk-in results: after the search
-   * debounce has settled and results are on screen, fetch each shown
-   * client's pass list in the background and let a muted summary line
-   * fill in as answers land. Rendering the results NEVER waits on this.
+   * Forms of payment for the DISPLAYED walk-in results: once a submitted
+   * search has its results in the modal, fetch each shown client's pass
+   * list in the background and let a muted summary line fill in as
+   * answers land. Rendering the results NEVER waits on this.
    *
    * Reuses the roster sweep's machinery wholesale: the same claim ledger
    * (`passSweepCache`, so a client already swept from a roster costs
@@ -1430,12 +1439,16 @@ function FrontDesk() {
         }
         await refreshRoster(activeId);
         /* A real booking moves the person onto the roster, so the search
-         * has done its job: clear it rather than leave the other matches
-         * hanging under the row the teacher is about to tap. Emptying the
-         * query clears the results through the search effect. Suppressed
-         * writes, errors, and waitlist adds keep the results, because
-         * their feedback renders on the walk-in row itself. */
-        if (!waitlist) setQuery("");
+         * has done its job: the modal closes and the search clears,
+         * leaving the teacher looking at the roster row they are about to
+         * check in. Suppressed writes, errors, and waitlist adds keep the
+         * modal and its results, because their feedback renders on the
+         * result row itself. */
+        if (!waitlist) {
+          setSearchOpen(false);
+          setQuery("");
+          setFound([]);
+        }
       } catch (err) {
         setBookMsg((m) => ({
           ...m,
@@ -1875,39 +1888,46 @@ function FrontDesk() {
         </div>
       ) : null}
 
-      <div className="search-wrap">
-      <input
-        className="search"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            skipDebounce.current = true;
-            setSearchNow((n) => n + 1);
-          }
-        }}
-        enterKeyHint="search"
-        placeholder={
-          searching
-            ? "Searching..."
-            : `Search for a walk-in (${settings.minQueryLength}+ letters)`
-        }
-        autoComplete="off"
-        autoCorrect="off"
-        spellCheck={false}
-      />
-      {query ? (
-        <button
-          type="button"
-          className="search-clear"
-          aria-label="Clear search"
-          onClick={() => setQuery("")}
-        >
-          <CloseIcon />
+      {/* Submit-triggered search (T16): typing costs nothing, Enter or
+          the Search button fires the one metered call and opens the
+          results modal. */}
+      <div className="search-bar">
+        <div className="search-wrap">
+          <input
+            className="search"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSearchMsg(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                submitSearch();
+              }
+            }}
+            enterKeyHint="search"
+            placeholder="Search for a walk-in (press Enter)"
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+          {query ? (
+            <button
+              type="button"
+              className="search-clear"
+              aria-label="Clear search"
+              onClick={() => setQuery("")}
+            >
+              <CloseIcon />
+            </button>
+          ) : null}
+        </div>
+        <button className="search-go" onClick={submitSearch}>
+          Search
         </button>
-      ) : null}
       </div>
+      {searchMsg ? <p className="search-quiet">{searchMsg}</p> : null}
 
       {/* The roster as a table, like Mindbody's own sign-in screen: one
           shared grid template so the payment and balance columns line up
@@ -2278,126 +2298,203 @@ function FrontDesk() {
           );
         })}
 
-        {walkIns.map((client) => {
-          const working = bookingIds.includes(client.id);
-          const msg = bookMsg[client.id];
-          const plainDetail = [
-            client.email,
-            classFull ? "Class is full." : null,
-          ]
-            .filter(Boolean)
-            .join(" - ");
-          /* The pass summary, once the background fetch has landed for
-           * this client: the same two-line format the roster's payment
-           * cell uses (short name over the 14px facts sub-line), so the
-           * pass reads the same on both sides of the booking. */
-          const passList = passLists[client.id]?.data ?? null;
-          const firstPass = passList?.[0] ?? null;
-          return (
-            <li key={`walkin-${client.id}`}>
-              {/* The row body is not an add target (T16, same principle
-                  as roster check-in): the add chip is the only action. */}
-              <div className="row">
-                <span className="name">
-                  <span className="name-line">
-                    <span className="name-text">{client.name}</span>
-                    {client.member ? (
-                      <span className="m-chip" title="Member" aria-label="Member">
-                        M
-                      </span>
-                    ) : null}
-                    {client.redAlert ? (
-                      <button
-                        className="row-icon row-alert"
-                        aria-label={`Red alert for ${client.name}`}
-                        title="Red alert"
-                        onClick={(e) => {
-                          /* Info-only, same as the roster icon: reading
-                             here does not acknowledge the ADD gate. */
-                          e.stopPropagation();
-                          setInfoModal({
-                            title: `Red alert on ${client.name}`,
-                            text: client.redAlert ?? "",
-                            alert: true,
-                          });
-                        }}
-                      >
-                        <AlertIcon />
-                      </button>
-                    ) : null}
-                    {!client.waiverSigned ? (
-                      <span className="mini-stop">no waiver</span>
-                    ) : null}
+      </ul>
+
+      {/* Search results, in their own modal (T16): opened by a submitted
+          search, titled with the query, and formatted with the SAME grid
+          row layout as the roster (a sibling column template: name, icon
+          slots, pass summary with its sub-line, balance, action) so a
+          person reads the same on both sides of the booking. The add chip
+          is the only action on a row, with the roster gates intact: red
+          alert blocks, a full class offers the waiting list. The X (and
+          Escape, and the scrim) closes with no action. */}
+      {searchOpen ? (
+        <div
+          className="modal-scrim"
+          onClick={() => setSearchOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="modal modal-list modal-search"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Search results for ${searchTitle}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="row-icon modal-x"
+              aria-label="Close search results"
+              onClick={() => setSearchOpen(false)}
+            >
+              <CloseIcon />
+            </button>
+            <p className="modal-title">{`Results for "${searchTitle}"`}</p>
+            {searching ? (
+              <p className="muted">
+                <span className="spinner" aria-label="working" /> Searching
+                Mindbody...
+              </p>
+            ) : null}
+            {searchError ? <p className="note">{searchError}</p> : null}
+            {!searching && !searchError && walkIns.length === 0 ? (
+              <p className="muted">
+                {found.length > 0
+                  ? "Everyone matching is already on this class's roster."
+                  : "Nobody found. Check the spelling, or try fewer letters."}
+              </p>
+            ) : null}
+            {walkIns.length > 0 ? (
+              <>
+                <div className="roster-head">
+                  <span aria-hidden="true">Name</span>
+                  <span aria-hidden="true" />
+                  <span aria-hidden="true">Passes</span>
+                  <span className="cell-bal" aria-hidden="true">
+                    Balance
                   </span>
-                  <span className="detail">
-                    {working ? (
-                      "Talking to Mindbody..."
-                    ) : msg !== undefined ? (
-                      msg
-                    ) : (
-                      <>
-                        {plainDetail}
-                        {client.balance !== null && client.balance !== 0 ? (
-                          <>
-                            {plainDetail ? " - " : null}
-                            <span
+                  <span aria-hidden="true" />
+                </div>
+                <ul className="roster modal-roster">
+                  {walkIns.map((client) => {
+                    const working = bookingIds.includes(client.id);
+                    const msg = bookMsg[client.id];
+                    /* Email sits where a roster row's history line would;
+                     * an in-flight call or an outcome message outranks it,
+                     * same precedence as the roster. */
+                    const subline = working
+                      ? "Talking to Mindbody..."
+                      : (msg ??
+                        [client.email, classFull ? "Class is full." : null]
+                          .filter(Boolean)
+                          .join(" - "));
+                    /* The pass summary, once the background fetch has
+                     * landed: the same two-line format as the roster's
+                     * payment cell. */
+                    const passList = passLists[client.id]?.data ?? null;
+                    const firstPass = passList?.[0] ?? null;
+                    return (
+                      <li key={`walkin-${client.id}`}>
+                        {/* The row body is not an add target (T16, same
+                            principle as roster check-in): the add chip is
+                            the only action. */}
+                        <div className="rrow">
+                          <div className="cell-name">
+                            <span className="name-line">
+                              <span className="name-text">{client.name}</span>
+                              {!client.waiverSigned ? (
+                                <span className="mini-stop">no waiver</span>
+                              ) : null}
+                            </span>
+                            {subline ? (
+                              <span className="subline">{subline}</span>
+                            ) : null}
+                          </div>
+                          <div className="cell-icons">
+                            <span className="icon-slot">
+                              {client.member ? (
+                                <span
+                                  className="m-chip"
+                                  title="Member"
+                                  aria-label="Member"
+                                >
+                                  M
+                                </span>
+                              ) : null}
+                            </span>
+                            <span className="icon-slot">
+                              {client.redAlert ? (
+                                <button
+                                  className="row-icon row-alert"
+                                  aria-label={`Red alert for ${client.name}`}
+                                  title="Red alert"
+                                  onClick={() => {
+                                    /* Info-only, same as the roster icon:
+                                       reading here does not acknowledge
+                                       the ADD gate. */
+                                    setInfoModal({
+                                      title: `Red alert on ${client.name}`,
+                                      text: client.redAlert ?? "",
+                                      alert: true,
+                                    });
+                                  }}
+                                >
+                                  <AlertIcon />
+                                </button>
+                              ) : null}
+                            </span>
+                          </div>
+                          <div className="cell-pay">
+                            <span className="pay-stack">
+                              {passList !== null ? (
+                                firstPass ? (
+                                  <>
+                                    <span
+                                      className="pay-name"
+                                      title={firstPass.name}
+                                    >
+                                      {shortPassName(firstPass.name)}
+                                    </span>
+                                    <PassFactsLine
+                                      remaining={firstPass.remaining}
+                                      count={firstPass.count}
+                                      expires={firstPass.expires}
+                                    />
+                                  </>
+                                ) : (
+                                  <span className="pay-name muted">
+                                    No current passes
+                                  </span>
+                                )
+                              ) : null}
+                            </span>
+                          </div>
+                          <span
+                            className={
+                              client.balance !== null && client.balance < 0
+                                ? "cell-bal neg"
+                                : "cell-bal"
+                            }
+                          >
+                            {client.balance !== null && client.balance !== 0
+                              ? money(client.balance)
+                              : ""}
+                          </span>
+                          <div className="cell-actions">
+                            <button
                               className={
-                                client.balance < 0 ? "bal-neg" : undefined
+                                working
+                                  ? "chip busy"
+                                  : classFull
+                                    ? "chip unpaid"
+                                    : "chip action"
+                              }
+                              disabled={working}
+                              onClick={() => tapWalkIn(client)}
+                              aria-label={
+                                classFull
+                                  ? `Add ${client.name} to the waiting list`
+                                  : `Add ${client.name} to this class`
                               }
                             >
-                              {money(client.balance)} balance
-                            </span>
-                          </>
-                        ) : null}
-                      </>
-                    )}
-                  </span>
-                  {passList !== null ? (
-                    firstPass ? (
-                      <>
-                        <span className="detail">
-                          {shortPassName(firstPass.name)}
-                        </span>
-                        <PassFactsLine
-                          remaining={firstPass.remaining}
-                          count={firstPass.count}
-                          expires={firstPass.expires}
-                        />
-                      </>
-                    ) : (
-                      <span className="pass-facts">No current passes</span>
-                    )
-                  ) : null}
-                </span>
-                <button
-                  className={
-                    working
-                      ? "chip busy"
-                      : classFull
-                        ? "chip unpaid"
-                        : "chip action"
-                  }
-                  disabled={working}
-                  onClick={() => tapWalkIn(client)}
-                  aria-label={
-                    classFull
-                      ? `Add ${client.name} to the waiting list`
-                      : `Add ${client.name} to this class`
-                  }
-                >
-                  {working ? (
-                    <span className="spinner" aria-label="working" />
-                  ) : classFull ? (
-                    "waitlist"
-                  ) : (
-                    "add"
-                  )}
-                </button>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+                              {working ? (
+                                <span className="spinner" aria-label="working" />
+                              ) : classFull ? (
+                                "waitlist"
+                              ) : (
+                                "add"
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {/* The lists behind the counters. Signed up and checked in render
           from roster state already in memory, so opening them costs no

@@ -387,13 +387,17 @@ From live testing after T14 and the five-fix polish pass:
       made the whole row the target for speed; live use showed accidental
       check-ins. Do not restore row-tap check-in. Walk-in rows got the
       same treatment: the add chip is the only action.
-- [ ] Search results move into their own modal, formatted with the SAME
+- [x] Search results move into their own modal, formatted with the SAME
       row layout as the roster list (grid columns, icon slots, pass
       sub-line, balance column), with an X close button that closes with
       no action. No more auto-search while typing: the debounced
       live search goes away; Enter (or a Search button) submits, which
       suits the mobile keyboard anyway. Minimum-length check applies at
-      submit. The dev-drawer debounce setting retires with it.
+      submit. The dev-drawer debounce setting retires with it. (The
+      modal's rows scope --roster-cols to a sibling template: no notes
+      slot, add chip only in the actions column. A successful add closes
+      the modal and clears the search; suppressed writes, errors and
+      waitlist adds keep it open with the feedback on the row.)
 - [ ] Balance column: no ellipsis. Widen the column to fit real
       four-figure balances, right-aligned with tabular figures so the
       decimal points line up down the roster.

@@ -230,7 +230,6 @@ const NUMBERS: {
   max: number;
   step: number;
 }[] = [
-  { key: "searchDebounceMs", label: "Search debounce", hint: "ms", min: 0, max: 1500, step: 50 },
   { key: "minQueryLength", label: "Minimum query", hint: "letters", min: 1, max: 6, step: 1 },
   { key: "searchLimit", label: "Search results", hint: "max", min: 3, max: 50, step: 1 },
   { key: "hoursBack", label: "Schedule back", hint: "hours", min: 0, max: 12, step: 1 },

@@ -6,11 +6,13 @@ import { useCallback, useEffect, useState } from "react";
  * Tunable knobs, held in the browser so they can be changed without a
  * commit and a restart.
  *
- * These are the numbers that have already been wrong once each: the search
- * debounce was tuned for a local index and fired four calls per lookup, the
+ * These are the numbers that have already been wrong once each: the
  * minimum query length let "de" match 209 people, and check-in was
  * optimistic when it should have waited. Each was a constant, a commit and
- * a redeploy to test. Now they are dials.
+ * a redeploy to test. Now they are dials. (The search debounce used to be
+ * one of them; it retired with the live search itself when search became
+ * submit-triggered, T16. A stored value for it merges harmlessly and is
+ * ignored.)
  *
  * Deliberately client-side only. Anything that decides whether a write
  * reaches Mindbody -- dry run, target, the write guard -- stays in the
@@ -19,7 +21,6 @@ import { useCallback, useEffect, useState } from "react";
  */
 
 export interface Settings {
-  searchDebounceMs: number;
   minQueryLength: number;
   searchLimit: number;
   /** Hours of schedule to show either side of now. */
@@ -36,7 +37,6 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  searchDebounceMs: 350,
   minQueryLength: 3,
   searchLimit: 12,
   hoursBack: 2,

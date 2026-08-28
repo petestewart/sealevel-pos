@@ -184,9 +184,42 @@ button {
   grid-template-columns: 20px minmax(0, 1fr);
 }
 
+/* The search input plus its Search button (T16: search fires on submit,
+ * never while typing, so the button is the visible half of "press
+ * Enter"). */
+.search-bar {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
 .search-wrap {
   position: relative;
-  margin: 12px 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.search-go {
+  flex: 0 0 auto;
+  min-height: 64px;
+  padding: 0 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.search-go:active {
+  background: var(--action-bg);
+}
+
+/* The quiet minimum-length message under the search bar. */
+.search-quiet {
+  margin: -4px 0 12px;
+  font-size: 16px;
+  color: var(--muted);
 }
 
 .search {
@@ -302,13 +335,6 @@ button {
   background: var(--stop-bg);
   color: var(--stop);
   font-size: 16px;
-  font-weight: 600;
-}
-
-/* Money owed on a walk-in's detail line, same stop treatment as the
- * roster's balance column. */
-.bal-neg {
-  color: var(--stop);
   font-weight: 600;
 }
 
@@ -1129,6 +1155,36 @@ button.pass-opt:disabled {
  * scroll the list rather than the screen. */
 .modal-list {
   width: min(600px, 100%);
+}
+
+/* The search-results modal: wider still, because its rows reuse the
+ * roster's grid layout. The column template is a sibling of
+ * --roster-cols, redefined in scope so the shared .roster-head/.rrow
+ * rules pick it up unchanged: no notes slot (walk-ins carry M and alert
+ * only, so the icon column is 30 + 44), and the actions column holds
+ * just the add chip. */
+.modal-search {
+  --roster-cols: minmax(0, 2fr) 74px minmax(0, 1.8fr) 5em 128px;
+  position: relative;
+  width: min(860px, 100%);
+}
+
+.modal-search .cell-icons {
+  grid-template-columns: 30px 44px;
+}
+
+/* Room for the X so a long query's title never runs under it. */
+.modal-search .modal-title {
+  padding-right: 48px;
+}
+
+/* The modal's close-with-no-action X: the row-icon idiom (44px circle),
+ * pinned to the modal's top corner. */
+.modal-x {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  color: var(--ink);
 }
 
 .modal-roster {
