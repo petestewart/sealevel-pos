@@ -370,6 +370,38 @@ function fakeUnlimited(count: number | null, remaining: number | null): boolean 
   );
 }
 
+/**
+ * The pass facts as ONE sub-line under the pass name, everywhere a pass
+ * renders two-line (roster payment cell, walk-in summaries): "3 remaining,
+ * exp 3/2/27"; a fake-unlimited pass shows only the expiry; nothing known,
+ * no line. "1 remaining" keeps the warn pill: it is the renewal
+ * conversation that happens now or never, so it stays loud even in a
+ * sub-line.
+ */
+function PassFactsLine(props: {
+  remaining: number | null;
+  count: number | null;
+  expires: string | null;
+}) {
+  const showRemaining =
+    !fakeUnlimited(props.count, props.remaining) && props.remaining !== null;
+  const exp = props.expires ? `exp ${slashDate(props.expires)}` : null;
+  if (!showRemaining && !exp) return null;
+  return (
+    <span className="pass-facts">
+      {showRemaining ? (
+        props.remaining === 1 ? (
+          <span className="detail-last">1 remaining</span>
+        ) : (
+          `${props.remaining} remaining`
+        )
+      ) : null}
+      {showRemaining && exp ? ", " : null}
+      {exp}
+    </span>
+  );
+}
+
 function money(n: number): string {
   return n.toLocaleString([], {
     style: "currency",
@@ -1226,19 +1258,19 @@ export default function FrontDesk() {
       (p): p is PassInfo & { id: number } =>
         p.id !== null && p.id !== entry.clientServiceId,
     );
-    const facts = (p: {
+    /* The facts render as two right-aligned COLUMNS shared by every row
+     * in the dropdown (the .pass-opt grid), so "4 left" and the expiry
+     * line up vertically down the list instead of floating at each row's
+     * own x. Empty string keeps the column's slot so alignment holds. */
+    const leftCol = (p: {
       remaining: number | null;
       count: number | null;
-      expires: string | null;
     }): string =>
-      [
-        !fakeUnlimited(p.count, p.remaining) && p.remaining !== null
-          ? `${p.remaining} left`
-          : null,
-        p.expires ? `exp ${slashDate(p.expires)}` : null,
-      ]
-        .filter(Boolean)
-        .join(" · ");
+      !fakeUnlimited(p.count, p.remaining) && p.remaining !== null
+        ? `${p.remaining} left`
+        : "";
+    const expCol = (p: { expires: string | null }): string =>
+      p.expires ? `exp ${slashDate(p.expires)}` : "";
     /* The pass paying now, shown checked at the top. When the fetched
      * list does not carry it (or has not landed yet), the roster's own
      * Visit.Service data stands in, so the top line is always the truth
@@ -1246,13 +1278,11 @@ export default function FrontDesk() {
     const currentLine = entry.pricingOption
       ? {
           name: current?.name ?? entry.pricingOption,
-          facts: facts(
-            current ?? {
-              remaining: entry.passRemaining,
-              count: entry.passCount,
-              expires: entry.passExpires,
-            },
-          ),
+          facts: current ?? {
+            remaining: entry.passRemaining,
+            count: entry.passCount,
+            expires: entry.passExpires,
+          },
         }
       : null;
     return (
@@ -1288,9 +1318,8 @@ export default function FrontDesk() {
                   <span className="pass-opt-full">{currentLine.name}</span>
                 ) : null}
               </span>
-              {currentLine.facts ? (
-                <span className="pass-opt-facts">{currentLine.facts}</span>
-              ) : null}
+              <span className="pass-col">{leftCol(currentLine.facts)}</span>
+              <span className="pass-col">{expCol(currentLine.facts)}</span>
             </div>
           ) : null}
           {list?.loading ? (
@@ -1311,7 +1340,6 @@ export default function FrontDesk() {
           ) : null}
           {others.map((p) => {
             const saving = passSavingId === p.id;
-            const line = facts(p);
             const short = shortPassName(p.name);
             return (
               <button
@@ -1331,7 +1359,8 @@ export default function FrontDesk() {
                     <span className="pass-opt-full">{p.name}</span>
                   ) : null}
                 </span>
-                {line ? <span className="pass-opt-facts">{line}</span> : null}
+                <span className="pass-col">{leftCol(p)}</span>
+                <span className="pass-col">{expCol(p)}</span>
               </button>
             );
           })}
@@ -1512,8 +1541,6 @@ export default function FrontDesk() {
         <div className="roster-head" aria-hidden="true">
           <span>Name</span>
           <span>Payment</span>
-          <span>Expires</span>
-          <span>Left</span>
           <span className="cell-bal">Balance</span>
           <span />
         </div>
@@ -1541,11 +1568,6 @@ export default function FrontDesk() {
           const visits = histories[entry.clientId];
           const history =
             statusMsg === null && visits ? historyLine(visits) : "";
-          const unlimited = fakeUnlimited(entry.passCount, entry.passRemaining);
-          const showRemaining =
-            entry.pricingOption !== null &&
-            !unlimited &&
-            entry.passRemaining !== null;
           const canTap = !entry.checkedIn && !working;
 
           const chipClass = entry.checkedIn
@@ -1646,15 +1668,27 @@ export default function FrontDesk() {
                 </div>
 
                 <div className="cell-pay">
-                  <span
-                    className={
-                      entry.pricingOption ? "pay-name" : "pay-name none"
-                    }
-                    title={entry.pricingOption ?? undefined}
-                  >
-                    {entry.pricingOption
-                      ? shortPassName(entry.pricingOption)
-                      : "No pass"}
+                  {/* Two lines: the pass name, and under it the remaining/
+                      expiry facts that used to be their own grid columns
+                      (T15). No pass, no sub-line. */}
+                  <span className="pay-stack">
+                    <span
+                      className={
+                        entry.pricingOption ? "pay-name" : "pay-name none"
+                      }
+                      title={entry.pricingOption ?? undefined}
+                    >
+                      {entry.pricingOption
+                        ? shortPassName(entry.pricingOption)
+                        : "No pass"}
+                    </span>
+                    {entry.pricingOption ? (
+                      <PassFactsLine
+                        remaining={entry.passRemaining}
+                        count={entry.passCount}
+                        expires={entry.passExpires}
+                      />
+                    ) : null}
                   </span>
                   {/* The payment-change chevron renders only when there is
                       something to change TO: a paid row needs a second
@@ -1704,27 +1738,6 @@ export default function FrontDesk() {
                     ? renderPassDropdown(entry)
                     : null}
                 </div>
-
-                <span className="cell-plain">
-                  {entry.pricingOption && entry.passExpires
-                    ? slashDate(entry.passExpires)
-                    : ""}
-                </span>
-
-                {/* The fake-unlimited rule: no number is better than
-                    99987. Remaining 1 is the renewal conversation that
-                    happens now or never, so it stays loud. */}
-                <span className="cell-plain">
-                  {showRemaining ? (
-                    entry.passRemaining === 1 ? (
-                      <span className="detail-last">1</span>
-                    ) : (
-                      entry.passRemaining
-                    )
-                  ) : (
-                    ""
-                  )}
-                </span>
 
                 <span
                   className={

@@ -241,9 +241,11 @@ button {
  * truncates with an ellipsis rather than wrapping the grid.
  */
 :root {
-  /* The payment column got wider when the Change/Assign text control
-   * became a 44px chevron: the freed space belongs to the pass name. */
-  --roster-cols: minmax(0, 2fr) minmax(0, 1.7fr) 4.6em 3em 5em 208px;
+  /* Four columns since T15 folded Expires and Left under the payment name:
+   * name | payment (two-line) | balance | actions. The reclaimed width
+   * belongs to the name and payment; balance and actions stay put so the
+   * right edge does not move. */
+  --roster-cols: minmax(0, 2.2fr) minmax(0, 1.8fr) 5em 208px;
 }
 
 .roster-head,
@@ -375,6 +377,15 @@ button {
   color: var(--accent);
 }
 
+/* The two-line block in the payment cell: pass name over its facts. The
+ * chevron sits OUTSIDE this stack (flex sibling, margin-left auto), so it
+ * stays pinned right and vertically centered against both lines. */
+.pay-stack {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .pay-name {
   min-width: 0;
   overflow: hidden;
@@ -383,17 +394,25 @@ button {
   font-size: 16px;
 }
 
+/* The facts sub-line under the pass name: "3 remaining, exp 3/2/27".
+ * DELIBERATE EXCEPTION to the 16px floor (T15, Pete's call, recorded on
+ * the ticket): 14px muted secondary glance data, same standing as the
+ * compact sort bar. The "1 remaining" warn pill renders inline here at
+ * this size and stays the loud thing on the line. */
+.pass-facts {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--muted);
+}
+
 /* An unpaid booking's payment cell, same amber the unpaid chip uses. */
 .pay-name.none {
   color: var(--warn);
   font-weight: 600;
-}
-
-.cell-plain {
-  font-size: 16px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .cell-bal {
@@ -455,8 +474,14 @@ button {
   gap: 2px;
 }
 
+/* One grid shared by every option row, so the facts line up as COLUMNS
+ * down the list instead of floating at each row's own x: check | name
+ * (truncating, with its optional full-name second line) | left | expiry.
+ * The fact columns are fixed-width and right-aligned; an empty value
+ * keeps its slot so the alignment holds. */
 .pass-opt {
-  display: flex;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 4.5em 7.5em;
   align-items: center;
   gap: 10px;
   min-height: 64px;
@@ -517,10 +542,14 @@ button.pass-opt:disabled {
   color: var(--muted);
 }
 
-.pass-opt-facts {
-  flex: 0 0 auto;
+/* A fact column in the dropdown grid. Muted even on the checked current
+ * row: the facts are the quiet half everywhere. */
+.pass-col {
+  text-align: right;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 16px;
+  font-weight: 400;
 }
 
 .pass-empty {

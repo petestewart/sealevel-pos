@@ -343,6 +343,15 @@ From live testing after T14 and the five-fix polish pass:
       app's first client-record write, so it must be surgical: never send
       fields beyond Id and Notes, and never touch Liability). Pete: verify
       live against the dummy client that only Notes changes.
+- [x] (added 2026-08-28) The Expires and Left columns go away: their data
+      moves under the payment name as a second line ("3 remaining,
+      exp 3/2/27"; a fake-unlimited pass shows only the expiry; no pass,
+      no line). The sub-line is 14px muted, a DELIBERATE exception to the
+      16px floor, Pete's call: secondary glance data, same standing as the
+      compact sort bar. "1 remaining" keeps its warn pill inline. The same
+      two-line format applies to the walk-in rows' pass summary; the
+      change dropdown keeps facts to the right but aligns them as shared
+      right-aligned columns down the list.
 
 ## T9. Deployment, minus auth (PLAN Phase 1.5)
 
