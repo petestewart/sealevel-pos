@@ -299,9 +299,16 @@ export async function mindbody<T = any>(
       });
       if (retry.ok) return (await retry.json()) as T;
     }
+    /* The thrown message reaches teacher-facing surfaces (context panel
+     * lines, row messages), so it carries Mindbody's human-readable reason
+     * and nothing else. The transport detail -- method, full path, status,
+     * both bodies -- is already in the call log for the dev drawer; a
+     * teacher must not be shown URL-encoded query strings. */
     const message =
       body?.Error?.Message ?? (typeof body === "string" ? body.slice(0, 200) : "");
-    throw new Error(`Mindbody ${method} ${path}: HTTP ${res.status} ${message}`);
+    throw new Error(
+      message || `Mindbody did not accept the request (HTTP ${res.status}).`,
+    );
   }
   return body as T;
 }
