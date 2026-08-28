@@ -200,7 +200,14 @@ interface ClientBrief {
   member: boolean;
 }
 
-const CLIENT_LOOKUP_CHUNK = 40;
+/**
+ * Mindbody's hard limit, learned live: 21 ids in one request returned
+ * HTTP 400 "ClientIds should not be more than 20." and the whole roster
+ * fell back to "(unknown client)" with no waiver data. The old value of
+ * 40 was a URL-length guess that testing with small rosters never hit.
+ * Do not raise this.
+ */
+const CLIENT_LOOKUP_CHUNK = 20;
 
 async function briefsForIds(ids: string[]): Promise<Map<string, ClientBrief>> {
   const chunks: string[][] = [];

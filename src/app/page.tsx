@@ -1510,7 +1510,13 @@ function FrontDesk() {
    */
   const bookWalkIn = useCallback(
     async (client: SearchResult, waitlist: boolean) => {
-      if (activeId === null || bookingIds.includes(client.id)) return;
+      /* ONE booking at a time, across the whole modal, not per client:
+       * with per-client locking a fast run of "+" taps booked several
+       * people in parallel, each racing past the same stale capacity
+       * check, and Mindbody's API happily overbooked the class (21 of
+       * 20 seen live). The modal closes on the first success anyway, so
+       * serializing costs nothing a teacher can feel. */
+      if (activeId === null || bookingIds.length > 0) return;
       setBookingIds((b) => [...b, client.id]);
       setBookMsg((m) => {
         const { [client.id]: _drop, ...rest } = m;
@@ -1588,7 +1594,9 @@ function FrontDesk() {
    */
   const tapWalkIn = useCallback(
     (client: SearchResult) => {
-      if (bookingIds.includes(client.id)) return;
+      /* Same single-flight rule as bookWalkIn: any booking in flight
+       * blocks every other row's tap, not just this client's. */
+      if (bookingIds.length > 0) return;
       if (client.redAlert && !acked.includes(client.id)) {
         setWalkinAlertPrompt(client);
         return;
@@ -2735,7 +2743,10 @@ function FrontDesk() {
                                 tapWalkIn, unchanged. */}
                             <button
                               className="add-btn"
-                              disabled={working}
+                              /* Every row's "+" goes inert while ANY booking
+                                 is in flight; the spinner stays on the row
+                                 that is actually booking. */
+                              disabled={working || bookingIds.length > 0}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 tapWalkIn(client);
