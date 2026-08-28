@@ -785,6 +785,13 @@ function FrontDesk() {
     if (activeId === null) return;
     setPickerFor(null);
     setPassMsg(null);
+    /* The unpaid-confirm arm and any failure text are keyed by CLIENT id,
+     * so without this a "confirm" armed on one class would carry to the
+     * same client's unpaid booking on another class, turning the
+     * deliberate second tap into a pre-armed single tap. Both are
+     * per-class-view state; a class switch resets them. */
+    setConfirming([]);
+    setFailed({});
     /* A cancel dialog has no business surviving a class switch; close it.
      * Safe even mid-write: the dialog state carries the classId it was
      * opened for, and that is what the write posts. */
