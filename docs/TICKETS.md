@@ -363,6 +363,20 @@ From live testing after T14 and the five-fix polish pass:
       counters compacted on the right. Layout only: classes data and
       selection state are unchanged.
 
+## Noted for later: waiver signing at the counter (Pete, 2026-08-28)
+
+Pete's observation, which softens the design doc's Phase 3 framing: the
+Mindbody POS itself shows the full waiver text in a popup with Ignore /
+Resolve that any staff member can tap. Matching that is not a new risk, it
+replicates the tool the studio already uses. So a cheaper middle option is
+legitimate before the Phase 3 QR flow: the blocked row's dialog shows the
+real waiver text from /site/liabilitywaiver, the student reads it at the
+counter, and a deliberate confirm tap writes LiabilityRelease: true, with
+our own receipt (client id, timestamp, text hash) kept from day one since
+Mindbody stores no waiver version. The QR-on-their-phone flow remains the
+better end state, off the critical path. Not scheduled; ticket it when
+Pete wants it.
+
 ## T9. Deployment, minus auth (PLAN Phase 1.5)
 
 Not blocked by T10. Ships behind the existing safety rails.
