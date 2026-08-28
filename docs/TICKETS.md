@@ -410,13 +410,26 @@ From live testing after T14 and the five-fix polish pass:
       away entirely; the second line holds only the icons (M, alert) and
       the no-waiver chip.
 - [x] The add chip becomes a "+" icon button.
-- [ ] When a result has multiple current passes, which pass will pay is
+- [x] When a result has multiple current passes, which pass will pay is
       selectable IN the modal (same chevron/dropdown idiom as the roster),
       but selecting takes NO action; the booking happens only on the "+"
       tap, using the chosen pass. Check the spec first: if
       AddClientToClassRequest carries ClientServiceId, send it in the one
       booking call; otherwise book then assign via the existing
       updateclientvisit path with the returned visit id.
+
+Spec answer (docs/mindbody-openapi/class.yml): `AddClientToClassRequest`
+DOES carry `ClientServiceId` ("the ID of the pricing option on the
+client's account that you want to use to pay for this booking"), so the
+chosen pass rides the ONE booking call and there is no follow-up
+updateclientvisit write. No explicit choice omits the field: the payload
+is byte-for-byte what it was, and a waitlist add never sends it (a queue
+entry is not a booking). The picker in the modal is position: fixed,
+anchored from the row at open time, because the modal's scrolling list
+would clip a row-anchored absolute dropdown; scrolling the list closes
+it. Selection resets when the modal closes or a new search lands. Live
+verification of the chosen pass actually landing on the visit belongs
+with Pete's T2 rehearsal.
 
 ## Noted for later: waiver signing at the counter (Pete, 2026-08-28)
 

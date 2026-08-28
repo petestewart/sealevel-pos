@@ -12,13 +12,17 @@ export const dynamic = "force-dynamic";
  * - `{clientId, classId, waitlist: true}` queues, for a full class.
  * - `{clientId, classId, waitlistEntryId}` promotes off the waiting list.
  *
+ * Any of them may carry `clientServiceId`, the pricing option explicitly
+ * chosen to pay for the booking (the search modal's pass picker); absent
+ * means Mindbody picks, as it always did.
+ *
  * The write goes through the mindbody() client, so dry run and the
  * POS_WRITE_CLIENT_IDS guard both apply; a suppressed booking is reported
  * as such rather than pretending a visit exists.
  */
 export async function POST(request: Request) {
   try {
-    const { clientId, classId, waitlist, waitlistEntryId } =
+    const { clientId, classId, waitlist, waitlistEntryId, clientServiceId } =
       await request.json();
     if (typeof clientId !== "string" || !clientId) {
       return NextResponse.json(
@@ -38,6 +42,8 @@ export async function POST(request: Request) {
       waitlist: waitlist === true,
       waitlistEntryId:
         typeof waitlistEntryId === "number" ? waitlistEntryId : undefined,
+      clientServiceId:
+        typeof clientServiceId === "number" ? clientServiceId : undefined,
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {

@@ -576,6 +576,19 @@ button {
   gap: 2px;
 }
 
+/* The search modal's pass picker: the same dropdown, but position: fixed
+ * with its coordinates captured from the row at open time. The modal's
+ * results list scrolls (overflow-y on .modal-roster), which would clip a
+ * row-anchored absolute dropdown at the list's edge; a fixed element's
+ * containing block is the viewport, so ancestor overflow cannot clip it.
+ * Its own max-height scrolls a long pass list instead of running off
+ * screen; scrolling the results list closes it (see the modal's ul). */
+.pass-dd.dd-fixed {
+  position: fixed;
+  max-height: min(48vh, 420px);
+  overflow-y: auto;
+}
+
 /* One grid shared by every option row, so the facts line up as COLUMNS
  * down the list instead of floating at each row's own x: check | name
  * (flexible width, WRAPPING to a second line rather than ever truncating,

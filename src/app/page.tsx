@@ -460,6 +460,25 @@ function fakeUnlimited(count: number | null, remaining: number | null): boolean 
 }
 
 /**
+ * The right-aligned fact columns shared by every pass-dropdown row (the
+ * roster's payment change and the search modal's pass picker), so "4 left"
+ * and the expiry line up vertically down the list. Empty string keeps the
+ * column's slot so alignment holds; the fake-unlimited rule applies.
+ */
+function passLeftCol(p: {
+  remaining: number | null;
+  count: number | null;
+}): string {
+  return !fakeUnlimited(p.count, p.remaining) && p.remaining !== null
+    ? `${p.remaining} left`
+    : "";
+}
+
+function passExpCol(p: { expires: string | null }): string {
+  return p.expires ? `exp ${slashDate(p.expires)}` : "";
+}
+
+/**
  * The pass facts as ONE sub-line under the pass name, everywhere a pass
  * renders two-line (roster payment cell, walk-in summaries): "3 remaining,
  * exp 3/2/27"; a fake-unlimited pass shows only the expiry; nothing known,
@@ -565,6 +584,28 @@ function FrontDesk() {
    *  "I have read it", session-only acknowledgement, nothing written. */
   const [walkinAlertPrompt, setWalkinAlertPrompt] =
     useState<SearchResult | null>(null);
+  /** Per-result chosen pass (ClientServiceId), from the search modal's
+   *  pass picker. LOCAL selection only: picking writes nothing and books
+   *  nothing -- the "+" tap is the one action, and it sends the choice on
+   *  the booking call. Absent means no explicit choice, which books
+   *  exactly as before. Reset when the modal closes or a new search
+   *  lands. */
+  const [walkinPassChoice, setWalkinPassChoice] = useState<
+    Record<string, number>
+  >({});
+  /** The open pass picker in the search modal: which result, and where.
+   *  The coordinates are captured from the row when the chevron is
+   *  tapped, because the dropdown renders position: fixed -- the modal's
+   *  results list scrolls (overflow-y), and a row-anchored absolute
+   *  dropdown would be clipped at its edge; a fixed element escapes
+   *  ancestor overflow entirely, same solution family as the roster
+   *  dropdown's escape-the-cell anchoring. Scrolling the list closes it
+   *  rather than letting it drift off its row. */
+  const [walkinPicker, setWalkinPicker] = useState<{
+    id: string;
+    top: number;
+    right: number;
+  } | null>(null);
   /** Which counter's modal is open, if any. The lists behind "signed up"
    *  and "checked in" render from roster state already in memory; only the
    *  waitlist one can ever cost a call, and that call is shared with the
@@ -1031,6 +1072,10 @@ function FrontDesk() {
     setSearching(true);
     setSearchError(null);
     setFound([]);
+    /* A new search is a new set of people: any pass chosen for the old
+     * results must not silently apply to a same-id row in the new ones. */
+    setWalkinPassChoice({});
+    setWalkinPicker(null);
     fetch(`/api/search?q=${encodeURIComponent(q)}&limit=${settings.searchLimit}`)
       .then((r) => r.json())
       .then((d) => {
@@ -1041,9 +1086,11 @@ function FrontDesk() {
       .finally(() => setSearching(false));
   }, [query, searching, settings.minQueryLength, settings.searchLimit]);
 
-  /** Escape closes the search-results modal, unless a dialog is stacked
-   *  on top of it (red alert, waitlist confirm, an info modal): Escape
-   *  should peel the top layer, and those close on their own scrims. */
+  /** Escape closes the search-results modal, unless a layer is stacked
+   *  on top of it (red alert, waitlist confirm, an info modal, the pass
+   *  picker): Escape peels the top layer, so an open pass picker closes
+   *  first and the modal takes the next press. The dialogs close on
+   *  their own scrims. */
   useEffect(() => {
     if (!searchOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -1053,12 +1100,27 @@ function FrontDesk() {
         !walkinAlertPrompt &&
         !infoModal
       ) {
-        setSearchOpen(false);
+        if (walkinPicker) {
+          setWalkinPicker(null);
+        } else {
+          setSearchOpen(false);
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [searchOpen, waitlistPrompt, walkinAlertPrompt, infoModal]);
+  }, [searchOpen, waitlistPrompt, walkinAlertPrompt, infoModal, walkinPicker]);
+
+  /** The chosen-pass selection lives only as long as the modal: closing
+   *  it (any path: X, scrim, Escape, a successful add) resets both the
+   *  choices and any open picker, so a stale choice can never ride into
+   *  the next search session. */
+  useEffect(() => {
+    if (!searchOpen) {
+      setWalkinPassChoice({});
+      setWalkinPicker(null);
+    }
+  }, [searchOpen]);
 
   /**
    * Set a visit's signed-in state, and wait for Mindbody before showing it
@@ -1435,11 +1497,24 @@ function FrontDesk() {
         const { [client.id]: _drop, ...rest } = m;
         return rest;
       });
+      /* The pass chosen in the modal, if any, rides the ONE booking call:
+       * AddClientToClassRequest carries ClientServiceId per the vendored
+       * spec (docs/mindbody-openapi/class.yml), so there is no follow-up
+       * write. No explicit choice means the field is omitted and the
+       * payload is exactly what it was. A waitlist add deliberately never
+       * sends it: a queue entry is not a booking, and the waitlist flow
+       * stays byte-for-byte as before. */
+      const chosenPass = waitlist ? undefined : walkinPassChoice[client.id];
       try {
         const res = await fetch("/api/book", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ clientId: client.id, classId: activeId, waitlist }),
+          body: JSON.stringify({
+            clientId: client.id,
+            classId: activeId,
+            waitlist,
+            clientServiceId: chosenPass,
+          }),
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
@@ -1480,7 +1555,7 @@ function FrontDesk() {
         setBookingIds((b) => b.filter((id) => id !== client.id));
       }
     },
-    [activeId, bookingIds, refreshRoster, loadWaitlist],
+    [activeId, bookingIds, refreshRoster, loadWaitlist, walkinPassChoice],
   );
 
   /**
@@ -1622,19 +1697,6 @@ function FrontDesk() {
       (p): p is PassInfo & { id: number } =>
         p.id !== null && p.id !== entry.clientServiceId,
     );
-    /* The facts render as two right-aligned COLUMNS shared by every row
-     * in the dropdown (the .pass-opt grid), so "4 left" and the expiry
-     * line up vertically down the list instead of floating at each row's
-     * own x. Empty string keeps the column's slot so alignment holds. */
-    const leftCol = (p: {
-      remaining: number | null;
-      count: number | null;
-    }): string =>
-      !fakeUnlimited(p.count, p.remaining) && p.remaining !== null
-        ? `${p.remaining} left`
-        : "";
-    const expCol = (p: { expires: string | null }): string =>
-      p.expires ? `exp ${slashDate(p.expires)}` : "";
     /* The pass paying now, shown checked at the top. When the fetched
      * list does not carry it (or has not landed yet), the roster's own
      * Visit.Service data stands in, so the top line is always the truth
@@ -1681,8 +1743,8 @@ function FrontDesk() {
                   <span className="pass-opt-full">{currentLine.name}</span>
                 ) : null}
               </span>
-              <span className="pass-col">{leftCol(currentLine.facts)}</span>
-              <span className="pass-col">{expCol(currentLine.facts)}</span>
+              <span className="pass-col">{passLeftCol(currentLine.facts)}</span>
+              <span className="pass-col">{passExpCol(currentLine.facts)}</span>
             </div>
           ) : null}
           {list?.loading ? (
@@ -1722,8 +1784,8 @@ function FrontDesk() {
                     <span className="pass-opt-full">{p.name}</span>
                   ) : null}
                 </span>
-                <span className="pass-col">{leftCol(p)}</span>
-                <span className="pass-col">{expCol(p)}</span>
+                <span className="pass-col">{passLeftCol(p)}</span>
+                <span className="pass-col">{passExpCol(p)}</span>
               </button>
             );
           })}
@@ -2375,7 +2437,15 @@ function FrontDesk() {
                   </span>
                   <span aria-hidden="true" />
                 </div>
-                <ul className="roster modal-roster">
+                <ul
+                  className="roster modal-roster"
+                  /* The picker is position: fixed, so scrolling the list
+                     would slide its row out from under it; close it
+                     instead. */
+                  onScroll={
+                    walkinPicker ? () => setWalkinPicker(null) : undefined
+                  }
+                >
                   {walkIns.map((client) => {
                     const working = bookingIds.includes(client.id);
                     const msg = bookMsg[client.id];
@@ -2388,9 +2458,25 @@ function FrontDesk() {
                       : (msg ?? (classFull ? "Class is full." : null));
                     /* The pass summary, once the background fetch has
                      * landed: the same two-line format as the roster's
-                     * payment cell. */
+                     * payment cell. With more than one current pass the
+                     * cell grows the roster's chevron and which pass will
+                     * pay becomes choosable (T17): the choice is LOCAL --
+                     * rendered here, sent only when the "+" books --
+                     * defaulting to the list's first pass, which is what
+                     * the summary always showed. Only passes carrying an
+                     * id are choosable; a pass Mindbody returned without
+                     * one cannot be named on a booking call. */
                     const passList = passLists[client.id]?.data ?? null;
-                    const firstPass = passList?.[0] ?? null;
+                    const choosable = (passList ?? []).filter(
+                      (p): p is PassInfo & { id: number } => p.id !== null,
+                    );
+                    const chosenId = walkinPassChoice[client.id];
+                    const chosen =
+                      chosenId !== undefined
+                        ? (choosable.find((p) => p.id === chosenId) ?? null)
+                        : null;
+                    const shownPass = chosen ?? passList?.[0] ?? null;
+                    const pickerOpen = walkinPicker?.id === client.id;
                     return (
                       <li key={`walkin-${client.id}`}>
                         {/* The row body is not an add target (T16, same
@@ -2451,18 +2537,18 @@ function FrontDesk() {
                           <div className="cell-pay">
                             <span className="pay-stack">
                               {passList !== null ? (
-                                firstPass ? (
+                                shownPass ? (
                                   <>
                                     <span
                                       className="pay-name"
-                                      title={firstPass.name}
+                                      title={shownPass.name}
                                     >
-                                      {shortPassName(firstPass.name)}
+                                      {shortPassName(shownPass.name)}
                                     </span>
                                     <PassFactsLine
-                                      remaining={firstPass.remaining}
-                                      count={firstPass.count}
-                                      expires={firstPass.expires}
+                                      remaining={shownPass.remaining}
+                                      count={shownPass.count}
+                                      expires={shownPass.expires}
                                     />
                                   </>
                                 ) : (
@@ -2472,6 +2558,116 @@ function FrontDesk() {
                                 )
                               ) : null}
                             </span>
+                            {/* The chevron only when there is a real
+                                choice: two or more choosable passes. The
+                                tap opens the picker; picking takes NO
+                                action beyond updating this cell. */}
+                            {choosable.length >= 2 ? (
+                              <button
+                                className="row-icon pass-toggle"
+                                disabled={working}
+                                aria-haspopup="dialog"
+                                aria-expanded={pickerOpen}
+                                aria-label={`Choose which pass pays for ${client.name}`}
+                                title="Choose which pass pays"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (pickerOpen) {
+                                    setWalkinPicker(null);
+                                    return;
+                                  }
+                                  /* Anchor the fixed dropdown to the ROW's
+                                   * bottom-right, clamped so it always
+                                   * opens on screen (its own max-height
+                                   * scrolls the rest). */
+                                  const row =
+                                    e.currentTarget.closest(".rrow") ??
+                                    e.currentTarget;
+                                  const r = row.getBoundingClientRect();
+                                  setWalkinPicker({
+                                    id: client.id,
+                                    top: Math.min(
+                                      r.bottom + 6,
+                                      Math.max(window.innerHeight - 380, 16),
+                                    ),
+                                    right: Math.max(
+                                      window.innerWidth - r.right,
+                                      8,
+                                    ),
+                                  });
+                                }}
+                              >
+                                <ChevronDownIcon />
+                              </button>
+                            ) : null}
+                            {pickerOpen && walkinPicker ? (
+                              <>
+                                <div
+                                  className="pass-scrim"
+                                  role="presentation"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setWalkinPicker(null);
+                                  }}
+                                />
+                                <div
+                                  className="pass-dd dd-fixed"
+                                  style={{
+                                    top: walkinPicker.top,
+                                    right: walkinPicker.right,
+                                  }}
+                                  role="dialog"
+                                  aria-label={`Choose which pass pays for ${client.name}`}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {choosable.map((p) => {
+                                    const selected = shownPass?.id === p.id;
+                                    const short = shortPassName(p.name);
+                                    return (
+                                      <button
+                                        key={`wp-${client.id}-${p.id}`}
+                                        className={
+                                          selected
+                                            ? "pass-opt current"
+                                            : "pass-opt"
+                                        }
+                                        aria-pressed={selected}
+                                        onClick={() => {
+                                          /* Selection only: nothing is
+                                             written and nothing books
+                                             until the "+" tap. */
+                                          setWalkinPassChoice((c) => ({
+                                            ...c,
+                                            [client.id]: p.id,
+                                          }));
+                                          setWalkinPicker(null);
+                                        }}
+                                      >
+                                        <span className="pass-check">
+                                          {selected ? <CheckIcon /> : null}
+                                        </span>
+                                        <span className="pass-opt-text">
+                                          <span className="pass-opt-name">
+                                            {short}
+                                          </span>
+                                          {short !== p.name.trim() ? (
+                                            <span className="pass-opt-full">
+                                              {p.name}
+                                            </span>
+                                          ) : null}
+                                        </span>
+                                        <span className="pass-col">
+                                          {passLeftCol(p)}
+                                        </span>
+                                        <span className="pass-col">
+                                          {passExpCol(p)}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </>
+                            ) : null}
                           </div>
                           <span
                             className={

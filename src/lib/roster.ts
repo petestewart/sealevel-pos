@@ -336,6 +336,13 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
  *   deliberately: per the spec, omitted means an active pricing option is
  *   NOT required, which is exactly the money-free half of walk-in booking.
  *   Phase 2 sells the pass; Phase 1 gets the person a visit to sign in.
+ * - `ClientServiceId` names the pricing option on the client's account
+ *   that pays for the booking, when the caller chose one explicitly (the
+ *   search modal's pass picker, T17). The spec carries it on
+ *   `AddClientToClassRequest` directly, so the choice rides the ONE
+ *   booking call instead of a book-then-updateclientvisit follow-up.
+ *   Omitted when no choice was made, leaving the payload exactly as
+ *   before: Mindbody picks the applicable pass, as it always did.
  * - `Waitlist: true` adds them to the waiting list instead, for a class
  *   at capacity. The caller decides; Mindbody will refuse a plain booking
  *   on a full class rather than queueing it silently.
@@ -360,6 +367,9 @@ export async function bookClientIntoClass(opts: {
   classId: number;
   waitlist?: boolean;
   waitlistEntryId?: number;
+  /** Purchase-instance id of the pass that pays, when explicitly chosen.
+   *  Omitted otherwise, and the payload is unchanged from before. */
+  clientServiceId?: number;
 }): Promise<BookingResult> {
   const body: Record<string, unknown> = {
     ClientId: opts.clientId,
@@ -369,6 +379,9 @@ export async function bookClientIntoClass(opts: {
   if (opts.waitlist) body["Waitlist"] = true;
   if (opts.waitlistEntryId !== undefined) {
     body["WaitlistEntryId"] = opts.waitlistEntryId;
+  }
+  if (opts.clientServiceId !== undefined) {
+    body["ClientServiceId"] = opts.clientServiceId;
   }
   const res = await mindbody("/class/addclienttoclass", {
     method: "POST",
