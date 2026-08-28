@@ -1307,17 +1307,18 @@ export default function FrontDesk() {
              no badge, normal check-in. */
           const noWaiver = entry.waiverSigned === false && !entry.checkedIn;
           /* The line under the name: an in-flight call, a failure, or a
-             gate message outranks the quiet history line; with none of
-             those and no history yet, nothing renders and nothing waits. */
+             confirm prompt outranks the quiet history line; with none of
+             those and no history yet, nothing renders and nothing waits.
+             The waiver gate does NOT get a line here: the "no waiver" pill
+             already says it, and the tap-gate dialog carries the "sign it
+             in Mindbody" instruction. */
           const statusMsg = working
             ? "Talking to Mindbody..."
             : failed[entry.clientId]
               ? failed[entry.clientId]
-              : noWaiver
-                ? "Needs the liability waiver. Sign it in the Mindbody app."
-                : confirming.includes(entry.clientId)
-                  ? "No pass on this booking. Tap again to check in for free."
-                  : null;
+              : confirming.includes(entry.clientId)
+                ? "No pass on this booking. Tap again to check in for free."
+                : null;
           const visits = histories[entry.clientId];
           const history =
             statusMsg === null && visits ? historyLine(visits) : "";
