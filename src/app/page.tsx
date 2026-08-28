@@ -733,6 +733,13 @@ export default function FrontDesk() {
           void loadWaitlist(activeId);
         }
         await refreshRoster(activeId);
+        /* A real booking moves the person onto the roster, so the search
+         * has done its job: clear it rather than leave the other matches
+         * hanging under the row the teacher is about to tap. Emptying the
+         * query clears the results through the search effect. Suppressed
+         * writes, errors, and waitlist adds keep the results, because
+         * their feedback renders on the walk-in row itself. */
+        if (!waitlist) setQuery("");
       } catch (err) {
         setBookMsg((m) => ({
           ...m,
