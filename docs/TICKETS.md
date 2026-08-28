@@ -51,6 +51,15 @@ Watch live: whether `/class/waitlistentries` with `HidePastEntries=true`
 counts an in-progress class's entries as "past". If it does, the promote list
 goes empty exactly when a teacher needs it, and the flag has to go.
 
+Found in live testing (2026-08-28): **the API overbooks without complaint.**
+Rapid parallel adds pushed a 20-cap class to 21; `/class/addclienttoclass`
+refused nothing. So the app's own `TotalBooked >= MaxCapacity` check is the
+only thing routing people to the waitlist, and bookings are now serialized
+client-side (one in flight at a time) so no two adds can race the same
+stale count. The same incident found Mindbody's real batch limit for
+`/client/clients`: 20 ids per request (21 returns HTTP 400 "ClientIds
+should not be more than 20."), now the chunk size in `briefsForIds`.
+
 ## T3. Header counters (PLAN 1.3)
 
 - [x] Signed up, checked in, capacity from data already on hand (roster
