@@ -275,18 +275,19 @@ button {
   gap: 8px;
 }
 
-/* Opens the client in the Mindbody staff web app, new tab. A real button
- * visually: it sits among tap targets and gets hit from the same distance. */
+/* Opens the client in the Mindbody staff web app, new tab. A quiet utility
+ * pill, deliberately under the 64px floor: it is an occasional admin jump,
+ * not something hit at speed with a queue, and sized like the dev handle. */
 .mb-link {
   justify-self: start;
   display: inline-flex;
   align-items: center;
-  min-height: 64px;
-  padding: 0 24px;
+  min-height: 44px;
+  padding: 0 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--action-bg);
-  color: var(--ink);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
   font-size: 16px;
   font-weight: 600;
   text-decoration: none;
@@ -294,6 +295,7 @@ button {
 
 .mb-link:active {
   background: var(--line);
+  color: var(--ink);
 }
 
 .ctx-line {
