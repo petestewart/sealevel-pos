@@ -369,6 +369,30 @@ From live testing after T14 and the five-fix polish pass:
       counters compacted on the right. Layout only: classes data and
       selection state are unchanged.
 
+## T16. Counter flow round three (Pete, 2026-08-28)
+
+- [ ] Pass dropdown: names never ellipsize. The name column gets real
+      width (wider dropdown, flexible name column, wrap to a second line
+      before ever truncating); the left/exp fact columns stay aligned.
+- [ ] The selected class id lives in the URL as a query param, so a
+      refresh returns to the same class instead of the default. Reading it
+      back tolerates a class no longer in the window (falls back quietly).
+- [ ] Tapping the ROW no longer checks anyone in. The check-in chip is the
+      only trigger; all gates (waiver, red alert, unpaid confirm) move to
+      the chip tap. DECISION REVERSAL, Pete's call: the original design
+      made the whole row the target for speed; live use showed accidental
+      check-ins. Do not restore row-tap check-in.
+- [ ] Search results move into their own modal, formatted with the SAME
+      row layout as the roster list (grid columns, icon slots, pass
+      sub-line, balance column), with an X close button that closes with
+      no action. No more auto-search while typing: the debounced
+      live search goes away; Enter (or a Search button) submits, which
+      suits the mobile keyboard anyway. Minimum-length check applies at
+      submit. The dev-drawer debounce setting retires with it.
+- [ ] Balance column: no ellipsis. Widen the column to fit real
+      four-figure balances, right-aligned with tabular figures so the
+      decimal points line up down the roster.
+
 ## Noted for later: waiver signing at the counter (Pete, 2026-08-28)
 
 Pete's observation, which softens the design doc's Phase 3 framing: the
