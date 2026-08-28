@@ -1170,9 +1170,35 @@ button.pass-opt:disabled {
  * onto the name cell's second line, which is what gives the name the
  * row's whole first line. */
 .modal-search {
-  --roster-cols: minmax(0, 2.4fr) minmax(0, 1.6fr) 7em 128px;
+  --roster-cols: minmax(0, 2.4fr) minmax(0, 1.6fr) 7em 64px;
   position: relative;
   width: min(860px, 100%);
+}
+
+/* The "+" add button on a search-result row: the .chip.action pairing in
+ * a round filled button, 52px so it stays an easy target with a queue.
+ * Both halves are tokens, both palettes; the spinner replaces the plus
+ * while a booking is in flight. */
+.add-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--action-bg);
+  color: var(--ink);
+}
+
+.add-btn:active {
+  background: var(--line);
+}
+
+.add-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 /* The one column that can NEVER ellipsize (T17): the name owns its full

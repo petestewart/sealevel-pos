@@ -409,7 +409,7 @@ From live testing after T14 and the five-fix polish pass:
       column that cannot. Name gets the row's full first line; email goes
       away entirely; the second line holds only the icons (M, alert) and
       the no-waiver chip.
-- [ ] The add chip becomes a "+" icon button.
+- [x] The add chip becomes a "+" icon button.
 - [ ] When a result has multiple current passes, which pass will pay is
       selectable IN the modal (same chevron/dropdown idiom as the roster),
       but selecting takes NO action; the booking happens only on the "+"

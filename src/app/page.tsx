@@ -190,6 +190,21 @@ function TrashIcon() {
   );
 }
 
+/** Plus sign: the add action on a search-result row (books, or offers the
+ *  waiting list on a full class -- the aria-label says which). */
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        d="M12 5v14M5 12h14"
+      />
+    </svg>
+  );
+}
+
 /** Warning triangle for the red alert icon; tapping it shows the text. */
 function AlertIcon() {
   return (
@@ -2470,28 +2485,33 @@ function FrontDesk() {
                               : ""}
                           </span>
                           <div className="cell-actions">
+                            {/* A "+" icon, not a text chip (T17): the one
+                                action on the row, a 52px filled circle in
+                                the same action pairing as the check-in
+                                chip. The aria-label carries what the label
+                                text used to: whether the tap books or
+                                offers the waiting list. All gates are in
+                                tapWalkIn, unchanged. */}
                             <button
-                              className={
-                                working
-                                  ? "chip busy"
-                                  : classFull
-                                    ? "chip unpaid"
-                                    : "chip action"
-                              }
+                              className="add-btn"
                               disabled={working}
-                              onClick={() => tapWalkIn(client)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                tapWalkIn(client);
+                              }}
                               aria-label={
                                 classFull
-                                  ? `Add ${client.name} to the waiting list`
+                                  ? `Add ${client.name} to the waitlist`
                                   : `Add ${client.name} to this class`
+                              }
+                              title={
+                                classFull ? "Add to waitlist" : "Add to this class"
                               }
                             >
                               {working ? (
                                 <span className="spinner" aria-label="working" />
-                              ) : classFull ? (
-                                "waitlist"
                               ) : (
-                                "add"
+                                <PlusIcon />
                               )}
                             </button>
                           </div>
