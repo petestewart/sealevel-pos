@@ -271,10 +271,31 @@ button {
   background: var(--surface);
 }
 
-/* The row body is the check-in target, exactly as it was before the grid;
- * the inline controls stop the tap from bubbling. */
-.rrow.tappable {
+/* The row body is the tap target (check-in on roster rows, add on walk-in
+ * rows); the inline controls stop the tap from bubbling. */
+.rrow.tappable,
+.row.tappable {
   cursor: pointer;
+}
+
+/* "no waiver" pill riding a walk-in result's name line: same stop pairing
+ * as the roster's blocked chip, sized to the line. Tokens, both palettes. */
+.mini-stop {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: var(--stop-bg);
+  color: var(--stop);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* Money owed on a walk-in's detail line, same stop treatment as the
+ * roster's balance column. */
+.bal-neg {
+  color: var(--stop);
+  font-weight: 600;
 }
 
 .cell-name {

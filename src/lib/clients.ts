@@ -65,6 +65,26 @@ export interface SearchResult {
   id: string;
   name: string;
   email: string | null;
+  /**
+   * Context carried FREE from the search: `searchText` returns full Client
+   * records, so the same fields the roster's batched lookup extracts ride
+   * along at zero extra calls. Parsed identically to `briefsForIds` in
+   * src/lib/roster.ts so a walk-in row and a roster row cannot disagree
+   * about the same person.
+   */
+  /** `Liability.IsReleased`; false means no released waiver on file. */
+  waiverSigned: boolean;
+  /** `RedAlert` free text; null when none. Gates the ADD action the way
+   *  it gates check-in. */
+  redAlert: string | null;
+  /** `AccountBalance`; null when Mindbody omitted it. */
+  balance: number | null;
+  /** `MembershipIcon` nonzero. */
+  member: boolean;
+  /** Staff `Notes`; null when none. */
+  notes: string | null;
+  /** Mindbody's numeric `UniqueId`, for staff web app links. */
+  mindbodyId: number | null;
 }
 
 export interface SearchResponse {
@@ -89,6 +109,23 @@ export async function search(
       id: String(row.Id),
       name: name || "(unnamed)",
       email: row.Email ?? null,
+      waiverSigned: Boolean(row?.Liability?.IsReleased),
+      redAlert:
+        typeof row?.RedAlert === "string" && row.RedAlert.trim()
+          ? row.RedAlert.trim()
+          : null,
+      balance:
+        typeof row?.AccountBalance === "number" &&
+        Number.isFinite(row.AccountBalance)
+          ? row.AccountBalance
+          : null,
+      member:
+        typeof row?.MembershipIcon === "number" && row.MembershipIcon !== 0,
+      notes:
+        typeof row?.Notes === "string" && row.Notes.trim()
+          ? row.Notes.trim()
+          : null,
+      mindbodyId: typeof row?.UniqueId === "number" ? row.UniqueId : null,
     });
   }
   return { results };

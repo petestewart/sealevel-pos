@@ -317,7 +317,7 @@ From live testing after T14 and the five-fix polish pass:
       smaller: compact pills, quiet weight. Deliberate exception to the
       64px floor, recorded here: sorting is an occasional deliberate tap,
       not a queue-speed action.
-- [ ] Walk-in search results carry context: waiver, red alert, balance and
+- [x] Walk-in search results carry context: waiver, red alert, balance and
       membership come free (searchText returns full Client records; this
       also closes the T5 follow-up about red-alert walk-ins booking without
       the alert showing). Forms of payment need one clientservices call per

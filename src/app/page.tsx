@@ -50,10 +50,19 @@ interface RosterEntry {
   mindbodyId: number | null;
 }
 
+/** Mirrors src/lib/clients.ts: the context fields ride the searchText
+ *  response for free (full Client records), parsed the same way as the
+ *  roster's batched lookup. */
 interface SearchResult {
   id: string;
   name: string;
   email: string | null;
+  waiverSigned: boolean;
+  redAlert: string | null;
+  balance: number | null;
+  member: boolean;
+  notes: string | null;
+  mindbodyId: number | null;
 }
 
 interface WaitlistRow {
@@ -485,6 +494,11 @@ export default function FrontDesk() {
   const [waitlistPrompt, setWaitlistPrompt] = useState<SearchResult | null>(
     null,
   );
+  /** A red-alert walk-in whose ADD is held behind the unread alert, same
+   *  contract as the roster's check-in gate: blocking dialog, explicit
+   *  "I have read it", session-only acknowledgement, nothing written. */
+  const [walkinAlertPrompt, setWalkinAlertPrompt] =
+    useState<SearchResult | null>(null);
   /** Which counter's modal is open, if any. The lists behind "signed up"
    *  and "checked in" render from roster state already in memory; only the
    *  waitlist one can ever cost a call, and that call is shared with the
@@ -1131,7 +1145,67 @@ export default function FrontDesk() {
     () => new Set(entries.map((e) => e.clientId)),
     [entries],
   );
-  const walkIns = found.filter((f) => !rosterIds.has(f.id));
+  const walkIns = useMemo(
+    () => found.filter((f) => !rosterIds.has(f.id)),
+    [found, rosterIds],
+  );
+
+  /**
+   * Forms of payment for the DISPLAYED walk-in results: after the search
+   * debounce has settled and results are on screen, fetch each shown
+   * client's pass list in the background and let a muted summary line
+   * fill in as answers land. Rendering the results NEVER waits on this.
+   *
+   * Reuses the roster sweep's machinery wholesale: the same claim ledger
+   * (`passSweepCache`, so a client already swept from a roster costs
+   * nothing here and vice versa), the same `passLists` cache the rows
+   * read, the same concurrency cap, and the same staleness posture --
+   * this effect's cleanup cancels the workers when the result set
+   * changes (the analogue of the roster sweep's activeIdRef guard), and
+   * caches are keyed by client id, so a late answer can only ever land
+   * under its own client and can never dirty another result set's rows.
+   * Metered-call note (on the ticket): worst case is result-limit calls
+   * per novel search.
+   */
+  useEffect(() => {
+    const ids = walkIns
+      .map((w) => w.id)
+      .filter((id) => !passSweepCache.current.has(id));
+    if (ids.length === 0) return;
+    let cancelled = false;
+    let next = 0;
+    const worker = async () => {
+      while (!cancelled) {
+        const id = ids[next++];
+        if (id === undefined) return;
+        /* Claim before fetching, so an overlapping roster sweep or a
+         * re-run of this effect does not fetch the same client twice. */
+        if (passSweepCache.current.has(id)) continue;
+        passSweepCache.current.set(id, null);
+        try {
+          const r = await fetch(
+            `/api/passes?clientId=${encodeURIComponent(id)}`,
+          );
+          const body = await r.json();
+          if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+          const passes: PassInfo[] = body?.passes ?? [];
+          passSweepCache.current.set(id, passes);
+          setPassLists((l) =>
+            l[id]?.data || l[id]?.loading
+              ? l
+              : { ...l, [id]: { data: passes, error: null, loading: false } },
+          );
+        } catch {
+          /* Ledger keeps the null claim: the summary line is a nicety,
+           * not worth a retry storm on a struggling API. */
+        }
+      }
+    };
+    for (let i = 0; i < HISTORY_SWEEP_CONCURRENCY; i++) void worker();
+    return () => {
+      cancelled = true;
+    };
+  }, [walkIns]);
 
   const activeClass = classes.find((c) => c.classId === activeId) ?? null;
   /** Full means TotalBooked has reached MaxCapacity. Unknown counts are
@@ -1237,6 +1311,31 @@ export default function FrontDesk() {
       }
     },
     [activeId, bookingIds, refreshRoster, loadWaitlist],
+  );
+
+  /**
+   * The walk-in ADD tap. A known red alert stops it exactly the way it
+   * stops a roster check-in: the blocking dialog opens and nothing is
+   * booked until the teacher has read the alert and chosen to continue
+   * (this closes the T5 follow-up where a red-alert walk-in could be
+   * booked without the alert ever showing). Past the gate, the existing
+   * full-class handling stands: a full class offers the waiting list, a
+   * class with room books.
+   */
+  const tapWalkIn = useCallback(
+    (client: SearchResult) => {
+      if (bookingIds.includes(client.id)) return;
+      if (client.redAlert && !acked.includes(client.id)) {
+        setWalkinAlertPrompt(client);
+        return;
+      }
+      if (classFull) {
+        setWaitlistPrompt(client);
+      } else {
+        void bookWalkIn(client, false);
+      }
+    },
+    [bookingIds, acked, classFull, bookWalkIn],
   );
 
   /**
@@ -1933,34 +2032,115 @@ export default function FrontDesk() {
         {walkIns.map((client) => {
           const working = bookingIds.includes(client.id);
           const msg = bookMsg[client.id];
-          const detail = working
-            ? "Talking to Mindbody..."
-            : msg ??
-              [client.email, classFull ? "Class is full." : null]
-                .filter(Boolean)
-                .join(" - ");
+          const plainDetail = [
+            client.email,
+            classFull ? "Class is full." : null,
+          ]
+            .filter(Boolean)
+            .join(" - ");
+          /* The pass summary, once the background fetch has landed for
+           * this client: the same two-line format the roster's payment
+           * cell uses (short name over the 14px facts sub-line), so the
+           * pass reads the same on both sides of the booking. */
+          const passList = passLists[client.id]?.data ?? null;
+          const firstPass = passList?.[0] ?? null;
           return (
             <li key={`walkin-${client.id}`}>
-              <button
-                className="row"
-                disabled={working}
-                onClick={() =>
-                  classFull
-                    ? setWaitlistPrompt(client)
-                    : void bookWalkIn(client, false)
-                }
+              {/* A div, not a button: the row carries its own inner
+                  controls (the alert icon), and the chip is the button a
+                  keyboard reaches -- same pattern as the roster rows. */}
+              <div
+                className={working ? "row" : "row tappable"}
+                onClick={working ? undefined : () => tapWalkIn(client)}
               >
                 <span className="name">
-                  {client.name}
-                  {detail ? <span className="detail">{detail}</span> : null}
+                  <span className="name-line">
+                    <span className="name-text">{client.name}</span>
+                    {client.member ? (
+                      <span className="m-chip" title="Member" aria-label="Member">
+                        M
+                      </span>
+                    ) : null}
+                    {client.redAlert ? (
+                      <button
+                        className="row-icon row-alert"
+                        aria-label={`Red alert for ${client.name}`}
+                        title="Red alert"
+                        onClick={(e) => {
+                          /* Info-only, same as the roster icon: reading
+                             here does not acknowledge the ADD gate. */
+                          e.stopPropagation();
+                          setInfoModal({
+                            title: `Red alert on ${client.name}`,
+                            text: client.redAlert ?? "",
+                            alert: true,
+                          });
+                        }}
+                      >
+                        <AlertIcon />
+                      </button>
+                    ) : null}
+                    {!client.waiverSigned ? (
+                      <span className="mini-stop">no waiver</span>
+                    ) : null}
+                  </span>
+                  <span className="detail">
+                    {working ? (
+                      "Talking to Mindbody..."
+                    ) : msg !== undefined ? (
+                      msg
+                    ) : (
+                      <>
+                        {plainDetail}
+                        {client.balance !== null && client.balance !== 0 ? (
+                          <>
+                            {plainDetail ? " - " : null}
+                            <span
+                              className={
+                                client.balance < 0 ? "bal-neg" : undefined
+                              }
+                            >
+                              {money(client.balance)} balance
+                            </span>
+                          </>
+                        ) : null}
+                      </>
+                    )}
+                  </span>
+                  {passList !== null ? (
+                    firstPass ? (
+                      <>
+                        <span className="detail">
+                          {shortPassName(firstPass.name)}
+                        </span>
+                        <PassFactsLine
+                          remaining={firstPass.remaining}
+                          count={firstPass.count}
+                          expires={firstPass.expires}
+                        />
+                      </>
+                    ) : (
+                      <span className="pass-facts">No current passes</span>
+                    )
+                  ) : null}
                 </span>
-                <span
+                <button
                   className={
                     working
                       ? "chip busy"
                       : classFull
                         ? "chip unpaid"
                         : "chip action"
+                  }
+                  disabled={working}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    tapWalkIn(client);
+                  }}
+                  aria-label={
+                    classFull
+                      ? `Add ${client.name} to the waiting list`
+                      : `Add ${client.name} to this class`
                   }
                 >
                   {working ? (
@@ -1970,8 +2150,8 @@ export default function FrontDesk() {
                   ) : (
                     "add"
                   )}
-                </span>
-              </button>
+                </button>
+              </div>
             </li>
           );
         })}
@@ -2288,6 +2468,67 @@ export default function FrontDesk() {
                 }}
               >
                 I have read it, check in
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* The walk-in twin of the gate above: a red-alert walk-in does not
+          get booked on reflex either. Confirming acknowledges for this
+          browser session (the same acked list the roster gate uses, so
+          reading past it once covers both surfaces for that person) and
+          then continues into the normal add flow, full-class handling
+          included. Nothing is ever written back. */}
+      {walkinAlertPrompt ? (
+        <div
+          className="modal-scrim"
+          onClick={() => setWalkinAlertPrompt(null)}
+          role="presentation"
+        >
+          <div
+            className="modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Red alert on this client"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">
+              Red alert on {walkinAlertPrompt.name}
+            </p>
+            <p className="ctx-alert modal-alert">
+              {walkinAlertPrompt.redAlert ??
+                "The studio flagged this client."}
+            </p>
+            <p className="muted">
+              The studio flagged this deliberately. Read it before adding
+              them to the class.
+            </p>
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                onClick={() => setWalkinAlertPrompt(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="modal-confirm"
+                onClick={() => {
+                  const client = walkinAlertPrompt;
+                  setWalkinAlertPrompt(null);
+                  setAcked((a) =>
+                    a.includes(client.id) ? a : [...a, client.id],
+                  );
+                  /* Past the alert, the normal add flow resumes: a full
+                     class still offers the waiting list instead. */
+                  if (classFull) {
+                    setWaitlistPrompt(client);
+                  } else {
+                    void bookWalkIn(client, false);
+                  }
+                }}
+              >
+                I have read it, add
               </button>
             </div>
           </div>
