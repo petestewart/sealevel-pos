@@ -1090,6 +1090,15 @@ function FrontDesk() {
       .finally(() => setSearching(false));
   }, [query, searching, settings.minQueryLength, settings.searchLimit]);
 
+  /** Closing the results modal, by any path, also clears the input and
+   *  the held results: a closed search is a finished search, and stale
+   *  text in the box otherwise invites resubmitting it by reflex. */
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setQuery("");
+    setFound([]);
+  }, []);
+
   /** Escape closes the search-results modal, unless a layer is stacked
    *  on top of it (red alert, waitlist confirm, an info modal, the pass
    *  picker): Escape peels the top layer, so an open pass picker closes
@@ -1107,13 +1116,20 @@ function FrontDesk() {
         if (walkinPicker) {
           setWalkinPicker(null);
         } else {
-          setSearchOpen(false);
+          closeSearch();
         }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [searchOpen, waitlistPrompt, walkinAlertPrompt, infoModal, walkinPicker]);
+  }, [
+    searchOpen,
+    waitlistPrompt,
+    walkinAlertPrompt,
+    infoModal,
+    walkinPicker,
+    closeSearch,
+  ]);
 
   /** The chosen-pass selection lives only as long as the modal: closing
    *  it (any path: X, scrim, Escape, a successful add) resets both the
@@ -1566,11 +1582,7 @@ function FrontDesk() {
          * check in. Suppressed writes, errors, and waitlist adds keep the
          * modal and its results, because their feedback renders on the
          * result row itself. */
-        if (!waitlist) {
-          setSearchOpen(false);
-          setQuery("");
-          setFound([]);
-        }
+        if (!waitlist) closeSearch();
       } catch (err) {
         setBookMsg((m) => ({
           ...m,
@@ -1580,7 +1592,7 @@ function FrontDesk() {
         setBookingIds((b) => b.filter((id) => id !== client.id));
       }
     },
-    [activeId, bookingIds, refreshRoster, loadWaitlist, walkinPassChoice],
+    [activeId, bookingIds, refreshRoster, loadWaitlist, walkinPassChoice, closeSearch],
   );
 
   /**
@@ -2420,11 +2432,7 @@ function FrontDesk() {
           alert blocks, a full class offers the waiting list. The X (and
           Escape, and the scrim) closes with no action. */}
       {searchOpen ? (
-        <div
-          className="modal-scrim"
-          onClick={() => setSearchOpen(false)}
-          role="presentation"
-        >
+        <div className="modal-scrim" onClick={closeSearch} role="presentation">
           <div
             className="modal modal-list modal-search"
             role="dialog"
@@ -2435,7 +2443,7 @@ function FrontDesk() {
             <button
               className="row-icon modal-x"
               aria-label="Close search results"
-              onClick={() => setSearchOpen(false)}
+              onClick={closeSearch}
             >
               <CloseIcon />
             </button>
