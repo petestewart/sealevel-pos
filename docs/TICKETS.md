@@ -403,6 +403,21 @@ From live testing after T14 and the five-fix polish pass:
       decimal points line up down the roster. (7em, sized for a
       five-figure negative; the search modal's balance column matches.)
 
+## T17. Search modal polish (Pete, 2026-08-28)
+
+- [ ] The name column in the search modal never ellipsizes; it is the one
+      column that cannot. Name gets the row's full first line; email goes
+      away entirely; the second line holds only the icons (M, alert) and
+      the no-waiver chip.
+- [ ] The add chip becomes a "+" icon button.
+- [ ] When a result has multiple current passes, which pass will pay is
+      selectable IN the modal (same chevron/dropdown idiom as the roster),
+      but selecting takes NO action; the booking happens only on the "+"
+      tap, using the chosen pass. Check the spec first: if
+      AddClientToClassRequest carries ClientServiceId, send it in the one
+      booking call; otherwise book then assign via the existing
+      updateclientvisit path with the returned visit id.
+
 ## Noted for later: waiver signing at the counter (Pete, 2026-08-28)
 
 Pete's observation, which softens the design doc's Phase 3 framing: the
