@@ -1063,6 +1063,33 @@ button.pass-opt:disabled {
   color: var(--ink);
 }
 
+/* The cancel-booking dialog's middle lines: the entity (who/what pass) is
+ * quiet; the consequence is the ONLY stop-coloured text in the dialog, so
+ * the one loud line is the thing that happens on confirm. */
+.modal-entity {
+  margin: 0 0 8px;
+  font-size: 17px;
+  color: var(--muted);
+}
+
+.modal-consequence {
+  margin: 0 0 16px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--stop);
+}
+
+/* A suppression / failure notice inside a modal (reuses the dropdown's
+ * amber pass-note pairing) needs its own bottom gap there. */
+.modal .modal-note-gap {
+  margin: 0 0 16px;
+}
+
+.modal-actions button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .modal-confirm {
   border: 1px solid transparent;
   background: var(--stop-bg);

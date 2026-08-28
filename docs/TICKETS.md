@@ -329,7 +329,7 @@ From live testing after T14 and the five-fix polish pass:
       checked-in row regardless of waiver state.
 - [x] Check-out icon becomes an undo symbol (counter-clockwise arrow), not
       an X.
-- [ ] Rows not checked in get a trash icon where the undo would sit:
+- [x] Rows not checked in get a trash icon where the undo would sit:
       cancel the visit entirely via /class/removeclientfromclass (verify
       against docs/mindbody-openapi/class.yml), behind a confirmation
       dialog that names the person and says they will be removed from the

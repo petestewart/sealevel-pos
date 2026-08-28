@@ -382,6 +382,39 @@ export async function bookClientIntoClass(opts: {
 }
 
 /**
+ * Cancel a booking outright: `POST /class/removeclientfromclass` (spec:
+ * docs/mindbody-openapi/class.yml, `RemoveClientFromClassRequest`).
+ *
+ * The schema takes `ClassId` (int) plus ONE of `ClientId` (string RSSID) or
+ * `UniqueClientId`; this app holds the RSSID everywhere, so it sends
+ * `ClientId`. `SendEmail: false` explicitly, same reasoning as booking: a
+ * counter tap with the person standing there should not fire a cancellation
+ * email at them. `LateCancel` is omitted: the spec defaults it to false
+ * (early cancel), and whether the studio's late-cancel policy should bite
+ * is a business decision this screen must not quietly make. `VisitId` and
+ * `Test` are omitted as unneeded.
+ *
+ * This ClientId also drives the POS_WRITE_CLIENT_IDS guard (the payload
+ * names the client, and mindbody() reads it from the body). Under dry run
+ * or the write guard the call never goes out; the caller is told which
+ * guard fired so the UI says so instead of showing a removal that did not
+ * happen.
+ */
+export async function removeClientFromClass(
+  clientId: string,
+  classId: number,
+): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
+  const res = await mindbody("/class/removeclientfromclass", {
+    method: "POST",
+    body: { ClientId: clientId, ClassId: classId, SendEmail: false },
+    clientId,
+  });
+  if (res?.DryRun) return { suppressed: "dry-run" };
+  if (res?.WriteSuppressed) return { suppressed: "write-guard" };
+  return { suppressed: null };
+}
+
+/**
  * The waiting list for one class, in queue order.
  *
  * `GET /class/waitlistentries` filtered by class id. The entries carry a

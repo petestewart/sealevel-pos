@@ -151,6 +151,28 @@ function UndoIcon() {
   );
 }
 
+/** Trash can: cancels the booking itself, behind a confirmation. */
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M4 6.5h16M9.5 6.5V4h5v2.5M6.5 6.5 7.5 20h9l1-13.5"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        d="M10 10.5v6M14 10.5v6"
+      />
+    </svg>
+  );
+}
+
 /** Warning triangle for the red alert icon; tapping it shows the text. */
 function AlertIcon() {
   return (
@@ -388,6 +410,17 @@ export default function FrontDesk() {
   const [searchNow, setSearchNow] = useState(0);
   /** The row awaiting a confirmed check-out, if any. */
   const [checkingOut, setCheckingOut] = useState<RosterEntry | null>(null);
+  /** The row awaiting a confirmed booking cancellation, if any. */
+  const [cancelling, setCancelling] = useState<RosterEntry | null>(null);
+  /** True while the cancellation write is in flight: the dialog's confirm
+   *  button spins and the dialog refuses to close until Mindbody answers.
+   *  Non-optimistic, same reasoning as check-in: a teacher who saw the row
+   *  vanish believes the booking is gone. */
+  const [cancelBusy, setCancelBusy] = useState(false);
+  /** Outcome text inside the cancel dialog: a failure, or the suppression
+   *  notice when dry run or the write guard stopped the write. Never
+   *  rendered as success. */
+  const [cancelMsg, setCancelMsg] = useState<string | null>(null);
   /** Walk-in bookings in flight, by client id. Like check-in, booking is
    *  NOT optimistic: a booking is attendance-adjacent, so the row spins
    *  until Mindbody answers rather than faking success. */
@@ -566,6 +599,11 @@ export default function FrontDesk() {
     if (activeId === null) return;
     setPickerFor(null);
     setPassMsg(null);
+    /* A cancel dialog held open across a class switch would post the old
+     * class's entry against the NEW activeId; close it instead. Safe even
+     * mid-write: the write already carries the classId it was opened for. */
+    setCancelling(null);
+    setCancelMsg(null);
     setCounterModal(null);
     setWaitlist(null);
     setWaitlistError(null);
@@ -671,6 +709,63 @@ export default function FrontDesk() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [pickerFor, passSavingId]);
+
+  /** Escape closes the cancel-booking dialog too, except mid-write: once
+   *  the removal is on the wire the dialog waits for the answer, because a
+   *  dismissed dialog whose write later succeeds is a row that vanishes
+   *  with nobody watching. */
+  useEffect(() => {
+    if (cancelling === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !cancelBusy) {
+        setCancelling(null);
+        setCancelMsg(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cancelling, cancelBusy]);
+
+  /**
+   * Cancel a booking outright, from the cancel dialog's confirm button.
+   * Non-optimistic: the button spins until Mindbody answers. On success
+   * the dialog closes and the roster refreshes through the same
+   * activeIdRef-guarded refresh everything else uses, so the row's
+   * disappearance is Mindbody's answer, not our guess. Suppression
+   * (dry run / write guard) renders inside the dialog as the amber
+   * notice, never as success; failure shows Mindbody's reason.
+   */
+  const cancelVisit = useCallback(
+    async (entry: RosterEntry) => {
+      if (activeId === null || cancelBusy) return;
+      setCancelBusy(true);
+      setCancelMsg(null);
+      try {
+        const res = await fetch("/api/cancel-visit", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clientId: entry.clientId, classId: activeId }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        if (body.suppressed) {
+          setCancelMsg(
+            body.suppressed === "dry-run"
+              ? "Dry run: removal suppressed, nothing was written."
+              : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
+          );
+          return;
+        }
+        await refreshRoster(activeId);
+        setCancelling(null);
+      } catch (err) {
+        setCancelMsg(err instanceof Error ? err.message : String(err));
+      } finally {
+        setCancelBusy(false);
+      }
+    },
+    [activeId, cancelBusy, refreshRoster],
+  );
 
   /**
    * Search hits Mindbody, so it is debounced properly and cancelled on the
@@ -1676,6 +1771,22 @@ export default function FrontDesk() {
                     >
                       <UndoIcon />
                     </button>
+                  ) : !entry.checkedIn && !working ? (
+                    /* Not checked in: the quiet trash sits where the undo
+                       would, and cancels the BOOKING (behind a confirm)
+                       rather than a sign-in. */
+                    <button
+                      className="undo-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCancelMsg(null);
+                        setCancelling(entry);
+                      }}
+                      aria-label={`Remove ${entry.name} from this class`}
+                      title={`Remove ${entry.name} from this class`}
+                    >
+                      <TrashIcon />
+                    </button>
                   ) : (
                     <span className="act-spacer" aria-hidden="true" />
                   )}
@@ -2081,6 +2192,66 @@ export default function FrontDesk() {
                 }}
               >
                 Check out
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Cancel a booking. Names the person, says what it does in the stop
+          colour, and waits for Mindbody on the confirm button itself: the
+          dialog is the spinner, and it refuses to close mid-write. */}
+      {cancelling ? (
+        <div
+          className="modal-scrim"
+          onClick={() => {
+            if (!cancelBusy) {
+              setCancelling(null);
+              setCancelMsg(null);
+            }
+          }}
+          role="presentation"
+        >
+          <div
+            className="modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Confirm removal from class"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">
+              Remove {cancelling.name} from this class?
+            </p>
+            <p className="modal-entity">
+              {cancelling.pricingOption
+                ? shortPassName(cancelling.pricingOption)
+                : "No pass"}
+            </p>
+            <p className="modal-consequence">
+              Cancels their booking for this class.
+            </p>
+            {cancelMsg ? <p className="pass-note modal-note-gap">{cancelMsg}</p> : null}
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                disabled={cancelBusy}
+                onClick={() => {
+                  setCancelling(null);
+                  setCancelMsg(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="modal-confirm"
+                disabled={cancelBusy}
+                onClick={() => void cancelVisit(cancelling)}
+              >
+                {cancelBusy ? (
+                  <span className="spinner" aria-label="working" />
+                ) : (
+                  "Remove"
+                )}
               </button>
             </div>
           </div>
