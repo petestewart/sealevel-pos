@@ -313,7 +313,7 @@ this container):
 
 From live testing after T14 and the five-fix polish pass:
 
-- [ ] Sort bar (sign-in order / last name / first name) rendered much
+- [x] Sort bar (sign-in order / last name / first name) rendered much
       smaller: compact pills, quiet weight. Deliberate exception to the
       64px floor, recorded here: sorting is an occasional deliberate tap,
       not a queue-speed action.
