@@ -605,6 +605,10 @@ function FrontDesk() {
     id: string;
     top: number;
     right: number;
+    /** Viewport room below `top`, applied inline so the picker can never
+     *  run off the bottom even when a wrapped pass name makes it taller
+     *  than the open-time estimate. */
+    maxHeight: number;
   } | null>(null);
   /** Which counter's modal is open, if any. The lists behind "signed up"
    *  and "checked in" render from roster state already in memory; only the
@@ -1121,6 +1125,21 @@ function FrontDesk() {
       setWalkinPicker(null);
     }
   }, [searchOpen]);
+
+  /** The picker's coordinates are position: fixed and captured at open
+   *  time, so a resize or an orientation change would leave it floating
+   *  over a reflowed modal at stale coordinates. Close it instead, same
+   *  posture as scrolling the results list. */
+  useEffect(() => {
+    if (!walkinPicker) return;
+    const close = () => setWalkinPicker(null);
+    window.addEventListener("resize", close);
+    window.addEventListener("orientationchange", close);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("orientationchange", close);
+    };
+  }, [walkinPicker]);
 
   /**
    * Set a visit's signed-in state, and wait for Mindbody before showing it
@@ -2577,22 +2596,47 @@ function FrontDesk() {
                                     return;
                                   }
                                   /* Anchor the fixed dropdown to the ROW's
-                                   * bottom-right, clamped so it always
-                                   * opens on screen (its own max-height
-                                   * scrolls the rest). */
+                                   * bottom-right. The pull-up clamp uses
+                                   * the LIST's estimated height (64px
+                                   * option floor + gaps + chrome, capped
+                                   * at the CSS max-height), not a fixed
+                                   * worst case: a two-option picker for a
+                                   * bottom row must stay glued to its row,
+                                   * not float mid-screen over somebody
+                                   * else's cells. The inline max-height is
+                                   * the belt: wrapped pass names can beat
+                                   * the estimate, and then the picker
+                                   * scrolls instead of running off the
+                                   * bottom. */
                                   const row =
                                     e.currentTarget.closest(".rrow") ??
                                     e.currentTarget;
                                   const r = row.getBoundingClientRect();
+                                  const capHeight = Math.min(
+                                    window.innerHeight * 0.48,
+                                    420,
+                                  );
+                                  const estHeight = Math.min(
+                                    choosable.length * 66 + 18,
+                                    capHeight,
+                                  );
+                                  const top = Math.min(
+                                    r.bottom + 6,
+                                    Math.max(
+                                      window.innerHeight - estHeight - 8,
+                                      16,
+                                    ),
+                                  );
                                   setWalkinPicker({
                                     id: client.id,
-                                    top: Math.min(
-                                      r.bottom + 6,
-                                      Math.max(window.innerHeight - 380, 16),
-                                    ),
+                                    top,
                                     right: Math.max(
                                       window.innerWidth - r.right,
                                       8,
+                                    ),
+                                    maxHeight: Math.min(
+                                      window.innerHeight - top - 8,
+                                      capHeight,
                                     ),
                                   });
                                 }}
@@ -2615,6 +2659,7 @@ function FrontDesk() {
                                   style={{
                                     top: walkinPicker.top,
                                     right: walkinPicker.right,
+                                    maxHeight: walkinPicker.maxHeight,
                                   }}
                                   role="dialog"
                                   aria-label={`Choose which pass pays for ${client.name}`}
