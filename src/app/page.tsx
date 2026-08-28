@@ -215,6 +215,28 @@ function NotesIcon() {
   );
 }
 
+/** Pencil: switches the notes modal into its editing state. */
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M15.5 4.5 19.5 8.5 8 20H4v-4Z"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        d="M13 7l4 4"
+      />
+    </svg>
+  );
+}
+
 /** Arrow out of a box: opens the client in the Mindbody staff web app. */
 function ExternalLinkIcon() {
   return (
@@ -504,7 +526,22 @@ export default function FrontDesk() {
     title: string;
     text: string;
     alert: boolean;
+    /** Set on the NOTES modal only: the client whose notes these are,
+     *  which is what makes the pencil render. The alert modal never sets
+     *  it, so an alert stays strictly read-only. */
+    notesClientId?: string;
   } | null>(null);
+  /** True while the notes modal is in its editing state. */
+  const [notesEditing, setNotesEditing] = useState(false);
+  /** The textarea's contents while editing notes. */
+  const [notesDraft, setNotesDraft] = useState("");
+  /** True while the notes save is in flight. Non-optimistic, like every
+   *  write here: the Save button spins until Mindbody answers, and the
+   *  modal refuses to close meanwhile. */
+  const [notesSaving, setNotesSaving] = useState(false);
+  /** Outcome text inside the notes modal: a failure, or the suppression
+   *  notice when dry run or the write guard stopped the save. */
+  const [notesMsg, setNotesMsg] = useState<string | null>(null);
   /** The client id whose payment-change dropdown is open, if any. */
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   /** On-demand pass lists per client, for the dropdown. Successes cache
@@ -964,6 +1001,64 @@ export default function FrontDesk() {
     },
     [busy, confirming, acked, setSignedIn, settings.confirmUnpaid],
   );
+
+  /** Close the info modal and drop any notes-editing state with it.
+   *  Refused mid-save: the answer is coming. */
+  const closeInfoModal = useCallback(() => {
+    if (notesSaving) return;
+    setInfoModal(null);
+    setNotesEditing(false);
+    setNotesMsg(null);
+  }, [notesSaving]);
+
+  /**
+   * Save the notes draft through /api/client-notes, which posts the
+   * surgical `{Client: {Id, Notes}}` update (see src/lib/clients.ts).
+   * Non-optimistic: the Save button spins until Mindbody answers. On
+   * success the row's local notes state updates in place -- no roster
+   * reload for a one-field edit -- and the modal drops back to its
+   * reading state showing the saved text. Suppression renders inside the
+   * modal as the amber notice, never as success; failure shows Mindbody's
+   * reason and keeps the draft for another try.
+   */
+  const saveNotes = useCallback(async () => {
+    const clientId = infoModal?.notesClientId;
+    if (!clientId || notesSaving) return;
+    setNotesSaving(true);
+    setNotesMsg(null);
+    try {
+      const res = await fetch("/api/client-notes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId, notes: notesDraft }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      if (body.suppressed) {
+        setNotesMsg(
+          body.suppressed === "dry-run"
+            ? "Dry run: save suppressed, nothing was written."
+            : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
+        );
+        return;
+      }
+      /* The roster's batched brief lookup trims and null-converts notes
+       * the same way, so the local update matches what a reload would
+       * show (and it undims the icon). */
+      const trimmed = notesDraft.trim();
+      setEntries((rows) =>
+        rows.map((r) =>
+          r.clientId === clientId ? { ...r, notes: trimmed || null } : r,
+        ),
+      );
+      setInfoModal((m) => (m ? { ...m, text: trimmed } : m));
+      setNotesEditing(false);
+    } catch (err) {
+      setNotesMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setNotesSaving(false);
+    }
+  }, [infoModal, notesDraft, notesSaving]);
 
   /**
    * Open the payment-change dropdown on a row. The background sweep has
@@ -1634,23 +1729,30 @@ export default function FrontDesk() {
                         <AlertIcon />
                       </button>
                     ) : null}
-                    {entry.notes ? (
-                      <button
-                        className="row-icon"
-                        aria-label={`Notes for ${entry.name}`}
-                        title="Notes"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setInfoModal({
-                            title: `Notes on ${entry.name}`,
-                            text: entry.notes ?? "",
-                            alert: false,
-                          });
-                        }}
-                      >
-                        <NotesIcon />
-                      </button>
-                    ) : null}
+                    {/* On EVERY row: dimmed when there is nothing behind
+                        it yet, because adding a note starts here too. */}
+                    <button
+                      className={entry.notes ? "row-icon" : "row-icon dim"}
+                      aria-label={
+                        entry.notes
+                          ? `Notes for ${entry.name}`
+                          : `Add notes for ${entry.name}`
+                      }
+                      title={entry.notes ? "Notes" : "Add notes"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setNotesEditing(false);
+                        setNotesMsg(null);
+                        setInfoModal({
+                          title: `Notes on ${entry.name}`,
+                          text: entry.notes ?? "",
+                          alert: false,
+                          notesClientId: entry.clientId,
+                        });
+                      }}
+                    >
+                      <NotesIcon />
+                    </button>
                   </span>
                   {statusMsg ? (
                     <span
@@ -2030,15 +2132,17 @@ export default function FrontDesk() {
         </div>
       ) : null}
 
-      {/* The row icons' read-only text: the red alert or the staff notes,
-          one Close button, nothing else. Deliberately NOT the check-in
-          gate: reading an alert here does not acknowledge it, so a
-          flagged row's check-in tap still stops at the blocking dialog
-          below. */}
+      {/* The row icons' text: the red alert or the staff notes.
+          Deliberately NOT the check-in gate: reading an alert here does
+          not acknowledge it, so a flagged row's check-in tap still stops
+          at the blocking dialog below. The NOTES modal (notesClientId
+          set) additionally carries the pencil that edits them -- the one
+          write this modal can make, and it writes Notes only. The alert
+          modal stays strictly read-only. */}
       {infoModal ? (
         <div
           className="modal-scrim"
-          onClick={() => setInfoModal(null)}
+          onClick={closeInfoModal}
           role="presentation"
         >
           <div
@@ -2049,20 +2153,80 @@ export default function FrontDesk() {
             onClick={(e) => e.stopPropagation()}
           >
             <p className="modal-title">{infoModal.title}</p>
-            <p
-              className={
-                infoModal.alert ? "ctx-alert modal-alert" : "modal-note"
-              }
-            >
-              {infoModal.text}
-            </p>
-            <div className="modal-actions">
-              <button
-                className="modal-cancel"
-                onClick={() => setInfoModal(null)}
+            {notesEditing && infoModal.notesClientId ? (
+              /* Editing: the textarea seeded with the current notes.
+                 Whitespace and line breaks survive the round trip: the
+                 textarea holds them natively and modal-note renders
+                 pre-wrap. */
+              <textarea
+                className="notes-edit"
+                value={notesDraft}
+                onChange={(e) => setNotesDraft(e.target.value)}
+                disabled={notesSaving}
+                aria-label="Edit notes"
+                autoFocus
+              />
+            ) : infoModal.text ? (
+              <p
+                className={
+                  infoModal.alert ? "ctx-alert modal-alert" : "modal-note"
+                }
               >
-                Close
-              </button>
+                {infoModal.text}
+              </p>
+            ) : (
+              <p className="modal-note muted">No notes yet.</p>
+            )}
+            {notesMsg ? (
+              <p className="pass-note modal-note-gap">{notesMsg}</p>
+            ) : null}
+            <div className="modal-actions">
+              {notesEditing && infoModal.notesClientId ? (
+                <>
+                  <button
+                    className="modal-cancel"
+                    disabled={notesSaving}
+                    onClick={() => {
+                      setNotesEditing(false);
+                      setNotesMsg(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="modal-confirm go"
+                    disabled={notesSaving}
+                    onClick={() => void saveNotes()}
+                  >
+                    {notesSaving ? (
+                      <span className="spinner" aria-label="working" />
+                    ) : (
+                      "Save"
+                    )}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="modal-cancel" onClick={closeInfoModal}>
+                    Close
+                  </button>
+                  {infoModal.notesClientId ? (
+                    <button
+                      className="modal-cancel"
+                      onClick={() => {
+                        setNotesDraft(infoModal.text);
+                        setNotesMsg(null);
+                        setNotesEditing(true);
+                      }}
+                    >
+                      <span className="btn-ico">
+                        <PencilIcon />
+                      </span>
+                      Edit
+                    </button>
+                  ) : null}
+                </>
+              )}
             </div>
           </div>
         </div>

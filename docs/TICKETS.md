@@ -335,7 +335,7 @@ From live testing after T14 and the five-fix polish pass:
       dialog that names the person and says they will be removed from the
       class list. Write-guarded like every write; roster refreshes on
       success; suppression surfaces as such.
-- [ ] Notes icon on every roster row: dimmed when the client has no notes,
+- [x] Notes icon on every roster row: dimmed when the client has no notes,
       normal when they do. Tapping opens the note box either way, with a
       pencil edit affordance that lets a teacher edit or add notes, saved
       via /client/updateclient with a minimal {Client: {Id, Notes}} payload

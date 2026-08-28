@@ -344,6 +344,13 @@ button {
   color: var(--stop);
 }
 
+/* The notes icon on a client with no notes yet: dimmed but still visible
+ * and tappable, because adding the first note starts here. Opacity over a
+ * lighter token so it tracks --muted in both palettes. */
+.row-icon.dim {
+  opacity: 0.45;
+}
+
 /* Cluster the name-line badges. The 44px hit boxes may overlap via
  * negative margins, but only by 4px between two icon BUTTONS: the later
  * box paints on top, so any deeper overlap would shave the earlier
@@ -1117,6 +1124,31 @@ button.pass-opt:disabled {
 .modal-actions button:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* The notes editor inside the info modal. Same whitespace semantics as
+ * the reading view (a textarea preserves line breaks natively; modal-note
+ * renders them pre-wrap), 17px like the text it edits. */
+.notes-edit {
+  width: 100%;
+  min-height: 160px;
+  margin: 0 0 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 17px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+/* An icon inline in a modal action button's label. */
+.btn-ico {
+  display: inline-flex;
+  vertical-align: -3px;
+  margin-right: 8px;
 }
 
 .modal-confirm {
