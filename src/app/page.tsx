@@ -191,6 +191,22 @@ function ExternalLinkIcon() {
   );
 }
 
+/** Chevron opening the payment-change dropdown on a roster row. */
+function ChevronDownIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M5.5 9.5 12 16l6.5-6.5"
+      />
+    </svg>
+  );
+}
+
 /** Checkmark marking the pass currently paying, in the change dropdown. */
 function CheckIcon() {
   return (
@@ -238,28 +254,46 @@ function nth(n: number): string {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * The visit history as ONE line, highest signal first: a streak this week
- * beats a monthly count beats a last-seen date. Computed in the browser so
- * "this week" means the iPad's local week (Monday start), not the server's
- * timezone. The server window is ~35 days; the monthly count re-filters to
- * a strict 30 so "in the last month" is not quietly five weeks.
+ * The visit history as ONE line, highest signal first, and the week wins:
+ * any visit in the trailing seven days beats the monthly count beats a
+ * last-seen date. Trailing days, not the calendar week: on a Monday the
+ * calendar week is empty by definition and the line kept saying "4 visits
+ * in the last month" about someone who was here yesterday. The server
+ * window is ~35 days; the monthly count re-filters to a strict 30 so "in
+ * the last month" is not quietly five weeks.
  *
  * No visits returns "" and the row shows nothing: on a panel "no visits"
  * was an answer, but on every new client's row it is noise.
  */
 function historyLine(visits: VisitInfo[], now = new Date()): string {
-  const weekStart = new Date(now);
-  weekStart.setHours(0, 0, 0, 0);
-  const day = weekStart.getDay(); /* 0 = Sunday */
-  weekStart.setDate(weekStart.getDate() - ((day + 6) % 7));
+  const weekStart = new Date(now.getTime() - 7 * DAY_MS);
   const thisWeek = visits.filter((v) => new Date(v.at) >= weekStart).length;
   if (thisWeek >= 2) return `${nth(thisWeek)} class this week`;
+  if (thisWeek === 1) return "1 visit this week";
   const monthStart = new Date(now.getTime() - 30 * DAY_MS);
   const month = visits.filter((v) => new Date(v.at) >= monthStart).length;
   if (month >= 2) return `${month} visits in the last month`;
   const latest = visits[0];
   if (latest) return `Last here ${shortDate(latest.at)}`;
   return "";
+}
+
+/**
+ * Mindbody pass names carry back-office qualifiers the counter does not
+ * need: "Monthly Membership - Gym Access (Auto-Renew)" is one pass, and
+ * on a roster row it truncated to "Monthly Membersh...". Shorten
+ * deterministically instead of shrinking text below the 16px floor:
+ * strip parenthetical qualifiers, drop everything after " - ", collapse
+ * the whitespace that leaves behind. If stripping eats the whole name
+ * (a name that is ONLY a parenthetical), fall back to the full name.
+ * Everywhere a pass renders on a row uses this; the dropdown shows the
+ * full name as a second muted line when the short form dropped text.
+ */
+function shortPassName(name: string): string {
+  const cut = (name.replace(/\s*\([^)]*\)/g, " ").split(" - ")[0] ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cut || name.replace(/\s+/g, " ").trim();
 }
 
 /** Numeric date for row copy, e.g. 8/22/27. */
@@ -402,6 +436,14 @@ export default function FrontDesk() {
    *  (value null = the fetch failed; not retried this session, because a
    *  history line is not worth hammering a struggling API for). */
   const historyCache = useRef(new Map<string, VisitInfo[] | null>());
+  /** The sweep's claim ledger for pass fetches, same shape as the history
+   *  cache: which client ids the sweep has asked /api/passes about (null =
+   *  failed, and the sweep does not retry -- but the dropdown's own
+   *  on-demand fetch reads `passLists`, not this, so opening the dropdown
+   *  remains the retry path). Successful answers land in `passLists`, the
+   *  ONE cache the dropdown reads, so its open is instant and nothing is
+   *  fetched twice. */
+  const passSweepCache = useRef(new Map<string, PassInfo[] | null>());
   /** Set when the roster's batched client lookup failed: waiver state is
    *  unknown on every row and rows fail open. Shown quietly. */
   const [waiverError, setWaiverError] = useState<string | null>(null);
@@ -506,11 +548,16 @@ export default function FrontDesk() {
   }, [activeId, refreshRoster]);
 
   /**
-   * The history sweep: after a roster renders, fetch each client's recent
-   * visits in the background, a few at a time, and let the rows fill in
-   * as the answers land. The roster itself NEVER waits on this.
+   * The background sweep: after a roster renders, fetch each client's
+   * recent visits AND their pass list in the background, a few clients at
+   * a time, and let the rows fill in as the answers land. The roster
+   * itself NEVER waits on this. The pass list is what decides whether a
+   * row shows the payment-change chevron at all (a paid row with one pass
+   * has nothing to change to), and it pre-warms the dropdown: the same
+   * `passLists` cache the dropdown reads is filled here, so its open is
+   * instant and no double-fetch happens.
    *
-   * The session cache is keyed by client id, so switching classes and
+   * The session caches are keyed by client id, so switching classes and
    * refreshing the roster refetch nothing, and a late answer can only
    * ever write under its own client's key -- it cannot dirty another
    * class's rows. The loop itself still stops early when the teacher
@@ -522,32 +569,64 @@ export default function FrontDesk() {
     const classId = activeId;
     const ids = [
       ...new Set(entries.map((e) => e.clientId).filter((id) => id)),
-    ].filter((id) => !historyCache.current.has(id));
+    ].filter(
+      (id) =>
+        !historyCache.current.has(id) || !passSweepCache.current.has(id),
+    );
     if (ids.length === 0) return;
     let cancelled = false;
     let next = 0;
+    const fetchHistory = async (id: string) => {
+      try {
+        const r = await fetch(
+          `/api/history?clientId=${encodeURIComponent(id)}`,
+        );
+        const body = await r.json();
+        if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+        const visits: VisitInfo[] = body?.visits ?? [];
+        historyCache.current.set(id, visits);
+        setHistories((h) => ({ ...h, [id]: visits }));
+      } catch {
+        /* Left as null in the cache: the row shows nothing, and this
+         * client is not retried this session. A history line is a
+         * nicety, not worth a retry storm. */
+      }
+    };
+    const fetchSweepPasses = async (id: string) => {
+      try {
+        const r = await fetch(`/api/passes?clientId=${encodeURIComponent(id)}`);
+        const body = await r.json();
+        if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+        const passes: PassInfo[] = body?.passes ?? [];
+        passSweepCache.current.set(id, passes);
+        /* Never clobber the dropdown's own fetch: if it answered (or is
+         * mid-flight) for this client, its result stands. */
+        setPassLists((l) =>
+          l[id]?.data || l[id]?.loading
+            ? l
+            : { ...l, [id]: { data: passes, error: null, loading: false } },
+        );
+      } catch {
+        /* Left as null in the claim ledger; the dropdown's on-demand
+         * fetch is the retry path. */
+      }
+    };
     const worker = async () => {
       while (!cancelled && activeIdRef.current === classId) {
         const id = ids[next++];
         if (id === undefined) return;
         /* Claim the id before fetching, so a re-run of the effect (a
          * roster refresh mid-sweep) does not fetch it twice. */
-        if (historyCache.current.has(id)) continue;
-        historyCache.current.set(id, null);
-        try {
-          const r = await fetch(
-            `/api/history?clientId=${encodeURIComponent(id)}`,
-          );
-          const body = await r.json();
-          if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
-          const visits: VisitInfo[] = body?.visits ?? [];
-          historyCache.current.set(id, visits);
-          setHistories((h) => ({ ...h, [id]: visits }));
-        } catch {
-          /* Left as null in the cache: the row shows nothing, and this
-           * client is not retried this session. A history line is a
-           * nicety, not worth a retry storm. */
+        const jobs: Promise<void>[] = [];
+        if (!historyCache.current.has(id)) {
+          historyCache.current.set(id, null);
+          jobs.push(fetchHistory(id));
         }
+        if (!passSweepCache.current.has(id)) {
+          passSweepCache.current.set(id, null);
+          jobs.push(fetchSweepPasses(id));
+        }
+        await Promise.all(jobs);
       }
     };
     for (let i = 0; i < HISTORY_SWEEP_CONCURRENCY; i++) void worker();
@@ -734,10 +813,12 @@ export default function FrontDesk() {
   );
 
   /**
-   * Open the payment-change dropdown on a row, fetching the client's pass
-   * list on the FIRST open only: one metered `/client/clientservices`
-   * call per client per session, cached thereafter. A failed fetch is not
-   * cached, so closing and reopening the dropdown is the retry path.
+   * Open the payment-change dropdown on a row. The background sweep has
+   * normally cached the pass list already (that is what made the chevron
+   * render), so this is usually instant; the fetch below is the fallback
+   * for a somehow-uncached client, one metered `/client/clientservices`
+   * call per client per session. A failed fetch is not cached, so closing
+   * and reopening the dropdown is the retry path.
    */
   const openPicker = useCallback(
     (entry: RosterEntry) => {
@@ -753,10 +834,14 @@ export default function FrontDesk() {
         .then(async (r) => {
           const body = await r.json();
           if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+          const passes = (body?.passes ?? []) as PassInfo[];
+          /* Claim the sweep's ledger too, so a later sweep does not spend
+           * a second call on a client this fetch already answered. */
+          passSweepCache.current.set(entry.clientId, passes);
           setPassLists((l) => ({
             ...l,
             [entry.clientId]: {
-              data: (body?.passes ?? []) as PassInfo[],
+              data: passes,
               error: null,
               loading: false,
             },
@@ -1074,7 +1159,14 @@ export default function FrontDesk() {
               <span className="pass-check">
                 <CheckIcon />
               </span>
-              <span className="pass-opt-name">{currentLine.name}</span>
+              <span className="pass-opt-text">
+                <span className="pass-opt-name">
+                  {shortPassName(currentLine.name)}
+                </span>
+                {shortPassName(currentLine.name) !== currentLine.name.trim() ? (
+                  <span className="pass-opt-full">{currentLine.name}</span>
+                ) : null}
+              </span>
               {currentLine.facts ? (
                 <span className="pass-opt-facts">{currentLine.facts}</span>
               ) : null}
@@ -1099,6 +1191,7 @@ export default function FrontDesk() {
           {others.map((p) => {
             const saving = passSavingId === p.id;
             const line = facts(p);
+            const short = shortPassName(p.name);
             return (
               <button
                 key={`opt-${p.id}`}
@@ -1111,7 +1204,12 @@ export default function FrontDesk() {
                     <span className="spinner" aria-label="working" />
                   ) : null}
                 </span>
-                <span className="pass-opt-name">{p.name}</span>
+                <span className="pass-opt-text">
+                  <span className="pass-opt-name">{short}</span>
+                  {short !== p.name.trim() ? (
+                    <span className="pass-opt-full">{p.name}</span>
+                  ) : null}
+                </span>
                 {line ? <span className="pass-opt-facts">{line}</span> : null}
               </button>
             );
@@ -1433,29 +1531,54 @@ export default function FrontDesk() {
                     }
                     title={entry.pricingOption ?? undefined}
                   >
-                    {entry.pricingOption ?? "No pass"}
+                    {entry.pricingOption
+                      ? shortPassName(entry.pricingOption)
+                      : "No pass"}
                   </span>
-                  {/* No visit id means nothing to reassign, so no control.
-                      Everyone else gets the dropdown: Change swaps the
-                      paying pass, Assign puts one on an unpaid booking. */}
-                  {entry.visitId !== null ? (
-                    <button
-                      className="change-link"
-                      disabled={passSavingId !== null}
-                      aria-haspopup="dialog"
-                      aria-expanded={pickerFor === entry.clientId}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (pickerFor === entry.clientId) {
-                          if (passSavingId === null) setPickerFor(null);
-                        } else {
-                          openPicker(entry);
+                  {/* The payment-change chevron renders only when there is
+                      something to change TO: a paid row needs a second
+                      current pass, an unpaid row needs at least one, and a
+                      row with no visit id has nothing to reassign at all.
+                      The pass count comes from the background sweep (which
+                      shares the dropdown's cache); until it answers for
+                      this client no control renders -- it appears when
+                      known, rather than offering a dropdown that could
+                      only say "no other passes". */}
+                  {(() => {
+                    const known = passLists[entry.clientId]?.data ?? null;
+                    const showControl =
+                      entry.visitId !== null &&
+                      known !== null &&
+                      known.length >= (entry.pricingOption ? 2 : 1);
+                    return showControl ? (
+                      <button
+                        className="row-icon pass-toggle"
+                        disabled={passSavingId !== null}
+                        aria-haspopup="dialog"
+                        aria-expanded={pickerFor === entry.clientId}
+                        aria-label={
+                          entry.pricingOption
+                            ? "Change which pass pays"
+                            : "Assign a pass"
                         }
-                      }}
-                    >
-                      {entry.pricingOption ? "Change" : "Assign"}
-                    </button>
-                  ) : null}
+                        title={
+                          entry.pricingOption
+                            ? "Change which pass pays"
+                            : "Assign a pass"
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (pickerFor === entry.clientId) {
+                            if (passSavingId === null) setPickerFor(null);
+                          } else {
+                            openPicker(entry);
+                          }
+                        }}
+                      >
+                        <ChevronDownIcon />
+                      </button>
+                    ) : null;
+                  })()}
                   {pickerFor === entry.clientId
                     ? renderPassDropdown(entry)
                     : null}
@@ -1645,7 +1768,9 @@ export default function FrontDesk() {
                         <span className="name">
                           {entry.name}
                           <span className="detail">
-                            {entry.pricingOption ?? "No pass on this booking"}
+                            {entry.pricingOption
+                              ? shortPassName(entry.pricingOption)
+                              : "No pass on this booking"}
                           </span>
                         </span>
                         <span
@@ -1673,7 +1798,9 @@ export default function FrontDesk() {
                           <span className="name">
                             {entry.name}
                             <span className="detail">
-                              {entry.pricingOption ?? "No pass on this booking"}
+                              {entry.pricingOption
+                              ? shortPassName(entry.pricingOption)
+                              : "No pass on this booking"}
                             </span>
                           </span>
                           <span className="chip in">checked in</span>

@@ -235,7 +235,9 @@ button {
  * truncates with an ellipsis rather than wrapping the grid.
  */
 :root {
-  --roster-cols: minmax(0, 2.1fr) minmax(0, 1.5fr) 4.6em 3em 5em 208px;
+  /* The payment column got wider when the Change/Assign text control
+   * became a 44px chevron: the freed space belongs to the pass name. */
+  --roster-cols: minmax(0, 2fr) minmax(0, 1.7fr) 4.6em 3em 5em 208px;
 }
 
 .roster-head,
@@ -271,15 +273,20 @@ button {
   min-width: 0;
 }
 
+/* Gap 2px: the name-line icons cluster right after the name instead of
+ * spreading. The 8px between the name and the first badge comes back via
+ * the name's own margin; the icons' 44px hit boxes then pull together
+ * with negative margins below. */
 .name-line {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
   min-width: 0;
 }
 
 .name-text {
   min-width: 0;
+  margin-right: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -320,19 +327,46 @@ button {
   background: var(--line);
 }
 
+.row-icon:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .row-icon.row-alert {
   color: var(--stop);
 }
 
+/* Cluster the name-line badges. The 44px hit boxes may overlap via
+ * negative margins, but only by 4px between two icon BUTTONS: the later
+ * box paints on top, so any deeper overlap would shave the earlier
+ * button's exclusive tappable area under the 40px floor. (Tighter still
+ * would eventually cover the neighbour's 18px glyph, which sits 13px in
+ * from the box edge.) The M chip is not a target, so the icon after it
+ * tucks in until its glyph sits ~4px off the chip. */
+.name-line .row-icon + .row-icon {
+  margin-left: -4px;
+}
+
+.name-line .m-chip + .row-icon {
+  margin-left: -11px;
+}
+
 /* The payment cell: the ONE pass paying for this visit, truncating rather
- * than wrapping, plus the quiet Change/Assign control. Anchors the
- * dropdown. */
+ * than wrapping, plus the quiet change chevron. Anchors the dropdown. */
 .cell-pay {
   position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
   min-width: 0;
+}
+
+/* The chevron pins to the column's RIGHT edge (the pass name truncates on
+ * the left of it), so the icons line up vertically down the roster
+ * instead of trailing each name at a different x. */
+.cell-pay .pass-toggle {
+  margin-left: auto;
+  color: var(--accent);
 }
 
 .pay-name {
@@ -347,28 +381,6 @@ button {
 .pay-name.none {
   color: var(--warn);
   font-weight: 600;
-}
-
-/* Opens the payment dropdown. Visually quiet, still a 64px target. */
-.change-link {
-  flex: 0 0 auto;
-  min-height: 64px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 12px;
-  background: transparent;
-  color: var(--accent);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.change-link:active {
-  background: var(--line);
-}
-
-.change-link:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 .cell-plain {
@@ -473,12 +485,30 @@ button.pass-opt:disabled {
   width: 20px;
 }
 
-.pass-opt-name {
+/* Option text stacks: the shortened pass name, and when shortening
+ * dropped anything, the full Mindbody name under it in muted 16px. */
+.pass-opt-text {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pass-opt-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pass-opt-full {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
 }
 
 .pass-opt-facts {
