@@ -111,7 +111,7 @@ const ROSTER_SORT_KEY = "pos.rosterSort";
  *  calls a teacher is waiting on. */
 const HISTORY_SWEEP_CONCURRENCY = 4;
 
-/** Grey and unlabelled: checking out is the quiet action on the row. */
+/** X, for clearing the search box. */
 function CloseIcon() {
   return (
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -120,6 +120,32 @@ function CloseIcon() {
         strokeWidth="2.4"
         strokeLinecap="round"
         d="M6 6l12 12M18 6L6 18"
+      />
+    </svg>
+  );
+}
+
+/** Counter-clockwise arrow: check-out is undoing a check-in, and the icon
+ *  says so. Grey and unlabelled: the quiet action on the row, deliberately
+ *  separate from the check-in gesture. */
+function UndoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M3.5 4.5v6h6"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M5.1 15.2a8 8 0 1 0 1.7-8.6L3.5 10.5"
       />
     </svg>
   );
@@ -1632,6 +1658,12 @@ export default function FrontDesk() {
                       {chipLabel}
                     </button>
                   )}
+                  {/* The undo renders on EVERY checked-in row, waiver state
+                      included (audited for T15): the waiver gate lives in
+                      tapRow, which returns early for checked-in rows, so it
+                      applies to check-IN only. A no-waiver client checked in
+                      by mistake must be sign-out-able, or the mistake is
+                      permanent. */}
                   {entry.checkedIn && !working ? (
                     <button
                       className="undo-btn"
@@ -1642,7 +1674,7 @@ export default function FrontDesk() {
                       aria-label={`Check out ${entry.name}`}
                       title={`Check out ${entry.name}`}
                     >
-                      <CloseIcon />
+                      <UndoIcon />
                     </button>
                   ) : (
                     <span className="act-spacer" aria-hidden="true" />

@@ -324,10 +324,10 @@ From live testing after T14 and the five-fix polish pass:
       shown result: fetched in the background after the debounce settles,
       session-cached per client, displayed as the shortened pass summary.
       Metered-call note: worst case is result-limit calls per novel search.
-- [ ] A checked-in client with no waiver can still be signed OUT. The
+- [x] A checked-in client with no waiver can still be signed OUT. The
       waiver gate blocks check-IN only; the undo control renders on every
       checked-in row regardless of waiver state.
-- [ ] Check-out icon becomes an undo symbol (counter-clockwise arrow), not
+- [x] Check-out icon becomes an undo symbol (counter-clockwise arrow), not
       an X.
 - [ ] Rows not checked in get a trash icon where the undo would sit:
       cancel the visit entirely via /class/removeclientfromclass (verify
