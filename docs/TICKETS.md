@@ -233,6 +233,12 @@ endpoint check-in already uses, with the same write-guard clientId threading.
       check-in.
 - [ ] Pete: verify live against a write-guarded dummy client; the sandbox
       payloads suggest the visit's `Service` swaps, nobody has watched it.
+      Include the after-check-in case: change the pass on an already
+      signed-in visit and confirm (a) SignedIn stays true (we never send
+      it) and (b) the Remaining counts move correctly, one back onto the
+      old pass, one off the new. The spec does not document that
+      bookkeeping; it is the expected behavior because it is what MB's own
+      Change dialog does.
 
 Buy button from the MB screen: deliberately NOT here. That is Phase 2's
 sale path (sell the missing pass and check in together), already planned.
