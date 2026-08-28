@@ -107,11 +107,20 @@ inactive or unknown, `clientaccountbalances` and `clientpurchases` 400
 ("Client with Custom ID ... is inactive or does not exist") but
 `clientservices` silently IGNORES the filter and returns pricing options
 site-wide -- ~90 strangers' passes rendered on one row, and any of them
-with `Remaining: 1` fired the last-class banner falsely. Fixed by scoping
-the response client-side on each item's `ClientID` and treating a non-empty
-response with zero matches as a lookup error. Check in the drawer that live
-items actually carry `ClientID`; if they come back without it, the scope
-check cannot bite and this needs a different guard.
+with `Remaining: 1` fired the last-class banner falsely. Fixed twice over:
+the response is scoped client-side on each item's `ClientID`, and a client
+whose record says `Active: false` gets a pass-list error regardless of what
+came back (sandbox payloads confirm the field is returned). Note the
+distinction seen live: `Active` is whether the record is archived,
+`Status` is membership standing, and `RedAlert` is free text unrelated to
+the structured `SuspensionInfo` (Amanda's says suspended while
+`BookingSuspended` is false).
+
+Cheap improvement spotted in the live classvisits payload: each visit
+embeds the FULL pass object (`Visit.Service` with `Name`, `Remaining`,
+`Count`). For booked students, `Remaining: 1` could light the renewal
+prompt on the roster row itself, zero extra calls, without waiting for a
+row open. Worth a small ticket when polishing.
 
 ## T6. Waiver state (PLAN 1.6)
 
