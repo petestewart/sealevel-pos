@@ -44,6 +44,8 @@ interface RosterEntry {
   waiverSigned: boolean | null;
   /** RedAlert text from the client record; null when none or lookup failed. */
   redAlert: string | null;
+  /** Staff notes from the client record; null when none or lookup failed. */
+  notes: string | null;
   /** Mindbody's numeric UniqueId, for staff web app links. */
   mindbodyId: number | null;
 }
@@ -63,11 +65,6 @@ interface WaitlistRow {
 
 /** Mirrors src/lib/clientcontext.ts, which is where the shapes are derived
  *  from the vendored spec. */
-interface CtxSection<T> {
-  data: T | null;
-  error: string | null;
-}
-
 interface PassInfo {
   /** ClientService purchase-instance id; what a payment change posts.
    *  null means Mindbody omitted it and the pass cannot be picked. */
@@ -84,12 +81,13 @@ interface VisitInfo {
   signedIn: boolean;
 }
 
-interface ClientContext {
-  passes: CtxSection<PassInfo[]>;
-  balance: CtxSection<number>;
-  visits: CtxSection<VisitInfo[]>;
-  habits: CtxSection<string[]>;
-  profile: CtxSection<{ notes: string | null; redAlert: string | null }>;
+/** The on-demand pass list behind a row's payment-change dropdown. A
+ *  successful fetch is cached for the session; an error is not, so
+ *  reopening the dropdown retries. */
+interface PassListState {
+  data: PassInfo[] | null;
+  error: string | null;
+  loading: boolean;
 }
 
 /**
@@ -108,6 +106,11 @@ const ROSTER_SORTS: { value: RosterSort; label: string }[] = [
 
 const ROSTER_SORT_KEY = "pos.rosterSort";
 
+/** How many history fetches the background sweep keeps in flight at once.
+ *  Modest on purpose: the sweep is a nicety and must never crowd out the
+ *  calls a teacher is waiting on. */
+const HISTORY_SWEEP_CONCURRENCY = 4;
+
 /** Grey and unlabelled: checking out is the quiet action on the row. */
 function CloseIcon() {
   return (
@@ -122,7 +125,7 @@ function CloseIcon() {
   );
 }
 
-/** Warning triangle for the red alert line; the dialog spells it out. */
+/** Warning triangle for the red alert icon; tapping it shows the text. */
 function AlertIcon() {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -143,7 +146,7 @@ function AlertIcon() {
   );
 }
 
-/** Note sheet for the client's Notes field. */
+/** Note sheet for the client's Notes field; tapping it shows the text. */
 function NotesIcon() {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -164,46 +167,41 @@ function NotesIcon() {
   );
 }
 
-/** Clock with a counter-clockwise arrow for the recent-visits lines. */
-function HistoryIcon() {
+/** Arrow out of a box: opens the client in the Mindbody staff web app. */
+function ExternalLinkIcon() {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
       <path
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
+        strokeLinejoin="round"
         fill="none"
-        d="M4.5 5.5v4h4"
+        d="M10 5H5v14h14v-5"
       />
       <path
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
+        strokeLinejoin="round"
         fill="none"
-        d="M4.9 9.2a8 8 0 1 1-.4 4"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        fill="none"
-        d="M12 8v4.4l3 1.8"
+        d="M14 4h6v6M20 4l-9 9"
       />
     </svg>
   );
 }
 
-/** Chevron for the per-row context toggle; rotates when the row is open. */
-function ChevronIcon() {
+/** Checkmark marking the pass currently paying, in the change dropdown. */
+function CheckIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
       <path
         stroke="currentColor"
         strokeWidth="2.4"
         strokeLinecap="round"
         strokeLinejoin="round"
         fill="none"
-        d="M6 9l6 6 6-6"
+        d="M4.5 12.5 10 18 19.5 6.5"
       />
     </svg>
   );
@@ -245,6 +243,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * "this week" means the iPad's local week (Monday start), not the server's
  * timezone. The server window is ~35 days; the monthly count re-filters to
  * a strict 30 so "in the last month" is not quietly five weeks.
+ *
+ * No visits returns "" and the row shows nothing: on a panel "no visits"
+ * was an answer, but on every new client's row it is noise.
  */
 function historyLine(visits: VisitInfo[], now = new Date()): string {
   const weekStart = new Date(now);
@@ -252,13 +253,13 @@ function historyLine(visits: VisitInfo[], now = new Date()): string {
   const day = weekStart.getDay(); /* 0 = Sunday */
   weekStart.setDate(weekStart.getDate() - ((day + 6) % 7));
   const thisWeek = visits.filter((v) => new Date(v.at) >= weekStart).length;
-  if (thisWeek >= 2) return `${nth(thisWeek)} class this week.`;
+  if (thisWeek >= 2) return `${nth(thisWeek)} class this week`;
   const monthStart = new Date(now.getTime() - 30 * DAY_MS);
   const month = visits.filter((v) => new Date(v.at) >= monthStart).length;
-  if (month >= 2) return `${month} visits in the last month.`;
+  if (month >= 2) return `${month} visits in the last month`;
   const latest = visits[0];
-  if (latest) return `Last here ${shortDate(latest.at)}.`;
-  return "No visits in the last month.";
+  if (latest) return `Last here ${shortDate(latest.at)}`;
+  return "";
 }
 
 /** Numeric date for row copy, e.g. 8/22/27. */
@@ -277,7 +278,9 @@ function slashDate(iso: string): string {
  * Remaining gets the same rule, for the pass whose Count Mindbody omits:
  * a real pass's Remaining can never exceed its Count, and no real pass
  * here holds 100 classes, so Remaining >= 100 is the same fake counter
- * arriving without its other half.
+ * arriving without its other half. This rule applies EVERYWHERE a pass
+ * renders, the change dropdown included: "99993 of 99999 left" leaked
+ * once through a renderer that forgot it.
  */
 function fakeUnlimited(count: number | null, remaining: number | null): boolean {
   return (
@@ -285,277 +288,11 @@ function fakeUnlimited(count: number | null, remaining: number | null): boolean 
   );
 }
 
-/**
- * What the person is paying with, on the row itself: pass name, remaining,
- * expiry, balance. Secondary details, scannable at arm's length -- except
- * "1 left", which is the renewal conversation that happens now or never
- * and gets the loud warn treatment.
- */
-function PassLine({ entry }: { entry: RosterEntry }) {
-  const unlimited = fakeUnlimited(entry.passCount, entry.passRemaining);
-  const showRemaining =
-    entry.pricingOption !== null && !unlimited && entry.passRemaining !== null;
-  const balance =
-    entry.balance !== null && entry.balance !== 0 ? entry.balance : null;
-  return (
-    <>
-      {entry.pricingOption ?? "No pass on this booking"}
-      {showRemaining ? (
-        <span className={entry.passRemaining === 1 ? "detail-last" : undefined}>
-          {" "}
-          &middot; {entry.passRemaining} left
-        </span>
-      ) : null}
-      {entry.pricingOption !== null && entry.passExpires ? (
-        <> &middot; exp {slashDate(entry.passExpires)}</>
-      ) : null}
-      {balance !== null ? <> &middot; {money(balance)} balance</> : null}
-    </>
-  );
-}
-
-/**
- * Badges beside the name: the membership chip, and the red alert's icon so
- * a flagged row is visibly flagged before anyone taps it (the tap gate
- * already existed; this makes it not a surprise).
- */
-function NameBadges({ entry }: { entry: RosterEntry }) {
-  return (
-    <>
-      {entry.member ? (
-        <span className="m-chip" title="Member" aria-label="Member">
-          M
-        </span>
-      ) : null}
-      {entry.redAlert ? (
-        <span className="row-alert" title="Red alert" aria-label="Red alert">
-          <AlertIcon />
-        </span>
-      ) : null}
-    </>
-  );
-}
-
-/**
- * The pass list answers "what are they paying with", not "everything on
- * account" (sandbox clients own eight passes; the Mindbody link below the
- * list is the escape hatch). The pass this visit is booked against sorts
- * first, identical lines collapse with a count, and the list caps at four.
- */
-const PASS_DISPLAY_CAP = 4;
-
-function passLines(
-  passes: PassInfo[],
-  inUse: string | null,
-): { lines: { text: string; dupes: number }[]; more: number } {
-  const ordered = inUse
-    ? [...passes].sort(
-        (a, b) => Number(b.name === inUse) - Number(a.name === inUse),
-      )
-    : passes;
-  const lines: { text: string; dupes: number }[] = [];
-  const seen = new Map<string, number>();
-  for (const p of ordered) {
-    const text =
-      p.name +
-      (p.remaining !== null
-        ? `: ${p.remaining}${p.count !== null ? ` of ${p.count}` : ""} left`
-        : "") +
-      (p.expires ? `, expires ${shortDate(p.expires)}` : "");
-    const at = seen.get(text);
-    if (at !== undefined) {
-      const line = lines[at];
-      if (line) line.dupes += 1;
-      continue;
-    }
-    seen.set(text, lines.length);
-    lines.push({ text, dupes: 1 });
-  }
-  const shown = lines.slice(0, PASS_DISPLAY_CAP);
-  const more = lines.length - shown.length;
-  return { lines: shown, more };
-}
-
 function money(n: number): string {
   return n.toLocaleString([], {
     style: "currency",
     currency: "USD",
   });
-}
-
-/**
- * What the teacher should know about the person in front of them, on one
- * open row: red alert, notes, the pass and what remains on it, account
- * credit, recent visits, habitual add-ons. Opens instantly with a spinner;
- * each section renders its own error as text, because a purchases outage
- * must not hide the red alert, and no error here ever blocks check-in.
- */
-function ContextPanel({
-  ctx,
-  loading,
-  error,
-  mindbodyId,
-  passInUse,
-  onChangePass,
-  canChangePass,
-}: {
-  ctx: ClientContext | undefined;
-  loading: boolean;
-  error: string | undefined;
-  mindbodyId: number | null;
-  passInUse: string | null;
-  /** Opens the pass picker. null hides the affordance entirely (fewer
-   *  than two current passes to choose between, so nothing to change). */
-  onChangePass: (() => void) | null;
-  /** False when the row has no visit id: the affordance renders disabled,
-   *  because there is no visit to reassign a pass to. */
-  canChangePass: boolean;
-}) {
-  /* The one thing this app deliberately does not do (edit a client) is a
-   * tap away in the tool that does. Opens the staff web app; the teacher
-   * must already be signed in to Mindbody there. */
-  const mbLink = mindbodyId ? (
-    <a
-      className="mb-link"
-      href={`https://clients.mindbodyonline.com/app/clients/${mindbodyId}/client-info`}
-      target="_blank"
-      rel="noopener noreferrer"
-    >
-      Open in Mindbody
-    </a>
-  ) : null;
-  if (loading || (!ctx && !error)) {
-    return (
-      <div className="context">
-        <span className="ctx-line muted">
-          <span className="spinner" aria-label="working" /> Looking them up...
-        </span>
-        {mbLink}
-      </div>
-    );
-  }
-  if (!ctx) {
-    return (
-      <div className="context">
-        <span className="ctx-line ctx-err">Could not load details: {error}</span>
-        {mbLink}
-      </div>
-    );
-  }
-
-  const passes = ctx.passes.data ?? [];
-  const lastClass = passes.some((p) => p.remaining === 1);
-  const balance = ctx.balance.data;
-  const visits = ctx.visits.data;
-  const habits = ctx.habits.data ?? [];
-  const profile = ctx.profile.data;
-
-  return (
-    <div className="context">
-      {profile?.redAlert ? (
-        <span className="ctx-alert">
-          <AlertIcon /> {profile.redAlert}
-        </span>
-      ) : null}
-      {ctx.profile.error ? (
-        <span className="ctx-line ctx-err">
-          Notes and alerts unavailable: {ctx.profile.error}
-        </span>
-      ) : null}
-      {profile?.notes ? (
-        <span className="ctx-line ctx-iconed">
-          <NotesIcon /> {profile.notes}
-        </span>
-      ) : null}
-
-      {/* Remaining: 1 is the highest-value prompt in the app: the renewal
-          conversation happens now or not at all. It gets the loud warn
-          treatment, not a line in a list. */}
-      {lastClass ? (
-        <span className="ctx-warn">
-          This is the last class on their pass. Offer the renewal now.
-        </span>
-      ) : null}
-      {ctx.passes.error ? (
-        <span className="ctx-line ctx-err">
-          Passes unavailable: {ctx.passes.error}
-        </span>
-      ) : passes.length === 0 ? (
-        <span className="ctx-line muted">No active pass.</span>
-      ) : (
-        (() => {
-          const trimmed = passLines(passes, passInUse);
-          return (
-            <>
-              {trimmed.lines.map((line) => (
-                <span className="ctx-line" key={line.text}>
-                  {line.text}
-                  {line.dupes > 1 ? ` (x${line.dupes})` : ""}
-                </span>
-              ))}
-              {trimmed.more > 0 ? (
-                <span className="ctx-line muted">
-                  And {trimmed.more} more in Mindbody.
-                </span>
-              ) : null}
-            </>
-          );
-        })()
-      )}
-      {/* More than one current pass means "which one pays" is a real
-          question, so the picker is a tap away. Disabled rather than
-          hidden when the row has no visit id: the reason nothing can
-          change is worth a glance, not a mystery. */}
-      {onChangePass ? (
-        <button
-          className="change-btn"
-          onClick={onChangePass}
-          disabled={!canChangePass}
-        >
-          Change which pass pays
-        </button>
-      ) : null}
-      {onChangePass && !canChangePass ? (
-        <span className="ctx-line muted">
-          No visit id on this booking, so the payment cannot be changed here.
-        </span>
-      ) : null}
-
-      {ctx.balance.error ? (
-        <span className="ctx-line ctx-err">
-          Account credit unavailable: {ctx.balance.error}
-        </span>
-      ) : balance !== null && balance !== 0 ? (
-        <span className="ctx-line">Account credit: {money(balance)}.</span>
-      ) : null}
-
-      {ctx.visits.error ? (
-        <span className="ctx-line ctx-err">
-          Visits unavailable: {ctx.visits.error}
-        </span>
-      ) : visits ? (
-        /* ONE line, highest signal wins: streak this week, else monthly
-           count, else last seen, else nothing recent. One line means one
-           line. */
-        <span className="ctx-line ctx-iconed">
-          <HistoryIcon /> {historyLine(visits)}
-        </span>
-      ) : null}
-
-      {/* Habitual add-ons need a real pattern (3 of the last 5 sales) or
-          they are noise; with no pattern this whole section is nothing. */}
-      {ctx.habits.error ? (
-        <span className="ctx-line ctx-err">
-          Purchase history unavailable: {ctx.habits.error}
-        </span>
-      ) : habits.length > 0 ? (
-        <span className="ctx-line ctx-habit">
-          Usually adds: {habits.join(", ")}. Worth asking.
-        </span>
-      ) : null}
-      {mbLink}
-    </div>
-  );
 }
 
 export default function FrontDesk() {
@@ -613,18 +350,10 @@ export default function FrontDesk() {
   /** Waitlist promotions in flight, by entry id. Also non-optimistic. */
   const [promoting, setPromoting] = useState<number[]>([]);
   const [promoteMsg, setPromoteMsg] = useState<Record<number, string>>({});
-  /** The one roster row whose context panel is open. One at a time: the
-   *  panel answers "who is in front of me", and one person is in front. */
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  /** Fetched context per client id, kept for the session so re-opening a
-   *  row is free. Four metered calls per entry is why this is per-open,
-   *  never per-roster. */
-  const [contexts, setContexts] = useState<Record<string, ClientContext>>({});
-  const [ctxLoading, setCtxLoading] = useState<string[]>([]);
-  const [ctxError, setCtxError] = useState<Record<string, string>>({});
   /** Red alerts a teacher has explicitly read past, by client id. UI state
    *  only, deliberately: acknowledging an alert must never write anything
-   *  back to Mindbody. */
+   *  back to Mindbody. Set ONLY by the check-in gate dialog; reading the
+   *  alert through the row's info icon deliberately does not ack it. */
   const [acked, setAcked] = useState<string[]>([]);
   /** The row whose check-in is held behind an unread red alert. */
   const [redAlertPrompt, setRedAlertPrompt] = useState<RosterEntry | null>(
@@ -641,15 +370,38 @@ export default function FrontDesk() {
    * the student's own phone.
    */
   const [waiverPrompt, setWaiverPrompt] = useState<RosterEntry | null>(null);
-  /** The row whose pass picker (change how they are paying) is open. */
-  const [passPicker, setPassPicker] = useState<RosterEntry | null>(null);
+  /**
+   * Read-only text behind a row icon: the red alert or the staff notes.
+   * Informational only, one Close button, and it never acks the alert for
+   * the check-in gate -- reading is not the same act as reading PAST.
+   */
+  const [infoModal, setInfoModal] = useState<{
+    title: string;
+    text: string;
+    alert: boolean;
+  } | null>(null);
+  /** The client id whose payment-change dropdown is open, if any. */
+  const [pickerFor, setPickerFor] = useState<string | null>(null);
+  /** On-demand pass lists per client, for the dropdown. Successes cache
+   *  for the session; errors do not, so reopening retries. */
+  const [passLists, setPassLists] = useState<Record<string, PassListState>>(
+    {},
+  );
   /** The pass id being written, if any. Non-optimistic, like check-in:
-   *  which pass a class burns is money-adjacent, so the picker spins until
-   *  Mindbody answers. */
+   *  which pass a class burns is money-adjacent, so the dropdown spins
+   *  until Mindbody answers. */
   const [passSavingId, setPassSavingId] = useState<number | null>(null);
-  /** Outcome text inside the picker: a failure, or the quiet suppression
+  /** Outcome text inside the dropdown: a failure, or the quiet suppression
    *  notice when dry run or the write guard stopped the write. */
   const [passMsg, setPassMsg] = useState<string | null>(null);
+  /** Recent-visit windows per client, filled by the background sweep and
+   *  kept for the session (keyed by client, so a class switch reuses
+   *  them). Rows fill in as answers land; absent renders as nothing. */
+  const [histories, setHistories] = useState<Record<string, VisitInfo[]>>({});
+  /** The sweep's session cache: which client ids have been asked already
+   *  (value null = the fetch failed; not retried this session, because a
+   *  history line is not worth hammering a struggling API for). */
+  const historyCache = useRef(new Map<string, VisitInfo[] | null>());
   /** Set when the roster's batched client lookup failed: waiver state is
    *  unknown on every row and rows fail open. Shown quietly. */
   const [waiverError, setWaiverError] = useState<string | null>(null);
@@ -744,13 +496,76 @@ export default function FrontDesk() {
 
   useEffect(() => {
     if (activeId === null) return;
-    setExpandedId(null);
+    setPickerFor(null);
+    setPassMsg(null);
     setCounterModal(null);
     setWaitlist(null);
     setWaitlistError(null);
     setPromoteMsg({});
     void refreshRoster(activeId);
   }, [activeId, refreshRoster]);
+
+  /**
+   * The history sweep: after a roster renders, fetch each client's recent
+   * visits in the background, a few at a time, and let the rows fill in
+   * as the answers land. The roster itself NEVER waits on this.
+   *
+   * The session cache is keyed by client id, so switching classes and
+   * refreshing the roster refetch nothing, and a late answer can only
+   * ever write under its own client's key -- it cannot dirty another
+   * class's rows. The loop itself still stops early when the teacher
+   * switches classes (activeIdRef), so a stale sweep does not keep
+   * spending metered calls on a roster nobody is looking at.
+   */
+  useEffect(() => {
+    if (activeId === null || entries.length === 0) return;
+    const classId = activeId;
+    const ids = [
+      ...new Set(entries.map((e) => e.clientId).filter((id) => id)),
+    ].filter((id) => !historyCache.current.has(id));
+    if (ids.length === 0) return;
+    let cancelled = false;
+    let next = 0;
+    const worker = async () => {
+      while (!cancelled && activeIdRef.current === classId) {
+        const id = ids[next++];
+        if (id === undefined) return;
+        /* Claim the id before fetching, so a re-run of the effect (a
+         * roster refresh mid-sweep) does not fetch it twice. */
+        if (historyCache.current.has(id)) continue;
+        historyCache.current.set(id, null);
+        try {
+          const r = await fetch(
+            `/api/history?clientId=${encodeURIComponent(id)}`,
+          );
+          const body = await r.json();
+          if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+          const visits: VisitInfo[] = body?.visits ?? [];
+          historyCache.current.set(id, visits);
+          setHistories((h) => ({ ...h, [id]: visits }));
+        } catch {
+          /* Left as null in the cache: the row shows nothing, and this
+           * client is not retried this session. A history line is a
+           * nicety, not worth a retry storm. */
+        }
+      }
+    };
+    for (let i = 0; i < HISTORY_SWEEP_CONCURRENCY; i++) void worker();
+    return () => {
+      cancelled = true;
+    };
+  }, [entries, activeId]);
+
+  /** Escape closes the payment dropdown (outside taps close it via its
+   *  scrim). Never while a write is in flight: the answer is coming. */
+  useEffect(() => {
+    if (pickerFor === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && passSavingId === null) setPickerFor(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pickerFor, passSavingId]);
 
   /**
    * Search hits Mindbody, so it is debounced properly and cancelled on the
@@ -895,16 +710,13 @@ export default function FrontDesk() {
       }
       /**
        * A known red alert stops the tap until it is read. The alert rides
-       * the roster's batched client lookup now, so it is known from roster
-       * load on every row, unopened ones included; the context fetch is
-       * the fallback for the rare row the batch missed. Once seen it must
-       * be explicitly read past, once, before this row will check in. The
-       * acknowledgement lives in this browser session only; nothing is
-       * ever written back.
+       * the roster's batched client lookup, so it is known from roster
+       * load on every row. Once seen it must be explicitly read past,
+       * once, before this row will check in; reading it through the row's
+       * info icon deliberately does not count. The acknowledgement lives
+       * in this browser session only; nothing is ever written back.
        */
-      const redAlert =
-        entry.redAlert ?? contexts[entry.clientId]?.profile.data?.redAlert;
-      if (redAlert && !acked.includes(entry.clientId)) {
+      if (entry.redAlert && !acked.includes(entry.clientId)) {
         setRedAlertPrompt(entry);
         return;
       }
@@ -918,47 +730,50 @@ export default function FrontDesk() {
       }
       void setSignedIn(entry, true);
     },
-    [busy, confirming, contexts, acked, setSignedIn, settings.confirmUnpaid],
+    [busy, confirming, acked, setSignedIn, settings.confirmUnpaid],
   );
 
   /**
-   * Open or close the context panel on a row. Its own 64px control, NOT the
-   * row tap: check-in is the app's whole point and stays one tap on the row
-   * body. The panel opens instantly with a spinner and the batched fetch
-   * fills it in; a failure renders as text in the panel and never blocks
-   * check-in, because the fallback for "context is down" is the counter
-   * working exactly as it did before this feature existed.
+   * Open the payment-change dropdown on a row, fetching the client's pass
+   * list on the FIRST open only: one metered `/client/clientservices`
+   * call per client per session, cached thereafter. A failed fetch is not
+   * cached, so closing and reopening the dropdown is the retry path.
    */
-  const toggleContext = useCallback(
-    (clientId: string) => {
-      if (expandedId === clientId) {
-        setExpandedId(null);
-        return;
-      }
-      setExpandedId(clientId);
-      if (contexts[clientId] || ctxLoading.includes(clientId)) return;
-      setCtxLoading((l) => [...l, clientId]);
-      setCtxError((e) => {
-        const { [clientId]: _drop, ...rest } = e;
-        return rest;
-      });
-      fetch(`/api/client-context?clientId=${encodeURIComponent(clientId)}`)
+  const openPicker = useCallback(
+    (entry: RosterEntry) => {
+      setPassMsg(null);
+      setPickerFor(entry.clientId);
+      const have = passLists[entry.clientId];
+      if (have?.data || have?.loading) return;
+      setPassLists((l) => ({
+        ...l,
+        [entry.clientId]: { data: null, error: null, loading: true },
+      }));
+      fetch(`/api/passes?clientId=${encodeURIComponent(entry.clientId)}`)
         .then(async (r) => {
           const body = await r.json();
           if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
-          setContexts((c) => ({ ...c, [clientId]: body as ClientContext }));
-        })
-        .catch((err) => {
-          setCtxError((e) => ({
-            ...e,
-            [clientId]: err instanceof Error ? err.message : String(err),
+          setPassLists((l) => ({
+            ...l,
+            [entry.clientId]: {
+              data: (body?.passes ?? []) as PassInfo[],
+              error: null,
+              loading: false,
+            },
           }));
         })
-        .finally(() => {
-          setCtxLoading((l) => l.filter((id) => id !== clientId));
+        .catch((err) => {
+          setPassLists((l) => ({
+            ...l,
+            [entry.clientId]: {
+              data: null,
+              error: err instanceof Error ? err.message : String(err),
+              loading: false,
+            },
+          }));
         });
     },
-    [expandedId, contexts, ctxLoading],
+    [passLists],
   );
 
   /**
@@ -1144,8 +959,9 @@ export default function FrontDesk() {
    * Post the payment change: `{VisitId, ClientServiceId}` through the same
    * guard plumbing as check-in, then refresh the roster so the row shows
    * the new pass (refreshRoster already drops stale responses if the
-   * teacher has switched classes). A suppressed write keeps the picker
-   * open and says which guard fired, exactly like the booking path.
+   * teacher has switched classes). Non-optimistic: the picked option
+   * spins until Mindbody answers. A suppressed write keeps the dropdown
+   * open and says which guard fired, quietly, never as success.
    */
   const changePass = useCallback(
     async (entry: RosterEntry, clientServiceId: number) => {
@@ -1175,7 +991,7 @@ export default function FrontDesk() {
         if (activeIdRef.current !== null) {
           await refreshRoster(activeIdRef.current);
         }
-        setPassPicker(null);
+        setPickerFor(null);
       } catch (err) {
         setPassMsg(err instanceof Error ? err.message : String(err));
       } finally {
@@ -1184,6 +1000,121 @@ export default function FrontDesk() {
     },
     [passSavingId, refreshRoster],
   );
+
+  /**
+   * The payment-change dropdown, anchored under the row's payment cell.
+   * Current pass checked at the top, the client's OTHER current passes as
+   * options; the fake-unlimited rule applies to every line in it. An
+   * unpaid booking lists everything as assignable. Closes on outside tap
+   * (the scrim) and Escape; stays open across a suppressed write so the
+   * notice is actually read.
+   */
+  const renderPassDropdown = (entry: RosterEntry) => {
+    const list = passLists[entry.clientId];
+    const passes = list?.data ?? null;
+    const current =
+      entry.clientServiceId !== null && passes
+        ? (passes.find((p) => p.id === entry.clientServiceId) ?? null)
+        : null;
+    const others = (passes ?? []).filter(
+      (p): p is PassInfo & { id: number } =>
+        p.id !== null && p.id !== entry.clientServiceId,
+    );
+    const facts = (p: {
+      remaining: number | null;
+      count: number | null;
+      expires: string | null;
+    }): string =>
+      [
+        !fakeUnlimited(p.count, p.remaining) && p.remaining !== null
+          ? `${p.remaining} left`
+          : null,
+        p.expires ? `exp ${slashDate(p.expires)}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    /* The pass paying now, shown checked at the top. When the fetched
+     * list does not carry it (or has not landed yet), the roster's own
+     * Visit.Service data stands in, so the top line is always the truth
+     * the row shows. */
+    const currentLine = entry.pricingOption
+      ? {
+          name: current?.name ?? entry.pricingOption,
+          facts: facts(
+            current ?? {
+              remaining: entry.passRemaining,
+              count: entry.passCount,
+              expires: entry.passExpires,
+            },
+          ),
+        }
+      : null;
+    return (
+      <>
+        <div
+          className="pass-scrim"
+          onClick={() => {
+            if (passSavingId === null) setPickerFor(null);
+          }}
+          role="presentation"
+        />
+        <div
+          className="pass-dd"
+          role="dialog"
+          aria-label={`Change how ${entry.name} is paying`}
+        >
+          {passMsg ? <p className="pass-note">{passMsg}</p> : null}
+          {currentLine ? (
+            <div className="pass-opt current" aria-current="true">
+              <span className="pass-check">
+                <CheckIcon />
+              </span>
+              <span className="pass-opt-name">{currentLine.name}</span>
+              {currentLine.facts ? (
+                <span className="pass-opt-facts">{currentLine.facts}</span>
+              ) : null}
+            </div>
+          ) : null}
+          {list?.loading ? (
+            <p className="pass-empty">
+              <span className="spinner" aria-label="working" /> Looking up
+              their passes...
+            </p>
+          ) : null}
+          {list?.error ? (
+            <p className="pass-note">Passes unavailable: {list.error}</p>
+          ) : null}
+          {passes && others.length === 0 ? (
+            <p className="pass-empty">
+              {entry.pricingOption
+                ? "No other current passes."
+                : "No current passes to assign."}
+            </p>
+          ) : null}
+          {others.map((p) => {
+            const saving = passSavingId === p.id;
+            const line = facts(p);
+            return (
+              <button
+                key={`opt-${p.id}`}
+                className="pass-opt"
+                disabled={passSavingId !== null}
+                onClick={() => void changePass(entry, p.id)}
+              >
+                <span className="pass-check">
+                  {saving ? (
+                    <span className="spinner" aria-label="working" />
+                  ) : null}
+                </span>
+                <span className="pass-opt-name">{p.name}</span>
+                {line ? <span className="pass-opt-facts">{line}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      </>
+    );
+  };
 
   return (
     <main className="shell">
@@ -1348,13 +1279,32 @@ export default function FrontDesk() {
         </div>
       ) : null}
 
+      {/* The roster as a table, like Mindbody's own sign-in screen: one
+          shared grid template so the payment, expiry, remaining and
+          balance columns line up down the list, and NOTHING is behind a
+          tap. The expandable row this replaced was the friction Pete asked
+          to remove; detail moved into it missed the point. */}
+      {sortedEntries.length > 0 ? (
+        <div className="roster-head" aria-hidden="true">
+          <span>Name</span>
+          <span>Payment</span>
+          <span>Expires</span>
+          <span>Left</span>
+          <span className="cell-bal">Balance</span>
+          <span />
+        </div>
+      ) : null}
+
       <ul className="roster">
         {sortedEntries.map((entry) => {
           const working = busy.includes(entry.clientId);
           /* False only. Null is unknown (lookup failed) and fails open:
              no badge, normal check-in. */
           const noWaiver = entry.waiverSigned === false && !entry.checkedIn;
-          const detail = working
+          /* The line under the name: an in-flight call, a failure, or a
+             gate message outranks the quiet history line; with none of
+             those and no history yet, nothing renders and nothing waits. */
+          const statusMsg = working
             ? "Talking to Mindbody..."
             : failed[entry.clientId]
               ? failed[entry.clientId]
@@ -1362,139 +1312,233 @@ export default function FrontDesk() {
                 ? "Needs the liability waiver. Sign it in the Mindbody app."
                 : confirming.includes(entry.clientId)
                   ? "No pass on this booking. Tap again to check in for free."
-                  : /* The quiet case: what the Mindbody sign-in screen
-                       shows per row, with no extra taps. */
-                    <PassLine entry={entry} />;
+                  : null;
+          const visits = histories[entry.clientId];
+          const history =
+            statusMsg === null && visits ? historyLine(visits) : "";
+          const unlimited = fakeUnlimited(entry.passCount, entry.passRemaining);
+          const showRemaining =
+            entry.pricingOption !== null &&
+            !unlimited &&
+            entry.passRemaining !== null;
+          const canTap = !entry.checkedIn && !working;
 
-          const open = expandedId === entry.clientId;
-          /* The context toggle: its own control, so opening details never
-             costs the check-in tap a second gesture. */
-          const infoBtn = (
-            <button
-              className="info-btn"
-              onClick={() => toggleContext(entry.clientId)}
-              aria-expanded={open}
-              aria-label={
-                open
-                  ? `Hide details for ${entry.name}`
-                  : `Show details for ${entry.name}`
-              }
-              title={open ? "Hide details" : "Show details"}
-            >
-              <ChevronIcon />
-            </button>
+          const chipClass = entry.checkedIn
+            ? "chip in"
+            : working
+              ? "chip busy"
+              : failed[entry.clientId]
+                ? "chip failed"
+                : noWaiver
+                  ? "chip stop"
+                  : confirming.includes(entry.clientId)
+                    ? "chip unpaid"
+                    : entry.paid
+                      ? "chip action"
+                      : "chip unpaid";
+          const chipLabel = entry.checkedIn ? (
+            "checked in"
+          ) : working ? (
+            <span className="spinner" aria-label="working" />
+          ) : failed[entry.clientId] ? (
+            "failed"
+          ) : noWaiver ? (
+            "no waiver"
+          ) : confirming.includes(entry.clientId) ? (
+            "confirm"
+          ) : entry.paid ? (
+            "check in"
+          ) : (
+            "unpaid"
           );
-          /* The picker only exists when there is a real choice: two or
-             more current passes with ids the API can assign. The pass
-             list is the one already fetched on row open; no new read. */
-          const pickablePasses = (
-            contexts[entry.clientId]?.passes.data ?? []
-          ).filter((p) => p.id !== null);
-          const panel = open ? (
-            <ContextPanel
-              ctx={contexts[entry.clientId]}
-              loading={ctxLoading.includes(entry.clientId)}
-              error={ctxError[entry.clientId]}
-              mindbodyId={entry.mindbodyId}
-              passInUse={entry.pricingOption}
-              onChangePass={
-                pickablePasses.length > 1
-                  ? () => {
-                      setPassMsg(null);
-                      setPassPicker(entry);
-                    }
-                  : null
-              }
-              canChangePass={entry.visitId !== null}
-            />
-          ) : null;
-
-          /**
-           * A checked-in row is NOT a button. Undoing a check-in used to be
-           * a tap anywhere on the row, which is the same gesture that made
-           * it -- far too easy to reverse someone by accident while scanning
-           * a list. It now takes a small deliberate control, and then a
-           * confirmation.
-           */
-          if (entry.checkedIn && !working) {
-            return (
-              <li key={entry.clientId}>
-                <div className="row">
-                  <span className="row-main">
-                    <span className="name">
-                      {entry.name}
-                      <NameBadges entry={entry} />
-                      <span className="detail">{detail}</span>
-                    </span>
-                    <span className="chip in">checked in</span>
-                  </span>
-                  {infoBtn}
-                  <button
-                    className="undo-btn"
-                    onClick={() => setCheckingOut(entry)}
-                    aria-label={`Check out ${entry.name}`}
-                    title={`Check out ${entry.name}`}
-                  >
-                    <CloseIcon />
-                  </button>
-                </div>
-                {panel}
-              </li>
-            );
-          }
 
           return (
             <li key={entry.clientId}>
-              <div className="row">
-                {/* Check-in stays ONE tap on the row body. The context
-                    toggle sits outside this button, so knowing more about
-                    someone is optional and checking them in never waits
-                    on it. */}
-                <button className="row-main" onClick={() => tapRow(entry)}>
-                  <span className="name">
-                    {entry.name}
-                    <NameBadges entry={entry} />
-                    <span className="detail">{detail}</span>
+              {/* The whole row is the check-in target, same as before the
+                  rework; the chip is the button a keyboard reaches. The
+                  inline controls (icons, Change, undo, the Mindbody link)
+                  stop the tap from bubbling into a check-in. */}
+              <div
+                className={canTap ? "rrow tappable" : "rrow"}
+                onClick={canTap ? () => tapRow(entry) : undefined}
+              >
+                <div className="cell-name">
+                  <span className="name-line">
+                    <span className="name-text">{entry.name}</span>
+                    {entry.member ? (
+                      <span className="m-chip" title="Member" aria-label="Member">
+                        M
+                      </span>
+                    ) : null}
+                    {entry.redAlert ? (
+                      <button
+                        className="row-icon row-alert"
+                        aria-label={`Red alert for ${entry.name}`}
+                        title="Red alert"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setInfoModal({
+                            title: `Red alert on ${entry.name}`,
+                            text: entry.redAlert ?? "",
+                            alert: true,
+                          });
+                        }}
+                      >
+                        <AlertIcon />
+                      </button>
+                    ) : null}
+                    {entry.notes ? (
+                      <button
+                        className="row-icon"
+                        aria-label={`Notes for ${entry.name}`}
+                        title="Notes"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setInfoModal({
+                            title: `Notes on ${entry.name}`,
+                            text: entry.notes ?? "",
+                            alert: false,
+                          });
+                        }}
+                      >
+                        <NotesIcon />
+                      </button>
+                    ) : null}
                   </span>
-                  {/* The no-waiver chip outranks everything but an
-                      in-flight call or a failure: it is the blocked state
-                      the teacher must see before their thumb lands. */}
+                  {statusMsg ? (
+                    <span
+                      className={
+                        failed[entry.clientId] || noWaiver
+                          ? "subline stop-text"
+                          : "subline"
+                      }
+                    >
+                      {statusMsg}
+                    </span>
+                  ) : history ? (
+                    <span className="subline">{history}</span>
+                  ) : null}
+                </div>
+
+                <div className="cell-pay">
                   <span
                     className={
-                      working
-                        ? "chip busy"
-                        : failed[entry.clientId]
-                          ? "chip failed"
-                          : noWaiver
-                            ? "chip stop"
-                            : confirming.includes(entry.clientId)
-                              ? "chip unpaid"
-                              : entry.paid
-                                ? "chip action"
-                                : "chip unpaid"
+                      entry.pricingOption ? "pay-name" : "pay-name none"
                     }
+                    title={entry.pricingOption ?? undefined}
                   >
-                    {working ? (
-                      <span className="spinner" aria-label="working" />
-                    ) : failed[entry.clientId] ? (
-                      "failed"
-                    ) : noWaiver ? (
-                      "no waiver"
-                    ) : confirming.includes(entry.clientId) ? (
-                      "confirm"
-                    ) : entry.paid ? (
-                      "check in"
-                    ) : (
-                      "unpaid"
-                    )}
+                    {entry.pricingOption ?? "No pass"}
                   </span>
-                </button>
-                {infoBtn}
-                {/* Holds the space the undo control occupies on a checked-in
-                    row, so chips stay in one column down the list. */}
-                <span className="undo-spacer" aria-hidden="true" />
+                  {/* No visit id means nothing to reassign, so no control.
+                      Everyone else gets the dropdown: Change swaps the
+                      paying pass, Assign puts one on an unpaid booking. */}
+                  {entry.visitId !== null ? (
+                    <button
+                      className="change-link"
+                      disabled={passSavingId !== null}
+                      aria-haspopup="dialog"
+                      aria-expanded={pickerFor === entry.clientId}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (pickerFor === entry.clientId) {
+                          if (passSavingId === null) setPickerFor(null);
+                        } else {
+                          openPicker(entry);
+                        }
+                      }}
+                    >
+                      {entry.pricingOption ? "Change" : "Assign"}
+                    </button>
+                  ) : null}
+                  {pickerFor === entry.clientId
+                    ? renderPassDropdown(entry)
+                    : null}
+                </div>
+
+                <span className="cell-plain">
+                  {entry.pricingOption && entry.passExpires
+                    ? slashDate(entry.passExpires)
+                    : ""}
+                </span>
+
+                {/* The fake-unlimited rule: no number is better than
+                    99987. Remaining 1 is the renewal conversation that
+                    happens now or never, so it stays loud. */}
+                <span className="cell-plain">
+                  {showRemaining ? (
+                    entry.passRemaining === 1 ? (
+                      <span className="detail-last">1</span>
+                    ) : (
+                      entry.passRemaining
+                    )
+                  ) : (
+                    ""
+                  )}
+                </span>
+
+                <span
+                  className={
+                    entry.balance !== null && entry.balance < 0
+                      ? "cell-bal neg"
+                      : "cell-bal"
+                  }
+                >
+                  {entry.balance !== null && entry.balance !== 0
+                    ? money(entry.balance)
+                    : ""}
+                </span>
+
+                <div className="cell-actions">
+                  {entry.checkedIn && !working ? (
+                    <span className={chipClass}>{chipLabel}</span>
+                  ) : (
+                    <button
+                      className={chipClass}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        tapRow(entry);
+                      }}
+                      aria-label={`Check in ${entry.name}`}
+                    >
+                      {chipLabel}
+                    </button>
+                  )}
+                  {entry.checkedIn && !working ? (
+                    <button
+                      className="undo-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCheckingOut(entry);
+                      }}
+                      aria-label={`Check out ${entry.name}`}
+                      title={`Check out ${entry.name}`}
+                    >
+                      <CloseIcon />
+                    </button>
+                  ) : (
+                    <span className="act-spacer" aria-hidden="true" />
+                  )}
+                  {/* The one thing this app deliberately does not do
+                      (edit a client) is a tap away in the tool that does.
+                      Opens the staff web app; the teacher must already be
+                      signed in to Mindbody there. */}
+                  {entry.mindbodyId ? (
+                    <a
+                      className="row-icon"
+                      href={`https://clients.mindbodyonline.com/app/clients/${entry.mindbodyId}/client-info`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`Open ${entry.name} in Mindbody`}
+                      title="Open in Mindbody"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ExternalLinkIcon />
+                    </a>
+                  ) : (
+                    <span className="act-spacer" aria-hidden="true" />
+                  )}
+                </div>
               </div>
-              {panel}
             </li>
           );
         })}
@@ -1540,11 +1584,6 @@ export default function FrontDesk() {
                     "add"
                   )}
                 </span>
-                {/* Walk-in rows have no info button, so the chip needs its
-                    width made up or the pill drifts out of the chip column
-                    the roster rows establish. */}
-                <span className="info-spacer" aria-hidden="true" />
-                <span className="undo-spacer" aria-hidden="true" />
               </button>
             </li>
           );
@@ -1702,6 +1741,44 @@ export default function FrontDesk() {
         </div>
       ) : null}
 
+      {/* The row icons' read-only text: the red alert or the staff notes,
+          one Close button, nothing else. Deliberately NOT the check-in
+          gate: reading an alert here does not acknowledge it, so a
+          flagged row's check-in tap still stops at the blocking dialog
+          below. */}
+      {infoModal ? (
+        <div
+          className="modal-scrim"
+          onClick={() => setInfoModal(null)}
+          role="presentation"
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={infoModal.title}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">{infoModal.title}</p>
+            <p
+              className={
+                infoModal.alert ? "ctx-alert modal-alert" : "modal-note"
+              }
+            >
+              {infoModal.text}
+            </p>
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                onClick={() => setInfoModal(null)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* A red alert is Mindbody's own "stop and read this" flag, so a
           row known to carry one does not check in on reflex: the tap stops
           here until the teacher has read the alert and chosen to continue.
@@ -1725,9 +1802,7 @@ export default function FrontDesk() {
               Red alert on {redAlertPrompt.name}
             </p>
             <p className="ctx-alert modal-alert">
-              {redAlertPrompt.redAlert ??
-                contexts[redAlertPrompt.clientId]?.profile.data?.redAlert ??
-                "The studio flagged this client."}
+              {redAlertPrompt.redAlert ?? "The studio flagged this client."}
             </p>
             <p className="muted">
               The studio flagged this deliberately. Read it before letting
@@ -1889,94 +1964,6 @@ export default function FrontDesk() {
                 }}
               >
                 Add to waiting list
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {/* Mindbody's "Change how the client is paying": every current pass
-          on the account, tap one to make it pay for this visit. The list
-          is the context fetch already in memory. Writing is
-          non-optimistic and the modal survives a suppressed write so the
-          notice is actually read. */}
-      {passPicker ? (
-        <div
-          className="modal-scrim"
-          onClick={() => {
-            if (passSavingId === null) setPassPicker(null);
-          }}
-          role="presentation"
-        >
-          <div
-            className="modal modal-list"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Change which pass pays"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="modal-title">
-              Change how {passPicker.name} is paying
-            </p>
-            {passMsg ? <p className="note">{passMsg}</p> : null}
-            <ul className="roster modal-roster">
-              {(contexts[passPicker.clientId]?.passes.data ?? [])
-                .filter((p): p is PassInfo & { id: number } => p.id !== null)
-                .map((p) => {
-                  const working = passSavingId === p.id;
-                  const inUse =
-                    passPicker.clientServiceId !== null &&
-                    p.id === passPicker.clientServiceId;
-                  const facts = [
-                    !fakeUnlimited(p.count, p.remaining) && p.remaining !== null
-                      ? `${p.remaining} left`
-                      : null,
-                    p.expires ? `exp ${slashDate(p.expires)}` : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ");
-                  return (
-                    <li key={`pass-${p.id}`}>
-                      <button
-                        className="row"
-                        disabled={inUse || passSavingId !== null}
-                        onClick={() => void changePass(passPicker, p.id)}
-                      >
-                        <span className="name">
-                          {p.name}
-                          {facts ? (
-                            <span className="detail">{facts}</span>
-                          ) : null}
-                        </span>
-                        <span
-                          className={
-                            working
-                              ? "chip busy"
-                              : inUse
-                                ? "chip in"
-                                : "chip action"
-                          }
-                        >
-                          {working ? (
-                            <span className="spinner" aria-label="working" />
-                          ) : inUse ? (
-                            "paying now"
-                          ) : (
-                            "use this"
-                          )}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-            </ul>
-            <div className="modal-actions">
-              <button
-                className="modal-cancel"
-                disabled={passSavingId !== null}
-                onClick={() => setPassPicker(null)}
-              >
-                Cancel
               </button>
             </div>
           </div>

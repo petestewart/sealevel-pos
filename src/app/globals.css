@@ -226,152 +226,290 @@ button {
   opacity: 1;
 }
 
-/* The tappable body of a roster row: name, detail and chip, one tap to
- * check in. It sits beside the context toggle and the undo control inside
- * .row, so the check-in gesture never shares a target with anything else.
- * Every colour it shows is inherited from tokens on .row. */
-.row-main {
-  flex: 1;
+/* --- Roster grid ----------------------------------------------------
+ * The roster as a table, like Mindbody's own sign-in screen. ONE template,
+ * shared by the header and every row, is what makes the payment, expiry,
+ * remaining and balance columns line up down the list: fr columns resolve
+ * identically because every row is the same width, and the fixed columns
+ * are fixed. iPad landscape is the target width; the payment cell
+ * truncates with an ellipsis rather than wrapping the grid.
+ */
+:root {
+  --roster-cols: minmax(0, 2.1fr) minmax(0, 1.5fr) 4.6em 3em 5em 208px;
+}
+
+.roster-head,
+.rrow {
+  display: grid;
+  grid-template-columns: var(--roster-cols);
+  gap: 12px;
+  align-items: center;
+}
+
+.roster-head {
+  margin-top: 4px;
+  padding: 0 16px 4px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.rrow {
+  min-height: 72px;
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+/* The row body is the check-in target, exactly as it was before the grid;
+ * the inline controls stop the tap from bubbling. */
+.rrow.tappable {
+  cursor: pointer;
+}
+
+.cell-name {
+  min-width: 0;
+}
+
+.name-line {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 64px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  font: inherit;
+  gap: 8px;
+  min-width: 0;
 }
 
-/* Opens the per-client context panel under the row. Deliberately its own
- * 64px-tall target rather than a second meaning for the row tap: check-in
- * is the app's whole point and stays one tap. The chevron flips when the
- * panel is open. */
-/* Holds the info button's width on rows that have no info button (walk-in
- * search results), so every chip lands in the same column. */
-.info-spacer {
-  flex: 0 0 auto;
-  width: 48px;
+.name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 20px;
+  font-weight: 600;
 }
 
-.info-btn {
+/* The muted one-liner under the name: the history line, or a status
+ * message (in-flight, failed, gate) which outranks it. */
+.subline {
+  display: block;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.subline.stop-text {
+  color: var(--stop);
+}
+
+/* Small square target for the alert / notes / Mindbody-link icons. 44px
+ * like the undo control: occasional, deliberate taps, not the thing hit
+ * at speed with a queue. */
+.row-icon {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 48px;
-  min-height: 64px;
+  width: 44px;
+  height: 44px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 999px;
   background: transparent;
   color: var(--muted);
-}
-
-.info-btn:active {
-  background: var(--line);
-}
-
-.info-btn svg {
-  transition: transform 150ms ease-out;
-}
-
-.info-btn[aria-expanded="true"] {
-  color: var(--accent);
-}
-
-.info-btn[aria-expanded="true"] svg {
-  transform: rotate(180deg);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .info-btn svg { transition: none; }
-}
-
-/* The expanded row's context: what the teacher should know about the
- * person in front of them. Attached under its row, tokens only, nothing
- * under 16px -- this is read at arm's length mid-conversation. */
-.context {
-  margin-top: 4px;
-  padding: 12px 16px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  display: grid;
-  gap: 8px;
-}
-
-/* Opens the client in the Mindbody staff web app, new tab. A quiet utility
- * pill, deliberately under the 64px floor: it is an occasional admin jump,
- * not something hit at speed with a queue, and sized like the dev handle. */
-.mb-link {
-  justify-self: start;
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 0 16px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: none;
-  color: var(--muted);
-  font-size: 16px;
-  font-weight: 600;
   text-decoration: none;
 }
 
-.mb-link:active {
+.row-icon:active {
   background: var(--line);
-  color: var(--ink);
 }
 
-.ctx-line {
+.row-icon.row-alert {
+  color: var(--stop);
+}
+
+/* The payment cell: the ONE pass paying for this visit, truncating rather
+ * than wrapping, plus the quiet Change/Assign control. Anchors the
+ * dropdown. */
+.cell-pay {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pay-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 16px;
 }
 
-/* Opens the pass picker (change how the client is paying). A real action
- * taken mid-conversation, so it keeps the 64px floor, unlike the quiet
- * Mindbody admin link beside it. Tokens only, both palettes. */
-.change-btn {
-  justify-self: start;
+/* An unpaid booking's payment cell, same amber the unpaid chip uses. */
+.pay-name.none {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* Opens the payment dropdown. Visually quiet, still a 64px target. */
+.change-link {
+  flex: 0 0 auto;
   min-height: 64px;
-  padding: 0 20px;
-  border: 1px solid var(--line);
+  padding: 0 10px;
+  border: 0;
   border-radius: 12px;
-  background: var(--action-bg);
-  color: var(--ink);
+  background: transparent;
+  color: var(--accent);
   font-size: 16px;
   font-weight: 600;
 }
 
-.change-btn:disabled {
+.change-link:active {
+  background: var(--line);
+}
+
+.change-link:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-/* Lines led by an icon: the icon keeps its size and the text wraps beside
- * it, not under it. Also applies to the red alert via .ctx-alert below. */
-.ctx-iconed,
+.cell-plain {
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-bal {
+  font-size: 16px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Money owed renders in the stop colour; credit and zero do not shout. */
+.cell-bal.neg {
+  color: var(--stop);
+  font-weight: 600;
+}
+
+/* Fixed-width actions cell so the chips sit in one column whether or not
+ * a row carries the undo control or the Mindbody link. */
+.cell-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cell-actions .chip {
+  border: 0;
+}
+
+.act-spacer {
+  flex: 0 0 auto;
+  width: 44px;
+}
+
+/* --- Payment-change dropdown ---------------------------------------
+ * Anchored under the payment cell. The scrim is transparent and catches
+ * the outside tap; Escape also closes. Options keep the 64px floor.
+ */
+.pass-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 24;
+  background: transparent;
+}
+
+.pass-dd {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 25;
+  min-width: min(360px, 82vw);
+  max-width: min(440px, 92vw);
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
+  display: grid;
+  gap: 2px;
+}
+
+.pass-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-size: 16px;
+}
+
+button.pass-opt:active {
+  background: var(--action-bg);
+}
+
+button.pass-opt:disabled {
+  cursor: default;
+}
+
+/* The pass paying now: checked at the top, not an action. */
+.pass-opt.current {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.pass-check {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+}
+
+.pass-opt-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pass-opt-facts {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.pass-empty {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Suppression and failure notices inside the dropdown. Quiet, and never
+ * dressed as success: a dry-run "write" did not happen. */
+.pass-note {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 16px;
+}
+
+/* The red-alert text block, in the info modal and the check-in gate. */
 .ctx-alert {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-}
-
-.ctx-iconed svg,
-.ctx-alert svg {
-  flex: 0 0 auto;
-  margin-top: 2px;
-}
-
-.ctx-line .spinner {
-  margin-right: 8px;
-}
-
-/* The stop-and-read states. The red alert uses the stop pairing; the
- * last-class prompt is the highest-value line in the app and gets the loud
- * warn treatment rather than a spot in a list. */
-.ctx-alert {
   padding: 10px 12px;
   border-radius: 8px;
   background: var(--stop-bg);
@@ -380,27 +518,18 @@ button {
   font-weight: 600;
 }
 
-.ctx-warn {
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--warn-bg);
-  color: var(--warn);
-  font-size: 17px;
-  font-weight: 700;
-}
-
-.ctx-err {
-  color: var(--stop);
-}
-
-.ctx-habit {
-  font-weight: 600;
-}
-
-/* The alert text inside the red-alert confirmation dialog. */
+/* The alert text inside the red-alert dialogs. */
 .modal-alert {
   display: block;
   margin: 0 0 12px;
+}
+
+/* Staff notes in the info modal: plain reading text, preserving the line
+ * breaks staff typed into Mindbody. */
+.modal-note {
+  margin: 0 0 12px;
+  font-size: 17px;
+  white-space: pre-wrap;
 }
 
 .row .name {
@@ -429,27 +558,17 @@ button {
 
 /* Membership chip beside the name. Small but never under 16px. */
 .m-chip {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 26px;
   min-height: 26px;
-  margin-left: 8px;
   border-radius: 999px;
   background: var(--accent);
   color: var(--surface);
   font-size: 16px;
   font-weight: 700;
-  vertical-align: 2px;
-}
-
-/* The red alert's icon on the row itself: the tap gate already exists,
- * this makes the flag visible before a thumb lands on it. */
-.row-alert {
-  display: inline-flex;
-  margin-left: 8px;
-  color: var(--stop);
-  vertical-align: -2px;
 }
 
 /* One width for every chip, whatever the label. The chip is the rightmost
@@ -835,7 +954,6 @@ button {
   justify-content: center;
   width: 44px;
   height: 44px;
-  margin-left: 12px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -844,13 +962,6 @@ button {
 
 .undo-btn:active {
   background: var(--line);
-}
-
-/* Same footprint on rows that have no undo, so the chips line up. */
-.undo-spacer {
-  flex: 0 0 auto;
-  width: 44px;
-  margin-left: 12px;
 }
 
 /* Confirmation dialog. */

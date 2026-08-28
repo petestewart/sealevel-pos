@@ -242,30 +242,72 @@ sale path (sell the missing pass and check in together), already planned.
 Pete's screenshot review of T11-T13: the expandable row is the friction he
 asked to remove, and detail moved INTO it missed the point. Rework:
 
-- [ ] The roster row expando is gone. Everything renders on the row, in
+- [x] The roster row expando is gone. Everything renders on the row, in
       aligned columns (CSS grid shared across rows, like MB's table): name
       with M / alert / notes icons, payment type, expiration, remaining,
       balance. A one-line history sits with the row too.
-- [ ] Exactly ONE form of payment shows: the pass paying for this visit, or
-      "No pass on this booking". "Change" is the only way to see the others,
+- [x] Exactly ONE form of payment shows: the pass paying for this visit, or
+      "No pass". "Change" is the only way to see the others,
       and it is an inline dropdown (not a modal): other current passes as
       options, current one marked, pick one to post the existing
       /api/visit-payment write. An unpaid booking with available passes gets
       the same dropdown to assign one.
-- [ ] Fake-unlimited suppression applies EVERYWHERE a pass renders,
+- [x] Fake-unlimited suppression applies EVERYWHERE a pass renders,
       including the change dropdown options ("99993 of 99999" leaked in the
       old panel pass list).
-- [ ] Negative account balance renders in the danger colour (token, both
+- [x] Negative account balance renders in the danger colour (token, both
       palettes).
-- [ ] History one-liner needs `/client/clientvisits` per client, so it is
+- [x] History one-liner needs `/client/clientvisits` per client, so it is
       fetched in a background sweep AFTER the roster renders and cached per
       client for the session; rows fill in as answers land. The roster
       itself never waits on it.
-- [ ] Notes ride the existing batched `/client/clients` lookup (`Notes` is
+- [x] Notes ride the existing batched `/client/clients` lookup (`Notes` is
       a top-level Client field); the notes icon tap shows the text. Red
       alert icon tap shows the alert. Open in Mindbody becomes a small
       per-row affordance. The old context panel and its five-call fetch
       retire; the change dropdown fetches `clientservices` on demand.
+- [ ] Pete: eyeball the grid on the studio iPad in landscape, both
+      palettes, and watch one payment change land in the dev drawer.
+
+How it landed (all done (code): typecheck and build clean, no live run in
+this container):
+
+- One grid template (`--roster-cols` in `globals.css`), shared by the
+  header row and every roster row, is what aligns the columns; the payment
+  cell truncates with an ellipsis rather than wrapping the grid. The whole
+  row is still the check-in target, exactly as before; inline controls
+  stop the tap from bubbling. Walk-in search rows and the counter/waitlist
+  modals keep their old flex layout untouched.
+- Pete's refinement, mid-build: the alert/notes icons open INFO-ONLY
+  modals (title, text, one Close button) that never ack the alert, while
+  the check-in gate keeps the existing blocking dialog with Cancel and
+  "I have read it, check in". Reading an alert is not reading PAST it.
+- `src/lib/clientcontext.ts` slimmed to the two per-client reads the new
+  design still makes: `fetchPasses` (dropdown, on demand at first open,
+  cached per client for the session, failed fetches retried on reopen) and
+  `fetchVisits` (history sweep). The five-call `clientContext` bundle, the
+  balance/habits/profile fetches, the habit rule, and `/api/client-context`
+  are deleted; `/api/passes` and `/api/history` replace them. The
+  clientservices StartDate trap handling and the per-item ClientID
+  anti-spill scope survived the move verbatim. Knowingly dropped with the
+  bundle: the inactive-client (`Active: false`) belt-and-braces pass-list
+  refusal, which rode the deleted profile fetch; the ClientID scope guard
+  (confirmed live to have a field to bite on in every row) still catches
+  the observed spill.
+- The history sweep runs 4 fetches at a time after the roster renders,
+  caches per client id for the session (a failed lookup is also not
+  retried until reload; a history line is not worth a retry storm), and
+  because the cache is keyed by client a late answer cannot dirty another
+  class's rows. A row with no visits shows nothing, deliberately.
+- The dropdown's top line is the roster's own `Visit.Service` data, so it
+  is always the truth the row shows even before `/client/clientservices`
+  answers; suppressed writes render as an amber notice inside the open
+  dropdown, never as success. Escape and outside tap close it, except
+  while a write is in flight.
+- Also gone with the panel: the habitual add-ons prompt ("usually adds"),
+  the account-credit line (balance is now a column), and the panel's
+  "No active pass." line. The last-class banner's job is done by the loud
+  "1" in the LEFT column.
 
 ## T9. Deployment, minus auth (PLAN Phase 1.5)
 

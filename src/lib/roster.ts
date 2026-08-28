@@ -54,6 +54,10 @@ export interface RosterEntry {
    */
   waiverSigned: boolean | null;
   redAlert: string | null;
+  /** Staff notes from the client record (`Notes`, a top-level Client field
+   *  per docs/mindbody-openapi/client.yml, and staff-facing by its own
+   *  description). null when none or when the lookup failed. */
+  notes: string | null;
   /** Mindbody's numeric UniqueId, which the staff web app's client URLs
    *  use (the API's ClientId is the editable custom id and 404s there).
    *  null when neither the visit nor the client lookup carried it. */
@@ -158,6 +162,7 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
        *  knows nothing about waivers. */
       waiverSigned: null,
       redAlert: null,
+      notes: null,
       mindbodyId:
         typeof v.ClientUniqueId === "number" ? v.ClientUniqueId : null,
     };
@@ -182,6 +187,8 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
 interface ClientBrief {
   /** RedAlert free text from the client record; null when none. */
   redAlert: string | null;
+  /** Staff notes (`Notes`) from the client record; null when none. */
+  notes: string | null;
   uniqueId: number | null;
   name: string;
   waiverSigned: boolean;
@@ -219,6 +226,10 @@ async function briefsForIds(ids: string[]): Promise<Map<string, ClientBrief>> {
         redAlert:
           typeof c?.RedAlert === "string" && c.RedAlert.trim()
             ? c.RedAlert.trim()
+            : null,
+        notes:
+          typeof c?.Notes === "string" && c.Notes.trim()
+            ? c.Notes.trim()
             : null,
         uniqueId: typeof c?.UniqueId === "number" ? c.UniqueId : null,
         balance:
@@ -291,6 +302,9 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
        * a reflex tap, not only after a row has been opened. Null when the
        * lookup failed or the client has none. */
       redAlert: brief?.redAlert ?? null,
+      /* Notes ride the same batch: the row's notes icon exists only when
+       * there is text behind it. Null when the lookup failed. */
+      notes: brief?.notes ?? null,
       /* Balance and membership ride the same batch. Null when the lookup
        * failed or missed this client: unknown renders as nothing, which is
        * the same fail-open posture as waiverSigned. */
