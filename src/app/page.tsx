@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import DevDrawer from "./DevDrawer";
 import { useSettings } from "./settings";
@@ -475,7 +483,7 @@ function money(n: number): string {
   });
 }
 
-export default function FrontDesk() {
+function FrontDesk() {
   const [classes, setClasses] = useState<ClassSummary[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [entries, setEntries] = useState<RosterEntry[]>([]);
@@ -649,6 +657,41 @@ export default function FrontDesk() {
   const activeIdRef = useRef<number | null>(null);
   activeIdRef.current = activeId;
 
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  /** The URL's ?classId=, readable at fetch-response time without making
+   *  the classes fetch re-run on every router.replace below. */
+  const classIdParamRef = useRef<string | null>(null);
+  classIdParamRef.current = searchParams.get("classId");
+
+  /**
+   * Keep ?classId= equal to the selected class, so a refresh lands on the
+   * same class instead of the default. replace, not push: switching
+   * classes is not a history the back button should walk, and scroll:
+   * false so the roster does not jump. The page is fully client-side
+   * state, so the replace never remounts anything.
+   */
+  const syncClassParam = useCallback(
+    (id: number | null) => {
+      const current = classIdParamRef.current;
+      const wanted = id === null ? null : String(id);
+      if (current === wanted) return;
+      router.replace(wanted === null ? "/" : `/?classId=${wanted}`, {
+        scroll: false,
+      });
+    },
+    [router],
+  );
+
+  /** Every class switch goes through here so the URL follows along. */
+  const selectClass = useCallback(
+    (id: number) => {
+      setActiveId(id);
+      syncClassParam(id);
+    },
+    [syncClassParam],
+  );
+
   useEffect(() => {
     /* localStorage can throw (private mode, storage disabled); the sort
      * is a convenience and falls back to the default silently. */
@@ -685,11 +728,23 @@ export default function FrontDesk() {
       .then((r) => r.json())
       .then((d) => {
         if (d.error) return setError(d.error);
-        setClasses(d.classes ?? []);
-        setActiveId(d.classes?.[0]?.classId ?? null);
+        const list: ClassSummary[] = d.classes ?? [];
+        setClasses(list);
+        /* The URL names the class to land on. If it is not in the
+         * classes-around-now window (an old link, a class that has
+         * scrolled out), fall back to the default quietly and correct
+         * the param, so the URL always says what the screen shows. */
+        const wanted = Number(classIdParamRef.current);
+        const fromUrl =
+          Number.isFinite(wanted) && classIdParamRef.current !== null
+            ? (list.find((c) => c.classId === wanted) ?? null)
+            : null;
+        const chosen = fromUrl?.classId ?? list[0]?.classId ?? null;
+        setActiveId(chosen);
+        syncClassParam(chosen);
       })
       .catch((e) => setError(String(e)));
-  }, [settings.hoursBack, settings.hoursForward]);
+  }, [settings.hoursBack, settings.hoursForward, syncClassParam]);
 
   /**
    * The roster for one class, also called after a booking so the new visit
@@ -1785,7 +1840,7 @@ export default function FrontDesk() {
                     <button
                       className="row"
                       onClick={() => {
-                        setActiveId(c.classId);
+                        selectClass(c.classId);
                         setClassPickerOpen(false);
                       }}
                     >
@@ -2922,5 +2977,18 @@ export default function FrontDesk() {
 
       <DevDrawer />
     </main>
+  );
+}
+
+/**
+ * useSearchParams in a client component must sit under a Suspense boundary
+ * (Next requires it for the static shell). The page is fully client-side,
+ * so the fallback flashes at most once, before hydration.
+ */
+export default function FrontDeskPage() {
+  return (
+    <Suspense fallback={null}>
+      <FrontDesk />
+    </Suspense>
   );
 }

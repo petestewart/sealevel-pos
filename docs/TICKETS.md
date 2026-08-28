@@ -377,9 +377,10 @@ From live testing after T14 and the five-fix polish pass:
       The dropdown now anchors to the ROW's right edge (it was
       left-anchored under the payment cell), so at its new width it can
       never overflow the viewport's right side.
-- [ ] The selected class id lives in the URL as a query param, so a
+- [x] The selected class id lives in the URL as a query param, so a
       refresh returns to the same class instead of the default. Reading it
-      back tolerates a class no longer in the window (falls back quietly).
+      back tolerates a class no longer in the window (falls back quietly
+      and corrects the param).
 - [ ] Tapping the ROW no longer checks anyone in. The check-in chip is the
       only trigger; all gates (waiver, red alert, unpaid confirm) move to
       the chip tap. DECISION REVERSAL, Pete's call: the original design
