@@ -31,6 +31,8 @@ interface RosterEntry {
   checkedIn: boolean;
   /** true = waiver on file, false = blocked, null = unknown (fails open). */
   waiverSigned: boolean | null;
+  /** RedAlert text from the client record; null when none or lookup failed. */
+  redAlert: string | null;
 }
 
 interface SearchResult {
@@ -575,14 +577,16 @@ export default function FrontDesk() {
         return;
       }
       /**
-       * A known red alert stops the tap until it is read. "Known" is the
-       * operative word: context is only fetched when a row is opened, so an
-       * unopened row checks in at full speed, and once the alert has been
-       * seen it must be explicitly read past, once, before this row will
-       * check in. The acknowledgement lives in this browser session only;
-       * nothing is ever written back.
+       * A known red alert stops the tap until it is read. The alert rides
+       * the roster's batched client lookup now, so it is known from roster
+       * load on every row, unopened ones included; the context fetch is
+       * the fallback for the rare row the batch missed. Once seen it must
+       * be explicitly read past, once, before this row will check in. The
+       * acknowledgement lives in this browser session only; nothing is
+       * ever written back.
        */
-      const redAlert = contexts[entry.clientId]?.profile.data?.redAlert;
+      const redAlert =
+        entry.redAlert ?? contexts[entry.clientId]?.profile.data?.redAlert;
       if (redAlert && !acked.includes(entry.clientId)) {
         setRedAlertPrompt(entry);
         return;
@@ -1304,7 +1308,8 @@ export default function FrontDesk() {
               Red alert on {redAlertPrompt.name}
             </p>
             <p className="ctx-alert modal-alert">
-              {contexts[redAlertPrompt.clientId]?.profile.data?.redAlert ??
+              {redAlertPrompt.redAlert ??
+                contexts[redAlertPrompt.clientId]?.profile.data?.redAlert ??
                 "The studio flagged this client."}
             </p>
             <p className="muted">

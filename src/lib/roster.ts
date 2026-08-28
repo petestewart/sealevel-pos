@@ -27,6 +27,7 @@ export interface RosterEntry {
    * the counter.
    */
   waiverSigned: boolean | null;
+  redAlert: string | null;
 }
 
 export interface ClassSummary {
@@ -109,6 +110,7 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
       /** Filled by classRoster's batched client lookup; a bare visit list
        *  knows nothing about waivers. */
       waiverSigned: null,
+      redAlert: null,
     }),
   );
 }
@@ -129,6 +131,8 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
  * matters.
  */
 interface ClientBrief {
+  /** RedAlert free text from the client record; null when none. */
+  redAlert: string | null;
   name: string;
   waiverSigned: boolean;
 }
@@ -156,6 +160,10 @@ async function briefsForIds(ids: string[]): Promise<Map<string, ClientBrief>> {
         name: `${c.FirstName ?? ""} ${c.LastName ?? ""}`.trim(),
         /** Absent Liability or IsReleased means no released waiver. */
         waiverSigned: Boolean(c?.Liability?.IsReleased),
+        redAlert:
+          typeof c?.RedAlert === "string" && c.RedAlert.trim()
+            ? c.RedAlert.trim()
+            : null,
       });
     }
   }
@@ -215,6 +223,10 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
       /** A client the successful lookup did not return stays null: unknown
        *  is not "unsigned", and null fails open. */
       waiverSigned: brief ? brief.waiverSigned : null,
+      /* The red alert rides the same batch, so the blocking gate works on
+       * a reflex tap, not only after a row has been opened. Null when the
+       * lookup failed or the client has none. */
+      redAlert: brief?.redAlert ?? null,
     };
   });
   const summary = classes.find((c) => c.classId === classId);
