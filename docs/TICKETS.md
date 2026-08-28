@@ -355,6 +355,13 @@ From live testing after T14 and the five-fix polish pass:
       two-line format applies to the walk-in rows' pass summary; the
       change dropdown keeps facts to the right but aligns them as shared
       right-aligned columns down the list.
+- [x] (added 2026-08-28) The horizontal class bar goes away: one header
+      row with the current class on the left (date AND time, e.g.
+      "Fri Aug 28 · 6:20 AM", name and teacher, plus a labelled 64px
+      "Change class" button opening a picker of the classes around now
+      with the old bar's facts and the current one marked) and the three
+      counters compacted on the right. Layout only: classes data and
+      selection state are unchanged.
 
 ## T9. Deployment, minus auth (PLAN Phase 1.5)
 

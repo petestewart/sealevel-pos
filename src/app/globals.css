@@ -57,58 +57,74 @@ button {
   padding: 16px;
 }
 
-.classbar {
+/* --- Class header ---------------------------------------------------
+ * ONE row (it replaced the horizontal class bar, T15): the current class
+ * on the left -- date and time over name and teacher, teacher-facing so
+ * 16px+ -- with the labelled "Change class" button next to it, and the
+ * three counters compacted on the right so the whole thing fits iPad
+ * landscape. Wraps on narrower screens rather than clipping. */
+
+.class-header {
   display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding-bottom: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 4px;
 }
 
-.classbar button {
+.class-current {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.class-when {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.class-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Quiet, but a real labelled button: switching classes is deliberate and
+ * must be findable, not an easter egg on the title. Full 64px. */
+.class-change {
   flex: 0 0 auto;
   min-height: 64px;
-  padding: 10px 16px;
+  padding: 0 20px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
   color: var(--ink);
-  text-align: left;
-}
-
-.classbar button[aria-pressed="true"] {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-.classbar .when {
-  display: block;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
 }
 
-.classbar .who {
-  display: block;
-  color: var(--muted);
-  font-size: 16px;
+.class-change:active {
+  background: var(--action-bg);
 }
 
-/* Header counters for the selected class: three numbers a teacher reads at
- * arm's length. Each is a button that opens the list behind it, so it keeps
- * the 72px tap target and gets honest button affordance: a chevron, and a
- * pressed state. All colours are tokens, defined in both palettes above and
- * below. */
+/* Counters for the selected class: three numbers a teacher reads at arm's
+ * length, each a button opening the list behind it. Compact (number over
+ * label) but never under the 64px tap floor. */
 
 .counters {
   display: flex;
   gap: 8px;
-  margin-top: 12px;
+  margin-left: auto;
 }
 
 .counter {
   position: relative;
-  flex: 1;
-  min-height: 72px;
-  padding: 10px 16px;
+  min-height: 64px;
+  min-width: 96px;
+  padding: 8px 14px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
@@ -121,12 +137,12 @@ button {
 
 .counter-num {
   display: block;
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 700;
 }
 
 .counter-cap {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 400;
   color: var(--muted);
 }

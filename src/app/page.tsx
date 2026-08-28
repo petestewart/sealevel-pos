@@ -332,6 +332,17 @@ function clockTime(iso: string): string {
   return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+/** "Fri Aug 28": weekday and date for the class header. Joined by hand so
+ *  the locale's comma does not creep in. */
+function dayDate(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `${d.toLocaleDateString([], { weekday: "short" })} ${d.toLocaleDateString(
+    [],
+    { month: "short", day: "numeric" },
+  )}`;
+}
+
 function shortDate(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
@@ -623,6 +634,9 @@ export default function FrontDesk() {
   /** Whether the sort menu (anchored under the header's sort icon) is
    *  open. Pure UI state; the choice itself is rosterSort. */
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  /** Whether the class picker (behind the header's "Change class") is
+   *  open. Pure UI state; the selection itself is activeId. */
+  const [classPickerOpen, setClassPickerOpen] = useState(false);
   const skipDebounce = useRef(false);
   /** The class currently on screen, readable from inside an async fetch:
    *  a waitlist response that comes back after the teacher has switched
@@ -819,6 +833,16 @@ export default function FrontDesk() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [pickerFor, passSavingId]);
+
+  /** Escape closes the class picker. Nothing in it writes. */
+  useEffect(() => {
+    if (!classPickerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setClassPickerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [classPickerOpen]);
 
   /** Escape closes the sort menu (outside taps close it via its scrim).
    *  Nothing here ever writes, so no in-flight guard is needed. */
@@ -1634,35 +1658,41 @@ export default function FrontDesk() {
         </p>
       ) : null}
 
-      <nav className="classbar">
-        {classes.map((c) => (
-          <button
-            key={c.classId}
-            aria-pressed={c.classId === activeId}
-            onClick={() => setActiveId(c.classId)}
-          >
-            <span className="when">{clockTime(c.startsAt)}</span>
-            <span className="who">
-              {c.name}
-              {c.teacher ? ` - ${c.teacher}` : ""}
-              {c.booked !== null ? ` - ${c.booked} booked` : ""}
-            </span>
-          </button>
-        ))}
-        {classes.length === 0 && !error ? (
-          <p className="muted">No classes in the next few hours.</p>
-        ) : null}
-      </nav>
+      {classes.length === 0 && !error ? (
+        <p className="muted">No classes in the next few hours.</p>
+      ) : null}
 
-      {/* Three numbers, read at arm's length in the ninety seconds before
-          class: is everyone here, is anyone missing, is there room. Signed
-          up and checked in come from the roster already in memory, capacity
-          from the class summary; only the waitlist ever costs a call, and
-          only for a full class. Each one taps open to the list behind it,
-          which is where "is Dennis here yet" gets answered without
-          scrolling the roster. */}
+      {/* ONE header row for the class (the horizontal class bar it
+          replaced spent a full row on classes nobody was working): on the
+          left the CURRENT class -- date and time, name, teacher -- with a
+          labelled "Change class" button opening the picker; on the right
+          the three counters, read at arm's length in the ninety seconds
+          before class. Signed up and checked in come from the roster
+          already in memory, capacity from the class summary; only the
+          waitlist ever costs a call, and only for a full class. Each
+          counter taps open to the list behind it, which is where "is
+          Dennis here yet" gets answered without scrolling the roster.
+          Layout only: the classes data and selection state are exactly
+          what the old bar used. */}
       {activeClass ? (
-        <header className="counters" aria-label="Counts for the selected class">
+        <header className="class-header">
+          <div className="class-current">
+            <span className="class-when">
+              {dayDate(activeClass.startsAt)} · {clockTime(activeClass.startsAt)}
+            </span>
+            <span className="class-title">
+              {activeClass.name}
+              {activeClass.teacher ? ` - ${activeClass.teacher}` : ""}
+            </span>
+          </div>
+          <button
+            className="class-change"
+            aria-haspopup="dialog"
+            onClick={() => setClassPickerOpen(true)}
+          >
+            Change class
+          </button>
+          <div className="counters" aria-label="Counts for the selected class">
           <button
             className="counter"
             onClick={() => setCounterModal("signedUp")}
@@ -1711,7 +1741,66 @@ export default function FrontDesk() {
             </span>
             <span className="counter-label">waitlist</span>
           </button>
+          </div>
         </header>
+      ) : null}
+
+      {/* The class picker behind "Change class": the classes around now
+          with the same facts the old bar showed, the current one marked.
+          Picking one switches exactly as the old bar tap did. */}
+      {classPickerOpen ? (
+        <div
+          className="modal-scrim"
+          onClick={() => setClassPickerOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="modal modal-list"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Change class"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">Classes around now</p>
+            {classes.length === 0 ? (
+              <p className="muted">No classes in the next few hours.</p>
+            ) : (
+              <ul className="roster modal-roster">
+                {classes.map((c) => (
+                  <li key={`pick-${c.classId}`}>
+                    <button
+                      className="row"
+                      onClick={() => {
+                        setActiveId(c.classId);
+                        setClassPickerOpen(false);
+                      }}
+                    >
+                      <span className="name">
+                        {dayDate(c.startsAt)} · {clockTime(c.startsAt)}
+                        <span className="detail">
+                          {c.name}
+                          {c.teacher ? ` - ${c.teacher}` : ""}
+                          {c.booked !== null ? ` - ${c.booked} booked` : ""}
+                        </span>
+                      </span>
+                      {c.classId === activeId ? (
+                        <span className="chip in">current</span>
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                onClick={() => setClassPickerOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       <div className="search-wrap">
