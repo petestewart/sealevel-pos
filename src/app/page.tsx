@@ -274,9 +274,15 @@ function slashDate(iso: string): string {
  * Mindbody fakes "unlimited" with absurd counters (99999, 99988, 1000).
  * Any pass whose original Count is 100 or more is one of them: show no
  * numbers rather than telling a teacher someone has 99987 classes left.
+ * Remaining gets the same rule, for the pass whose Count Mindbody omits:
+ * a real pass's Remaining can never exceed its Count, and no real pass
+ * here holds 100 classes, so Remaining >= 100 is the same fake counter
+ * arriving without its other half.
  */
-function fakeUnlimited(count: number | null): boolean {
-  return count !== null && count >= 100;
+function fakeUnlimited(count: number | null, remaining: number | null): boolean {
+  return (
+    (count !== null && count >= 100) || (remaining !== null && remaining >= 100)
+  );
 }
 
 /**
@@ -286,7 +292,7 @@ function fakeUnlimited(count: number | null): boolean {
  * and gets the loud warn treatment.
  */
 function PassLine({ entry }: { entry: RosterEntry }) {
-  const unlimited = fakeUnlimited(entry.passCount);
+  const unlimited = fakeUnlimited(entry.passCount, entry.passRemaining);
   const showRemaining =
     entry.pricingOption !== null && !unlimited && entry.passRemaining !== null;
   const balance =
@@ -1922,7 +1928,7 @@ export default function FrontDesk() {
                     passPicker.clientServiceId !== null &&
                     p.id === passPicker.clientServiceId;
                   const facts = [
-                    !fakeUnlimited(p.count) && p.remaining !== null
+                    !fakeUnlimited(p.count, p.remaining) && p.remaining !== null
                       ? `${p.remaining} left`
                       : null,
                     p.expires ? `exp ${slashDate(p.expires)}` : null,
