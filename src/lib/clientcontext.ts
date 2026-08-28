@@ -62,7 +62,11 @@ export interface ClientContext {
   /** Items appearing in at least 3 of the last 5 sales: the mat-rental
    *  habit worth prompting for. Empty means no real pattern, show nothing. */
   habits: Section<string[]>;
-  profile: Section<{ notes: string | null; redAlert: string | null }>;
+  profile: Section<{
+    notes: string | null;
+    redAlert: string | null;
+    active: boolean | null;
+  }>;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -213,14 +217,22 @@ async function fetchHabits(clientId: string, now: Date): Promise<string[]> {
 
 async function fetchProfile(
   clientId: string,
-): Promise<{ notes: string | null; redAlert: string | null }> {
+): Promise<{
+  notes: string | null;
+  redAlert: string | null;
+  active: boolean | null;
+}> {
   const body = await mindbody(
     `/client/clients?clientIds=${encodeURIComponent(clientId)}&limit=1`,
   );
   const row = (body?.Clients ?? []).find(
     (c: any) => String(c?.Id ?? "") === clientId,
   );
-  return { notes: str(row?.Notes), redAlert: str(row?.RedAlert) };
+  return {
+    notes: str(row?.Notes),
+    redAlert: str(row?.RedAlert),
+    active: typeof row?.Active === "boolean" ? row.Active : null,
+  };
 }
 
 /**
@@ -238,5 +250,24 @@ export async function clientContext(
     section(() => fetchHabits(clientId, now)),
     section(() => fetchProfile(clientId)),
   ]);
+  /* Seen live in the sandbox: for an INACTIVE client, clientaccountbalances
+   * and clientpurchases 400 with ClientNotFound, but clientservices ignores
+   * the filter and returns pricing options site-wide. The per-item ClientID
+   * scope in fetchPasses catches that only when items carry the field, so
+   * use the client record itself as the authority: an inactive client's
+   * pass list is not trustworthy, whatever came back. */
+  if (profile.data?.active === false && passes.error === null) {
+    return {
+      passes: {
+        data: null,
+        error:
+          "Client is inactive in Mindbody; the pass list cannot be trusted.",
+      },
+      balance,
+      visits,
+      habits,
+      profile,
+    };
+  }
   return { passes, balance, visits, habits, profile };
 }
