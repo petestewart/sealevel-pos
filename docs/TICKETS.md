@@ -309,6 +309,41 @@ this container):
   "No active pass." line. The last-class banner's job is done by the loud
   "1" in the LEFT column.
 
+## T15. Counter flow round two (Pete, 2026-08-28)
+
+From live testing after T14 and the five-fix polish pass:
+
+- [ ] Sort bar (sign-in order / last name / first name) rendered much
+      smaller: compact pills, quiet weight. Deliberate exception to the
+      64px floor, recorded here: sorting is an occasional deliberate tap,
+      not a queue-speed action.
+- [ ] Walk-in search results carry context: waiver, red alert, balance and
+      membership come free (searchText returns full Client records; this
+      also closes the T5 follow-up about red-alert walk-ins booking without
+      the alert showing). Forms of payment need one clientservices call per
+      shown result: fetched in the background after the debounce settles,
+      session-cached per client, displayed as the shortened pass summary.
+      Metered-call note: worst case is result-limit calls per novel search.
+- [ ] A checked-in client with no waiver can still be signed OUT. The
+      waiver gate blocks check-IN only; the undo control renders on every
+      checked-in row regardless of waiver state.
+- [ ] Check-out icon becomes an undo symbol (counter-clockwise arrow), not
+      an X.
+- [ ] Rows not checked in get a trash icon where the undo would sit:
+      cancel the visit entirely via /class/removeclientfromclass (verify
+      against docs/mindbody-openapi/class.yml), behind a confirmation
+      dialog that names the person and says they will be removed from the
+      class list. Write-guarded like every write; roster refreshes on
+      success; suppression surfaces as such.
+- [ ] Notes icon on every roster row: dimmed when the client has no notes,
+      normal when they do. Tapping opens the note box either way, with a
+      pencil edit affordance that lets a teacher edit or add notes, saved
+      via /client/updateclient with a minimal {Client: {Id, Notes}} payload
+      (verify the partial-update shape against client.yml; this is the
+      app's first client-record write, so it must be surgical: never send
+      fields beyond Id and Notes, and never touch Liability). Pete: verify
+      live against the dummy client that only Notes changes.
+
 ## T9. Deployment, minus auth (PLAN Phase 1.5)
 
 Not blocked by T10. Ships behind the existing safety rails.
