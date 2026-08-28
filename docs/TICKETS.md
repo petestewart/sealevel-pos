@@ -405,7 +405,7 @@ From live testing after T14 and the five-fix polish pass:
 
 ## T17. Search modal polish (Pete, 2026-08-28)
 
-- [ ] The name column in the search modal never ellipsizes; it is the one
+- [x] The name column in the search modal never ellipsizes; it is the one
       column that cannot. Name gets the row's full first line; email goes
       away entirely; the second line holds only the icons (M, alert) and
       the no-waiver chip.

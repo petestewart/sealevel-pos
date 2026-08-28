@@ -2354,7 +2354,6 @@ function FrontDesk() {
               <>
                 <div className="roster-head">
                   <span aria-hidden="true">Name</span>
-                  <span aria-hidden="true" />
                   <span aria-hidden="true">Passes</span>
                   <span className="cell-bal" aria-hidden="true">
                     Balance
@@ -2365,15 +2364,13 @@ function FrontDesk() {
                   {walkIns.map((client) => {
                     const working = bookingIds.includes(client.id);
                     const msg = bookMsg[client.id];
-                    /* Email sits where a roster row's history line would;
-                     * an in-flight call or an outcome message outranks it,
-                     * same precedence as the roster. */
+                    /* Under the markers: an in-flight call or an outcome
+                     * message, else the full-class notice. Email is gone
+                     * from the row entirely (T17): it never helped pick a
+                     * person at the counter and it crowded the name. */
                     const subline = working
                       ? "Talking to Mindbody..."
-                      : (msg ??
-                        [client.email, classFull ? "Class is full." : null]
-                          .filter(Boolean)
-                          .join(" - "));
+                      : (msg ?? (classFull ? "Class is full." : null));
                     /* The pass summary, once the background fetch has
                      * landed: the same two-line format as the roster's
                      * payment cell. */
@@ -2386,49 +2383,55 @@ function FrontDesk() {
                             the only action. */}
                         <div className="rrow">
                           <div className="cell-name">
-                            <span className="name-line">
-                              <span className="name-text">{client.name}</span>
-                              {!client.waiverSigned ? (
-                                <span className="mini-stop">no waiver</span>
-                              ) : null}
-                            </span>
+                            {/* The name owns the row's whole first line and
+                                NEVER ellipsizes: it is the one column a
+                                teacher cannot read truncated. An absurdly
+                                long name wraps; "..." is not an option
+                                here (T17). */}
+                            <span className="name-text">{client.name}</span>
+                            {/* The second line holds only the markers, in a
+                                fixed order: M, alert, no-waiver. A row with
+                                none of them skips the line. */}
+                            {client.member ||
+                            client.redAlert ||
+                            !client.waiverSigned ? (
+                              <span className="marker-line">
+                                {client.member ? (
+                                  <span
+                                    className="m-chip"
+                                    title="Member"
+                                    aria-label="Member"
+                                  >
+                                    M
+                                  </span>
+                                ) : null}
+                                {client.redAlert ? (
+                                  <button
+                                    className="row-icon row-alert"
+                                    aria-label={`Red alert for ${client.name}`}
+                                    title="Red alert"
+                                    onClick={() => {
+                                      /* Info-only, same as the roster icon:
+                                         reading here does not acknowledge
+                                         the ADD gate. */
+                                      setInfoModal({
+                                        title: `Red alert on ${client.name}`,
+                                        text: client.redAlert ?? "",
+                                        alert: true,
+                                      });
+                                    }}
+                                  >
+                                    <AlertIcon />
+                                  </button>
+                                ) : null}
+                                {!client.waiverSigned ? (
+                                  <span className="mini-stop">no waiver</span>
+                                ) : null}
+                              </span>
+                            ) : null}
                             {subline ? (
                               <span className="subline">{subline}</span>
                             ) : null}
-                          </div>
-                          <div className="cell-icons">
-                            <span className="icon-slot">
-                              {client.member ? (
-                                <span
-                                  className="m-chip"
-                                  title="Member"
-                                  aria-label="Member"
-                                >
-                                  M
-                                </span>
-                              ) : null}
-                            </span>
-                            <span className="icon-slot">
-                              {client.redAlert ? (
-                                <button
-                                  className="row-icon row-alert"
-                                  aria-label={`Red alert for ${client.name}`}
-                                  title="Red alert"
-                                  onClick={() => {
-                                    /* Info-only, same as the roster icon:
-                                       reading here does not acknowledge
-                                       the ADD gate. */
-                                    setInfoModal({
-                                      title: `Red alert on ${client.name}`,
-                                      text: client.redAlert ?? "",
-                                      alert: true,
-                                    });
-                                  }}
-                                >
-                                  <AlertIcon />
-                                </button>
-                              ) : null}
-                            </span>
                           </div>
                           <div className="cell-pay">
                             <span className="pay-stack">

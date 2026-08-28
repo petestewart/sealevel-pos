@@ -1165,17 +1165,41 @@ button.pass-opt:disabled {
 /* The search-results modal: wider still, because its rows reuse the
  * roster's grid layout. The column template is a sibling of
  * --roster-cols, redefined in scope so the shared .roster-head/.rrow
- * rules pick it up unchanged: no notes slot (walk-ins carry M and alert
- * only, so the icon column is 30 + 44), and the actions column holds
- * just the add chip. */
+ * rules pick it up unchanged. Four columns since T17 -- name | passes |
+ * balance | action -- because the icon column is gone: the markers moved
+ * onto the name cell's second line, which is what gives the name the
+ * row's whole first line. */
 .modal-search {
-  --roster-cols: minmax(0, 2fr) 74px minmax(0, 1.8fr) 7em 128px;
+  --roster-cols: minmax(0, 2.4fr) minmax(0, 1.6fr) 7em 128px;
   position: relative;
   width: min(860px, 100%);
 }
 
-.modal-search .cell-icons {
-  grid-template-columns: 30px 44px;
+/* The one column that can NEVER ellipsize (T17): the name owns its full
+ * first line and wraps on an absurdly long name rather than truncating.
+ * Modal scope only; roster rows keep the ellipsis, where the icon column
+ * caps the name's room. */
+.modal-search .name-text {
+  display: block;
+  margin-right: 0;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* The markers line under the name: M chip, alert icon, no-waiver chip, in
+ * that fixed order. The mini-stop drops the after-the-name offset it
+ * carries on a name line. */
+.marker-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.marker-line .mini-stop {
+  margin-left: 0;
 }
 
 /* Room for the X so a long query's title never runs under it. */
