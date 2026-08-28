@@ -137,15 +137,40 @@ button {
   color: var(--muted);
 }
 
+.search-wrap {
+  position: relative;
+  margin: 12px 0;
+}
+
 .search {
   width: 100%;
   min-height: 64px;
-  margin: 12px 0;
-  padding: 0 16px;
+  padding: 0 64px 0 16px; /* room for the clear button */
   font-size: 20px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
+  color: var(--ink);
+}
+
+/* Clears the query. Same quiet treatment as the row's check-out X; a full
+ * 64px tap target sitting inside the input's right edge. */
+.search-clear {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--muted);
+}
+
+.search-clear:active {
   color: var(--ink);
 }
 

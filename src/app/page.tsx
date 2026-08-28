@@ -914,6 +914,7 @@ export default function FrontDesk() {
         </header>
       ) : null}
 
+      <div className="search-wrap">
       <input
         className="search"
         value={query}
@@ -935,6 +936,17 @@ export default function FrontDesk() {
         autoCorrect="off"
         spellCheck={false}
       />
+      {query ? (
+        <button
+          type="button"
+          className="search-clear"
+          aria-label="Clear search"
+          onClick={() => setQuery("")}
+        >
+          <CloseIcon />
+        </button>
+      ) : null}
+      </div>
 
       <ul className="roster">
         {entries.map((entry) => {
