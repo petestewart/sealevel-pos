@@ -31,6 +31,11 @@ import { mindbody } from "./mindbody";
  */
 
 export interface PassInfo {
+  /** The purchase-instance id of the pass (`ClientService.Id`), which is
+   *  what `POST /client/updateclientvisit` takes as `ClientServiceId` to
+   *  change which pass pays for a visit. null when Mindbody omitted it,
+   *  in which case the pass cannot be picked as payment. */
+  id: number | null;
   name: string;
   /** Classes left on the pass. null when Mindbody omits it (memberships). */
   remaining: number | null;
@@ -125,6 +130,7 @@ async function fetchPasses(clientId: string, now: Date): Promise<PassInfo[]> {
     .filter((s: any) => s?.Current !== false)
     .map(
       (s: any): PassInfo => ({
+        id: num(s?.Id),
         name: str(s?.Name) ?? "Pass",
         remaining: num(s?.Remaining),
         count: num(s?.Count),

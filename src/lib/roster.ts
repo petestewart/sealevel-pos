@@ -428,6 +428,35 @@ export async function waitlistFor(classId: number): Promise<WaitlistRow[]> {
  * And unlike arrival, it reverses: `SignedIn: false` undoes a check-in, so
  * a mistake is recoverable rather than permanent.
  */
+/**
+ * Change which pass pays for a visit: Mindbody's "Change how the client is
+ * paying", and the same `POST /client/updateclientvisit` endpoint check-in
+ * uses. The payload is `{VisitId, ClientServiceId}` and nothing else --
+ * deliberately no `SignedIn`, because sending a field the operation does
+ * not need would also set it, and changing payment must not sign anyone
+ * in or out as a side effect.
+ *
+ * Under dry run or the write guard the call never goes out; the caller is
+ * told which guard fired so the UI can say so instead of showing a swap
+ * that did not happen (same contract as bookClientIntoClass).
+ */
+export async function setVisitService(
+  visitId: number,
+  clientServiceId: number,
+  /** Who the visit belongs to, for POS_WRITE_CLIENT_IDS only; never
+   *  merged into the payload. */
+  clientId?: string,
+): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
+  const res = await mindbody("/client/updateclientvisit", {
+    method: "POST",
+    body: { VisitId: visitId, ClientServiceId: clientServiceId },
+    clientId,
+  });
+  if (res?.DryRun) return { suppressed: "dry-run" };
+  if (res?.WriteSuppressed) return { suppressed: "write-guard" };
+  return { suppressed: null };
+}
+
 export async function setSignedIn(
   visitId: number,
   signedIn: boolean,

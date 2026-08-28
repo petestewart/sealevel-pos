@@ -224,12 +224,12 @@ Mindbody's "Change how the client is paying" dialog. Spec-confirmed:
 to assign to the visit"), so this is the same `POST /client/updateclientvisit`
 endpoint check-in already uses, with the same write-guard clientId threading.
 
-- [ ] On the expanded row, when the client's fetched pass list has more than
+- [x] On the expanded row, when the client's fetched pass list has more than
       one current option, offer a change affordance next to the payment line
       (the pass list already loads on row open; no new read).
-- [ ] Picking one posts `{VisitId, ClientServiceId}` through the existing
+- [x] Picking one posts `{VisitId, ClientServiceId}` through the existing
       guard plumbing and refreshes the roster so the row shows the new pass.
-- [ ] Suppressed writes (dry run / write guard) surface as such, same as
+- [x] Suppressed writes (dry run / write guard) surface as such, same as
       check-in.
 - [ ] Pete: verify live against a write-guarded dummy client; the sandbox
       payloads suggest the visit's `Service` swaps, nobody has watched it.

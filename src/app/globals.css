@@ -329,6 +329,26 @@ button {
   font-size: 16px;
 }
 
+/* Opens the pass picker (change how the client is paying). A real action
+ * taken mid-conversation, so it keeps the 64px floor, unlike the quiet
+ * Mindbody admin link beside it. Tokens only, both palettes. */
+.change-btn {
+  justify-self: start;
+  min-height: 64px;
+  padding: 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--action-bg);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.change-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Lines led by an icon: the icon keeps its size and the text wraps beside
  * it, not under it. Also applies to the red alert via .ctx-alert below. */
 .ctx-iconed,

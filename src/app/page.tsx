@@ -69,6 +69,9 @@ interface CtxSection<T> {
 }
 
 interface PassInfo {
+  /** ClientService purchase-instance id; what a payment change posts.
+   *  null means Mindbody omitted it and the pass cannot be picked. */
+  id: number | null;
   name: string;
   remaining: number | null;
   count: number | null;
@@ -387,12 +390,20 @@ function ContextPanel({
   error,
   mindbodyId,
   passInUse,
+  onChangePass,
+  canChangePass,
 }: {
   ctx: ClientContext | undefined;
   loading: boolean;
   error: string | undefined;
   mindbodyId: number | null;
   passInUse: string | null;
+  /** Opens the pass picker. null hides the affordance entirely (fewer
+   *  than two current passes to choose between, so nothing to change). */
+  onChangePass: (() => void) | null;
+  /** False when the row has no visit id: the affordance renders disabled,
+   *  because there is no visit to reassign a pass to. */
+  canChangePass: boolean;
 }) {
   /* The one thing this app deliberately does not do (edit a client) is a
    * tap away in the tool that does. Opens the staff web app; the teacher
@@ -485,6 +496,24 @@ function ContextPanel({
           );
         })()
       )}
+      {/* More than one current pass means "which one pays" is a real
+          question, so the picker is a tap away. Disabled rather than
+          hidden when the row has no visit id: the reason nothing can
+          change is worth a glance, not a mystery. */}
+      {onChangePass ? (
+        <button
+          className="change-btn"
+          onClick={onChangePass}
+          disabled={!canChangePass}
+        >
+          Change which pass pays
+        </button>
+      ) : null}
+      {onChangePass && !canChangePass ? (
+        <span className="ctx-line muted">
+          No visit id on this booking, so the payment cannot be changed here.
+        </span>
+      ) : null}
 
       {ctx.balance.error ? (
         <span className="ctx-line ctx-err">
@@ -606,6 +635,15 @@ export default function FrontDesk() {
    * the student's own phone.
    */
   const [waiverPrompt, setWaiverPrompt] = useState<RosterEntry | null>(null);
+  /** The row whose pass picker (change how they are paying) is open. */
+  const [passPicker, setPassPicker] = useState<RosterEntry | null>(null);
+  /** The pass id being written, if any. Non-optimistic, like check-in:
+   *  which pass a class burns is money-adjacent, so the picker spins until
+   *  Mindbody answers. */
+  const [passSavingId, setPassSavingId] = useState<number | null>(null);
+  /** Outcome text inside the picker: a failure, or the quiet suppression
+   *  notice when dry run or the write guard stopped the write. */
+  const [passMsg, setPassMsg] = useState<string | null>(null);
   /** Set when the roster's batched client lookup failed: waiver state is
    *  unknown on every row and rows fail open. Shown quietly. */
   const [waiverError, setWaiverError] = useState<string | null>(null);
@@ -1096,6 +1134,51 @@ export default function FrontDesk() {
     [activeId, promoting, refreshRoster, loadWaitlist],
   );
 
+  /**
+   * Post the payment change: `{VisitId, ClientServiceId}` through the same
+   * guard plumbing as check-in, then refresh the roster so the row shows
+   * the new pass (refreshRoster already drops stale responses if the
+   * teacher has switched classes). A suppressed write keeps the picker
+   * open and says which guard fired, exactly like the booking path.
+   */
+  const changePass = useCallback(
+    async (entry: RosterEntry, clientServiceId: number) => {
+      if (entry.visitId === null || passSavingId !== null) return;
+      setPassSavingId(clientServiceId);
+      setPassMsg(null);
+      try {
+        const res = await fetch("/api/visit-payment", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            visitId: entry.visitId,
+            clientServiceId,
+            clientId: entry.clientId,
+          }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        if (body.suppressed) {
+          setPassMsg(
+            body.suppressed === "dry-run"
+              ? "Dry run: change suppressed, nothing was written."
+              : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
+          );
+          return;
+        }
+        if (activeIdRef.current !== null) {
+          await refreshRoster(activeIdRef.current);
+        }
+        setPassPicker(null);
+      } catch (err) {
+        setPassMsg(err instanceof Error ? err.message : String(err));
+      } finally {
+        setPassSavingId(null);
+      }
+    },
+    [passSavingId, refreshRoster],
+  );
+
   return (
     <main className="shell">
       {config?.configError ? <p className="note">{config.configError}</p> : null}
@@ -1295,6 +1378,12 @@ export default function FrontDesk() {
               <ChevronIcon />
             </button>
           );
+          /* The picker only exists when there is a real choice: two or
+             more current passes with ids the API can assign. The pass
+             list is the one already fetched on row open; no new read. */
+          const pickablePasses = (
+            contexts[entry.clientId]?.passes.data ?? []
+          ).filter((p) => p.id !== null);
           const panel = open ? (
             <ContextPanel
               ctx={contexts[entry.clientId]}
@@ -1302,6 +1391,15 @@ export default function FrontDesk() {
               error={ctxError[entry.clientId]}
               mindbodyId={entry.mindbodyId}
               passInUse={entry.pricingOption}
+              onChangePass={
+                pickablePasses.length > 1
+                  ? () => {
+                      setPassMsg(null);
+                      setPassPicker(entry);
+                    }
+                  : null
+              }
+              canChangePass={entry.visitId !== null}
             />
           ) : null;
 
@@ -1785,6 +1883,94 @@ export default function FrontDesk() {
                 }}
               >
                 Add to waiting list
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Mindbody's "Change how the client is paying": every current pass
+          on the account, tap one to make it pay for this visit. The list
+          is the context fetch already in memory. Writing is
+          non-optimistic and the modal survives a suppressed write so the
+          notice is actually read. */}
+      {passPicker ? (
+        <div
+          className="modal-scrim"
+          onClick={() => {
+            if (passSavingId === null) setPassPicker(null);
+          }}
+          role="presentation"
+        >
+          <div
+            className="modal modal-list"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Change which pass pays"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">
+              Change how {passPicker.name} is paying
+            </p>
+            {passMsg ? <p className="note">{passMsg}</p> : null}
+            <ul className="roster modal-roster">
+              {(contexts[passPicker.clientId]?.passes.data ?? [])
+                .filter((p): p is PassInfo & { id: number } => p.id !== null)
+                .map((p) => {
+                  const working = passSavingId === p.id;
+                  const inUse =
+                    passPicker.clientServiceId !== null &&
+                    p.id === passPicker.clientServiceId;
+                  const facts = [
+                    !fakeUnlimited(p.count) && p.remaining !== null
+                      ? `${p.remaining} left`
+                      : null,
+                    p.expires ? `exp ${slashDate(p.expires)}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
+                  return (
+                    <li key={`pass-${p.id}`}>
+                      <button
+                        className="row"
+                        disabled={inUse || passSavingId !== null}
+                        onClick={() => void changePass(passPicker, p.id)}
+                      >
+                        <span className="name">
+                          {p.name}
+                          {facts ? (
+                            <span className="detail">{facts}</span>
+                          ) : null}
+                        </span>
+                        <span
+                          className={
+                            working
+                              ? "chip busy"
+                              : inUse
+                                ? "chip in"
+                                : "chip action"
+                          }
+                        >
+                          {working ? (
+                            <span className="spinner" aria-label="working" />
+                          ) : inUse ? (
+                            "paying now"
+                          ) : (
+                            "use this"
+                          )}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+            </ul>
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                disabled={passSavingId !== null}
+                onClick={() => setPassPicker(null)}
+              >
+                Cancel
               </button>
             </div>
           </div>
