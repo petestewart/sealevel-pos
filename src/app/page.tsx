@@ -230,6 +230,46 @@ function visitLines(visits: VisitInfo[], now = new Date()): string[] {
   return lines;
 }
 
+/**
+ * The pass list answers "what are they paying with", not "everything on
+ * account" (sandbox clients own eight passes; the Mindbody link below the
+ * list is the escape hatch). The pass this visit is booked against sorts
+ * first, identical lines collapse with a count, and the list caps at four.
+ */
+const PASS_DISPLAY_CAP = 4;
+
+function passLines(
+  passes: PassInfo[],
+  inUse: string | null,
+): { lines: { text: string; dupes: number }[]; more: number } {
+  const ordered = inUse
+    ? [...passes].sort(
+        (a, b) => Number(b.name === inUse) - Number(a.name === inUse),
+      )
+    : passes;
+  const lines: { text: string; dupes: number }[] = [];
+  const seen = new Map<string, number>();
+  for (const p of ordered) {
+    const text =
+      p.name +
+      (p.remaining !== null
+        ? `: ${p.remaining}${p.count !== null ? ` of ${p.count}` : ""} left`
+        : "") +
+      (p.expires ? `, expires ${shortDate(p.expires)}` : "");
+    const at = seen.get(text);
+    if (at !== undefined) {
+      const line = lines[at];
+      if (line) line.dupes += 1;
+      continue;
+    }
+    seen.set(text, lines.length);
+    lines.push({ text, dupes: 1 });
+  }
+  const shown = lines.slice(0, PASS_DISPLAY_CAP);
+  const more = lines.length - shown.length;
+  return { lines: shown, more };
+}
+
 function money(n: number): string {
   return n.toLocaleString([], {
     style: "currency",
@@ -249,11 +289,13 @@ function ContextPanel({
   loading,
   error,
   mindbodyId,
+  passInUse,
 }: {
   ctx: ClientContext | undefined;
   loading: boolean;
   error: string | undefined;
   mindbodyId: number | null;
+  passInUse: string | null;
 }) {
   /* The one thing this app deliberately does not do (edit a client) is a
    * tap away in the tool that does. Opens the staff web app; the teacher
@@ -327,15 +369,24 @@ function ContextPanel({
       ) : passes.length === 0 ? (
         <span className="ctx-line muted">No active pass.</span>
       ) : (
-        passes.map((p, i) => (
-          <span className="ctx-line" key={`${p.name}-${i}`}>
-            {p.name}
-            {p.remaining !== null
-              ? `: ${p.remaining}${p.count !== null ? ` of ${p.count}` : ""} left`
-              : ""}
-            {p.expires ? `, expires ${shortDate(p.expires)}` : ""}
-          </span>
-        ))
+        (() => {
+          const trimmed = passLines(passes, passInUse);
+          return (
+            <>
+              {trimmed.lines.map((line) => (
+                <span className="ctx-line" key={line.text}>
+                  {line.text}
+                  {line.dupes > 1 ? ` (x${line.dupes})` : ""}
+                </span>
+              ))}
+              {trimmed.more > 0 ? (
+                <span className="ctx-line muted">
+                  And {trimmed.more} more in Mindbody.
+                </span>
+              ) : null}
+            </>
+          );
+        })()
       )}
 
       {ctx.balance.error ? (
@@ -1087,6 +1138,7 @@ export default function FrontDesk() {
               loading={ctxLoading.includes(entry.clientId)}
               error={ctxError[entry.clientId]}
               mindbodyId={entry.mindbodyId}
+              passInUse={entry.pricingOption}
             />
           ) : null;
 
