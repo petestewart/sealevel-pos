@@ -508,8 +508,13 @@ export default function FrontDesk() {
   const [searchNow, setSearchNow] = useState(0);
   /** The row awaiting a confirmed check-out, if any. */
   const [checkingOut, setCheckingOut] = useState<RosterEntry | null>(null);
-  /** The row awaiting a confirmed booking cancellation, if any. */
-  const [cancelling, setCancelling] = useState<RosterEntry | null>(null);
+  /** The row awaiting a confirmed booking cancellation, if any, WITH the
+   *  class id the dialog was opened under: the write must name that class,
+   *  never whatever activeId is by the time the confirm lands. */
+  const [cancelling, setCancelling] = useState<{
+    entry: RosterEntry;
+    classId: number;
+  } | null>(null);
   /** True while the cancellation write is in flight: the dialog's confirm
    *  button spins and the dialog refuses to close until Mindbody answers.
    *  Non-optimistic, same reasoning as check-in: a teacher who saw the row
@@ -723,9 +728,9 @@ export default function FrontDesk() {
     if (activeId === null) return;
     setPickerFor(null);
     setPassMsg(null);
-    /* A cancel dialog held open across a class switch would post the old
-     * class's entry against the NEW activeId; close it instead. Safe even
-     * mid-write: the write already carries the classId it was opened for. */
+    /* A cancel dialog has no business surviving a class switch; close it.
+     * Safe even mid-write: the dialog state carries the classId it was
+     * opened for, and that is what the write posts. */
     setCancelling(null);
     setCancelMsg(null);
     setCounterModal(null);
@@ -881,15 +886,22 @@ export default function FrontDesk() {
    * notice, never as success; failure shows Mindbody's reason.
    */
   const cancelVisit = useCallback(
-    async (entry: RosterEntry) => {
-      if (activeId === null || cancelBusy) return;
+    async (req: { entry: RosterEntry; classId: number }) => {
+      if (cancelBusy) return;
       setCancelBusy(true);
       setCancelMsg(null);
       try {
         const res = await fetch("/api/cancel-visit", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ clientId: entry.clientId, classId: activeId }),
+          body: JSON.stringify({
+            clientId: req.entry.clientId,
+            /* The class the dialog was opened for, captured when the trash
+             * was tapped -- NOT activeId, which could in principle have
+             * moved (the settings-driven classes refetch resets it) in the
+             * moment before the close-on-switch effect runs. */
+            classId: req.classId,
+          }),
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
@@ -901,7 +913,9 @@ export default function FrontDesk() {
           );
           return;
         }
-        await refreshRoster(activeId);
+        /* refreshRoster drops the response itself if the teacher has
+         * switched classes by the time it lands (activeIdRef). */
+        await refreshRoster(req.classId);
         setCancelling(null);
       } catch (err) {
         setCancelMsg(err instanceof Error ? err.message : String(err));
@@ -909,7 +923,7 @@ export default function FrontDesk() {
         setCancelBusy(false);
       }
     },
-    [activeId, cancelBusy, refreshRoster],
+    [cancelBusy, refreshRoster],
   );
 
   /**
@@ -2171,8 +2185,12 @@ export default function FrontDesk() {
                       className="undo-btn"
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (activeId === null) return;
                         setCancelMsg(null);
-                        setCancelling(entry);
+                        /* Capture the class the dialog is about NOW, so
+                         * the eventual confirm cannot post against a
+                         * different activeId. */
+                        setCancelling({ entry, classId: activeId });
                       }}
                       aria-label={`Remove ${entry.name} from this class`}
                       title={`Remove ${entry.name} from this class`}
@@ -2816,11 +2834,11 @@ export default function FrontDesk() {
             onClick={(e) => e.stopPropagation()}
           >
             <p className="modal-title">
-              Remove {cancelling.name} from this class?
+              Remove {cancelling.entry.name} from this class?
             </p>
             <p className="modal-entity">
-              {cancelling.pricingOption
-                ? shortPassName(cancelling.pricingOption)
+              {cancelling.entry.pricingOption
+                ? shortPassName(cancelling.entry.pricingOption)
                 : "No pass"}
             </p>
             <p className="modal-consequence">
