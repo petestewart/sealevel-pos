@@ -1053,7 +1053,11 @@ export default function FrontDesk() {
       <>
         <div
           className="pass-scrim"
-          onClick={() => {
+          onClick={(e) => {
+            /* The scrim and dropdown live INSIDE the tappable row, so
+             * without this the closing tap (or any tap in the dropdown)
+             * bubbles into the row's onClick and fires a check-in. */
+            e.stopPropagation();
             if (passSavingId === null) setPickerFor(null);
           }}
           role="presentation"
@@ -1062,6 +1066,7 @@ export default function FrontDesk() {
           className="pass-dd"
           role="dialog"
           aria-label={`Change how ${entry.name} is paying`}
+          onClick={(e) => e.stopPropagation()}
         >
           {passMsg ? <p className="pass-note">{passMsg}</p> : null}
           {currentLine ? (
