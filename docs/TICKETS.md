@@ -213,7 +213,7 @@ this is data the app already holds, so the ticket is surfacing, not fetching:
 
 ## T12. Roster sort (Pete, 2026-08-28)
 
-- [ ] Sort control above the roster: sign-in order (Mindbody's roster order,
+- [x] Sort control above the roster: sign-in order (Mindbody's roster order,
       the default), last name, first name. Choice persists in localStorage.
       Teacher-facing, so 16px+ and 64px targets apply.
 

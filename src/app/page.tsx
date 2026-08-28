@@ -89,6 +89,22 @@ interface ClientContext {
   profile: CtxSection<{ notes: string | null; redAlert: string | null }>;
 }
 
+/**
+ * Roster order. "signin" is the order Mindbody returned the visits, i.e.
+ * the array as fetched, which is the default. The other two sort locally:
+ * a roster is at most a room's worth of rows, so there is nothing to ask
+ * a server for.
+ */
+type RosterSort = "signin" | "last" | "first";
+
+const ROSTER_SORTS: { value: RosterSort; label: string }[] = [
+  { value: "signin", label: "Sign-in order" },
+  { value: "last", label: "Last name" },
+  { value: "first", label: "First name" },
+];
+
+const ROSTER_SORT_KEY = "pos.rosterSort";
+
 /** Grey and unlabelled: checking out is the quiet action on the row. */
 function CloseIcon() {
   return (
@@ -593,12 +609,41 @@ export default function FrontDesk() {
   /** Set when the roster's batched client lookup failed: waiver state is
    *  unknown on every row and rows fail open. Shown quietly. */
   const [waiverError, setWaiverError] = useState<string | null>(null);
+  /**
+   * How the roster is ordered on screen. A teacher-facing control, so it
+   * lives on the page rather than in the dev drawer, and it persists in
+   * localStorage: starts as the default, then reads the stored choice in
+   * an effect so the server render and first client render agree.
+   */
+  const [rosterSort, setRosterSort] = useState<RosterSort>("signin");
   const skipDebounce = useRef(false);
   /** The class currently on screen, readable from inside an async fetch:
    *  a waitlist response that comes back after the teacher has switched
    *  classes must be dropped, not written into state under the new class. */
   const activeIdRef = useRef<number | null>(null);
   activeIdRef.current = activeId;
+
+  useEffect(() => {
+    /* localStorage can throw (private mode, storage disabled); the sort
+     * is a convenience and falls back to the default silently. */
+    try {
+      const stored = localStorage.getItem(ROSTER_SORT_KEY);
+      if (stored === "signin" || stored === "last" || stored === "first") {
+        setRosterSort(stored);
+      }
+    } catch {
+      /* keep the default */
+    }
+  }, []);
+
+  const pickRosterSort = useCallback((value: RosterSort) => {
+    setRosterSort(value);
+    try {
+      localStorage.setItem(ROSTER_SORT_KEY, value);
+    } catch {
+      /* applies for this session anyway */
+    }
+  }, []);
 
   useEffect(() => {
     fetch("/api/config")
@@ -871,6 +916,24 @@ export default function FrontDesk() {
     },
     [expandedId, contexts, ctxLoading],
   );
+
+  /**
+   * The roster as displayed. Sorting is client-side, stable (Array.sort is
+   * stable), case-insensitive, and never mutates `entries`, which stays in
+   * Mindbody's sign-in order -- that IS the default option. Last-name sort
+   * splits on the final space of the display name; a one-word name sorts
+   * by that word. The counter modals deliberately keep sign-in order.
+   */
+  const sortedEntries = useMemo(() => {
+    if (rosterSort === "signin") return entries;
+    const key = (name: string): string => {
+      const trimmed = name.trim();
+      if (rosterSort === "first") return trimmed.toLowerCase();
+      const cut = trimmed.lastIndexOf(" ");
+      return (cut === -1 ? trimmed : trimmed.slice(cut + 1)).toLowerCase();
+    };
+    return [...entries].sort((a, b) => key(a.name).localeCompare(key(b.name)));
+  }, [entries, rosterSort]);
 
   const rosterIds = useMemo(
     () => new Set(entries.map((e) => e.clientId)),
@@ -1180,8 +1243,24 @@ export default function FrontDesk() {
       ) : null}
       </div>
 
+      {/* Roster order, above the list it orders. Teacher-facing, so it is
+          on the page (not the dev drawer), 16px+, 64px targets. */}
+      {activeClass ? (
+        <div className="sortbar" role="group" aria-label="Roster order">
+          {ROSTER_SORTS.map((s) => (
+            <button
+              key={s.value}
+              aria-pressed={rosterSort === s.value}
+              onClick={() => pickRosterSort(s.value)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <ul className="roster">
-        {entries.map((entry) => {
+        {sortedEntries.map((entry) => {
           const working = busy.includes(entry.clientId);
           /* False only. Null is unknown (lookup failed) and fails open:
              no badge, normal check-in. */

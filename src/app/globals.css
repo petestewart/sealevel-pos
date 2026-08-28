@@ -137,6 +137,33 @@ button {
   color: var(--muted);
 }
 
+/* Roster order: a small segmented control above the list. Same visual
+ * language as the class bar (aria-pressed gets the accent ring), 64px
+ * targets, 16px text, tokens only in both palettes. */
+.sortbar {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+
+.sortbar button {
+  flex: 0 0 auto;
+  min-height: 64px;
+  padding: 10px 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.sortbar button[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--ink);
+}
+
 .search-wrap {
   position: relative;
   margin: 12px 0;
