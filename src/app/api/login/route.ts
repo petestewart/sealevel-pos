@@ -2,10 +2,9 @@ import { NextResponse } from "next/server";
 
 import {
   authRequired,
+  claimLoginAttempt,
   issueToken,
-  lockoutRemainingMs,
   pinMatches,
-  recordLoginFailure,
   recordLoginSuccess,
   sessionSetCookie,
 } from "@/lib/auth";
@@ -26,7 +25,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "auth is disabled" }, { status: 400 });
   }
 
-  const lockedFor = lockoutRemainingMs();
+  /* Claim the attempt slot BEFORE the first await. Checking here and
+   * recording the failure after request.json() let a parallel burst of
+   * requests all pass the check before any counted (review find); the
+   * claim counts up front and a correct PIN clears it below. */
+  const lockedFor = claimLoginAttempt();
   if (lockedFor > 0) {
     return NextResponse.json(
       {
@@ -48,7 +51,7 @@ export async function POST(request: Request) {
   }
 
   if (!pinMatches(pin)) {
-    recordLoginFailure();
+    /* Already counted by the claim above. */
     return NextResponse.json({ error: "wrong PIN" }, { status: 401 });
   }
 

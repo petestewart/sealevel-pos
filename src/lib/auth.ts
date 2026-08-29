@@ -49,10 +49,19 @@ export function authRequired(): boolean {
 let cachedKey: { pin: string; key: Buffer } | null = null;
 
 function sessionKey(): Buffer {
+  /* Optional pepper (T21 review). The key is otherwise derived from the
+   * PIN alone with a public salt, so one captured cookie lets an attacker
+   * brute-force a 4-6 digit PIN offline in minutes (10k scrypts). A
+   * random POS_SESSION_SECRET in the server env makes that offline attack
+   * impossible without also having the environment, while keeping both
+   * revocation stories: changing the PIN (or the pepper) still
+   * invalidates every session. Unset keeps the original derivation. */
+  const pepper = (process.env.POS_SESSION_SECRET ?? "").trim();
   const pin = configuredPin();
-  if (cachedKey && cachedKey.pin === pin) return cachedKey.key;
-  const key = scryptSync(pin, KEY_SALT, 32);
-  cachedKey = { pin, key };
+  const input = pepper.length > 0 ? `${pin}\n${pepper}` : pin;
+  if (cachedKey && cachedKey.pin === input) return cachedKey.key;
+  const key = scryptSync(input, KEY_SALT, 32);
+  cachedKey = { pin: input, key };
   return key;
 }
 
@@ -187,4 +196,19 @@ export function recordLoginFailure(now = Date.now()): void {
 export function recordLoginSuccess(): void {
   loginState.failures = 0;
   loginState.lockedUntil = 0;
+}
+
+/**
+ * Claims one attempt slot, SYNCHRONOUSLY, before the handler does any
+ * async work. Returns the lockout remaining (0 = proceed). The claim
+ * counts as a failure up front and a success clears it: checking at the
+ * top and recording only after `await request.json()` let every
+ * concurrently in-flight request pass the check before any of them
+ * counted, so a parallel burst got N guesses per window instead of 5.
+ */
+export function claimLoginAttempt(now = Date.now()): number {
+  const remaining = lockoutRemainingMs(now);
+  if (remaining > 0) return remaining;
+  recordLoginFailure(now);
+  return 0;
 }
