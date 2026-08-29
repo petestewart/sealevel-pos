@@ -231,8 +231,14 @@ function PaymentPanel(props: {
   onCharge: () => void;
 }) {
   const { cart, priced, pricing, client, onCharge } = props;
+  /* While a pricing call (or its debounce) is pending, `priced` still
+   * holds the PREVIOUS cart's totals. Treat that as no total at all: the
+   * Charge button must never restate a number the current cart has not
+   * earned, stale-but-disabled included. */
   const total =
-    priced && !priced.suppressed && !priced.disagrees ? priced.grandTotal : null;
+    !pricing && priced && !priced.suppressed && !priced.disagrees
+      ? priced.grandTotal
+      : null;
   /* Disabled outright until T24; the stricter conditions below are what
    * T24 inherits: no empty cart, no in-flight pricing, no suppressed or
    * disagreeing total may ever be charged. */

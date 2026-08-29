@@ -1559,6 +1559,10 @@ button.pass-opt:disabled {
   inset: 0;
   z-index: 18;
   overflow-y: auto;
+  /* A scroll that hits the overlay's end must not chain into the roster
+   * behind it: closing the sale should land exactly where the teacher
+   * was, not where a rubber-band scrolled the page to. */
+  overscroll-behavior: contain;
   background: var(--bg);
 }
 
