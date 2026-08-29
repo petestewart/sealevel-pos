@@ -479,6 +479,26 @@ the bridge.
       AgreementDate stamps, the receipt lands in Notes, and nothing else
       on the record changes.
 
+## T19. The waiver gates the walk-in ADD, not just check-in (Pete, 2026-08-29)
+
+Found live: a no-waiver student can be booked from the search modal with
+no waiver dialog, and a booking made after class start can come back from
+Mindbody already signed in, so the roster's check-in gate never runs. The
+T18 review flagged the gap; Pete confirmed it is a real hole.
+
+- [ ] tapWalkIn gates on waiver FIRST, before the red alert, same order
+      as the roster's tapCheckIn: a result with waiverSigned false opens
+      the T18 waiver dialog (real text, scroll to end, record the
+      student's agreement) from inside the search modal.
+- [ ] On a recorded agreement the flow continues to the BOOKING (not a
+      check-in), with the result row's waiver state updated so the pill
+      clears without a new search.
+- [ ] A failed/unfetchable waiver text falls back to close-only, and the
+      add stays blocked, matching the roster gate's posture.
+- [ ] Pete: verify live whether /class/addclienttoclass after class start
+      returns the visit SignedIn true (the suspected mechanism); either
+      way the add-side gate closes the hole.
+
 ## T9. Deployment, minus auth (PLAN Phase 1.5)
 
 Not blocked by T10. Ships behind the existing safety rails.
