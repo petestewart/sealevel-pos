@@ -508,11 +508,11 @@ walk-in adds entirely; the blocking dialogs and the session ack list
 retire. The waiver gate is untouched. Auditing/cleaning the alert
 contents is deliberately out of scope.
 
-- [ ] The separate alert and notes icons become ONE info icon per row
+- [x] The separate alert and notes icons become ONE info icon per row
       (roster and search results; the M chip stays separate): greyed out
       when the client has no red alert, no yellow alert, and no notes;
       bright when any exist.
-- [ ] Tapping it opens one info view showing all three fields (Red
+- [x] Tapping it opens one info view showing all three fields (Red
       alert / Yellow alert / Notes), each editable with the same pencil
       -> textarea -> Save flow notes already have. Each save is its own
       surgical /client/updateclient write sending ONLY the id, that one
@@ -520,6 +520,10 @@ contents is deliberately out of scope.
       yellow-alert field name and writability in client.yml first; if
       yellow is not writable or not present on the client record, show
       what exists and say so in the report).
+      The whitelist (exactly Notes | RedAlert | YellowAlert) is enforced
+      server-side in /api/client-field, which generalized and replaced
+      /api/client-notes; the red alert keeps its stop treatment inside
+      the view, the yellow gets the warn pair.
 - [x] YellowAlert (or its real field name) joins the batched roster
       lookup and the search mapping, fail-open like its siblings.
       Spec-confirmed in docs/mindbody-openapi/client.yml: the field IS
@@ -527,10 +531,13 @@ contents is deliberately out of scope.
       `ClientWithSuspensionInfo`, which is exactly the schema
       `UpdateClientRequest.Client` references -- so both alerts are
       writable through the same surgical updateclient envelope notes use.
-- [ ] The red-alert blocking dialogs (roster and walk-in), the acked
+- [x] The red-alert blocking dialogs (roster and walk-in), the acked
       list, and their gate branches are removed; check-in order becomes
       waiver -> unpaid confirm; walk-in add order becomes waiver ->
-      full-class/waitlist.
+      full-class/waitlist. The waiver gate and its T18/T19 discipline
+      are untouched, re-traced after the removal: no path books or
+      checks in a waiverSigned false client without a recorded
+      agreement.
 - [ ] Promote-from-waitlist gets the waiver gate too (found by the T19
       review): waitlist rows carry no waiver state, so a no-waiver
       student who waitlisted online can be promoted with no dialog, and

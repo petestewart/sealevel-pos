@@ -297,10 +297,12 @@ button {
   /* Five columns since T15: name | icon slots | payment (two-line) |
    * balance | actions. The icon column is FIXED width (it must resolve
    * identically on every row -- each row is its own grid, so only fixed
-   * and fr values line up across rows), matching .cell-icons' slots. */
+   * and fr values line up across rows), matching .cell-icons' slots:
+   * 74px = 30 (M chip) + 44 (info icon) since T20 folded the separate
+   * alert and notes icons into one. */
   /* The balance column (7em) fits a five-figure negative (-$12,345.67)
    * at 16px tabular figures without ellipsizing. */
-  --roster-cols: minmax(0, 2fr) 118px minmax(0, 1.8fr) 7em 208px;
+  --roster-cols: minmax(0, 2fr) 74px minmax(0, 1.8fr) 7em 208px;
 }
 
 .roster-head,
@@ -357,16 +359,15 @@ button {
   min-width: 0;
 }
 
-/* The roster's fixed icon block between the name and the payment: three
- * slots in a set order (M | alert | notes), each the same width on every
- * row and empty when the row lacks the marker, so every marker aligns as
- * its own column down the list. 118px total = 30 + 44 + 44, and the
- * --roster-cols column must stay equal to it. This replaces the
- * cluster-after-the-name treatment on roster rows; walk-in rows (flex,
- * not the grid) still cluster below. */
+/* The roster's fixed icon block between the name and the payment: two
+ * slots in a set order (M | info), each the same width on every row and
+ * empty when the row lacks the marker, so every marker aligns as its own
+ * column down the list. 74px total = 30 + 44, and the --roster-cols
+ * column must stay equal to it. One info slot since T20: the alert and
+ * notes icons folded into the single info icon. */
 .cell-icons {
   display: grid;
-  grid-template-columns: 30px 44px 44px;
+  grid-template-columns: 30px 44px;
   align-items: center;
   justify-items: center;
 }
@@ -437,30 +438,13 @@ button {
   cursor: default;
 }
 
-.row-icon.row-alert {
-  color: var(--stop);
-}
-
-/* The notes icon on a client with no notes yet: dimmed but still visible
- * and tappable, because adding the first note starts here. Opacity over a
- * lighter token so it tracks --muted in both palettes. */
+/* The info icon on a client with no alerts and no notes yet: dimmed but
+ * still visible and tappable, because adding the first one starts here.
+ * Bright is the plain row-icon (--muted at full opacity), deliberately
+ * not the stop colour: since T20 an alert is information, not a gate.
+ * Opacity over a lighter token so it tracks --muted in both palettes. */
 .row-icon.dim {
   opacity: 0.45;
-}
-
-/* Cluster the name-line badges. The 44px hit boxes may overlap via
- * negative margins, but only by 4px between two icon BUTTONS: the later
- * box paints on top, so any deeper overlap would shave the earlier
- * button's exclusive tappable area under the 40px floor. (Tighter still
- * would eventually cover the neighbour's 18px glyph, which sits 13px in
- * from the box edge.) The M chip is not a target, so the icon after it
- * tucks in until its glyph sits ~4px off the chip. */
-.name-line .row-icon + .row-icon {
-  margin-left: -4px;
-}
-
-.name-line .m-chip + .row-icon {
-  margin-left: -11px;
 }
 
 /* The payment cell: the ONE pass paying for this visit, truncating rather
@@ -701,7 +685,8 @@ button.pass-opt:disabled {
   font-size: 16px;
 }
 
-/* The red-alert text block, in the info modal and the check-in gate. */
+/* The red-alert text block in the info view: information can still look
+ * important, so the stop pairing stays even though the gate is gone. */
 .ctx-alert {
   display: flex;
   align-items: flex-start;
@@ -714,18 +699,56 @@ button.pass-opt:disabled {
   font-weight: 600;
 }
 
-/* The alert text inside the red-alert dialogs. */
+/* The red-alert text as a block in a modal. */
 .modal-alert {
   display: block;
   margin: 0 0 12px;
+  white-space: pre-wrap;
 }
 
-/* Staff notes in the info modal: plain reading text, preserving the line
+/* The yellow-alert text block in the info view: the warn pair, one step
+ * quieter than the red alert's stop treatment. Tokens, both palettes. */
+.modal-warn {
+  display: block;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 16px;
+  font-weight: 600;
+  white-space: pre-wrap;
+}
+
+/* Staff notes in the info view: plain reading text, preserving the line
  * breaks staff typed into Mindbody. */
 .modal-note {
   margin: 0 0 12px;
   font-size: 17px;
   white-space: pre-wrap;
+}
+
+/* A section heading in the info view, with its edit pencil pinned to the
+ * line's right end. Muted: the labels are wayfinding, the texts below
+ * them are the content. */
+.info-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* An empty info section says so quietly rather than rendering nothing:
+ * three labelled sections always show, so the view reads the same shape
+ * for every client. */
+.info-none {
+  margin: 0 0 12px;
+  font-size: 17px;
+  color: var(--muted);
 }
 
 .row .name {
@@ -1233,9 +1256,9 @@ button.pass-opt:disabled {
   overflow-wrap: anywhere;
 }
 
-/* The markers line under the name: M chip, alert icon, no-waiver chip, in
- * that fixed order. The mini-stop drops the after-the-name offset it
- * carries on a name line. */
+/* The markers line under the name: M chip, info icon, no-waiver chip, in
+ * that fixed order (the info icon is on every result row since T20). The
+ * mini-stop drops the after-the-name offset it carries on a name line. */
 .marker-line {
   display: flex;
   align-items: center;

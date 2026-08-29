@@ -50,8 +50,11 @@ interface RosterEntry {
   checkedIn: boolean;
   /** true = waiver on file, false = blocked, null = unknown (fails open). */
   waiverSigned: boolean | null;
-  /** RedAlert text from the client record; null when none or lookup failed. */
+  /** RedAlert text from the client record; null when none or lookup failed.
+   *  Information behind the info icon since T20, not a gate. */
   redAlert: string | null;
+  /** YellowAlert text; same standing as redAlert. */
+  yellowAlert: string | null;
   /** Staff notes from the client record; null when none or lookup failed. */
   notes: string | null;
   /** Mindbody's numeric UniqueId, for staff web app links. */
@@ -67,6 +70,7 @@ interface SearchResult {
   email: string | null;
   waiverSigned: boolean;
   redAlert: string | null;
+  yellowAlert: string | null;
   balance: number | null;
   member: boolean;
   notes: string | null;
@@ -216,43 +220,25 @@ function PlusIcon() {
   );
 }
 
-/** Warning triangle for the red alert icon; tapping it shows the text. */
-function AlertIcon() {
+/** An "i" in a circle: the row's ONE info affordance (T20), opening the
+ *  combined red alert / yellow alert / notes view. Replaces the separate
+ *  alert-triangle and note-sheet icons. */
+function InfoIcon() {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path
+      <circle
+        cx="12"
+        cy="12"
+        r="9"
         stroke="currentColor"
         strokeWidth="2"
-        strokeLinejoin="round"
         fill="none"
-        d="M12 3.5 22 20.5H2Z"
       />
       <path
         stroke="currentColor"
         strokeWidth="2.2"
         strokeLinecap="round"
-        d="M12 9.5v5M12 17.6v.1"
-      />
-    </svg>
-  );
-}
-
-/** Note sheet for the client's Notes field; tapping it shows the text. */
-function NotesIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-        fill="none"
-        d="M6 3.5h9L19.5 8v12.5H6Z"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        d="M9 12h7M9 15.5h7"
+        d="M12 11v5.4M12 7.4v.1"
       />
     </svg>
   );
@@ -590,11 +576,6 @@ function FrontDesk() {
   const [waitlistPrompt, setWaitlistPrompt] = useState<SearchResult | null>(
     null,
   );
-  /** A red-alert walk-in whose ADD is held behind the unread alert, same
-   *  contract as the roster's check-in gate: blocking dialog, explicit
-   *  "I have read it", session-only acknowledgement, nothing written. */
-  const [walkinAlertPrompt, setWalkinAlertPrompt] =
-    useState<SearchResult | null>(null);
   /** Per-result chosen pass (ClientServiceId), from the search modal's
    *  pass picker. LOCAL selection only: picking writes nothing and books
    *  nothing -- the "+" tap is the one action, and it sends the choice on
@@ -634,15 +615,6 @@ function FrontDesk() {
   /** Waitlist promotions in flight, by entry id. Also non-optimistic. */
   const [promoting, setPromoting] = useState<number[]>([]);
   const [promoteMsg, setPromoteMsg] = useState<Record<number, string>>({});
-  /** Red alerts a teacher has explicitly read past, by client id. UI state
-   *  only, deliberately: acknowledging an alert must never write anything
-   *  back to Mindbody. Set ONLY by the check-in gate dialog; reading the
-   *  alert through the row's info icon deliberately does not ack it. */
-  const [acked, setAcked] = useState<string[]>([]);
-  /** The row whose check-in is held behind an unread red alert. */
-  const [redAlertPrompt, setRedAlertPrompt] = useState<RosterEntry | null>(
-    null,
-  );
   /**
    * The row a teacher tapped that has no released waiver. The dialog it
    * opens can now resolve it at the counter (T18, Pete's recorded
@@ -705,30 +677,37 @@ function FrontDesk() {
    *  Same stale-response pattern as activeIdRef. */
   const waiverGen = useRef(0);
   /**
-   * Read-only text behind a row icon: the red alert or the staff notes.
-   * Informational only, one Close button, and it never acks the alert for
-   * the check-in gate -- reading is not the same act as reading PAST.
+   * The ONE info view behind a row's info icon (T20): the client's red
+   * alert, yellow alert, and staff notes together, titled with their
+   * name. Each section is editable in place through the same textarea /
+   * Cancel / Save flow notes always had, one field per save. DECISION
+   * REVERSAL, recorded on the ticket: Pete studied the studio's actual
+   * RedAlert usage and it does not block anything ("Cleaning on
+   * Wednesdays"), so the alert is information here, not a gate -- the
+   * blocking dialogs and the session ack list are gone.
    */
-  const [infoModal, setInfoModal] = useState<{
-    title: string;
-    text: string;
-    alert: boolean;
-    /** Set on the NOTES modal only: the client whose notes these are,
-     *  which is what makes the pencil render. The alert modal never sets
-     *  it, so an alert stays strictly read-only. */
-    notesClientId?: string;
+  const [infoView, setInfoView] = useState<{
+    clientId: string;
+    name: string;
+    redAlert: string | null;
+    yellowAlert: string | null;
+    notes: string | null;
   } | null>(null);
-  /** True while the notes modal is in its editing state. */
-  const [notesEditing, setNotesEditing] = useState(false);
-  /** The textarea's contents while editing notes. */
-  const [notesDraft, setNotesDraft] = useState("");
-  /** True while the notes save is in flight. Non-optimistic, like every
-   *  write here: the Save button spins until Mindbody answers, and the
-   *  modal refuses to close meanwhile. */
-  const [notesSaving, setNotesSaving] = useState(false);
-  /** Outcome text inside the notes modal: a failure, or the suppression
+  /** Which of the info view's three fields is being edited, if any. The
+   *  values are the Mindbody field names the save posts; the whitelist
+   *  proper lives server-side in /api/client-field. */
+  const [infoEditing, setInfoEditing] = useState<
+    "RedAlert" | "YellowAlert" | "Notes" | null
+  >(null);
+  /** The textarea's contents while editing an info field. */
+  const [infoDraft, setInfoDraft] = useState("");
+  /** True while an info-field save is in flight. Non-optimistic, like
+   *  every write here: the Save button spins until Mindbody answers, and
+   *  the view refuses to close meanwhile. */
+  const [infoSaving, setInfoSaving] = useState(false);
+  /** Outcome text inside the info view: a failure, or the suppression
    *  notice when dry run or the write guard stopped the save. */
-  const [notesMsg, setNotesMsg] = useState<string | null>(null);
+  const [infoMsg, setInfoMsg] = useState<string | null>(null);
   /** The client id whose payment-change dropdown is open, if any. */
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   /** On-demand pass lists per client, for the dropdown. Successes cache
@@ -1162,19 +1141,18 @@ function FrontDesk() {
   }, []);
 
   /** Escape closes the search-results modal, unless a layer is stacked
-   *  on top of it (red alert, the waiver gate, waitlist confirm, an info
-   *  modal, the pass picker): Escape peels the top layer, so an open
-   *  pass picker closes first and the modal takes the next press. The
-   *  dialogs close on their own scrims. */
+   *  on top of it (the waiver gate, waitlist confirm, the info view, the
+   *  pass picker): Escape peels the top layer, so an open pass picker
+   *  closes first and the modal takes the next press. The dialogs close
+   *  on their own scrims. */
   useEffect(() => {
     if (!searchOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (
         e.key === "Escape" &&
         !waitlistPrompt &&
-        !walkinAlertPrompt &&
         !waiverPrompt &&
-        !infoModal
+        !infoView
       ) {
         if (walkinPicker) {
           setWalkinPicker(null);
@@ -1188,9 +1166,8 @@ function FrontDesk() {
   }, [
     searchOpen,
     waitlistPrompt,
-    walkinAlertPrompt,
     waiverPrompt,
-    infoModal,
+    infoView,
     walkinPicker,
     closeSearch,
   ]);
@@ -1294,7 +1271,7 @@ function FrontDesk() {
    * row body used to be the target too, for speed, and live use showed
    * accidental check-ins -- a deliberate reversal (T16, Pete's call), so
    * do not restore row-tap check-in. Every gate lives here, in order:
-   * waiver block, red alert, then the unpaid confirm -- an unpaid booking
+   * waiver block, then the unpaid confirm -- an unpaid booking
    * has no pricing option attached, so checking it in hands over a class
    * for free, and until Phase 2 sells them a pass it at least takes a
    * deliberate second tap of this same chip.
@@ -1307,29 +1284,20 @@ function FrontDesk() {
     (entry: RosterEntry) => {
       if (busy.includes(entry.clientId) || entry.checkedIn) return;
       /**
-       * No released waiver stops everything, before the red alert and
-       * before the unpaid confirm: the tap opens the gate dialog and goes
-       * no further. Unlike the red alert below there is no plain
-       * acknowledgement that lets the tap through -- since T18 the dialog
-       * can RESOLVE the waiver, but only by showing the student the real
-       * text, scrolled to the end, and recording THEIR agreement; a
-       * teacher cannot simply wave it past. Unknown (null, lookup failed)
-       * fails open and is not this branch.
+       * No released waiver stops everything, before the unpaid confirm:
+       * the tap opens the gate dialog and goes no further. Since T18 the
+       * dialog can RESOLVE the waiver, but only by showing the student
+       * the real text, scrolled to the end, and recording THEIR
+       * agreement; a teacher cannot simply wave it past. Unknown (null,
+       * lookup failed) fails open and is not this branch.
+       *
+       * There is deliberately no red-alert gate here anymore (T20,
+       * Pete's recorded reversal): the studio's real alerts are notes
+       * like "Cleaning on Wednesdays", information behind the row's
+       * info icon, not something to block a check-in over.
        */
       if (entry.waiverSigned === false) {
         setWaiverPrompt({ source: "roster", entry });
-        return;
-      }
-      /**
-       * A known red alert stops the tap until it is read. The alert rides
-       * the roster's batched client lookup, so it is known from roster
-       * load on every row. Once seen it must be explicitly read past,
-       * once, before this row will check in; reading it through the row's
-       * info icon deliberately does not count. The acknowledgement lives
-       * in this browser session only; nothing is ever written back.
-       */
-      if (entry.redAlert && !acked.includes(entry.clientId)) {
-        setRedAlertPrompt(entry);
         return;
       }
       if (
@@ -1342,7 +1310,7 @@ function FrontDesk() {
       }
       void setSignedIn(entry, true);
     },
-    [busy, confirming, acked, setSignedIn, settings.confirmUnpaid],
+    [busy, confirming, setSignedIn, settings.confirmUnpaid],
   );
 
   /** Close the waiver dialog and drop every piece of its state, so a
@@ -1408,63 +1376,97 @@ function FrontDesk() {
     }
   }, [waiverText]);
 
-  /** Close the info modal and drop any notes-editing state with it.
+  /** Open the info view for a person, whichever surface their row is on.
+   *  Always opens, even with nothing behind it: adding the first note or
+   *  alert starts here too. */
+  const openInfoView = useCallback(
+    (p: {
+      clientId: string;
+      name: string;
+      redAlert: string | null;
+      yellowAlert: string | null;
+      notes: string | null;
+    }) => {
+      setInfoEditing(null);
+      setInfoMsg(null);
+      setInfoView({
+        clientId: p.clientId,
+        name: p.name,
+        redAlert: p.redAlert,
+        yellowAlert: p.yellowAlert,
+        notes: p.notes,
+      });
+    },
+    [],
+  );
+
+  /** Close the info view and drop any editing state with it.
    *  Refused mid-save: the answer is coming. */
-  const closeInfoModal = useCallback(() => {
-    if (notesSaving) return;
-    setInfoModal(null);
-    setNotesEditing(false);
-    setNotesMsg(null);
-  }, [notesSaving]);
+  const closeInfoView = useCallback(() => {
+    if (infoSaving) return;
+    setInfoView(null);
+    setInfoEditing(null);
+    setInfoMsg(null);
+  }, [infoSaving]);
 
   /**
-   * Save the notes draft through /api/client-notes, which posts the
-   * surgical `{Client: {Id, Notes}}` update (see src/lib/clients.ts).
-   * Non-optimistic: the Save button spins until Mindbody answers. On
-   * success the row's local notes state updates in place -- no roster
-   * reload for a one-field edit -- and the modal drops back to its
-   * reading state showing the saved text. Suppression renders inside the
-   * modal as the amber notice, never as success; failure shows Mindbody's
-   * reason and keeps the draft for another try.
+   * Save the field being edited through /api/client-field, which posts
+   * the surgical `{Client: {Id, <field>}, CrossRegionalUpdate: false}`
+   * update -- ONE field per save, whitelisted server-side (see
+   * src/lib/clients.ts). Non-optimistic: the Save button spins until
+   * Mindbody answers. On success the person's local state updates in
+   * place wherever this screen holds them -- the roster row and any
+   * search result, so the info icon's grey/bright recomputes -- and the
+   * view drops back to reading, showing the saved text. Suppression
+   * renders inside the view as the amber notice, never as success;
+   * failure shows Mindbody's reason and keeps the draft for another try.
    */
-  const saveNotes = useCallback(async () => {
-    const clientId = infoModal?.notesClientId;
-    if (!clientId || notesSaving) return;
-    setNotesSaving(true);
-    setNotesMsg(null);
+  const saveInfoField = useCallback(async () => {
+    if (!infoView || !infoEditing || infoSaving) return;
+    const { clientId } = infoView;
+    const field = infoEditing;
+    setInfoSaving(true);
+    setInfoMsg(null);
     try {
-      const res = await fetch("/api/client-notes", {
+      const res = await fetch("/api/client-field", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ clientId, notes: notesDraft }),
+        body: JSON.stringify({ clientId, field, value: infoDraft }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
       if (body.suppressed) {
-        setNotesMsg(
+        setInfoMsg(
           body.suppressed === "dry-run"
             ? "Dry run: save suppressed, nothing was written."
             : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
         );
         return;
       }
-      /* The roster's batched brief lookup trims and null-converts notes
-       * the same way, so the local update matches what a reload would
-       * show (and it undims the icon). */
-      const trimmed = notesDraft.trim();
+      /* The batched brief lookup and the search mapping both trim and
+       * null-convert these fields the same way, so the local update
+       * matches what a reload would show. */
+      const trimmed = infoDraft.trim() || null;
+      const patch =
+        field === "Notes"
+          ? { notes: trimmed }
+          : field === "RedAlert"
+            ? { redAlert: trimmed }
+            : { yellowAlert: trimmed };
       setEntries((rows) =>
-        rows.map((r) =>
-          r.clientId === clientId ? { ...r, notes: trimmed || null } : r,
-        ),
+        rows.map((r) => (r.clientId === clientId ? { ...r, ...patch } : r)),
       );
-      setInfoModal((m) => (m ? { ...m, text: trimmed } : m));
-      setNotesEditing(false);
+      setFound((rows) =>
+        rows.map((r) => (r.id === clientId ? { ...r, ...patch } : r)),
+      );
+      setInfoView((v) => (v ? { ...v, ...patch } : v));
+      setInfoEditing(null);
     } catch (err) {
-      setNotesMsg(err instanceof Error ? err.message : String(err));
+      setInfoMsg(err instanceof Error ? err.message : String(err));
     } finally {
-      setNotesSaving(false);
+      setInfoSaving(false);
     }
-  }, [infoModal, notesDraft, notesSaving]);
+  }, [infoView, infoEditing, infoDraft, infoSaving]);
 
   /**
    * Open the payment-change dropdown on a row. The background sweep has
@@ -1725,8 +1727,8 @@ function FrontDesk() {
   );
 
   /**
-   * The walk-in ADD tap. The gates run in the same order as the roster's
-   * tapCheckIn: waiver first, then the red alert.
+   * The walk-in ADD tap. One gate, same as the roster's tapCheckIn:
+   * the waiver, then the full-class handling.
    *
    * The waiver gates the ADD, not just the eventual check-in (T19):
    * Mindbody can return an after-start booking already signed in, so the
@@ -1735,13 +1737,10 @@ function FrontDesk() {
    * dialog the roster uses, and nothing is booked until the student's
    * agreement is recorded.
    *
-   * A known red alert stops it exactly the way it stops a roster
-   * check-in: the blocking dialog opens and nothing is booked until the
-   * teacher has read the alert and chosen to continue (this closes the
-   * T5 follow-up where a red-alert walk-in could be booked without the
-   * alert ever showing). Past the gates, the existing full-class
-   * handling stands: a full class offers the waiting list, a class with
-   * room books.
+   * The red alert no longer gates here (T20, Pete's recorded reversal):
+   * it is information behind the row's info icon. Past the waiver, the
+   * existing full-class handling stands: a full class offers the
+   * waiting list, a class with room books.
    */
   const tapWalkIn = useCallback(
     (client: SearchResult) => {
@@ -1752,17 +1751,13 @@ function FrontDesk() {
         setWaiverPrompt({ source: "walkin", client });
         return;
       }
-      if (client.redAlert && !acked.includes(client.id)) {
-        setWalkinAlertPrompt(client);
-        return;
-      }
       if (classFull) {
         setWaitlistPrompt(client);
       } else {
         void bookWalkIn(client, false);
       }
     },
-    [bookingIds, acked, classFull, bookWalkIn],
+    [bookingIds, classFull, bookWalkIn],
   );
 
   /**
@@ -1780,11 +1775,10 @@ function FrontDesk() {
    * always, and for a walk-in the search results too, so the pill clears
    * without a new search -- and the SAME flow that opened the dialog
    * takes over, now past the waiver gate. A roster row re-enters
-   * tapCheckIn, with the red-alert and unpaid gates still applying in
-   * their usual order; a walk-in re-enters tapWalkIn, with the red-alert
-   * gate, the full-class waitlist offer, the chosen pass, and the
-   * single-flight booking lock all still applying (T19). The next roster
-   * load confirms from Mindbody.
+   * tapCheckIn, with the unpaid confirm still applying; a walk-in
+   * re-enters tapWalkIn, with the full-class waitlist offer, the chosen
+   * pass, and the single-flight booking lock all still applying (T19).
+   * The next roster load confirms from Mindbody.
    */
   const agreeWaiver = useCallback(async () => {
     const subject = waiverPrompt;
@@ -2469,11 +2463,12 @@ function FrontDesk() {
                   ) : null}
                 </div>
 
-                {/* Fixed icon slots in a set order (M | alert | notes), the
-                    same width on every row, so each marker lines up as its
-                    own column down the roster instead of trailing the name
-                    at whatever x the name ends. A row without the marker
-                    keeps the empty slot. */}
+                {/* Fixed icon slots in a set order (M | info), the same
+                    width on every row, so each marker lines up as its own
+                    column down the roster instead of trailing the name at
+                    whatever x the name ends. A row without the marker
+                    keeps the empty slot. One info icon since T20: the
+                    separate alert and notes icons folded into it. */}
                 <div className="cell-icons">
                   <span className="icon-slot">
                     {entry.member ? (
@@ -2483,48 +2478,24 @@ function FrontDesk() {
                     ) : null}
                   </span>
                   <span className="icon-slot">
-                    {entry.redAlert ? (
-                      <button
-                        className="row-icon row-alert"
-                        aria-label={`Red alert for ${entry.name}`}
-                        title="Red alert"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setInfoModal({
-                            title: `Red alert on ${entry.name}`,
-                            text: entry.redAlert ?? "",
-                            alert: true,
-                          });
-                        }}
-                      >
-                        <AlertIcon />
-                      </button>
-                    ) : null}
-                  </span>
-                  <span className="icon-slot">
-                    {/* On EVERY row: dimmed when there is nothing behind
-                        it yet, because adding a note starts here too. */}
+                    {/* On EVERY row: dimmed when the client has no red
+                        alert, no yellow alert and no notes, because
+                        adding the first one starts here too; bright when
+                        any exist. */}
                     <button
-                      className={entry.notes ? "row-icon" : "row-icon dim"}
-                      aria-label={
-                        entry.notes
-                          ? `Notes for ${entry.name}`
-                          : `Add notes for ${entry.name}`
+                      className={
+                        entry.redAlert || entry.yellowAlert || entry.notes
+                          ? "row-icon"
+                          : "row-icon dim"
                       }
-                      title={entry.notes ? "Notes" : "Add notes"}
+                      aria-label={`Alerts and notes for ${entry.name}`}
+                      title="Alerts and notes"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setNotesEditing(false);
-                        setNotesMsg(null);
-                        setInfoModal({
-                          title: `Notes on ${entry.name}`,
-                          text: entry.notes ?? "",
-                          alert: false,
-                          notesClientId: entry.clientId,
-                        });
+                        openInfoView(entry);
                       }}
                     >
-                      <NotesIcon />
+                      <InfoIcon />
                     </button>
                   </span>
                 </div>
@@ -2699,8 +2670,8 @@ function FrontDesk() {
           row layout as the roster (a sibling column template: name, icon
           slots, pass summary with its sub-line, balance, action) so a
           person reads the same on both sides of the booking. The add chip
-          is the only action on a row, with the roster gates intact: red
-          alert blocks, a full class offers the waiting list. The X (and
+          is the only action on a row, with the roster gates intact: the
+          waiver blocks, a full class offers the waiting list. The X (and
           Escape, and the scrim) closes with no action. */}
       {searchOpen ? (
         <div className="modal-scrim" onClick={closeSearch} role="presentation">
@@ -2810,46 +2781,47 @@ function FrontDesk() {
                                 long name wraps; "..." is not an option
                                 here (T17). */}
                             <span className="name-text">{client.name}</span>
-                            {/* The second line holds only the markers, in a
-                                fixed order: M, alert, no-waiver. A row with
-                                none of them skips the line. */}
-                            {client.member ||
-                            client.redAlert ||
-                            !client.waiverSigned ? (
-                              <span className="marker-line">
-                                {client.member ? (
-                                  <span
-                                    className="m-chip"
-                                    title="Member"
-                                    aria-label="Member"
-                                  >
-                                    M
-                                  </span>
-                                ) : null}
-                                {client.redAlert ? (
-                                  <button
-                                    className="row-icon row-alert"
-                                    aria-label={`Red alert for ${client.name}`}
-                                    title="Red alert"
-                                    onClick={() => {
-                                      /* Info-only, same as the roster icon:
-                                         reading here does not acknowledge
-                                         the ADD gate. */
-                                      setInfoModal({
-                                        title: `Red alert on ${client.name}`,
-                                        text: client.redAlert ?? "",
-                                        alert: true,
-                                      });
-                                    }}
-                                  >
-                                    <AlertIcon />
-                                  </button>
-                                ) : null}
-                                {!client.waiverSigned ? (
-                                  <span className="mini-stop">no waiver</span>
-                                ) : null}
-                              </span>
-                            ) : null}
+                            {/* The second line holds the markers, in a
+                                fixed order: M, info, no-waiver. The info
+                                icon is on every result row (T20), same
+                                grey/bright treatment as the roster's, so
+                                the line always renders. */}
+                            <span className="marker-line">
+                              {client.member ? (
+                                <span
+                                  className="m-chip"
+                                  title="Member"
+                                  aria-label="Member"
+                                >
+                                  M
+                                </span>
+                              ) : null}
+                              <button
+                                className={
+                                  client.redAlert ||
+                                  client.yellowAlert ||
+                                  client.notes
+                                    ? "row-icon"
+                                    : "row-icon dim"
+                                }
+                                aria-label={`Alerts and notes for ${client.name}`}
+                                title="Alerts and notes"
+                                onClick={() =>
+                                  openInfoView({
+                                    clientId: client.id,
+                                    name: client.name,
+                                    redAlert: client.redAlert,
+                                    yellowAlert: client.yellowAlert,
+                                    notes: client.notes,
+                                  })
+                                }
+                              >
+                                <InfoIcon />
+                              </button>
+                              {!client.waiverSigned ? (
+                                <span className="mini-stop">no waiver</span>
+                              ) : null}
+                            </span>
                             {subline ? (
                               <span className="subline">{subline}</span>
                             ) : null}
@@ -3190,73 +3162,114 @@ function FrontDesk() {
         </div>
       ) : null}
 
-      {/* The row icons' text: the red alert or the staff notes.
-          Deliberately NOT the check-in gate: reading an alert here does
-          not acknowledge it, so a flagged row's check-in tap still stops
-          at the blocking dialog below. The NOTES modal (notesClientId
-          set) additionally carries the pencil that edits them -- the one
-          write this modal can make, and it writes Notes only. The alert
-          modal stays strictly read-only. */}
-      {infoModal ? (
+      {/* The ONE info view behind a row's info icon (T20): red alert,
+          yellow alert and notes together, titled with the client's name.
+          Purely informational -- it gates nothing and never did the
+          acknowledging; the red-alert blocking dialogs it absorbed are
+          gone (Pete's recorded reversal: the studio's alerts do not
+          block). Each section shows its text (the red alert keeps its
+          stop treatment, the yellow its warn pair -- information can
+          still look important) or a quiet "None.", with a pencil opening
+          the same textarea / Cancel / Save flow notes always had. Each
+          save writes exactly ONE field. */}
+      {infoView ? (
         <div
           className="modal-scrim"
-          onClick={closeInfoModal}
+          onClick={closeInfoView}
           role="presentation"
         >
           <div
             className="modal"
             role="dialog"
             aria-modal="true"
-            aria-label={infoModal.title}
+            aria-label={`Alerts and notes for ${infoView.name}`}
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="modal-title">{infoModal.title}</p>
-            {notesEditing && infoModal.notesClientId ? (
-              /* Editing: the textarea seeded with the current notes.
-                 Whitespace and line breaks survive the round trip: the
-                 textarea holds them natively and modal-note renders
-                 pre-wrap. */
-              <textarea
-                className="notes-edit"
-                value={notesDraft}
-                onChange={(e) => setNotesDraft(e.target.value)}
-                disabled={notesSaving}
-                aria-label="Edit notes"
-                autoFocus
-              />
-            ) : infoModal.text ? (
-              <p
-                className={
-                  infoModal.alert ? "ctx-alert modal-alert" : "modal-note"
-                }
-              >
-                {infoModal.text}
-              </p>
-            ) : (
-              <p className="modal-note muted">No notes yet.</p>
-            )}
-            {notesMsg ? (
-              <p className="pass-note modal-note-gap">{notesMsg}</p>
+            <p className="modal-title">{infoView.name}</p>
+            {(
+              [
+                {
+                  field: "RedAlert" as const,
+                  label: "Red alert",
+                  text: infoView.redAlert,
+                  textClass: "ctx-alert modal-alert",
+                },
+                {
+                  field: "YellowAlert" as const,
+                  label: "Yellow alert",
+                  text: infoView.yellowAlert,
+                  textClass: "modal-warn",
+                },
+                {
+                  field: "Notes" as const,
+                  label: "Notes",
+                  text: infoView.notes,
+                  textClass: "modal-note",
+                },
+              ]
+            ).map((s) => (
+              <div key={s.field}>
+                <p className="info-label">
+                  {s.label}
+                  {/* One pencil per section; they rest while a section is
+                      being edited, so exactly one field is ever in play. */}
+                  {infoEditing === null ? (
+                    <button
+                      className="row-icon"
+                      aria-label={`Edit ${s.label.toLowerCase()} for ${infoView.name}`}
+                      title={`Edit ${s.label.toLowerCase()}`}
+                      onClick={() => {
+                        setInfoDraft(s.text ?? "");
+                        setInfoMsg(null);
+                        setInfoEditing(s.field);
+                      }}
+                    >
+                      <PencilIcon />
+                    </button>
+                  ) : null}
+                </p>
+                {infoEditing === s.field ? (
+                  /* Editing: the textarea seeded with the current text.
+                     Whitespace and line breaks survive the round trip:
+                     the textarea holds them natively and the reading
+                     views render pre-wrap. */
+                  <textarea
+                    className="notes-edit"
+                    value={infoDraft}
+                    onChange={(e) => setInfoDraft(e.target.value)}
+                    disabled={infoSaving}
+                    aria-label={`Edit ${s.label.toLowerCase()}`}
+                    autoFocus
+                  />
+                ) : s.text ? (
+                  <p className={s.textClass}>{s.text}</p>
+                ) : (
+                  <p className="info-none">None.</p>
+                )}
+              </div>
+            ))}
+            {infoMsg ? (
+              <p className="pass-note modal-note-gap">{infoMsg}</p>
             ) : null}
             <div className="modal-actions">
-              {notesEditing && infoModal.notesClientId ? (
+              {infoEditing !== null ? (
                 <>
                   <button
                     className="modal-cancel"
-                    disabled={notesSaving}
+                    disabled={infoSaving}
                     onClick={() => {
-                      setNotesEditing(false);
-                      setNotesMsg(null);
+                      setInfoEditing(null);
+                      setInfoMsg(null);
                     }}
                   >
                     Cancel
                   </button>
                   <button
                     className="modal-confirm go"
-                    disabled={notesSaving}
-                    onClick={() => void saveNotes()}
+                    disabled={infoSaving}
+                    onClick={() => void saveInfoField()}
                   >
-                    {notesSaving ? (
+                    {infoSaving ? (
                       <span className="spinner" aria-label="working" />
                     ) : (
                       "Save"
@@ -3264,150 +3277,10 @@ function FrontDesk() {
                   </button>
                 </>
               ) : (
-                <>
-                  <button className="modal-cancel" onClick={closeInfoModal}>
-                    Close
-                  </button>
-                  {infoModal.notesClientId ? (
-                    <button
-                      className="modal-cancel"
-                      onClick={() => {
-                        setNotesDraft(infoModal.text);
-                        setNotesMsg(null);
-                        setNotesEditing(true);
-                      }}
-                    >
-                      <span className="btn-ico">
-                        <PencilIcon />
-                      </span>
-                      Edit
-                    </button>
-                  ) : null}
-                </>
+                <button className="modal-cancel" onClick={closeInfoView}>
+                  Close
+                </button>
               )}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {/* A red alert is Mindbody's own "stop and read this" flag, so a
-          row known to carry one does not check in on reflex: the tap stops
-          here until the teacher has read the alert and chosen to continue.
-          The acknowledgement is this browser session's state only; nothing
-          is written back to Mindbody, and cancelling leaves the row
-          exactly as it was. */}
-      {redAlertPrompt ? (
-        <div
-          className="modal-scrim"
-          onClick={() => setRedAlertPrompt(null)}
-          role="presentation"
-        >
-          <div
-            className="modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-label="Red alert on this client"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="modal-title">
-              Red alert on {redAlertPrompt.name}
-            </p>
-            <p className="ctx-alert modal-alert">
-              {redAlertPrompt.redAlert ?? "The studio flagged this client."}
-            </p>
-            <p className="muted">
-              The studio flagged this deliberately. Read it before letting
-              them into class.
-            </p>
-            <div className="modal-actions">
-              <button
-                className="modal-cancel"
-                onClick={() => setRedAlertPrompt(null)}
-              >
-                Cancel
-              </button>
-              <button
-                className="modal-confirm"
-                onClick={() => {
-                  const entry = redAlertPrompt;
-                  setRedAlertPrompt(null);
-                  setAcked((a) =>
-                    a.includes(entry.clientId) ? a : [...a, entry.clientId],
-                  );
-                  /* Past the alert, the normal rules resume: an unpaid
-                     booking still takes its own confirming tap. */
-                  if (settings.confirmUnpaid && !entry.paid) {
-                    setConfirming((c) =>
-                      c.includes(entry.clientId) ? c : [...c, entry.clientId],
-                    );
-                    return;
-                  }
-                  void setSignedIn(entry, true);
-                }}
-              >
-                I have read it, check in
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {/* The walk-in twin of the gate above: a red-alert walk-in does not
-          get booked on reflex either. Confirming acknowledges for this
-          browser session (the same acked list the roster gate uses, so
-          reading past it once covers both surfaces for that person) and
-          then continues into the normal add flow, full-class handling
-          included. Nothing is ever written back. */}
-      {walkinAlertPrompt ? (
-        <div
-          className="modal-scrim"
-          onClick={() => setWalkinAlertPrompt(null)}
-          role="presentation"
-        >
-          <div
-            className="modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-label="Red alert on this client"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="modal-title">
-              Red alert on {walkinAlertPrompt.name}
-            </p>
-            <p className="ctx-alert modal-alert">
-              {walkinAlertPrompt.redAlert ??
-                "The studio flagged this client."}
-            </p>
-            <p className="muted">
-              The studio flagged this deliberately. Read it before adding
-              them to the class.
-            </p>
-            <div className="modal-actions">
-              <button
-                className="modal-cancel"
-                onClick={() => setWalkinAlertPrompt(null)}
-              >
-                Cancel
-              </button>
-              <button
-                className="modal-confirm"
-                onClick={() => {
-                  const client = walkinAlertPrompt;
-                  setWalkinAlertPrompt(null);
-                  setAcked((a) =>
-                    a.includes(client.id) ? a : [...a, client.id],
-                  );
-                  /* Past the alert, the normal add flow resumes: a full
-                     class still offers the waiting list instead. */
-                  if (classFull) {
-                    setWaitlistPrompt(client);
-                  } else {
-                    void bookWalkIn(client, false);
-                  }
-                }}
-              >
-                I have read it, add
-              </button>
             </div>
           </div>
         </div>
@@ -3426,8 +3299,8 @@ function FrontDesk() {
 
           Since T19 the same dialog gates the walk-in ADD, opened from
           inside the search modal (it renders after that modal, so it
-          stacks above it, same as the red-alert twin): identical
-          discipline, only the continuation and the verb differ. */}
+          stacks above it): identical discipline, only the continuation
+          and the verb differ. */}
       {waiverPrompt ? (
         <div
           className="modal-scrim"
