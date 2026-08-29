@@ -87,18 +87,23 @@ export function mindbodyEnv(): MindbodyEnv {
  * token is stale mid-transaction.
  */
 const TOKEN_TTL_MS = 60 * 60 * 1000;
-let cachedToken: { value: string; issuedAt: number; siteId: string } | null =
-  null;
+/**
+ * One slot per site, not one slot total: switching MINDBODY_TARGET to
+ * prod and back used to evict the sandbox's still-valid token (a prod
+ * token must never be reused against -99, so the miss forced a reissue
+ * at exactly the moment issuing might be down). Each site keeps its own.
+ */
+const cachedTokens = new Map<
+  string,
+  { value: string; issuedAt: number }
+>();
 
 export async function staffToken(env = mindbodyEnv()): Promise<string> {
   /** Keyed by site: a token issued for the sandbox must never be reused
    *  against production, or vice versa. */
-  if (
-    cachedToken &&
-    cachedToken.siteId === env.siteId &&
-    Date.now() - cachedToken.issuedAt < TOKEN_TTL_MS
-  ) {
-    return cachedToken.value;
+  const cached = cachedTokens.get(env.siteId);
+  if (cached && Date.now() - cached.issuedAt < TOKEN_TTL_MS) {
+    return cached.value;
   }
   const res = await fetch(`${env.baseUrl}/usertoken/issue`, {
     method: "POST",
@@ -123,24 +128,26 @@ export async function staffToken(env = mindbodyEnv()): Promise<string> {
      * 401 on the actual call, which forgets the token and reissues --
      * and if issuing is still down, THAT failure surfaces properly.
      */
-    if (cachedToken && cachedToken.siteId === env.siteId) {
+    if (cached) {
       console.warn(
         `[token] reissue failed (HTTP ${res.status}); riding the cached token until Mindbody rejects it`,
       );
-      cachedToken.issuedAt = Date.now(); /* back off: retry issue in an hour, not per call */
-      return cachedToken.value;
+      cached.issuedAt = Date.now(); /* back off: retry issue in an hour, not per call */
+      return cached.value;
     }
     throw new Error(
       `Mindbody usertoken/issue failed: HTTP ${res.status} ${JSON.stringify(body).slice(0, 200)}`,
     );
   }
-  cachedToken = { value: token, issuedAt: Date.now(), siteId: env.siteId };
+  cachedTokens.set(env.siteId, { value: token, issuedAt: Date.now() });
   return token;
 }
 
-/** Drop the cached token; call when Mindbody rejects it as invalid. */
+/** Drop the current site's cached token; call when Mindbody rejects it
+ *  as invalid. Other sites' tokens are untouched: a prod 401 says
+ *  nothing about the sandbox's token. */
 export function forgetToken(): void {
-  cachedToken = null;
+  cachedTokens.delete(mindbodyEnv().siteId);
 }
 
 export interface MindbodyCallOptions {
