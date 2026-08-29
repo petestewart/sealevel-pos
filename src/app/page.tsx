@@ -79,20 +79,26 @@ interface SearchResult {
 
 /**
  * Who the waiver dialog is about, and which flow resumes once the
- * student's agreement is recorded (T19): a roster row continues into the
- * normal check-in path, a search result into the normal booking path.
+ * student's agreement is recorded (T19, T20): a roster row continues
+ * into the normal check-in path, a search result into the normal
+ * booking path, a waitlist row into the normal promotion path.
  * Everything else about the dialog -- the real text, the scroll-to-end
- * gate, the receipt -- is shared and identical for both.
+ * gate, the receipt -- is shared and identical for all three.
  */
 type WaiverSubject =
   | { source: "roster"; entry: RosterEntry }
-  | { source: "walkin"; client: SearchResult };
+  | { source: "walkin"; client: SearchResult }
+  | { source: "promote"; row: WaitlistRow };
 
+/** Mirrors src/lib/roster.ts: waiverSigned and notes ride the same
+ *  batched client lookup that fills missing names, fail-open null. */
 interface WaitlistRow {
   entryId: number;
   clientId: string;
   name: string;
   requestedAt: string | null;
+  waiverSigned: boolean | null;
+  notes: string | null;
 }
 
 /** Mirrors src/lib/clientcontext.ts, which is where the shapes are derived
@@ -1014,6 +1020,22 @@ function FrontDesk() {
     return () => window.removeEventListener("keydown", onKey);
   }, [classPickerOpen]);
 
+  /** Escape closes the counter modals (checked-in, waitlist) -- unless
+   *  the waiver dialog is stacked above the waitlist panel (the promote
+   *  gate, T20), or an info view is: Escape peels the top layer, same
+   *  contract as the search modal's guard. The stacked dialogs close on
+   *  their own scrims. */
+  useEffect(() => {
+    if (counterModal === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !waiverPrompt && !infoView) {
+        setCounterModal(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [counterModal, waiverPrompt, infoView]);
+
   /** Escape closes the sort menu (outside taps close it via its scrim).
    *  Nothing here ever writes, so no in-flight guard is needed. */
   useEffect(() => {
@@ -1761,6 +1783,77 @@ function FrontDesk() {
   );
 
   /**
+   * Promote a waiting client into the class: the same booking endpoint
+   * carrying the WaitlistEntryId, which is the documented way to move
+   * someone off a waiting list rather than double-booking them. Also
+   * non-optimistic; the entry spins until Mindbody answers.
+   */
+  const promote = useCallback(
+    async (row: WaitlistRow) => {
+      if (activeId === null || promoting.includes(row.entryId)) return;
+      setPromoting((p) => [...p, row.entryId]);
+      setPromoteMsg((m) => {
+        const { [row.entryId]: _drop, ...rest } = m;
+        return rest;
+      });
+      try {
+        const res = await fetch("/api/book", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            clientId: row.clientId,
+            classId: activeId,
+            waitlistEntryId: row.entryId,
+          }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        if (body.suppressed) {
+          setPromoteMsg((m) => ({
+            ...m,
+            [row.entryId]:
+              body.suppressed === "dry-run"
+                ? "Dry run: promotion suppressed, nothing was written."
+                : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
+          }));
+          return;
+        }
+        await Promise.all([refreshRoster(activeId), loadWaitlist(activeId)]);
+      } catch (err) {
+        setPromoteMsg((m) => ({
+          ...m,
+          [row.entryId]: err instanceof Error ? err.message : String(err),
+        }));
+      } finally {
+        setPromoting((p) => p.filter((id) => id !== row.entryId));
+      }
+    },
+    [activeId, promoting, refreshRoster, loadWaitlist],
+  );
+
+  /**
+   * The promote tap, with the waiver gate in front of it (T20, found by
+   * the T19 review): a no-waiver student who waitlisted online was
+   * promotable with no dialog, and an after-start promotion can come
+   * back from Mindbody already signed in, so the roster's check-in gate
+   * never runs for it -- the promote tap is the last reliable stop,
+   * exactly the T19 add-side mechanism. `false` only: null is a failed
+   * lookup and FAILS OPEN, matching the roster's posture -- unknown
+   * must not block a promotion.
+   */
+  const tapPromote = useCallback(
+    (row: WaitlistRow) => {
+      if (promoting.includes(row.entryId)) return;
+      if (row.waiverSigned === false) {
+        setWaiverPrompt({ source: "promote", row });
+        return;
+      }
+      void promote(row);
+    },
+    [promoting, promote],
+  );
+
+  /**
    * Record the student's agreement (T18). Only reachable from the reading
    * state's confirm, which is disabled until the text has been scrolled
    * to the end -- so by construction the release is never written without
@@ -1790,11 +1883,17 @@ function FrontDesk() {
             name: subject.entry.name,
             notes: subject.entry.notes,
           }
-        : {
-            id: subject.client.id,
-            name: subject.client.name,
-            notes: subject.client.notes,
-          };
+        : subject.source === "walkin"
+          ? {
+              id: subject.client.id,
+              name: subject.client.name,
+              notes: subject.client.notes,
+            }
+          : {
+              id: subject.row.clientId,
+              name: subject.row.name,
+              notes: subject.row.notes,
+            };
     setWaiverSaving(true);
     setWaiverMsg(null);
     try {
@@ -1849,6 +1948,19 @@ function FrontDesk() {
           ),
         );
       }
+      /* The waitlist rows update for every flow, not just promote: the
+       * same person can be queued here while being signed from another
+       * surface, and a stale false would re-open the dialog on their
+       * promotion. */
+      setWaitlist((rows) =>
+        rows === null
+          ? rows
+          : rows.map((r) =>
+              r.clientId === person.id
+                ? { ...r, waiverSigned: true, notes: newNotes }
+                : r,
+            ),
+      );
       setWaiverSaving(false);
       closeWaiverDialog();
       /* The normal path for whichever flow opened the dialog, on the
@@ -1856,8 +1968,10 @@ function FrontDesk() {
        * ahead. */
       if (subject.source === "roster") {
         tapCheckIn({ ...subject.entry, waiverSigned: true, notes: newNotes });
-      } else {
+      } else if (subject.source === "walkin") {
         tapWalkIn({ ...subject.client, waiverSigned: true, notes: newNotes });
+      } else {
+        tapPromote({ ...subject.row, waiverSigned: true, notes: newNotes });
       }
     } catch (err) {
       setWaiverMsg(err instanceof Error ? err.message : String(err));
@@ -1872,6 +1986,7 @@ function FrontDesk() {
     closeWaiverDialog,
     tapCheckIn,
     tapWalkIn,
+    tapPromote,
   ]);
 
   /** The waiver dialog's subject, flattened for its rendering. */
@@ -1880,56 +1995,9 @@ function FrontDesk() {
       ? ""
       : waiverPrompt.source === "roster"
         ? waiverPrompt.entry.name
-        : waiverPrompt.client.name;
-
-  /**
-   * Promote a waiting client into the class: the same booking endpoint
-   * carrying the WaitlistEntryId, which is the documented way to move
-   * someone off a waiting list rather than double-booking them. Also
-   * non-optimistic; the entry spins until Mindbody answers.
-   */
-  const promote = useCallback(
-    async (row: WaitlistRow) => {
-      if (activeId === null || promoting.includes(row.entryId)) return;
-      setPromoting((p) => [...p, row.entryId]);
-      setPromoteMsg((m) => {
-        const { [row.entryId]: _drop, ...rest } = m;
-        return rest;
-      });
-      try {
-        const res = await fetch("/api/book", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            clientId: row.clientId,
-            classId: activeId,
-            waitlistEntryId: row.entryId,
-          }),
-        });
-        const body = await res.json();
-        if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
-        if (body.suppressed) {
-          setPromoteMsg((m) => ({
-            ...m,
-            [row.entryId]:
-              body.suppressed === "dry-run"
-                ? "Dry run: promotion suppressed, nothing was written."
-                : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
-          }));
-          return;
-        }
-        await Promise.all([refreshRoster(activeId), loadWaitlist(activeId)]);
-      } catch (err) {
-        setPromoteMsg((m) => ({
-          ...m,
-          [row.entryId]: err instanceof Error ? err.message : String(err),
-        }));
-      } finally {
-        setPromoting((p) => p.filter((id) => id !== row.entryId));
-      }
-    },
-    [activeId, promoting, refreshRoster, loadWaitlist],
-  );
+        : waiverPrompt.source === "walkin"
+          ? waiverPrompt.client.name
+          : waiverPrompt.row.name;
 
   /**
    * Post the payment change: `{VisitId, ClientServiceId}` through the same
@@ -3119,7 +3187,7 @@ function FrontDesk() {
                           <button
                             className="row"
                             disabled={working}
-                            onClick={() => void promote(row)}
+                            onClick={() => tapPromote(row)}
                           >
                             <span className="name">
                               {row.name}
@@ -3369,6 +3437,8 @@ function FrontDesk() {
                       <span className="spinner" aria-label="working" />
                     ) : waiverPrompt.source === "walkin" ? (
                       "Record agreement and add"
+                    ) : waiverPrompt.source === "promote" ? (
+                      "Record agreement and promote"
                     ) : (
                       "Record agreement and check in"
                     )}
@@ -3380,7 +3450,9 @@ function FrontDesk() {
                 <p className="ctx-alert modal-alert">
                   {waiverPrompt.source === "walkin"
                     ? "No liability waiver on file. They cannot be added to the class until they have read and agreed to it."
-                    : "No liability waiver on file. They cannot be checked in until they have read and agreed to it."}
+                    : waiverPrompt.source === "promote"
+                      ? "No liability waiver on file. They cannot be promoted into the class until they have read and agreed to it."
+                      : "No liability waiver on file. They cannot be checked in until they have read and agreed to it."}
                 </p>
                 {waiverFetchError ? (
                   /* The fetch failed: the old close-only shape, with the
@@ -3392,7 +3464,9 @@ function FrontDesk() {
                     signed the{" "}
                     {waiverPrompt.source === "walkin"
                       ? "add will go through normally."
-                      : "row will check in normally."}
+                      : waiverPrompt.source === "promote"
+                        ? "promotion will go through normally."
+                        : "row will check in normally."}
                   </p>
                 ) : (
                   <p className="muted">

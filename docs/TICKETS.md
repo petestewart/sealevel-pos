@@ -538,13 +538,17 @@ contents is deliberately out of scope.
       are untouched, re-traced after the removal: no path books or
       checks in a waiverSigned false client without a recorded
       agreement.
-- [ ] Promote-from-waitlist gets the waiver gate too (found by the T19
+- [x] Promote-from-waitlist gets the waiver gate too (found by the T19
       review): waitlist rows carry no waiver state, so a no-waiver
       student who waitlisted online can be promoted with no dialog, and
       an after-start booking can come back already signed in. Enrich the
       waitlist rows with waiverSigned through the roster's batched
       client lookup and gate promote() with the same waiver dialog (a
       third subject flavor whose continuation is the promotion).
+      waitlistFor's ONE briefsForIds call (the same one that already
+      filled missing names, widened to every row) now carries
+      waiverSigned and notes, fail-open null on a failed lookup --
+      unknown never blocks a promotion, matching the roster's posture.
 - [ ] Pete: live-verify one alert edit and one yellow edit on the dummy
       client change only their field.
 

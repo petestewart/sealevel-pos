@@ -264,20 +264,6 @@ async function briefsForIds(ids: string[]): Promise<Map<string, ClientBrief>> {
   return out;
 }
 
-/** Name-only view of the same lookup, for the waiting list. Swallows
- *  errors: a list with ids but no names still beats no list at all. */
-async function namesForIds(ids: string[]): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  try {
-    for (const [id, brief] of await briefsForIds(ids)) {
-      if (brief.name) out.set(id, brief.name);
-    }
-  } catch {
-    /* fall through with whatever resolved */
-  }
-  return out;
-}
-
 export async function classRoster(classId: number): Promise<ClassRoster> {
   const [classes, rawEntries] = await Promise.all([
     classesAroundNow(),
@@ -454,14 +440,31 @@ export async function removeClientFromClass(
  *
  * `GET /class/waitlistentries` filtered by class id. The entries carry a
  * `Client` reference that live data may populate thinly (the design doc's
- * stub warning), so any missing name is filled from the same batched
- * client lookup the roster uses.
+ * stub warning), so every row is enriched from the same batched client
+ * lookup the roster uses -- ONE briefsForIds call for the whole list
+ * (T20), which now serves both the missing names AND the waiver state:
+ * a no-waiver student who waitlisted online must not be promotable with
+ * no dialog, and an after-start promotion can come back already signed
+ * in, so the promote tap is the last reliable stop (the T19 mechanism,
+ * found by its review).
  */
 export interface WaitlistRow {
   entryId: number;
   clientId: string;
   name: string;
   requestedAt: string | null;
+  /**
+   * `Liability.IsReleased` from the batched client lookup. Same contract
+   * as the roster's: `false` means the promote tap must stop at the
+   * waiver dialog, `null` means the lookup failed and the row FAILS
+   * OPEN -- unknown must not block a promotion, the risk being managed
+   * is reflex promotions of known-unsigned students, not outages.
+   */
+  waiverSigned: boolean | null;
+  /** Staff notes, riding the same lookup: the waiver dialog's receipt
+   *  append needs the current notes to append to. Null when none or
+   *  when the lookup failed. */
+  notes: string | null;
 }
 
 export async function waitlistFor(classId: number): Promise<WaitlistRow[]> {
@@ -479,17 +482,38 @@ export async function waitlistFor(classId: number): Promise<WaitlistRow[]> {
             : "",
         name: `${e.Client?.FirstName ?? ""} ${e.Client?.LastName ?? ""}`.trim(),
         requestedAt: e.RequestDateTime ?? null,
+        /* Filled from the batched lookup below; a bare waitlist entry
+         * knows nothing about waivers. */
+        waiverSigned: null,
+        notes: null,
       }),
     );
-  const missing = [
-    ...new Set(rows.filter((r) => !r.name && r.clientId).map((r) => r.clientId)),
-  ];
-  const names = missing.length > 0 ? await namesForIds(missing) : new Map();
-  const named = rows.map((r) =>
-    r.name ? r : { ...r, name: names.get(r.clientId) ?? "(unknown client)" },
-  );
+  /* ONE batched lookup for every id on the list (it used to run only for
+   * nameless rows, and kept only names). A failed lookup fails OPEN:
+   * names fall back, waiverSigned stays null on every row, and the list
+   * still renders -- same posture as the roster's. */
+  const ids = [...new Set(rows.map((r) => r.clientId).filter((id) => id))];
+  let briefs = new Map<string, ClientBrief>();
+  if (ids.length > 0) {
+    try {
+      briefs = await briefsForIds(ids);
+    } catch {
+      /* fall through with the un-enriched rows */
+    }
+  }
+  const enriched = rows.map((r): WaitlistRow => {
+    const brief = briefs.get(r.clientId);
+    return {
+      ...r,
+      name: r.name || brief?.name || "(unknown client)",
+      /* A client the successful lookup did not return stays null:
+       * unknown is not "unsigned", and null fails open. */
+      waiverSigned: brief ? brief.waiverSigned : null,
+      notes: brief?.notes ?? null,
+    };
+  });
   /** Queue order: first asked, first offered the spot. */
-  return named.sort((a, b) =>
+  return enriched.sort((a, b) =>
     (a.requestedAt ?? "").localeCompare(b.requestedAt ?? ""),
   );
 }
