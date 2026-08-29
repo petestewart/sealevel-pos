@@ -22,18 +22,49 @@ import { mindbody, mindbodyEnv } from "./mindbody";
  */
 let cached: { siteId: string; text: string; sha256: string } | null = null;
 
+/**
+ * The stored waiver is HTML (the sandbox's arrived wrapped in a <div>,
+ * and Mindbody's own dialog renders it), so the display copy is derived
+ * by stripping markup to plain text: block-ish closers and <br> become
+ * newlines, every other tag drops, the basic entities decode, and
+ * whitespace collapses. Deliberately NOT rendered as HTML: the waiver
+ * body is staff-editable remote content, and a counter app has no
+ * business executing it.
+ *
+ * The sha256 stays over the RAW text exactly as Mindbody served it. The
+ * raw text is the canonical artifact the receipt attests to; this
+ * transform is deterministic code in the repo, so what was displayed can
+ * always be re-derived from the hashed original.
+ */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<\s*(br|\/p|\/div|\/li|\/h[1-6]|\/tr)\s*\/?\s*>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n\n")
+    .trim();
+}
+
 export async function getWaiver(): Promise<{ text: string; sha256: string }> {
   const siteId = mindbodyEnv().siteId;
   if (!cached || cached.siteId !== siteId) {
     const body = await mindbody("/site/liabilitywaiver");
-    const text = body?.LiabilityWaiver;
-    if (typeof text !== "string" || !text.trim()) {
+    const raw = body?.LiabilityWaiver;
+    if (typeof raw !== "string" || !raw.trim()) {
       throw new Error("Mindbody returned no waiver text.");
     }
+    const text = stripHtml(raw);
+    if (!text) throw new Error("Mindbody returned no waiver text.");
     cached = {
       siteId,
       text,
-      sha256: createHash("sha256").update(text, "utf8").digest("hex"),
+      sha256: createHash("sha256").update(raw, "utf8").digest("hex"),
     };
   }
   return { text: cached.text, sha256: cached.sha256 };

@@ -3369,8 +3369,13 @@ function FrontDesk() {
             aria-label="Liability waiver needed"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="modal-title">
-              {waiverPrompt.name} has not signed the waiver
+            {/* Titled the way Mindbody's own dialog is: the document name
+                on top, the person as the line beneath it. */}
+            <p className="modal-title">Liability Waiver</p>
+            <p className="muted modal-who">
+              {waiverText
+                ? `For ${waiverPrompt.name} to read and agree to.`
+                : `${waiverPrompt.name} has not signed the waiver.`}
             </p>
             {waiverText ? (
               <>

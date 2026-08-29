@@ -1346,6 +1346,12 @@ button.pass-opt:disabled {
  * STUDENT reads, capped so the dialog still fits an iPad in landscape
  * with the consent line and buttons visible below it. Tokens only, both
  * palettes; pre-wrap keeps the paragraph breaks Mindbody stored. */
+/* The name line under the waiver dialog's title. */
+.modal-who {
+  margin: -4px 0 12px;
+  font-size: 16px;
+}
+
 .waiver-scroll {
   margin: 0 0 12px;
   padding: 14px 16px;
