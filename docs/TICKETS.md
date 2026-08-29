@@ -675,6 +675,27 @@ POST /api/price-cart. Spec findings worth keeping:
 - The payment-Metadata key list (sale.yml:3934) is truncated mid-sentence
   in the vendored file itself (ends "* '"), so at least one payment type
   is missing from our copy of the spec. Refresh from upstream before T24.
+  DONE (T22 review, 2026-08-29): cloned api-evangelist/mindbody and
+  compared. The upstream per-tag files, the monolithic
+  `_original/mindbody-public-api-v6-openapi-original.yml`, and even the
+  extracted `json-schema/public-api-v6-checkout-payment-info-schema.json`
+  all end the list at exactly the same dangling "* " -- the truncation is
+  in Mindbody's published doc string, not in our vendoring, so no refresh
+  helps (paths and schemas are otherwise deep-equal to ours; only the
+  `openapi:` header, info titles, and YAML key order differ, so nothing
+  was re-vendored). What the list DOES establish, for T24: CreditCard
+  keys amount, creditCardNumber, expMonth, expYear, cvv, billingName,
+  billingAddress, billingCity, billingState, billingPostalCode, saveInfo,
+  cardId; StoredCard - amount, lastFour; DirectDebit - amount;
+  EncryptedTrackData / TrackData - amount, trackData; DebitAccount -
+  amount; Custom - amount, id; Comp - amount. The Type enumeration is cut
+  the same way (mid-DebitAccount), so at least one payment type after
+  Comp (Cash and/or GiftCard, per /site/paymenttypes) exists with keys
+  the spec cannot supply. T24's Cash path must be established with a
+  `Test: true` call, not read from this spec. Note also the documented
+  key casing is lowercase ("amount"), while our Comp stub sends
+  `Amount`; Mindbody's binder has accepted PascalCase elsewhere, but the
+  first sandbox Test run should confirm the stub is honored.
 - There is no /sale/paymenttypes; the endpoint is /site/paymenttypes
   (site.yml:508), same trap as /site/categories.
 - A prod dry run suppresses the Test POST too (every POST outside
