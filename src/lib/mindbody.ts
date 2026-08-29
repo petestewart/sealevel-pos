@@ -113,6 +113,23 @@ export async function staffToken(env = mindbodyEnv()): Promise<string> {
   const body = await res.json().catch(() => ({}));
   const token = body?.AccessToken;
   if (!res.ok || typeof token !== "string") {
+    /**
+     * Seen live (2026-08-29): the sandbox refused to ISSUE tokens (403
+     * "Staff identity authentication failed", for every credential set)
+     * while still ACCEPTING tokens issued earlier. Our hourly refresh is
+     * a guess at a lifetime Mindbody does not document, so an expired-
+     * by-our-clock token is not known bad: keep riding it and let
+     * Mindbody itself be the judge. A genuine rejection comes back as
+     * 401 on the actual call, which forgets the token and reissues --
+     * and if issuing is still down, THAT failure surfaces properly.
+     */
+    if (cachedToken && cachedToken.siteId === env.siteId) {
+      console.warn(
+        `[token] reissue failed (HTTP ${res.status}); riding the cached token until Mindbody rejects it`,
+      );
+      cachedToken.issuedAt = Date.now(); /* back off: retry issue in an hour, not per call */
+      return cachedToken.value;
+    }
     throw new Error(
       `Mindbody usertoken/issue failed: HTTP ${res.status} ${JSON.stringify(body).slice(0, 200)}`,
     );
