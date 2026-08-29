@@ -824,6 +824,36 @@ not have gone through" and invites no retry. Spec findings:
   visible Cash/Custom keys takes a tendered amount, so it is validated
   server-side (refused when short of the total) and never forwarded.
 
+Money-review pass (2026-08-29), on top of the split-disarm review:
+
+- **The 401 token-refresh retry in mindbody() is argued safe for money
+  writes and kept**: 401 is the authentication gate refusing the request
+  BEFORE endpoint logic runs, so the first POST provably did not process
+  and one re-POST with a fresh token cannot double-charge. What was
+  wrong around it is fixed: the retry now lands in the call log as its
+  own entry, and a failed retry throws the RETRY's status and message
+  instead of the original 401's.
+- **A 500-class answer to a money write is now `ambiguous: true`**, not
+  "nothing was charged": a server that errored mid-request may have
+  processed the charge first. Only 4xx refusals and pre-write failures
+  report as definite. Thrown Mindbody errors carry the HTTP status
+  (mindbodyHttpStatus) to make the distinction possible.
+- **Rule 1 of the $10 minimum is now enforced server-side**: a
+  storedcard checkout is refused (409, with the live balance) whenever
+  the re-read balance covers the total, and the UI greys the card with
+  "Credit covers this". Besides being the design doc's rule ("credit is
+  THE method, the card is not offered"), this is what closes the split
+  failure's re-buy loop for good: after the $10 credit purchase, the
+  balance covers any sub-$10 total, so re-selecting the card cannot buy
+  a second $10 even if the browser state was lost.
+- Short-tender check no longer exempts an explicit $0; the paid receipt
+  is no longer wiped by its own cart-clear; comp's "Tap to unselect"
+  actually unselects (the completed hold's click is swallowed); Back is
+  disabled mid-charge so the outcome panel cannot be unmounted while
+  money moves; the pricing-area suppression notice no longer says "Dry
+  run" for a write-guard suppression; keypad/chip/comp tap targets
+  raised to the 64px floor.
+
 ## T25. The unpaid row sells the pass (PLAN 2.4)
 
 - [ ] An unpaid booking's flow becomes: pick the pass to sell (sensible

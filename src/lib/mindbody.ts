@@ -231,6 +231,34 @@ function bodyClientId(body: unknown): string | null {
   return id === undefined || id === null ? null : String(id);
 }
 
+/**
+ * The HTTP status Mindbody answered a failed call with, when the failure
+ * WAS an answer (thrown by mindbody() below), else null. Money routes need
+ * the distinction inside the 5xx range: a 4xx is a refusal that provably
+ * did not process, while a 500-class answer to a write may have processed
+ * before failing and must be reported as ambiguous, never as "nothing was
+ * charged".
+ */
+export function mindbodyHttpStatus(err: unknown): number | null {
+  const status = (err as { httpStatus?: unknown } | null)?.httpStatus;
+  return typeof status === "number" ? status : null;
+}
+
+/** Build the teacher-facing error for a non-ok Mindbody answer, tagging it
+ *  with the HTTP status for mindbodyHttpStatus(). The thrown message
+ *  reaches teacher-facing surfaces, so it carries Mindbody's human-readable
+ *  reason and nothing else; transport detail lives in the call log. */
+function mindbodyHttpError(body: unknown, status: number): Error {
+  const message =
+    (body as any)?.Error?.Message ??
+    (typeof body === "string" ? body.slice(0, 200) : "");
+  const err = new Error(
+    message || `Mindbody did not accept the request (HTTP ${status}).`,
+  );
+  (err as Error & { httpStatus: number }).httpStatus = status;
+  return err;
+}
+
 export async function mindbody<T = any>(
   path: string,
   opts: MindbodyCallOptions = {},
@@ -311,28 +339,53 @@ export async function mindbody<T = any>(
      * A rejected token is the one failure worth retrying automatically:
      * it is invisible to the teacher and costs one extra round trip,
      * where the alternative is a check-in that mysteriously fails once.
+     *
+     * Safe for writes too, money writes included: 401 means the request
+     * was refused at the authentication gate, BEFORE any endpoint logic
+     * ran, so the first attempt provably did not process (a server that
+     * charged a card and then answered 401 does not exist). The retry is
+     * one fresh attempt with a fresh token; if IT dies in transport, the
+     * timeout/abort propagates and the money routes flag the outcome
+     * ambiguous exactly as they would for a first attempt.
      */
     if (res.status === 401 && !opts.anonymous) {
       forgetToken();
       const retryHeaders = { ...headers, Authorization: await staffToken(env) };
+      const retryStarted = Date.now();
       const retry = await fetch(`${env.baseUrl}${path}`, {
         method,
         headers: retryHeaders,
         body: opts.body ? JSON.stringify(opts.body) : undefined,
         signal: AbortSignal.timeout(20_000),
       });
-      if (retry.ok) return (await retry.json()) as T;
+      /* The retry is a real call Mindbody received: it goes in the call
+       * log like any other, and its OWN status/body -- not the original
+       * 401's -- is what the caller hears about. */
+      const retryText = await retry.text();
+      record({
+        method,
+        path,
+        status: retry.status,
+        ms: Date.now() - retryStarted,
+        outcome: "sent",
+        requestBody: opts.body ?? null,
+        responseBody: retryText,
+      });
+      let retryBody: any = retryText;
+      try {
+        retryBody = JSON.parse(retryText);
+      } catch {
+        /* non-JSON; keep the text, same as the main path */
+      }
+      if (retry.ok) return retryBody as T;
+      throw mindbodyHttpError(retryBody, retry.status);
     }
     /* The thrown message reaches teacher-facing surfaces (context panel
      * lines, row messages), so it carries Mindbody's human-readable reason
      * and nothing else. The transport detail -- method, full path, status,
      * both bodies -- is already in the call log for the dev drawer; a
      * teacher must not be shown URL-encoded query strings. */
-    const message =
-      body?.Error?.Message ?? (typeof body === "string" ? body.slice(0, 200) : "");
-    throw new Error(
-      message || `Mindbody did not accept the request (HTTP ${res.status}).`,
-    );
+    throw mindbodyHttpError(body, res.status);
   }
   return body as T;
 }

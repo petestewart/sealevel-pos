@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
-import { isDryRun } from "@/lib/mindbody";
+import { isDryRun, mindbodyHttpStatus } from "@/lib/mindbody";
 
 import {
   CARD_MINIMUM_USD,
@@ -54,16 +54,20 @@ export const dynamic = "force-dynamic";
  *                                    not invite a retry.
  */
 
-/** Was this thrown by the transport (outcome unknown) rather than by
- *  Mindbody answering (outcome known)? mindbody() surfaces an HTTP error
- *  as a plain Error carrying Mindbody's message; a timeout or connection
- *  failure comes out of fetch as a DOMException (TimeoutError/AbortError)
- *  or a TypeError. For a money write the distinction is everything: a
- *  refusal is safe to retry, an unanswered POST is not. */
+/** Is the outcome of a money write UNKNOWN after this error? Two shapes
+ *  qualify: the transport died (timeout/reset: fetch throws a DOMException
+ *  named TimeoutError/AbortError, or a TypeError) so Mindbody may never
+ *  have answered; or Mindbody answered with a 500-class status, which is
+ *  the server failing MID-request -- possibly after the charge processed
+ *  -- not refusing it. Only a definite refusal (a 4xx answer) may be
+ *  reported as "nothing was charged"; everything else must not invite a
+ *  retry. */
 function isAmbiguous(err: unknown): boolean {
   if (err instanceof TypeError) return true;
   const name = (err as { name?: unknown })?.name;
-  return name === "TimeoutError" || name === "AbortError";
+  if (name === "TimeoutError" || name === "AbortError") return true;
+  const status = mindbodyHttpStatus(err);
+  return status !== null && status >= 500;
 }
 
 function errMessage(err: unknown): string {
@@ -161,10 +165,13 @@ export async function POST(request: Request) {
   }
   const total = priced.grandTotal;
 
+  /* A PRESENT tendered amount below the total is a short tender, zero
+   * included ("" was never sent; an explicit 0 is an entry). Display-only
+   * or not, the server refuses to record a cash sale the drawer cannot
+   * cover. */
   if (
     typeof cashTendered === "number" &&
     method === "cash" &&
-    cashTendered > 0 &&
     cashTendered < total
   ) {
     return NextResponse.json(
@@ -256,6 +263,28 @@ export async function POST(request: Request) {
         {
           error: `The card on file (ending ${card.lastFour}) is expired.`,
           stage: "method",
+        },
+        { status: 409 },
+      );
+    }
+
+    /* Rule 1 of the $10 minimum (design doc: "not a default the teacher
+     * can talk themselves out of"): when account credit covers the total,
+     * credit IS the method and the card is not offered. Enforced here,
+     * not just greyed in the UI, because this is also what makes the
+     * under-$10 split failure un-re-runnable: after the $10 credit
+     * purchase, the balance covers any sub-$10 total, so a second card
+     * attempt -- and its second credit purchase -- is refused with the
+     * balance that must be spent instead. */
+    if (profile.balance !== null && profile.balance >= total) {
+      return NextResponse.json(
+        {
+          error:
+            `Account credit is ${profile.balance.toFixed(2)} and covers the ` +
+            `${total.toFixed(2)} total. Credit is the method for this sale; ` +
+            "the card is not offered when credit covers it. Nothing was charged.",
+          stage: "method",
+          creditBalance: profile.balance,
         },
         { status: 409 },
       );

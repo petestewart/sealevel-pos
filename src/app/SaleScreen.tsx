@@ -298,6 +298,14 @@ function PaymentPanel(props: {
    *  the dangerous one (buy it again) is not. */
   const [freshBalance, setFreshBalance] = useState<number | null>(null);
 
+  const card = cardLookup?.card ?? null;
+  const balance = freshBalance ?? client?.balance ?? null;
+  /* The attach snapshot (or a split failure's fresher report) gates the
+   * button; /api/checkout re-reads the balance server-side and never
+   * trusts this number. */
+  const balanceCoversTotal =
+    balance !== null && total !== null && balance >= total;
+
   /* A detach invalidates the client-bound methods and the balance. */
   const clientId = client?.id ?? null;
   useEffect(() => {
@@ -307,10 +315,23 @@ function PaymentPanel(props: {
     }
   }, [clientId]);
 
-  /* A cart edit retires a stale receipt; warnings stay until dismissed. */
+  /* A cart EDIT retires a stale receipt; warnings stay until dismissed.
+   * The empty cart is skipped deliberately: a successful charge clears the
+   * cart in the same commit that sets the receipt, and this effect firing
+   * on that clear would wipe the receipt before the teacher saw it. */
   useEffect(() => {
+    if (cart.length === 0) return;
     setResult((r) => (r?.kind === "paid" ? null : r));
   }, [cart]);
+
+  /* Rule 1: when credit covers the total, the card is not offered -- so a
+   * stored-card selection made before the balance (or a fresh total) was
+   * known cannot stay armed. The server refuses it too. */
+  useEffect(() => {
+    if (balanceCoversTotal) {
+      setMethod((m) => (m === "storedcard" ? null : m));
+    }
+  }, [balanceCoversTotal]);
 
   useEffect(() => {
     return () => {
@@ -321,7 +342,6 @@ function PaymentPanel(props: {
   /* Method availability. Unavailable methods render greyed WITH the
    * reason, never hidden (PLAN 2.2: "account credit ($12) greyed out
    * beats a failure"). */
-  const card = cardLookup?.card ?? null;
   const cardReason = !client
     ? "Attach a client"
     : cardLookup?.loading
@@ -333,12 +353,14 @@ function PaymentPanel(props: {
           : card.expired
             ? `Card ...${card.lastFour} is expired`
             : null;
+  const cardReasonFinal =
+    cardReason ??
+    /* Rule 1 of the $10 minimum: when credit covers the total, credit IS
+     * the method and the card is not offered. /api/checkout refuses it
+     * server-side too; this grey-out is the honest face of that. */
+    (balanceCoversTotal ? `Credit covers this (${money(balance as number)})` : null);
   const cardDetail = card && !card.expired ? `Card ...${card.lastFour}` : null;
 
-  const balance = freshBalance ?? client?.balance ?? null;
-  /* The attach snapshot (or a split failure's fresher report) gates the
-   * button; /api/checkout re-reads the balance server-side and never
-   * trusts this number. */
   const creditReason = !client
     ? "Attach a client"
     : balance === null || balance <= 0
@@ -409,7 +431,20 @@ function PaymentPanel(props: {
       } catch {
         /* fall through to the status-code handling below */
       }
-      if (res.ok && body?.ok === true) {
+      /* Any answer carrying the live balance refreshes the credit gate:
+       * a method-stage refusal ("credit covers this") and the split
+       * failure both name the number the next decision must be made on. */
+      if (typeof body?.creditBalance === "number") {
+        setFreshBalance(body.creditBalance);
+      }
+      if (res.ok && body === null) {
+        /* A 200 whose body could not be read: the charge may well have
+         * completed, so this must NOT render as "not charged". */
+        setResult({
+          kind: "ambiguous",
+          message: "The server answered but the outcome could not be read.",
+        });
+      } else if (res.ok && body?.ok === true) {
         const methodName =
           method === "storedcard"
             ? `stored card${card ? ` ...${card.lastFour}` : ""}`
@@ -443,9 +478,6 @@ function PaymentPanel(props: {
          * retry is spending the credit that now exists, never re-buying
          * it, so there is no retry affordance on the credit step. */
         setMethod(null);
-        if (typeof body?.creditBalance === "number") {
-          setFreshBalance(body.creditBalance);
-        }
         setResult({
           kind: "split",
           message:
@@ -485,11 +517,16 @@ function PaymentPanel(props: {
   };
 
   /* Comp arms on a HOLD, not a tap: it hands goods over for nothing, so
-   * it cannot sit where a fat finger lands. */
+   * it cannot sit where a fat finger lands. Unselecting is a plain tap
+   * (the click handler below); the ref swallows the click the browser
+   * fires at the END of a completed hold so arming and disarming cannot
+   * happen in the same gesture. */
+  const compHeld = useRef(false);
   const compHoldStart = () => {
     if (compTimer.current) clearTimeout(compTimer.current);
     compTimer.current = setTimeout(() => {
       compTimer.current = null;
+      compHeld.current = true;
       pickMethod("comp");
     }, COMP_HOLD_MS);
   };
@@ -498,6 +535,20 @@ function PaymentPanel(props: {
       clearTimeout(compTimer.current);
       compTimer.current = null;
     }
+  };
+  /* A pointer that leaves or is cancelled will never produce the click,
+   * so the swallow flag must not survive it and eat the NEXT tap. */
+  const compHoldAbort = () => {
+    compHoldEnd();
+    compHeld.current = false;
+  };
+  const compClick = () => {
+    if (compHeld.current) {
+      compHeld.current = false;
+      return;
+    }
+    /* A bare tap never ARMS comp; it only disarms an armed one. */
+    if (method === "comp") pickMethod("comp");
   };
 
   const keypadTap = (key: string) => {
@@ -514,7 +565,7 @@ function PaymentPanel(props: {
       <div className="methods" aria-label="Payment methods">
         <button
           className={method === "storedcard" ? "method on" : "method"}
-          disabled={cardReason !== null || charging}
+          disabled={cardReasonFinal !== null || charging}
           onClick={() => pickMethod("storedcard")}
           aria-pressed={method === "storedcard"}
         >
@@ -522,7 +573,9 @@ function PaymentPanel(props: {
             <CardIcon />
           </span>
           Stored card
-          <span className="method-why">{cardReason ?? cardDetail ?? ""}</span>
+          <span className="method-why">
+            {cardReasonFinal ?? cardDetail ?? ""}
+          </span>
         </button>
         <button
           className={method === "credit" ? "method on" : "method"}
@@ -557,8 +610,9 @@ function PaymentPanel(props: {
         disabled={charging}
         onPointerDown={compHoldStart}
         onPointerUp={compHoldEnd}
-        onPointerLeave={compHoldEnd}
-        onPointerCancel={compHoldEnd}
+        onPointerLeave={compHoldAbort}
+        onPointerCancel={compHoldAbort}
+        onClick={compClick}
         onContextMenu={(e) => e.preventDefault()}
         aria-pressed={method === "comp"}
       >
@@ -950,12 +1004,15 @@ export default function SaleScreen(props: {
 
         <div className="sale-top">
           <h2 className="sale-title">Sell</h2>
-          {/* The deliberate Back always works, mid-pricing included (the
-              cart and its in-flight answer survive: the component stays
-              mounted). Only the ambient Escape waits for a total. */}
+          {/* The deliberate Back works mid-pricing (the cart and its
+              in-flight answer survive: the component stays mounted) but
+              NOT mid-charge: closing would unmount the payment panel and
+              its outcome -- the split-failure warning included -- while
+              money is moving. */}
           <button
             className="class-change sale-back"
             onClick={onClose}
+            disabled={charging}
             aria-label="Back to the roster"
           >
             <span className="btn-ico">
@@ -1064,8 +1121,9 @@ export default function SaleScreen(props: {
                   </div>
                 ) : totals?.suppressed ? (
                   <div className="pass-note t-suppressed">
-                    Dry run: Mindbody did not price this cart, so there is no
-                    total to show. Nothing was written.
+                    Suppressed (dry run or write guard): Mindbody did not
+                    price this cart, so there is no total to show. Nothing
+                    was written.
                   </div>
                 ) : totals ? (
                   <>
