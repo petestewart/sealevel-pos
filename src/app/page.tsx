@@ -1481,6 +1481,21 @@ function FrontDesk() {
       setFound((rows) =>
         rows.map((r) => (r.id === clientId ? { ...r, ...patch } : r)),
       );
+      /* Waitlist rows carry notes too, and theirs feed the waiver
+       * receipt append (agreeWaiver posts the row's notes for the
+       * server to append to): a notes edit that skipped them would be
+       * clobbered by the very next recorded agreement for that person.
+       * Same cross-surface reasoning as agreeWaiver's own waitlist
+       * patch. Alerts are not on the row, so only Notes applies. */
+      if (field === "Notes") {
+        setWaitlist((rows) =>
+          rows === null
+            ? rows
+            : rows.map((r) =>
+                r.clientId === clientId ? { ...r, notes: trimmed } : r,
+              ),
+        );
+      }
       setInfoView((v) => (v ? { ...v, ...patch } : v));
       setInfoEditing(null);
     } catch (err) {
