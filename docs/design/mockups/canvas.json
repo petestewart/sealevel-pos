@@ -1,0 +1,15 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1180, "h": 1000, "title": "Roster, light" },
+    { "file": "DarkRoster.dc.html", "x": 0, "y": 1160, "w": 1180, "h": 660, "title": "Roster, dark" },
+    { "file": "ChangePass.dc.html", "x": 1300, "y": 0, "w": 760, "h": 560, "title": "Change which pass pays" },
+    { "file": "Dialogs.dc.html", "x": 1300, "y": 700, "w": 1040, "h": 580, "title": "Confirm dialogs" },
+    { "file": "Payment.dc.html", "x": 0, "y": 1980, "w": 1280, "h": 880, "title": "Payment, Phase 2 concept" }
+  ],
+  "annotations": [
+    { "id": "direction", "x": -360, "y": 0, "w": 260, "text": "Warm accent replaces the blue; gold is status only (M chip, counts, 1 left); red stays destructive. The accent color is your call: use the Accent chip above the light roster to try terracotta, deep teal, or cafe brown." },
+    { "id": "what-stays", "x": -360, "y": 360, "w": 260, "text": "Deliberately kept: aligned columns (no cards stacking info vertically), one filled action per row (48px buttons inside the 84px row target, 64px dialog actions), the 16px floor, the mode banner, and the pessimistic spinner. Full reasoning in docs/design/ui-refactor-recommendations.md." },
+    { "id": "phase2", "x": 1380, "y": 1980, "w": 260, "text": "Payment screen is a Phase 2 concept only: nothing here is scheduled. Stored-card amount is never typed; the button restates the total; the keypad belongs to cash." }
+  ],
+  "launch": { "view": "canvas" }
+}

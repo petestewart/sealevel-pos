@@ -57,50 +57,206 @@ button {
   padding: 16px;
 }
 
-.classbar {
+/* --- Class header ---------------------------------------------------
+ * ONE row (it replaced the horizontal class bar, T15): the current class
+ * on the left -- date and time over name and teacher, teacher-facing so
+ * 16px+ -- with the labelled "Change class" button next to it, and the
+ * three counters compacted on the right so the whole thing fits iPad
+ * landscape. Wraps on narrower screens rather than clipping. */
+
+.class-header {
   display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding-bottom: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 4px;
 }
 
-.classbar button {
+.class-current {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.class-when {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.class-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Quiet, but a real labelled button: switching classes is deliberate and
+ * must be findable, not an easter egg on the title. Full 64px. */
+.class-change {
   flex: 0 0 auto;
   min-height: 64px;
-  padding: 10px 16px;
+  padding: 0 20px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
   color: var(--ink);
-  text-align: left;
-}
-
-.classbar button[aria-pressed="true"] {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-.classbar .when {
-  display: block;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
 }
 
-.classbar .who {
+.class-change:active {
+  background: var(--action-bg);
+}
+
+/* Counters for the selected class: three numbers a teacher reads at arm's
+ * length, each a button opening the list behind it. Compact (number over
+ * label) but never under the 64px tap floor. */
+
+.counters {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.counter {
+  position: relative;
+  min-height: 64px;
+  min-width: 96px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  text-align: left;
+}
+
+/* The signed-up counter is a stat, not a control: same card, no pressed
+ * state, no pointer affordance. */
+.counter.counter-stat:active {
+  background: var(--surface);
+}
+
+.counter:active {
+  background: var(--action-bg);
+}
+
+.counter-num {
   display: block;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.counter-cap {
+  font-size: 16px;
+  font-weight: 400;
   color: var(--muted);
-  font-size: 14px;
+}
+
+.counter-label {
+  display: block;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Roster order: ONE quiet 44px icon at the right end of the column-header
+ * row (it superseded the pill bar, which crowded the roster it orders),
+ * opening an anchored menu with the active order checked. Same 44px
+ * standing as the undo control: an occasional deliberate tap, recorded as
+ * the deliberate exception to the 64px floor. */
+.head-actions {
+  position: relative;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sort-dd {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 25;
+  min-width: 240px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
+  display: grid;
+  gap: 2px;
+}
+
+/* Sort options reuse the dropdown-option idiom minus the fact columns. */
+.sort-dd .pass-opt {
+  grid-template-columns: 20px minmax(0, 1fr);
+}
+
+/* The search input plus its Search button (T16: search fires on submit,
+ * never while typing, so the button is the visible half of "press
+ * Enter"). */
+.search-bar {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.search-go {
+  flex: 0 0 auto;
+  min-height: 64px;
+  padding: 0 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.search-go:active {
+  background: var(--action-bg);
+}
+
+/* The quiet minimum-length message under the search bar. */
+.search-quiet {
+  margin: -4px 0 12px;
+  font-size: 16px;
+  color: var(--muted);
 }
 
 .search {
   width: 100%;
   min-height: 64px;
-  margin: 12px 0;
-  padding: 0 16px;
+  padding: 0 64px 0 16px; /* room for the clear button */
   font-size: 20px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
+  color: var(--ink);
+}
+
+/* Clears the query. Same quiet treatment as the row's check-out X; a full
+ * 64px tap target sitting inside the input's right edge. */
+.search-clear {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--muted);
+}
+
+.search-clear:active {
   color: var(--ink);
 }
 
@@ -129,6 +285,472 @@ button {
   opacity: 1;
 }
 
+/* --- Roster grid ----------------------------------------------------
+ * The roster as a table, like Mindbody's own sign-in screen. ONE template,
+ * shared by the header and every row, is what makes the payment, expiry,
+ * remaining and balance columns line up down the list: fr columns resolve
+ * identically because every row is the same width, and the fixed columns
+ * are fixed. iPad landscape is the target width; the payment cell
+ * truncates with an ellipsis rather than wrapping the grid.
+ */
+:root {
+  /* Five columns since T15: name | icon slots | payment (two-line) |
+   * balance | actions. The icon column is FIXED width (it must resolve
+   * identically on every row -- each row is its own grid, so only fixed
+   * and fr values line up across rows), matching .cell-icons' slots:
+   * 74px = 30 (M chip) + 44 (info icon) since T20 folded the separate
+   * alert and notes icons into one. */
+  /* The balance column (7em) fits a five-figure negative (-$12,345.67)
+   * at 16px tabular figures without ellipsizing. */
+  --roster-cols: minmax(0, 2fr) 74px minmax(0, 1.8fr) 7em 208px;
+}
+
+.roster-head,
+.rrow {
+  display: grid;
+  grid-template-columns: var(--roster-cols);
+  gap: 12px;
+  align-items: center;
+}
+
+.roster-head {
+  margin-top: 4px;
+  padding: 0 16px 4px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.rrow {
+  /* Anchors the payment-change dropdown (see .pass-dd). */
+  position: relative;
+  min-height: 72px;
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+/* Every OTHER search row while one row's booking is in flight: the
+ * single-flight lock makes them inert, this makes the lock visible. */
+.rrow.row-dim {
+  opacity: 0.4;
+  transition: opacity 120ms ease-out;
+}
+
+/* The row body is deliberately NOT a tap target (T16 reversal: row-tap
+ * check-in caused accidental check-ins in live use). The chip in the
+ * actions cell is the one check-in/add trigger; the row keeps the
+ * default cursor. */
+
+/* "no waiver" pill riding a walk-in result's name line: same stop pairing
+ * as the roster's blocked chip, sized to the line. Tokens, both palettes. */
+.mini-stop {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: var(--stop-bg);
+  color: var(--stop);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.cell-name {
+  min-width: 0;
+}
+
+/* The roster's fixed icon block between the name and the payment: two
+ * slots in a set order (M | info), each the same width on every row and
+ * empty when the row lacks the marker, so every marker aligns as its own
+ * column down the list. 74px total = 30 + 44, and the --roster-cols
+ * column must stay equal to it. One info slot since T20: the alert and
+ * notes icons folded into the single info icon. */
+.cell-icons {
+  display: grid;
+  grid-template-columns: 30px 44px;
+  align-items: center;
+  justify-items: center;
+}
+
+.icon-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Gap 2px: the name-line icons cluster right after the name instead of
+ * spreading. The 8px between the name and the first badge comes back via
+ * the name's own margin; the icons' 44px hit boxes then pull together
+ * with negative margins below. Walk-in rows only, since the roster moved
+ * its markers into .cell-icons. */
+.name-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.name-text {
+  min-width: 0;
+  margin-right: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* The muted one-liner under the name: the history line, or a status
+ * message (in-flight, failed, gate) which outranks it. */
+.subline {
+  display: block;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.subline.stop-text {
+  color: var(--stop);
+}
+
+/* Small square target for the alert / notes / Mindbody-link icons. 44px
+ * like the undo control: occasional, deliberate taps, not the thing hit
+ * at speed with a queue. */
+.row-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.row-icon:active {
+  background: var(--line);
+}
+
+.row-icon:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The info icon on a client with no alerts and no notes yet: dimmed but
+ * still visible and tappable, because adding the first one starts here.
+ * Bright is the plain row-icon (--muted at full opacity), deliberately
+ * not the stop colour: since T20 an alert is information, not a gate.
+ * Opacity over a lighter token so it tracks --muted in both palettes. */
+.row-icon.dim {
+  opacity: 0.45;
+}
+
+/* The payment cell: the ONE pass paying for this visit, truncating rather
+ * than wrapping, plus the quiet change chevron. The dropdown anchors to
+ * the ROW (.rrow is position: relative), not this cell: the cell sits in
+ * the right half of the grid, and a dropdown wide enough to never
+ * ellipsize a pass name would overflow the viewport's right edge if it
+ * opened leftward from here. */
+.cell-pay {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* The chevron pins to the column's RIGHT edge (the pass name truncates on
+ * the left of it), so the icons line up vertically down the roster
+ * instead of trailing each name at a different x. */
+.cell-pay .pass-toggle {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+/* The two-line block in the payment cell: pass name over its facts. The
+ * chevron sits OUTSIDE this stack (flex sibling, margin-left auto), so it
+ * stays pinned right and vertically centered against both lines. */
+.pay-stack {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pay-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+}
+
+/* The facts sub-line under the pass name: "3 remaining, exp 3/2/27".
+ * DELIBERATE EXCEPTION to the 16px floor (T15, Pete's call, recorded on
+ * the ticket): 14px muted secondary glance data, same standing as the
+ * compact sort bar. The "1 remaining" warn pill renders inline here at
+ * this size and stays the loud thing on the line. */
+.pass-facts {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* An unpaid booking's payment cell, same amber the unpaid chip uses. */
+.pay-name.none {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* Right-aligned tabular figures so the decimal points line up down the
+ * list. No ellipsis: the column is sized for a five-figure negative, so
+ * with fixed-width digits it cannot overflow; an absurd value would clip
+ * into the row padding rather than render "...". */
+.cell-bal {
+  font-size: 16px;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Money owed renders in the stop colour; credit and zero do not shout. */
+.cell-bal.neg {
+  color: var(--stop);
+  font-weight: 600;
+}
+
+/* Fixed-width actions cell so the chips sit in one column whether or not
+ * a row carries the undo control or the Mindbody link. */
+.cell-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cell-actions .chip {
+  border: 0;
+}
+
+.act-spacer {
+  flex: 0 0 auto;
+  width: 44px;
+}
+
+/* --- Payment-change dropdown ---------------------------------------
+ * Anchored under the payment cell. The scrim is transparent and catches
+ * the outside tap; Escape also closes. Options keep the 64px floor.
+ */
+.pass-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 24;
+  background: transparent;
+}
+
+/* Wide enough that a pass name never ellipsizes (it WRAPS past this, see
+ * .pass-opt-name), and anchored to the row's RIGHT edge: the anchor row
+ * always ends inside the viewport, so opening leftward from its right
+ * edge can never overflow the right side of the screen the way a
+ * left-anchored dropdown under the payment cell could. */
+.pass-dd {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 25;
+  min-width: min(520px, 92vw);
+  max-width: min(520px, 92vw);
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
+  display: grid;
+  gap: 2px;
+}
+
+/* The search modal's pass picker: the same dropdown, but position: fixed
+ * with its coordinates captured from the row at open time. The modal's
+ * results list scrolls (overflow-y on .modal-roster), which would clip a
+ * row-anchored absolute dropdown at the list's edge; a fixed element's
+ * containing block is the viewport, so ancestor overflow cannot clip it.
+ * Its own max-height scrolls a long pass list instead of running off
+ * screen; scrolling the results list closes it (see the modal's ul). */
+.pass-dd.dd-fixed {
+  position: fixed;
+  max-height: min(48vh, 420px);
+  overflow-y: auto;
+}
+
+/* One grid shared by every option row, so the facts line up as COLUMNS
+ * down the list instead of floating at each row's own x: check | name
+ * (flexible width, WRAPPING to a second line rather than ever truncating,
+ * with its optional full-name line under it) | left | expiry. The fact
+ * columns are fixed-width and right-aligned; an empty value keeps its
+ * slot so the alignment holds. Start-aligned so a wrapped name's first
+ * line, the check and the facts all sit on one line; the vertical
+ * padding is what centers a single-line row inside the 64px floor. */
+.pass-opt {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 4.5em 7.5em;
+  align-items: start;
+  gap: 10px;
+  min-height: 64px;
+  padding: 20px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-size: 16px;
+}
+
+button.pass-opt:active {
+  background: var(--action-bg);
+}
+
+button.pass-opt:disabled {
+  cursor: default;
+}
+
+/* The pass paying now: checked at the top, not an action. */
+.pass-opt.current {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.pass-check {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+}
+
+/* Option text stacks: the shortened pass name, and when shortening
+ * dropped anything, the full Mindbody name under it in muted 16px. */
+.pass-opt-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Names WRAP, never truncate: a teacher choosing which pass a class
+ * burns has to read the whole name, so "Monthly Membersh..." is not an
+ * option here. The dropdown is wide (see .pass-dd) so wrapping is rare;
+ * when it happens the row grows and stays tidy via align-items: start. */
+.pass-opt-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pass-opt-full {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* A fact column in the dropdown grid. Muted even on the checked current
+ * row: the facts are the quiet half everywhere. */
+.pass-col {
+  text-align: right;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 400;
+}
+
+.pass-empty {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Suppression and failure notices inside the dropdown. Quiet, and never
+ * dressed as success: a dry-run "write" did not happen. */
+.pass-note {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 16px;
+}
+
+/* The red-alert text block in the info view: information can still look
+ * important, so the stop pairing stays even though the gate is gone. */
+.ctx-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--stop-bg);
+  color: var(--stop);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* The red-alert text as a block in a modal. */
+.modal-alert {
+  display: block;
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+}
+
+/* The yellow-alert text block in the info view: the warn pair, one step
+ * quieter than the red alert's stop treatment. Tokens, both palettes. */
+.modal-warn {
+  display: block;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 16px;
+  font-weight: 600;
+  white-space: pre-wrap;
+}
+
+/* Staff notes in the info view: plain reading text, preserving the line
+ * breaks staff typed into Mindbody. */
+.modal-note {
+  margin: 0 0 12px;
+  font-size: 17px;
+  white-space: pre-wrap;
+}
+
+/* A section heading in the info view, with its edit pencil pinned to the
+ * line's right end. Muted: the labels are wayfinding, the texts below
+ * them are the content. */
+.info-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* An empty info section says so quietly rather than rendering nothing:
+ * three labelled sections always show, so the view reads the same shape
+ * for every client. */
+.info-none {
+  margin: 0 0 12px;
+  font-size: 17px;
+  color: var(--muted);
+}
+
 .row .name {
   flex: 1;
   font-size: 20px;
@@ -137,9 +759,35 @@ button {
 
 .row .detail {
   display: block;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 400;
   color: var(--muted);
+}
+
+/* "1 left" on a real (non-unlimited) pass: the renewal prompt, loud on
+ * purpose. Same warn pairing as the context panel's last-class banner, so
+ * one colour means one thing everywhere. Tokens only, both palettes. */
+.detail-last {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-weight: 700;
+}
+
+/* Membership chip beside the name. Small but never under 16px. */
+.m-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  min-height: 26px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 16px;
+  font-weight: 700;
 }
 
 /* One width for every chip, whatever the label. The chip is the rightmost
@@ -155,7 +803,7 @@ button {
   min-height: 32px;
   padding: 6px 12px;
   border-radius: 999px;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   text-align: center;
 }
@@ -221,6 +869,15 @@ button {
   color: var(--stop);
 }
 
+/* The blocked state: no released waiver on file. Same stop pairing as a
+ * failure, because to a teacher mid-queue it means the same thing: this tap
+ * does not check anyone in. Both halves are tokens, defined in both
+ * palettes. */
+.chip.stop {
+  background: var(--stop-bg);
+  color: var(--stop);
+}
+
 .note {
   margin: 16px 0;
   padding: 12px 16px;
@@ -251,6 +908,13 @@ button {
   }
 }
 
+/* A confirming action that is not destructive: adding someone to the
+ * waiting list gets the action pairing, not the stop pairing. */
+.modal-confirm.go {
+  background: var(--action-bg);
+  color: var(--ink);
+}
+
 /* Mode banner. The counter must never wonder whether a tap was real. */
 .banner {
   margin: 0 0 12px;
@@ -264,6 +928,22 @@ button {
 .banner.live {
   background: var(--warn-bg);
   color: var(--warn);
+}
+
+/* Studio banner: the announcement an admin set (POS_BANNER_TEXT). A
+ * different shape from the mode banner on purpose -- plain surface with an
+ * accent rail instead of a filled status pill -- so a workshop notice can
+ * never read as, or crowd out, the dry-run/live line. Tokens only, both
+ * palettes. */
+.studio-banner {
+  margin: 0 0 12px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--accent);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 17px;
 }
 
 /* --- Dev drawer -----------------------------------------------------
@@ -486,7 +1166,6 @@ button {
   justify-content: center;
   width: 44px;
   height: 44px;
-  margin-left: 12px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -495,13 +1174,6 @@ button {
 
 .undo-btn:active {
   background: var(--line);
-}
-
-/* Same footprint on rows that have no undo, so the chips line up. */
-.undo-spacer {
-  flex: 0 0 auto;
-  width: 44px;
-  margin-left: 12px;
 }
 
 /* Confirmation dialog. */
@@ -526,6 +1198,98 @@ button {
   box-shadow: 0 12px 48px rgb(0 0 0 / 0.4);
 }
 
+/* Counter modals hold a list, so they run wider than a confirmation and
+ * scroll the list rather than the screen. */
+.modal-list {
+  width: min(600px, 100%);
+}
+
+/* The search-results modal: wider still, because its rows reuse the
+ * roster's grid layout. The column template is a sibling of
+ * --roster-cols, redefined in scope so the shared .roster-head/.rrow
+ * rules pick it up unchanged. Four columns since T17 -- name | passes |
+ * balance | action -- because the icon column is gone: the markers moved
+ * onto the name cell's second line, which is what gives the name the
+ * row's whole first line. */
+.modal-search {
+  --roster-cols: minmax(0, 2.4fr) minmax(0, 1.6fr) 7em 64px;
+  position: relative;
+  width: min(860px, 100%);
+}
+
+/* The "+" add button on a search-result row: the .chip.action pairing in
+ * a round filled button, 52px so it stays an easy target with a queue.
+ * Both halves are tokens, both palettes; the spinner replaces the plus
+ * while a booking is in flight. */
+.add-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--action-bg);
+  color: var(--ink);
+}
+
+.add-btn:active {
+  background: var(--line);
+}
+
+.add-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* The one column that can NEVER ellipsize (T17): the name owns its full
+ * first line and wraps on an absurdly long name rather than truncating.
+ * Modal scope only; roster rows keep the ellipsis, where the icon column
+ * caps the name's room. */
+.modal-search .name-text {
+  display: block;
+  margin-right: 0;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* The markers line under the name: M chip, info icon, no-waiver chip, in
+ * that fixed order (the info icon is on every result row since T20). The
+ * mini-stop drops the after-the-name offset it carries on a name line. */
+.marker-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.marker-line .mini-stop {
+  margin-left: 0;
+}
+
+/* Room for the X so a long query's title never runs under it. */
+.modal-search .modal-title {
+  padding-right: 48px;
+}
+
+/* The modal's close-with-no-action X: the row-icon idiom (44px circle),
+ * pinned to the modal's top corner. */
+.modal-x {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  color: var(--ink);
+}
+
+.modal-roster {
+  max-height: min(55vh, 520px);
+  overflow-y: auto;
+  margin-bottom: 20px;
+}
+
 .modal-title {
   margin: 0 0 8px;
   font-size: 22px;
@@ -543,7 +1307,7 @@ button {
 
 .modal-actions button {
   flex: 1;
-  min-height: 56px;
+  min-height: 64px;
   border-radius: 12px;
   font-size: 17px;
   font-weight: 600;
@@ -553,6 +1317,90 @@ button {
   border: 1px solid var(--line);
   background: transparent;
   color: var(--ink);
+}
+
+/* The cancel-booking dialog's middle lines: the entity (who/what pass) is
+ * quiet; the consequence is the ONLY stop-coloured text in the dialog, so
+ * the one loud line is the thing that happens on confirm. */
+.modal-entity {
+  margin: 0 0 8px;
+  font-size: 17px;
+  color: var(--muted);
+}
+
+.modal-consequence {
+  margin: 0 0 16px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--stop);
+}
+
+/* A suppression / failure notice inside a modal (reuses the dropdown's
+ * amber pass-note pairing) needs its own bottom gap there. */
+.modal .modal-note-gap {
+  margin: 0 0 16px;
+}
+
+.modal-actions button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* The notes editor inside the info modal. Same whitespace semantics as
+ * the reading view (a textarea preserves line breaks natively; modal-note
+ * renders them pre-wrap), 17px like the text it edits. */
+.notes-edit {
+  width: 100%;
+  min-height: 160px;
+  margin: 0 0 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 17px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+/* The waiver dialog in its reading state (T18): wider than a plain
+ * confirmation, because a student is reading a legal text on it. */
+.modal-waiver {
+  width: min(680px, 100%);
+}
+
+/* The waiver text itself, in a scrollable region: 16px floor and a
+ * generous line height because this is the one thing in the app a
+ * STUDENT reads, capped so the dialog still fits an iPad in landscape
+ * with the consent line and buttons visible below it. Tokens only, both
+ * palettes; pre-wrap keeps the paragraph breaks Mindbody stored. */
+/* The name line under the waiver dialog's title. */
+.modal-who {
+  margin: -4px 0 12px;
+  font-size: 16px;
+}
+
+.waiver-scroll {
+  margin: 0 0 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  max-height: min(46vh, 440px);
+  overflow-y: auto;
+  font-size: 16px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* An icon inline in a modal action button's label. */
+.btn-ico {
+  display: inline-flex;
+  vertical-align: -3px;
+  margin-right: 8px;
 }
 
 .modal-confirm {

@@ -87,18 +87,23 @@ export function mindbodyEnv(): MindbodyEnv {
  * token is stale mid-transaction.
  */
 const TOKEN_TTL_MS = 60 * 60 * 1000;
-let cachedToken: { value: string; issuedAt: number; siteId: string } | null =
-  null;
+/**
+ * One slot per site, not one slot total: switching MINDBODY_TARGET to
+ * prod and back used to evict the sandbox's still-valid token (a prod
+ * token must never be reused against -99, so the miss forced a reissue
+ * at exactly the moment issuing might be down). Each site keeps its own.
+ */
+const cachedTokens = new Map<
+  string,
+  { value: string; issuedAt: number }
+>();
 
 export async function staffToken(env = mindbodyEnv()): Promise<string> {
   /** Keyed by site: a token issued for the sandbox must never be reused
    *  against production, or vice versa. */
-  if (
-    cachedToken &&
-    cachedToken.siteId === env.siteId &&
-    Date.now() - cachedToken.issuedAt < TOKEN_TTL_MS
-  ) {
-    return cachedToken.value;
+  const cached = cachedTokens.get(env.siteId);
+  if (cached && Date.now() - cached.issuedAt < TOKEN_TTL_MS) {
+    return cached.value;
   }
   const res = await fetch(`${env.baseUrl}/usertoken/issue`, {
     method: "POST",
@@ -113,17 +118,36 @@ export async function staffToken(env = mindbodyEnv()): Promise<string> {
   const body = await res.json().catch(() => ({}));
   const token = body?.AccessToken;
   if (!res.ok || typeof token !== "string") {
+    /**
+     * Seen live (2026-08-29): the sandbox refused to ISSUE tokens (403
+     * "Staff identity authentication failed", for every credential set)
+     * while still ACCEPTING tokens issued earlier. Our hourly refresh is
+     * a guess at a lifetime Mindbody does not document, so an expired-
+     * by-our-clock token is not known bad: keep riding it and let
+     * Mindbody itself be the judge. A genuine rejection comes back as
+     * 401 on the actual call, which forgets the token and reissues --
+     * and if issuing is still down, THAT failure surfaces properly.
+     */
+    if (cached) {
+      console.warn(
+        `[token] reissue failed (HTTP ${res.status}); riding the cached token until Mindbody rejects it`,
+      );
+      cached.issuedAt = Date.now(); /* back off: retry issue in an hour, not per call */
+      return cached.value;
+    }
     throw new Error(
       `Mindbody usertoken/issue failed: HTTP ${res.status} ${JSON.stringify(body).slice(0, 200)}`,
     );
   }
-  cachedToken = { value: token, issuedAt: Date.now(), siteId: env.siteId };
+  cachedTokens.set(env.siteId, { value: token, issuedAt: Date.now() });
   return token;
 }
 
-/** Drop the cached token; call when Mindbody rejects it as invalid. */
+/** Drop the current site's cached token; call when Mindbody rejects it
+ *  as invalid. Other sites' tokens are untouched: a prod 401 says
+ *  nothing about the sandbox's token. */
 export function forgetToken(): void {
-  cachedToken = null;
+  cachedTokens.delete(mindbodyEnv().siteId);
 }
 
 export interface MindbodyCallOptions {
@@ -131,6 +155,16 @@ export interface MindbodyCallOptions {
   body?: unknown;
   /** Skip the staff token. Only for endpoints that genuinely do not need it. */
   anonymous?: boolean;
+  /**
+   * The client this write is about, for the POS_WRITE_CLIENT_IDS guard,
+   * when the Mindbody payload itself does not name one.
+   * `/client/updateclientvisit` takes only `{VisitId, SignedIn}`, so without
+   * this every check-in would be suppressed under the write guard -- including
+   * the allowed dummy client's, which is exactly the write the guard exists
+   * to let through. Never merged into the request body: the payload stays
+   * spec-shaped.
+   */
+  clientId?: string;
 }
 
 /**
@@ -221,7 +255,7 @@ export async function mindbody<T = any>(
       return { DryRun: true } as T;
     }
     const allowed = allowedWriteClientIds();
-    const client = bodyClientId(opts.body);
+    const client = bodyClientId(opts.body) ?? opts.clientId ?? null;
     if (allowed.size > 0 && (client === null || !allowed.has(client))) {
       console.warn(
         `[write-guard] suppressed ${method} ${path} for client ${client ?? "(none named)"}; ` +
@@ -289,9 +323,16 @@ export async function mindbody<T = any>(
       });
       if (retry.ok) return (await retry.json()) as T;
     }
+    /* The thrown message reaches teacher-facing surfaces (context panel
+     * lines, row messages), so it carries Mindbody's human-readable reason
+     * and nothing else. The transport detail -- method, full path, status,
+     * both bodies -- is already in the call log for the dev drawer; a
+     * teacher must not be shown URL-encoded query strings. */
     const message =
       body?.Error?.Message ?? (typeof body === "string" ? body.slice(0, 200) : "");
-    throw new Error(`Mindbody ${method} ${path}: HTTP ${res.status} ${message}`);
+    throw new Error(
+      message || `Mindbody did not accept the request (HTTP ${res.status}).`,
+    );
   }
   return body as T;
 }

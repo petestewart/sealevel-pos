@@ -1,0 +1,1530 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Counter Refresh Mockups</title>
+<style>
+/* ================================================================
+ * Counter refresh mockups for sealevel-pos.
+ * Static, self-contained, no external requests. Each panel paints
+ * its own palette explicitly (.pal-light / .pal-dark), so the page
+ * renders identically whatever the viewer's OS theme is.
+ * ================================================================ */
+
+:root {
+  /* Accent is a page-level custom property so the swatch switcher can
+   * retint every accent-coloured thing at once. */
+  --accent: #a8512e;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  /* Neutral shell that works regardless of OS theme: painted explicitly. */
+  background: #24221e;
+  color: #e8e4db;
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+.gallery {
+  max-width: 1220px;
+  margin: 0 auto;
+  padding: 32px 24px 96px;
+}
+
+.gallery-head {
+  margin: 0 0 8px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.gallery-sub {
+  margin: 0 0 24px;
+  color: #b5afa3;
+  font-size: 16px;
+  max-width: 72ch;
+}
+
+/* --- Accent switcher -------------------------------------------- */
+
+.accent-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 36px;
+  padding: 14px 18px;
+  border: 1px solid #3b382f;
+  border-radius: 14px;
+  background: #2b2924;
+}
+
+.accent-bar .lbl {
+  font-size: 16px;
+  font-weight: 600;
+  color: #cfc9bc;
+  margin-right: 4px;
+}
+
+.swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 16px 8px 10px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #34312a;
+  color: #e8e4db;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.swatch .dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.swatch[aria-pressed="true"] {
+  border-color: #e8e4db;
+}
+
+/* --- Panel chrome ----------------------------------------------- */
+
+.panel {
+  margin: 0 0 56px;
+}
+
+.panel-cap {
+  margin: 0 0 12px;
+  font-size: 17px;
+  color: #cfc9bc;
+  max-width: 90ch;
+}
+
+.panel-cap b {
+  color: #f3efe7;
+  font-weight: 700;
+}
+
+.frame {
+  width: 100%;
+  max-width: 1140px;
+  border-radius: 22px;
+  overflow: hidden;
+  border: 1px solid #454136;
+  box-shadow: 0 18px 60px rgb(0 0 0 / 0.45);
+}
+
+/* ================================================================
+ * The mockup palettes. Every colour inside a frame is a token defined
+ * on the palette class, mirroring globals.css but with the 2.1 ground
+ * softening and the 2.6 gold pair applied.
+ * ================================================================ */
+
+.pal-light {
+  --bg: #f3efe7;            /* one step warmer/darker than the old #fbfaf8 */
+  --surface: #ffffff;
+  --line: #e3ded6;
+  --ink: #1d1b18;
+  --muted: #6d6659;
+  --ok: #0f7b4f;
+  --ok-bg: #e6f4ec;
+  --warn: #8a5a00;
+  --warn-bg: #fdf1dc;
+  --stop: #a32020;
+  --stop-bg: #fbe9e9;
+  --gold: #8a6a1f;
+  --gold-bg: #f6ecd2;
+  --action-bg: #e0d9cc;
+  --accent-ink: #ffffff;    /* text on an accent fill */
+  --accent-text: var(--accent); /* accent used AS text on surface */
+  --shadow: 0 1px 2px rgb(29 27 24 / 0.06), 0 2px 8px rgb(29 27 24 / 0.05);
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.pal-dark {
+  --bg: #100f0c;            /* a step further from surface than #14130f */
+  --surface: #1e1c18;
+  --line: #37332c;
+  --ink: #f3efe7;
+  --muted: #a49c8c;
+  --ok: #6fd39b;
+  --ok-bg: #12301f;
+  --warn: #e8b45c;
+  --warn-bg: #33260c;
+  --stop: #f08a8a;
+  --stop-bg: #341616;
+  --gold: #e5c26a;
+  --gold-bg: #322810;
+  --action-bg: #464036;
+  --accent-ink: #ffffff;
+  /* Accent as text needs lifting on a dark ground to keep contrast. */
+  --accent-text: color-mix(in srgb, var(--accent) 60%, #ffffff 40%);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.5), 0 2px 10px rgb(0 0 0 / 0.35);
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.screen {
+  padding: 18px 20px 26px;
+  font-size: 16px;
+}
+
+/* --- Banners ------------------------------------------------------ */
+
+.banner {
+  margin: 0 0 12px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-weight: 600;
+  background: var(--ok-bg);
+  color: var(--ok);
+  font-size: 16px;
+}
+
+.banner.live {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.studio-banner {
+  margin: 0 0 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--accent);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 17px;
+  box-shadow: var(--shadow);
+}
+
+/* --- Class bar (2.3 / 2.4) --------------------------------------- */
+
+.classbar {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.cls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 68px;
+  padding: 10px 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  box-shadow: var(--shadow);
+}
+
+.cls .when {
+  display: block;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.cls .who {
+  display: block;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+/* Count badge: gold pair, never the accent, so "selected" and "full"
+ * cannot be confused. */
+.count-chip {
+  flex: 0 0 auto;
+  min-width: 40px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--gold-bg);
+  color: var(--gold);
+  font-size: 16px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.count-chip.full {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+/* Active class is FILLED with the accent (2.4). */
+.cls.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.cls.active .who { color: color-mix(in srgb, var(--accent-ink) 78%, var(--accent) 22%); }
+
+.cls.active .count-chip {
+  background: color-mix(in srgb, var(--accent-ink) 22%, var(--accent) 78%);
+  color: var(--accent-ink);
+}
+
+/* --- Sort bar ----------------------------------------------------- */
+
+.sortbar {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 14px;
+}
+
+.sortbar .sort {
+  min-height: 56px;
+  padding: 8px 22px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+}
+
+.sortbar .sort.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  margin: 0 0 16px;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 19px;
+  box-shadow: var(--shadow);
+}
+
+/* --- Roster grid (T14 columns kept, avatar column added: 2.7) ----- */
+
+.roster-head,
+.rrow {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 2.1fr) minmax(0, 1.5fr) 4.6em 3em 5em 208px;
+  gap: 12px;
+  align-items: center;
+}
+
+.roster-head {
+  padding: 0 16px 6px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.roster {
+  display: grid;
+  gap: 11px;   /* 2.1: rows float apart on the softened ground */
+}
+
+.rrow {
+  min-height: 84px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+/* Initials avatar, tinted by state (2.7). */
+.avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--action-bg);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.avatar.in {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.avatar.blocked {
+  background: var(--stop-bg);
+  color: var(--stop);
+}
+
+.cell-name { min-width: 0; }
+
+.name-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* The gold member chip (2.3 / 2.6): gold pair, not the accent. */
+.m-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  min-height: 26px;
+  border-radius: 999px;
+  background: var(--gold-bg);
+  color: var(--gold);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* Icons cluster tightly right after the name. */
+.row-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  color: var(--muted);
+}
+
+.row-icon.alert { color: var(--stop); }
+
+.subline {
+  display: block;
+  margin-top: 2px;
+  font-size: 16px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subline.stop-text { color: var(--stop); }
+
+/* Payment cell: shortened pass name plus the chevron control, chevron
+ * right-justified in the column. */
+.cell-pay {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pay-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+}
+
+.pay-name.none {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.pay-chev {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-left: auto;
+  border-radius: 999px;
+  color: var(--accent-text);
+  background: transparent;
+}
+
+.cell-plain {
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pill-last {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--gold-bg);
+  color: var(--gold);
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.cell-bal {
+  font-size: 16px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cell-bal.neg {
+  color: var(--stop);
+  font-weight: 700;
+}
+
+.cell-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Chips: the actionable ones look like buttons (2.2 / 2.6), the passive
+ * ones stay quiet pills. */
+.chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 112px;
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.chip.primary {
+  min-height: 50px;
+  min-width: 130px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+  box-shadow: var(--shadow);
+}
+
+.chip.in { background: var(--ok-bg); color: var(--ok); }
+.chip.unpaid { background: var(--warn-bg); color: var(--warn); }
+.chip.stop { background: var(--stop-bg); color: var(--stop); }
+.chip.busy { background: var(--line); color: var(--muted); }
+
+.undo-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  color: var(--muted);
+}
+
+.act-spacer { width: 44px; flex: 0 0 auto; }
+
+.spinner {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  border: 2px solid var(--muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2s; }
+  .skel { animation: none; }
+}
+
+/* --- Dialogs (2.5) ------------------------------------------------ */
+
+.dim {
+  background: color-mix(in srgb, var(--bg) 45%, rgb(0 0 0 / 0.55) 55%);
+  padding: 40px 32px;
+  display: flex;
+  gap: 28px;
+  justify-content: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.modal {
+  width: min(460px, 100%);
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 12px 48px rgb(0 0 0 / 0.4);
+  color: var(--ink);
+}
+
+.modal-title {
+  margin: 0 0 6px;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.modal .lead {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.ctx-label {
+  display: block;
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+/* The entity summary card inside a confirm. */
+.modal-entity {
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  display: grid;
+  gap: 6px;
+}
+
+.me-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.me-line {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* The consequence is the ONLY red text in the dialog. */
+.me-consequence {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--stop);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.modal-actions .btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  border-radius: 12px;
+  font-size: 17px;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.btn.quiet {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--ink);
+}
+
+.btn.danger {
+  background: var(--stop);
+  color: #ffffff;
+}
+
+.btn.go {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* --- Pass dropdown (panel 4) -------------------------------------- */
+
+.dd-anchor { position: relative; }
+
+.pass-dd {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: -8px;
+  z-index: 5;
+  width: 400px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
+  display: grid;
+  gap: 2px;
+}
+
+.pass-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 16px;
+}
+
+.pass-opt.current { color: var(--ok); font-weight: 700; }
+
+.pass-check {
+  flex: 0 0 auto;
+  width: 22px;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.pass-opt-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pass-opt-facts {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+/* --- Payment screen (2.9) ----------------------------------------- */
+
+.pay-panes {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.ticket {
+  padding: 22px 22px 26px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px;
+}
+
+.ticket h3 {
+  margin: 0 0 2px;
+  font-size: 18px;
+  font-weight: 700;
+  text-align: center;
+  font-family: inherit;
+}
+
+.ticket .t-sub {
+  margin: 0 0 14px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.t-rule {
+  border: 0;
+  border-top: 2px dashed var(--line);
+  margin: 12px 0;
+}
+
+.t-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+}
+
+.t-line .amt { white-space: nowrap; }
+.t-line.muted { color: var(--muted); }
+
+.t-total {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.pay-right { display: grid; gap: 16px; }
+
+.methods {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+
+.method {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  min-height: 96px;
+  padding: 14px 10px;
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+}
+
+.method .mi { color: var(--muted); }
+
+.method.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface) 90%);
+}
+
+.method.selected .mi { color: var(--accent-text); }
+
+.cash-row {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 16px;
+  align-items: start;
+}
+
+.amount-box {
+  display: grid;
+  gap: 10px;
+}
+
+.amount-display {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 24px;
+  font-weight: 700;
+  box-shadow: var(--shadow);
+}
+
+.amount-display .cap {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.quick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.qchip {
+  min-height: 48px;
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 16px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+}
+
+.change-line {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 4px 0;
+  font-size: 17px;
+}
+
+.change-line b { font-size: 19px; }
+
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 22px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+}
+
+.key.back { color: var(--stop); }
+
+.pay-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.pay-foot .btn { flex: 0 0 auto; min-width: 180px; padding: 0 28px; }
+.pay-foot .btn.go { min-width: 280px; font-size: 19px; }
+
+/* --- Empty + loading (2.8) --------------------------------------- */
+
+.empty {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 44px 20px 40px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.empty .glyph { color: var(--muted); opacity: 0.7; }
+
+.empty p {
+  margin: 0;
+  font-size: 18px;
+}
+
+.skel-row {
+  min-height: 84px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  display: grid;
+  grid-template-columns: 52px minmax(0, 2.1fr) minmax(0, 1.5fr) 4.6em 3em 5em 208px;
+  gap: 12px;
+  align-items: center;
+  box-shadow: var(--shadow);
+}
+
+.skel {
+  border-radius: 999px;
+  background: var(--line);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.skel.circle { width: 44px; height: 44px; }
+.skel.bar { height: 16px; }
+.skel.bar.tall { height: 20px; margin-bottom: 8px; }
+.skel.chipish { height: 44px; width: 130px; justify-self: end; border-radius: 999px; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.split-cap {
+  margin: 20px 0 10px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+svg { display: block; }
+</style>
+</head>
+<body>
+<main class="gallery">
+  <h1 class="gallery-head">Counter refresh mockups</h1>
+  <p class="gallery-sub">
+    Static visuals for the themed pass in
+    <code>docs/design/ui-refactor-recommendations.md</code> (2.1 to 2.9).
+    Nothing here is wired up; every panel paints its own palette so it looks
+    the same on any device. Pick an accent below and everything
+    accent-coloured retints.
+  </p>
+
+  <div class="accent-bar" role="group" aria-label="Accent colour">
+    <span class="lbl">Accent</span>
+    <button class="swatch" data-accent="#a8512e" aria-pressed="true">
+      <span class="dot" style="background:#a8512e"></span>Terracotta
+    </button>
+    <button class="swatch" data-accent="#166d67" aria-pressed="false">
+      <span class="dot" style="background:#166d67"></span>Deep teal
+    </button>
+    <button class="swatch" data-accent="#7a5c3e" aria-pressed="false">
+      <span class="dot" style="background:#7a5c3e"></span>Cafe brown
+    </button>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Panel 1: roster, light palette                                -->
+  <!-- ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">
+      <b>1. Roster, light palette.</b> Softened ground under floating card
+      rows (2.1), filled active class and sort chips with gold count badges
+      (2.3, 2.4), one filled accent action per row (2.2, 2.6), gold member
+      chip, initials avatars tinted by state (2.7), aligned T14 columns kept.
+      Pass names shortened, icons tight after the name, history prefers the
+      week.
+    </p>
+    <div class="frame pal-light">
+      <div class="screen">
+        <div class="banner">Dry run: taps are rehearsed, nothing reaches Mindbody.</div>
+        <div class="studio-banner">Studio closes early Friday for the teacher training weekend.</div>
+
+        <div class="classbar">
+          <button class="cls active">
+            <span><span class="when">4:30 pm</span><span class="who">Hot 26 &middot; Dana Whitfield</span></span>
+            <span class="count-chip">18</span>
+          </button>
+          <button class="cls">
+            <span><span class="when">6:15 pm</span><span class="who">Power Flow &middot; Marcus Oyelaran</span></span>
+            <span class="count-chip full">26</span>
+          </button>
+          <button class="cls">
+            <span><span class="when">8:00 pm</span><span class="who">Yin &middot; Dana Whitfield</span></span>
+            <span class="count-chip">7</span>
+          </button>
+        </div>
+
+        <div class="sortbar">
+          <button class="sort active">First name</button>
+          <button class="sort">Last name</button>
+          <button class="sort">Needs attention</button>
+        </div>
+
+        <div class="search-box">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          Search everyone
+        </div>
+
+        <div class="roster-head">
+          <span></span><span>Name</span><span>Paying with</span><span>Expires</span><span>Left</span><span style="text-align:right">Balance</span><span></span>
+        </div>
+
+        <ul class="roster" style="list-style:none;margin:0;padding:0">
+          <li class="rrow">
+            <span class="avatar">AP</span>
+            <span class="cell-name">
+              <span class="name-line">
+                <span class="name-text">Amanda Phillips</span>
+                <span class="m-chip">M</span>
+                <span class="row-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+              </span>
+              <span class="subline">3rd class this week</span>
+            </span>
+            <span class="cell-pay"><span class="pay-name">Monthly Unlimited</span>
+              <span class="pay-chev"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </span>
+            <span class="cell-plain">9/12/26</span>
+            <span class="cell-plain"></span>
+            <span class="cell-bal">$0.00</span>
+            <span class="cell-actions"><span class="act-spacer"></span><span class="chip primary">Check in</span></span>
+          </li>
+
+          <li class="rrow">
+            <span class="avatar in">CD</span>
+            <span class="cell-name">
+              <span class="name-line"><span class="name-text">Colin Dennis</span></span>
+              <span class="subline">1 visit this week</span>
+            </span>
+            <span class="cell-pay"><span class="pay-name">10 Class Card</span>
+              <span class="pay-chev"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </span>
+            <span class="cell-plain">11/02/26</span>
+            <span class="cell-plain">6</span>
+            <span class="cell-bal">$8.18</span>
+            <span class="cell-actions">
+              <span class="undo-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></span>
+              <span class="chip in"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>checked in</span>
+            </span>
+          </li>
+
+          <li class="rrow">
+            <span class="avatar">PN</span>
+            <span class="cell-name">
+              <span class="name-line">
+                <span class="name-text">Priya Natarajan</span>
+                <span class="row-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+              </span>
+              <span class="subline">First visit this week</span>
+            </span>
+            <span class="cell-pay"><span class="pay-name none">No pass</span>
+              <span class="pay-chev"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </span>
+            <span class="cell-plain"></span>
+            <span class="cell-plain"></span>
+            <span class="cell-bal neg">-$12.50</span>
+            <span class="cell-actions"><span class="act-spacer"></span><span class="chip unpaid">unpaid</span></span>
+          </li>
+
+          <li class="rrow">
+            <span class="avatar">MW</span>
+            <span class="cell-name">
+              <span class="name-line">
+                <span class="name-text">Marcus Webb</span>
+                <span class="row-icon alert"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></span>
+              </span>
+              <span class="subline">2nd class this week</span>
+            </span>
+            <span class="cell-pay"><span class="pay-name">10 Class Card</span>
+              <span class="pay-chev"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </span>
+            <span class="cell-plain">9/30/26</span>
+            <span class="cell-plain"><span class="pill-last">1</span></span>
+            <span class="cell-bal">$0.00</span>
+            <span class="cell-actions"><span class="act-spacer"></span><span class="chip primary">Check in</span></span>
+          </li>
+
+          <li class="rrow">
+            <span class="avatar blocked">SM</span>
+            <span class="cell-name">
+              <span class="name-line"><span class="name-text">Sofia Marchetti</span></span>
+              <span class="subline">First visit</span>
+            </span>
+            <span class="cell-pay"><span class="pay-name">Intro 2 Weeks</span>
+              <span class="pay-chev"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </span>
+            <span class="cell-plain">9/09/26</span>
+            <span class="cell-plain">13</span>
+            <span class="cell-bal">$0.00</span>
+            <span class="cell-actions"><span class="act-spacer"></span><span class="chip stop">no waiver</span></span>
+          </li>
+
+          <li class="rrow">
+            <span class="avatar">JT</span>
+            <span class="cell-name">
+              <span class="name-line"><span class="name-text">Jonah Trask</span></span>
+              <span class="subline">Checking in&hellip;</span>
+            </span>
+            <span class="cell-pay"><span class="pay-name">Drop In</span>
+              <span class="pay-chev"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </span>
+            <span class="cell-plain"></span>
+            <span class="cell-plain"></span>
+            <span class="cell-bal">$0.00</span>
+            <span class="cell-actions"><span class="act-spacer"></span><span class="chip busy"><span class="spinner"></span>&nbsp;working</span></span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- Panel 2: roster, dark palette                                 -->
+  <!-- ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">
+      <b>2. The same roster, dark palette.</b> Every token has a dark twin;
+      the ground sits a step further from the cards, shadows are heavier,
+      and accent-as-text is lifted for contrast.
+    </p>
+    <div class="frame pal-dark">
+      <div class="screen">
+        <div class="banner live">LIVE: taps are real. This screen changes Mindbody.</div>
+        <div class="studio-banner">Studio closes early Friday for the teacher training weekend.</div>
+
+        <div class="classbar">
+          <button class="cls active">
+            <span><span class="when">4:30 pm</span><span class="who">Hot 26 &middot; Dana Whitfield</span></span>
+            <span class="count-chip">18</span>
+          </button>
+          <button class="cls">
+            <span><span class="when">6:15 pm</span><span class="who">Power Flow &middot; Marcus Oyelaran</span></span>
+            <span class="count-chip full">26</span>
+          </button>
+          <button class="cls">
+            <span><span class="when">8:00 pm</span><span class="who">Yin &middot; Dana Whitfield</span></span>
+            <span class="count-chip">7</span>
+          </button>
+        </div>
+
+        <div class="sortbar">
+          <button class="sort active">First name</button>
+          <button class="sort">Last name</button>
+          <button class="sort">Needs attention</button>
+        </div>
+
+        <div class="search-box">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          Search everyone
+        </div>
+
+        <div class="roster-head">
+          <span></span><span>Name</span><span>Paying with</span><span>Expires</span><span>Left</span><span style="text-align:right">Balance</span><span></span>
+        </div>
+
+        <ul class="roster" style="list-style:none;margin:0;padding:0">
+          <li class="rrow">
+            <span class="avatar">AP</span>
+            <span class="cell-name">
+              <span class="name-line">
+                <span class="name-text">Amanda Phillips</span>
+                <span class="m-chip">M</span>
+                <span class="row-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+              </span>
+              <span class="subline">3rd class this week</span>
+            </span>
+            <span class="cell-pay"><span class="pay-name">Monthly Unlimited</span>
+              <span class="pay-chev"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </span>
+            <span class="cell-plain">9/12/26</span>
+            <span class="cell-plain"></span>
+            <span class="cell-bal">$0.00</span>
+            <span class="cell-actions"><span class="act-spacer"></span><span class="chip primary">Check in</span></span>
+          </li>
+
+          <li class="rrow">
+            <span class="avatar in">CD</span>
+            <span class="cell-name">
+              <span class="name-line"><span class="name-text">Colin Dennis</span></span>
+              <span class="subline">1 visit this week</span>
+            </span>
+            <span class="cell-pay"><span class="pay-name">10 Class Card</span>
+              <span class="pay-chev"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </span>
+            <span class="cell-plain">11/02/26</span>
+            <span class="cell-plain">6</span>
+            <span class="cell-bal">$8.18</span>
+            <span class="cell-actions">
+              <span class="undo-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></span>
+              <span class="chip in"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>checked in</span>
+            </span>
+          </li>
+
+          <li class="rrow">
+            <span class="avatar">PN</span>
+            <span class="cell-name">
+              <span class="name-line">
+                <span class="name-text">Priya Natarajan</span>
+                <span class="row-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+              </span>
+              <span class="subline">First visit this week</span>
+            </span>
+            <span class="cell-pay"><span class="pay-name none">No pass</span>
+              <span class="pay-chev"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </span>
+            <span class="cell-plain"></span>
+            <span class="cell-plain"></span>
+            <span class="cell-bal neg">-$12.50</span>
+            <span class="cell-actions"><span class="act-spacer"></span><span class="chip unpaid">unpaid</span></span>
+          </li>
+
+          <li class="rrow">
+            <span class="avatar">MW</span>
+            <span class="cell-name">
+              <span class="name-line">
+                <span class="name-text">Marcus Webb</span>
+                <span class="row-icon alert"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></span>
+              </span>
+              <span class="subline">2nd class this week</span>
+            </span>
+            <span class="cell-pay"><span class="pay-name">10 Class Card</span>
+              <span class="pay-chev"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </span>
+            <span class="cell-plain">9/30/26</span>
+            <span class="cell-plain"><span class="pill-last">1</span></span>
+            <span class="cell-bal">$0.00</span>
+            <span class="cell-actions"><span class="act-spacer"></span><span class="chip primary">Check in</span></span>
+          </li>
+
+          <li class="rrow">
+            <span class="avatar blocked">SM</span>
+            <span class="cell-name">
+              <span class="name-line"><span class="name-text">Sofia Marchetti</span></span>
+              <span class="subline">First visit</span>
+            </span>
+            <span class="cell-pay"><span class="pay-name">Intro 2 Weeks</span>
+              <span class="pay-chev"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </span>
+            <span class="cell-plain">9/09/26</span>
+            <span class="cell-plain">13</span>
+            <span class="cell-bal">$0.00</span>
+            <span class="cell-actions"><span class="act-spacer"></span><span class="chip stop">no waiver</span></span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- Panel 3: confirm dialogs                                      -->
+  <!-- ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">
+      <b>3. Confirm dialogs (2.5).</b> Each restates the entity in a summary
+      card. The consequence is the only red text; the red alert gets the
+      small uppercase gold context label. Dialog buttons at 64px.
+    </p>
+    <div class="frame pal-light">
+      <div class="dim">
+        <div class="modal">
+          <h3 class="modal-title">Check Colin out?</h3>
+          <p class="lead">This reverses the check-in you just made.</p>
+          <div class="modal-entity">
+            <span class="me-name"><span class="avatar in" style="width:36px;height:36px">CD</span>Colin Dennis</span>
+            <span class="me-line">10 Class Card &middot; 6 left &middot; 4:30 pm Hot 26</span>
+            <span class="me-consequence">Marks them as not attended</span>
+          </div>
+          <div class="modal-actions">
+            <span class="btn quiet">Cancel</span>
+            <span class="btn danger">Check out</span>
+          </div>
+        </div>
+
+        <div class="modal">
+          <span class="ctx-label">Red alert</span>
+          <h3 class="modal-title">Read before check-in</h3>
+          <div class="modal-entity">
+            <span class="me-name"><span class="avatar" style="width:36px;height:36px">MW</span>Marcus Webb</span>
+            <span class="me-line">10 Class Card &middot; 4:30 pm Hot 26</span>
+            <span class="me-consequence">Fainted in class 8/12. Cleared by doctor, must keep water and electrolytes at the mat.</span>
+          </div>
+          <div class="modal-actions">
+            <span class="btn quiet">Cancel</span>
+            <span class="btn go">I have read it, check in</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- Panel 4: pass-change dropdown                                 -->
+  <!-- ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">
+      <b>4. The pass-change control, open.</b> The control is a chevron icon
+      right-justified in the payment column, not the word "Change". The
+      anchored dropdown lists the client's passes with the paying one
+      checked; facts stay tabular on the right.
+    </p>
+    <div class="frame pal-light">
+      <div class="screen" style="padding-bottom:250px">
+        <div class="roster-head">
+          <span></span><span>Name</span><span>Paying with</span><span>Expires</span><span>Left</span><span style="text-align:right">Balance</span><span></span>
+        </div>
+        <ul class="roster" style="list-style:none;margin:0;padding:0">
+          <li class="rrow">
+            <span class="avatar">AP</span>
+            <span class="cell-name">
+              <span class="name-line"><span class="name-text">Amanda Phillips</span><span class="m-chip">M</span></span>
+              <span class="subline">3rd class this week</span>
+            </span>
+            <span class="cell-pay dd-anchor">
+              <span class="pay-name">Monthly Unlimited</span>
+              <span class="pay-chev" style="background:var(--action-bg)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg></span>
+              <div class="pass-dd">
+                <div class="pass-opt current">
+                  <span class="pass-check"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>
+                  <span class="pass-opt-name">Monthly Unlimited</span>
+                  <span class="pass-opt-facts">exp 9/12/26</span>
+                </div>
+                <div class="pass-opt">
+                  <span class="pass-check"></span>
+                  <span class="pass-opt-name">10 Class Card</span>
+                  <span class="pass-opt-facts">4 left &middot; exp 10/22/26</span>
+                </div>
+                <div class="pass-opt">
+                  <span class="pass-check"></span>
+                  <span class="pass-opt-name">Comp Class</span>
+                  <span class="pass-opt-facts">1 left</span>
+                </div>
+              </div>
+            </span>
+            <span class="cell-plain">9/12/26</span>
+            <span class="cell-plain"></span>
+            <span class="cell-bal">$0.00</span>
+            <span class="cell-actions"><span class="act-spacer"></span><span class="chip primary">Check in</span></span>
+          </li>
+
+          <li class="rrow" style="opacity:0.55">
+            <span class="avatar">CD</span>
+            <span class="cell-name">
+              <span class="name-line"><span class="name-text">Colin Dennis</span></span>
+              <span class="subline">1 visit this week</span>
+            </span>
+            <span class="cell-pay"><span class="pay-name">10 Class Card</span>
+              <span class="pay-chev"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </span>
+            <span class="cell-plain">11/02/26</span>
+            <span class="cell-plain">6</span>
+            <span class="cell-bal">$8.18</span>
+            <span class="cell-actions"><span class="act-spacer"></span><span class="chip primary">Check in</span></span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- Panel 5: Phase 2 payment concept                              -->
+  <!-- ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">
+      <b>5. Phase 2 payment concept (2.9).</b> Receipt ticket left, method
+      cards right with the cash keypad at 64px keys, and one filled charge
+      button that restates the amount. The mode banner stays above
+      everything; nothing auto-charges.
+    </p>
+    <div class="frame pal-light">
+      <div class="screen">
+        <div class="banner live">LIVE: taps are real. This screen changes Mindbody.</div>
+
+        <div class="pay-panes">
+          <div class="ticket">
+            <h3>Sealevel Hot Yoga</h3>
+            <p class="t-sub">Fremont &middot; 8/28/26 &middot; 4:12 pm</p>
+            <hr class="t-rule">
+            <div class="t-line"><span>Amanda Phillips</span></div>
+            <hr class="t-rule">
+            <div class="t-line"><span>10 Class Card</span><span class="amt">$163.00</span></div>
+            <hr class="t-rule">
+            <div class="t-line muted"><span>Subtotal</span><span class="amt">$163.00</span></div>
+            <div class="t-line muted"><span>Tax 10.35%</span><span class="amt">$16.87</span></div>
+            <hr class="t-rule">
+            <div class="t-line t-total"><span>Total</span><span class="amt">$179.87</span></div>
+          </div>
+
+          <div class="pay-right">
+            <div class="methods">
+              <div class="method selected">
+                <span class="mi"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg></span>
+                Stored card &middot; 4242
+              </div>
+              <div class="method">
+                <span class="mi"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg></span>
+                Cash
+              </div>
+              <div class="method">
+                <span class="mi"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17l10-10"/><path d="M8 7h9v9"/></svg></span>
+                Hand off to Mindbody
+              </div>
+            </div>
+
+            <div class="cash-row">
+              <div class="amount-box">
+                <div class="amount-display"><span class="cap">Tendered</span><span>$200.00</span></div>
+                <div class="quick-chips">
+                  <span class="qchip">Exact</span>
+                  <span class="qchip">$20</span>
+                  <span class="qchip">$50</span>
+                  <span class="qchip">$100</span>
+                  <span class="qchip">$200</span>
+                </div>
+                <div class="change-line"><span>Change due</span><b>$20.13</b></div>
+                <p class="me-line" style="margin:6px 4px 0">Keypad and tendered amount apply to cash only. A stored-card charge is always the cart total.</p>
+              </div>
+
+              <div class="keypad">
+                <span class="key">1</span><span class="key">2</span><span class="key">3</span>
+                <span class="key">4</span><span class="key">5</span><span class="key">6</span>
+                <span class="key">7</span><span class="key">8</span><span class="key">9</span>
+                <span class="key">.</span><span class="key">0</span>
+                <span class="key back"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/><path d="M18 9l-6 6"/><path d="M12 9l6 6"/></svg></span>
+              </div>
+            </div>
+
+            <div class="pay-foot">
+              <span class="btn quiet" style="min-height:64px;display:inline-flex;align-items:center;justify-content:center;border-radius:12px;font-size:17px;font-weight:700">Cancel</span>
+              <span class="btn go" style="min-height:64px;display:inline-flex;align-items:center;justify-content:center;border-radius:12px;font-weight:700">Charge $179.87</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- Panel 6: empty and loading                                    -->
+  <!-- ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">
+      <b>6. Empty and loading (2.8).</b> A blank roster reads as "nothing to
+      do", not "failed to load": centred quiet glyph with an 18px line.
+      First load gets a 3-row skeleton at the exact grid template; skeletons
+      never appear on a refresh after a booking.
+    </p>
+    <div class="frame pal-light">
+      <div class="screen">
+        <div class="empty">
+          <span class="glyph"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg></span>
+          <p>Nobody is signed up yet.</p>
+        </div>
+
+        <p class="split-cap">First load skeleton</p>
+
+        <div class="roster">
+          <div class="skel-row">
+            <span class="skel circle"></span>
+            <span><span class="skel bar tall" style="width:62%"></span><span class="skel bar" style="width:40%;display:block"></span></span>
+            <span class="skel bar" style="width:75%"></span>
+            <span class="skel bar"></span>
+            <span class="skel bar"></span>
+            <span class="skel bar"></span>
+            <span class="skel chipish"></span>
+          </div>
+          <div class="skel-row">
+            <span class="skel circle"></span>
+            <span><span class="skel bar tall" style="width:48%"></span><span class="skel bar" style="width:33%;display:block"></span></span>
+            <span class="skel bar" style="width:60%"></span>
+            <span class="skel bar"></span>
+            <span class="skel bar"></span>
+            <span class="skel bar"></span>
+            <span class="skel chipish"></span>
+          </div>
+          <div class="skel-row">
+            <span class="skel circle"></span>
+            <span><span class="skel bar tall" style="width:55%"></span><span class="skel bar" style="width:44%;display:block"></span></span>
+            <span class="skel bar" style="width:68%"></span>
+            <span class="skel bar"></span>
+            <span class="skel bar"></span>
+            <span class="skel bar"></span>
+            <span class="skel chipish"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+// Accent switcher: one custom property drives every accent use.
+(function () {
+  var swatches = document.querySelectorAll(".swatch");
+  swatches.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      document.documentElement.style.setProperty("--accent", btn.dataset.accent);
+      swatches.forEach(function (b) {
+        b.setAttribute("aria-pressed", b === btn ? "true" : "false");
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

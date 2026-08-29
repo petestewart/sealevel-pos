@@ -1,0 +1,193 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; color: #1d1b18; }
+    a { color: #a8512e; } a:hover { color: #8a3f20; }
+  </style>
+</helmet>
+<div style="width: 1180px; min-height: 980px; background: #f6f3ee; padding: 24px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px">
+
+  <div style="padding: 12px 16px; border-radius: 12px; background: #e6f4ec; color: #0f7b4f; font-weight: 600; font-size: 16px">Dry run: taps are rehearsed, nothing writes to Mindbody</div>
+
+  <div style="display: flex; gap: 10px">
+    <div style="flex: 0 0 auto; min-height: 72px; padding: 12px 18px; border-radius: 14px; background: {{accent}}; color: #ffffff; display: flex; flex-direction: column; justify-content: center; gap: 2px">
+      <div style="display: flex; align-items: center; gap: 10px">
+        <span style="font-size: 18px; font-weight: 700">6:20 AM</span>
+        <span style="min-width: 44px; padding: 2px 10px; border-radius: 999px; background: #f0dcae; color: #6d4a05; font-size: 16px; font-weight: 700; text-align: center">2/20</span>
+      </div>
+      <div style="font-size: 16px; opacity: 0.9">Yoga · Ken Berry</div>
+    </div>
+    <div style="flex: 0 0 auto; min-height: 72px; padding: 12px 18px; border: 1px solid #e3ded6; border-radius: 14px; background: #ffffff; display: flex; flex-direction: column; justify-content: center; gap: 2px">
+      <div style="display: flex; align-items: center; gap: 10px">
+        <span style="font-size: 18px; font-weight: 600">9:15 AM</span>
+        <span style="min-width: 44px; padding: 2px 10px; border-radius: 999px; background: #edeae3; color: #6d6659; font-size: 16px; font-weight: 700; text-align: center">0</span>
+      </div>
+      <div style="font-size: 16px; color: #6d6659">Bottoms Up · Dan Darragh</div>
+    </div>
+    <div style="flex: 0 0 auto; min-height: 72px; padding: 12px 18px; border: 1px solid #e3ded6; border-radius: 14px; background: #ffffff; display: flex; flex-direction: column; justify-content: center; gap: 2px">
+      <div style="display: flex; align-items: center; gap: 10px">
+        <span style="font-size: 18px; font-weight: 600">7:00 PM</span>
+        <span style="min-width: 44px; padding: 2px 10px; border-radius: 999px; background: #fdf1dc; color: #8a5a00; font-size: 16px; font-weight: 700; text-align: center">26/26 full</span>
+      </div>
+      <div style="font-size: 16px; color: #6d6659">Hot 26 · Eve Derooy</div>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 10px">
+    <div style="flex: 1; min-height: 78px; padding: 12px 18px; border: 1px solid #e3ded6; border-radius: 14px; background: #ffffff; box-shadow: 0 1px 2px rgba(29, 27, 24, 0.05)">
+      <span style="font-size: 28px; font-weight: 700">2</span><span style="font-size: 18px; color: #6d6659"> of 20</span>
+      <div style="font-size: 16px; color: #6d6659">signed up</div>
+    </div>
+    <div style="flex: 1; min-height: 78px; padding: 12px 18px; border: 1px solid #e3ded6; border-radius: 14px; background: #ffffff; box-shadow: 0 1px 2px rgba(29, 27, 24, 0.05)">
+      <span style="font-size: 28px; font-weight: 700">1</span>
+      <div style="font-size: 16px; color: #6d6659">checked in</div>
+    </div>
+    <div style="flex: 1; min-height: 78px; padding: 12px 18px; border: 1px solid #e3ded6; border-radius: 14px; background: #ffffff; box-shadow: 0 1px 2px rgba(29, 27, 24, 0.05)">
+      <span style="font-size: 28px; font-weight: 700">0</span>
+      <div style="font-size: 16px; color: #6d6659">waitlist</div>
+    </div>
+  </div>
+
+  <div style="min-height: 60px; padding: 0 16px; border: 1px solid #e3ded6; border-radius: 14px; background: #ffffff; display: flex; align-items: center; color: #6d6659; font-size: 20px">Search for a walk-in (3+ letters)</div>
+
+  <div style="display: flex; gap: 10px">
+    <div style="min-height: 52px; padding: 12px 22px; border-radius: 999px; background: {{accent}}; color: #ffffff; font-weight: 600; display: flex; align-items: center">Sign-in order</div>
+    <div style="min-height: 52px; padding: 12px 22px; border: 1px solid #e3ded6; border-radius: 999px; background: #ffffff; color: #6d6659; font-weight: 600; display: flex; align-items: center">Last name</div>
+    <div style="min-height: 52px; padding: 12px 22px; border: 1px solid #e3ded6; border-radius: 999px; background: #ffffff; color: #6d6659; font-weight: 600; display: flex; align-items: center">First name</div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: minmax(0, 2.3fr) minmax(0, 1.6fr) 92px 64px 92px 190px; gap: 12px; align-items: center; padding: 0 18px; color: #6d6659; font-size: 16px">
+    <div>Name</div><div>Payment</div><div>Expires</div><div>Left</div><div style="text-align: right">Balance</div><div></div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px">
+
+    <div style="display: grid; grid-template-columns: minmax(0, 2.3fr) minmax(0, 1.6fr) 92px 64px 92px 190px; gap: 12px; align-items: center; min-height: 84px; padding: 10px 18px; border: 1px solid #e3ded6; border-radius: 14px; background: #ffffff; box-shadow: 0 1px 2px rgba(29, 27, 24, 0.05)">
+      <div style="display: flex; align-items: center; gap: 12px; min-width: 0">
+        <div style="flex: 0 0 auto; width: 44px; height: 44px; border-radius: 999px; background: #edeae3; color: #6d6659; display: flex; align-items: center; justify-content: center; font-weight: 700">AP</div>
+        <div style="min-width: 0">
+          <div style="display: flex; align-items: center; gap: 8px">
+            <span style="font-size: 20px; font-weight: 600; white-space: nowrap">Amanda Phillips</span>
+            <span style="min-width: 26px; min-height: 26px; border-radius: 999px; background: #f0dcae; color: #6d4a05; font-size: 16px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center">M</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a32020" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6d6659" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="13" y2="17"></line></svg>
+          </div>
+          <div style="font-size: 16px; color: #6d6659">3rd class this week</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; min-width: 0">
+        <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Membership First month free</span>
+        <span style="flex: 0 0 auto; color: {{accent}}; font-weight: 600">Change</span>
+      </div>
+      <div>9/2/26</div>
+      <div style="color: #6d6659">-</div>
+      <div style="text-align: right; color: #a32020; font-weight: 600">-$12.50</div>
+      <div style="display: flex; justify-content: flex-end; align-items: center; gap: 8px">
+        <div style="min-width: 118px; min-height: 48px; border-radius: 999px; background: {{accent}}; color: #ffffff; font-weight: 700; display: flex; align-items: center; justify-content: center">Check in</div>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: minmax(0, 2.3fr) minmax(0, 1.6fr) 92px 64px 92px 190px; gap: 12px; align-items: center; min-height: 84px; padding: 10px 18px; border: 1px solid #e3ded6; border-radius: 14px; background: #ffffff; box-shadow: 0 1px 2px rgba(29, 27, 24, 0.05)">
+      <div style="display: flex; align-items: center; gap: 12px; min-width: 0">
+        <div style="flex: 0 0 auto; width: 44px; height: 44px; border-radius: 999px; background: #e6f4ec; color: #0f7b4f; display: flex; align-items: center; justify-content: center; font-weight: 700">CD</div>
+        <div style="min-width: 0">
+          <div style="font-size: 20px; font-weight: 600; white-space: nowrap">Colin Dennis</div>
+          <div style="font-size: 16px; color: #6d6659">2 visits in the last month</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; min-width: 0">
+        <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">10 Class Card</span>
+        <span style="flex: 0 0 auto; color: {{accent}}; font-weight: 600">Change</span>
+      </div>
+      <div>8/22/27</div>
+      <div>9</div>
+      <div style="text-align: right"></div>
+      <div style="display: flex; justify-content: flex-end; align-items: center; gap: 8px">
+        <div style="min-width: 118px; min-height: 40px; border-radius: 999px; background: #e6f4ec; color: #0f7b4f; font-weight: 600; display: flex; align-items: center; justify-content: center">checked in</div>
+        <div style="flex: 0 0 auto; width: 44px; height: 44px; border-radius: 999px; display: flex; align-items: center; justify-content: center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6d6659" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></div>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: minmax(0, 2.3fr) minmax(0, 1.6fr) 92px 64px 92px 190px; gap: 12px; align-items: center; min-height: 84px; padding: 10px 18px; border: 1px solid #e3ded6; border-radius: 14px; background: #ffffff; box-shadow: 0 1px 2px rgba(29, 27, 24, 0.05)">
+      <div style="display: flex; align-items: center; gap: 12px; min-width: 0">
+        <div style="flex: 0 0 auto; width: 44px; height: 44px; border-radius: 999px; background: #edeae3; color: #6d6659; display: flex; align-items: center; justify-content: center; font-weight: 700">MW</div>
+        <div style="min-width: 0">
+          <div style="font-size: 20px; font-weight: 600; white-space: nowrap">Mandy Wang</div>
+          <div style="font-size: 16px; color: #6d6659">Last here May 28</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; min-width: 0">
+        <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8a5a00; font-weight: 600">No pass</span>
+        <span style="flex: 0 0 auto; color: {{accent}}; font-weight: 600">Assign</span>
+      </div>
+      <div style="color: #6d6659">-</div>
+      <div style="color: #6d6659">-</div>
+      <div style="text-align: right">$8.18</div>
+      <div style="display: flex; justify-content: flex-end; align-items: center; gap: 8px">
+        <div style="min-width: 118px; min-height: 48px; border-radius: 999px; background: {{accent}}; color: #ffffff; font-weight: 700; display: flex; align-items: center; justify-content: center">Check in</div>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: minmax(0, 2.3fr) minmax(0, 1.6fr) 92px 64px 92px 190px; gap: 12px; align-items: center; min-height: 84px; padding: 10px 18px; border: 1px solid #e3ded6; border-radius: 14px; background: #ffffff; box-shadow: 0 1px 2px rgba(29, 27, 24, 0.05)">
+      <div style="display: flex; align-items: center; gap: 12px; min-width: 0">
+        <div style="flex: 0 0 auto; width: 44px; height: 44px; border-radius: 999px; background: #edeae3; color: #6d6659; display: flex; align-items: center; justify-content: center; font-weight: 700">JL</div>
+        <div style="min-width: 0">
+          <div style="font-size: 20px; font-weight: 600; white-space: nowrap">Jordan Lee</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; min-width: 0">
+        <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">5 Class Card</span>
+        <span style="flex: 0 0 auto; color: {{accent}}; font-weight: 600">Change</span>
+      </div>
+      <div>3/2/27</div>
+      <div><span style="padding: 2px 10px; border-radius: 999px; background: #f0dcae; color: #6d4a05; font-weight: 700">1</span></div>
+      <div style="text-align: right"></div>
+      <div style="display: flex; justify-content: flex-end; align-items: center; gap: 8px">
+        <div style="min-width: 118px; min-height: 48px; border-radius: 999px; background: {{accent}}; color: #ffffff; font-weight: 700; display: flex; align-items: center; justify-content: center">Check in</div>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: minmax(0, 2.3fr) minmax(0, 1.6fr) 92px 64px 92px 190px; gap: 12px; align-items: center; min-height: 84px; padding: 10px 18px; border: 1px solid #e3ded6; border-radius: 14px; background: #ffffff; box-shadow: 0 1px 2px rgba(29, 27, 24, 0.05)">
+      <div style="display: flex; align-items: center; gap: 12px; min-width: 0">
+        <div style="flex: 0 0 auto; width: 44px; height: 44px; border-radius: 999px; background: #edeae3; color: #6d6659; display: flex; align-items: center; justify-content: center; font-weight: 700">TO</div>
+        <div style="min-width: 0">
+          <div style="display: flex; align-items: center; gap: 8px">
+            <span style="font-size: 20px; font-weight: 600; white-space: nowrap">Tom Obranovich</span>
+            <span style="min-width: 26px; min-height: 26px; border-radius: 999px; background: #f0dcae; color: #6d4a05; font-size: 16px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center">M</span>
+          </div>
+          <div style="font-size: 16px; color: #6d6659">Checking in with Mindbody...</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; min-width: 0">
+        <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Monthly Committed Membership</span>
+      </div>
+      <div>9/1/26</div>
+      <div style="color: #6d6659">-</div>
+      <div style="text-align: right">$8.18</div>
+      <div style="display: flex; justify-content: flex-end; align-items: center; gap: 8px">
+        <div style="min-width: 118px; min-height: 40px; border-radius: 999px; background: #edeae3; color: #6d6659; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px">
+          <span style="display: inline-block; width: 14px; height: 14px; border: 2px solid #6d6659; border-top-color: transparent; border-radius: 50%"></span>
+          <span>checking in</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#a8512e","options":["#a8512e","#166d67","#7a5c3e"]}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { accent: this.props.accent ?? '#a8512e' };
+  }
+}
+</script>
+</body>
+</html>
