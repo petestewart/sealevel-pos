@@ -32,7 +32,9 @@ export interface Settings {
    * rather than argued about.
    */
   optimisticCheckIn: boolean;
-  /** Require a second tap to check in a booking with no pass attached. */
+  /** Gate an unpaid booking's check-in behind the pay-and-check-in
+   *  dialog (T25). Off checks unpaid rows straight in for free, the
+   *  pre-Phase-2 behavior. */
   confirmUnpaid: boolean;
 }
 

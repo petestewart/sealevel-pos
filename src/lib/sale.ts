@@ -81,6 +81,12 @@ export interface CatalogItem {
   taxExempt: boolean;
   /** The CheckoutItem discriminator this maps to (sale.yml:4971). */
   type: "Product" | "Service";
+  /** Services only: the pricing option's initial usage count
+   *  (Service.Count, sale.yml:5239 "The initial count of usages
+   *  available"). What lets T25's pay dialog default to a sensible
+   *  single-visit option (a drop-in is Count 1). Null for products and
+   *  when Mindbody omits it. */
+  count: number | null;
 }
 
 function num(v: unknown): number | null {
@@ -135,6 +141,7 @@ export async function catalogFor(
         secondaryCategoryId: secondary,
         taxExempt: secondary === TAX_EXEMPT_SECONDARY_CATEGORY_ID,
         type: "Product",
+        count: null,
       };
     })
     .filter((p: CatalogItem | null): p is CatalogItem => p !== null);
@@ -193,6 +200,7 @@ export async function pricingOptions(): Promise<CatalogItem[]> {
          * the server total is still the authority if that is ever wrong. */
         taxExempt: false,
         type: "Service",
+        count: num(s?.Count),
       };
     })
     .filter((s: CatalogItem | null): s is CatalogItem => s !== null);

@@ -2128,3 +2128,86 @@ button.sale-for:active {
   opacity: 0.5;
   cursor: default;
 }
+
+/* --- Pay and check in (T25): the unpaid row's dialog ------------------
+ * Reuses the modal and pass-opt idioms; tokens only, both palettes come
+ * from the variable swap. Rows keep the 64px floor and 16px text. */
+
+.modal-pay {
+  width: min(560px, 100%);
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+/* The option list scrolls past a handful so the actions never leave the
+ * screen; the dialog's rows are check | name | price. */
+.pay-opts {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 12px;
+  max-height: min(40vh, 340px);
+  overflow-y: auto;
+}
+
+.modal-pay .pass-opt {
+  grid-template-columns: 20px minmax(0, 1fr) 5.5em;
+  border: 1px solid transparent;
+}
+
+/* The chosen option: accent outline, same family as a selected method
+ * card on the sale screen. */
+.modal-pay .pass-opt.sel {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* The pricing spinner line, same posture as the sale ticket's. */
+.pay-price-line {
+  margin: 0 0 8px;
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+/* How the charge pays: one quiet sentence, not a chooser. */
+.pay-method-line {
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+
+.pay-cash-note {
+  margin: 0 0 16px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Free entry, the labelled exception: full width so it is findable, but
+ * dashed-quiet so it never competes with the one filled action above. */
+.pay-free {
+  width: 100%;
+  min-height: 64px;
+  margin-top: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.pay-free:active:not(:disabled) {
+  background: var(--action-bg);
+}
+
+.pay-free:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* The ONE primary action, restating the amount: the sale screen's
+ * charge-button pairing, in modal-action size. */
+.modal-confirm.pay-charge {
+  background: var(--accent);
+  color: var(--surface);
+}

@@ -113,6 +113,9 @@ interface PassInfo {
   /** ClientService purchase-instance id; what a payment change posts.
    *  null means Mindbody omitted it and the pass cannot be picked. */
   id: number | null;
+  /** The pricing option's own id, matching the catalog's productId; what
+   *  T25 matches on to find a just-purchased instance. */
+  productId: number | null;
   name: string;
   remaining: number | null;
   count: number | null;
@@ -133,6 +136,57 @@ interface PassListState {
   error: string | null;
   loading: boolean;
 }
+
+/** A sellable pricing option in the pay-and-check-in dialog (T25): the
+ *  catalog's Service items, as /api/catalog serves them. */
+interface PayOption {
+  id: string | number;
+  productId: number | null;
+  name: string;
+  price: number;
+  taxExempt: boolean;
+  /** Initial usage count of the option; 1 is a drop-in. */
+  count: number | null;
+  type: "Product" | "Service";
+}
+
+/** The stored card + live balance, as /api/stored-card serves them. */
+interface PayProfile {
+  loading: boolean;
+  balance: number | null;
+  card: {
+    lastFour: string;
+    expMonth: string | null;
+    expYear: string | null;
+    expired: boolean;
+  } | null;
+  error: string | null;
+}
+
+/** Mirrors /api/price-cart's PricedCart, trimmed to what the pay dialog
+ *  renders. */
+interface PayPriced {
+  suppressed: boolean;
+  grandTotal: number | null;
+  expectedTotal: number;
+  disagrees: boolean;
+}
+
+/**
+ * How the last pay-and-check-in gesture ended, when it did not simply
+ * succeed (success closes the dialog). Every shape is an HONEST outcome
+ * reported at ITS stage: suppression is amber and stops at stage (a); a
+ * definite charge refusal invites a retry because nothing else happened;
+ * an ambiguous one does not; the post-charge failures say exactly what
+ * DID happen and how the roster machinery finishes the job by hand.
+ */
+type PayOutcome =
+  | { kind: "suppressed"; mode: string }
+  | { kind: "charge-failed"; message: string }
+  | { kind: "charge-ambiguous"; message: string }
+  | { kind: "split"; message: string; mindbody: string }
+  | { kind: "attach-failed"; message: string }
+  | { kind: "checkin-failed" };
 
 /**
  * Roster order. "signin" is the order Mindbody returned the visits, i.e.
@@ -568,8 +622,55 @@ function FrontDesk() {
   const [config, setConfig] = useState<ModeConfig | null>(null);
   /** Rows whose check-in call failed after going green optimistically. */
   const [failed, setFailed] = useState<Record<string, string>>({});
-  /** Unpaid rows tapped once, awaiting a deliberate second tap. */
-  const [confirming, setConfirming] = useState<string[]>([]);
+  /**
+   * The pay-and-check-in dialog over an unpaid row (T25): the row and the
+   * class it was tapped under, both captured at open so the writes cannot
+   * chase a moved activeId -- same posture as the cancel dialog. Null
+   * means closed.
+   */
+  const [payDialog, setPayDialog] = useState<{
+    entry: RosterEntry;
+    classId: number;
+  } | null>(null);
+  /** The sellable pricing options, from /api/catalog, fetched on the
+   *  dialog's first open and kept for the session (the route caches
+   *  server-side too). Errors are not kept, so reopening retries. */
+  const [payCatalog, setPayCatalog] = useState<{
+    passes: PayOption[] | null;
+    error: string | null;
+    loading: boolean;
+  }>({ passes: null, error: null, loading: false });
+  /** The chosen pricing option's catalog id. Null until the default
+   *  lands (see the effect that picks it). */
+  const [paySelectedId, setPaySelectedId] = useState<string | number | null>(
+    null,
+  );
+  /** Card on file + live balance for the dialog's client, fetched at
+   *  open. Which method the one Charge button uses derives from this,
+   *  per T24's rules; /api/checkout re-reads it all server-side. */
+  const [payProfile, setPayProfile] = useState<PayProfile | null>(null);
+  /** The server-priced total for the chosen option, T23's pessimistic
+   *  pricing loop in miniature: the Charge button restates Mindbody's
+   *  number or none. */
+  const [payPriced, setPayPriced] = useState<PayPriced | null>(null);
+  const [payPricing, setPayPricing] = useState(false);
+  const [payPriceError, setPayPriceError] = useState<string | null>(null);
+  /** Stale-response guard for the dialog's profile fetch: bumped on
+   *  every open and close, the waiverGen pattern. */
+  const payGen = useRef(0);
+  /** Its sibling for the dialog's pricing loop, separate so a repriced
+   *  selection cannot orphan a profile fetch mid-flight. */
+  const payPriceGen = useRef(0);
+  /** Which stage of the gesture is in flight; non-null locks the dialog
+   *  shut (scrim, Escape, Cancel all refuse). */
+  const [payStage, setPayStage] = useState<
+    "charge" | "attach" | "checkin" | null
+  >(null);
+  /** The synchronous double-tap lock, T24's inFlight pattern: state
+   *  re-renders too late for a fast second tap. */
+  const payFlight = useRef(false);
+  /** How the last gesture ended, when it did not fully succeed. */
+  const [payOutcome, setPayOutcome] = useState<PayOutcome | null>(null);
   /** Rows with a check-in in flight. */
   const [busy, setBusy] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
@@ -937,12 +1038,14 @@ function FrontDesk() {
     if (activeId === null) return;
     setPickerFor(null);
     setPassMsg(null);
-    /* The unpaid-confirm arm and any failure text are keyed by CLIENT id,
-     * so without this a "confirm" armed on one class would carry to the
-     * same client's unpaid booking on another class, turning the
-     * deliberate second tap into a pre-armed single tap. Both are
-     * per-class-view state; a class switch resets them. */
-    setConfirming([]);
+    /* Failure text is keyed by CLIENT id, so without this a failure shown
+     * on one class would carry to the same client's booking on another
+     * class. Per-class-view state; a class switch resets it. The pay
+     * dialog (T25) deliberately does NOT close here: it is a modal (a
+     * teacher cannot switch classes under it; only the settings-driven
+     * classes refetch can move activeId), it captured its entry and
+     * classId at open, and closing it mid-gesture would unmount the
+     * outcome of a charge. */
     setFailed({});
     /* A cancel dialog has no business surviving a class switch; close it.
      * Safe even mid-write: the dialog state carries the classId it was
@@ -1326,7 +1429,6 @@ function FrontDesk() {
         const { [entry.clientId]: _drop, ...rest } = f;
         return rest;
       });
-      setConfirming((c) => c.filter((id) => id !== entry.clientId));
       try {
         const res = await fetch("/api/checkin", {
           method: "POST",
@@ -1364,14 +1466,196 @@ function FrontDesk() {
   );
 
   /**
+   * Open the pay-and-check-in dialog (T25) over an unpaid row: capture
+   * the row and the class NOW (the cancel dialog's discipline: the
+   * eventual writes name these, never whatever activeId has become),
+   * reset every piece of dialog state, and start the two reads the
+   * dialog needs -- the catalog's pricing options (session-cached) and
+   * the client's card + live balance.
+   */
+  const openPayDialog = useCallback(
+    (entry: RosterEntry) => {
+      if (activeId === null) return;
+      payGen.current += 1;
+      payPriceGen.current += 1;
+      const gen = payGen.current;
+      setPayOutcome(null);
+      setPayPriced(null);
+      setPayPriceError(null);
+      setPayPricing(false);
+      setPaySelectedId(null);
+      setPayDialog({ entry, classId: activeId });
+      /* The roster's balance stands in until the live read lands. */
+      setPayProfile({
+        loading: true,
+        balance: entry.balance,
+        card: null,
+        error: null,
+      });
+      fetch(`/api/stored-card?clientId=${encodeURIComponent(entry.clientId)}`)
+        .then(async (r) => {
+          const body = await r.json();
+          if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+          if (payGen.current !== gen) return;
+          setPayProfile({
+            loading: false,
+            balance:
+              typeof body?.balance === "number" ? body.balance : entry.balance,
+            card: body?.card ?? null,
+            error: null,
+          });
+        })
+        .catch((e) => {
+          if (payGen.current !== gen) return;
+          setPayProfile({
+            loading: false,
+            balance: entry.balance,
+            card: null,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        });
+      /* The catalog, once per session; a kept error would dead-end every
+       * later open, so errors are shown but not cached (the dialog's
+       * Retry re-enters here). */
+      if (payCatalog.passes === null && !payCatalog.loading) {
+        setPayCatalog({ passes: null, error: null, loading: true });
+        fetch("/api/catalog")
+          .then(async (r) => {
+            const body = await r.json();
+            if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+            const passes: PayOption[] = (body?.passes ?? []).filter(
+              (p: PayOption) => p?.type === "Service",
+            );
+            setPayCatalog({ passes, error: null, loading: false });
+          })
+          .catch((e) =>
+            setPayCatalog({
+              passes: null,
+              error: e instanceof Error ? e.message : String(e),
+              loading: false,
+            }),
+          );
+      }
+    },
+    [activeId, payCatalog],
+  );
+
+  /** Close the pay dialog and drop everything it held. Refused while any
+   *  stage of the gesture is in flight: money may be moving, and the
+   *  outcome renders HERE. */
+  const closePayDialog = useCallback(() => {
+    if (payStage !== null) return;
+    payGen.current += 1;
+    payPriceGen.current += 1;
+    setPayDialog(null);
+    setPayOutcome(null);
+    setPayPriced(null);
+    setPayPriceError(null);
+    setPayPricing(false);
+    setPaySelectedId(null);
+    setPayProfile(null);
+  }, [payStage]);
+
+  /**
+   * The dialog's default selection: the sensible single-visit option, so
+   * the common gesture is tap-the-chip, tap-Charge. Lowest real Count
+   * wins (a drop-in is Count 1; the fake-unlimited counters >= 100 sort
+   * last), price breaks ties. Runs when the catalog lands with the
+   * dialog open and nothing chosen yet.
+   */
+  useEffect(() => {
+    if (!payDialog || paySelectedId !== null) return;
+    const passes = payCatalog.passes;
+    if (!passes || passes.length === 0) return;
+    const best = [...passes].sort((a, b) => {
+      const ca =
+        a.count !== null && a.count < 100 ? a.count : Number.MAX_SAFE_INTEGER;
+      const cb =
+        b.count !== null && b.count < 100 ? b.count : Number.MAX_SAFE_INTEGER;
+      return ca - cb || a.price - b.price;
+    })[0];
+    if (best) setPaySelectedId(best.id);
+  }, [payDialog, paySelectedId, payCatalog.passes]);
+
+  /**
+   * The dialog's pricing loop, T23's pessimistic pattern in miniature:
+   * the chosen option debounces briefly (a teacher tapping down the list
+   * costs one metered Test call, not one per tap), POSTs /api/price-cart
+   * with the client attached (attachment can change pricing), and only
+   * the newest generation's answer lands. The Charge button restates the
+   * SERVER's total or none; suppression and disagreement render as
+   * exactly what they are.
+   */
+  useEffect(() => {
+    const clientId = payDialog?.entry.clientId ?? null;
+    const sel =
+      paySelectedId !== null
+        ? (payCatalog.passes?.find((p) => p.id === paySelectedId) ?? null)
+        : null;
+    if (clientId === null || sel === null) {
+      setPayPriced(null);
+      setPayPricing(false);
+      setPayPriceError(null);
+      return;
+    }
+    const gen = ++payPriceGen.current;
+    setPayPricing(true);
+    setPayPriceError(null);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/price-cart", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            items: [
+              {
+                type: sel.type,
+                metadataId: sel.id,
+                quantity: 1,
+                price: sel.price,
+                taxExempt: sel.taxExempt,
+              },
+            ],
+            clientId,
+          }),
+        });
+        const body = await res.json();
+        if (payPriceGen.current !== gen) return;
+        if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        setPayPriced(body as PayPriced);
+      } catch (err) {
+        if (payPriceGen.current !== gen) return;
+        setPayPriced(null);
+        setPayPriceError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (payPriceGen.current === gen) setPayPricing(false);
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [payDialog, paySelectedId, payCatalog.passes]);
+
+  /** Escape closes the pay dialog like its Cancel does -- never while a
+   *  stage of the gesture is in flight: money may be moving, and the
+   *  outcome renders here. */
+  useEffect(() => {
+    if (!payDialog) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && payStage === null) closePayDialog();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [payDialog, payStage, closePayDialog]);
+
+  /**
    * The check-in CHIP's tap. The chip is the ONLY check-in trigger: the
    * row body used to be the target too, for speed, and live use showed
    * accidental check-ins -- a deliberate reversal (T16, Pete's call), so
    * do not restore row-tap check-in. Every gate lives here, in order:
-   * waiver block, then the unpaid confirm -- an unpaid booking
-   * has no pricing option attached, so checking it in hands over a class
-   * for free, and until Phase 2 sells them a pass it at least takes a
-   * deliberate second tap of this same chip.
+   * waiver block FIRST, then the unpaid gate -- an unpaid booking has no
+   * pricing option attached, and since T25 its tap opens the
+   * pay-and-check-in dialog, which sells the missing pass, attaches it,
+   * and checks them in as one gesture (free entry survives inside it as
+   * the labelled exception).
    *
    * Checking OUT is not here: it has its own control and its own
    * confirmation, because undoing a check-in by the same gesture that made
@@ -1381,12 +1665,13 @@ function FrontDesk() {
     (entry: RosterEntry) => {
       if (busy.includes(entry.clientId) || entry.checkedIn) return;
       /**
-       * No released waiver stops everything, before the unpaid confirm:
-       * the tap opens the gate dialog and goes no further. Since T18 the
-       * dialog can RESOLVE the waiver, but only by showing the student
-       * the real text, scrolled to the end, and recording THEIR
-       * agreement; a teacher cannot simply wave it past. Unknown (null,
-       * lookup failed) fails open and is not this branch.
+       * No released waiver stops everything, BEFORE the pay dialog: an
+       * unpaid no-waiver client meets the waiver gate first, and only a
+       * recorded agreement re-enters this tap and reaches the pay
+       * dialog. Since T18 the dialog can RESOLVE the waiver, but only by
+       * showing the student the real text, scrolled to the end, and
+       * recording THEIR agreement; a teacher cannot simply wave it past.
+       * Unknown (null, lookup failed) fails open and is not this branch.
        *
        * There is deliberately no red-alert gate here anymore (T20,
        * Pete's recorded reversal): the studio's real alerts are notes
@@ -1397,17 +1682,17 @@ function FrontDesk() {
         setWaiverPrompt({ source: "roster", entry });
         return;
       }
-      if (
-        settings.confirmUnpaid &&
-        !entry.paid &&
-        !confirming.includes(entry.clientId)
-      ) {
-        setConfirming((c) => [...c, entry.clientId]);
+      /* The T25 gate. A row with no visit id cannot be attached to or
+       * signed in, so it falls through to setSignedIn, which reports
+       * that plainly. confirmUnpaid=false keeps the old direct
+       * behavior: unpaid checks straight in, no dialog. */
+      if (settings.confirmUnpaid && !entry.paid && entry.visitId !== null) {
+        openPayDialog(entry);
         return;
       }
       void setSignedIn(entry, true);
     },
-    [busy, confirming, setSignedIn, settings.confirmUnpaid],
+    [busy, setSignedIn, settings.confirmUnpaid, openPayDialog],
   );
 
   /** Close the waiver dialog and drop every piece of its state, so a
@@ -2255,6 +2540,294 @@ function FrontDesk() {
     );
   };
 
+  /* ------------------------------------------------------------------
+   * T25: the pay-and-check-in gesture's derived state and stages. Plain
+   * render-body values and functions, deliberately not memoized: they
+   * are only read by the dialog's JSX and its button handlers, so every
+   * read sees the current render's truth with no stale-closure risk.
+   * ---------------------------------------------------------------- */
+  const paySelected =
+    paySelectedId !== null
+      ? (payCatalog.passes?.find((p) => p.id === paySelectedId) ?? null)
+      : null;
+  /* The chargeable total: the server's number, current selection only.
+   * While the pricing loop (or its debounce) is pending, the previous
+   * selection's total must not be restated on the button. */
+  const payTotal =
+    !payPricing && payPriced && !payPriced.suppressed && !payPriced.disagrees
+      ? payPriced.grandTotal
+      : null;
+  const payBalance = payProfile?.balance ?? payDialog?.entry.balance ?? null;
+  const payCard = payProfile?.card ?? null;
+  /* T24's method rules, applied without a chooser: when credit covers
+   * the total, credit IS the method (rule 1; /api/checkout refuses the
+   * card server-side too); otherwise a live card on file. No cash here:
+   * this dialog is one primary action, and a cash sale has a whole
+   * screen. */
+  const payCreditCovers =
+    payBalance !== null && payTotal !== null && payBalance >= payTotal;
+  const payMethod: "credit" | "storedcard" | null = payCreditCovers
+    ? "credit"
+    : payProfile && !payProfile.loading && payCard && !payCard.expired
+      ? "storedcard"
+      : null;
+  /* The one-line reason there is nothing to charge with, greyed and
+   * shown rather than hidden (T24's posture). */
+  const payMethodReason =
+    payMethod !== null
+      ? null
+      : !payProfile || payProfile.loading
+        ? "Checking the card on file..."
+        : payProfile.error
+          ? `Card check failed: ${payProfile.error}`
+          : payCard?.expired
+            ? `The card on file (...${payCard.lastFour}) is expired.`
+            : "No card on file.";
+  /* Once money moved (or MAY have moved), the dialog offers no second
+   * charge and no free entry: the outcome text says how the roster
+   * machinery finishes the job, and Close is the way out. */
+  const payMoneyMoved =
+    payOutcome !== null &&
+    payOutcome.kind !== "suppressed" &&
+    payOutcome.kind !== "charge-failed";
+  const payChargeable =
+    payStage === null &&
+    !payMoneyMoved &&
+    payDialog !== null &&
+    paySelected !== null &&
+    payTotal !== null &&
+    payMethod !== null;
+
+  /**
+   * The gesture (T25): charge, attach, check in -- pessimistic end to
+   * end, each stage's failure reported at ITS stage and nothing retried
+   * automatically. The entry and class were captured at open; the
+   * roster refresh at the end is what shows the row paid and checked
+   * in, and it drops itself if the teacher has somehow moved on.
+   */
+  const runPayAndCheckIn = async () => {
+    if (payFlight.current || !payChargeable) return;
+    if (!payDialog || !paySelected || payMethod === null) return;
+    const { entry, classId } = payDialog;
+    if (entry.visitId === null) return;
+    payFlight.current = true;
+    setPayOutcome(null);
+    try {
+      /* Stage (a): the charge, via the one route that moves money. The
+       * route rehearses and re-prices server-side; the browser's number
+       * is never what gets charged. */
+      setPayStage("charge");
+      let chargeRes: Response;
+      let chargeBody: any = null;
+      try {
+        chargeRes = await fetch("/api/checkout", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            items: [
+              {
+                type: paySelected.type,
+                metadataId: paySelected.id,
+                quantity: 1,
+                price: paySelected.price,
+                taxExempt: paySelected.taxExempt,
+              },
+            ],
+            clientId: entry.clientId,
+            method: payMethod,
+          }),
+        });
+      } catch {
+        /* The request died between us and our server: the outcome is
+         * UNKNOWN, and the one wrong move is to invite a retry. */
+        setPayOutcome({ kind: "charge-ambiguous", message: "" });
+        return;
+      }
+      try {
+        chargeBody = await chargeRes.json();
+      } catch {
+        chargeBody = null;
+      }
+      if (chargeRes.ok && chargeBody === null) {
+        setPayOutcome({
+          kind: "charge-ambiguous",
+          message: "The server answered but the outcome could not be read.",
+        });
+        return;
+      }
+      if (chargeRes.ok && chargeBody?.suppressed) {
+        /* Stage (a) suppression: amber, and the gesture STOPS -- no
+         * attach, no check-in, because nothing was sold. */
+        setPayOutcome({
+          kind: "suppressed",
+          mode: String(chargeBody.suppressed),
+        });
+        return;
+      }
+      if (!(chargeRes.ok && chargeBody?.ok === true)) {
+        if (chargeBody?.stage === "checkout-after-credit") {
+          /* T24's seam, surfaced with the same discipline: the $10
+           * credit exists, the sale does not, and the credit step must
+           * not run again. This dialog offers no path that could. */
+          setPayOutcome({
+            kind: "split",
+            message:
+              `The $10 credit purchase succeeded; the pass sale failed; ` +
+              `their balance is now ${
+                typeof chargeBody?.creditBalance === "number"
+                  ? money(chargeBody.creditBalance)
+                  : "unknown (Mindbody did not answer the balance read)"
+              }; do NOT re-run the credit step. Sell the pass in Sell, on ` +
+              "account credit, then attach and check in from the row.",
+            mindbody: String(chargeBody?.error ?? "no reason returned"),
+          });
+          return;
+        }
+        if (chargeBody?.ambiguous === true) {
+          setPayOutcome({
+            kind: "charge-ambiguous",
+            message: String(chargeBody?.error ?? ""),
+          });
+          return;
+        }
+        /* A definite refusal: nothing was charged, nothing else
+         * happened, and saying so is what makes a retry safe. A refusal
+         * that names the live balance (rule 1: "credit covers this")
+         * refreshes the method gate, T24's freshBalance move, so the
+         * retry runs on credit instead of failing identically. */
+        if (typeof chargeBody?.creditBalance === "number") {
+          setPayProfile((prof) =>
+            prof ? { ...prof, balance: chargeBody.creditBalance } : prof,
+          );
+        }
+        setPayOutcome({
+          kind: "charge-failed",
+          message: String(chargeBody?.error ?? `HTTP ${chargeRes.status}`),
+        });
+        return;
+      }
+
+      /* Stage (b): find the NEW ClientService (re-fetch their passes;
+       * the just-purchased option's instance is the newest id carrying
+       * its ProductId) and assign it to the visit. A failure here is
+       * charged-but-not-attached, finished BY HAND with the payment
+       * chevron -- never auto-retried: the charge stands and a blind
+       * second write is how a visit ends up on the wrong pass. */
+      setPayStage("attach");
+      try {
+        const pr = await fetch(
+          `/api/passes?clientId=${encodeURIComponent(entry.clientId)}`,
+        );
+        const pBody = await pr.json();
+        if (!pr.ok) throw new Error(pBody?.error ?? `HTTP ${pr.status}`);
+        const fresh: PassInfo[] = pBody?.passes ?? [];
+        /* Refresh the caches the payment chevron reads, so the by-hand
+         * finish is a working path whatever happens below. */
+        passSweepCache.current.set(entry.clientId, fresh);
+        setPassLists((l) => ({
+          ...l,
+          [entry.clientId]: { data: fresh, error: null, loading: false },
+        }));
+        if (paySelected.productId === null) {
+          throw new Error(
+            "this pricing option carries no ProductId, so the new " +
+              "purchase could not be identified",
+          );
+        }
+        const instance = fresh
+          .filter(
+            (p): p is PassInfo & { id: number } =>
+              p.id !== null && p.productId === paySelected.productId,
+          )
+          .reduce<(PassInfo & { id: number }) | null>(
+            (newest, p) => (newest === null || p.id > newest.id ? p : newest),
+            null,
+          );
+        if (!instance) {
+          throw new Error(
+            "the purchased pass has not appeared on their account yet",
+          );
+        }
+        const ar = await fetch("/api/visit-payment", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            visitId: entry.visitId,
+            clientServiceId: instance.id,
+            clientId: entry.clientId,
+          }),
+        });
+        const aBody = await ar.json();
+        if (!ar.ok) throw new Error(aBody?.error ?? `HTTP ${ar.status}`);
+        if (aBody?.suppressed) {
+          /* Should be unreachable (the guard let the charge through two
+           * calls ago), but if it happens the truth is the same shape:
+           * charged, not attached. */
+          throw new Error(
+            `the write was suppressed (${aBody.suppressed}) after the charge went through`,
+          );
+        }
+      } catch (err) {
+        setPayOutcome({
+          kind: "attach-failed",
+          message: err instanceof Error ? err.message : String(err),
+        });
+        await refreshRoster(classId);
+        return;
+      }
+
+      /* Stage (c): the check-in itself, the same write the chip makes. */
+      setPayStage("checkin");
+      try {
+        const cr = await fetch("/api/checkin", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            visitId: entry.visitId,
+            signedIn: true,
+            clientId: entry.clientId,
+          }),
+        });
+        const cBody = await cr.json();
+        if (!cr.ok) throw new Error(cBody?.error ?? `HTTP ${cr.status}`);
+      } catch {
+        /* Paid and attached; the row is now a normal paid row, and its
+         * ordinary check-in tap finishes the job. */
+        setPayOutcome({ kind: "checkin-failed" });
+        await refreshRoster(classId);
+        return;
+      }
+
+      /* The whole gesture landed: the refreshed roster shows the row
+       * paid and checked in. Closed inline rather than via
+       * closePayDialog, whose payStage guard would read this run's
+       * in-flight stage from a stale closure. */
+      await refreshRoster(classId);
+      payGen.current += 1;
+      payPriceGen.current += 1;
+      setPayDialog(null);
+      setPayOutcome(null);
+      setPayPriced(null);
+      setPayPriceError(null);
+      setPayPricing(false);
+      setPaySelectedId(null);
+      setPayProfile(null);
+    } finally {
+      payFlight.current = false;
+      setPayStage(null);
+    }
+  };
+
+  /** Free entry, the deliberate exception (T25): today's Phase 1
+   *  behavior exactly -- no charge, just the pessimistic check-in write
+   *  -- behind its own labelled choice. */
+  const freeCheckIn = () => {
+    if (payStage !== null || !payDialog || payMoneyMoved) return;
+    const entry = payDialog.entry;
+    closePayDialog();
+    void setSignedIn(entry, true);
+  };
+
   return (
     <main className="shell">
       {config?.configError ? <p className="note">{config.configError}</p> : null}
@@ -2568,11 +3141,7 @@ function FrontDesk() {
              path (T18). */
           const statusMsg = working
             ? "Talking to Mindbody..."
-            : failed[entry.clientId]
-              ? failed[entry.clientId]
-              : confirming.includes(entry.clientId)
-                ? "No pass on this booking. Tap confirm to check in for free."
-                : null;
+            : (failed[entry.clientId] ?? null);
           const visits = histories[entry.clientId];
           const history =
             statusMsg === null && visits ? historyLine(visits) : "";
@@ -2585,11 +3154,9 @@ function FrontDesk() {
                 ? "chip failed"
                 : noWaiver
                   ? "chip stop"
-                  : confirming.includes(entry.clientId)
-                    ? "chip unpaid"
-                    : entry.paid
-                      ? "chip action"
-                      : "chip unpaid";
+                  : entry.paid
+                    ? "chip action"
+                    : "chip unpaid";
           const chipLabel = entry.checkedIn ? (
             "checked in"
           ) : working ? (
@@ -2598,8 +3165,6 @@ function FrontDesk() {
             "failed"
           ) : noWaiver ? (
             "no waiver"
-          ) : confirming.includes(entry.clientId) ? (
-            "confirm"
           ) : entry.paid ? (
             "check in"
           ) : (
@@ -3773,6 +4338,226 @@ function FrontDesk() {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Pay and check in (T25): the unpaid row's dialog. ONE primary
+          action that restates the amount; free entry demoted to the
+          labelled quiet exception; each stage's failure reported at its
+          stage. The scrim, Escape and Cancel all refuse to close while
+          any stage is in flight. */}
+      {payDialog ? (
+        <div className="modal-scrim" onClick={closePayDialog} role="presentation">
+          <div
+            className="modal modal-pay"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Pay and check in ${payDialog.entry.name}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">Pay and check in</p>
+            <p className="modal-entity">{payDialog.entry.name}</p>
+
+            {/* The pass to sell. Sorted single-visit first (the default
+                selection's own order), 64px rows, short name with the
+                full Mindbody name under it when shortening dropped
+                anything, price on the right. */}
+            {payCatalog.loading ? (
+              <p className="pass-empty">
+                <span className="spinner" aria-label="working" /> Loading
+                pricing options...
+              </p>
+            ) : payCatalog.error ? (
+              <div>
+                <p className="pass-note modal-note-gap">
+                  Pricing options unavailable: {payCatalog.error}
+                </p>
+                <button
+                  className="class-change"
+                  onClick={() => openPayDialog(payDialog.entry)}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : payCatalog.passes && payCatalog.passes.length === 0 ? (
+              <p className="pass-empty">
+                Mindbody lists nothing sellable at the studio.
+              </p>
+            ) : payCatalog.passes ? (
+              <div className="pay-opts" aria-label="Pass to sell">
+                {[...payCatalog.passes]
+                  .sort((a, b) => {
+                    const ca =
+                      a.count !== null && a.count < 100
+                        ? a.count
+                        : Number.MAX_SAFE_INTEGER;
+                    const cb =
+                      b.count !== null && b.count < 100
+                        ? b.count
+                        : Number.MAX_SAFE_INTEGER;
+                    return ca - cb || a.price - b.price;
+                  })
+                  .map((p) => {
+                    const short = shortPassName(p.name);
+                    const selected = paySelectedId === p.id;
+                    return (
+                      <button
+                        key={`payopt-${p.id}`}
+                        className={selected ? "pass-opt sel" : "pass-opt"}
+                        disabled={payStage !== null || payMoneyMoved}
+                        aria-pressed={selected}
+                        onClick={() => setPaySelectedId(p.id)}
+                      >
+                        <span className="pass-check">
+                          {selected ? <CheckIcon /> : null}
+                        </span>
+                        <span className="pass-opt-text">
+                          <span className="pass-opt-name">{short}</span>
+                          {short !== p.name.trim() ? (
+                            <span className="pass-opt-full">{p.name}</span>
+                          ) : null}
+                        </span>
+                        <span className="pass-col">{money(p.price)}</span>
+                      </button>
+                    );
+                  })}
+              </div>
+            ) : null}
+
+            {/* The pricing area: the server's answer or an honest
+                absence, never a locally computed number dressed as a
+                total. Suppression here means the charge cannot run
+                (there is no priced amount), rendered amber. */}
+            {payPricing ? (
+              <p className="pay-price-line">
+                <span className="spinner" aria-label="working" /> Pricing with
+                Mindbody...
+              </p>
+            ) : payPriceError ? (
+              <div className="sale-stop">Pricing failed: {payPriceError}</div>
+            ) : payPriced?.suppressed ? (
+              <div className="pass-note modal-note-gap">
+                Suppressed (dry run or write guard): Mindbody did not price
+                this option, so there is no amount to charge. Nothing was
+                written.
+              </div>
+            ) : payPriced?.disagrees ? (
+              <div className="sale-stop">
+                Totals disagree. Our math says{" "}
+                {money(payPriced.expectedTotal)}, Mindbody says{" "}
+                {payPriced.grandTotal !== null
+                  ? money(payPriced.grandTotal)
+                  : "nothing"}
+                . Do not charge; this is a bug to report.
+              </div>
+            ) : null}
+
+            {/* How it gets paid, derived from T24's rules: credit when it
+                covers the total (rule 1: the card is not offered then),
+                otherwise the stored card. A missing method renders its
+                reason rather than disappearing. */}
+            <p className="pay-method-line">
+              {payMethod === "credit"
+                ? `Pays with account credit (${
+                    payBalance !== null ? money(payBalance) : ""
+                  }).`
+                : payMethod === "storedcard" && payCard
+                  ? `Pays with the stored card ...${payCard.lastFour}.`
+                  : payMethodReason}
+            </p>
+            <p className="pay-cash-note">For cash, use Sell.</p>
+
+            {/* The outcome, when the gesture did not simply finish. */}
+            {payOutcome?.kind === "suppressed" ? (
+              <p className="pass-note modal-note-gap">
+                {payOutcome.mode === "dry-run"
+                  ? "Dry run: nothing was charged and nobody was checked in."
+                  : "Write guard: this client is not in POS_WRITE_CLIENT_IDS."}{" "}
+                The write was suppressed on the server.
+              </p>
+            ) : payOutcome?.kind === "charge-failed" ? (
+              <div className="sale-stop">
+                Not charged: {payOutcome.message} Nothing else happened; it is
+                safe to try again.
+              </div>
+            ) : payOutcome?.kind === "charge-ambiguous" ? (
+              <div className="sale-stop">
+                The charge may or may not have gone through. Check the dev
+                drawer or Mindbody before charging again.
+                {payOutcome.message ? ` (${payOutcome.message})` : ""}
+              </div>
+            ) : payOutcome?.kind === "split" ? (
+              <div className="sale-stop">
+                <p className="pay-split-head">{payOutcome.message}</p>
+                <p className="pay-split-why">
+                  Mindbody said: {payOutcome.mindbody}
+                </p>
+              </div>
+            ) : payOutcome?.kind === "attach-failed" ? (
+              <div className="sale-stop">
+                Charged, but the pass was not attached to this visit; attach
+                it with the payment chevron, then check in.
+                {payOutcome.message ? ` (${payOutcome.message})` : ""}
+              </div>
+            ) : payOutcome?.kind === "checkin-failed" ? (
+              <p className="pass-note modal-note-gap">
+                Paid and attached; the check-in tap will finish it.
+              </p>
+            ) : null}
+
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                disabled={payStage !== null}
+                onClick={closePayDialog}
+              >
+                {payOutcome !== null && payOutcome.kind !== "charge-failed"
+                  ? "Close"
+                  : "Cancel"}
+              </button>
+              {!payMoneyMoved ? (
+                <button
+                  className="modal-confirm pay-charge"
+                  disabled={!payChargeable}
+                  onClick={() => void runPayAndCheckIn()}
+                >
+                  {payStage === "charge" ? (
+                    <>
+                      <span className="spinner" aria-label="working" />{" "}
+                      Charging...
+                    </>
+                  ) : payStage === "attach" ? (
+                    <>
+                      <span className="spinner" aria-label="working" />{" "}
+                      Attaching the pass...
+                    </>
+                  ) : payStage === "checkin" ? (
+                    <>
+                      <span className="spinner" aria-label="working" />{" "}
+                      Checking in...
+                    </>
+                  ) : payTotal !== null ? (
+                    `Charge ${money(payTotal)} and check in`
+                  ) : (
+                    "Charge and check in"
+                  )}
+                </button>
+              ) : null}
+            </div>
+
+            {/* Free entry: present, labelled, and visually the
+                exception. Today's Phase 1 behavior exactly: no charge,
+                just the pessimistic check-in write. */}
+            {!payMoneyMoved ? (
+              <button
+                className="pay-free"
+                disabled={payStage !== null}
+                onClick={freeCheckIn}
+              >
+                Check in free (comp)
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}

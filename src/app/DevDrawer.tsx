@@ -244,8 +244,8 @@ const FLAGS: { key: keyof Settings; label: string; hint: string }[] = [
   },
   {
     key: "confirmUnpaid",
-    label: "Confirm unpaid check-in",
-    hint: "require a second tap for a booking with no pass attached",
+    label: "Unpaid opens Pay and check in",
+    hint: "gate a booking with no pass behind the pay dialog (off = check in free directly)",
   },
 ];
 

@@ -38,6 +38,11 @@ export interface PassInfo {
    *  change which pass pays for a visit. null when Mindbody omitted it,
    *  in which case the pass cannot be picked as payment. */
   id: number | null;
+  /** The pricing option's own id (`ClientService.ProductId`, "not specific
+   *  to any client's purchase of it", client.yml:4151), matching
+   *  CatalogItem.productId from /sale/services. What T25 uses to find the
+   *  just-purchased instance of a chosen option after a checkout. */
+  productId: number | null;
   name: string;
   /** Classes left on the pass. null when Mindbody omits it (memberships). */
   remaining: number | null;
@@ -103,6 +108,7 @@ export async function fetchPasses(
     .map(
       (s: any): PassInfo => ({
         id: num(s?.Id),
+        productId: num(s?.ProductId),
         name: str(s?.Name) ?? "Pass",
         remaining: num(s?.Remaining),
         count: num(s?.Count),

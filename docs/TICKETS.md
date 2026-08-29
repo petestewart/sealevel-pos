@@ -856,13 +856,83 @@ Money-review pass (2026-08-29), on top of the split-disarm review:
 
 ## T25. The unpaid row sells the pass (PLAN 2.4)
 
-- [ ] An unpaid booking's flow becomes: pick the pass to sell (sensible
+- [x] An unpaid booking's flow becomes: pick the pass to sell (sensible
       default from the class's pricing options), charge on the stored
       card via the T24 machinery, assign it to the visit, check in --
       one gesture, pessimistic end to end, partial failure reported
       honestly at each step.
-- [ ] Free entry survives as the deliberate exception behind its own
+- [x] Free entry survives as the deliberate exception behind its own
       clearly-labelled choice, no longer the default.
+
+Shipped 2026-08-29: the unpaid chip's tap now opens the "Pay and check
+in" dialog in page.tsx (the old arm-then-confirm second tap is gone,
+with its `confirming` state). The waiver gate stays FIRST in tapCheckIn,
+so an unpaid no-waiver client reads and agrees before any pay dialog;
+the dialog captures its row and class at open (the cancel dialog's
+discipline) and refuses to close while any stage is in flight. The
+`confirmUnpaid` setting keeps its key and now gates the dialog; off
+means the pre-Phase-2 direct free check-in.
+
+The dialog: catalog pricing options (Service items from /api/catalog,
+session-cached), sorted and defaulted single-visit-first -- lowest real
+`Count` (a drop-in is 1; the fake-unlimited >= 100 counters sort last),
+price breaks ties; `Service.Count` was added to CatalogItem for this.
+The chosen option is priced pessimistically through /api/price-cart
+(350ms debounce, generation-guarded), and the one primary button
+restates the SERVER total: "Charge $X and check in". The method is
+derived, not chosen: account credit when the balance covers the total
+(rule 1; /api/checkout enforces it server-side too, and a refusal
+naming the live balance refreshes the gate), else the stored card from
+/api/stored-card; no cash keypad -- a quiet "For cash, use Sell." line.
+Free entry is the dashed quiet "Check in free (comp)" button, today's
+behavior exactly (no charge, just the pessimistic setSignedIn).
+
+The stage-failure matrix as built (nothing auto-retries):
+
+- (a) charge, via /api/checkout: suppression renders amber and STOPS
+  (no attach, no check-in); a definite 4xx refusal says "Nothing else
+  happened; it is safe to try again"; `ambiguous: true` (or an unread
+  answer, or the fetch dying) renders T24's wording verbatim -- "The
+  charge may or may not have gone through. Check the dev drawer or
+  Mindbody before charging again." -- and the dialog offers no second
+  charge; a checkout-after-credit split renders the balance and "do
+  NOT re-run the credit step", pointing at Sell + the row's chevron.
+- (b) attach: re-fetch /api/passes, match `ClientService.ProductId`
+  == the chosen option's `productId` (both fields added for this;
+  the instance id is the newest matching `Id`), POST
+  /api/visit-payment. Any failure -- passes fetch, no instance yet,
+  refusal, or a should-be-unreachable suppression -- reports
+  "Charged, but the pass was not attached to this visit; attach it
+  with the payment chevron, then check in." The fresh pass list is
+  written into the chevron's caches first, so the by-hand finish
+  works immediately.
+- (c) check-in: a failure reports "Paid and attached; the check-in
+  tap will finish it." and leaves the row normal (roster refreshed:
+  paid, not checked in).
+
+Full success refreshes the roster (activeIdRef-guarded, against the
+captured classId) so the row shows paid and checked in, then closes.
+
+Seams for the first sandbox run:
+
+- **Does the purchased ClientService appear immediately after
+  checkout?** Stage (b) assumes the /api/passes re-fetch right after a
+  200 from /sale/checkoutshoppingcart already lists the new instance.
+  If Mindbody materializes it asynchronously, every gesture will end
+  at the honest attach-failed message with the charge standing; the
+  fix would be a short bounded re-poll in stage (b), added only if the
+  sandbox shows the lag.
+- **ProductId matching**: instance selection is newest `ClientService.Id`
+  among those with the chosen option's ProductId, so a client who
+  already owns an older instance of the same option gets the new one
+  attached. If /client/clientservices ever omits ProductId, matching
+  degrades to the attach-failed path, never to guessing by name.
+- **Roster paid-state refresh**: "shows the row paid" assumes
+  `Visit.Service` reflects the updateclientvisit assignment on the
+  next /class/classvisits read. Watch it flip in the sandbox.
+- All T24 open questions (payment metadata casing, Cash shape,
+  usedPaymentStub) apply unchanged; this ticket added no new payment
+  shapes.
 
 ## T26. Last-class renewal (PLAN 2.5)
 
