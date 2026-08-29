@@ -33,6 +33,10 @@ export interface RosterEntry {
    *  `POST /client/updateclientvisit` takes as ClientServiceId to change
    *  how the visit is paid. */
   clientServiceId: number | null;
+  /** The pricing option's own id (`Service.ProductId`, class.yml:3705),
+   *  matching CatalogItem.productId from /sale/services. What T26's
+   *  renewal prompt uses to default to the same pack again. */
+  passProductId: number | null;
   /**
    * `AccountBalance` from the batched client lookup. null when the lookup
    * failed (fail open, like waiverSigned); 0 renders as nothing.
@@ -152,6 +156,7 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
           ? service.ExpirationDate
           : null,
       clientServiceId: num(service?.Id),
+      passProductId: num(service?.ProductId),
       /** Filled by classRoster's batched client lookup. */
       balance: null,
       member: null,

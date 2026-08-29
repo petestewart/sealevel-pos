@@ -48,6 +48,10 @@ interface RosterEntry {
   passExpires: string | null;
   /** Purchase-instance id of the pass, what a payment change posts. */
   clientServiceId: number | null;
+  /** The pricing option's own id (Service.ProductId), matching
+   *  CatalogItem.productId; what T26's renewal defaults the next pack
+   *  to. Null when the visit carries no service or Mindbody omits it. */
+  passProductId: number | null;
   /** AccountBalance from the batched client lookup; null when unknown. */
   balance: number | null;
   /** MembershipIcon nonzero on the client record; null when unknown. */
@@ -631,7 +635,22 @@ function FrontDesk() {
   const [payDialog, setPayDialog] = useState<{
     entry: RosterEntry;
     classId: number;
+    /** "unpaid" is T25's three-stage gesture (charge, attach, check in);
+     *  "renewal" is T26's post-check-in offer, whose gesture is stage
+     *  (a) ONLY: the visit is already paid and signed in, so the charge
+     *  deliberately touches neither. */
+    flavor: "unpaid" | "renewal";
   } | null>(null);
+  /** Synchronous mirror of payDialog (the activeIdRef pattern), for the
+   *  async renewal-offer decision: by the time its reads land, the
+   *  render-scope payDialog is stale. */
+  const payDialogRef = useRef<typeof payDialog>(null);
+  payDialogRef.current = payDialog;
+  /** Rows whose last session was just used where the renewal dialog had
+   *  nothing to charge with (no card on file, no covering credit): a
+   *  quiet row line instead, so the teacher can use Sell manually.
+   *  Keyed by clientId; cleared on a class switch. */
+  const [lastUsed, setLastUsed] = useState<Record<string, true>>({});
   /** The sellable pricing options, from /api/catalog, fetched on the
    *  dialog's first open and kept for the session (the route caches
    *  server-side too). Errors are not kept, so reopening retries. */
@@ -1056,6 +1075,9 @@ function FrontDesk() {
     setWaitlist(null);
     setWaitlistError(null);
     setPromoteMsg({});
+    /* The quiet "Last session used." lines belong to the class they were
+     * earned on. */
+    setLastUsed({});
     void refreshRoster(activeId);
   }, [activeId, refreshRoster]);
 
@@ -1407,15 +1429,18 @@ function FrontDesk() {
    * time a teacher with a queue has looked away and believes someone is
    * checked in who is not. Attendance is worth the 300-900ms. The row shows
    * a spinner meanwhile, so the wait is visible rather than mysterious.
+   *
+   * Returns whether the write succeeded, so a caller can chain something
+   * that must only follow a REAL check-in (T26's renewal offer).
    */
   const setSignedIn = useCallback(
-    async (entry: RosterEntry, signedIn: boolean) => {
+    async (entry: RosterEntry, signedIn: boolean): Promise<boolean> => {
       if (entry.visitId === null) {
         setFailed((f) => ({
           ...f,
           [entry.clientId]: "No visit id on this booking, so it cannot be signed in.",
         }));
-        return;
+        return false;
       }
       setBusy((b) => [...b, entry.clientId]);
       if (settings.optimisticCheckIn) {
@@ -1446,6 +1471,7 @@ function FrontDesk() {
             r.clientId === entry.clientId ? { ...r, checkedIn: signedIn } : r,
           ),
         );
+        return true;
       } catch (err) {
         if (settings.optimisticCheckIn) {
           setEntries((rows) =>
@@ -1458,6 +1484,7 @@ function FrontDesk() {
           ...f,
           [entry.clientId]: err instanceof Error ? err.message : String(err),
         }));
+        return false;
       } finally {
         setBusy((b) => b.filter((id) => id !== entry.clientId));
       }
@@ -1474,7 +1501,13 @@ function FrontDesk() {
    * the client's card + live balance.
    */
   const openPayDialog = useCallback(
-    (entry: RosterEntry) => {
+    (
+      entry: RosterEntry,
+      flavor: "unpaid" | "renewal" = "unpaid",
+      /** A profile the caller just read (T26's offer gate reads it to
+       *  decide whether to open at all); passing it skips the fetch. */
+      profile?: PayProfile,
+    ) => {
       if (activeId === null) return;
       payGen.current += 1;
       payPriceGen.current += 1;
@@ -1484,36 +1517,42 @@ function FrontDesk() {
       setPayPriceError(null);
       setPayPricing(false);
       setPaySelectedId(null);
-      setPayDialog({ entry, classId: activeId });
-      /* The roster's balance stands in until the live read lands. */
-      setPayProfile({
-        loading: true,
-        balance: entry.balance,
-        card: null,
-        error: null,
-      });
-      fetch(`/api/stored-card?clientId=${encodeURIComponent(entry.clientId)}`)
-        .then(async (r) => {
-          const body = await r.json();
-          if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
-          if (payGen.current !== gen) return;
-          setPayProfile({
-            loading: false,
-            balance:
-              typeof body?.balance === "number" ? body.balance : entry.balance,
-            card: body?.card ?? null,
-            error: null,
-          });
-        })
-        .catch((e) => {
-          if (payGen.current !== gen) return;
-          setPayProfile({
-            loading: false,
-            balance: entry.balance,
-            card: null,
-            error: e instanceof Error ? e.message : String(e),
-          });
+      setPayDialog({ entry, classId: activeId, flavor });
+      if (profile) {
+        setPayProfile(profile);
+      } else {
+        /* The roster's balance stands in until the live read lands. */
+        setPayProfile({
+          loading: true,
+          balance: entry.balance,
+          card: null,
+          error: null,
         });
+        fetch(`/api/stored-card?clientId=${encodeURIComponent(entry.clientId)}`)
+          .then(async (r) => {
+            const body = await r.json();
+            if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+            if (payGen.current !== gen) return;
+            setPayProfile({
+              loading: false,
+              balance:
+                typeof body?.balance === "number"
+                  ? body.balance
+                  : entry.balance,
+              card: body?.card ?? null,
+              error: null,
+            });
+          })
+          .catch((e) => {
+            if (payGen.current !== gen) return;
+            setPayProfile({
+              loading: false,
+              balance: entry.balance,
+              card: null,
+              error: e instanceof Error ? e.message : String(e),
+            });
+          });
+      }
       /* The catalog, once per session; a kept error would dead-end every
        * later open, so errors are shown but not cached (the dialog's
        * Retry re-enters here). */
@@ -1557,6 +1596,105 @@ function FrontDesk() {
   }, [payStage]);
 
   /**
+   * T26: after a REAL check-in that used a pass's last session, decide
+   * between the renewal dialog and the quiet row line. Never blocking:
+   * the check-in already happened and stands whatever this does. The
+   * dialog opens only when there is something to charge with -- an
+   * unexpired card on file, or account credit covering the would-be
+   * default pack's list price -- and only if the teacher is still on the
+   * class the tap belonged to with no other pay dialog open; otherwise
+   * the row gets the quiet "Last session used." line so the teacher can
+   * use Sell manually.
+   */
+  const maybeOfferRenewal = useCallback(
+    async (entry: RosterEntry, classId: number) => {
+      const quiet = () =>
+        setLastUsed((m) => ({ ...m, [entry.clientId]: true }));
+      /* The live profile: the same read the dialog would make, done up
+       * front because it IS the decision. A failed read cannot decide,
+       * so it goes quiet rather than opening a dialog with nothing
+       * chargeable in it. */
+      let profile: PayProfile;
+      try {
+        const r = await fetch(
+          `/api/stored-card?clientId=${encodeURIComponent(entry.clientId)}`,
+        );
+        const body = await r.json();
+        if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+        profile = {
+          loading: false,
+          balance:
+            typeof body?.balance === "number" ? body.balance : entry.balance,
+          card: body?.card ?? null,
+          error: null,
+        };
+      } catch {
+        quiet();
+        return;
+      }
+      const card = profile.card && !profile.card.expired ? profile.card : null;
+      /* The catalog, for the covering-credit yardstick (and the dialog
+       * itself); reuse the session cache, fetch it once if this offer
+       * gets there first. Best-effort: no catalog means the yardstick
+       * cannot pass, and a card-on-file dialog shows the catalog error
+       * with its Retry. */
+      let passes = payCatalog.passes;
+      if (passes === null && card === null) {
+        try {
+          const r = await fetch("/api/catalog");
+          const body = await r.json();
+          if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+          passes = ((body?.passes ?? []) as PayOption[]).filter(
+            (p) => p?.type === "Service",
+          );
+          setPayCatalog({ passes, error: null, loading: false });
+        } catch {
+          passes = null;
+        }
+      }
+      /* The pack the dialog would default to: same ProductId when still
+       * sellable, else the usual single-visit default. Its LIST price is
+       * the covering-credit yardstick; tax can push the real total past
+       * it, and /api/checkout re-reads the balance and refuses honestly
+       * if so. */
+      let target: PayOption | null = null;
+      if (passes && passes.length > 0) {
+        target =
+          (entry.passProductId !== null
+            ? passes.find((p) => p.productId === entry.passProductId)
+            : undefined) ??
+          [...passes].sort((a, b) => {
+            const ca =
+              a.count !== null && a.count < 100
+                ? a.count
+                : Number.MAX_SAFE_INTEGER;
+            const cb =
+              b.count !== null && b.count < 100
+                ? b.count
+                : Number.MAX_SAFE_INTEGER;
+            return ca - cb || a.price - b.price;
+          })[0] ??
+          null;
+      }
+      const creditCovers =
+        target !== null &&
+        profile.balance !== null &&
+        profile.balance >= target.price;
+      if (
+        (card !== null || creditCovers) &&
+        payDialogRef.current === null &&
+        !payFlight.current &&
+        activeIdRef.current === classId
+      ) {
+        openPayDialog(entry, "renewal", profile);
+      } else {
+        quiet();
+      }
+    },
+    [openPayDialog, payCatalog.passes],
+  );
+
+  /**
    * The dialog's default selection: the sensible single-visit option, so
    * the common gesture is tap-the-chip, tap-Charge. Lowest real Count
    * wins (a drop-in is Count 1; the fake-unlimited counters >= 100 sort
@@ -1567,6 +1705,18 @@ function FrontDesk() {
     if (!payDialog || paySelectedId !== null) return;
     const passes = payCatalog.passes;
     if (!passes || passes.length === 0) return;
+    /* Renewal flavor (T26): the default is the SAME pack again, matched
+     * by the current pass's ProductId, when the catalog still sells it.
+     * No match (or no ProductId) falls through to the usual default. */
+    if (payDialog.flavor === "renewal" && payDialog.entry.passProductId !== null) {
+      const same = passes.find(
+        (p) => p.productId === payDialog.entry.passProductId,
+      );
+      if (same) {
+        setPaySelectedId(same.id);
+        return;
+      }
+    }
     const best = [...passes].sort((a, b) => {
       const ca =
         a.count !== null && a.count < 100 ? a.count : Number.MAX_SAFE_INTEGER;
@@ -1690,9 +1840,25 @@ function FrontDesk() {
         openPayDialog(entry);
         return;
       }
+      /* T26: a real pass down to its last session. The check-in itself
+       * runs exactly as normal -- they still have the session, and the
+       * tap must not get slower -- and only a SUCCESSFUL write chains
+       * the renewal offer, which never blocks or undoes anything. */
+      const lastSession =
+        entry.paid &&
+        entry.passRemaining === 1 &&
+        !fakeUnlimited(entry.passCount, entry.passRemaining);
+      const classId = activeIdRef.current;
+      if (lastSession && classId !== null) {
+        void (async () => {
+          const ok = await setSignedIn(entry, true);
+          if (ok) void maybeOfferRenewal(entry, classId);
+        })();
+        return;
+      }
       void setSignedIn(entry, true);
     },
-    [busy, setSignedIn, settings.confirmUnpaid, openPayDialog],
+    [busy, setSignedIn, settings.confirmUnpaid, openPayDialog, maybeOfferRenewal],
   );
 
   /** Close the waiver dialog and drop every piece of its state, so a
@@ -2608,8 +2774,12 @@ function FrontDesk() {
   const runPayAndCheckIn = async () => {
     if (payFlight.current || !payChargeable) return;
     if (!payDialog || !paySelected || payMethod === null) return;
-    const { entry, classId } = payDialog;
-    if (entry.visitId === null) return;
+    const { entry, classId, flavor } = payDialog;
+    /* The unpaid gesture attaches to and signs in a visit; without a
+     * visit id there is nothing to run. The renewal gesture (T26) is the
+     * charge alone -- the visit is already paid and checked in and is
+     * deliberately not touched -- so it needs no visit id. */
+    if (flavor === "unpaid" && entry.visitId === null) return;
     payFlight.current = true;
     setPayOutcome(null);
     try {
@@ -2696,8 +2866,10 @@ function FrontDesk() {
               }; do NOT re-run the credit step.` +
               (chargeBody?.ambiguous === true
                 ? ""
-                : " Sell the pass in Sell, on account credit, then attach " +
-                  "and check in from the row."),
+                : flavor === "renewal"
+                  ? " Sell the pack in Sell, on account credit."
+                  : " Sell the pass in Sell, on account credit, then attach " +
+                    "and check in from the row."),
             mindbody: String(chargeBody?.error ?? "no reason returned"),
           });
           return;
@@ -2723,6 +2895,45 @@ function FrontDesk() {
           kind: "charge-failed",
           message: String(chargeBody?.error ?? `HTTP ${chargeRes.status}`),
         });
+        return;
+      }
+
+      /* Renewal flavor (T26): the gesture is stage (a) alone. The visit
+       * is already paid and checked in, so the purchase deliberately
+       * touches neither the visit assignment nor the sign-in state; the
+       * pass caches and the roster refresh so the row's pass facts show
+       * the new pack, best-effort because the sale already stands. */
+      if (flavor === "renewal") {
+        try {
+          const pr = await fetch(
+            `/api/passes?clientId=${encodeURIComponent(entry.clientId)}`,
+          );
+          const pBody = await pr.json();
+          if (pr.ok) {
+            const fresh: PassInfo[] = pBody?.passes ?? [];
+            passSweepCache.current.set(entry.clientId, fresh);
+            setPassLists((l) => ({
+              ...l,
+              [entry.clientId]: { data: fresh, error: null, loading: false },
+            }));
+          }
+        } catch {
+          /* The row's chevron refetches on open; the sale is unaffected. */
+        }
+        await refreshRoster(classId);
+        setLastUsed((m) => {
+          const { [entry.clientId]: _drop, ...rest } = m;
+          return rest;
+        });
+        payGen.current += 1;
+        payPriceGen.current += 1;
+        setPayDialog(null);
+        setPayOutcome(null);
+        setPayPriced(null);
+        setPayPriceError(null);
+        setPayPricing(false);
+        setPaySelectedId(null);
+        setPayProfile(null);
         return;
       }
 
@@ -2847,6 +3058,9 @@ function FrontDesk() {
      * paid gesture. */
     if (payFlight.current || payStage !== null || !payDialog || payMoneyMoved)
       return;
+    /* The renewal dialog has no free entry: the student is already
+     * checked in, so there is nothing to comp. */
+    if (payDialog.flavor === "renewal") return;
     const entry = payDialog.entry;
     closePayDialog();
     void setSignedIn(entry, true);
@@ -3280,6 +3494,13 @@ function FrontDesk() {
                         count={entry.passCount}
                         expires={entry.passExpires}
                       />
+                    ) : null}
+                    {/* T26's quiet fallback: the last session was just
+                        used and the renewal dialog had nothing to charge
+                        with (no card on file, no covering credit), so
+                        the fact sits here for a manual Sell. */}
+                    {lastUsed[entry.clientId] ? (
+                      <span className="pass-last-used">Last session used.</span>
                     ) : null}
                   </span>
                   {/* The payment-change chevron renders only when there is
@@ -4377,10 +4598,18 @@ function FrontDesk() {
             className="modal modal-pay"
             role="dialog"
             aria-modal="true"
-            aria-label={`Pay and check in ${payDialog.entry.name}`}
+            aria-label={
+              payDialog.flavor === "renewal"
+                ? `Sell the next pack to ${payDialog.entry.name}`
+                : `Pay and check in ${payDialog.entry.name}`
+            }
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="modal-title">Pay and check in</p>
+            <p className="modal-title">
+              {payDialog.flavor === "renewal"
+                ? "Last session used. Sell the next pack?"
+                : "Pay and check in"}
+            </p>
             <p className="modal-entity">{payDialog.entry.name}</p>
 
             {/* The pass to sell. Sorted single-visit first (the default
@@ -4399,7 +4628,7 @@ function FrontDesk() {
                 </p>
                 <button
                   className="class-change"
-                  onClick={() => openPayDialog(payDialog.entry)}
+                  onClick={() => openPayDialog(payDialog.entry, payDialog.flavor)}
                 >
                   Retry
                 </button>
@@ -4496,7 +4725,9 @@ function FrontDesk() {
             {payOutcome?.kind === "suppressed" ? (
               <p className="pass-note modal-note-gap">
                 {payOutcome.mode === "dry-run"
-                  ? "Dry run: nothing was charged and nobody was checked in."
+                  ? payDialog.flavor === "renewal"
+                    ? "Dry run: nothing was charged."
+                    : "Dry run: nothing was charged and nobody was checked in."
                   : "Write guard: this client is not in POS_WRITE_CLIENT_IDS."}{" "}
                 The write was suppressed on the server.
               </p>
@@ -4538,7 +4769,9 @@ function FrontDesk() {
               >
                 {payOutcome !== null && payOutcome.kind !== "charge-failed"
                   ? "Close"
-                  : "Cancel"}
+                  : payDialog.flavor === "renewal"
+                    ? "Not now"
+                    : "Cancel"}
               </button>
               {!payMoneyMoved ? (
                 <button
@@ -4562,7 +4795,13 @@ function FrontDesk() {
                       Checking in...
                     </>
                   ) : payTotal !== null ? (
-                    `Charge ${money(payTotal)} and check in`
+                    payDialog.flavor === "renewal" ? (
+                      `Charge ${money(payTotal)}`
+                    ) : (
+                      `Charge ${money(payTotal)} and check in`
+                    )
+                  ) : payDialog.flavor === "renewal" ? (
+                    "Charge"
                   ) : (
                     "Charge and check in"
                   )}
@@ -4572,8 +4811,10 @@ function FrontDesk() {
 
             {/* Free entry: present, labelled, and visually the
                 exception. Today's Phase 1 behavior exactly: no charge,
-                just the pessimistic check-in write. */}
-            {!payMoneyMoved ? (
+                just the pessimistic check-in write. Not in the renewal
+                flavor: the student is already checked in, and "Not now"
+                is the whole exit. */}
+            {!payMoneyMoved && payDialog.flavor !== "renewal" ? (
               <button
                 className="pay-free"
                 disabled={payStage !== null}

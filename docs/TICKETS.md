@@ -936,9 +936,52 @@ Seams for the first sandbox run:
 
 ## T26. Last-class renewal (PLAN 2.5)
 
-- [ ] The "1 remaining" pill's row offers selling the next pack in the
+- [x] The "1 remaining" pill's row offers selling the next pack in the
       same gesture as check-in, via the same T24/T25 machinery. Quiet
       when no card on file.
+
+Shipped 2026-08-29, reusing T25's dialog with a `flavor` rather than new
+machinery. A roster row whose pass is real (not a fake-unlimited
+counter) and down to `Remaining: 1` checks in EXACTLY as before -- they
+still have the session, and the tap must not get slower -- and only a
+successful check-in write chains the offer. The offer never blocks and
+never undoes: whatever it does, the check-in already stands.
+
+The decision, made after the check-in with one /api/stored-card read
+(plus the session-cached catalog when there is no card): an unexpired
+card on file, or account credit covering the would-be default pack's
+list price, opens the T25 dialog in its "renewal" flavor -- title "Last
+session used. Sell the next pack?", the same pricing-option list
+defaulting to the pack matching the current pass's ProductId
+(`Visit.Service.ProductId`, now on RosterEntry as passProductId) when
+the catalog still sells it, else the usual single-visit default, the
+same pessimistic pricing loop, the same derived method and single
+Charge button (labelled "Charge $X", no "and check in"). Neither, or a
+failed profile read, or the teacher having moved on (another pay dialog
+open, or a different class active by decision time): no dialog at all,
+just a quiet warn-token "Last session used." line under the row's pass
+facts so the teacher can use Sell manually. "Not now" (the renewal
+flavor's cancel) dismisses in one tap; Escape and the scrim work too,
+mid-flight refusals unchanged.
+
+**The renewal purchase intentionally does not touch the visit**: the
+gesture is T25's stage (a) alone -- no visit assignment, no
+re-check-in -- because the session being paid for is a FUTURE one, and
+the current visit is already paid by the pass that just hit zero. On
+success the pass caches (chevron dropdown) refresh best-effort, the
+roster refreshes so the row's pass facts update, and the dialog closes.
+Suppression renders amber with renewal wording ("Dry run: nothing was
+charged.") and stops; ambiguity uses T24's wording verbatim and
+withdraws the charge; the under-$10 split's renewal wording drops the
+attach/check-in instruction since there is nothing to attach. The
+free-entry comp button does not render in this flavor (the student is
+already checked in) and freeCheckIn refuses it defensively.
+
+Same single-flight (payFlight ref before any await), same
+generation-guarded reads, all inherited by construction. The
+covering-credit yardstick is the LIST price; tax can push the real
+total past it, in which case /api/checkout re-reads the balance and
+refuses honestly, and the dialog's gate refreshes with the live number.
 
 ## T10. Auth — deliberately last
 

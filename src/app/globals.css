@@ -2211,3 +2211,12 @@ button.sale-for:active {
   background: var(--accent);
   color: var(--surface);
 }
+
+/* T26's quiet fallback line under the pass facts: the last session was
+ * just used and the renewal dialog had nothing to charge with, so the
+ * teacher sells manually. The warn token keeps it findable without
+ * shouting; tokens only, so both palettes come from the variable swap. */
+.pass-last-used {
+  font-size: 16px;
+  color: var(--warn);
+}
