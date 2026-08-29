@@ -440,19 +440,44 @@ it. Selection resets when the modal closes or a new search lands. Live
 verification of the chosen pass actually landing on the visit belongs
 with Pete's T2 rehearsal.
 
-## Noted for later: waiver signing at the counter (Pete, 2026-08-28)
+## T18. Waiver signing at the counter (Pete, 2026-08-28)
 
-Pete's observation, which softens the design doc's Phase 3 framing: the
-Mindbody POS itself shows the full waiver text in a popup with Ignore /
-Resolve that any staff member can tap. Matching that is not a new risk, it
-replicates the tool the studio already uses. So a cheaper middle option is
-legitimate before the Phase 3 QR flow: the blocked row's dialog shows the
-real waiver text from /site/liabilitywaiver, the student reads it at the
-counter, and a deliberate confirm tap writes LiabilityRelease: true, with
-our own receipt (client id, timestamp, text hash) kept from day one since
-Mindbody stores no waiver version. The QR-on-their-phone flow remains the
-better end state, off the critical path. Not scheduled; ticket it when
-Pete wants it.
+Promoted from the note below at Pete's direction. DECISION REVERSAL,
+recorded: T6 shipped "no tap path marks a waiver signed", and Pete has
+overruled it for the counter flow, on the grounds that Mindbody's own POS
+shows the waiver text with a staff-tappable Resolve, so matching it
+replicates the studio's existing tool rather than creating a new risk.
+The Phase 3 QR-on-their-phone flow stays the better end state; this is
+the bridge.
+
+- [ ] The no-waiver gate dialog grows a "Read the waiver" path: fetch the
+      studio's real waiver text from GET /site/liabilitywaiver (verify
+      the response shape in docs/mindbody-openapi/site.yml), shown
+      scrollable at 16px+. The old close-only dialog remains the shape
+      when the waiver text cannot be fetched.
+- [ ] The confirm is unmistakably the STUDENT's agreement: enabled only
+      after the text has been scrolled to the end, worded "They have
+      read it and agree", button "Record agreement and check in". No
+      path records agreement without the text having been shown.
+- [ ] Confirming writes the release via POST /client/updateclient with
+      the same surgical discipline as notes (verify against client.yml
+      where LiabilityRelease sits in UpdateClientRequest; send nothing
+      beyond the id, the release flag, and CrossRegionalUpdate: false),
+      write-guarded and dry-run-suppressible like every write, then
+      refreshes and checks the row in through the normal path.
+- [ ] The receipt, from day one, since Mindbody stores no waiver text or
+      version: (a) a structured server log line (client id, timestamp,
+      sha256 of the exact text served) written whenever an agreement is
+      recorded, and (b) the same line appended to the client's Mindbody
+      Notes through the existing surgical notes write, so the receipt
+      travels with the client where staff already look. A standalone
+      receipt store waits for the database (design doc Phase 3).
+- [ ] The design doc's waiver section gets a short dated addendum
+      recording Pete's decision and the MB-Resolve reasoning, so the
+      reasoning of record stays true.
+- [ ] Pete: live-verify against the dummy client that IsReleased flips,
+      AgreementDate stamps, the receipt lands in Notes, and nothing else
+      on the record changes.
 
 ## T9. Deployment, minus auth (PLAN Phase 1.5)
 
