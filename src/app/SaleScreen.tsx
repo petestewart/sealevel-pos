@@ -292,9 +292,16 @@ function PaymentPanel(props: {
       ? priced.grandTotal
       : null;
 
-  /* A detach invalidates the client-bound methods. */
+  /** A fresher balance than the attach snapshot, learned from a split
+   *  failure's report: it is what lets Account credit light up so the
+   *  honest retry (spend the credit that now exists) is available while
+   *  the dangerous one (buy it again) is not. */
+  const [freshBalance, setFreshBalance] = useState<number | null>(null);
+
+  /* A detach invalidates the client-bound methods and the balance. */
   const clientId = client?.id ?? null;
   useEffect(() => {
+    setFreshBalance(null);
     if (clientId === null) {
       setMethod((m) => (m === "storedcard" || m === "credit" ? null : m));
     }
@@ -328,9 +335,10 @@ function PaymentPanel(props: {
             : null;
   const cardDetail = card && !card.expired ? `Card ...${card.lastFour}` : null;
 
-  const balance = client?.balance ?? null;
-  /* The attach snapshot gates the button; /api/checkout re-reads the
-   * balance server-side and never trusts this number. */
+  const balance = freshBalance ?? client?.balance ?? null;
+  /* The attach snapshot (or a split failure's fresher report) gates the
+   * button; /api/checkout re-reads the balance server-side and never
+   * trusts this number. */
   const creditReason = !client
     ? "Attach a client"
     : balance === null || balance <= 0
@@ -429,7 +437,15 @@ function PaymentPanel(props: {
         setResult({ kind: "suppressed", mode: String(body.suppressed) });
       } else if (body?.stage === "checkout-after-credit") {
         /* THE seam, rendered verbatim and prominent: the credit exists,
-         * the sale does not, and the credit step must not run again. */
+         * the sale does not, and the credit step must not run again. The
+         * method is DESELECTED so a bare re-tap of Charge is impossible,
+         * and the fresh balance lets Account credit light up: the honest
+         * retry is spending the credit that now exists, never re-buying
+         * it, so there is no retry affordance on the credit step. */
+        setMethod(null);
+        if (typeof body?.creditBalance === "number") {
+          setFreshBalance(body.creditBalance);
+        }
         setResult({
           kind: "split",
           message:
@@ -646,8 +662,10 @@ function PaymentPanel(props: {
         </div>
       ) : result?.kind === "suppressed" ? (
         <div className="pass-note t-suppressed" role="status">
-          Dry run: nothing was charged. The {result.mode} guard suppressed
-          the write; the cart is untouched.
+          {result.mode === "dry-run"
+            ? "Dry run: nothing was charged."
+            : "Write guard: nothing was charged."}{" "}
+          The write was suppressed on the server; the cart is untouched.
           <button
             className="class-change pay-dismiss"
             onClick={() => setResult(null)}
