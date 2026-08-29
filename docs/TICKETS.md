@@ -705,12 +705,44 @@ POST /api/price-cart. Spec findings worth keeping:
 
 ## T23. The sale screen (PLAN 2.1 UI)
 
-- [ ] Two panes per the approved mockups: receipt-style cart left
+- [x] Two panes per the approved mockups: receipt-style cart left
       (items, qty, subtotal, tax, total), category chips and item grid
       right. Reached from a "Sell" affordance in the header; the roster
       remains the home screen. Mode banner stays visible.
-- [ ] Optional client attachment: a sale can be anonymous or attached to
+- [x] Optional client attachment: a sale can be anonymous or attached to
       a client (search reused); attaching enables stored-card/credit.
+
+Shipped as src/app/SaleScreen.tsx plus flag-driven changes to page.tsx
+(2026-08-29). UI and wiring only; no payment execution. Notes:
+
+- The overlay is state, not a route: the roster stays mounted underneath
+  and ?classId= is untouched. SaleScreen stays mounted across open/close
+  so a cart survives an accidental Back. Escape closes it unless a modal
+  is stacked above or a pricing call is in flight.
+- Pricing is pessimistic: every cart or client change debounces 400ms,
+  POSTs /api/price-cart, and renders the SERVER totals under a request
+  generation counter (the activeIdRef pattern). `disagrees` renders the
+  stop-treatment "Our math says X, Mindbody says Y" block; `suppressed`
+  renders the amber dry-run notice with no number; `usedPaymentStub`
+  surfaces as a quiet line because T24 must know which shape priced.
+- Client attachment reuses the search modal behind an `attachMode` flag:
+  same submit-triggered search (the input renders inside the modal since
+  attach opens it queryless), same row format; the row action becomes a
+  person-check that selects and closes, the booking-only furniture
+  (waiver gate, full-class offer, pass picker, roster de-duplication)
+  steps aside. The clientId rides price-cart calls; a balance chip and a
+  detach X render atop the ticket.
+- THE T24 SEAM: <PaymentPanel cart priced pricing client onCharge/> at
+  the bottom of SaleScreen.tsx owns everything below the totals -- the
+  three disabled method cards (Stored card / Account credit / Cash) and
+  the disabled Charge button restating the live total. T24 replaces that
+  component's internals and the onCharge stub without touching the cart,
+  shelf, or pricing loop. Its `chargeable` const already encodes the
+  invariants T24 inherits: never charge an empty, in-flight, suppressed,
+  or disagreeing cart.
+- The mode banner is now the shared <ModeBanner/> component, rendered by
+  both the roster page and the sale overlay from the same /api/config
+  data.
 
 ## T24. Payment execution (PLAN 2.2 + 2.3)
 

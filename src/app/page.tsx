@@ -12,6 +12,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import DevDrawer from "./DevDrawer";
 import LockScreen from "./LockScreen";
+import SaleScreen, {
+  ModeBanner,
+  type ModeConfig,
+  type SaleClient,
+} from "./SaleScreen";
 import { useSettings } from "./settings";
 
 /**
@@ -222,6 +227,38 @@ function PlusIcon() {
         strokeWidth="2.4"
         strokeLinecap="round"
         d="M12 5v14M5 12h14"
+      />
+    </svg>
+  );
+}
+
+/** A person with a check: the search modal's row action in attach mode
+ *  (T23). Selects the client for the sale and closes; books nothing. */
+function PersonCheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <circle
+        cx="10"
+        cy="8"
+        r="3.4"
+        stroke="currentColor"
+        strokeWidth="2"
+        fill="none"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        fill="none"
+        d="M4 19.5c.6-3.4 3-5.2 6-5.2 1.2 0 2.3.3 3.2.8"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M14.5 17.5l2.2 2.2 3.8-4.4"
       />
     </svg>
   );
@@ -528,14 +565,7 @@ function FrontDesk() {
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<SearchResult[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [config, setConfig] = useState<{
-    dryRun: boolean;
-    target: string;
-    siteId: string | null;
-    configError: string | null;
-    writeClientIds: string[];
-    banner: string | null;
-  } | null>(null);
+  const [config, setConfig] = useState<ModeConfig | null>(null);
   /** Rows whose check-in call failed after going green optimistically. */
   const [failed, setFailed] = useState<Record<string, string>>({});
   /** Unpaid rows tapped once, awaiting a deliberate second tap. */
@@ -761,6 +791,20 @@ function FrontDesk() {
   /** Whether the class picker (behind the header's "Change class") is
    *  open. Pure UI state; the selection itself is activeId. */
   const [classPickerOpen, setClassPickerOpen] = useState(false);
+  /** Whether the sale overlay (T23) is on screen. Pure UI state: the
+   *  roster stays mounted underneath and the URL is untouched, so closing
+   *  lands back exactly where the teacher was. SaleScreen itself stays
+   *  mounted across open/close, so a cart survives an accidental Back. */
+  const [saleOpen, setSaleOpen] = useState(false);
+  /** The client the sale is for, or null for an anonymous sale. Chosen
+   *  through the search modal's attach mode; rides /api/price-cart. */
+  const [saleClient, setSaleClient] = useState<SaleClient | null>(null);
+  /** True while the search modal is open as the sale's attach picker
+   *  (T23): same modal, same submit-triggered search, same row format,
+   *  but the row action selects the client instead of booking, and the
+   *  booking-only furniture (full-class notice, pass picker, roster
+   *  de-duplication) steps aside. */
+  const [attachMode, setAttachMode] = useState(false);
   /** The class currently on screen, readable from inside an async fetch:
    *  a waitlist response that comes back after the teacher has switched
    *  classes must be dropped, not written into state under the new class. */
@@ -1161,7 +1205,37 @@ function FrontDesk() {
     setSearchOpen(false);
     setQuery("");
     setFound([]);
+    setAttachMode(false);
   }, []);
+
+  /** Open the search modal as the sale's attach picker (T23): no query
+   *  yet, so the modal renders its own copy of the search bar, wired to
+   *  the SAME query state and submitSearch, and the one metered call
+   *  still fires on submit only. */
+  const openAttachSearch = useCallback(() => {
+    setAttachMode(true);
+    setSearchMsg(null);
+    setSearchError(null);
+    setSearchTitle("");
+    setFound([]);
+    setQuery("");
+    setSearchOpen(true);
+  }, []);
+
+  /** The attach-mode row action: select the client for the sale and
+   *  close. Writes nothing, books nothing, gates nothing -- buying a
+   *  bottle of water needs no waiver. */
+  const attachSaleClient = useCallback(
+    (client: SearchResult) => {
+      setSaleClient({
+        id: client.id,
+        name: client.name,
+        balance: client.balance,
+      });
+      closeSearch();
+    },
+    [closeSearch],
+  );
 
   /** Escape closes the search-results modal, unless a layer is stacked
    *  on top of it (the waiver gate, waitlist confirm, the info view, the
@@ -1581,6 +1655,10 @@ function FrontDesk() {
     () => found.filter((f) => !rosterIds.has(f.id)),
     [found, rosterIds],
   );
+  /** What the search modal lists. Attach mode (T23) shows EVERY match:
+   *  someone already on the roster can still buy a drink, so the
+   *  booking-flow de-duplication does not apply to a sale. */
+  const shownResults = attachMode ? found : walkIns;
 
   /**
    * Forms of payment for the DISPLAYED walk-in results: once a submitted
@@ -2181,17 +2259,10 @@ function FrontDesk() {
     <main className="shell">
       {config?.configError ? <p className="note">{config.configError}</p> : null}
 
-      {config && !config.configError ? (
-        <p className={config.dryRun ? "banner" : "banner live"}>
-          {config.dryRun
-            ? "Dry run. Nothing is written to Mindbody."
-            : "LIVE. Taps check real students in."}{" "}
-          {config.target === "prod" ? "Production" : "Sandbox"} site {config.siteId}.
-          {!config.dryRun && config.writeClientIds.length > 0
-            ? ` Writes limited to client ${config.writeClientIds.join(", ")}.`
-            : ""}
-        </p>
-      ) : null}
+      {/* The mode banner is shared with the sale overlay (T23): ONE
+          component, one wording, so "is this live" reads the same on
+          every screen. */}
+      <ModeBanner config={config} />
 
       {/* Studio banner: an announcement, never a status. It renders BELOW
           the mode banner and in a deliberately different shape (quiet
@@ -2248,6 +2319,21 @@ function FrontDesk() {
             onClick={() => setClassPickerOpen(true)}
           >
             Change class
+          </button>
+          {/* Opens the sale overlay (T23). Quiet like "Change class":
+              selling is deliberate, not the thing hit at speed. The
+              roster stays mounted underneath; closing lands right back. */}
+          <button
+            className="class-change"
+            onClick={() => {
+              /* Anything anchored to roster rows (dropdowns, menus) would
+               * otherwise paint above the overlay at a higher z-index. */
+              setPickerFor(null);
+              setSortMenuOpen(false);
+              setSaleOpen(true);
+            }}
+          >
+            Sell
           </button>
           <div className="counters" aria-label="Counts for the selected class">
           {/* A plain stat, not a button: its list IS the roster below,
@@ -2763,7 +2849,11 @@ function FrontDesk() {
             className="modal modal-list modal-search"
             role="dialog"
             aria-modal="true"
-            aria-label={`Search results for ${searchTitle}`}
+            aria-label={
+              attachMode
+                ? "Attach a client to the sale"
+                : `Search results for ${searchTitle}`
+            }
             onClick={(e) => e.stopPropagation()}
           >
             <button
@@ -2773,11 +2863,62 @@ function FrontDesk() {
             >
               <CloseIcon />
             </button>
-            <p className="modal-title">{`Results for "${searchTitle}"`}</p>
+            <p className="modal-title">
+              {attachMode
+                ? "Attach a client to the sale"
+                : `Results for "${searchTitle}"`}
+            </p>
+            {/* Attach mode opens the modal BEFORE any search exists, so
+                the search bar renders here: the same query state, the
+                same submitSearch, the same one-call-on-submit rule as the
+                page's own bar. */}
+            {attachMode ? (
+              <div className="search-bar">
+                <div className="search-wrap">
+                  <input
+                    className="search"
+                    value={query}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      setSearchMsg(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        submitSearch();
+                      }
+                    }}
+                    enterKeyHint="search"
+                    placeholder="Who is the sale for? (press Enter)"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    autoFocus
+                  />
+                  {query ? (
+                    <button
+                      type="button"
+                      className="search-clear"
+                      aria-label="Clear search"
+                      onClick={() => setQuery("")}
+                    >
+                      <CloseIcon />
+                    </button>
+                  ) : null}
+                </div>
+                <button className="search-go" onClick={submitSearch}>
+                  Search
+                </button>
+              </div>
+            ) : null}
+            {attachMode && searchMsg ? (
+              <p className="search-quiet">{searchMsg}</p>
+            ) : null}
             {/* A class-level fact, said once here rather than stamped on
                 every result row: with the class full, every add offers
-                the waiting list instead. */}
-            {classFull && walkIns.length > 0 ? (
+                the waiting list instead. Booking flow only; a sale does
+                not care whether the class is full. */}
+            {!attachMode && classFull && walkIns.length > 0 ? (
               <p className="muted">Class is full. Adding goes to the waiting list.</p>
             ) : null}
             {searching ? (
@@ -2787,14 +2928,18 @@ function FrontDesk() {
               </p>
             ) : null}
             {searchError ? <p className="note">{searchError}</p> : null}
-            {!searching && !searchError && walkIns.length === 0 ? (
+            {!searching && !searchError && shownResults.length === 0 ? (
               <p className="muted">
-                {found.length > 0
-                  ? "Everyone matching is already on this class's roster."
-                  : "Nobody found. Check the spelling, or try fewer letters."}
+                {attachMode
+                  ? searchTitle
+                    ? "Nobody found. Check the spelling, or try fewer letters."
+                    : "Search for the client the sale is for, or close to sell anonymously."
+                  : found.length > 0
+                    ? "Everyone matching is already on this class's roster."
+                    : "Nobody found. Check the spelling, or try fewer letters."}
               </p>
             ) : null}
-            {walkIns.length > 0 ? (
+            {shownResults.length > 0 ? (
               <>
                 <div className="roster-head">
                   <span aria-hidden="true">Name</span>
@@ -2813,7 +2958,7 @@ function FrontDesk() {
                     walkinPicker ? () => setWalkinPicker(null) : undefined
                   }
                 >
-                  {walkIns.map((client) => {
+                  {shownResults.map((client) => {
                     const working = bookingIds.includes(client.id);
                     const msg = bookMsg[client.id];
                     /* Under the markers: an in-flight call or an outcome
@@ -2937,8 +3082,10 @@ function FrontDesk() {
                             {/* The chevron only when there is a real
                                 choice: two or more choosable passes. The
                                 tap opens the picker; picking takes NO
-                                action beyond updating this cell. */}
-                            {choosable.length >= 2 ? (
+                                action beyond updating this cell. Booking
+                                flow only: attaching a client to a sale
+                                picks no pass. */}
+                            {!attachMode && choosable.length >= 2 ? (
                               <button
                                 className="row-icon pass-toggle"
                                 disabled={working}
@@ -3083,13 +3230,30 @@ function FrontDesk() {
                               : ""}
                           </span>
                           <div className="cell-actions">
-                            {/* A "+" icon, not a text chip (T17): the one
+                            {/* In attach mode the row's one action is a
+                                person-check: select this client for the
+                                sale and close. No waiver gate, no
+                                waitlist offer, nothing written (T23). */}
+                            {attachMode ? (
+                              <button
+                                className="add-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  attachSaleClient(client);
+                                }}
+                                aria-label={`Attach ${client.name} to the sale`}
+                                title="Attach to the sale"
+                              >
+                                <PersonCheckIcon />
+                              </button>
+                            ) : (
+                            /* A "+" icon, not a text chip (T17): the one
                                 action on the row, a 52px filled circle in
                                 the same action pairing as the check-in
                                 chip. The aria-label carries what the label
                                 text used to: whether the tap books or
                                 offers the waiting list. All gates are in
-                                tapWalkIn, unchanged. */}
+                                tapWalkIn, unchanged. */
                             <button
                               className="add-btn"
                               /* Every row's "+" goes inert while ANY booking
@@ -3115,6 +3279,7 @@ function FrontDesk() {
                                 <PlusIcon />
                               )}
                             </button>
+                            )}
                           </div>
                         </div>
                       </li>
@@ -3659,6 +3824,21 @@ function FrontDesk() {
           </div>
         </div>
       ) : null}
+
+      {/* The sale overlay (T23). ALWAYS mounted so its cart survives an
+          accidental Back and reopens where it left off; `open` is what
+          shows it. It sits below every modal scrim, so the search modal
+          in attach mode, the info view, and the dev drawer all stack
+          above it as usual. */}
+      <SaleScreen
+        open={saleOpen}
+        onClose={() => setSaleOpen(false)}
+        config={config}
+        client={saleClient}
+        onRequestAttach={openAttachSearch}
+        onDetachClient={() => setSaleClient(null)}
+        modalAbove={searchOpen || infoView !== null || waiverPrompt !== null}
+      />
 
       <DevDrawer />
     </main>

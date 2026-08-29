@@ -1541,3 +1541,408 @@ button.pass-opt:disabled {
   opacity: 0.5;
   cursor: default;
 }
+
+/* --- Sale screen (T23) ----------------------------------------------
+ * A full-screen overlay over the roster, per the approved payment mockup
+ * (counter-refresh panel 5): receipt ticket left, category chips and the
+ * item shelf right, the T24 payment seam below. Tokens only, both
+ * palettes come from the variable swap; the receipt body is 16px
+ * monospace, a recorded allowance (the floor is 16px, monospace is the
+ * ticket idiom, not a size cheat).
+ *
+ * z-index 18: above the page, BELOW the dev drawer (19/20) so the call
+ * log stays reachable while testing pricing, and below every modal scrim
+ * (30) so the search modal in attach mode stacks over it. */
+
+.sale-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 18;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.sale-shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.sale-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+
+.sale-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+/* Ticket left, shelf right; stacks on a narrow screen. */
+.sale-panes {
+  display: grid;
+  grid-template-columns: 400px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .sale-panes {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The receipt ticket, translated from the mockup to tokens. */
+.ticket {
+  padding: 22px 22px 26px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px;
+}
+
+.ticket h3 {
+  margin: 0 0 2px;
+  font-size: 18px;
+  font-weight: 700;
+  text-align: center;
+  font-family: inherit;
+}
+
+.ticket .t-sub {
+  margin: 0 0 14px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.t-rule {
+  border: 0;
+  border-top: 2px dashed var(--line);
+  margin: 12px 0;
+}
+
+.t-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+}
+
+.t-line .amt {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.t-line .t-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.t-line.t-muted {
+  color: var(--muted);
+}
+
+.t-total {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.t-empty {
+  margin: 0;
+  padding: 8px 0;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* The spinner line while Mindbody prices the cart: the totals area IS the
+ * wait, same posture as check-in. */
+.t-pricing {
+  margin: 0;
+  padding: 8px 0;
+  color: var(--muted);
+}
+
+/* Dry-run suppression where the totals would render. Amber, never a
+ * number: no total exists. Reuses the pass-note pairing via its class. */
+.pass-note.t-suppressed {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+}
+
+/* The loud pricing failure: totals disagreement or a failed call. Stop
+ * treatment, because charging against it would be the bug the design doc
+ * says never to swallow. */
+.sale-stop {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--stop-bg);
+  color: var(--stop);
+  font-size: 16px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+}
+
+/* The Comp-stub flag T22 asks T24 to watch for: quiet, dev-facing. */
+.t-stub {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+/* One cart line's stepper row, under its receipt line. */
+.t-item {
+  padding: 2px 0;
+}
+
+.t-qty-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0 6px;
+}
+
+.t-qty {
+  min-width: 3em;
+  color: var(--muted);
+}
+
+/* 44px steppers: occasional deliberate taps, the same recorded standing
+ * as the row icons. */
+.qty-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.qty-btn:active:not(:disabled) {
+  background: var(--action-bg);
+}
+
+.qty-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Remove sits apart from the steppers, in the quiet stop colour. */
+.qty-btn.t-remove {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--stop);
+}
+
+/* The "For:" affordance atop the cart: a full-width 64px quiet button
+ * when nobody is attached, a name-plus-balance line with a detach X when
+ * someone is. */
+.sale-for {
+  width: 100%;
+  min-height: 64px;
+  margin: 0 0 4px;
+  padding: 8px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 16px;
+  text-align: left;
+}
+
+button.sale-for:active {
+  background: var(--action-bg);
+}
+
+.sale-for.attached {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-style: solid;
+  color: var(--ink);
+}
+
+.sale-for-name {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.sale-for-clear {
+  color: var(--muted);
+}
+
+/* Account balance chip beside the attached name: owed money keeps the
+ * stop pairing the roster's balance column uses; credit stays quiet. */
+.bal-chip {
+  flex: 0 0 auto;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--line);
+  color: var(--ink);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bal-chip.neg {
+  background: var(--stop-bg);
+  color: var(--stop);
+  font-weight: 600;
+}
+
+/* The right pane: chips, shelf, then the payment seam. */
+.sale-right {
+  display: grid;
+  gap: 16px;
+}
+
+.sale-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Category chips at the full 64px: they are primary targets on this
+ * screen. Active is filled with the accent pairing (same as the M chip),
+ * both halves tokens. */
+.cat-chip {
+  min-height: 64px;
+  padding: 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.cat-chip:active {
+  background: var(--action-bg);
+}
+
+.cat-chip.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--surface);
+}
+
+.shelf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+/* One sellable thing: name over price, 64px+ tap target, ellipsis is not
+ * allowed on a price. */
+.shelf-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-height: 76px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+
+.shelf-item:active {
+  background: var(--action-bg);
+}
+
+.shelf-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.shelf-price {
+  font-size: 16px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The subtle tax-exempt marker on a shelf item. */
+.shelf-notax {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* --- The T24 seam: method cards and the charge button ---------------
+ * Static disabled placeholders until T24 wires them. The card shape is
+ * the mockup's, translated to tokens. */
+
+.pay-seam {
+  display: grid;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.methods {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.method {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 8px;
+  min-height: 96px;
+  padding: 14px 10px;
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.method .mi {
+  color: var(--muted);
+}
+
+.method:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.method-hint {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* The one filled button, restating the amount. Disabled until T24. */
+.charge-btn {
+  min-height: 64px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.charge-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
