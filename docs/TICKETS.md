@@ -499,6 +499,36 @@ T18 review flagged the gap; Pete confirmed it is a real hole.
       returns the visit SignedIn true (the suspected mechanism); either
       way the add-side gate closes the hole.
 
+## T20. One info view: red alert, yellow alert, notes (Pete, 2026-08-29)
+
+DECISION REVERSAL, recorded: Pete studied the studio's actual RedAlert
+usage separately and determined it is NOT used to block classes (e.g.
+"Cleaning on Wednesdays"). So the red alert stops gating check-in and
+walk-in adds entirely; the blocking dialogs and the session ack list
+retire. The waiver gate is untouched. Auditing/cleaning the alert
+contents is deliberately out of scope.
+
+- [ ] The separate alert and notes icons become ONE info icon per row
+      (roster and search results; the M chip stays separate): greyed out
+      when the client has no red alert, no yellow alert, and no notes;
+      bright when any exist.
+- [ ] Tapping it opens one info view showing all three fields (Red
+      alert / Yellow alert / Notes), each editable with the same pencil
+      -> textarea -> Save flow notes already have. Each save is its own
+      surgical /client/updateclient write sending ONLY the id, that one
+      field, and CrossRegionalUpdate: false (verify RedAlert and the
+      yellow-alert field name and writability in client.yml first; if
+      yellow is not writable or not present on the client record, show
+      what exists and say so in the report).
+- [ ] YellowAlert (or its real field name) joins the batched roster
+      lookup and the search mapping, fail-open like its siblings.
+- [ ] The red-alert blocking dialogs (roster and walk-in), the acked
+      list, and their gate branches are removed; check-in order becomes
+      waiver -> unpaid confirm; walk-in add order becomes waiver ->
+      full-class/waitlist.
+- [ ] Pete: live-verify one alert edit and one yellow edit on the dummy
+      client change only their field.
+
 ## T9. Deployment, minus auth (PLAN Phase 1.5)
 
 Not blocked by T10. Ships behind the existing safety rails.
