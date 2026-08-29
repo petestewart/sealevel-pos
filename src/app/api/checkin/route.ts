@@ -23,12 +23,16 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    await setSignedIn(
+    const { suppressed } = await setSignedIn(
       visitId,
       signedIn !== false,
       typeof clientId === "string" ? clientId : undefined,
     );
-    return NextResponse.json({ ok: true });
+    /* `suppressed` says the write never reached Mindbody (dry run or the
+     * write guard). Still ok:true -- the guards working is not an error
+     * -- but the caller must not chain anything that assumes a session
+     * was really consumed (T26's renewal offer). */
+    return NextResponse.json({ ok: true, suppressed });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },

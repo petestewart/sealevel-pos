@@ -577,10 +577,16 @@ export async function setSignedIn(
    * guard would suppress every check-in whenever it is armed.
    */
   clientId?: string,
-): Promise<void> {
-  await mindbody("/client/updateclientvisit", {
-    method: "POST",
-    body: { VisitId: visitId, SignedIn: signedIn },
-    clientId,
-  });
+): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
+  const res = await mindbody<{ DryRun?: boolean; WriteSuppressed?: boolean }>(
+    "/client/updateclientvisit",
+    {
+      method: "POST",
+      body: { VisitId: visitId, SignedIn: signedIn },
+      clientId,
+    },
+  );
+  if (res?.DryRun) return { suppressed: "dry-run" };
+  if (res?.WriteSuppressed) return { suppressed: "write-guard" };
+  return { suppressed: null };
 }

@@ -1430,8 +1430,13 @@ function FrontDesk() {
    * checked in who is not. Attendance is worth the 300-900ms. The row shows
    * a spinner meanwhile, so the wait is visible rather than mysterious.
    *
-   * Returns whether the write succeeded, so a caller can chain something
-   * that must only follow a REAL check-in (T26's renewal offer).
+   * Returns whether the write REALLY reached Mindbody, so a caller can
+   * chain something that must only follow a real check-in (T26's renewal
+   * offer): false on failure, and false on a dry-run or write-guard
+   * suppression too, because a suppressed write consumed nobody's
+   * session. The row still flips on a suppressed 200 (the long-standing
+   * dev-mode behavior, so the flow stays exercisable under dry run), but
+   * nothing downstream may treat it as a session spent.
    */
   const setSignedIn = useCallback(
     async (entry: RosterEntry, signedIn: boolean): Promise<boolean> => {
@@ -1471,7 +1476,7 @@ function FrontDesk() {
             r.clientId === entry.clientId ? { ...r, checkedIn: signedIn } : r,
           ),
         );
-        return true;
+        return !body?.suppressed;
       } catch (err) {
         if (settings.optimisticCheckIn) {
           setEntries((rows) =>
@@ -1608,8 +1613,15 @@ function FrontDesk() {
    */
   const maybeOfferRenewal = useCallback(
     async (entry: RosterEntry, classId: number) => {
-      const quiet = () =>
+      const quiet = () => {
+        /* The line belongs to the class the tap was on. Landing after a
+         * class switch must not write into the NEW class's map -- the
+         * switch already cleared it, and the same clientId can sit on
+         * both rosters. Switching back loses the line, which is the
+         * "cleared on class switch" rule applied consistently. */
+        if (activeIdRef.current !== classId) return;
         setLastUsed((m) => ({ ...m, [entry.clientId]: true }));
+      };
       /* The live profile: the same read the dialog would make, done up
        * front because it IS the decision. A failed read cannot decide,
        * so it goes quiet rather than opening a dialog with nothing
