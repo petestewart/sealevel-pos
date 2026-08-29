@@ -611,11 +611,12 @@ function FrontDesk() {
     maxHeight: number;
   } | null>(null);
   /** Which counter's modal is open, if any. The lists behind "signed up"
-   *  and "checked in" render from roster state already in memory; only the
+   *  "checked in" renders from roster state already in memory; only the
    *  waitlist one can ever cost a call, and that call is shared with the
-   *  counter itself. */
+   *  counter itself. The signed-up counter opens nothing: its list IS the
+   *  roster on screen, so it is a plain stat (Pete, 2026-08-29). */
   const [counterModal, setCounterModal] = useState<
-    "signedUp" | "checkedIn" | "waitlist" | null
+    "checkedIn" | "waitlist" | null
   >(null);
   const [waitlist, setWaitlist] = useState<WaitlistRow[] | null>(null);
   const [waitlistError, setWaitlistError] = useState<string | null>(null);
@@ -2078,11 +2079,11 @@ function FrontDesk() {
             Change class
           </button>
           <div className="counters" aria-label="Counts for the selected class">
-          <button
-            className="counter"
-            onClick={() => setCounterModal("signedUp")}
-            aria-haspopup="dialog"
-          >
+          {/* A plain stat, not a button: its list IS the roster below,
+              and a modal copying the screen behind it earned nothing
+              (Pete, 2026-08-29). Checked-in and waitlist keep their
+              panels; the waitlist's is the only home its entries have. */}
+          <div className="counter counter-stat">
             <span className="counter-num">
               {entries.length}
               {activeClass.capacity !== null ? (
@@ -2090,7 +2091,7 @@ function FrontDesk() {
               ) : null}
             </span>
             <span className="counter-label">signed up</span>
-          </button>
+          </div>
           <button
             className="counter"
             onClick={() => setCounterModal("checkedIn")}
@@ -2995,53 +2996,17 @@ function FrontDesk() {
             role="dialog"
             aria-modal="true"
             aria-label={
-              counterModal === "signedUp"
-                ? "Everyone signed up"
-                : counterModal === "checkedIn"
-                  ? "Everyone checked in"
-                  : "The waiting list"
+              counterModal === "checkedIn"
+                ? "Everyone checked in"
+                : "The waiting list"
             }
             onClick={(e) => e.stopPropagation()}
           >
             <p className="modal-title">
-              {counterModal === "signedUp"
-                ? `Signed up (${entries.length}${
-                    activeClass.capacity !== null
-                      ? ` of ${activeClass.capacity}`
-                      : ""
-                  })`
-                : counterModal === "checkedIn"
-                  ? `Checked in (${entries.filter((e) => e.checkedIn).length} of ${entries.length})`
-                  : `Waiting list${waitlist !== null ? ` (${waitlist.length})` : ""}`}
+              {counterModal === "checkedIn"
+                ? `Checked in (${entries.filter((e) => e.checkedIn).length} of ${entries.length})`
+                : `Waiting list${waitlist !== null ? ` (${waitlist.length})` : ""}`}
             </p>
-
-            {counterModal === "signedUp" ? (
-              entries.length === 0 ? (
-                <p className="muted">Nobody is signed up yet.</p>
-              ) : (
-                <ul className="roster modal-roster">
-                  {entries.map((entry) => (
-                    <li key={`m-su-${entry.clientId}`}>
-                      <div className="row">
-                        <span className="name">
-                          {entry.name}
-                          <span className="detail">
-                            {entry.pricingOption
-                              ? shortPassName(entry.pricingOption)
-                              : "No pass on this booking"}
-                          </span>
-                        </span>
-                        <span
-                          className={entry.checkedIn ? "chip in" : "chip out"}
-                        >
-                          {entry.checkedIn ? "checked in" : "not yet"}
-                        </span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )
-            ) : null}
 
             {counterModal === "checkedIn" ? (
               entries.filter((e) => e.checkedIn).length === 0 ? (

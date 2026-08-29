@@ -131,6 +131,12 @@ button {
   text-align: left;
 }
 
+/* The signed-up counter is a stat, not a control: same card, no pressed
+ * state, no pointer affordance. */
+.counter.counter-stat:active {
+  background: var(--surface);
+}
+
 .counter:active {
   background: var(--action-bg);
 }
@@ -790,13 +796,6 @@ button.pass-opt:disabled {
 }
 
 .chip.busy {
-  background: var(--line);
-  color: var(--muted);
-}
-
-/* Someone signed up but not here yet, in the counter modals. Quiet on
- * purpose: the green "checked in" chip is the state worth noticing. */
-.chip.out {
   background: var(--line);
   color: var(--muted);
 }
