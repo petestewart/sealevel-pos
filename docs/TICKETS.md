@@ -622,6 +622,19 @@ this container):
 - Nothing secret is client-side: the bundle holds no PIN, no hash, no
   comparison; the lock screen only POSTs what was typed.
 
+Deploy notes from the T21 review (Pete, before the counter goes live):
+
+- A misspelled POS_PIN silently disables auth by design; after deploying,
+  open the app in a fresh browser and confirm the lock screen appears.
+- Set POS_SESSION_SECRET in production (openssl rand -hex 32): it kills
+  the offline PIN-brute path a captured cookie would otherwise allow.
+- The login limiter is global, not per-IP: five wrong PINs from anyone
+  lock the counter for 30s, teacher included. Accepted for one shared
+  iPad; it is also a 30s nuisance button for anyone on the LAN.
+- A production build over plain http can never unlock (the cookie is
+  Secure under NODE_ENV=production); LAN testing of a prod build needs
+  https or the dev server.
+
 ## T22. Catalog and cart pricing (PLAN 2.1)
 
 - [ ] src/lib/sale.ts: fetch sellable items per the hardcoded categories
