@@ -695,6 +695,15 @@ function FrontDesk() {
   /** The scrollable waiver text region, for the fits-without-scrolling
    *  check once the text renders. */
   const waiverScrollRef = useRef<HTMLDivElement | null>(null);
+  /** Bumped every time the waiver dialog closes, so a text fetch still in
+   *  flight when the teacher cancelled cannot land its result into the
+   *  NEXT open: without this, the leaked text put a fresh dialog straight
+   *  into the reading state (skipping the "has not signed" framing for a
+   *  different person), and a waiver short enough to fit unscrolled left
+   *  the confirm permanently disabled, because the fits-without-scrolling
+   *  effect keys on waiverText changing and it already held the text.
+   *  Same stale-response pattern as activeIdRef. */
+  const waiverGen = useRef(0);
   /**
    * Read-only text behind a row icon: the red alert or the staff notes.
    * Informational only, one Close button, and it never acks the alert for
@@ -1341,6 +1350,7 @@ function FrontDesk() {
    *  Refused mid-write: the answer is coming. */
   const closeWaiverDialog = useCallback(() => {
     if (waiverSaving) return;
+    waiverGen.current += 1;
     setWaiverPrompt(null);
     setWaiverText(null);
     setWaiverLoading(false);
@@ -1358,6 +1368,7 @@ function FrontDesk() {
    */
   const readWaiver = useCallback(() => {
     if (waiverLoading) return;
+    const gen = waiverGen.current;
     setWaiverLoading(true);
     setWaiverFetchError(null);
     fetch("/api/waiver")
@@ -1370,13 +1381,20 @@ function FrontDesk() {
         ) {
           throw new Error("The waiver text was missing from the response.");
         }
+        /* The dialog this fetch belonged to has closed: drop the result
+         * rather than leaking the reading state into the next open. */
+        if (waiverGen.current !== gen) return;
         setWaiverScrolled(false);
         setWaiverText({ text: body.text, sha256: body.sha256 });
       })
-      .catch((e) =>
-        setWaiverFetchError(e instanceof Error ? e.message : String(e)),
-      )
-      .finally(() => setWaiverLoading(false));
+      .catch((e) => {
+        if (waiverGen.current !== gen) return;
+        setWaiverFetchError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (waiverGen.current !== gen) return;
+        setWaiverLoading(false);
+      });
   }, [waiverLoading]);
 
   /** A waiver short enough to fit without scrolling has been fully shown
