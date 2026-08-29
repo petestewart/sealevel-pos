@@ -983,6 +983,42 @@ covering-credit yardstick is the LIST price; tax can push the real
 total past it, in which case /api/checkout re-reads the balance and
 refuses honestly, and the dialog's gate refreshes with the live number.
 
+## The Phase 2 sandbox run (Pete): one ordered checklist
+
+The run left T21-T26 code-complete, each adversarially reviewed. These are
+the questions only a live run answers, in the order that unblocks the most:
+
+1. **AccountBalance sign convention FIRST** (positive = spendable credit is
+   assumed by the credit gate and rule 1; if inverted, both flip).
+2. One cart priced in the sandbox: watch `usedPaymentStub` (does Test-mode
+   checkout demand the Comp stub?), the Metadata id choice (ProductId for
+   services, barcode Id for products), and `disagrees` (whole-cart
+   rounding vs Mindbody's).
+3. One real stored-card sale on the dummy/test client: payment Metadata
+   casing (PascalCase Amount sent; lowercase documented), then the
+   under-$10 split path end to end.
+4. `Type: "Cash"`: does it bind, or does the recorded Custom fallback
+   (id from /site/paymenttypes) need to be promoted? Never auto-falls
+   back by design.
+5. An anonymous cash sale: does Mindbody refuse for want of a ClientId?
+   If so, the fix is a house walk-in client (your call).
+6. Pay-and-check-in on an unpaid booking: does the purchased
+   ClientService appear immediately after checkout (else every gesture
+   ends at the honest attach-failed message and a bounded re-poll is the
+   recorded fix)?
+7. A last-session check-in: the renewal offer fires on a REAL check-in
+   only (a write-guard-suppressed one must not offer), and
+   Visit.Service.ProductId matches a catalog productId so the same-pack
+   default engages.
+8. Auth on the deployed build: lock screen appears (a misspelled POS_PIN
+   silently disables auth), POS_SESSION_SECRET set, and note a prod
+   build over plain http can never unlock (Secure cookie).
+
+Assumptions carried in Pete's absence, reversible: P2 partial credit
+ignored (credit only when it covers the whole total); P4 the $10 minimum
+measured on the after-tax total; PLAN 2.6 (the $49 special / $21 upgrade)
+deferred on B1 and P3.
+
 ## T10. Auth — deliberately last
 
 - [ ] Shared PIN (stubbed in `.env.example`) or per-teacher identity per the
