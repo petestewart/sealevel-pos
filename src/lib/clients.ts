@@ -61,6 +61,48 @@ export async function updateClientNotes(
   return { suppressed: null };
 }
 
+/**
+ * Record a liability release: `POST /client/updateclient` with
+ * `LiabilityRelease: true` (T18, Pete's recorded reversal of the T6 "no
+ * tap path marks a waiver signed" rule -- Mindbody's own POS shows the
+ * waiver text with a staff-tappable Resolve, and this matches it).
+ *
+ * Spec-verified in docs/mindbody-openapi/client.yml: `UpdateClientRequest`
+ * holds `{Client, Test, CrossRegionalUpdate, NewId, LeadChannelId}`, and
+ * `LiabilityRelease` is a boolean ON THE NESTED CLIENT
+ * (`ClientWithSuspensionInfo.LiabilityRelease`), not top-level on the
+ * request. Per its schema description, passing `true` sets
+ * `Liability.IsReleased`, stamps `AgreementDate` in the business's time
+ * zone, and records `ReleasedBy` as the calling staff member. The
+ * `Liability` sub-object itself is never sent: the flag is the documented
+ * write path and anything more would overwrite fields Mindbody owns.
+ *
+ * Same surgical discipline as updateClientNotes above, for the same
+ * reason: updateclient overwrites whatever the payload carries, so this
+ * sends the id, the flag, `CrossRegionalUpdate: false`, and nothing else
+ * -- never Notes (the receipt append is a separate call through
+ * updateClientNotes). The clientId rides mindbody()'s options for the
+ * POS_WRITE_CLIENT_IDS guard; suppression is reported, never dressed as
+ * success. The CALLER must only invoke this after the real waiver text
+ * was shown and read to the end -- that gate lives in the dialog, and
+ * this function is deliberately not reachable from anywhere else.
+ */
+export async function recordLiabilityRelease(
+  clientId: string,
+): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
+  const res = await mindbody("/client/updateclient", {
+    method: "POST",
+    body: {
+      Client: { Id: clientId, LiabilityRelease: true },
+      CrossRegionalUpdate: false,
+    },
+    clientId,
+  });
+  if (res?.DryRun) return { suppressed: "dry-run" };
+  if (res?.WriteSuppressed) return { suppressed: "write-guard" };
+  return { suppressed: null };
+}
+
 export interface SearchResult {
   id: string;
   name: string;
