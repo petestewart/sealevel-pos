@@ -2648,10 +2648,17 @@ function FrontDesk() {
       } catch {
         chargeBody = null;
       }
-      if (chargeRes.ok && chargeBody === null) {
+      if (chargeBody === null && (chargeRes.ok || chargeRes.status >= 500)) {
+        /* A 200 whose body could not be read, or a 500-class answer with
+         * no readable verdict (a gateway 502/504 serves HTML): the route
+         * may have run -- and charged -- before the answer was lost, so
+         * this must NOT render as "not charged, safe to retry". Only a
+         * readable refusal or a 4xx earns the definite branch below. */
         setPayOutcome({
           kind: "charge-ambiguous",
-          message: "The server answered but the outcome could not be read.",
+          message: chargeRes.ok
+            ? "The server answered but the outcome could not be read."
+            : `The server's answer (HTTP ${chargeRes.status}) carried no readable outcome.`,
         });
         return;
       }
@@ -2667,18 +2674,30 @@ function FrontDesk() {
       if (!(chargeRes.ok && chargeBody?.ok === true)) {
         if (chargeBody?.stage === "checkout-after-credit") {
           /* T24's seam, surfaced with the same discipline: the $10
-           * credit exists, the sale does not, and the credit step must
-           * not run again. This dialog offers no path that could. */
+           * credit exists, the sale did not complete (or, when the route
+           * flagged the checkout ambiguous, MAY not have), and the
+           * credit step must not run again. This dialog offers no path
+           * that could -- and when the sale's own outcome is unknown,
+           * the message must not assert it failed, or the teacher
+           * re-sells a pass that may already exist. */
+          const saleVerdict =
+            chargeBody?.ambiguous === true
+              ? "the pass sale may or may not have completed, so check the " +
+                "dev drawer or Mindbody before selling again"
+              : "the pass sale failed";
           setPayOutcome({
             kind: "split",
             message:
-              `The $10 credit purchase succeeded; the pass sale failed; ` +
+              `The $10 credit purchase succeeded; ${saleVerdict}; ` +
               `their balance is now ${
                 typeof chargeBody?.creditBalance === "number"
                   ? money(chargeBody.creditBalance)
                   : "unknown (Mindbody did not answer the balance read)"
-              }; do NOT re-run the credit step. Sell the pass in Sell, on ` +
-              "account credit, then attach and check in from the row.",
+              }; do NOT re-run the credit step.` +
+              (chargeBody?.ambiguous === true
+                ? ""
+                : " Sell the pass in Sell, on account credit, then attach " +
+                  "and check in from the row."),
             mindbody: String(chargeBody?.error ?? "no reason returned"),
           });
           return;
@@ -2822,7 +2841,12 @@ function FrontDesk() {
    *  behavior exactly -- no charge, just the pessimistic check-in write
    *  -- behind its own labelled choice. */
   const freeCheckIn = () => {
-    if (payStage !== null || !payDialog || payMoneyMoved) return;
+    /* payFlight is the SYNCHRONOUS lock: payStage lags a render behind,
+     * so without the ref a free tap landing in the same tick as a Charge
+     * tap could check someone in mid-charge. Same single-flight as the
+     * paid gesture. */
+    if (payFlight.current || payStage !== null || !payDialog || payMoneyMoved)
+      return;
     const entry = payDialog.entry;
     closePayDialog();
     void setSignedIn(entry, true);

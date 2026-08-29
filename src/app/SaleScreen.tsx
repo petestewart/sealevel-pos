@@ -437,12 +437,17 @@ function PaymentPanel(props: {
       if (typeof body?.creditBalance === "number") {
         setFreshBalance(body.creditBalance);
       }
-      if (res.ok && body === null) {
-        /* A 200 whose body could not be read: the charge may well have
-         * completed, so this must NOT render as "not charged". */
+      if (body === null && (res.ok || res.status >= 500)) {
+        /* A 200 whose body could not be read, or a 500-class answer with
+         * no readable verdict (a gateway 502/504 serves HTML): the route
+         * may have run, and charged, before the answer was lost, so this
+         * must NOT render as "not charged". Only a readable refusal or a
+         * 4xx earns the definite error branch below. */
         setResult({
           kind: "ambiguous",
-          message: "The server answered but the outcome could not be read.",
+          message: res.ok
+            ? "The server answered but the outcome could not be read."
+            : `The server's answer (HTTP ${res.status}) carried no readable outcome.`,
         });
       } else if (res.ok && body?.ok === true) {
         const methodName =
