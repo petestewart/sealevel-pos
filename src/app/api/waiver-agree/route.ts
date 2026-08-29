@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { recordLiabilityRelease, updateClientNotes } from "@/lib/clients";
+import { getWaiver } from "@/lib/waiver";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,8 @@ export const dynamic = "force-dynamic";
  * 2. The RECEIPT, only after a real (non-suppressed) release, because
  *    Mindbody stores no waiver content or version: (a) one structured log
  *    line with the client id, timestamp and the sha256 of the exact text
- *    served (from /api/waiver, passed back by the dialog), and (b) the
+ *    served (the dialog echoes the hash from /api/waiver; it is verified
+ *    against the server's own copy before the release), and (b) the
  *    same fact appended to the client's Mindbody Notes through the
  *    existing surgical notes write, so the receipt travels with the
  *    client where staff already look.
@@ -57,6 +59,26 @@ export async function POST(request: Request) {
       );
     }
 
+    /* The hash the browser echoes back is proof of WHICH text the dialog
+     * showed, and the server does not take a browser's word for a legal
+     * receipt: it is verified against the server's own copy of the text
+     * (src/lib/waiver.ts, the same cache /api/waiver serves from) BEFORE
+     * anything is written. A mismatch means the wording changed since the
+     * student read it, or the value was tampered with; either way no
+     * release goes out, and the dialog is told to reopen. If the text
+     * cannot be fetched to verify, this fails closed the same way. The
+     * receipt below then records the server's hash, never the browser's. */
+    const waiver = await getWaiver();
+    if (textSha256 !== waiver.sha256) {
+      return NextResponse.json(
+        {
+          error:
+            "The waiver text has changed since it was read. Close the dialog and read it again.",
+        },
+        { status: 409 },
+      );
+    }
+
     const release = await recordLiabilityRelease(clientId);
     if (release.suppressed) {
       return NextResponse.json({
@@ -74,11 +96,11 @@ export async function POST(request: Request) {
         event: "waiver-agreed",
         clientId,
         at,
-        textSha256,
+        textSha256: waiver.sha256,
       }),
     );
 
-    const receiptLine = `Waiver agreed at the counter ${at}, text sha256:${textSha256.slice(0, 12)}`;
+    const receiptLine = `Waiver agreed at the counter ${at}, text sha256:${waiver.sha256.slice(0, 12)}`;
     const current = typeof notes === "string" ? notes : "";
     const newNotes = current ? `${current}\n${receiptLine}` : receiptLine;
     let receiptNoted = false;
