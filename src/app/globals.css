@@ -1367,14 +1367,6 @@ button.pass-opt:disabled {
   overflow-wrap: anywhere;
 }
 
-/* "They have read it and agree." -- the line that makes the confirm
- * unmistakably record the STUDENT's agreement, not the teacher's. */
-.waiver-agree-line {
-  margin: 0 0 12px;
-  font-size: 17px;
-  font-weight: 600;
-}
-
 /* An icon inline in a modal action button's label. */
 .btn-ico {
   display: inline-flex;

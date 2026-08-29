@@ -3407,9 +3407,6 @@ function FrontDesk() {
                 {waiverMsg ? (
                   <p className="pass-note modal-note-gap">{waiverMsg}</p>
                 ) : null}
-                <p className="waiver-agree-line">
-                  They have read it and agree.
-                </p>
                 <div className="modal-actions">
                   <button
                     className="modal-cancel"
