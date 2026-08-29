@@ -2698,8 +2698,17 @@ function FrontDesk() {
                       <li key={`walkin-${client.id}`}>
                         {/* The row body is not an add target (T16, same
                             principle as roster check-in): the add chip is
-                            the only action. */}
-                        <div className="rrow">
+                            the only action. While ONE row's booking is in
+                            flight every other row dims: the single-flight
+                            lock already made them inert, this makes it
+                            visible. */}
+                        <div
+                          className={
+                            bookingIds.length > 0 && !working
+                              ? "rrow row-dim"
+                              : "rrow"
+                          }
+                        >
                           <div className="cell-name">
                             {/* The name owns the row's whole first line and
                                 NEVER ellipsizes: it is the one column a

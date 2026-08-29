@@ -322,6 +322,13 @@ button {
   background: var(--surface);
 }
 
+/* Every OTHER search row while one row's booking is in flight: the
+ * single-flight lock makes them inert, this makes the lock visible. */
+.rrow.row-dim {
+  opacity: 0.4;
+  transition: opacity 120ms ease-out;
+}
+
 /* The row body is deliberately NOT a tap target (T16 reversal: row-tap
  * check-in caused accidental check-ins in live use). The chip in the
  * actions cell is the one check-in/add trigger; the row keeps the
