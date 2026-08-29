@@ -1888,9 +1888,9 @@ button.sale-for:active {
   font-weight: 400;
 }
 
-/* --- The T24 seam: method cards and the charge button ---------------
- * Static disabled placeholders until T24 wires them. The card shape is
- * the mockup's, translated to tokens. */
+/* --- The payment seam (T24): live method cards, the cash keypad, the
+ * charge button and the outcome panel. Card shape from the mockup,
+ * every colour a token so both palettes hold. */
 
 .pay-seam {
   display: grid;
@@ -1929,10 +1929,183 @@ button.sale-for:active {
   cursor: default;
 }
 
-.method-hint {
+/* The selected method: accent border, quiet fill, same as a chip's "on"
+ * standing but without inverting the card (the reason line must stay
+ * readable). */
+.method.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.method.on .mi {
+  color: var(--accent);
+}
+
+/* The one-line reason a method is greyed (or the card's last four when
+ * it is not). Present even when empty so the cards stay equal height. */
+.method-why {
+  min-height: 1.2em;
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* Comp lives OUT of the method row and arms on a hold: quiet text
+ * button, stop-coloured once selected so a comped sale is unmissable. */
+.comp-hold {
+  justify-self: start;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.comp-hold.on {
+  border: 2px solid var(--warn);
+  border-style: solid;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* --- Cash tendered: display-only change math. ----------------------- */
+
+.cash-pad {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.cash-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 18px;
+}
+
+.cash-label {
+  color: var(--muted);
+}
+
+.cash-amt {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.cash-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cash-chip {
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.cash-chip:active:not(:disabled) {
+  background: var(--action-bg);
+}
+
+.cash-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cash-keys {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.cash-key {
+  min-height: 56px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cash-key:active {
+  background: var(--action-bg);
+}
+
+.cash-change {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.cash-change.short {
+  color: var(--stop);
+}
+
+.cash-change.muted-note {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* --- Charge outcomes. ----------------------------------------------- */
+
+/* The paid confirmation: the ok pairing, with the sale summary. */
+.pay-done {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.pay-done-line {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.pay-done-detail {
   margin: 0;
   font-size: 16px;
-  color: var(--muted);
+}
+
+/* The under-$10 split failure: stop treatment, structured, prominent.
+ * No retry affordance anywhere near it, by design. */
+.pay-split-head {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.pay-split-why {
+  margin: 0 0 6px;
+  font-weight: 400;
+}
+
+/* Dismiss buttons inside outcome blocks stay quiet and separate. */
+.pay-dismiss {
+  display: block;
+  margin-top: 8px;
 }
 
 /* The one filled button, restating the amount. Disabled until T24. */
