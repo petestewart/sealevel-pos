@@ -22,18 +22,37 @@ import { mindbody } from "./mindbody";
  */
 
 /**
- * Save a client's staff notes: `POST /client/updateclient` (spec:
- * docs/mindbody-openapi/client.yml, `UpdateClientRequest`).
+ * The three free-text client fields this app may edit, and the ONLY three:
+ * the whitelist is enforced server-side (in /api/client-field and by this
+ * module's types), never trusted from a browser. All three are plain
+ * strings on the Client record per docs/mindbody-openapi/client.yml --
+ * `Notes`, `RedAlert` (~line 6339) and `YellowAlert` (~line 6343) sit on
+ * `ClientWithSuspensionInfo`, which is exactly the schema
+ * `UpdateClientRequest.Client` references (~line 7076), so all three are
+ * writable through the same envelope.
+ */
+export const EDITABLE_CLIENT_FIELDS = [
+  "Notes",
+  "RedAlert",
+  "YellowAlert",
+] as const;
+
+export type EditableClientField = (typeof EDITABLE_CLIENT_FIELDS)[number];
+
+/**
+ * Save ONE free-text field on a client record: `POST /client/updateclient`
+ * (spec: docs/mindbody-openapi/client.yml, `UpdateClientRequest`).
  *
  * The envelope is `{Client: {...}}` with flags alongside, and two of the
  * spec's facts shape this payload:
  *
  * - The payload is SURGICAL, deliberately: per the schema, "any specified
  *   values are updated", so every field present on the nested Client is a
- *   field this call may overwrite. This is the app's first client-record
- *   write, and it sends the client's `Id` (the lookup key) and `Notes` and
- *   NOTHING else -- never `Liability` (the one-line waiver write the design
- *   doc forbids), never names, never contact fields.
+ *   field this call may overwrite. It sends the client's `Id` (the lookup
+ *   key) and the ONE whitelisted field and NOTHING else -- one field per
+ *   save, never `Liability` (the one-line waiver write the design doc
+ *   restricts to recordLiabilityRelease below), never names, never
+ *   contact fields.
  * - `CrossRegionalUpdate` is documented as DEFAULTING TO TRUE, which would
  *   propagate the edit to every site in the region where the client has a
  *   profile. Sent as `false` explicitly: a counter note belongs to this
@@ -44,14 +63,15 @@ import { mindbody } from "./mindbody";
  * (the body nests it under Client, where the guard's body sniffing does
  * not look); under dry run or the guard the caller is told which fired.
  */
-export async function updateClientNotes(
+export async function updateClientField(
   clientId: string,
-  notes: string,
+  field: EditableClientField,
+  value: string,
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
   const res = await mindbody("/client/updateclient", {
     method: "POST",
     body: {
-      Client: { Id: clientId, Notes: notes },
+      Client: { Id: clientId, [field]: value },
       CrossRegionalUpdate: false,
     },
     clientId,
@@ -59,6 +79,16 @@ export async function updateClientNotes(
   if (res?.DryRun) return { suppressed: "dry-run" };
   if (res?.WriteSuppressed) return { suppressed: "write-guard" };
   return { suppressed: null };
+}
+
+/** The notes save, as the one-field write above. Kept named because the
+ *  waiver receipt append (/api/waiver-agree) is a NOTES write by design
+ *  and should read as one at its call site. */
+export async function updateClientNotes(
+  clientId: string,
+  notes: string,
+): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
+  return updateClientField(clientId, "Notes", notes);
 }
 
 /**
@@ -116,9 +146,11 @@ export interface SearchResult {
    */
   /** `Liability.IsReleased`; false means no released waiver on file. */
   waiverSigned: boolean;
-  /** `RedAlert` free text; null when none. Gates the ADD action the way
-   *  it gates check-in. */
+  /** `RedAlert` free text; null when none. Information behind the row's
+   *  info icon since T20, not a gate. */
   redAlert: string | null;
+  /** `YellowAlert` free text; null when none. Same standing as redAlert. */
+  yellowAlert: string | null;
   /** `AccountBalance`; null when Mindbody omitted it. */
   balance: number | null;
   /** `MembershipIcon` nonzero. */
@@ -155,6 +187,10 @@ export async function search(
       redAlert:
         typeof row?.RedAlert === "string" && row.RedAlert.trim()
           ? row.RedAlert.trim()
+          : null,
+      yellowAlert:
+        typeof row?.YellowAlert === "string" && row.YellowAlert.trim()
+          ? row.YellowAlert.trim()
           : null,
       balance:
         typeof row?.AccountBalance === "number" &&

@@ -54,6 +54,11 @@ export interface RosterEntry {
    */
   waiverSigned: boolean | null;
   redAlert: string | null;
+  /** `YellowAlert` free text from the client record, the softer sibling of
+   *  `RedAlert` (both are top-level Client fields per
+   *  docs/mindbody-openapi/client.yml). Information, not a gate; null when
+   *  none or when the lookup failed (fail open, like its siblings). */
+  yellowAlert: string | null;
   /** Staff notes from the client record (`Notes`, a top-level Client field
    *  per docs/mindbody-openapi/client.yml, and staff-facing by its own
    *  description). null when none or when the lookup failed. */
@@ -162,6 +167,7 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
        *  knows nothing about waivers. */
       waiverSigned: null,
       redAlert: null,
+      yellowAlert: null,
       notes: null,
       mindbodyId:
         typeof v.ClientUniqueId === "number" ? v.ClientUniqueId : null,
@@ -187,6 +193,8 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
 interface ClientBrief {
   /** RedAlert free text from the client record; null when none. */
   redAlert: string | null;
+  /** YellowAlert free text from the client record; null when none. */
+  yellowAlert: string | null;
   /** Staff notes (`Notes`) from the client record; null when none. */
   notes: string | null;
   uniqueId: number | null;
@@ -233,6 +241,10 @@ async function briefsForIds(ids: string[]): Promise<Map<string, ClientBrief>> {
         redAlert:
           typeof c?.RedAlert === "string" && c.RedAlert.trim()
             ? c.RedAlert.trim()
+            : null,
+        yellowAlert:
+          typeof c?.YellowAlert === "string" && c.YellowAlert.trim()
+            ? c.YellowAlert.trim()
             : null,
         notes:
           typeof c?.Notes === "string" && c.Notes.trim()
@@ -309,7 +321,10 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
        * a reflex tap, not only after a row has been opened. Null when the
        * lookup failed or the client has none. */
       redAlert: brief?.redAlert ?? null,
-      /* Notes ride the same batch: the row's notes icon exists only when
+      /* The yellow alert rides the same batch as the red one; both are
+       * information behind the row's info icon, not gates (T20). */
+      yellowAlert: brief?.yellowAlert ?? null,
+      /* Notes ride the same batch: the row's info icon brightens only when
        * there is text behind it. Null when the lookup failed. */
       notes: brief?.notes ?? null,
       /* Balance and membership ride the same batch. Null when the lookup
