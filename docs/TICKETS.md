@@ -746,22 +746,83 @@ Shipped as src/app/SaleScreen.tsx plus flag-driven changes to page.tsx
 
 ## T24. Payment execution (PLAN 2.2 + 2.3)
 
-- [ ] Methods: stored card (client attached, card on file), account
+- [x] Methods: stored card (client attached, card on file), account
       credit (balance covers total), cash (records the sale with the
       cash payment type), comp where the API allows. Read balances
       before offering; an unavailable method renders greyed with the
       reason, never hidden.
-- [ ] The $10 card minimum EXACTLY per PLAN 2.3's table: credit-covers
+- [x] The $10 card minimum EXACTLY per PLAN 2.3's table: credit-covers
       via DebitAccount; card >= $10 via StoredCard; card under $10 buys
       $10 account credit then checks out on DebitAccount, with Test:
       true rehearsal BEFORE the credit purchase and an explicit
       credit-balance report on a step-2 failure. Never collapse the card
       paths through credit.
-- [ ] ASSUMPTIONS (Pete may reverse): P2 partial credit ignored (credit
+- [x] ASSUMPTIONS (Pete may reverse): P2 partial credit ignored (credit
       is only used when it covers the whole total); P4 the $10 minimum
       is measured against the charged, after-tax total.
-- [ ] Charge button restates the amount ("Charge $179.87"); pessimistic
+- [x] Charge button restates the amount ("Charge $179.87"); pessimistic
       spinner; suppression surfaced; nothing ever auto-charges.
+
+Shipped 2026-08-29 as the T24 half of src/lib/sale.ts (checkoutCart,
+purchaseCredit, rehearseCheckout, clientPaymentProfile/storedCardFor),
+POST /api/checkout and GET /api/stored-card (both requireSession first),
+and the live PaymentPanel in src/app/SaleScreen.tsx. Every write goes
+through mindbody(), so dry run and POS_WRITE_CLIENT_IDS intercept them
+and suppression comes back as `{ok:false, suppressed}`, rendered amber,
+never as a receipt. Comp is hold-to-arm, out of the method row. A
+synchronous ref plus the disabled button make a double tap impossible; a
+transport-level failure (timeout/reset, flagged `ambiguous: true` by the
+route, or the browser's own fetch dying) renders "the charge may or may
+not have gone through" and invites no retry. Spec findings:
+
+- **The Cash shape is `Type: "Cash"`, Metadata `{Amount}`, unproven.**
+  The CheckoutPaymentInfo Type enum (sale.yml:3928-3931) and Metadata
+  key list (3932-3935) are both truncated upstream (T22's finding), each
+  BEFORE any cash entry, so the spec literally cannot answer. The
+  chooser table in the design doc says "Custom / cash payment info", so
+  the recorded fallback if the sandbox refuses `"Cash"` is
+  `Type: "Custom"` with `{Amount, Id}` (Custom keys - amount, id;
+  sale.yml:3934), the Id being the cash row of /site/paymenttypes
+  (site.yml:508; PaymentType carries Id/PaymentTypeName, site.yml:2200).
+  Deliberately NOT an automatic fallback: a refused payment type is a
+  clean nothing-charged failure, and a money call must never quietly
+  retry itself in a different shape. First sandbox run decides.
+- **Payment metadata ships PascalCase** (`Amount`, `LastFour`), matching
+  the one checkout known to have passed live (the 2026-08-26 probe's
+  StoredCard Test call) and T22's Comp stub, against the spec's
+  lowercase key list (sale.yml:3934). Open until a sandbox run watches
+  a payment bind; lowercasing those keys is the first fix to try.
+- **purchaseaccountcredit has NO Amount field** anywhere in
+  PurchaseAccountCreditRequest (sale.yml:4774-4810): the figure rides
+  `PaymentInfo.Metadata` (PaymentInfo at 4808, a CheckoutPaymentInfo),
+  confirming the design doc's "dynamic, not a preconfigured SKU". The
+  $10 floor is CARD_MINIMUM_USD, policy not API.
+- **A completed sale may require a client.** CheckoutShoppingCartRequest
+  ClientId (sale.yml:5654) says "A 'ClientId' OR 'UniqueClientId' must
+  be specified to complete a sale" -- a description absent from the Test
+  path we have exercised. An anonymous cash/comp sale is therefore
+  expected to be refused; the route lets it through and surfaces
+  Mindbody's refusal verbatim rather than pre-empting a description that
+  might be wrong. If the sandbox confirms it, the fix is a house
+  walk-in client, decided with Pete.
+- **Card on file comes on the ordinary client record**: GET
+  /client/clients (client.yml:1323) returns ClientWithSuspensionInfo
+  (GetClientsResponse, 7106) carrying `ClientCreditCard` (6257; model at
+  7365 with LastFour 7397, ExpMonth 7389, ExpYear 7393 -- expiry as
+  strings) and `AccountBalance` (6370), so one read serves the method
+  gate AND the charge-time re-verify. No separate cards endpoint exists.
+- **The under-$10 rehearsal is priceCart itself** (Test: true, Comp stub
+  fallback and all): rehearsing with the real DebitAccount payment would
+  check a balance the client is not supposed to have yet. /api/checkout
+  runs it fresh on every charge, so the authoritative total is also
+  re-read at charge time and the browser's number is never charged.
+- The `usedPaymentStub` question T22 left is still open (no sandbox run
+  yet); if the stub turns out to be what prices carts, the rehearsal
+  already sends it by construction, and the Comp permission becomes a
+  hard requirement as T22 predicted.
+- Tendered cash is change-due arithmetic only. Nothing in the spec's
+  visible Cash/Custom keys takes a tendered amount, so it is validated
+  server-side (refused when short of the total) and never forwarded.
 
 ## T25. The unpaid row sells the pass (PLAN 2.4)
 
