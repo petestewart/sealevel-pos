@@ -472,7 +472,7 @@ the bridge.
       Notes through the existing surgical notes write, so the receipt
       travels with the client where staff already look. A standalone
       receipt store waits for the database (design doc Phase 3).
-- [ ] The design doc's waiver section gets a short dated addendum
+- [x] The design doc's waiver section gets a short dated addendum
       recording Pete's decision and the MB-Resolve reasoning, so the
       reasoning of record stays true.
 - [ ] Pete: live-verify against the dummy client that IsReleased flips,

@@ -439,6 +439,24 @@ receipt: client id, timestamp, and a hash of the exact text displayed. That is
 cheap, and it is the first thing in this app that genuinely needs durable
 storage of its own.
 
+**Addendum, 2026-08-28 (Pete): the counter can now resolve it.** The "not if
+the teacher taps it" rule above is overruled for the counter flow, and T18
+records the reversal. The deciding observation is that Mindbody's own POS
+offers exactly this: the waiver text on the front-desk screen with a
+staff-tappable Resolve, so a counter signing path replicates the studio's
+existing tool rather than creating a new risk. What survives the reversal is
+the discipline: the release is written only after the real text from
+`/site/liabilitywaiver` has been shown and scrolled to the end, the confirm is
+worded as recording the student's agreement ("They have read it and agree"),
+and every agreement produces the receipt described above -- a structured
+server log line and the same fact appended to the client's Notes, each
+carrying the sha256 of the exact text served, since Mindbody snapshots
+nothing. The write itself is as surgical as the notes write: the client id,
+`LiabilityRelease: true`, `CrossRegionalUpdate: false`, nothing else. The
+QR-on-their-phone flow remains the better end state and stays in Phase 3;
+this is the bridge that keeps a new student out of the Mindbody app queue at
+6pm.
+
 ## Categories
 
 Hardcoded as config in the app, not fetched. `GET /site/categories` does exist

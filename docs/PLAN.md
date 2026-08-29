@@ -91,10 +91,12 @@ roster.
 - `Notes`, and `RedAlert` treated as blocking rather than decorative
 - Done when: one tap answers "what do I need to know about this person".
 
-**1.6 Waiver state.** Show it; resolving it is Phase 3.
+**1.6 Waiver state.** Show it; the counter signing path is T18.
 - `Liability.IsReleased` and `AgreementDate` on the client record
-- Unmissable blocked state on the row. **Do not let a teacher tap it signed** —
-  see the design doc on why that record would be worthless.
+- Unmissable blocked state on the row. A teacher cannot simply tap it signed;
+  since T18 (Pete, 2026-08-28) the gate dialog can show the real waiver text
+  and record the STUDENT's agreement -- see the design doc's waiver addendum.
+  The QR flow stays Phase 3.
 - Done when: a student without a waiver cannot be checked in by reflex.
 
 **1.7 Studio banner.** Text from an env var, shown until changed. No
