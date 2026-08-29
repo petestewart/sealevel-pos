@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { requireSession } from "@/lib/auth";
+
 import { fetchPasses } from "@/lib/clientcontext";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +16,8 @@ export const dynamic = "force-dynamic";
  * client for the session. Reads only.
  */
 export async function GET(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
   const clientId = new URL(request.url).searchParams.get("clientId");
   if (!clientId) {
     return NextResponse.json({ error: "clientId is required" }, { status: 400 });

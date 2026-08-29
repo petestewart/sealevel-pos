@@ -11,6 +11,7 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 
 import DevDrawer from "./DevDrawer";
+import LockScreen from "./LockScreen";
 import { useSettings } from "./settings";
 
 /**
@@ -3665,6 +3666,76 @@ function FrontDesk() {
 }
 
 /**
+ * The auth gate (T21). Asks /api/session whether a lock exists and whether
+ * this browser holds a session; until it answers, nothing renders (a blank
+ * flash beats flashing the roster at a locked counter). Locked renders
+ * ONLY the lock screen. While the app is open, a 401 from any /api data
+ * fetch flips back to the lock screen: sessions expire after 30 days and a
+ * PIN change revokes them all, and the fallback must be the lock, not a
+ * page of failed rows.
+ */
+function AuthGate() {
+  const [phase, setPhase] = useState<"checking" | "locked" | "open">(
+    "checking",
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/session")
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        setPhase(d.authRequired && !d.authenticated ? "locked" : "open");
+      })
+      .catch(() => {
+        /* The session probe failing (server down, network blip) must not
+         * brick the counter behind a lock that cannot check a PIN either.
+         * Open; every real route still enforces server-side. */
+        if (!cancelled) setPhase("open");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /* The one shared chokepoint for "a data fetch answered 401": wrap
+   * window.fetch while the app is open. Every call site (FrontDesk, the
+   * dev drawer's polling) goes through it, so none of them needs its own
+   * 401 handling and a future fetch cannot forget it. The wrapper only
+   * OBSERVES same-origin /api responses; it never alters them. */
+  useEffect(() => {
+    if (phase !== "open") return;
+    const original = window.fetch;
+    window.fetch = async (...args: Parameters<typeof window.fetch>) => {
+      const response = await original(...args);
+      try {
+        const url = new URL(String(
+          args[0] instanceof Request ? args[0].url : args[0],
+        ), window.location.origin);
+        if (
+          response.status === 401 &&
+          url.origin === window.location.origin &&
+          url.pathname.startsWith("/api/") &&
+          url.pathname !== "/api/login"
+        ) {
+          setPhase("locked");
+        }
+      } catch {
+        /* URL parsing is best-effort; never break the actual fetch. */
+      }
+      return response;
+    };
+    return () => {
+      window.fetch = original;
+    };
+  }, [phase]);
+
+  if (phase === "checking") return null;
+  if (phase === "locked") return <LockScreen />;
+  return <FrontDesk />;
+}
+
+/**
  * useSearchParams in a client component must sit under a Suspense boundary
  * (Next requires it for the static shell). The page is fully client-side,
  * so the fallback flashes at most once, before hydration.
@@ -3672,7 +3743,7 @@ function FrontDesk() {
 export default function FrontDeskPage() {
   return (
     <Suspense fallback={null}>
-      <FrontDesk />
+      <AuthGate />
     </Suspense>
   );
 }

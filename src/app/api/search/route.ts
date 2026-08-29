@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 
+import { requireSession } from "@/lib/auth";
+
 import { search } from "@/lib/clients";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
   const params = new URL(request.url).searchParams;
   const q = params.get("q") ?? "";
   const limit = Number(params.get("limit") ?? 12);

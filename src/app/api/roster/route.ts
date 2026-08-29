@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { requireSession } from "@/lib/auth";
+
 import { classesAroundNow, classRoster } from "@/lib/roster";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +11,8 @@ export const dynamic = "force-dynamic";
  * GET /api/roster?classId=1  -> that class plus its roster
  */
 export async function GET(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
   const params = new URL(request.url).searchParams;
   const classId = params.get("classId");
   const hoursBack = Number(params.get("hoursBack") ?? 2);

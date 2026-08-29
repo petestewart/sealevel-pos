@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { requireSession } from "@/lib/auth";
+
 import { removeClientFromClass } from "@/lib/roster";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +17,8 @@ export const dynamic = "force-dynamic";
  * as such rather than pretending the booking is gone.
  */
 export async function POST(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
   try {
     const { clientId, classId } = await request.json();
     if (typeof clientId !== "string" || !clientId) {

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { requireSession } from "@/lib/auth";
+
 import { recordLiabilityRelease, updateClientNotes } from "@/lib/clients";
 import { getWaiver } from "@/lib/waiver";
 
@@ -38,6 +40,8 @@ export const dynamic = "force-dynamic";
  * wholly lost.
  */
 export async function POST(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
   try {
     const { clientId, notes, textSha256 } = await request.json();
     if (typeof clientId !== "string" || !clientId) {

@@ -581,15 +581,46 @@ and is NOT built in this run; probes B1/B3 remain Pete's.
 The service-account decision (P1) stands: one shared PIN for the studio,
 per the .env.example stub. Per-teacher identity waits on payroll.
 
-- [ ] POS_PIN env var (unset = auth disabled, for dev). A lock screen
+- [x] POS_PIN env var (unset = auth disabled, for dev). A lock screen
       (64px keypad, same visual system) gates the app; a correct PIN sets
       an httpOnly signed session cookie (long-lived; the iPad stays
       unlocked through a shift).
-- [ ] EVERY API route refuses without the session (401), including
+- [x] EVERY API route refuses without the session (401), including
       devlog; the page itself renders only the lock screen when locked.
-- [ ] No PIN or its hash ever reaches the client bundle; rate-limit
+- [x] No PIN or its hash ever reaches the client bundle; rate-limit
       attempts modestly server-side.
 - [ ] Pete: set POS_PIN and verify the lock on the iPad.
+
+How it landed (done (code): typecheck and build clean, no live run in
+this container):
+
+- `src/lib/auth.ts` is the whole mechanism: a 30-day HMAC-signed token
+  (`v1.<issued-at>.<hmac>`) in an httpOnly SameSite=Lax cookie, Secure in
+  production only (the LAN dev case is http and a Secure cookie would
+  never store). The signing key derives DETERMINISTICALLY from POS_PIN
+  via scryptSync with a fixed app salt: a deploy restart keeps the iPad's
+  session mid-shift, changing the PIN revokes every session at once. PIN
+  check and token verify both go through timingSafeEqual. `requireSession`
+  is the ONE guard, called first in every handler; login failures hit an
+  in-memory limiter (5 straight failures = 30s lockout, per process).
+- New routes: POST /api/login ({pin} -> cookie), POST /api/logout, and
+  GET /api/session ({authRequired, authenticated}), which is what the
+  page asks before rendering anything.
+- /api/config stays reachable without a session because the LOCK SCREEN
+  shows the mode banner too, but its unauthenticated answer is trimmed to
+  dryRun/target/banner: the full shape also carried siteId, configError
+  and writeClientIds, and those now wait for a session.
+- The page renders through an AuthGate: /api/session says locked ->
+  ONLY the lock screen (studio name, mode banner, masked dots, 0-9 +
+  backspace keypad at 64px, explicit Unlock button or Enter; no
+  auto-submit since PIN length varies; wrong PIN shakes quietly, the
+  lockout counts down). While open, a fetch wrapper watches every /api
+  response and a 401 flips back to the lock screen, so an expired or
+  revoked session degrades to the lock rather than a page of errors. The
+  session probe failing entirely fails OPEN client-side (the server still
+  enforces): a lock that cannot check a PIN must not brick the counter.
+- Nothing secret is client-side: the bundle holds no PIN, no hash, no
+  comparison; the lock screen only POSTs what was typed.
 
 ## T22. Catalog and cart pricing (PLAN 2.1)
 

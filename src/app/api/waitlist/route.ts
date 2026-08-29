@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { requireSession } from "@/lib/auth";
+
 import { waitlistFor } from "@/lib/roster";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +12,8 @@ export const dynamic = "force-dynamic";
  * at capacity, because a class with room cannot have a queue.
  */
 export async function GET(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
   const classId = new URL(request.url).searchParams.get("classId");
   if (!classId) {
     return NextResponse.json(

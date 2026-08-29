@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { requireSession } from "@/lib/auth";
+
 import { setVisitService } from "@/lib/roster";
 
 export const dynamic = "force-dynamic";
@@ -12,6 +14,8 @@ export const dynamic = "force-dynamic";
  * doing it again with the old id reverses it.
  */
 export async function POST(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
   try {
     const { visitId, clientServiceId, clientId } = await request.json();
     if (typeof visitId !== "number") {

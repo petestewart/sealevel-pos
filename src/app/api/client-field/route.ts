@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { requireSession } from "@/lib/auth";
+
 import {
   EDITABLE_CLIENT_FIELDS,
   updateClientField,
@@ -24,6 +26,8 @@ export const dynamic = "force-dynamic";
  * such rather than pretending the edit stuck.
  */
 export async function POST(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
   try {
     const { clientId, field, value } = await request.json();
     if (typeof clientId !== "string" || !clientId) {

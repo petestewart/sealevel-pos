@@ -1408,3 +1408,136 @@ button.pass-opt:disabled {
   background: var(--stop-bg);
   color: var(--stop);
 }
+
+/* --- Lock screen (T21) ----------------------------------------------
+ * The whole page when POS_PIN is set and no session exists. Same visual
+ * system as everything else: token colours only (both palettes come from
+ * the variable swap above), nothing under 16px, 64px keys per the payment
+ * mockup's keypad. */
+
+.lock-shell {
+  max-width: 420px;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+}
+
+.lock-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.lock-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.lock-sub {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* The masked entry: one dot per digit typed, never the digits. */
+.lock-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.lock-dots.shake {
+  animation: lock-shake 0.3s;
+}
+
+.lock-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+.lock-dots-empty {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+@keyframes lock-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-8px); }
+  75% { transform: translateX(8px); }
+}
+
+/* Wrong PIN / lockout line. Quiet, and it reserves its height so the
+ * keypad does not jump when it appears. */
+.lock-msg {
+  margin: 0;
+  min-height: 22px;
+  font-size: 16px;
+  color: var(--stop);
+  text-align: center;
+}
+
+.lock-msg-empty {
+  visibility: hidden;
+}
+
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.key:active:not(:disabled) {
+  background: var(--action-bg);
+}
+
+.key:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.key.back {
+  color: var(--stop);
+}
+
+.lock-unlock {
+  min-height: 64px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.lock-unlock:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { requireSession } from "@/lib/auth";
+
 import { getWaiver } from "@/lib/waiver";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +19,9 @@ export const dynamic = "force-dynamic";
  * verifies the hash the browser echoes back against the same server-side
  * value, so a tampered or stale hash can never label a receipt.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
   try {
     const { text, sha256 } = await getWaiver();
     return NextResponse.json({ text, sha256 });

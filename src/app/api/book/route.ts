@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { requireSession } from "@/lib/auth";
+
 import { bookClientIntoClass } from "@/lib/roster";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +23,8 @@ export const dynamic = "force-dynamic";
  * as such rather than pretending a visit exists.
  */
 export async function POST(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
   try {
     const { clientId, classId, waitlist, waitlistEntryId, clientServiceId } =
       await request.json();
