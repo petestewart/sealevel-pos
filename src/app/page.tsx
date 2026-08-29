@@ -73,6 +73,17 @@ interface SearchResult {
   mindbodyId: number | null;
 }
 
+/**
+ * Who the waiver dialog is about, and which flow resumes once the
+ * student's agreement is recorded (T19): a roster row continues into the
+ * normal check-in path, a search result into the normal booking path.
+ * Everything else about the dialog -- the real text, the scroll-to-end
+ * gate, the receipt -- is shared and identical for both.
+ */
+type WaiverSubject =
+  | { source: "roster"; entry: RosterEntry }
+  | { source: "walkin"; client: SearchResult };
+
 interface WaitlistRow {
   entryId: number;
   clientId: string;
@@ -645,8 +656,12 @@ function FrontDesk() {
    * back to the old close-only shape -- no path records agreement without
    * the text having been shown. The QR-on-their-phone flow remains the
    * Phase 3 end state.
+   *
+   * Since T19 the same dialog also gates the walk-in ADD: the subject
+   * says which flow opened it, and a recorded agreement resumes that
+   * flow -- check-in for a roster row, booking for a search result.
    */
-  const [waiverPrompt, setWaiverPrompt] = useState<RosterEntry | null>(null);
+  const [waiverPrompt, setWaiverPrompt] = useState<WaiverSubject | null>(null);
   /** The waiver text as served, with the sha256 of exactly that text
    *  (from /api/waiver) so the agreement receipt names what was shown.
    *  Non-null switches the dialog into its reading state. */
@@ -1138,10 +1153,10 @@ function FrontDesk() {
   }, []);
 
   /** Escape closes the search-results modal, unless a layer is stacked
-   *  on top of it (red alert, waitlist confirm, an info modal, the pass
-   *  picker): Escape peels the top layer, so an open pass picker closes
-   *  first and the modal takes the next press. The dialogs close on
-   *  their own scrims. */
+   *  on top of it (red alert, the waiver gate, waitlist confirm, an info
+   *  modal, the pass picker): Escape peels the top layer, so an open
+   *  pass picker closes first and the modal takes the next press. The
+   *  dialogs close on their own scrims. */
   useEffect(() => {
     if (!searchOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -1149,6 +1164,7 @@ function FrontDesk() {
         e.key === "Escape" &&
         !waitlistPrompt &&
         !walkinAlertPrompt &&
+        !waiverPrompt &&
         !infoModal
       ) {
         if (walkinPicker) {
@@ -1164,6 +1180,7 @@ function FrontDesk() {
     searchOpen,
     waitlistPrompt,
     walkinAlertPrompt,
+    waiverPrompt,
     infoModal,
     walkinPicker,
     closeSearch,
@@ -1291,7 +1308,7 @@ function FrontDesk() {
        * fails open and is not this branch.
        */
       if (entry.waiverSigned === false) {
-        setWaiverPrompt(entry);
+        setWaiverPrompt({ source: "roster", entry });
         return;
       }
       /**
@@ -1372,85 +1389,6 @@ function FrontDesk() {
       setWaiverScrolled(true);
     }
   }, [waiverText]);
-
-  /**
-   * Record the student's agreement (T18). Only reachable from the reading
-   * state's confirm, which is disabled until the text has been scrolled
-   * to the end -- so by construction the release is never written without
-   * the real text having been shown. Non-optimistic: the confirm spins
-   * until Mindbody answers. Suppression (dry run / write guard) renders
-   * inside the dialog as the amber notice, never as success; failure
-   * shows Mindbody's reason.
-   *
-   * On a real success: the dialog closes, the row's local waiverSigned
-   * flips (and its notes update if the receipt landed), and the SAME
-   * tapCheckIn flow the chip runs takes over -- now past the waiver gate,
-   * with the red-alert and unpaid gates still applying in their usual
-   * order. The next roster load confirms from Mindbody.
-   */
-  const agreeWaiver = useCallback(async () => {
-    const entry = waiverPrompt;
-    if (!entry || !waiverText || !waiverScrolled || waiverSaving) return;
-    setWaiverSaving(true);
-    setWaiverMsg(null);
-    try {
-      const res = await fetch("/api/waiver-agree", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          clientId: entry.clientId,
-          /* The freshest notes this screen holds, for the receipt append.
-           * A stale value loses at most a concurrent edit from another
-           * surface; the roster refetches notes on every load. */
-          notes: entry.notes,
-          textSha256: waiverText.sha256,
-        }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
-      if (body.suppressed) {
-        setWaiverMsg(
-          body.suppressed === "dry-run"
-            ? "Dry run: the agreement was suppressed, nothing was written."
-            : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
-        );
-        return;
-      }
-      const newNotes =
-        body.receiptNoted && typeof body.notes === "string"
-          ? body.notes.trim() || null
-          : entry.notes;
-      setWaiverReceiptWarn(
-        body.receiptNoted
-          ? null
-          : `Waiver recorded for ${entry.name}, but the receipt note did not save` +
-              `${body.receiptReason ? ` (${body.receiptReason})` : ""}. The agreement stands; the server log holds the receipt.`,
-      );
-      setEntries((rows) =>
-        rows.map((r) =>
-          r.clientId === entry.clientId
-            ? { ...r, waiverSigned: true, notes: newNotes }
-            : r,
-        ),
-      );
-      setWaiverSaving(false);
-      closeWaiverDialog();
-      /* The normal check-in path, on the updated row: past the waiver
-       * gate now, with the red-alert and unpaid gates still ahead. */
-      tapCheckIn({ ...entry, waiverSigned: true, notes: newNotes });
-    } catch (err) {
-      setWaiverMsg(err instanceof Error ? err.message : String(err));
-    } finally {
-      setWaiverSaving(false);
-    }
-  }, [
-    waiverPrompt,
-    waiverText,
-    waiverScrolled,
-    waiverSaving,
-    closeWaiverDialog,
-    tapCheckIn,
-  ]);
 
   /** Close the info modal and drop any notes-editing state with it.
    *  Refused mid-save: the answer is coming. */
@@ -1769,19 +1707,33 @@ function FrontDesk() {
   );
 
   /**
-   * The walk-in ADD tap. A known red alert stops it exactly the way it
-   * stops a roster check-in: the blocking dialog opens and nothing is
-   * booked until the teacher has read the alert and chosen to continue
-   * (this closes the T5 follow-up where a red-alert walk-in could be
-   * booked without the alert ever showing). Past the gate, the existing
-   * full-class handling stands: a full class offers the waiting list, a
-   * class with room books.
+   * The walk-in ADD tap. The gates run in the same order as the roster's
+   * tapCheckIn: waiver first, then the red alert.
+   *
+   * The waiver gates the ADD, not just the eventual check-in (T19):
+   * Mindbody can return an after-start booking already signed in, so the
+   * roster's check-in gate never runs for it -- the add is the last
+   * reliable stop. A result with no released waiver opens the same T18
+   * dialog the roster uses, and nothing is booked until the student's
+   * agreement is recorded.
+   *
+   * A known red alert stops it exactly the way it stops a roster
+   * check-in: the blocking dialog opens and nothing is booked until the
+   * teacher has read the alert and chosen to continue (this closes the
+   * T5 follow-up where a red-alert walk-in could be booked without the
+   * alert ever showing). Past the gates, the existing full-class
+   * handling stands: a full class offers the waiting list, a class with
+   * room books.
    */
   const tapWalkIn = useCallback(
     (client: SearchResult) => {
       /* Same single-flight rule as bookWalkIn: any booking in flight
        * blocks every other row's tap, not just this client's. */
       if (bookingIds.length > 0) return;
+      if (client.waiverSigned === false) {
+        setWaiverPrompt({ source: "walkin", client });
+        return;
+      }
       if (client.redAlert && !acked.includes(client.id)) {
         setWalkinAlertPrompt(client);
         return;
@@ -1794,6 +1746,129 @@ function FrontDesk() {
     },
     [bookingIds, acked, classFull, bookWalkIn],
   );
+
+  /**
+   * Record the student's agreement (T18). Only reachable from the reading
+   * state's confirm, which is disabled until the text has been scrolled
+   * to the end -- so by construction the release is never written without
+   * the real text having been shown. Non-optimistic: the confirm spins
+   * until Mindbody answers. Suppression (dry run / write guard) renders
+   * inside the dialog as the amber notice, never as success -- and never
+   * continues to a check-in or a booking; failure shows Mindbody's
+   * reason.
+   *
+   * On a real success: the dialog closes, the person's local
+   * waiverSigned flips wherever this screen holds them -- the roster
+   * always, and for a walk-in the search results too, so the pill clears
+   * without a new search -- and the SAME flow that opened the dialog
+   * takes over, now past the waiver gate. A roster row re-enters
+   * tapCheckIn, with the red-alert and unpaid gates still applying in
+   * their usual order; a walk-in re-enters tapWalkIn, with the red-alert
+   * gate, the full-class waitlist offer, the chosen pass, and the
+   * single-flight booking lock all still applying (T19). The next roster
+   * load confirms from Mindbody.
+   */
+  const agreeWaiver = useCallback(async () => {
+    const subject = waiverPrompt;
+    if (!subject || !waiverText || !waiverScrolled || waiverSaving) return;
+    const person =
+      subject.source === "roster"
+        ? {
+            id: subject.entry.clientId,
+            name: subject.entry.name,
+            notes: subject.entry.notes,
+          }
+        : {
+            id: subject.client.id,
+            name: subject.client.name,
+            notes: subject.client.notes,
+          };
+    setWaiverSaving(true);
+    setWaiverMsg(null);
+    try {
+      const res = await fetch("/api/waiver-agree", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientId: person.id,
+          /* The freshest notes this screen holds, for the receipt append.
+           * A stale value loses at most a concurrent edit from another
+           * surface; the roster refetches notes on every load. */
+          notes: person.notes,
+          textSha256: waiverText.sha256,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      if (body.suppressed) {
+        setWaiverMsg(
+          body.suppressed === "dry-run"
+            ? "Dry run: the agreement was suppressed, nothing was written."
+            : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
+        );
+        return;
+      }
+      const newNotes =
+        body.receiptNoted && typeof body.notes === "string"
+          ? body.notes.trim() || null
+          : person.notes;
+      setWaiverReceiptWarn(
+        body.receiptNoted
+          ? null
+          : `Waiver recorded for ${person.name}, but the receipt note did not save` +
+              `${body.receiptReason ? ` (${body.receiptReason})` : ""}. The agreement stands; the server log holds the receipt.`,
+      );
+      /* The roster updates for both flows: a walk-in who somehow already
+       * has a roster row (booked from another surface mid-search) must
+       * not keep a stale block on that row. */
+      setEntries((rows) =>
+        rows.map((r) =>
+          r.clientId === person.id
+            ? { ...r, waiverSigned: true, notes: newNotes }
+            : r,
+        ),
+      );
+      if (subject.source === "walkin") {
+        setFound((rows) =>
+          rows.map((r) =>
+            r.id === person.id
+              ? { ...r, waiverSigned: true, notes: newNotes }
+              : r,
+          ),
+        );
+      }
+      setWaiverSaving(false);
+      closeWaiverDialog();
+      /* The normal path for whichever flow opened the dialog, on the
+       * updated person: past the waiver gate now, every other gate still
+       * ahead. */
+      if (subject.source === "roster") {
+        tapCheckIn({ ...subject.entry, waiverSigned: true, notes: newNotes });
+      } else {
+        tapWalkIn({ ...subject.client, waiverSigned: true, notes: newNotes });
+      }
+    } catch (err) {
+      setWaiverMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWaiverSaving(false);
+    }
+  }, [
+    waiverPrompt,
+    waiverText,
+    waiverScrolled,
+    waiverSaving,
+    closeWaiverDialog,
+    tapCheckIn,
+    tapWalkIn,
+  ]);
+
+  /** The waiver dialog's subject, flattened for its rendering. */
+  const waiverName =
+    waiverPrompt === null
+      ? ""
+      : waiverPrompt.source === "roster"
+        ? waiverPrompt.entry.name
+        : waiverPrompt.client.name;
 
   /**
    * Promote a waiting client into the class: the same booking endpoint
@@ -3329,7 +3404,12 @@ function FrontDesk() {
           agreement, and a fetch failure falls back to the old close-only
           shape -- no path records agreement without the text rendered.
           The QR flow on the student's own phone remains the Phase 3 end
-          state; this is the bridge. */}
+          state; this is the bridge.
+
+          Since T19 the same dialog gates the walk-in ADD, opened from
+          inside the search modal (it renders after that modal, so it
+          stacks above it, same as the red-alert twin): identical
+          discipline, only the continuation and the verb differ. */}
       {waiverPrompt ? (
         <div
           className="modal-scrim"
@@ -3348,8 +3428,8 @@ function FrontDesk() {
             <p className="modal-title">Liability Waiver</p>
             <p className="muted modal-who">
               {waiverText
-                ? `For ${waiverPrompt.name} to read and agree to.`
-                : `${waiverPrompt.name} has not signed the waiver.`}
+                ? `For ${waiverName} to read and agree to.`
+                : `${waiverName} has not signed the waiver.`}
             </p>
             {waiverText ? (
               <>
@@ -3396,6 +3476,8 @@ function FrontDesk() {
                   >
                     {waiverSaving ? (
                       <span className="spinner" aria-label="working" />
+                    ) : waiverPrompt.source === "walkin" ? (
+                      "Record agreement and add"
                     ) : (
                       "Record agreement and check in"
                     )}
@@ -3405,8 +3487,9 @@ function FrontDesk() {
             ) : (
               <>
                 <p className="ctx-alert modal-alert">
-                  No liability waiver on file. They cannot be checked in
-                  until they have read and agreed to it.
+                  {waiverPrompt.source === "walkin"
+                    ? "No liability waiver on file. They cannot be added to the class until they have read and agreed to it."
+                    : "No liability waiver on file. They cannot be checked in until they have read and agreed to it."}
                 </p>
                 {waiverFetchError ? (
                   /* The fetch failed: the old close-only shape, with the
@@ -3415,7 +3498,10 @@ function FrontDesk() {
                   <p className="muted">
                     The waiver text could not be fetched ({waiverFetchError}).
                     Have them sign it in the Mindbody app instead; once it is
-                    signed the row will check in normally.
+                    signed the{" "}
+                    {waiverPrompt.source === "walkin"
+                      ? "add will go through normally."
+                      : "row will check in normally."}
                   </p>
                 ) : (
                   <p className="muted">
