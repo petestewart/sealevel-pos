@@ -566,6 +566,87 @@ endpoint against live student data. Deploy with `POS_DRY_RUN=true` or keep the
 URL private until auth exists; Pete's call, recorded here so it is a decision
 and not an accident.
 
+# Phase 2 (feature/phase-2)
+
+Phase 1 merged to main 2026-08-29. This section tracks the autonomous
+Phase 2 run Pete authorized: no waiting between tickets; assumptions made
+in his absence are recorded per ticket and reversible. Everything ships
+behind the existing rails (sandbox default, POS_DRY_RUN on prod, write
+guard, nothing auto-charges, Test: true rehearsals). Deferred: PLAN 2.6
+(the $49 special and $21 upgrade) is blocked on probe B1 and question P3
+and is NOT built in this run; probes B1/B3 remain Pete's.
+
+## T21. Auth: shared PIN (PLAN Phase 1.5)
+
+The service-account decision (P1) stands: one shared PIN for the studio,
+per the .env.example stub. Per-teacher identity waits on payroll.
+
+- [ ] POS_PIN env var (unset = auth disabled, for dev). A lock screen
+      (64px keypad, same visual system) gates the app; a correct PIN sets
+      an httpOnly signed session cookie (long-lived; the iPad stays
+      unlocked through a shift).
+- [ ] EVERY API route refuses without the session (401), including
+      devlog; the page itself renders only the lock screen when locked.
+- [ ] No PIN or its hash ever reaches the client bundle; rate-limit
+      attempts modestly server-side.
+- [ ] Pete: set POS_PIN and verify the lock on the iPad.
+
+## T22. Catalog and cart pricing (PLAN 2.1)
+
+- [ ] src/lib/sale.ts: fetch sellable items per the hardcoded categories
+      (/sale/products by CategoryIds; passes via /sale/services), reading
+      in-studio Price never OnlinePrice, spec-verified against
+      docs/mindbody-openapi/sale.yml.
+- [ ] Cart totals priced by Mindbody via /sale/checkoutshoppingcart with
+      Test: true, LocationId: 1, InStore: true. Assert our expected total
+      (Price x 1.1035, exempt category 100000 untaxed) against the
+      server's; a disagreement renders as an error, never swallowed.
+- [ ] No client-side price ever sent; Mindbody's total is the total.
+
+## T23. The sale screen (PLAN 2.1 UI)
+
+- [ ] Two panes per the approved mockups: receipt-style cart left
+      (items, qty, subtotal, tax, total), category chips and item grid
+      right. Reached from a "Sell" affordance in the header; the roster
+      remains the home screen. Mode banner stays visible.
+- [ ] Optional client attachment: a sale can be anonymous or attached to
+      a client (search reused); attaching enables stored-card/credit.
+
+## T24. Payment execution (PLAN 2.2 + 2.3)
+
+- [ ] Methods: stored card (client attached, card on file), account
+      credit (balance covers total), cash (records the sale with the
+      cash payment type), comp where the API allows. Read balances
+      before offering; an unavailable method renders greyed with the
+      reason, never hidden.
+- [ ] The $10 card minimum EXACTLY per PLAN 2.3's table: credit-covers
+      via DebitAccount; card >= $10 via StoredCard; card under $10 buys
+      $10 account credit then checks out on DebitAccount, with Test:
+      true rehearsal BEFORE the credit purchase and an explicit
+      credit-balance report on a step-2 failure. Never collapse the card
+      paths through credit.
+- [ ] ASSUMPTIONS (Pete may reverse): P2 partial credit ignored (credit
+      is only used when it covers the whole total); P4 the $10 minimum
+      is measured against the charged, after-tax total.
+- [ ] Charge button restates the amount ("Charge $179.87"); pessimistic
+      spinner; suppression surfaced; nothing ever auto-charges.
+
+## T25. The unpaid row sells the pass (PLAN 2.4)
+
+- [ ] An unpaid booking's flow becomes: pick the pass to sell (sensible
+      default from the class's pricing options), charge on the stored
+      card via the T24 machinery, assign it to the visit, check in --
+      one gesture, pessimistic end to end, partial failure reported
+      honestly at each step.
+- [ ] Free entry survives as the deliberate exception behind its own
+      clearly-labelled choice, no longer the default.
+
+## T26. Last-class renewal (PLAN 2.5)
+
+- [ ] The "1 remaining" pill's row offers selling the next pack in the
+      same gesture as check-in, via the same T24/T25 machinery. Quiet
+      when no card on file.
+
 ## T10. Auth — deliberately last
 
 - [ ] Shared PIN (stubbed in `.env.example`) or per-teacher identity per the
