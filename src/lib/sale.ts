@@ -147,7 +147,12 @@ export async function catalogFor(
  * `request.locationId` (sale.yml:1171) makes TaxRate/TaxIncluded studio
  * numbers; it does NOT filter by location, so SellAtLocationIds
  * (sale.yml:5278) is honored here instead: an option not sold at the studio
- * must not be a button a teacher can tap. Discontinued options are already
+ * must not be a button a teacher can tap. The spec says only "the location
+ * IDs where this pricing option is sold" and never defines an absent or
+ * empty list, so absence is read permissively (sellable) rather than as
+ * "sold nowhere": a wrongly shown option fails loudly at priceCart, while
+ * the strict reading could silently empty the Passes shelf at a one-location
+ * studio, which is the worse failure. Discontinued options are already
  * excluded by the endpoint's default (`request.includeDiscontinued`,
  * sale.yml:1149, default false).
  */
@@ -191,6 +196,11 @@ export async function pricingOptions(): Promise<CatalogItem[]> {
     .filter((s: CatalogItem | null): s is CatalogItem => s !== null);
 }
 
+/** The most of one item a counter cart can hold. A teacher selling more
+ *  than this of anything has mistyped, and an absurd quantity times a real
+ *  price is exactly the number nobody should ever see on a Charge button. */
+export const MAX_LINE_QUANTITY = 99;
+
 /** One line of a cart to be priced. The caller (the sale screen) builds
  *  these from CatalogItems; price/taxExempt ride along ONLY to feed the
  *  local assertion and are never sent to Mindbody. */
@@ -217,6 +227,16 @@ export function roundToCents(amount: number): number {
  * sum(Price x qty) x 1.1035, with tax-exempt lines contributing untaxed,
  * rounded half-up to cents. This is an ASSERTION against the server's
  * total, never a price we charge or display as authoritative.
+ *
+ * Rounding model: ONE round, of the whole cart's tax, at the end. Whether
+ * Mindbody instead rounds tax per line (or per unit) is not stated anywhere
+ * in the vendored spec; with the studio's real price points the models only
+ * diverge by a cent on multi-line carts with fractional-cent line tax, and
+ * when they do the mismatch surfaces as a loud `disagrees` error rather
+ * than a wrong charge (Mindbody's total is always the one charged). If the
+ * first sandbox runs show cent-level disagreement on multi-line carts,
+ * change THIS model to match the observed one; never widen totalsDisagree
+ * into a tolerance.
  */
 export function expectedTotal(items: readonly CartLine[]): number {
   let taxed = 0;
@@ -306,8 +326,14 @@ export async function priceCart(
     throw new Error("priceCart needs at least one item.");
   }
   for (const line of items) {
-    if (!Number.isInteger(line.quantity) || line.quantity < 1) {
-      throw new Error("Every cart line needs a positive whole quantity.");
+    if (
+      !Number.isInteger(line.quantity) ||
+      line.quantity < 1 ||
+      line.quantity > MAX_LINE_QUANTITY
+    ) {
+      throw new Error(
+        `Every cart line needs a whole quantity from 1 to ${MAX_LINE_QUANTITY}.`,
+      );
     }
   }
   const expected = expectedTotal(items);
@@ -339,6 +365,13 @@ export async function priceCart(
     if (!/payment/i.test(message)) throw err;
     /* The site wants a Payments array even to price. Comp stub, once. */
     usedPaymentStub = true;
+    /* The stub's Amount is our expectation, the only number in hand before
+     * the server has priced anything. If the server's total differs (the
+     * exact condition `disagrees` exists for), a payments-must-equal-total
+     * rule would reject this retry too -- which still fails loudly, just as
+     * a thrown error instead of a disagrees flag. The spec's key list
+     * spells the key "amount" (sale.yml:3934) where item Metadata examples
+     * are PascalCase; the first sandbox run confirms the casing. */
     res = await mindbody("/sale/checkoutshoppingcart", {
       method: "POST",
       body: {

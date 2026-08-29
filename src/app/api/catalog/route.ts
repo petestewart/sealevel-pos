@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 
 import { counterCategories } from "@/lib/categories";
+import { target } from "@/lib/mindbody";
 import { catalogFor, pricingOptions, type CatalogItem } from "@/lib/sale";
 
 export const dynamic = "force-dynamic";
@@ -28,12 +29,16 @@ interface CatalogPayload {
   passes: CatalogItem[];
 }
 
-let cache: { at: number; data: CatalogPayload } | null = null;
+/** Keyed by MINDBODY_TARGET for the same reason the staff-token cache is
+ *  keyed by site id: a process that switches target must never serve the
+ *  sandbox's catalog as the studio's shelf, or vice versa. */
+let cache: { key: string; at: number; data: CatalogPayload } | null = null;
 
 export async function GET(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
-  if (cache && Date.now() - cache.at < CACHE_TTL_MS) {
+  const key = target();
+  if (cache && cache.key === key && Date.now() - cache.at < CACHE_TTL_MS) {
     return NextResponse.json({ ...cache.data, cached: true });
   }
   try {
@@ -47,7 +52,7 @@ export async function GET(request: Request) {
       products,
       passes,
     };
-    cache = { at: Date.now(), data };
+    cache = { key, at: Date.now(), data };
     return NextResponse.json({ ...data, cached: false });
   } catch (err) {
     /* A failure is never cached: the next request retries Mindbody. */

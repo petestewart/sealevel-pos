@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
 
-import { priceCart, type CartLine } from "@/lib/sale";
+import { MAX_LINE_QUANTITY, priceCart, type CartLine } from "@/lib/sale";
+
+/** More distinct lines than the whole catalog has items is not a cart. */
+const MAX_CART_LINES = 100;
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +36,12 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  if (rawItems.length > MAX_CART_LINES) {
+    return NextResponse.json(
+      { error: `a cart holds at most ${MAX_CART_LINES} lines` },
+      { status: 400 },
+    );
+  }
   const items: CartLine[] = [];
   for (const raw of rawItems) {
     const type = raw?.type;
@@ -44,14 +53,17 @@ export async function POST(request: Request) {
       (typeof metadataId !== "string" && typeof metadataId !== "number") ||
       !Number.isInteger(quantity) ||
       quantity < 1 ||
+      quantity > MAX_LINE_QUANTITY ||
       typeof price !== "number" ||
-      !Number.isFinite(price)
+      !Number.isFinite(price) ||
+      price < 0
     ) {
       return NextResponse.json(
         {
           error:
             "each item needs type (Product|Service), metadataId, " +
-            "quantity (positive integer) and price (number)",
+            `quantity (integer, 1 to ${MAX_LINE_QUANTITY}) and ` +
+            "price (non-negative number)",
         },
         { status: 400 },
       );
