@@ -526,6 +526,13 @@ contents is deliberately out of scope.
       list, and their gate branches are removed; check-in order becomes
       waiver -> unpaid confirm; walk-in add order becomes waiver ->
       full-class/waitlist.
+- [ ] Promote-from-waitlist gets the waiver gate too (found by the T19
+      review): waitlist rows carry no waiver state, so a no-waiver
+      student who waitlisted online can be promoted with no dialog, and
+      an after-start booking can come back already signed in. Enrich the
+      waitlist rows with waiverSigned through the roster's batched
+      client lookup and gate promote() with the same waiver dialog (a
+      third subject flavor whose continuation is the promotion).
 - [ ] Pete: live-verify one alert edit and one yellow edit on the dummy
       client change only their field.
 
