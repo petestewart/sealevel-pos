@@ -637,15 +637,50 @@ Deploy notes from the T21 review (Pete, before the counter goes live):
 
 ## T22. Catalog and cart pricing (PLAN 2.1)
 
-- [ ] src/lib/sale.ts: fetch sellable items per the hardcoded categories
+- [x] src/lib/sale.ts: fetch sellable items per the hardcoded categories
       (/sale/products by CategoryIds; passes via /sale/services), reading
       in-studio Price never OnlinePrice, spec-verified against
       docs/mindbody-openapi/sale.yml.
-- [ ] Cart totals priced by Mindbody via /sale/checkoutshoppingcart with
+- [x] Cart totals priced by Mindbody via /sale/checkoutshoppingcart with
       Test: true, LocationId: 1, InStore: true. Assert our expected total
       (Price x 1.1035, exempt category 100000 untaxed) against the
       server's; a disagreement renders as an error, never swallowed.
-- [ ] No client-side price ever sent; Mindbody's total is the total.
+- [x] No client-side price ever sent; Mindbody's total is the total.
+
+Shipped as src/lib/sale.ts plus two requireSession-guarded routes:
+GET /api/catalog (products + passes, cached per process for 10 minutes;
+harmless because the CART total always comes live from priceCart) and
+POST /api/price-cart. Spec findings worth keeping:
+
+- **Payments under Test: true is formally optional but unproven live, and
+  this gates T24.** CheckoutShoppingCartRequest (sale.yml:5632-5735)
+  declares NO `required:` list at all -- Items, Payments, ClientId, every
+  field is optional by schema. But the one Test call known to have passed
+  (the 2026-08-26 probe, design doc rung 5) included a StoredCard payment,
+  so "Payments may be omitted" has never been observed. priceCart therefore
+  posts without Payments first and, if refused with a payment-shaped error,
+  retries once with `Comp { Amount }` (the only documented payment type
+  needing nothing but an amount, sale.yml:3934) and reports which shape
+  worked via `usedPaymentStub`. Watch that flag on the first sandbox run:
+  if the stub is what prices carts, T24's Test-rehearsal step must send a
+  stub too, and the Comp permission becomes a hard requirement.
+- CheckoutItem.Metadata is typed `string` in the vendored spec
+  (sale.yml:4975) with its keys behind the login-walled docs page, as the
+  design doc warned. The live API takes an object; we send
+  `{ Id: <item id> }`. Which id a Service wants (ProductId, "the unique ID
+  of this pricing option", sale.yml:5226, vs the barcode `Id`, 5231) is not
+  enumerated either; CatalogItem carries both and priceCart sends
+  ProductId for services, barcode Id for products. Confirm with one
+  sandbox Test call.
+- The payment-Metadata key list (sale.yml:3934) is truncated mid-sentence
+  in the vendored file itself (ends "* '"), so at least one payment type
+  is missing from our copy of the spec. Refresh from upstream before T24.
+- There is no /sale/paymenttypes; the endpoint is /site/paymenttypes
+  (site.yml:508), same trap as /site/categories.
+- A prod dry run suppresses the Test POST too (every POST outside
+  /usertoken is a write to our wrapper). priceCart returns
+  `suppressed: true` with no totals; the T23 UI must render that state,
+  never a made-up number.
 
 ## T23. The sale screen (PLAN 2.1 UI)
 

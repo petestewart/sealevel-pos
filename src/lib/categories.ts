@@ -12,9 +12,10 @@
  * Ordered by how often a teacher reaches for each at the counter. Everything
  * not listed here belongs behind a "more" control.
  *
- * Consumed by: nothing yet. This is Phase 2 groundwork; the retail catalog
- * UI (the sale screen's category buttons, filtering /sale/products) will be
- * its first consumer. Do not wire it into Phase 1 screens.
+ * Consumed by: GET /api/catalog (T22), which filters /sale/products by the
+ * ids here and fills the "Passes" entry from /sale/services. The sale
+ * screen's category buttons (T23) come next. Do not wire it into Phase 1
+ * screens.
  */
 
 /** One button on the eventual sale screen. */
