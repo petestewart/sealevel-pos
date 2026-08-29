@@ -1335,6 +1335,40 @@ button.pass-opt:disabled {
   resize: vertical;
 }
 
+/* The waiver dialog in its reading state (T18): wider than a plain
+ * confirmation, because a student is reading a legal text on it. */
+.modal-waiver {
+  width: min(680px, 100%);
+}
+
+/* The waiver text itself, in a scrollable region: 16px floor and a
+ * generous line height because this is the one thing in the app a
+ * STUDENT reads, capped so the dialog still fits an iPad in landscape
+ * with the consent line and buttons visible below it. Tokens only, both
+ * palettes; pre-wrap keeps the paragraph breaks Mindbody stored. */
+.waiver-scroll {
+  margin: 0 0 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  max-height: min(46vh, 440px);
+  overflow-y: auto;
+  font-size: 16px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* "They have read it and agree." -- the line that makes the confirm
+ * unmistakably record the STUDENT's agreement, not the teacher's. */
+.waiver-agree-line {
+  margin: 0 0 12px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
 /* An icon inline in a modal action button's label. */
 .btn-ico {
   display: inline-flex;

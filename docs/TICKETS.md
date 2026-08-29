@@ -450,22 +450,22 @@ replicates the studio's existing tool rather than creating a new risk.
 The Phase 3 QR-on-their-phone flow stays the better end state; this is
 the bridge.
 
-- [ ] The no-waiver gate dialog grows a "Read the waiver" path: fetch the
+- [x] The no-waiver gate dialog grows a "Read the waiver" path: fetch the
       studio's real waiver text from GET /site/liabilitywaiver (verify
       the response shape in docs/mindbody-openapi/site.yml), shown
       scrollable at 16px+. The old close-only dialog remains the shape
       when the waiver text cannot be fetched.
-- [ ] The confirm is unmistakably the STUDENT's agreement: enabled only
+- [x] The confirm is unmistakably the STUDENT's agreement: enabled only
       after the text has been scrolled to the end, worded "They have
       read it and agree", button "Record agreement and check in". No
       path records agreement without the text having been shown.
-- [ ] Confirming writes the release via POST /client/updateclient with
+- [x] Confirming writes the release via POST /client/updateclient with
       the same surgical discipline as notes (verify against client.yml
       where LiabilityRelease sits in UpdateClientRequest; send nothing
       beyond the id, the release flag, and CrossRegionalUpdate: false),
       write-guarded and dry-run-suppressible like every write, then
       refreshes and checks the row in through the normal path.
-- [ ] The receipt, from day one, since Mindbody stores no waiver text or
+- [x] The receipt, from day one, since Mindbody stores no waiver text or
       version: (a) a structured server log line (client id, timestamp,
       sha256 of the exact text served) written whenever an agreement is
       recorded, and (b) the same line appended to the client's Mindbody

@@ -633,15 +633,52 @@ function FrontDesk() {
   );
   /**
    * The row a teacher tapped that has no released waiver. The dialog it
-   * opens explains and closes; deliberately, there is no confirm button
-   * and no path anywhere in this app that marks a waiver signed. The API
-   * could do it in one line (`LiabilityRelease: true`), and that line is
-   * exactly what the design doc forbids: a staff tap would manufacture a
-   * legal record of an agreement the student may never have read. Signing
-   * happens in the Mindbody app until Phase 3 puts the real waiver text on
-   * the student's own phone.
+   * opens can now resolve it at the counter (T18, Pete's recorded
+   * reversal of T6's "no tap path marks a waiver signed": Mindbody's own
+   * POS shows the waiver text with a staff-tappable Resolve, so this
+   * matches the studio's existing tool rather than creating a new risk).
+   * The discipline survives the reversal: `LiabilityRelease: true` is
+   * written ONLY after the real waiver text was fetched, rendered, and
+   * scrolled to the end, and the confirm is worded as recording the
+   * STUDENT's agreement. If the text cannot be fetched, the dialog falls
+   * back to the old close-only shape -- no path records agreement without
+   * the text having been shown. The QR-on-their-phone flow remains the
+   * Phase 3 end state.
    */
   const [waiverPrompt, setWaiverPrompt] = useState<RosterEntry | null>(null);
+  /** The waiver text as served, with the sha256 of exactly that text
+   *  (from /api/waiver) so the agreement receipt names what was shown.
+   *  Non-null switches the dialog into its reading state. */
+  const [waiverText, setWaiverText] = useState<{
+    text: string;
+    sha256: string;
+  } | null>(null);
+  /** True while the waiver text fetch is in flight. */
+  const [waiverLoading, setWaiverLoading] = useState(false);
+  /** A failed waiver fetch: the dialog shows the close-only fallback with
+   *  this quiet reason. */
+  const [waiverFetchError, setWaiverFetchError] = useState<string | null>(
+    null,
+  );
+  /** True once the reading region has been scrolled to the bottom (or the
+   *  text fits without scrolling). The confirm is disabled until then. */
+  const [waiverScrolled, setWaiverScrolled] = useState(false);
+  /** True while the release write is in flight. Non-optimistic, like
+   *  every write here: the confirm spins until Mindbody answers, and the
+   *  dialog refuses to close meanwhile. */
+  const [waiverSaving, setWaiverSaving] = useState(false);
+  /** Outcome text inside the waiver dialog: a failure, or the suppression
+   *  notice when dry run or the write guard stopped the release write.
+   *  Never rendered as success. */
+  const [waiverMsg, setWaiverMsg] = useState<string | null>(null);
+  /** Quiet page-level warning when the agreement stood but the Notes
+   *  receipt did not land (the structured server log line did). */
+  const [waiverReceiptWarn, setWaiverReceiptWarn] = useState<string | null>(
+    null,
+  );
+  /** The scrollable waiver text region, for the fits-without-scrolling
+   *  check once the text renders. */
+  const waiverScrollRef = useRef<HTMLDivElement | null>(null);
   /**
    * Read-only text behind a row icon: the red alert or the staff notes.
    * Informational only, one Close button, and it never acks the alert for
@@ -1244,11 +1281,13 @@ function FrontDesk() {
       if (busy.includes(entry.clientId) || entry.checkedIn) return;
       /**
        * No released waiver stops everything, before the red alert and
-       * before the unpaid confirm: the tap opens the explanation and goes
-       * no further. There is no override and no acknowledgement that lets
-       * the tap through, unlike the red alert below, because reading past
-       * a warning is a judgement call and signing a legal waiver is not.
-       * Unknown (null, lookup failed) fails open and is not this branch.
+       * before the unpaid confirm: the tap opens the gate dialog and goes
+       * no further. Unlike the red alert below there is no plain
+       * acknowledgement that lets the tap through -- since T18 the dialog
+       * can RESOLVE the waiver, but only by showing the student the real
+       * text, scrolled to the end, and recording THEIR agreement; a
+       * teacher cannot simply wave it past. Unknown (null, lookup failed)
+       * fails open and is not this branch.
        */
       if (entry.waiverSigned === false) {
         setWaiverPrompt(entry);
@@ -1278,6 +1317,139 @@ function FrontDesk() {
     },
     [busy, confirming, acked, setSignedIn, settings.confirmUnpaid],
   );
+
+  /** Close the waiver dialog and drop every piece of its state, so a
+   *  half-read waiver on one client can never leak into another's dialog.
+   *  Refused mid-write: the answer is coming. */
+  const closeWaiverDialog = useCallback(() => {
+    if (waiverSaving) return;
+    setWaiverPrompt(null);
+    setWaiverText(null);
+    setWaiverLoading(false);
+    setWaiverFetchError(null);
+    setWaiverScrolled(false);
+    setWaiverMsg(null);
+  }, [waiverSaving]);
+
+  /**
+   * Fetch the waiver text and swap the dialog into its reading state. One
+   * metered call at most per server process (/api/waiver caches the text),
+   * so re-opening the dialog costs nothing. Failure falls back to the
+   * close-only shape with the reason shown quietly; retry is tapping
+   * "Read the waiver" again on the next open.
+   */
+  const readWaiver = useCallback(() => {
+    if (waiverLoading) return;
+    setWaiverLoading(true);
+    setWaiverFetchError(null);
+    fetch("/api/waiver")
+      .then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+        if (
+          typeof body?.text !== "string" ||
+          typeof body?.sha256 !== "string"
+        ) {
+          throw new Error("The waiver text was missing from the response.");
+        }
+        setWaiverScrolled(false);
+        setWaiverText({ text: body.text, sha256: body.sha256 });
+      })
+      .catch((e) =>
+        setWaiverFetchError(e instanceof Error ? e.message : String(e)),
+      )
+      .finally(() => setWaiverLoading(false));
+  }, [waiverLoading]);
+
+  /** A waiver short enough to fit without scrolling has been fully shown
+   *  the moment it renders, so the confirm enables immediately; anything
+   *  longer waits for the scroll-to-bottom check on the region itself. */
+  useEffect(() => {
+    if (!waiverText) return;
+    const el = waiverScrollRef.current;
+    if (el && el.scrollHeight <= el.clientHeight + 8) {
+      setWaiverScrolled(true);
+    }
+  }, [waiverText]);
+
+  /**
+   * Record the student's agreement (T18). Only reachable from the reading
+   * state's confirm, which is disabled until the text has been scrolled
+   * to the end -- so by construction the release is never written without
+   * the real text having been shown. Non-optimistic: the confirm spins
+   * until Mindbody answers. Suppression (dry run / write guard) renders
+   * inside the dialog as the amber notice, never as success; failure
+   * shows Mindbody's reason.
+   *
+   * On a real success: the dialog closes, the row's local waiverSigned
+   * flips (and its notes update if the receipt landed), and the SAME
+   * tapCheckIn flow the chip runs takes over -- now past the waiver gate,
+   * with the red-alert and unpaid gates still applying in their usual
+   * order. The next roster load confirms from Mindbody.
+   */
+  const agreeWaiver = useCallback(async () => {
+    const entry = waiverPrompt;
+    if (!entry || !waiverText || !waiverScrolled || waiverSaving) return;
+    setWaiverSaving(true);
+    setWaiverMsg(null);
+    try {
+      const res = await fetch("/api/waiver-agree", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientId: entry.clientId,
+          /* The freshest notes this screen holds, for the receipt append.
+           * A stale value loses at most a concurrent edit from another
+           * surface; the roster refetches notes on every load. */
+          notes: entry.notes,
+          textSha256: waiverText.sha256,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      if (body.suppressed) {
+        setWaiverMsg(
+          body.suppressed === "dry-run"
+            ? "Dry run: the agreement was suppressed, nothing was written."
+            : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
+        );
+        return;
+      }
+      const newNotes =
+        body.receiptNoted && typeof body.notes === "string"
+          ? body.notes.trim() || null
+          : entry.notes;
+      setWaiverReceiptWarn(
+        body.receiptNoted
+          ? null
+          : `Waiver recorded for ${entry.name}, but the receipt note did not save` +
+              `${body.receiptReason ? ` (${body.receiptReason})` : ""}. The agreement stands; the server log holds the receipt.`,
+      );
+      setEntries((rows) =>
+        rows.map((r) =>
+          r.clientId === entry.clientId
+            ? { ...r, waiverSigned: true, notes: newNotes }
+            : r,
+        ),
+      );
+      setWaiverSaving(false);
+      closeWaiverDialog();
+      /* The normal check-in path, on the updated row: past the waiver
+       * gate now, with the red-alert and unpaid gates still ahead. */
+      tapCheckIn({ ...entry, waiverSigned: true, notes: newNotes });
+    } catch (err) {
+      setWaiverMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWaiverSaving(false);
+    }
+  }, [
+    waiverPrompt,
+    waiverText,
+    waiverScrolled,
+    waiverSaving,
+    closeWaiverDialog,
+    tapCheckIn,
+  ]);
 
   /** Close the info modal and drop any notes-editing state with it.
    *  Refused mid-save: the answer is coming. */
@@ -1866,6 +2038,11 @@ function FrontDesk() {
         </p>
       ) : null}
 
+      {/* The agreement stood but the Notes receipt did not land. Quiet:
+          the structured server log line already holds the receipt, so
+          this is bookkeeping to chase, not a broken counter. */}
+      {waiverReceiptWarn ? <p className="muted">{waiverReceiptWarn}</p> : null}
+
       {classes.length === 0 && !error ? (
         <p className="muted">No classes in the next few hours.</p>
       ) : null}
@@ -2129,8 +2306,8 @@ function FrontDesk() {
              confirm prompt outranks the quiet history line; with none of
              those and no history yet, nothing renders and nothing waits.
              The waiver gate does NOT get a line here: the "no waiver" pill
-             already says it, and the tap-gate dialog carries the "sign it
-             in Mindbody" instruction. */
+             already says it, and the tap-gate dialog carries the signing
+             path (T18). */
           const statusMsg = working
             ? "Talking to Mindbody..."
             : failed[entry.clientId]
@@ -3169,21 +3346,24 @@ function FrontDesk() {
         </div>
       ) : null}
 
-      {/* No released waiver: the tap ends here. One button, Close. There is
-          deliberately no "mark it signed" and no "check in anyway": a staff
-          tap that flips LiabilityRelease manufactures a legal record of an
-          agreement the student may never have read (design doc, "Waiver
-          status"). Phase 3 puts the actual waiver on the student's own
-          phone; until then it is signed in the Mindbody app, outside this
-          screen. */}
+      {/* No released waiver: the tap stops here, and since T18 (Pete's
+          recorded reversal of T6's no-tap rule, matching Mindbody's own
+          POS waiver-plus-Resolve) it can also be RESOLVED here: "Read the
+          waiver" fetches the studio's real text and the dialog becomes a
+          reading surface. The confirm stays disabled until the text has
+          been scrolled to the end, is worded as recording the STUDENT's
+          agreement, and a fetch failure falls back to the old close-only
+          shape -- no path records agreement without the text rendered.
+          The QR flow on the student's own phone remains the Phase 3 end
+          state; this is the bridge. */}
       {waiverPrompt ? (
         <div
           className="modal-scrim"
-          onClick={() => setWaiverPrompt(null)}
+          onClick={closeWaiverDialog}
           role="presentation"
         >
           <div
-            className="modal"
+            className={waiverText ? "modal modal-waiver" : "modal"}
             role="alertdialog"
             aria-modal="true"
             aria-label="Liability waiver needed"
@@ -3192,23 +3372,102 @@ function FrontDesk() {
             <p className="modal-title">
               {waiverPrompt.name} has not signed the waiver
             </p>
-            <p className="ctx-alert modal-alert">
-              No liability waiver on file. They cannot be checked in from
-              here until it is signed.
-            </p>
-            <p className="muted">
-              Have them sign it in the Mindbody app first. This screen cannot
-              mark a waiver signed on their behalf, and once it is signed the
-              row will check in normally.
-            </p>
-            <div className="modal-actions">
-              <button
-                className="modal-cancel"
-                onClick={() => setWaiverPrompt(null)}
-              >
-                Close
-              </button>
-            </div>
+            {waiverText ? (
+              <>
+                <div
+                  className="waiver-scroll"
+                  ref={waiverScrollRef}
+                  tabIndex={0}
+                  aria-label="The liability waiver"
+                  onScroll={(e) => {
+                    /* Scrolled to the bottom, with a small tolerance for
+                       fractional pixel heights. Once true it stays true:
+                       scrolling back up does not un-read the text. */
+                    const el = e.currentTarget;
+                    if (
+                      el.scrollTop + el.clientHeight >=
+                      el.scrollHeight - 24
+                    ) {
+                      setWaiverScrolled(true);
+                    }
+                  }}
+                >
+                  {waiverText.text}
+                </div>
+                {!waiverScrolled ? (
+                  <p className="muted">
+                    Scroll to the end of the waiver to continue.
+                  </p>
+                ) : null}
+                {waiverMsg ? (
+                  <p className="pass-note modal-note-gap">{waiverMsg}</p>
+                ) : null}
+                <p className="waiver-agree-line">
+                  They have read it and agree.
+                </p>
+                <div className="modal-actions">
+                  <button
+                    className="modal-cancel"
+                    disabled={waiverSaving}
+                    onClick={closeWaiverDialog}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="modal-confirm go"
+                    disabled={!waiverScrolled || waiverSaving}
+                    onClick={() => void agreeWaiver()}
+                  >
+                    {waiverSaving ? (
+                      <span className="spinner" aria-label="working" />
+                    ) : (
+                      "Record agreement and check in"
+                    )}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="ctx-alert modal-alert">
+                  No liability waiver on file. They cannot be checked in
+                  until they have read and agreed to it.
+                </p>
+                {waiverFetchError ? (
+                  /* The fetch failed: the old close-only shape, with the
+                     reason said quietly. Signing falls back to the
+                     Mindbody app until the text can be shown here. */
+                  <p className="muted">
+                    The waiver text could not be fetched ({waiverFetchError}).
+                    Have them sign it in the Mindbody app instead; once it is
+                    signed the row will check in normally.
+                  </p>
+                ) : (
+                  <p className="muted">
+                    Hand them the iPad to read the studio&apos;s waiver, or
+                    have them sign it in the Mindbody app. Recording an
+                    agreement here requires the full text to be read first.
+                  </p>
+                )}
+                <div className="modal-actions">
+                  <button className="modal-cancel" onClick={closeWaiverDialog}>
+                    Close
+                  </button>
+                  {!waiverFetchError ? (
+                    <button
+                      className="modal-confirm go"
+                      disabled={waiverLoading}
+                      onClick={readWaiver}
+                    >
+                      {waiverLoading ? (
+                        <span className="spinner" aria-label="working" />
+                      ) : (
+                        "Read the waiver"
+                      )}
+                    </button>
+                  ) : null}
+                </div>
+              </>
+            )}
           </div>
         </div>
       ) : null}
