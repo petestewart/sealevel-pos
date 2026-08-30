@@ -1159,6 +1159,46 @@ button.pass-opt:disabled {
   accent-color: var(--accent);
 }
 
+/* Bundles tab (T29): the drawer-hosted admin surface. Same density and
+ * tokens as the settings tab; nothing here is teacher-facing. */
+
+.dev-setting .dev-text,
+.dev-setting select.dev-text {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+
+.dev-setting button {
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+}
+
+.dev-setting button:disabled {
+  opacity: 0.5;
+}
+
+.dev-bundle-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dev-bundle-toggle input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--accent);
+}
+
 .dev-changed {
   color: var(--warn);
   font-size: 12px;

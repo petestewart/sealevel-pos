@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
 
-import { counterBundles } from "@/lib/bundles";
+import { counterBundles, type CounterBundle } from "@/lib/bundles";
 import { counterCategories } from "@/lib/categories";
+import { enabledDbBundles } from "@/lib/db";
 import { target } from "@/lib/mindbody";
 import {
   catalogFor,
@@ -33,10 +34,6 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 
 interface CatalogPayload {
   categories: typeof counterCategories;
-  /** Static config riding the same response the categories do: the client
-   *  resolves each bundle against the products/passes below at render, so
-   *  no extra call and no extra cache entry. */
-  bundles: typeof counterBundles;
   products: CatalogItem[];
   passes: CatalogItem[];
   /** T30: packages ride the same shelf/cart machinery as products. */
@@ -51,12 +48,34 @@ interface CatalogPayload {
  *  sandbox's catalog as the studio's shelf, or vice versa. */
 let cache: { key: string; at: number; data: CatalogPayload } | null = null;
 
+/**
+ * Bundles ride the catalog response but sit OUTSIDE its cache: they are
+ * local (code config or our own table, never a Mindbody call), so reading
+ * them per request costs nothing metered, and an admin who just toggled a
+ * bundle in the drawer must see the shelf change on the next load, not up
+ * to ten minutes later. The database takes over only when it has rows
+ * (see enabledDbBundles); `bundleSource` records which config answered.
+ * Dev-drawer-payload detail only -- nothing teacher-facing shows it.
+ */
+async function currentBundles(): Promise<{
+  bundles: readonly CounterBundle[];
+  bundleSource: "db" | "config";
+}> {
+  const fromDb = await enabledDbBundles();
+  if (fromDb !== null) return { bundles: fromDb, bundleSource: "db" };
+  return { bundles: counterBundles, bundleSource: "config" };
+}
+
 export async function GET(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
   const key = target();
   if (cache && cache.key === key && Date.now() - cache.at < CACHE_TTL_MS) {
-    return NextResponse.json({ ...cache.data, cached: true });
+    return NextResponse.json({
+      ...cache.data,
+      ...(await currentBundles()),
+      cached: true,
+    });
   }
   try {
     const categoryIds = counterCategories.flatMap((c) => c.categoryIds);
@@ -68,14 +87,17 @@ export async function GET(request: Request) {
     ]);
     const data: CatalogPayload = {
       categories: counterCategories,
-      bundles: counterBundles,
       products,
       passes,
       packages,
       contracts,
     };
     cache = { key, at: Date.now(), data };
-    return NextResponse.json({ ...data, cached: false });
+    return NextResponse.json({
+      ...data,
+      ...(await currentBundles()),
+      cached: false,
+    });
   } catch (err) {
     /* A failure is never cached: the next request retries Mindbody. */
     return NextResponse.json(
