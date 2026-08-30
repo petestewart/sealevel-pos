@@ -1081,6 +1081,37 @@ TRUE and the stub-first pricing order):
 - [x] The tax-rate fix and the stub-first pricing order (details on
       T22/T24 above).
 
+Adversarial review (2026-08-30), three fixes:
+
+- **A method armed for client A no longer survives switching to client
+  B** (the per-row Buy button made A-to-B a one-tap path): storedcard
+  and credit now clear on ANY client change, not just detach. The
+  server would have refused the stale method anyway (it re-reads the
+  profile), but the Charge button must not offer it.
+- **A recorded cash tender no longer survives a cart edit or a client
+  change**: it was entered against the OLD total in the modal, and a
+  stale tender covering the NEW total would have let the Charge button
+  record the cash without reopening the modal. Cleared, the button
+  reopens it; the server-side short-tender refusal was never at risk.
+- **priceCart's bare no-Payments fallback fires only on a stub-shaped
+  refusal** (payment/Comp-the-word/permission in the message), restoring
+  the shape gate the stub-first reorder dropped: a genuine cart error
+  (bad item, missing client) burned a second metered call and, on this
+  site where the bare shape is known-refused, could mask the real error
+  with a payments-required one. Note "complete a sale" is Mindbody's
+  CLIENT-error wording, hence the word boundary on comp.
+
+TaxRate unit, checked against the spec and the live numbers: the field
+is a FRACTION (sandbox: $15 at 13% priced $16.95 = 15 x 1.13, so the
+catalog row carried 0.13), the mapping does no unit conversion anywhere
+(num() passthrough in catalogFor/pricingOptions, verbatim onto CartLine
+and into expectedTotal), and the spec's `example: 1.0` (sale.yml:5225,
+5849) is noise, not evidence. If the unit were ever percent-scaled the
+strict disagrees assertion fires loudly on the first priced cart and
+nothing charges. A client-tampered taxRate can only skew expectedTotal
+-- the display estimate and the disagree assertion (a 409, no charge);
+the charged amount is always the server rehearsal's grandTotal.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are

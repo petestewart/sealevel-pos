@@ -477,7 +477,19 @@ export async function priceCart(
       },
       ...(clientId ? { clientId } : {}),
     });
-  } catch {
+  } catch (err) {
+    /* Retry bare ONLY when the refusal looks aimed at the stub itself
+     * (a site without the Comp permission, or one that rejects the
+     * payment shape): mentions of payment, Comp, or permission. Any
+     * other error -- a bad item, a missing client -- is the CART's
+     * problem; retrying it without Payments would burn a second metered
+     * call to fail again, and on this site (where the bare shape is
+     * known-refused) would MASK the real error with a payments-required
+     * one. Rethrown, the stub attempt's error names the actual problem. */
+    const message = err instanceof Error ? err.message : String(err);
+    /* \bcomp\b, not bare "comp": "complete a sale" is Mindbody's own
+     * wording for a CLIENT error and must not read as a Comp refusal. */
+    if (!/payment|\bcomp\b|permission/i.test(message)) throw err;
     /* The Comp stub was refused; maybe this site prices without
      * Payments. One retry, bare. If this fails too, ITS error is the
      * one thrown: with no payment noise in the request, it names the

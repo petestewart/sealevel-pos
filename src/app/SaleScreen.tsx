@@ -346,22 +346,34 @@ function PaymentPanel(props: {
   const balanceCoversTotal =
     balance !== null && total !== null && balance >= total;
 
-  /* A detach invalidates the client-bound methods and the balance. */
+  /* ANY client change -- detach, attach, or the per-row Buy button
+   * switching straight from one client to another -- invalidates the
+   * client-bound methods and the balance: a method armed for client A
+   * must not stay armed for client B (whose card or credit may not even
+   * exist; the server would refuse, but the button must not offer it).
+   * A recorded cash tender is against the OLD client's total, so it goes
+   * too: with none recorded, the Charge button reopens the modal. */
   const clientId = client?.id ?? null;
   useEffect(() => {
     setFreshBalance(null);
-    if (clientId === null) {
-      setMethod((m) => (m === "storedcard" || m === "credit" ? null : m));
-    }
+    setTendered("");
+    setMethod((m) => (m === "storedcard" || m === "credit" ? null : m));
   }, [clientId]);
 
   /* A cart EDIT retires a stale receipt; warnings stay until dismissed.
    * The empty cart is skipped deliberately: a successful charge clears the
    * cart in the same commit that sets the receipt, and this effect firing
-   * on that clear would wipe the receipt before the teacher saw it. */
+   * on that clear would wipe the receipt before the teacher saw it (the
+   * charge's own success path already cleared the tender).
+   *
+   * The recorded cash tender goes with the edit too: it was entered
+   * against the OLD cart's total in the modal, and if it happened to
+   * cover the NEW total the Charge button would record the cash without
+   * ever reopening the modal. Cleared, the button reopens it. */
   useEffect(() => {
     if (cart.length === 0) return;
     setResult((r) => (r?.kind === "paid" ? null : r));
+    setTendered("");
   }, [cart]);
 
   /* Rule 1: when credit covers the total, the card is not offered -- so a
