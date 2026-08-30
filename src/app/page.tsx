@@ -5293,6 +5293,18 @@ function FrontDesk() {
         onRequestAttach={openAttachSearch}
         onDetachClient={() => setSaleClient(null)}
         modalAbove={searchOpen || infoView !== null || waiverPrompt !== null}
+        onContractPurchased={(cid) => {
+          /* T30, best-effort: a membership can change what pays for a
+             visit, so the client's pass caches are dropped (the next
+             open refetches) and the roster refreshes. The purchase
+             already stands whatever happens here. */
+          passSweepCache.current.delete(cid);
+          setPassLists((l) => {
+            const { [cid]: _drop, ...rest } = l;
+            return rest;
+          });
+          if (activeId !== null) void refreshRoster(activeId);
+        }}
       />
 
       <DevDrawer />

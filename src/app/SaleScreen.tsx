@@ -70,8 +70,37 @@ interface ShelfItem {
    *  Rides every cart line so expectedTotal taxes each line at ITS rate
    *  (the sandbox taxes at 13%, not Fremont's 10.35%; found live). */
   taxRate: number | null;
-  type: "Product" | "Service";
+  type: "Product" | "Service" | "Package";
   categoryId: number | null;
+}
+
+/** Mirrors src/lib/sale.ts AutopayScheduleInfo. */
+interface AutopayScheduleInfo {
+  frequencyType: string | null;
+  frequencyValue: number | null;
+  frequencyTimeUnit: string | null;
+}
+
+/** Mirrors src/lib/sale.ts ContractSummary, as /api/catalog serves it.
+ *  A contract is NOT a shelf item: it never enters the cart, and sells
+ *  through the dedicated dialog below. */
+interface ContractInfo {
+  id: number;
+  name: string;
+  description: string | null;
+  firstPaymentTotal: number | null;
+  recurringPaymentTotal: number | null;
+  totalContractTotal: number | null;
+  depositAmount: number | null;
+  autopayEnabled: boolean;
+  autopaySchedule: AutopayScheduleInfo | null;
+  numberOfAutopays: number | null;
+  autopayTriggerType: string | null;
+  actionUponCompletionOfAutopays: string | null;
+  clientsChargedOn: string | null;
+  clientsChargedOnSpecificDate: string | null;
+  agreementTerms: string | null;
+  soldOnline: boolean;
 }
 
 interface ShelfCategory {
@@ -90,6 +119,10 @@ interface CatalogState {
   bundles: ShelfBundle[];
   products: ShelfItem[];
   passes: ShelfItem[];
+  /** T30: packages ride the cart like any shelf item. */
+  packages: ShelfItem[];
+  /** T30: contracts feed the Memberships chip and its dialog only. */
+  contracts: ContractInfo[];
 }
 
 /** A bundle every line of which resolved against the loaded catalog; only
@@ -110,9 +143,17 @@ interface ResolvedBundle {
  */
 const FAVORITES_LABEL = "Favorites";
 
-/** One starred type+id pair, as persisted. */
+/** T30's two extra chips. Not Mindbody categories: Packages is fed by
+ *  /sale/packages and Memberships by /sale/contracts, both riding the
+ *  same /api/catalog response. Each renders only when it has content.
+ *  Labels cannot collide with categories.ts (hand-picked there). */
+const PACKAGES_LABEL = "Packages";
+const MEMBERSHIPS_LABEL = "Memberships";
+
+/** One starred type+id pair, as persisted. Packages star like anything
+ *  else on the shelf (T30): they are ordinary cart items. */
 interface FavPair {
-  type: "Product" | "Service";
+  type: "Product" | "Service" | "Package";
   id: string | number;
 }
 
@@ -151,6 +192,11 @@ interface PricedResult {
   grandTotal: number | null;
   expectedTotal: number;
   disagrees: boolean;
+  /** T30: true when the cart holds a package line. The server skips the
+   *  strict disagree assertion for these carts (a package row carries no
+   *  usable tax info), so the receipt shows a quiet "priced by Mindbody"
+   *  line and the server total stands as the only number. */
+  packagePricing?: boolean;
   usedPaymentStub: boolean;
 }
 
@@ -1329,6 +1375,530 @@ function PaymentPanel(props: {
   );
 }
 
+/* =====================================================================
+ * T30: the membership (contract) purchase dialog. A contract is not a
+ * cart item -- it starts an autopay -- so it sells through its own
+ * surface, and NOTHING recurring is ever started without the commitment
+ * restated on the confirm button itself ("Charge $X today, then $Y
+ * monthly ..."). Payment is the stored card (the schema's StoredCardInfo
+ * takes only LastFour); the start date is deliberately today-only, since
+ * purchasecontract's StartDate/FirstPaymentOccurs/ProrateDate interplay
+ * is documented only in prose and the counter sells memberships that
+ * start now (recorded on the T30 ticket).
+ * =================================================================== */
+
+/** How often the autopay charges, in words, from the schema's fields
+ *  (AutopaySchedule, sale.yml:4757; AutopayTriggerType, 5494). */
+function frequencyPhrase(c: ContractInfo): string {
+  if (c.autopayTriggerType === "PricingOptionRunsOutOrExpires" || !c.autopaySchedule) {
+    /* The schedule is null exactly in this case (sale.yml:5488). */
+    return "each time the included pass runs out or expires";
+  }
+  const s = c.autopaySchedule;
+  if (s.frequencyType === "MonthToMonth") return "monthly";
+  const n = s.frequencyValue ?? 1;
+  switch (s.frequencyTimeUnit) {
+    case "Monthly":
+      return n === 1 ? "monthly" : `every ${n} months`;
+    case "Weekly":
+      return n === 1 ? "weekly" : `every ${n} weeks`;
+    case "Yearly":
+      return n === 1 ? "yearly" : `every ${n} years`;
+    default:
+      return "on the contract's autopay schedule";
+  }
+}
+
+function fmtDay(d: Date): string {
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+/**
+ * When the NEXT recurring charge lands, computed only where the
+ * schema's ClientsChargedOn (sale.yml:5502) makes it unambiguous;
+ * otherwise a descriptive clause. Returns [startingClause] to append
+ * after the frequency, always beginning with a space.
+ */
+function chargedOnClause(c: ContractInfo): string {
+  const today = new Date();
+  const next = (day: number): Date => {
+    const d = new Date(today.getFullYear(), today.getMonth(), day);
+    if (d.getTime() <= today.getTime()) d.setMonth(d.getMonth() + 1);
+    return d;
+  };
+  switch (c.clientsChargedOn) {
+    case "OnSaleDate": {
+      /* The next charge is one period after today's sign-up. */
+      const s = c.autopaySchedule;
+      const n = s?.frequencyValue ?? 1;
+      const d = new Date(today);
+      switch (s?.frequencyTimeUnit) {
+        case "Weekly":
+          d.setDate(d.getDate() + 7 * n);
+          break;
+        case "Yearly":
+          d.setFullYear(d.getFullYear() + n);
+          break;
+        default:
+          /* Monthly, and MonthToMonth's null schedule both mean a
+           * month. */
+          d.setMonth(d.getMonth() + n);
+      }
+      return ` starting ${fmtDay(d)}`;
+    }
+    case "FirstOfTheMonth":
+      return ` starting ${fmtDay(next(1))}`;
+    case "FifteenthOfTheMonth":
+      return ` starting ${fmtDay(next(15))}`;
+    case "LastDayOfTheMonth": {
+      let d = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      if (d.getTime() <= today.getTime()) {
+        d = new Date(today.getFullYear(), today.getMonth() + 2, 0);
+      }
+      return ` starting ${fmtDay(d)}`;
+    }
+    case "SpecificDate": {
+      const raw = c.clientsChargedOnSpecificDate;
+      const d = raw ? new Date(raw) : null;
+      return d && !Number.isNaN(d.getTime())
+        ? ` starting ${fmtDay(d)}`
+        : "";
+    }
+    /* The either-or variants depend on a business rule the schema does
+     * not state; described, never guessed into a single date. */
+    case "FirstOrFifteenthOfTheMonth":
+      return ", charged on the next 1st or 15th of the month";
+    case "FirstOrSixteenthOfTheMonth":
+      return ", charged on the next 1st or 16th of the month";
+    case "FifteenthOrEndOfTheMonth":
+      return ", charged on the next 15th or end of the month";
+    default:
+      return "";
+  }
+}
+
+/**
+ * THE commitment sentence, shared verbatim by the confirm button and
+ * the paid summary: "Charge $X today, then $Y monthly starting DATE".
+ * `firstTotal` is the server-rehearsed first payment when available.
+ */
+function commitmentText(c: ContractInfo, firstTotal: number | null): string {
+  const first = firstTotal ?? c.firstPaymentTotal;
+  const firstText = first !== null ? money(first) : "the first payment";
+  const recurring = c.recurringPaymentTotal;
+  if (!c.autopayEnabled || recurring === null || recurring <= 0) {
+    return `Charge ${firstText} today. No recurring payments.`;
+  }
+  let text =
+    `Charge ${firstText} today, then ${money(recurring)} ` +
+    frequencyPhrase(c) +
+    chargedOnClause(c);
+  if (c.numberOfAutopays !== null && c.numberOfAutopays > 0) {
+    text += `, for ${c.numberOfAutopays} payment${c.numberOfAutopays === 1 ? "" : "s"}`;
+  }
+  if (c.actionUponCompletionOfAutopays === "ContractAutomaticallyRenews") {
+    text += ", renewing automatically";
+  }
+  return text + ".";
+}
+
+/** The Test rehearsal's lifecycle inside the dialog. */
+interface ContractRehearsal {
+  loading: boolean;
+  /** The server's first-payment Total from purchasecontract Test: true. */
+  total: number | null;
+  /** Non-null when the rehearsal was suppressed (prod dry run / write
+   *  guard): no server total exists, and the real write would be
+   *  suppressed the same way. */
+  suppressed: string | null;
+  error: string | null;
+}
+
+type ContractOutcome =
+  | { kind: "paid"; summary: string; detail: string | null }
+  | { kind: "suppressed"; mode: string }
+  | { kind: "ambiguous"; message: string }
+  | { kind: "error"; message: string };
+
+function ContractDialog(props: {
+  contract: ContractInfo;
+  client: SaleClient | null;
+  cardLookup: CardLookup | null;
+  onClose: () => void;
+  /** Reuses the sale screen's attach flow (the search modal stacks
+   *  above this dialog; attaching updates `client` live). */
+  onRequestAttach: () => void;
+  /** Mirrors the in-flight purchase up to SaleScreen so Escape and Back
+   *  cannot close anything while money is moving. */
+  onBusyChange: (busy: boolean) => void;
+  /** Best-effort cache invalidation after a real purchase. */
+  onPurchased: (clientId: string) => void;
+  /** True while the attach search modal is stacked above; Escape then
+   *  belongs to that layer, not this dialog. */
+  modalAbove: boolean;
+}) {
+  const {
+    contract,
+    client,
+    cardLookup,
+    onClose,
+    onRequestAttach,
+    onBusyChange,
+    onPurchased,
+    modalAbove,
+  } = props;
+
+  const [rehearsal, setRehearsal] = useState<ContractRehearsal | null>(null);
+  const [purchasing, setPurchasing] = useState(false);
+  const [outcome, setOutcome] = useState<ContractOutcome | null>(null);
+  const inFlight = useRef(false);
+  const rehearseGen = useRef(0);
+  /** Bumped by the Retry button on a failed rehearsal. */
+  const [rehearseNonce, setRehearseNonce] = useState(0);
+
+  const clientId = client?.id ?? null;
+  const card = cardLookup?.card ?? null;
+
+  /* Why the purchase cannot proceed yet, or null. The same
+   * greyed-with-the-reason posture as the method cards; the server
+   * re-checks all of it at purchase time. */
+  const blockReason = !client
+    ? "A membership needs a client attached."
+    : cardLookup?.loading
+      ? "Checking for a card on file..."
+      : cardLookup?.error
+        ? "The card check failed. Detach and re-attach the client to retry."
+        : !card
+          ? "No card on file. A membership charges the stored card; add a card in Mindbody first."
+          : card.expired
+            ? `The card on file (ending ${card.lastFour}) is expired.`
+            : null;
+
+  /* The Test rehearsal: purchasecontract supports Test: true, so the
+   * first-payment total on the confirm is the SERVER's number. Runs
+   * whenever the purchasable pair (client, usable card) is in place. */
+  useEffect(() => {
+    if (clientId === null || blockReason !== null) {
+      setRehearsal(null);
+      return;
+    }
+    const gen = ++rehearseGen.current;
+    setRehearsal({ loading: true, total: null, suppressed: null, error: null });
+    fetch("/api/purchase-contract", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ contractId: contract.id, clientId, test: true }),
+    })
+      .then(async (r) => {
+        const body = await r.json();
+        if (rehearseGen.current !== gen) return;
+        if (r.ok && body?.ok === true) {
+          setRehearsal({
+            loading: false,
+            total:
+              typeof body?.totals?.total === "number"
+                ? body.totals.total
+                : null,
+            suppressed: null,
+            error: null,
+          });
+        } else if (r.ok && body?.suppressed) {
+          setRehearsal({
+            loading: false,
+            total: null,
+            suppressed: String(body.suppressed),
+            error: null,
+          });
+        } else {
+          setRehearsal({
+            loading: false,
+            total: null,
+            suppressed: null,
+            error: String(body?.error ?? `HTTP ${r.status}`),
+          });
+        }
+      })
+      .catch((e) => {
+        if (rehearseGen.current !== gen) return;
+        setRehearsal({
+          loading: false,
+          total: null,
+          suppressed: null,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      });
+  }, [contract.id, clientId, blockReason, rehearseNonce]);
+
+  /* The commitment, restated with the server's first-payment total once
+   * the rehearsal lands. Under suppression no server total exists, so
+   * the catalog's figure stands with an explicit "as quoted by Mindbody
+   * at charge time" note below. */
+  const serverTotal = rehearsal?.total ?? null;
+  const commitment = commitmentText(contract, serverTotal);
+
+  const confirmable =
+    blockReason === null &&
+    !purchasing &&
+    rehearsal !== null &&
+    !rehearsal.loading &&
+    rehearsal.error === null;
+
+  const doPurchase = async () => {
+    if (inFlight.current || !confirmable || clientId === null) return;
+    inFlight.current = true;
+    setPurchasing(true);
+    onBusyChange(true);
+    setOutcome(null);
+    try {
+      const res = await fetch("/api/purchase-contract", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ contractId: contract.id, clientId }),
+      });
+      let body: any = null;
+      try {
+        body = await res.json();
+      } catch {
+        /* fall through to the status handling below */
+      }
+      if (body === null && (res.ok || res.status >= 500)) {
+        /* Same reading as /api/checkout's caller: an unreadable answer
+         * to a money write may have processed. Never "not charged". */
+        setOutcome({
+          kind: "ambiguous",
+          message: res.ok
+            ? "The server answered but the outcome could not be read."
+            : `The server's answer (HTTP ${res.status}) carried no readable outcome.`,
+        });
+      } else if (res.ok && body?.ok === true) {
+        /* The paid confirmation RESTATES what recurs; a membership that
+         * quietly starts an autopay is the one outcome this dialog must
+         * never produce. */
+        const paidTotal =
+          typeof body?.total === "number" ? body.total : serverTotal;
+        onPurchased(clientId);
+        setOutcome({
+          kind: "paid",
+          summary:
+            `${contract.name} started for ${client?.name ?? "the client"}. ` +
+            commitmentText(contract, paidTotal).replace(/^Charge/, "Charged"),
+          detail: body?.clientContractId
+            ? `Contract ${body.clientContractId} on their account.`
+            : null,
+        });
+      } else if (res.ok && body?.suppressed) {
+        setOutcome({ kind: "suppressed", mode: String(body.suppressed) });
+      } else if (body?.ambiguous === true) {
+        setOutcome({
+          kind: "ambiguous",
+          message: String(body?.error ?? "The purchase did not answer."),
+        });
+      } else {
+        setOutcome({
+          kind: "error",
+          message: String(body?.error ?? `HTTP ${res.status}`),
+        });
+      }
+    } catch {
+      setOutcome({ kind: "ambiguous", message: "" });
+    } finally {
+      inFlight.current = false;
+      setPurchasing(false);
+      onBusyChange(false);
+    }
+  };
+
+  /* The dialog unmounting mid-flight must not leave the overlay
+   * believing money is still moving. */
+  useEffect(() => {
+    return () => onBusyChange(false);
+  }, [onBusyChange]);
+
+  /* Escape closes the dialog -- never mid-purchase, and never while the
+   * attach search is stacked above (that layer takes the press). */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !purchasing && !modalAbove) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [purchasing, modalAbove, onClose]);
+
+  return (
+    <div
+      className="modal-scrim"
+      role="presentation"
+      onClick={() => {
+        if (!purchasing) onClose();
+      }}
+    >
+      <div
+        className="modal modal-contract"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Start the ${contract.name} membership`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p className="modal-title">{contract.name}</p>
+        {contract.description ? (
+          <p className="contract-desc">{contract.description}</p>
+        ) : null}
+
+        {/* The terms, from the API's own numbers (Contract model,
+            sale.yml:5445): first payment, the recurring amount and
+            cadence, and the lifespan total where Mindbody computes one.
+            The first payment upgrades to the server-rehearsed total the
+            moment the Test call answers. */}
+        <div className="contract-rows">
+          <div className="contract-row">
+            <span>First payment (today)</span>
+            <span className="amt">
+              {rehearsal?.loading ? (
+                <span className="spinner" aria-label="working" />
+              ) : serverTotal !== null ? (
+                money(serverTotal)
+              ) : contract.firstPaymentTotal !== null ? (
+                money(contract.firstPaymentTotal)
+              ) : (
+                "--"
+              )}
+            </span>
+          </div>
+          {contract.autopayEnabled &&
+          contract.recurringPaymentTotal !== null &&
+          contract.recurringPaymentTotal > 0 ? (
+            <div className="contract-row">
+              <span>Then</span>
+              <span className="amt">
+                {money(contract.recurringPaymentTotal)}{" "}
+                {frequencyPhrase(contract)}
+              </span>
+            </div>
+          ) : (
+            <div className="contract-row">
+              <span>Recurring</span>
+              <span>none</span>
+            </div>
+          )}
+          {contract.totalContractTotal !== null &&
+          contract.totalContractTotal > 0 ? (
+            <div className="contract-row">
+              <span>Contract total</span>
+              <span className="amt">{money(contract.totalContractTotal)}</span>
+            </div>
+          ) : null}
+          <div className="contract-row">
+            <span>Starts</span>
+            {/* Today only, deliberately: purchasecontract's StartDate is
+                omitted (Mindbody defaults it to today) because the
+                StartDate / FirstPaymentOccurs / proration semantics are
+                prose-only in the spec, and the counter sells memberships
+                that start now. Recorded on T30. */}
+            <span>Today</span>
+          </div>
+          <div className="contract-row">
+            <span>Payment</span>
+            <span>
+              {card && !card.expired ? `Stored card ...${card.lastFour}` : "--"}
+            </span>
+          </div>
+        </div>
+
+        {contract.agreementTerms ? (
+          <div className="contract-agree" tabIndex={0}>
+            {contract.agreementTerms}
+          </div>
+        ) : null}
+
+        {blockReason !== null ? (
+          <div className="pass-note modal-note-gap">
+            {blockReason}
+            {!client ? (
+              <button
+                className="class-change contract-attach"
+                onClick={onRequestAttach}
+              >
+                Attach a client
+              </button>
+            ) : null}
+          </div>
+        ) : rehearsal?.error ? (
+          <div className="sale-stop modal-note-gap">
+            Mindbody refused the rehearsal: {rehearsal.error}
+            <button
+              className="class-change pay-dismiss"
+              onClick={() => setRehearseNonce((n) => n + 1)}
+            >
+              Retry
+            </button>
+          </div>
+        ) : rehearsal?.suppressed ? (
+          <p className="pass-note t-suppressed modal-note-gap">
+            {rehearsal.suppressed === "dry-run"
+              ? "Dry run: Mindbody did not price the first payment; the amount shown is the catalog's, and the first charge is as quoted by Mindbody at charge time. The purchase itself will be suppressed too."
+              : "Write guard: Mindbody did not price the first payment for this client; the purchase itself will be suppressed too."}
+          </p>
+        ) : null}
+
+        {outcome?.kind === "paid" ? (
+          <div className="pay-done" role="status">
+            <p className="pay-done-line">{outcome.summary}</p>
+            {outcome.detail ? (
+              <p className="pay-done-detail">{outcome.detail}</p>
+            ) : null}
+            <button className="class-change" onClick={onClose}>
+              Done
+            </button>
+          </div>
+        ) : outcome?.kind === "suppressed" ? (
+          <div className="pass-note t-suppressed modal-note-gap" role="status">
+            {outcome.mode === "dry-run"
+              ? "Dry run: no membership was started and nothing was charged."
+              : "Write guard: no membership was started and nothing was charged."}
+          </div>
+        ) : outcome?.kind === "ambiguous" ? (
+          <div className="sale-stop modal-note-gap" role="alert">
+            The membership purchase may or may not have gone through. Check
+            the dev drawer or Mindbody before trying again.
+            {outcome.message ? ` (${outcome.message})` : ""}
+          </div>
+        ) : outcome?.kind === "error" ? (
+          <div className="sale-stop modal-note-gap" role="alert">
+            Not started: {outcome.message}
+          </div>
+        ) : null}
+
+        {outcome?.kind !== "paid" ? (
+          <div className="modal-actions">
+            <button
+              className="modal-cancel"
+              disabled={purchasing}
+              onClick={onClose}
+            >
+              Cancel
+            </button>
+            {/* THE commitment button: the recurring terms ARE the label,
+                so tapping it is agreeing to exactly what it says. */}
+            <button
+              className="modal-confirm go contract-confirm"
+              disabled={!confirmable}
+              onClick={() => void doPurchase()}
+            >
+              {purchasing ? (
+                <>
+                  <span className="spinner" aria-label="working" /> Starting...
+                </>
+              ) : (
+                commitment
+              )}
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export default function SaleScreen(props: {
   open: boolean;
   onClose: () => void;
@@ -1340,6 +1910,9 @@ export default function SaleScreen(props: {
   /** True while a modal (search, info view) is stacked above the overlay,
    *  so Escape peels that layer instead of closing the sale. */
   modalAbove: boolean;
+  /** T30: called after a REAL contract purchase so page.tsx can drop the
+   *  client's pass caches and refresh the roster, best-effort. */
+  onContractPurchased?: (clientId: string) => void;
 }) {
   const {
     open,
@@ -1349,6 +1922,7 @@ export default function SaleScreen(props: {
     onRequestAttach,
     onDetachClient,
     modalAbove,
+    onContractPurchased,
   } = props;
 
   const [catalog, setCatalog] = useState<CatalogState | null>(null);
@@ -1382,7 +1956,9 @@ export default function SaleScreen(props: {
               (p): p is FavPair =>
                 p !== null &&
                 typeof p === "object" &&
-                (p.type === "Product" || p.type === "Service") &&
+                (p.type === "Product" ||
+                  p.type === "Service" ||
+                  p.type === "Package") &&
                 (typeof p.id === "string" || typeof p.id === "number"),
             )
           : [],
@@ -1421,7 +1997,10 @@ export default function SaleScreen(props: {
    *  resolution. Products first, passes after, which is also the order
    *  starred items render in. */
   const allItems = useMemo<ShelfItem[]>(
-    () => (catalog ? [...catalog.products, ...catalog.passes] : []),
+    () =>
+      catalog
+        ? [...catalog.products, ...catalog.passes, ...catalog.packages]
+        : [],
     [catalog],
   );
 
@@ -1527,6 +2106,14 @@ export default function SaleScreen(props: {
    *  that closes it must not also close the overlay. */
   const [payModalOpen, setPayModalOpen] = useState(false);
 
+  /** T30: the contract whose purchase dialog is open, or null. The
+   *  dialog is its own modal layer; its Escape/scrim handling lives in
+   *  ContractDialog, and the overlay's Escape below skips while it is
+   *  up. */
+  const [contractDialog, setContractDialog] = useState<ContractInfo | null>(
+    null,
+  );
+
   /** The attached client's card on file, fetched on attach via the
    *  guarded /api/stored-card route. Null when nobody is attached. */
   const [cardLookup, setCardLookup] = useState<CardLookup | null>(null);
@@ -1617,6 +2204,8 @@ export default function SaleScreen(props: {
           bundles: body?.bundles ?? [],
           products: body?.products ?? [],
           passes: body?.passes ?? [],
+          packages: body?.packages ?? [],
+          contracts: body?.contracts ?? [],
         });
         /* The default chip is picked by the effect above, which also
            knows whether Favorites has anything to show. */
@@ -1730,6 +2319,7 @@ export default function SaleScreen(props: {
         !modalAbove &&
         !payModalOpen &&
         !cartPrompt &&
+        !contractDialog &&
         !pricing &&
         !charging
       ) {
@@ -1738,7 +2328,16 @@ export default function SaleScreen(props: {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, modalAbove, payModalOpen, cartPrompt, pricing, charging, onClose]);
+  }, [
+    open,
+    modalAbove,
+    payModalOpen,
+    cartPrompt,
+    contractDialog,
+    pricing,
+    charging,
+    onClose,
+  ]);
 
   const addItem = useCallback((item: ShelfItem) => {
     const key = `${item.type}-${item.id}`;
@@ -1806,23 +2405,32 @@ export default function SaleScreen(props: {
   if (!open) return null;
 
   const onFavorites = activeCat === FAVORITES_LABEL;
+  const onPackages = activeCat === PACKAGES_LABEL;
+  const onMemberships = activeCat === MEMBERSHIPS_LABEL;
   const category =
     catalog?.categories.find((c) => c.label === activeCat) ?? null;
   /** The Favorites shelf is starred items first (bundles render after the
-   *  grid maps these); a category shelf is what it always was. */
+   *  grid maps these); Packages is its own T30 shelf riding the same
+   *  cart; Memberships renders contracts instead of shelf items (a
+   *  contract never enters the cart); a category shelf is what it
+   *  always was. */
   const shelfItems: ShelfItem[] = onFavorites
     ? starredItems
-    : catalog === null || category === null
-      ? []
-      : category.categoryIds.length === 0
-        ? catalog.passes
-        : catalog.products.filter(
-            (p) =>
-              p.categoryId !== null &&
-              category.categoryIds.includes(p.categoryId),
-          );
+    : onPackages
+      ? (catalog?.packages ?? [])
+      : onMemberships || catalog === null || category === null
+        ? []
+        : category.categoryIds.length === 0
+          ? catalog.passes
+          : catalog.products.filter(
+              (p) =>
+                p.categoryId !== null &&
+                category.categoryIds.includes(p.categoryId),
+            );
   const shelfEmpty =
-    shelfItems.length === 0 && (!onFavorites || resolvedBundles.length === 0);
+    shelfItems.length === 0 &&
+    (!onFavorites || resolvedBundles.length === 0) &&
+    !onMemberships;
 
   /** What the totals area shows, in priority order: the amber suppression
    *  notice, the loud disagreement, a failed call, the spinner, or the
@@ -2052,6 +2660,15 @@ export default function SaleScreen(props: {
                           : ""}
                       </span>
                     </div>
+                    {/* T30 carve-out, the quiet face of it: a package
+                        line has no tax basis of its own, so the strict
+                        disagree assertion is off for this cart and the
+                        server's total simply stands. */}
+                    {totals.packagePricing ? (
+                      <p className="muted-note">
+                        Includes a package; priced by Mindbody.
+                      </p>
+                    ) : null}
                     {/* The Comp-stub fact is deliberately NOT printed on
                         the receipt any more: it is developer-speak on a
                         teacher screen, and the dev drawer's call log
@@ -2094,22 +2711,73 @@ export default function SaleScreen(props: {
                   >
                     {FAVORITES_LABEL}
                   </button>
-                  {catalog.categories.map((c) => (
-                    <button
-                      key={c.label}
-                      role="tab"
-                      aria-selected={activeCat === c.label}
-                      className={
-                        activeCat === c.label ? "cat-chip on" : "cat-chip"
-                      }
-                      onClick={() => setActiveCat(c.label)}
-                    >
-                      {c.label}
-                    </button>
-                  ))}
+                  {(() => {
+                    /* T30: the Packages and Memberships chips slot in
+                       right after Passes (the one category with no
+                       category ids), each rendered ONLY when it has
+                       something to sell; an empty extra chip would be a
+                       button that can never show anything. */
+                    const extras: string[] = [
+                      ...(catalog.packages.length > 0
+                        ? [PACKAGES_LABEL]
+                        : []),
+                      ...(catalog.contracts.length > 0
+                        ? [MEMBERSHIPS_LABEL]
+                        : []),
+                    ];
+                    const labels = catalog.categories.map((c) => c.label);
+                    const passesIdx = catalog.categories.findIndex(
+                      (c) => c.categoryIds.length === 0,
+                    );
+                    labels.splice(
+                      passesIdx >= 0 ? passesIdx + 1 : labels.length,
+                      0,
+                      ...extras,
+                    );
+                    return labels.map((label) => (
+                      <button
+                        key={label}
+                        role="tab"
+                        aria-selected={activeCat === label}
+                        className={
+                          activeCat === label ? "cat-chip on" : "cat-chip"
+                        }
+                        onClick={() => setActiveCat(label)}
+                      >
+                        {label}
+                      </button>
+                    ));
+                  })()}
                 </div>
 
-                {shelfEmpty ? (
+                {onMemberships ? (
+                  /* T30: contracts are NOT cart items -- tapping one
+                     opens the dedicated purchase dialog instead of
+                     ringing anything up. The card shows the recurring
+                     amount, the honest headline of an autopay. */
+                  <div className="shelf-grid">
+                    {catalog.contracts.map((c) => (
+                      <button
+                        key={`contract-${c.id}`}
+                        className="shelf-item shelf-contract"
+                        onClick={() => setContractDialog(c)}
+                        aria-label={`Start the ${c.name} membership`}
+                      >
+                        <span className="shelf-name">{c.name}</span>
+                        <span className="shelf-price">
+                          {c.autopayEnabled &&
+                          c.recurringPaymentTotal !== null &&
+                          c.recurringPaymentTotal > 0
+                            ? `${money(c.recurringPaymentTotal)} ${frequencyPhrase(c)}`
+                            : c.firstPaymentTotal !== null
+                              ? money(c.firstPaymentTotal)
+                              : ""}
+                          <span className="shelf-bundle-mark"> membership</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : shelfEmpty ? (
                   <p className="muted">
                     {onFavorites
                       ? "Star items on any shelf, and configure bundles in src/lib/bundles.ts."
@@ -2134,6 +2802,16 @@ export default function SaleScreen(props: {
                               {money(item.price)}
                               {item.taxExempt ? (
                                 <span className="shelf-notax"> no tax</span>
+                              ) : null}
+                              {/* A package's shelf price is a local
+                                  component-sum estimate (the API gives a
+                                  package no price of its own); the cart
+                                  total is Mindbody's, as always. */}
+                              {item.type === "Package" ? (
+                                <span className="shelf-bundle-mark">
+                                  {" "}
+                                  package
+                                </span>
                               ) : null}
                             </span>
                           </button>
@@ -2190,6 +2868,24 @@ export default function SaleScreen(props: {
           here can lose the attach. Scrim and Escape KEEP the items (a
           dismissal must not destroy a cart); "Empty cart" is the primary
           button because a new cart per client is Pete's default. */}
+      {/* T30: the membership purchase dialog. The attach search modal
+          stacks above it (modalAbove), so its attach button reuses the
+          exact flow the sale's own attach uses; the client prop updates
+          live and the dialog rehearses. Busy state rides setCharging so
+          Back and Escape lock while the purchase is in flight. */}
+      {contractDialog ? (
+        <ContractDialog
+          contract={contractDialog}
+          client={client}
+          cardLookup={cardLookup}
+          onClose={() => setContractDialog(null)}
+          onRequestAttach={onRequestAttach}
+          onBusyChange={setCharging}
+          onPurchased={(cid) => onContractPurchased?.(cid)}
+          modalAbove={modalAbove}
+        />
+      ) : null}
+
       {cartPrompt ? (
         <div className="modal-scrim" role="presentation" onClick={keepCart}>
           <div
