@@ -2031,6 +2031,41 @@ Judgement calls, all reversible:
   against the current total" rather than charging a different figure
   from the one on screen.
 
+Adversarial review (2026-08-30), one fix:
+
+- **A keypad could outlive its line and eat the next Escape.** Every
+  deliberate path that drops a tender line (the x, Done on an empty
+  entry, the client-change, cart-edit and cart-reset resets, arming
+  comp) dismisses the keypad and reports the close up through
+  `onModalChange`. The credit-visibility filter -- the effect that
+  drops a credit line when the balance stops being offered -- did not:
+  after it fired, `keypadFor` pointed at a line that no longer existed,
+  so no keypad rendered while SaleScreen still believed one owned
+  Escape, and the next Escape press was swallowed instead of closing
+  the overlay. Reachable through the exact case T33's review is about:
+  a keypad left open on a credit line while a charge comes back
+  ambiguous, whose balance refetch then drops the credit to zero. A
+  guard effect now dismisses a keypad whose line has gone, whatever
+  removed it. No money path is involved.
+
+Checked and deliberately left as they are: the amounts SENT are the
+server's (one line sends `method` alone, so /api/checkout charges its
+own rehearsed total; two lines send `coverage`, integer cents that sum
+to `totalCents` because Charge requires due to be exactly zero, and the
+route re-checks the sum against its own fresh rehearsal); a cash leg
+sends what it covers and `cashTendered` rides only a single-line
+request, which is the only shape the route accepts it on; every
+per-line reason is computed in the same render as `chargeable`, so no
+effect can leave an unoffered source chargeable for a frame; the credit
+clamp is `min(balance, room)` on entry and on the partner recompute,
+and the card clamp never exceeds the total; a repriced cart cannot be
+charged on stale lines (a cart edit clears them, and a total that moves
+under a non-cash line fails `lineReason`); the single-flight ref and
+every outcome branch are word for word what T24/T28/T31 left. Rule 1
+greying the card only when it would be the whole sale is the recorded
+T28 reversal and matches the route, at the cost of one extra tap when a
+credit-covered client wants card plus cash: add the cash line first.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are

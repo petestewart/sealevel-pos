@@ -662,6 +662,20 @@ function PaymentPanel(props: {
     );
   }, [creditVisible]);
 
+  /* A keypad whose LINE has gone must not stay open in name only. Every
+   * deliberate path (removeLine, closeKeypad, the resets) dismisses it,
+   * but the credit-visibility filter above removes a line WITHOUT going
+   * through them: after it fires, this panel renders no keypad while
+   * SaleScreen still believes one owns Escape, so the next Escape press
+   * is eaten instead of closing the overlay. Reachable: a keypad left
+   * open on a credit line while a charge comes back ambiguous, whose
+   * balance refetch then drops the credit to zero. */
+  useEffect(() => {
+    if (keypadFor === null) return;
+    if (lines.some((l) => l.id === keypadFor)) return;
+    dismissKeypad();
+  }, [keypadFor, lines, dismissKeypad]);
+
   /* ---------------------- T35: the tender math ---------------------- */
 
   /**
@@ -2291,8 +2305,9 @@ export default function SaleScreen(props: {
    *  Escape must not close the overlay out from under the outcome. */
   const [charging, setCharging] = useState(false);
 
-  /** True while the payment panel's cash-tender modal is up: the Escape
-   *  that closes it must not also close the overlay. */
+  /** True while the payment panel's amount keypad is up (T35; it was the
+   *  cash-tender modal before): the Escape that closes it must not also
+   *  close the overlay. */
   const [payModalOpen, setPayModalOpen] = useState(false);
 
   /** T30: the contract whose purchase dialog is open, or null. The
