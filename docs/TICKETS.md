@@ -1406,13 +1406,13 @@ Adversarial money review (2026-08-30), one fix:
 Mindbody's POS has a Contracts / Packages tab; ours sells only retail
 products and pricing options. Two mechanisms under one label:
 
-- [ ] PACKAGES are cart items (sale.yml's package model bundles
+- [x] PACKAGES are cart items (sale.yml's package model bundles
       services/products; DiscountAmount's "ignored for packages" proves
       they ride the cart): fetch the sellable list (find the endpoint in
       sale.yml), give them a shelf chip, sell through the existing cart
       with the package item Type; Metadata shape probe-noted like the
       others.
-- [ ] CONTRACTS (autopay memberships) sell through their own endpoint
+- [x] CONTRACTS (autopay memberships) sell through their own endpoint
       (grep sale.yml for /sale/contracts and /sale/purchasecontract):
       list contracts, and a purchase flow with the fields the schema
       demands (client REQUIRED, start date, first payment, stored card
@@ -1421,11 +1421,113 @@ products and pricing options. Two mechanisms under one label:
       the counter, so it gets its own confirm restating the autopay
       terms ("$130 today, then $130 monthly from Oct 1") -- nothing
       recurring is ever started without those words on screen.
-- [ ] All money rails inherited: rehearse/validate where the API allows
+- [x] All money rails inherited: rehearse/validate where the API allows
       (check whether purchasecontract has Test), explicit tap, single
       flight, suppression never success, ambiguity honest.
 - [ ] Pete sandbox: one package sale and one write-guarded contract
       purchase watched in the drawer before this counts live-verified.
+
+How it landed (done (code): typecheck and build clean, no live run in
+this container). All line numbers are docs/mindbody-openapi/sale.yml.
+
+**purchasecontract required vs optional -- the schema verdict.**
+PurchaseContractRequest (6210) declares NO `required:` list at all;
+every rule below is description-level, which is exactly why it is
+recorded here:
+
+- REQUIRED in practice: `ContractId` (6214); `ClientId` (6229) OR
+  `UniqueClientId` (6233 -- "you need to provide the 'UniqueClientId'
+  OR the 'ClientId'"; UniqueClientId wins if both are sent); and
+  exactly ONE payment source out of `CreditCardInfo` (6261),
+  `StoredCardInfo` (6264), `UseDirectDebit` (6275), `UseAccountCredit`
+  (6279) -- each is "only required if" the others are absent/false.
+  The counter sends StoredCardInfo, and its ENTIRE model is
+  `{ LastFour }` (5189-5196): there is no CardId anywhere, so yes, it
+  charges the card on file, addressed by last four exactly like a
+  StoredCard cart payment. No card on file (or an expired one, by our
+  own gate) refuses the sale with the reason before any write.
+- OPTIONAL and sent: `LocationId` (6224, "used for AutoPays") as 1;
+  `FirstPaymentOccurs` (6242) as `Instant` -- the enum is Instant |
+  StartDate, and the endpoint description (1866) settles the
+  semantics: Instant pays now, StartDate defers payment to the start
+  date; `Test` (6219, "validates input information, but does not
+  commit it"); `SendNotifications` (6267, default true) sent true
+  deliberately, unlike the cart's SendEmail: false -- a recurring
+  agreement belongs in the client's inbox.
+- OPTIONAL and deliberately omitted: `StartDate` (6238, "Default:
+  today's date") -- omitted so Mindbody's own today (site timezone,
+  not this server's UTC clock) is the start; the dialog is today-only
+  because the StartDate/FirstPaymentOccurs/ProrateDate interplay is
+  prose-only and the counter sells memberships that start now.
+  `ClientSignature` (6246) -- OPTIONAL (no required list; the
+  description only says what happens when it IS sent: a Base64 PNG
+  filed to Client Documents), so NO signature pad was built: the
+  counter does not collect signatures unless Mindbody demands them.
+  If a site setting ever makes the API refuse without one, the refusal
+  renders verbatim and the pad becomes its own ticket.
+  `PromotionCode`/`PromotionCodes` (6251/6255), `SalesRepId` (6270),
+  `UseDirectDebit`/`UseAccountCredit`, `ConsumerPresent` (6283) +
+  `PaymentAuthenticationCallbackUrl` (6287, SCA), `ProrateDate`
+  (6291): none sent.
+
+**Contracts, the read side**: GET /sale/contracts (142) with the
+REQUIRED `request.locationId` (157); `request.promoCode` (206),
+`request.soldOnline` (214, default false = ALL contracts, staff-only
+included, correct for a counter) and `request.uniqueClientId` (222)
+exist and are recorded in sale.ts. The Contract model (5445) carries
+Mindbody's own precomputed money -- FirstPaymentAmountTotal (5577),
+RecurringPaymentAmountTotal (5592), TotalContractAmountTotal (5607) --
+plus AutopaySchedule (4757: FrequencyType/Value/TimeUnit),
+NumberOfAutopays (5489), AutopayTriggerType (5494), ClientsChargedOn
+(5502, eight values), AgreementTerms (5555, shown verbatim in the
+dialog's scroll box), and LocationPurchaseRestrictionIds (5540,
+filtered against the studio). No local tax math exists for contracts;
+the Test rehearsal re-asks the server before every real purchase, and
+the rehearsed total is what the confirm button restates.
+
+**Packages, the read side**: GET /sale/packages (506) with locationId
+(546, default is the ONLINE STORE, so passing 1 matters) and sellOnline
+left default-false (570, returns all). The Package model (5950) has NO
+price, tax rate, or tax-included field: Id, Name, DiscountPercentage,
+SellOnline, Services[], Products[] only. The shelf price is therefore a
+local component-sum estimate (DiscountPercentage read as 0-100,
+clamped) and the cards say "package"; the cart total is Mindbody's, as
+everywhere.
+
+**The packagePricing carve-out** (recorded in sale.ts and here): a
+package may bundle taxed and untaxed components and its row exposes no
+usable tax info, so package-bearing carts are EXCLUDED from the strict
+`disagrees` assertion -- priceCart reports `packagePricing: true`, the
+receipt renders a quiet "Includes a package; priced by Mindbody." line,
+and the server total stands. Package-free carts keep the strict
+assertion unchanged; never widen this into a tolerance. Related:
+CheckoutItemWrapper.DiscountAmount is "ignored for packages" (3627), so
+a future promo applied to cart lines MUST skip package lines (promos
+are not built; comment left at sellablePackages so they are not built
+wrong).
+
+**NOTES FOR PETE'S SANDBOX RUN (the unchecked box above):**
+
+- Package Metadata probe: a package rides the cart as
+  `{ Item: { Type: "Package", Metadata: { Id: <package Id> } } }` --
+  the same unenumerated-Metadata caveat as products/services (the key
+  list is behind the login-walled docs page). The first Test pricing of
+  a package cart proves or refutes `{ Id }`.
+- Same probe, second question: the Comp pricing stub's Amount is our
+  LOCAL estimate, and for a package cart that estimate is the
+  component-sum guess. If Test-mode checkout enforces
+  payments-equal-total, a wrong guess fails the pricing call loudly
+  (never a wrong charge); if that bites, the fix is priced-then-reprice
+  plumbing, its own small ticket.
+- Contract purchase: run it write-guarded first (POS_WRITE_CLIENT_IDS
+  = the dummy client) and watch the drawer show the Test rehearsal
+  land and the real POST suppressed; then allow the dummy and watch
+  one real purchase commit. The first REAL purchase is also what
+  proves StoredCardInfo-by-LastFour binds the way the schema reads.
+- The dialog collects NO signature (decision above); if the sandbox
+  refuses a contract for a missing ClientSignature, that refusal
+  renders verbatim in the dialog and the signature pad becomes its own
+  ticket.
 
 Ordering: T28 (in flight) -> T30 -> T29 (database), since contracts are
 counter-essential and the database is admin infrastructure.
