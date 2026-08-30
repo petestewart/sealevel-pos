@@ -307,7 +307,10 @@ button {
    * alert and notes icons into one. */
   /* The balance column (7em) fits a five-figure negative (-$12,345.67)
    * at 16px tabular figures without ellipsizing. */
-  --roster-cols: minmax(0, 2fr) 74px minmax(0, 1.8fr) 7em 208px;
+  /* Actions 260px = chip 104 + undo/trash 44 + buy 44 + Mindbody link 44
+   * + three 8px gaps (the Buy bag joined the cell for the second live
+   * test); the header's sort icon rides the same column. */
+  --roster-cols: minmax(0, 2fr) 74px minmax(0, 1.8fr) 7em 260px;
 }
 
 .roster-head,
@@ -1217,7 +1220,9 @@ button.pass-opt:disabled {
  * onto the name cell's second line, which is what gives the name the
  * row's whole first line. */
 .modal-search {
-  --roster-cols: minmax(0, 2.4fr) minmax(0, 1.6fr) 7em 64px;
+  /* Actions 104px = buy bag 44 + "+" add 52 + the 8px gap; attach mode
+   * shows one button and right-aligns in the same slot. */
+  --roster-cols: minmax(0, 2.4fr) minmax(0, 1.6fr) 7em 104px;
   position: relative;
   width: min(860px, 100%);
 }
@@ -1707,11 +1712,12 @@ button.pass-opt:disabled {
     sans-serif;
 }
 
-/* The Comp-stub flag T22 asks T24 to watch for: quiet, dev-facing. */
-.t-stub {
-  margin: 6px 0 0;
-  color: var(--muted);
-  font-size: 16px;
+/* The cart lines scroll internally past a few items (second live test),
+ * so the totals and the charge button below the receipt stay on an
+ * iPad-landscape screen for any cart length. */
+.t-lines {
+  max-height: min(34vh, 320px);
+  overflow-y: auto;
 }
 
 /* One cart line's stepper row, under its receipt line. */
@@ -1926,6 +1932,15 @@ button.sale-for:active {
  * charge button and the outcome panel. Card shape from the mockup,
  * every colour a token so both palettes hold. */
 
+/* The left column since the second live test: attach control, compact
+ * method row, receipt, then the seam (comp, charge, outcomes). One grid
+ * so the pieces stack with even rhythm. */
+.sale-left {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
 .pay-seam {
   display: grid;
   gap: 12px;
@@ -1933,21 +1948,25 @@ button.sale-for:active {
   border-top: 1px solid var(--line);
 }
 
+/* The method row, compact (second live test): three 64px segmented
+ * buttons, icon beside label, no subtitle -- the tall cards it replaced
+ * pushed the receipt below the fold. Reasons move to title attrs and the
+ * shared .methods-note line below. */
 .methods {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
+  gap: 8px;
 }
 
 .method {
-  display: grid;
-  justify-items: center;
-  align-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   gap: 8px;
-  min-height: 96px;
-  padding: 14px 10px;
+  min-height: 64px;
+  padding: 8px 10px;
   border: 2px solid var(--line);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--surface);
   color: var(--ink);
   font-size: 16px;
@@ -1955,6 +1974,7 @@ button.sale-for:active {
 }
 
 .method .mi {
+  display: inline-flex;
   color: var(--muted);
 }
 
@@ -1964,8 +1984,7 @@ button.sale-for:active {
 }
 
 /* The selected method: accent border, quiet fill, same as a chip's "on"
- * standing but without inverting the card (the reason line must stay
- * readable). */
+ * standing but without inverting the card. */
 .method.on {
   border-color: var(--accent);
   color: var(--accent);
@@ -1975,14 +1994,14 @@ button.sale-for:active {
   color: var(--accent);
 }
 
-/* The one-line reason a method is greyed (or the card's last four when
- * it is not). Present even when empty so the cards stay equal height. */
-.method-why {
-  min-height: 1.2em;
+/* ONE shared quiet line under the method row: the selected method's
+ * detail, or the first unavailable method's reason. Reserves its height
+ * so the receipt below does not jump. */
+.methods-note {
+  margin: 4px 0 0;
+  min-height: 1.3em;
   font-size: 16px;
-  font-weight: 400;
   color: var(--muted);
-  text-align: center;
 }
 
 /* Comp lives OUT of the method row and arms on a hold: quiet text
@@ -2009,15 +2028,21 @@ button.sale-for:active {
   font-weight: 600;
 }
 
-/* --- Cash tendered: display-only change math. ----------------------- */
+/* --- Cash tendered: display-only change math, in its own modal since
+ * the second live test (the inline panel read as part of the form; a
+ * modal is the deliberate step it is). Keys keep the 64px floor. ------ */
 
-.cash-pad {
+.modal-cash {
   display: grid;
   gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
+}
+
+.modal-cash .modal-title {
+  margin-bottom: 0;
+}
+
+.modal-cash .modal-actions {
+  margin-top: 6px;
 }
 
 .cash-row {

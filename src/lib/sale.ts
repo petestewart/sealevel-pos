@@ -54,9 +54,13 @@ export function houseClientId(): string | null {
   return id || null;
 }
 
-/** The studio's sales tax at location 1, from the live /site/locations dump
- *  in the design doc. An in-studio total is Price x 1.1035, which is the
- *  cheap invariant priceCart asserts against the server. */
+/** Fremont's sales tax at location 1 (10.35%), from the live
+ *  /site/locations dump in the design doc. Since the second live test
+ *  (2026-08-30) this is only the FALLBACK for a line whose catalog row
+ *  carried no TaxRate: the sandbox taxes at 13%, and hardcoding 1.1035
+ *  in expectedTotal made our math say $16.55 where Mindbody said $16.95
+ *  on a $15 item. Each line's own TaxRate (populated because the catalog
+ *  fetches carry locationId) is the authority; see expectedTotal. */
 export const STUDIO_TAX_RATE = 0.1035;
 
 /**
@@ -273,6 +277,10 @@ export interface CartLine {
   price: number;
   /** From CatalogItem.taxExempt. */
   taxExempt: boolean;
+  /** From CatalogItem.taxRate: the item's own tax rate at the studio,
+   *  for expectedTotal only. Never sent. Null when Mindbody omitted it,
+   *  in which case expectedTotal falls back to STUDIO_TAX_RATE. */
+  taxRate: number | null;
 }
 
 /** Round half-up to cents. The epsilon absorbs float dust like
@@ -283,10 +291,20 @@ export function roundToCents(amount: number): number {
 }
 
 /**
- * What the studio's tax arithmetic says this cart costs:
- * sum(Price x qty) x 1.1035, with tax-exempt lines contributing untaxed,
- * rounded half-up to cents. This is an ASSERTION against the server's
- * total, never a price we charge or display as authoritative.
+ * What the studio's tax arithmetic says this cart costs: each line's
+ * extended price taxed at that LINE's own rate, with tax-exempt lines
+ * contributing untaxed, rounded half-up to cents. This is an ASSERTION
+ * against the server's total, never a price we charge or display as
+ * authoritative.
+ *
+ * Per-line TaxRate is the authority, found the expensive way (second
+ * live test, 2026-08-30): the sandbox taxes at 13%, not Fremont's
+ * 10.35%, and the hardcoded 1.1035 this replaced said $16.55 where
+ * Mindbody said $16.95 on a $15 item. The catalog already maps
+ * TaxIncluded/TaxRate per item (the T22 fetches carry locationId, which
+ * is what populates them, products and services both), so only a line
+ * with NO rate at all falls back to the studio constant -- and that
+ * fallback is Fremont's rate, wrong by construction anywhere else.
  *
  * Rounding model: ONE round, of the whole cart's tax, at the end. Whether
  * Mindbody instead rounds tax per line (or per unit) is not stated anywhere
@@ -299,14 +317,16 @@ export function roundToCents(amount: number): number {
  * into a tolerance.
  */
 export function expectedTotal(items: readonly CartLine[]): number {
-  let taxed = 0;
-  let exempt = 0;
+  let total = 0;
   for (const line of items) {
     const extended = line.price * line.quantity;
-    if (line.taxExempt) exempt += extended;
-    else taxed += extended;
+    /* The exempt category still contributes untaxed; otherwise the
+     * line's own rate, falling back to Fremont's 10.35% (STUDIO_TAX_RATE)
+     * ONLY when the catalog carried no rate for this line. */
+    const rate = line.taxExempt ? 0 : (line.taxRate ?? STUDIO_TAX_RATE);
+    total += extended * (1 + rate);
   }
-  return roundToCents(taxed * (1 + STUDIO_TAX_RATE) + exempt);
+  return roundToCents(total);
 }
 
 /**
@@ -340,9 +360,12 @@ export interface PricedCart {
   /** totalsDisagree(expectedTotal, grandTotal); false while suppressed. */
   disagrees: boolean;
   /**
-   * True when the no-Payments request was rejected and the Comp stub retry
-   * is what priced the cart. T24 cares: it means even Test-mode checkout
-   * demands a Payments array on this site.
+   * True when the Comp payment stub is what priced the cart. CONFIRMED
+   * TRUE on the first live sandbox run (2026-08-30): Test-mode checkout
+   * on this site demands a Payments array, so the stub is now the first
+   * attempt and the Comp permission is a hard requirement. False only
+   * when the stub was refused and the bare no-Payments fallback priced
+   * the cart instead (kept in case other sites differ).
    */
   usedPaymentStub: boolean;
 }
@@ -362,15 +385,15 @@ export interface PricedCart {
  * `{ Id }`, answer with a Test call, not by reading the spec harder.
  *
  * Payments: CheckoutShoppingCartRequest declares NO required properties at
- * all (sale.yml:5632-5735 carries no `required:` list), so the first
- * attempt sends no Payments array -- pricing a cart is not paying for it.
- * The live API may still demand one even under Test (the 2026-08-26 probe's
- * passing Test call happened to include a StoredCard payment, so
- * omit-ability is unproven); on a rejection that mentions payment, ONE
- * retry goes out with a `Comp` stub -- the only documented payment type
- * whose Metadata needs nothing but an amount (sale.yml:3934, "Comp Keys -
- * amount") and which could move no money even if Test were ignored.
- * `usedPaymentStub` reports which shape worked, because T24 needs to know.
+ * all (sale.yml:5632-5735 carries no `required:` list), but the first live
+ * sandbox run (2026-08-30) settled what the schema could not: Test-mode
+ * checkout on this site refuses a cart with no Payments array, and the
+ * `Comp` stub -- the only documented payment type whose Metadata needs
+ * nothing but an amount (sale.yml:3934, "Comp Keys - amount"), and which
+ * could move no money even if Test were ignored -- is what prices it. So
+ * the stub goes FIRST now, with a bare no-Payments retry kept as the
+ * fallback for a site that differs. `usedPaymentStub` reports which shape
+ * worked; the Comp permission is a hard requirement of pricing here.
  *
  * `clientId` rides mindbody()'s options for the POS_WRITE_CLIENT_IDS guard
  * and, when present, goes in the body as ClientId (sale.yml:5654) since
@@ -427,32 +450,42 @@ export async function priceCart(
     CalculateTax: true,
   };
 
-  let usedPaymentStub = false;
+  /* STUB FIRST, since the first live sandbox run (2026-08-30):
+   * usedPaymentStub came back TRUE -- Test-mode carts on this site DO
+   * require a Payments array, and the Comp stub is what prices them. The
+   * order this replaced (no-Payments first, stub on a payment-shaped
+   * refusal) burned a doomed metered call on every single pricing, so the
+   * stub is now the first attempt. The no-stub fallback below is kept in
+   * case other sites differ: if the stub itself is refused (a site
+   * without the Comp permission, say), ONE retry goes out with no
+   * Payments at all.
+   *
+   * The stub's Amount is our expectation, the only number in hand before
+   * the server has priced anything. If the server's total differs (the
+   * exact condition `disagrees` exists for), a payments-must-equal-total
+   * rule would reject the stubbed call -- which still fails loudly, just
+   * as a thrown error instead of a disagrees flag. PascalCase Amount is
+   * the casing the live run accepted. */
+  let usedPaymentStub = true;
   let res: any;
   try {
-    res = await mindbody("/sale/checkoutshoppingcart", {
-      method: "POST",
-      body: baseBody,
-      ...(clientId ? { clientId } : {}),
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!/payment/i.test(message)) throw err;
-    /* The site wants a Payments array even to price. Comp stub, once. */
-    usedPaymentStub = true;
-    /* The stub's Amount is our expectation, the only number in hand before
-     * the server has priced anything. If the server's total differs (the
-     * exact condition `disagrees` exists for), a payments-must-equal-total
-     * rule would reject this retry too -- which still fails loudly, just as
-     * a thrown error instead of a disagrees flag. The spec's key list
-     * spells the key "amount" (sale.yml:3934) where item Metadata examples
-     * are PascalCase; the first sandbox run confirms the casing. */
     res = await mindbody("/sale/checkoutshoppingcart", {
       method: "POST",
       body: {
         ...baseBody,
         Payments: [{ Type: "Comp", Metadata: { Amount: expected } }],
       },
+      ...(clientId ? { clientId } : {}),
+    });
+  } catch {
+    /* The Comp stub was refused; maybe this site prices without
+     * Payments. One retry, bare. If this fails too, ITS error is the
+     * one thrown: with no payment noise in the request, it names the
+     * cart's actual problem. */
+    usedPaymentStub = false;
+    res = await mindbody("/sale/checkoutshoppingcart", {
+      method: "POST",
+      body: baseBody,
       ...(clientId ? { clientId } : {}),
     });
   }
@@ -796,6 +829,17 @@ export function parseCartLines(
     const metadataId = entry?.metadataId;
     const quantity = entry?.quantity;
     const price = entry?.price;
+    const taxRate = entry?.taxRate;
+    if (
+      taxRate !== undefined &&
+      taxRate !== null &&
+      (typeof taxRate !== "number" || !Number.isFinite(taxRate) || taxRate < 0)
+    ) {
+      return {
+        items: null,
+        error: "taxRate, when present, must be a non-negative number or null",
+      };
+    }
     if (
       (type !== "Product" && type !== "Service") ||
       (typeof metadataId !== "string" && typeof metadataId !== "number") ||
@@ -820,6 +864,7 @@ export function parseCartLines(
       quantity,
       price,
       taxExempt: entry?.taxExempt === true,
+      taxRate: typeof taxRate === "number" ? taxRate : null,
     });
   }
   return { items, error: null };

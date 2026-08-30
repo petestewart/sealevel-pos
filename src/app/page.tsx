@@ -149,6 +149,10 @@ interface PayOption {
   name: string;
   price: number;
   taxExempt: boolean;
+  /** The option's own tax rate at the studio (null when Mindbody omitted
+   *  it); rides every cart line so expectedTotal taxes at the item's
+   *  rate, not a hardcoded studio constant (the sandbox taxes at 13%). */
+  taxRate: number | null;
   /** Initial usage count of the option; 1 is a drop-in. */
   count: number | null;
   type: "Product" | "Service";
@@ -416,6 +420,31 @@ function ExternalLinkIcon() {
   );
 }
 
+/** A shopping bag: opens the Buy overlay with the row's client already
+ *  attached. The quiet per-row companion to the header's Buy button. */
+function BagIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M5.5 8h13l-1 12.5h-11Z"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M8.8 10.5V6.7a3.2 3.2 0 0 1 6.4 0v3.8"
+      />
+    </svg>
+  );
+}
+
 /** Chevron opening the payment-change dropdown on a roster row. */
 function ChevronDownIcon() {
   return (
@@ -648,7 +677,7 @@ function FrontDesk() {
   payDialogRef.current = payDialog;
   /** Rows whose last session was just used where the renewal dialog had
    *  nothing to charge with (no card on file, no covering credit): a
-   *  quiet row line instead, so the teacher can use Sell manually.
+   *  quiet row line instead, so the teacher can use Buy manually.
    *  Keyed by clientId; cleared on a class switch. */
   const [lastUsed, setLastUsed] = useState<Record<string, true>>({});
   /** The sellable pricing options, from /api/catalog, fetched on the
@@ -1362,6 +1391,28 @@ function FrontDesk() {
     [closeSearch],
   );
 
+  /**
+   * The per-row Buy button (roster rows and normal-mode search results):
+   * open the Buy overlay with THAT client already attached, from the
+   * facts the row holds. Attaching writes nothing; SaleScreen's pricing
+   * loop keys on the client id, so a cart already held reprices for the
+   * new client exactly as the attach-mode path does. Opened from the
+   * search modal, the modal closes first (the overlay sits below every
+   * modal scrim).
+   */
+  const openBuyFor = useCallback(
+    (client: SaleClient) => {
+      setSaleClient(client);
+      /* Same tidying as the header's Buy button: anything anchored to
+       * roster rows would otherwise paint above the overlay. */
+      setPickerFor(null);
+      setSortMenuOpen(false);
+      closeSearch();
+      setSaleOpen(true);
+    },
+    [closeSearch],
+  );
+
   /** Escape closes the search-results modal, unless a layer is stacked
    *  on top of it (the waiver gate, waitlist confirm, the info view, the
    *  pass picker): Escape peels the top layer, so an open pass picker
@@ -1609,7 +1660,7 @@ function FrontDesk() {
    * default pack's list price -- and only if the teacher is still on the
    * class the tap belonged to with no other pay dialog open; otherwise
    * the row gets the quiet "Last session used." line so the teacher can
-   * use Sell manually.
+   * use Buy manually.
    */
   const maybeOfferRenewal = useCallback(
     async (entry: RosterEntry, classId: number) => {
@@ -1776,6 +1827,7 @@ function FrontDesk() {
                 quantity: 1,
                 price: sel.price,
                 taxExempt: sel.taxExempt,
+                taxRate: sel.taxRate,
               },
             ],
             clientId,
@@ -2813,6 +2865,7 @@ function FrontDesk() {
                 quantity: 1,
                 price: paySelected.price,
                 taxExempt: paySelected.taxExempt,
+                taxRate: paySelected.taxRate,
               },
             ],
             clientId: entry.clientId,
@@ -2879,8 +2932,8 @@ function FrontDesk() {
               (chargeBody?.ambiguous === true
                 ? ""
                 : flavor === "renewal"
-                  ? " Sell the pack in Sell, on account credit."
-                  : " Sell the pass in Sell, on account credit, then attach " +
+                  ? " Sell the pack in Buy, on account credit."
+                  : " Sell the pass in Buy, on account credit, then attach " +
                     "and check in from the row."),
             mindbody: String(chargeBody?.error ?? "no reason returned"),
           });
@@ -3143,9 +3196,11 @@ function FrontDesk() {
           >
             Change class
           </button>
-          {/* Opens the sale overlay (T23). Quiet like "Change class":
-              selling is deliberate, not the thing hit at speed. The
-              roster stays mounted underneath; closing lands right back. */}
+          {/* Opens the Buy overlay (T23; "Buy" since the second live
+              test -- the counter conversation is the student's, "I want
+              to buy a mat"). Quiet like "Change class": selling is
+              deliberate, not the thing hit at speed. The roster stays
+              mounted underneath; closing lands right back. */}
           <button
             className="class-change"
             onClick={() => {
@@ -3156,7 +3211,7 @@ function FrontDesk() {
               setSaleOpen(true);
             }}
           >
-            Sell
+            Buy
           </button>
           <div className="counters" aria-label="Counts for the selected class">
           {/* A plain stat, not a button: its list IS the roster below,
@@ -3510,7 +3565,7 @@ function FrontDesk() {
                     {/* T26's quiet fallback: the last session was just
                         used and the renewal dialog had nothing to charge
                         with (no card on file, no covering credit), so
-                        the fact sits here for a manual Sell. */}
+                        the fact sits here for a manual Buy. */}
                     {lastUsed[entry.clientId] ? (
                       <span className="pass-last-used">Last session used.</span>
                     ) : null}
@@ -3630,6 +3685,24 @@ function FrontDesk() {
                   ) : (
                     <span className="act-spacer" aria-hidden="true" />
                   )}
+                  {/* Buy for this student: the overlay opens with them
+                      already attached (id, name, balance from the row),
+                      and any held cart reprices for them. */}
+                  <button
+                    className="row-icon"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openBuyFor({
+                        id: entry.clientId,
+                        name: entry.name,
+                        balance: entry.balance,
+                      });
+                    }}
+                    aria-label={`Buy for ${entry.name}`}
+                    title={`Buy for ${entry.name}`}
+                  >
+                    <BagIcon />
+                  </button>
                   {/* The one thing this app deliberately does not do
                       (edit a client) is a tap away in the tool that does.
                       Opens the staff web app; the teacher must already be
@@ -4069,13 +4142,34 @@ function FrontDesk() {
                                 <PersonCheckIcon />
                               </button>
                             ) : (
-                            /* A "+" icon, not a text chip (T17): the one
-                                action on the row, a 52px filled circle in
-                                the same action pairing as the check-in
-                                chip. The aria-label carries what the label
-                                text used to: whether the tap books or
-                                offers the waiting list. All gates are in
-                                tapWalkIn, unchanged. */
+                            <>
+                            {/* Buy for a searched person without booking
+                                them: the modal closes and the Buy overlay
+                                opens with them attached. No gates -- a
+                                purchase needs no waiver. */}
+                            <button
+                              className="row-icon"
+                              disabled={working || bookingIds.length > 0}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openBuyFor({
+                                  id: client.id,
+                                  name: client.name,
+                                  balance: client.balance,
+                                });
+                              }}
+                              aria-label={`Buy for ${client.name}`}
+                              title={`Buy for ${client.name}`}
+                            >
+                              <BagIcon />
+                            </button>
+                            {/* A "+" icon, not a text chip (T17): the one
+                                booking action on the row, a 52px filled
+                                circle in the same action pairing as the
+                                check-in chip. The aria-label carries what
+                                the label text used to: whether the tap
+                                books or offers the waiting list. All
+                                gates are in tapWalkIn, unchanged. */}
                             <button
                               className="add-btn"
                               /* Every row's "+" goes inert while ANY booking
@@ -4101,6 +4195,7 @@ function FrontDesk() {
                                 <PlusIcon />
                               )}
                             </button>
+                            </>
                             )}
                           </div>
                         </div>
@@ -4731,7 +4826,7 @@ function FrontDesk() {
                   ? `Pays with the stored card ...${payCard.lastFour}.`
                   : payMethodReason}
             </p>
-            <p className="pay-cash-note">For cash, use Sell.</p>
+            <p className="pay-cash-note">For cash, use Buy.</p>
 
             {/* The outcome, when the gesture did not simply finish. */}
             {payOutcome?.kind === "suppressed" ? (

@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 /**
  * The sale screen (T23, PLAN 2.1 UI). A full-screen overlay over the
@@ -59,6 +65,10 @@ interface ShelfItem {
   name: string;
   price: number;
   taxExempt: boolean;
+  /** The item's own tax rate at the studio, when Mindbody returned one.
+   *  Rides every cart line so expectedTotal taxes each line at ITS rate
+   *  (the sandbox taxes at 13%, not Fremont's 10.35%; found live). */
+  taxRate: number | null;
   type: "Product" | "Service";
   categoryId: number | null;
 }
@@ -253,15 +263,16 @@ type ChargeResult =
 const COMP_HOLD_MS = 700;
 
 /**
- * THE T24 SEAM, now live. Everything below the receipt's totals -- the
- * method cards, the cash keypad, the charge button and the outcome
- * panel -- renders here, and ONLY here. The invariants inherited from
- * T23 are kept verbatim: never charge an empty, in-flight, suppressed,
- * or disagreeing cart; the button restates the server's number or none.
- * On top of them: nothing fires without an explicit tap, one charge can
- * be in flight at a time (ref-guarded, button disabled), and a failed or
- * ambiguous outcome renders with enough truth that re-tapping cannot
- * quietly double-charge.
+ * THE T24 SEAM, now live, and since the second live test the whole LEFT
+ * column: the compact method row above the receipt, the receipt itself
+ * (passed in, so the cart and pricing loop stay outside the seam), the
+ * charge button, the outcome panel, and the cash-tender modal. The
+ * invariants inherited from T23 are kept verbatim: never charge an
+ * empty, in-flight, suppressed, or disagreeing cart; the button restates
+ * the server's number or none. On top of them: nothing fires without an
+ * explicit tap, one charge can be in flight at a time (ref-guarded,
+ * button disabled), and a failed or ambiguous outcome renders with
+ * enough truth that re-tapping cannot quietly double-charge.
  */
 function PaymentPanel(props: {
   cart: readonly CartEntry[];
@@ -269,19 +280,42 @@ function PaymentPanel(props: {
   pricing: boolean;
   client: SaleClient | null;
   cardLookup: CardLookup | null;
+  /** The attach-client control, rendered at the top of the column. */
+  attach: ReactNode;
+  /** The receipt ticket, rendered between the method row and the charge
+   *  button. SaleScreen still owns the cart and the pricing loop. */
+  receipt: ReactNode;
   /** Clear the cart: the sale is recorded on Mindbody's side. */
   onSold: () => void;
   /** Mirrors the in-flight charge up to SaleScreen so ambient Escape
    *  cannot close the overlay while money is moving. */
   onBusyChange: (busy: boolean) => void;
+  /** Mirrors the cash-tender modal up to SaleScreen so the Escape that
+   *  closes the modal cannot also close the overlay. */
+  onModalChange: (open: boolean) => void;
 }) {
-  const { cart, priced, pricing, client, cardLookup, onSold, onBusyChange } =
-    props;
+  const {
+    cart,
+    priced,
+    pricing,
+    client,
+    cardLookup,
+    attach,
+    receipt,
+    onSold,
+    onBusyChange,
+    onModalChange,
+  } = props;
 
   const [method, setMethod] = useState<PayMethod | null>(null);
   /** Tendered cash in CENTS, as a digit string (POS-style entry: typing
    *  2-0-0-0 reads $20.00). Display only; never sent to Mindbody. */
   const [tendered, setTendered] = useState("");
+  /** The cash-tender modal (second live test: the inline keypad panel is
+   *  gone). Opens on selecting Cash, and again from the Charge button
+   *  when cash is armed with no tender recorded; its confirm fires the
+   *  SAME charge path the Charge button does. */
+  const [cashOpen, setCashOpen] = useState(false);
   const [charging, setCharging] = useState(false);
   const [result, setResult] = useState<ChargeResult | null>(null);
   /** The double-fire lock. State alone re-renders too late for a fast
@@ -344,6 +378,13 @@ function PaymentPanel(props: {
       if (compTimer.current) clearTimeout(compTimer.current);
     };
   }, []);
+
+  /* PaymentPanel unmounts when the overlay closes; a cash modal that
+   * was somehow up must not leave SaleScreen believing a modal still
+   * blocks Escape on the next open. */
+  useEffect(() => {
+    return () => onModalChange(false);
+  }, [onModalChange]);
 
   /* Method availability. Unavailable methods render greyed WITH the
    * reason, never hidden (PLAN 2.2: "account credit ($12) greyed out
@@ -423,6 +464,7 @@ function PaymentPanel(props: {
             quantity: line.quantity,
             price: line.item.price,
             taxExempt: line.item.taxExempt,
+            taxRate: line.item.taxRate,
           })),
           ...(clientId ? { clientId } : {}),
           method,
@@ -571,49 +613,122 @@ function PaymentPanel(props: {
     });
   };
 
+  const openCashModal = () => {
+    setCashOpen(true);
+    onModalChange(true);
+  };
+  /** Cancelling clears the tender too: with none recorded, the Charge
+   *  button reopens this modal rather than charging directly. */
+  const closeCashModal = useCallback(() => {
+    setCashOpen(false);
+    setTendered("");
+    onModalChange(false);
+  }, [onModalChange]);
+  /** The confirm: close the modal and fire the ONE charge path. The
+   *  tendered amount stays as entered (it rides the request for the
+   *  server-side short-tender refusal); the outcome renders where every
+   *  charge outcome renders, under the receipt. */
+  const confirmCash = () => {
+    setCashOpen(false);
+    onModalChange(false);
+    void doCharge();
+  };
+
+  /* Escape closes the cash modal (never mid-charge). SaleScreen skips
+   * its own overlay-close for the same press via onModalChange. */
+  useEffect(() => {
+    if (!cashOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !charging) closeCashModal();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cashOpen, charging, closeCashModal]);
+
+  /* The shared quiet line under the method row (the per-card subtitle is
+   * gone with the compact buttons): the selected method's detail, else
+   * the first unavailable method's reason. The full reason also sits on
+   * each button's title attr. */
+  const methodNote =
+    method === "storedcard"
+      ? (cardDetail ?? "")
+      : method === "credit"
+        ? creditLabel
+        : method === "cash"
+          ? tenderedUsd !== null
+            ? `Tendered ${money(tenderedUsd)}`
+            : ""
+          : method === "comp"
+            ? ""
+            : cardReasonFinal !== null
+              ? `Stored card: ${cardReasonFinal}`
+              : creditReason !== null
+                ? `Credit: ${creditReason}`
+                : "";
+
   return (
-    <div className="pay-seam">
-      <div className="methods" aria-label="Payment methods">
-        <button
-          className={method === "storedcard" ? "method on" : "method"}
-          disabled={cardReasonFinal !== null || charging}
-          onClick={() => pickMethod("storedcard")}
-          aria-pressed={method === "storedcard"}
-        >
-          <span className="mi">
-            <CardIcon />
-          </span>
-          Stored card
-          <span className="method-why">
-            {cardReasonFinal ?? cardDetail ?? ""}
-          </span>
-        </button>
-        <button
-          className={method === "credit" ? "method on" : "method"}
-          disabled={creditReason !== null || charging}
-          onClick={() => pickMethod("credit")}
-          aria-pressed={method === "credit"}
-        >
-          <span className="mi">
-            <CreditIcon />
-          </span>
-          {creditLabel}
-          <span className="method-why">{creditReason ?? ""}</span>
-        </button>
-        <button
-          className={method === "cash" ? "method on" : "method"}
-          disabled={charging}
-          onClick={() => pickMethod("cash")}
-          aria-pressed={method === "cash"}
-        >
-          <span className="mi">
-            <CashIcon />
-          </span>
-          Cash
-          <span className="method-why"></span>
-        </button>
+    <div className="sale-left">
+      {/* Who the sale is for; owned by SaleScreen, rendered up top so the
+          methods it gates sit right under it. */}
+      {attach}
+
+      {/* The method row, compact and ABOVE the receipt (second live
+          test): three 64px segmented buttons, icon + label, no subtitle
+          line. Unavailable stays visible-but-greyed; the reason moves to
+          the title attr and the shared quiet line below. */}
+      <div>
+        <div className="methods" aria-label="Payment methods">
+          <button
+            className={method === "storedcard" ? "method on" : "method"}
+            disabled={cardReasonFinal !== null || charging}
+            onClick={() => pickMethod("storedcard")}
+            aria-pressed={method === "storedcard"}
+            title={cardReasonFinal ?? cardDetail ?? "Stored card"}
+          >
+            <span className="mi">
+              <CardIcon />
+            </span>
+            Stored card
+          </button>
+          <button
+            className={method === "credit" ? "method on" : "method"}
+            disabled={creditReason !== null || charging}
+            onClick={() => pickMethod("credit")}
+            aria-pressed={method === "credit"}
+            title={creditReason ?? creditLabel}
+          >
+            <span className="mi">
+              <CreditIcon />
+            </span>
+            Credit
+          </button>
+          <button
+            className={method === "cash" ? "method on" : "method"}
+            disabled={charging}
+            onClick={() => {
+              const selecting = method !== "cash";
+              pickMethod("cash");
+              /* Selecting cash opens the tender modal; a deselecting tap
+                 does not. */
+              if (selecting) openCashModal();
+            }}
+            aria-pressed={method === "cash"}
+            title="Cash"
+          >
+            <span className="mi">
+              <CashIcon />
+            </span>
+            Cash
+          </button>
+        </div>
+        <p className="methods-note">{methodNote || " "}</p>
       </div>
 
+      {/* The receipt ticket; it may scroll internally, so the charge
+          button below stays on screen for a long cart. */}
+      {receipt}
+
+      <div className="pay-seam">
       {/* Comp: deliberately out of the method row and armed by holding,
           so nobody comps a sale by grazing a card. */}
       <button
@@ -632,78 +747,19 @@ function PaymentPanel(props: {
           : "Hold to comp this sale"}
       </button>
 
-      {method === "cash" ? (
-        <div className="cash-pad" aria-label="Cash tendered">
-          <div className="cash-row">
-            <span className="cash-label">Tendered</span>
-            <span className="cash-amt">
-              {tenderedUsd !== null ? money(tenderedUsd) : "--"}
-            </span>
-          </div>
-          <div className="cash-chips">
-            <button
-              className="cash-chip"
-              disabled={total === null}
-              onClick={() =>
-                total !== null &&
-                setTendered(String(Math.round(total * 100)))
-              }
-            >
-              Exact
-            </button>
-            {[20, 50, 100].map((usd) => (
-              <button
-                key={usd}
-                className="cash-chip"
-                onClick={() => setTendered(String(usd * 100))}
-              >
-                ${usd}
-              </button>
-            ))}
-          </div>
-          <div className="cash-keys">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0"].map(
-              (k) => (
-                <button
-                  key={k}
-                  className="cash-key"
-                  onClick={() => keypadTap(k)}
-                >
-                  {k}
-                </button>
-              ),
-            )}
-            <button
-              className="cash-key"
-              aria-label="Delete last digit"
-              onClick={() => keypadTap("back")}
-            >
-              &#9003;
-            </button>
-          </div>
-          {total !== null && tenderedUsd !== null ? (
-            cashShort ? (
-              <p className="cash-change short">
-                Short {money(total - tenderedUsd)}
-              </p>
-            ) : (
-              <p className="cash-change">
-                Change due {money(tenderedUsd - total)}
-              </p>
-            )
-          ) : (
-            <p className="cash-change muted-note">
-              Tendered is for the change math only; it is not sent to
-              Mindbody.
-            </p>
-          )}
-        </div>
-      ) : null}
-
       <button
         className="charge-btn"
         disabled={!chargeable}
-        onClick={doCharge}
+        onClick={() => {
+          /* Cash armed with no tender recorded: the tap opens the tender
+             modal (whose confirm fires this same path) instead of
+             charging directly. */
+          if (method === "cash" && tenderedCents === null) {
+            openCashModal();
+            return;
+          }
+          void doCharge();
+        }}
         aria-label={chargeLabel}
       >
         {charging ? (
@@ -781,6 +837,118 @@ function PaymentPanel(props: {
           </button>
         </div>
       ) : null}
+      </div>
+
+      {/* The cash-tender modal (second live test: the inline panel read
+          as part of the form; a modal is the deliberate step it is).
+          Keypad and chips are display-only change math; the confirm is
+          the SAME charge path as the Charge button, single-flight and
+          all, and the outcome renders under the receipt like every
+          other charge outcome. The server still refuses a short tender. */}
+      {cashOpen ? (
+        <div
+          className="modal-scrim"
+          role="presentation"
+          onClick={() => {
+            if (!charging) closeCashModal();
+          }}
+        >
+          <div
+            className="modal modal-cash"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Record a cash payment"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">Cash</p>
+            <div className="cash-row">
+              <span className="cash-label">Total</span>
+              <span className="cash-amt">
+                {total !== null ? money(total) : "--"}
+              </span>
+            </div>
+            <div className="cash-row">
+              <span className="cash-label">Tendered</span>
+              <span className="cash-amt">
+                {tenderedUsd !== null ? money(tenderedUsd) : "--"}
+              </span>
+            </div>
+            <div className="cash-chips">
+              <button
+                className="cash-chip"
+                disabled={total === null}
+                onClick={() =>
+                  total !== null &&
+                  setTendered(String(Math.round(total * 100)))
+                }
+              >
+                Exact
+              </button>
+              {[20, 50, 100].map((usd) => (
+                <button
+                  key={usd}
+                  className="cash-chip"
+                  onClick={() => setTendered(String(usd * 100))}
+                >
+                  ${usd}
+                </button>
+              ))}
+            </div>
+            <div className="cash-keys">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0"].map(
+                (k) => (
+                  <button
+                    key={k}
+                    className="cash-key"
+                    onClick={() => keypadTap(k)}
+                  >
+                    {k}
+                  </button>
+                ),
+              )}
+              <button
+                className="cash-key"
+                aria-label="Delete last digit"
+                onClick={() => keypadTap("back")}
+              >
+                &#9003;
+              </button>
+            </div>
+            {total !== null && tenderedUsd !== null ? (
+              cashShort ? (
+                <p className="cash-change short">
+                  Short {money(total - tenderedUsd)}
+                </p>
+              ) : (
+                <p className="cash-change">
+                  Change due {money(tenderedUsd - total)}
+                </p>
+              )
+            ) : (
+              <p className="cash-change muted-note">
+                Tendered is for the change math only; it is not sent to
+                Mindbody.
+              </p>
+            )}
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                disabled={charging}
+                onClick={closeCashModal}
+              >
+                Cancel
+              </button>
+              <button
+                className="modal-confirm go"
+                disabled={total === null || cashShort || charging || !chargeable}
+                onClick={confirmCash}
+              >
+                {total !== null ? `Record ${money(total)} cash` : "Record cash"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -828,6 +996,10 @@ export default function SaleScreen(props: {
   /** True while /api/checkout is in flight: money is moving, so ambient
    *  Escape must not close the overlay out from under the outcome. */
   const [charging, setCharging] = useState(false);
+
+  /** True while the payment panel's cash-tender modal is up: the Escape
+   *  that closes it must not also close the overlay. */
+  const [payModalOpen, setPayModalOpen] = useState(false);
 
   /** The attached client's card on file, fetched on attach via the
    *  guarded /api/stored-card route. Null when nobody is attached. */
@@ -927,6 +1099,7 @@ export default function SaleScreen(props: {
               quantity: line.quantity,
               price: line.item.price,
               taxExempt: line.item.taxExempt,
+              taxRate: line.item.taxRate,
             })),
             ...(clientId ? { clientId } : {}),
           }),
@@ -953,13 +1126,19 @@ export default function SaleScreen(props: {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !modalAbove && !pricing && !charging) {
+      if (
+        e.key === "Escape" &&
+        !modalAbove &&
+        !payModalOpen &&
+        !pricing &&
+        !charging
+      ) {
         onClose();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, modalAbove, pricing, charging, onClose]);
+  }, [open, modalAbove, payModalOpen, pricing, charging, onClose]);
 
   const addItem = useCallback((item: ShelfItem) => {
     const key = `${item.type}-${item.id}`;
@@ -1018,12 +1197,12 @@ export default function SaleScreen(props: {
   const showSpinner = pricing;
 
   return (
-    <div className="sale-overlay" role="dialog" aria-label="Sell">
+    <div className="sale-overlay" role="dialog" aria-label="Buy">
       <div className="sale-shell">
         <ModeBanner config={config} />
 
         <div className="sale-top">
-          <h2 className="sale-title">Sell</h2>
+          <h2 className="sale-title">Buy</h2>
           {/* The deliberate Back works mid-pricing (the cart and its
               in-flight answer survive: the component stays mounted) but
               NOT mid-charge: closing would unmount the payment panel and
@@ -1043,14 +1222,25 @@ export default function SaleScreen(props: {
         </div>
 
         <div className="sale-panes">
-          {/* LEFT: the receipt ticket. */}
-          <div className="ticket">
-            <h3>Sealevel Hot Yoga</h3>
-            <p className="t-sub">Fremont</p>
-
-            {/* Who the sale is for. Anonymous is fine; attaching enables
-                stored-card/credit in T24 and rides price-cart now. */}
-            {client ? (
+          {/* LEFT: the whole payment column (PaymentPanel since the
+              second live test): the attach control, the compact method
+              row, the receipt, the charge button and the outcomes. The
+              ticket rides in as a prop; the cart and the pricing loop
+              stay here in SaleScreen. */}
+          <PaymentPanel
+            cart={cart}
+            priced={priced}
+            pricing={pricing}
+            client={client}
+            cardLookup={cardLookup}
+            onSold={() => setCart([])}
+            onBusyChange={setCharging}
+            onModalChange={setPayModalOpen}
+            attach={
+              /* Who the sale is for. Anonymous is fine; attaching
+                 enables stored card and account credit, and rides
+                 price-cart. */
+              client ? (
               <div className="sale-for attached">
                 <span className="sale-for-name">For: {client.name}</span>
                 {client.balance !== null && client.balance !== 0 ? (
@@ -1085,7 +1275,12 @@ export default function SaleScreen(props: {
                   </span>
                 </span>
               </button>
-            )}
+              )
+            }
+            receipt={
+              <div className="ticket">
+            <h3>Sealevel Hot Yoga</h3>
+            <p className="t-sub">Fremont</p>
 
             <hr className="t-rule" />
 
@@ -1093,6 +1288,10 @@ export default function SaleScreen(props: {
               <p className="t-empty">Nothing rung up yet.</p>
             ) : (
               <>
+                {/* The lines scroll internally past a few items, so the
+                    totals and the charge button below never leave an
+                    iPad-landscape screen. */}
+                <div className="t-lines">
                 {cart.map((line) => (
                   <div className="t-item" key={line.key}>
                     <div className="t-line">
@@ -1139,6 +1338,7 @@ export default function SaleScreen(props: {
                     </div>
                   </div>
                 ))}
+                </div>
 
                 <hr className="t-rule" />
 
@@ -1208,18 +1408,20 @@ export default function SaleScreen(props: {
                           : ""}
                       </span>
                     </div>
-                    {totals.usedPaymentStub ? (
-                      <p className="t-stub">
-                        Priced via the Comp payment stub (T24 cares).
-                      </p>
-                    ) : null}
+                    {/* The Comp-stub fact is deliberately NOT printed on
+                        the receipt any more: it is developer-speak on a
+                        teacher screen, and the dev drawer's call log
+                        already carries which shape priced the cart. */}
                   </>
                 ) : null}
               </>
             )}
-          </div>
+              </div>
+            }
+          />
 
-          {/* RIGHT: the shelf, and below it the T24 payment seam. */}
+          {/* RIGHT: only the shelf since the second live test; the
+              payment column moved left, above and below the receipt. */}
           <div className="sale-right">
             {catalogLoading ? (
               <p className="muted">
@@ -1275,16 +1477,6 @@ export default function SaleScreen(props: {
                 )}
               </>
             ) : null}
-
-            <PaymentPanel
-              cart={cart}
-              priced={priced}
-              pricing={pricing}
-              client={client}
-              cardLookup={cardLookup}
-              onSold={() => setCart([])}
-              onBusyChange={setCharging}
-            />
           </div>
         </div>
       </div>

@@ -725,6 +725,28 @@ First live sandbox run (2026-08-30) findings, fixed same day:
   config, not a free item (comps go through the comp path), and a missing
   Price excludes the row rather than coercing to 0.
 
+Second live run (Pete, 2026-08-30) findings, fixed same day:
+
+- **The sandbox taxes at 13%, not Fremont's 10.35%, which exposed the
+  hardcoded 1.1035 in expectedTotal**: our math said $16.55 against
+  Mindbody's $16.95 on a $15 item, and every taxed cart hit the
+  totals-disagree stop. Per-item TaxRate is authoritative: the catalog
+  already mapped TaxIncluded/TaxRate onto every CatalogItem (products AND
+  services -- the fetches carry locationId, which is what populates them),
+  so the rate now rides each cart line and expectedTotal taxes each line
+  at ITS rate. Only a line with no rate at all falls back to the studio
+  constant 0.1035, named in the code as Fremont's rate. The disagreement
+  assertion stays strict; the tolerance route remains forbidden.
+- **`usedPaymentStub` came back TRUE**: Test-mode carts on this site DO
+  require the Comp payment stub -- the answer to the question the T22
+  notes left open. Consequences: the stub retry is the working path, so
+  priceCart now sends the stub FIRST (the no-Payments attempt was a
+  doomed metered call on every single pricing) and keeps the bare
+  no-Payments shape as the one-retry fallback in case other sites differ;
+  and the **Comp permission is confirmed a hard requirement** for pricing,
+  exactly as predicted. PascalCase `Amount` in the stub's Metadata was
+  accepted.
+
 ## T23. The sale screen (PLAN 2.1 UI)
 
 - [x] Two panes per the approved mockups: receipt-style cart left
@@ -852,10 +874,15 @@ not have gone through" and invites no retry. Spec findings:
   check a balance the client is not supposed to have yet. /api/checkout
   runs it fresh on every charge, so the authoritative total is also
   re-read at charge time and the browser's number is never charged.
-- The `usedPaymentStub` question T22 left is still open (no sandbox run
-  yet); if the stub turns out to be what prices carts, the rehearsal
-  already sends it by construction, and the Comp permission becomes a
-  hard requirement as T22 predicted.
+- The `usedPaymentStub` question T22 left is CLOSED (second live run,
+  2026-08-30): TRUE -- Test-mode carts do require the Comp stub. The
+  rehearsal inherits priceCart's machinery by construction, so it already
+  sends the stub and nothing else in T24 changes; the Comp permission is
+  now a hard requirement, as predicted. priceCart sends the stub first
+  now (see the T22 second-run notes). The "Priced via the Comp payment
+  stub" receipt line was dropped with the answer in hand: developer-speak
+  on a teacher screen, and the dev drawer's call log already shows which
+  shape priced every cart.
 - Tendered cash is change-due arithmetic only. Nothing in the spec's
   visible Cash/Custom keys takes a tendered amount, so it is validated
   server-side (refused when short of the total) and never forwarded.
@@ -1019,6 +1046,41 @@ covering-credit yardstick is the LIST price; tax can push the real
 total past it, in which case /api/checkout re-reads the balance and
 refuses honestly, and the dialog's gate refreshes with the live number.
 
+## T27. Sale screen round two (Pete's second live test, 2026-08-30)
+
+Five changes from watching the Buy screen used at the counter, plus the
+two findings recorded on T22/T24 above (per-item TaxRate; usedPaymentStub
+TRUE and the stub-first pricing order):
+
+- [x] "Buy", not "Sell": the header button, the overlay title and
+      aria-label, and every line of copy that named the screen ("For
+      cash, use Sell." included) -- the counter conversation is the
+      student's ("I want to buy a mat").
+- [x] A Buy button on each client row: a quiet 44px bag icon in the
+      roster's actions cell next to the Mindbody link, and on
+      normal-mode search-result rows next to the "+", opening the Buy
+      overlay with THAT client already attached (id, name, balance from
+      the row; the search modal closes first). A held cart reprices for
+      the new client through the existing client-change path. The
+      actions column widened to fit (260px roster, 104px search modal),
+      header consistent.
+- [x] Cash tender is a modal, not an inline panel: selecting Cash opens
+      it (keypad at 64px, quick chips, change-due math, Cancel), and its
+      "Record $X cash" confirm fires the SAME charge path as the Charge
+      button -- single-flight and every T24 invariant intact, the
+      outcome rendering where charge outcomes render. The Charge button
+      with cash armed and no tender recorded opens the modal instead of
+      charging; the server-side short-tender refusal stays.
+- [x] Method buttons compact and above the receipt: the three cards are
+      now a row of 64px segmented buttons in the LEFT column, below the
+      attach-client control and above the ticket; no subtitle line (the
+      unavailable reason lives on the title attr plus one shared quiet
+      line under the row). The right column keeps only the shelf; Charge
+      and the outcome area sit below the receipt, and the receipt's cart
+      lines scroll internally so the left column fits iPad landscape.
+- [x] The tax-rate fix and the stub-first pricing order (details on
+      T22/T24 above).
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
@@ -1026,10 +1088,12 @@ the questions only a live run answers, in the order that unblocks the most:
 
 1. **AccountBalance sign convention FIRST** (positive = spendable credit is
    assumed by the credit gate and rule 1; if inverted, both flip).
-2. One cart priced in the sandbox: watch `usedPaymentStub` (does Test-mode
-   checkout demand the Comp stub?), the Metadata id choice (ProductId for
-   services, barcode Id for products), and `disagrees` (whole-cart
-   rounding vs Mindbody's).
+2. One cart priced in the sandbox: watch the Metadata id choice
+   (ProductId for services, barcode Id for products) and `disagrees`
+   (whole-cart rounding vs Mindbody's). ANSWERED by the second live run:
+   `usedPaymentStub` is TRUE (Test-mode checkout demands the Comp stub;
+   it now goes first), and the 13% sandbox tax exposed the hardcoded
+   10.35% in expectedTotal, fixed to per-item TaxRate. See T22/T27.
 3. One real stored-card sale on the dummy/test client: payment Metadata
    casing (PascalCase Amount sent; lowercase documented), then the
    under-$10 split path end to end.
