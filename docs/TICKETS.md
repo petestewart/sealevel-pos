@@ -1779,6 +1779,66 @@ Judgement calls, all reversible:
   touched (a roster person's passes show if a sweep already landed them,
   and the cell stays empty otherwise rather than claiming "no passes").
 
+## T33. The method row reads at a glance (Pete, 2026-08-30)
+
+Pete, same live test: "on the payment methods, change 'Stored card' to
+'Card'. 'Credit' should be the first option on the left if there's a
+balance. If there's no balance, it shouldn't be a visible option." And,
+on the paid receipt: "once a sale completes and I click Done here, it
+should go back to the sign-in view."
+
+- [x] **"Card"**, on the button, its title attr and the quiet reason line
+      ("Card: No card on file"). The split slots already read that way.
+- [x] **Credit leads the row when there is credit, and is absent when
+      there is not.** Most sales are to people with no account balance,
+      and a permanently greyed button is noise on the one row that has to
+      be read at a glance. First-on-the-left is also where the tap
+      usually belongs: rule 1 makes credit the method whenever it covers
+      the total (the card is refused server-side then, and greys out
+      here). Same rule and same order in the split slots, so both read
+      alike.
+- [x] **The one exception, deliberate: the split-failure seam.** When a
+      $10 credit purchase succeeded and the checkout after it failed, the
+      credit certainly exists, and the balance read that follows may have
+      failed (`creditBalance: null`). Hiding the honest retry -- spend the
+      credit that now exists -- on the one screen built to offer it would
+      be the worst outcome, so Credit stays visible while that warning is
+      up. See T24/T28.
+- [x] **Nothing invisible stays armed.** Credit can vanish under the
+      teacher (T31's post-sale refetch reporting the balance the sale just
+      spent), so losing visibility disarms it in the single method row and
+      in both split slots.
+- [x] **Done returns to the roster.** The counter's resting screen is the
+      sign-in view, not an empty cart. The receipt is cleared first, so
+      reopening Buy starts clean.
+
+## T34. The class selector is a dropdown (Pete, 2026-08-30)
+
+Pete: "make it a drop down like the Buy view. When I drop the list down,
+it should show the same 'X booked' view it does on the current selector,
+but after I select it, that won't be part of the view since we already
+have counters for that."
+
+- [x] **The current class IS the control.** The header's class block is
+      now the dropdown button (Buy's attach-picker idiom: the class line,
+      a chevron, a `pass-dd` menu with a check on the current one), so the
+      separate "Change class" button and the modal it opened are both
+      gone. One less tap and one less full-screen layer for the thing a
+      teacher changes most.
+- [x] **"N booked" lives in the list, not on the collapsed line**, per
+      Pete: the header's three counters already say it, in bigger type,
+      for the class in front of you.
+- [x] Same data and same selection path as the modal it replaces (the
+      classes around now, `selectClass`), same Escape-closes handling, no
+      new calls. The menu is left-aligned under the button and scrolls at
+      60vh; new CSS is `.class-pick`, `.class-pick-btn`, `.class-pick-dd`
+      plus the two-column `.pass-opt` override, tokens only.
+
+Open, if it comes up live: the menu lists the classes around now, as the
+modal did. The Buy view's picker lists the whole teaching day. Widening
+this one to the day is a small change if the -2/+4h window turns out to
+be the wrong reach at the counter.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are

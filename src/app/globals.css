@@ -72,6 +72,39 @@ button {
   margin-top: 4px;
 }
 
+/* The class selector is the Buy view's dropdown idiom (Pete, fourth live
+ * test): the current class IS the button, and the menu hangs off it. The
+ * wrapper is the anchor .pass-dd positions against. */
+.class-pick {
+  position: relative;
+  min-width: 0;
+  display: flex;
+}
+
+.class-pick-btn {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+
+/* Left-aligned under the button, not right-aligned like the pass menus,
+ * and wide enough for a class line with its teacher. */
+.class-pick-dd {
+  left: 0;
+  right: auto;
+  min-width: min(560px, 92vw);
+  max-width: min(560px, 92vw);
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+}
+
+/* No pass columns here: a check and the class line. */
+.class-pick-dd .pass-opt {
+  grid-template-columns: 20px minmax(0, 1fr);
+}
+
 .class-current {
   min-width: 0;
   display: flex;

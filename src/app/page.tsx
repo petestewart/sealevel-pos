@@ -3502,22 +3502,84 @@ function FrontDesk() {
           what the old bar used. */}
       {activeClass ? (
         <header className="class-header">
-          <div className="class-current">
-            <span className="class-when">
-              {dayDate(activeClass.startsAt)} · {clockTime(activeClass.startsAt)}
-            </span>
-            <span className="class-title">
-              {activeClass.name}
-              {activeClass.teacher ? ` - ${activeClass.teacher}` : ""}
-            </span>
+          {/* The class is its own dropdown (Pete, fourth live test), the
+              Buy view's picker idiom: the current class IS the control,
+              so the separate "Change class" button is gone. The list
+              carries the "N booked" line the modal had; the collapsed
+              line does not, because the header's counters already say it
+              for the class in front of you. */}
+          <div className="class-pick">
+            <button
+              className="class-change class-pick-btn"
+              aria-haspopup="dialog"
+              aria-expanded={classPickerOpen}
+              aria-label="Change class"
+              onClick={() => setClassPickerOpen((o) => !o)}
+            >
+              <span className="class-current">
+                <span className="class-when">
+                  {dayDate(activeClass.startsAt)} ·{" "}
+                  {clockTime(activeClass.startsAt)}
+                </span>
+                <span className="class-title">
+                  {activeClass.name}
+                  {activeClass.teacher ? ` - ${activeClass.teacher}` : ""}
+                </span>
+              </span>
+              <ChevronDownIcon />
+            </button>
+            {classPickerOpen ? (
+              <>
+                <div
+                  className="pass-scrim"
+                  role="presentation"
+                  onClick={() => setClassPickerOpen(false)}
+                />
+                <div
+                  className="pass-dd class-pick-dd"
+                  role="dialog"
+                  aria-label="Classes around now"
+                >
+                  {classes.length === 0 ? (
+                    <p className="pass-empty">
+                      No classes in the next few hours.
+                    </p>
+                  ) : (
+                    classes.map((c) => {
+                      const current = c.classId === activeId;
+                      return (
+                        <button
+                          key={`pick-${c.classId}`}
+                          className={current ? "pass-opt current" : "pass-opt"}
+                          aria-pressed={current}
+                          onClick={() => {
+                            selectClass(c.classId);
+                            setClassPickerOpen(false);
+                          }}
+                        >
+                          <span className="pass-check">
+                            {current ? <CheckIcon /> : null}
+                          </span>
+                          <span className="pass-opt-text">
+                            <span className="pass-opt-name">
+                              {dayDate(c.startsAt)} · {clockTime(c.startsAt)} ·{" "}
+                              {c.name}
+                              {c.teacher ? ` - ${c.teacher}` : ""}
+                            </span>
+                            {c.booked !== null ? (
+                              <span className="pass-facts">
+                                {c.booked} booked
+                              </span>
+                            ) : null}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </>
+            ) : null}
           </div>
-          <button
-            className="class-change"
-            aria-haspopup="dialog"
-            onClick={() => setClassPickerOpen(true)}
-          >
-            Change class
-          </button>
           {/* Opens the Buy overlay (T23; "Buy" since the second live
               test -- the counter conversation is the student's, "I want
               to buy a mat"). Quiet like "Change class": selling is
@@ -3586,64 +3648,6 @@ function FrontDesk() {
           </button>
           </div>
         </header>
-      ) : null}
-
-      {/* The class picker behind "Change class": the classes around now
-          with the same facts the old bar showed, the current one marked.
-          Picking one switches exactly as the old bar tap did. */}
-      {classPickerOpen ? (
-        <div
-          className="modal-scrim"
-          onClick={() => setClassPickerOpen(false)}
-          role="presentation"
-        >
-          <div
-            className="modal modal-list"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Change class"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="modal-title">Classes around now</p>
-            {classes.length === 0 ? (
-              <p className="muted">No classes in the next few hours.</p>
-            ) : (
-              <ul className="roster modal-roster">
-                {classes.map((c) => (
-                  <li key={`pick-${c.classId}`}>
-                    <button
-                      className="row"
-                      onClick={() => {
-                        selectClass(c.classId);
-                        setClassPickerOpen(false);
-                      }}
-                    >
-                      <span className="name">
-                        {dayDate(c.startsAt)} · {clockTime(c.startsAt)}
-                        <span className="detail">
-                          {c.name}
-                          {c.teacher ? ` - ${c.teacher}` : ""}
-                          {c.booked !== null ? ` - ${c.booked} booked` : ""}
-                        </span>
-                      </span>
-                      {c.classId === activeId ? (
-                        <span className="chip in">current</span>
-                      ) : null}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="modal-actions">
-              <button
-                className="modal-cancel"
-                onClick={() => setClassPickerOpen(false)}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
       ) : null}
 
       {/* Submit-triggered search (T16): typing costs nothing, Enter or
