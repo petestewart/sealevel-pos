@@ -296,7 +296,9 @@ function CardIcon() {
   );
 }
 
-/** Account-credit icon: a wallet-ish note. */
+/** Account-credit icon: a coin with a dollar sign. Deliberately NOT a
+ *  rectangle -- the earlier note shape read as a second credit card next
+ *  to the stored-card button (Pete, fourth live test). */
 function CreditIcon() {
   return (
     <svg
@@ -310,8 +312,11 @@ function CreditIcon() {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <rect x="3" y="6" width="18" height="13" rx="2" />
-      <path d="M3 10h18M16 15h2" />
+      <circle cx="12" cy="12" r="9" />
+      <path
+        strokeWidth="1.8"
+        d="M12 6.6v10.8M14.7 9.6c-.5-.8-1.5-1.3-2.7-1.3-1.6 0-2.8.8-2.8 1.9 0 2.5 5.6 1.2 5.6 3.8 0 1.1-1.2 1.9-2.8 1.9-1.2 0-2.2-.5-2.7-1.3"
+      />
     </svg>
   );
 }
@@ -344,10 +349,19 @@ export interface StoredCardInfo {
   expired: boolean;
 }
 
-/** The attach-time card lookup's lifecycle, held by SaleScreen. */
+/** The attached client's payment profile as /api/stored-card serves it,
+ *  with its fetch lifecycle. Held by SaleScreen, refetched after every
+ *  charge that may have moved money (a sale spends credit, so the number
+ *  beside the name goes stale the moment it completes). */
 interface CardLookup {
+  /** Who this lookup is FOR: a stale answer for the previous client must
+   *  never gate the current one's methods. */
+  clientId: string;
   loading: boolean;
   card: StoredCardInfo | null;
+  /** Account credit, as of this lookup. Null when Mindbody reports none
+   *  or the read failed. */
+  balance: number | null;
   error: string | null;
 }
 
@@ -393,13 +407,21 @@ function PaymentPanel(props: {
   pricing: boolean;
   client: SaleClient | null;
   cardLookup: CardLookup | null;
-  /** The attach-client control, rendered at the top of the column. */
-  attach: ReactNode;
   /** The receipt ticket, rendered between the method row and the charge
    *  button. SaleScreen still owns the cart and the pricing loop. */
   receipt: ReactNode;
   /** Clear the cart: the sale is recorded on Mindbody's side. */
   onSold: () => void;
+  /**
+   * A charge finished in a state that may have moved money, so everything
+   * this screen shows about the client (credit above all, and the roster
+   * underneath) is now a stale snapshot. Fired for a completed sale, for
+   * the credit-purchased split failure, and for an ambiguous outcome --
+   * never for a definite refusal or a suppressed write, where nothing
+   * changed. Re-reading is the honest move in all three: it is a read,
+   * and it cannot make a wrong number righter than the truth.
+   */
+  onClientDataStale: () => void;
   /** Mirrors the in-flight charge up to SaleScreen so ambient Escape
    *  cannot close the overlay while money is moving. */
   onBusyChange: (busy: boolean) => void;
@@ -419,9 +441,9 @@ function PaymentPanel(props: {
     pricing,
     client,
     cardLookup,
-    attach,
     receipt,
     onSold,
+    onClientDataStale,
     onBusyChange,
     onModalChange,
     cartResetNonce,
@@ -473,7 +495,14 @@ function PaymentPanel(props: {
   const [freshBalance, setFreshBalance] = useState<number | null>(null);
 
   const card = cardLookup?.card ?? null;
-  const balance = freshBalance ?? client?.balance ?? null;
+  /* Freshest first: a refusal's reported balance, then the profile lookup
+   * (refetched after every charge), then the attach snapshot the roster
+   * row supplied. Only lookups for THIS client count. */
+  const lookedUpBalance =
+    cardLookup && cardLookup.clientId === (client?.id ?? null)
+      ? cardLookup.balance
+      : null;
+  const balance = freshBalance ?? lookedUpBalance ?? client?.balance ?? null;
   /* The attach snapshot (or a split failure's fresher report) gates the
    * button; /api/checkout re-reads the balance server-side and never
    * trusts this number. */
@@ -777,6 +806,7 @@ function PaymentPanel(props: {
             ? "The server answered but the outcome could not be read."
             : `The server's answer (HTTP ${res.status}) carried no readable outcome.`,
         });
+        onClientDataStale();
       } else if (res.ok && body?.ok === true) {
         /* The paid summary names how it was paid; a split names BOTH
          * legs, amounts included, so the drawer count and the statement
@@ -797,6 +827,11 @@ function PaymentPanel(props: {
               ? "account credit"
               : String(method);
         onSold();
+        /* The sale stands, so every client number this screen holds is a
+         * pre-sale snapshot: drop the one learned from a refusal and let
+         * the refetch onClientDataStale triggers be the answer. */
+        setFreshBalance(null);
+        onClientDataStale();
         setResult({
           kind: "paid",
           summary: `Paid ${money(body?.total ?? total)} by ${methodName}${
@@ -827,6 +862,9 @@ function PaymentPanel(props: {
          * retry is spending the credit that now exists, never re-buying
          * it, so there is no retry affordance on the credit step. */
         setMethod(null);
+        /* The credit purchase went through: their balance really did
+         * change, whatever happened to the checkout after it. */
+        onClientDataStale();
         setResult({
           kind: "split",
           message:
@@ -843,6 +881,7 @@ function PaymentPanel(props: {
           kind: "ambiguous",
           message: String(body?.error ?? "The charge did not answer."),
         });
+        onClientDataStale();
       } else {
         setResult({
           kind: "error",
@@ -853,6 +892,7 @@ function PaymentPanel(props: {
       /* The request itself died between us and the server: the outcome
        * is UNKNOWN, and the one wrong move is to invite a retry. */
       setResult({ kind: "ambiguous", message: "" });
+      onClientDataStale();
     } finally {
       inFlight.current = false;
       setCharging(false);
@@ -1018,9 +1058,10 @@ function PaymentPanel(props: {
 
   return (
     <div className="sale-left">
-      {/* Who the sale is for; owned by SaleScreen, rendered up top so the
-          methods it gates sit right under it. */}
-      {attach}
+      {/* Who the sale is for lives in the screen header now (Pete, fourth
+          live test: it is identity, not a payment control, and the column
+          is the scarcer real estate). The method row it gates is first
+          here. */}
 
       {/* The method row, compact and ABOVE the receipt (second live
           test): three 64px segmented buttons, icon + label, no subtitle
@@ -2008,6 +2049,12 @@ export default function SaleScreen(props: {
   /** T30: called after a REAL contract purchase so page.tsx can drop the
    *  client's pass caches and refresh the roster, best-effort. */
   onContractPurchased?: (clientId: string) => void;
+  /** Called after a charge that may have moved money for the attached
+   *  client, so page.tsx can drop their pass caches and refresh the
+   *  roster: a sale spends credit and can add a pass, and the row behind
+   *  the overlay must not keep showing the pre-sale numbers (Pete, fourth
+   *  live test). Best-effort; the sale stands whatever happens here. */
+  onSaleCompleted?: (clientId: string) => void;
 }) {
   const {
     open,
@@ -2018,6 +2065,7 @@ export default function SaleScreen(props: {
     onDetachClient,
     modalAbove,
     onContractPurchased,
+    onSaleCompleted,
   } = props;
 
   const [catalog, setCatalog] = useState<CatalogState | null>(null);
@@ -2209,9 +2257,27 @@ export default function SaleScreen(props: {
     null,
   );
 
-  /** The attached client's card on file, fetched on attach via the
-   *  guarded /api/stored-card route. Null when nobody is attached. */
+  /** The attached client's card on file and account credit, fetched on
+   *  attach via the guarded /api/stored-card route. Null when nobody is
+   *  attached. */
   const [cardLookup, setCardLookup] = useState<CardLookup | null>(null);
+  /** Bumped whenever a charge may have changed what Mindbody holds for
+   *  this client (their credit above all): the lookup refetches, so the
+   *  balance beside their name is the one AFTER the sale. Pete's fourth
+   *  live test: a $5 credit spend left $40 on screen until the class was
+   *  switched and switched back. */
+  const [profileNonce, setProfileNonce] = useState(0);
+
+  /** A charge finished in a state that may have moved money: refetch this
+   *  client's profile (the balance chip and the method gates) and tell
+   *  page.tsx to refresh the roster row underneath. Both are reads, so
+   *  this is safe to fire on an ambiguous outcome too -- and that is
+   *  exactly when the truth matters most. */
+  const clientIdForStale = client?.id ?? null;
+  const onClientDataStale = useCallback(() => {
+    setProfileNonce((n) => n + 1);
+    if (clientIdForStale !== null) onSaleCompleted?.(clientIdForStale);
+  }, [clientIdForStale, onSaleCompleted]);
 
   /**
    * The keep-or-empty dialog over a client CHANGE with a held cart
@@ -2325,23 +2391,35 @@ export default function SaleScreen(props: {
    */
   const clientId = client?.id ?? null;
 
-  /** Card-on-file lookup on attach. The result only gates which method
-   *  cards light up; /api/checkout re-reads everything server-side. */
+  /** Card-on-file and account-credit lookup, on attach and again on every
+   *  bump of profileNonce (after a charge). The result gates which method
+   *  cards light up and what the header chip shows; /api/checkout re-reads
+   *  everything server-side and trusts none of it. */
   useEffect(() => {
     if (clientId === null) {
       setCardLookup(null);
       return;
     }
     let alive = true;
-    setCardLookup({ loading: true, card: null, error: null });
+    /* A REFETCH for the same client keeps the numbers it already has on
+     * screen while it runs: blanking them would flicker the method row and
+     * the balance chip to "loading" right after a sale. A client CHANGE
+     * blanks, because the previous client's card is not this one's. */
+    setCardLookup((prev) =>
+      prev && prev.clientId === clientId
+        ? { ...prev, loading: true, error: null }
+        : { clientId, loading: true, card: null, balance: null, error: null },
+    );
     fetch(`/api/stored-card?clientId=${encodeURIComponent(clientId)}`)
       .then(async (r) => {
         const body = await r.json();
         if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
         if (alive) {
           setCardLookup({
+            clientId,
             loading: false,
             card: body?.card ?? null,
+            balance: typeof body?.balance === "number" ? body.balance : null,
             error: null,
           });
         }
@@ -2349,8 +2427,10 @@ export default function SaleScreen(props: {
       .catch((e) => {
         if (alive) {
           setCardLookup({
+            clientId,
             loading: false,
             card: null,
+            balance: null,
             error: e instanceof Error ? e.message : String(e),
           });
         }
@@ -2358,7 +2438,7 @@ export default function SaleScreen(props: {
     return () => {
       alive = false;
     };
-  }, [clientId]);
+  }, [clientId, profileNonce]);
 
   useEffect(() => {
     const gen = ++priceGen.current;
@@ -2533,6 +2613,19 @@ export default function SaleScreen(props: {
   const totals = priced;
   const showSpinner = pricing;
 
+  /** The balance shown beside the attached name: the profile lookup's
+   *  number when it is this client's (it is refetched after every charge,
+   *  so it is post-sale), otherwise the snapshot the roster row attached
+   *  with. */
+  const attachedBalance =
+    client === null
+      ? null
+      : cardLookup !== null &&
+          cardLookup.clientId === client.id &&
+          cardLookup.balance !== null
+        ? cardLookup.balance
+        : client.balance;
+
   return (
     <div className="sale-overlay" role="dialog" aria-label="Buy">
       <div className="sale-shell">
@@ -2540,6 +2633,58 @@ export default function SaleScreen(props: {
 
         <div className="sale-top">
           <h2 className="sale-title">Buy</h2>
+
+          {/* Who the sale is for, beside the title (Pete, fourth live
+              test): identity belongs in the header, and the payment
+              column gets the real estate back. Anonymous is fine;
+              attaching enables stored card and account credit, and rides
+              price-cart. The balance shown is the freshest one known --
+              the profile lookup refetches after every charge, so a sale
+              that spends credit updates it in place. */}
+          {client ? (
+            <div className="sale-for attached">
+              <span className="sale-for-name">For: {client.name}</span>
+              {attachedBalance !== null && attachedBalance !== 0 ? (
+                <span
+                  className={attachedBalance < 0 ? "bal-chip neg" : "bal-chip"}
+                >
+                  {money(attachedBalance)}
+                </span>
+              ) : null}
+              <button
+                className="row-icon sale-for-clear"
+                aria-label={`Detach ${client.name} from this sale`}
+                title="Detach"
+                /* No client change while money is moving: mid-charge the
+                   switch is refused entirely, not queued behind the
+                   dialog. Same reason the Back button locks. */
+                disabled={charging}
+                onClick={onDetachClient}
+              >
+                <CloseIcon />
+              </button>
+            </div>
+          ) : (
+            /* A real button, not receipt text: the old dashed monospace
+               line was not recognizable as tappable in live testing,
+               which orphaned the whole attach flow (and with it stored
+               card and credit). Solid surface, icon, verb-first label. */
+            <button
+              className="sale-for"
+              /* Mid-charge, no client change; see the detach button. */
+              disabled={charging}
+              onClick={onRequestAttach}
+            >
+              <PlusIcon />
+              <span>
+                Attach a client
+                <span className="sale-for-hint">
+                  for stored card or account credit
+                </span>
+              </span>
+            </button>
+          )}
+
           {/* The deliberate Back works mid-pricing (the cart and its
               in-flight answer survive: the component stays mounted) but
               NOT mid-charge: closing would unmount the payment panel and
@@ -2574,56 +2719,7 @@ export default function SaleScreen(props: {
             onBusyChange={setCharging}
             onModalChange={setPayModalOpen}
             cartResetNonce={cartResetNonce}
-            attach={
-              /* Who the sale is for. Anonymous is fine; attaching
-                 enables stored card and account credit, and rides
-                 price-cart. */
-              client ? (
-              <div className="sale-for attached">
-                <span className="sale-for-name">For: {client.name}</span>
-                {client.balance !== null && client.balance !== 0 ? (
-                  <span
-                    className={
-                      client.balance < 0 ? "bal-chip neg" : "bal-chip"
-                    }
-                  >
-                    {money(client.balance)}
-                  </span>
-                ) : null}
-                <button
-                  className="row-icon sale-for-clear"
-                  aria-label={`Detach ${client.name} from this sale`}
-                  title="Detach"
-                  /* No client change while money is moving: mid-charge
-                     the switch is refused entirely, not queued behind
-                     the dialog. Same reason the Back button locks. */
-                  disabled={charging}
-                  onClick={onDetachClient}
-                >
-                  <CloseIcon />
-                </button>
-              </div>
-            ) : (
-              /* A real button, not receipt text: the old dashed monospace
-                 line was not recognizable as tappable in live testing,
-                 which orphaned the whole attach flow (and with it stored
-                 card and credit). Solid surface, icon, verb-first label. */
-              <button
-                className="sale-for"
-                /* Mid-charge, no client change; see the detach button. */
-                disabled={charging}
-                onClick={onRequestAttach}
-              >
-                <PlusIcon />
-                <span>
-                  Attach a client
-                  <span className="sale-for-hint">
-                    for stored card or account credit
-                  </span>
-                </span>
-              </button>
-              )
-            }
+            onClientDataStale={onClientDataStale}
             receipt={
               <div className="ticket">
             <h3>Sealevel Hot Yoga</h3>
@@ -2979,7 +3075,12 @@ export default function SaleScreen(props: {
           onClose={() => setContractDialog(null)}
           onRequestAttach={onRequestAttach}
           onBusyChange={setCharging}
-          onPurchased={(cid) => onContractPurchased?.(cid)}
+          onPurchased={(cid) => {
+            /* A contract's first payment can spend credit and always
+               changes what the client holds: same refresh as a sale. */
+            setProfileNonce((n) => n + 1);
+            onContractPurchased?.(cid);
+          }}
           modalAbove={modalAbove}
         />
       ) : null}

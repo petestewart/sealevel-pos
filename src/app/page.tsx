@@ -1560,6 +1560,27 @@ function FrontDesk() {
     [closeSearch],
   );
 
+  /**
+   * Best-effort refresh of everything the screen holds about one client
+   * after money moved for them (a sale, T30's contract purchase). Their
+   * pass caches are dropped so the next open refetches, and the roster
+   * refreshes: a sale spends account credit and can add a pass, and Pete's
+   * fourth live test caught a $5 credit spend leaving $40.00 on the row
+   * until the class was switched and switched back. The purchase already
+   * stands whatever happens here.
+   */
+  const refreshClientState = useCallback(
+    (cid: string) => {
+      passSweepCache.current.delete(cid);
+      setPassLists((l) => {
+        const { [cid]: _drop, ...rest } = l;
+        return rest;
+      });
+      if (activeId !== null) void refreshRoster(activeId);
+    },
+    [activeId, refreshRoster],
+  );
+
   /** Escape closes the search-results modal, unless a layer is stacked
    *  on top of it (the waiver gate, waitlist confirm, the info view, the
    *  pass picker): Escape peels the top layer, so an open pass picker
@@ -5293,18 +5314,8 @@ function FrontDesk() {
         onRequestAttach={openAttachSearch}
         onDetachClient={() => setSaleClient(null)}
         modalAbove={searchOpen || infoView !== null || waiverPrompt !== null}
-        onContractPurchased={(cid) => {
-          /* T30, best-effort: a membership can change what pays for a
-             visit, so the client's pass caches are dropped (the next
-             open refetches) and the roster refreshes. The purchase
-             already stands whatever happens here. */
-          passSweepCache.current.delete(cid);
-          setPassLists((l) => {
-            const { [cid]: _drop, ...rest } = l;
-            return rest;
-          });
-          if (activeId !== null) void refreshRoster(activeId);
-        }}
+        onContractPurchased={refreshClientState}
+        onSaleCompleted={refreshClientState}
       />
 
       <DevDrawer />

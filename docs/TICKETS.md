@@ -1661,6 +1661,45 @@ Shipped 2026-08-30. How the rules landed:
 - The build never connects: `next build` verified clean with no
   database listening.
 
+## T31. Buy screen round four (Pete's fourth live test, 2026-08-30)
+
+A real split sale went through in the sandbox ($5 account credit + $11.95
+cash for Alida Abbott, sale e02301bb...): T28's two-Payments call binds.
+Three things wrong with what stayed on screen afterwards.
+
+- [x] **The balance did not update after the sale.** Her $40.00 stayed
+      $40.00 on both the Buy header chip and the roster row until the class
+      was switched and switched back. Both were pre-sale snapshots that
+      nothing invalidated. Fixed in two places, both reads:
+      - The `/api/stored-card` lookup now carries `balance` and the client
+        id it is FOR, and refetches on a `profileNonce` bump. PaymentPanel
+        reads it after a refusal's reported balance and before the attach
+        snapshot, so the credit gate uses the freshest number known; a
+        completed sale drops the refusal-learned `freshBalance` so the
+        refetch is the answer. A refetch for the SAME client keeps its
+        numbers on screen while it runs (blanking flickers the method row
+        right after a charge); a client CHANGE blanks, because the other
+        client's card is not this one's.
+      - `onSaleCompleted` (new, alongside T30's `onContractPurchased`, both
+        now the one `refreshClientState` in page.tsx) drops the client's
+        pass caches and refreshes the roster, so the row behind the overlay
+        shows the post-sale balance and any pass the sale just added.
+      Fired on a completed sale, on the credit-purchased split failure, and
+      on BOTH ambiguous branches -- never on a definite refusal or a
+      suppressed write, where nothing moved. Re-reading after an ambiguous
+      outcome is the point: that is when the truth matters most. Contract
+      purchases bump the profile too (a first payment can spend credit).
+- [x] **The client moved to the header.** "For: NAME" plus the balance chip
+      (and the attach button when nobody is attached) now sits beside the
+      "Buy" title, taking the slack before Back; the payment column starts
+      at the method row. Pete's reasoning: it is identity, not a payment
+      control, and the column is the scarcer real estate. Same markup, same
+      64px target, same mid-charge lock on attach and detach.
+- [x] **The account-credit icon is a coin with a dollar sign**, not the old
+      rounded note: beside the stored-card button it read as a second
+      credit card. Pete asked for "dollar sign, money bag, or something
+      like that."
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are

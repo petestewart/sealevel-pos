@@ -1705,8 +1705,21 @@ button.pass-opt:disabled {
 
 .sale-title {
   margin: 0;
+  flex: 0 0 auto;
   font-size: 24px;
   font-weight: 700;
+}
+
+/* The attach control lives in the header, beside the title (Pete, fourth
+ * live test): identity, not a payment control, and the payment column
+ * keeps the room. It takes the slack between the title and Back rather
+ * than the full width it had atop the cart. */
+.sale-top .sale-for {
+  width: auto;
+  min-width: 0;
+  max-width: 460px;
+  margin: 0;
+  margin-right: auto;
 }
 
 /* Ticket left, shelf right; stacks on a narrow screen. */
