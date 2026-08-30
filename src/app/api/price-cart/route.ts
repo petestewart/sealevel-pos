@@ -68,6 +68,9 @@ export async function POST(request: Request) {
       grandTotal: null,
       expectedTotal: expectedTotal(parsed.items),
       disagrees: false,
+      /* Honest even here: a package's estimate is a component-sum guess
+       * (see sale.ts sellablePackages), so the UI can label it. */
+      packagePricing: parsed.items.some((l) => l.type === "Package"),
       usedPaymentStub: false,
     });
   }

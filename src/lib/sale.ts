@@ -71,12 +71,14 @@ export const STUDIO_TAX_RATE = 0.1035;
  */
 export const TAX_EXEMPT_SECONDARY_CATEGORY_ID = 100000;
 
-/** One sellable thing, product or pricing option, priced for the studio. */
+/** One sellable thing, product, pricing option or package, priced for the
+ *  studio. */
 export interface CatalogItem {
   /**
    * The id the cart's Item.Metadata refers to. For a retail product this is
    * the barcode `Id` (sale.yml:5816); for a pricing option it is
-   * `ProductId`, "the unique ID of this pricing option" (sale.yml:5226).
+   * `ProductId`, "the unique ID of this pricing option" (sale.yml:5226);
+   * for a package it is the package `Id` (sale.yml:5954).
    * The spec does not enumerate Metadata's keys (see priceCart), so which
    * id checkout wants is a Test-call question, and both ids are kept.
    */
@@ -101,8 +103,9 @@ export interface CatalogItem {
   secondaryCategoryId: number | null;
   /** True when this line must be asserted untaxed. */
   taxExempt: boolean;
-  /** The CheckoutItem discriminator this maps to (sale.yml:4971). */
-  type: "Product" | "Service";
+  /** The CheckoutItem discriminator this maps to (sale.yml:4971; the
+   *  enum there is Service, Product, Package, Tip). */
+  type: "Product" | "Service" | "Package";
   /** Services only: the pricing option's initial usage count
    *  (Service.Count, sale.yml:5239 "The initial count of usages
    *  available"). What lets T25's pay dialog default to a sensible
@@ -260,6 +263,89 @@ export async function pricingOptions(): Promise<CatalogItem[]> {
     });
 }
 
+/**
+ * T30: packages, via GET /sale/packages (sale.yml:506). "A package is
+ * typically used to combine multiple services and/or products into a
+ * single offering" (sale.yml:511). Packages ARE cart items -- the
+ * CheckoutItem Type enum includes `Package` (sale.yml:4971), and
+ * CheckoutItemWrapper.DiscountAmount is "ignored for packages"
+ * (sale.yml:3627), which only makes sense for something that rides the
+ * cart. NOTE for any future promo work: because of that line, a promo
+ * that discounts cart lines must SKIP package lines (promos are not
+ * built yet; recorded here so they are not built wrong).
+ *
+ * `request.locationId` (sale.yml:546: "the location ID to use to
+ * determine the tax", default **online store**) is passed as 1 so
+ * component pricing is the studio's; `request.sellOnline` is left at its
+ * default false (sale.yml:570), which returns ALL packages -- this is a
+ * staff counter, not the online store.
+ *
+ * The Package model (sale.yml:5950) carries NO price, tax rate or
+ * tax-included field of its own: only Id (5954), Name (5959),
+ * DiscountPercentage (5963), SellOnline (5969), Services (5974) and
+ * Products (5980). The shelf price here is therefore a LOCAL estimate --
+ * the sum of the component in-studio Prices with DiscountPercentage
+ * (read as 0-100) taken off -- and is display-only, like every shelf
+ * price. More importantly, a package may bundle taxed and untaxed
+ * components and the row exposes no usable per-package tax info, so our
+ * per-line tax assertion has no basis for a package line: priceCart
+ * EXCLUDES package-bearing carts from the strict `disagrees` assertion
+ * and reports `packagePricing: true` instead, which the UI renders as a
+ * quiet "priced by Mindbody" line. The server's total remains the only
+ * number charged, exactly as everywhere else.
+ */
+export async function sellablePackages(): Promise<CatalogItem[]> {
+  const body = await mindbody(
+    `/sale/packages?request.locationId=${STUDIO_LOCATION_ID}` +
+      `&request.limit=200`,
+  );
+  const seen = new Set<string | number>();
+  return (body?.Packages ?? [])
+    .map((p: any): CatalogItem | null => {
+      const id = num(p?.Id);
+      if (id === null) return null;
+      /* The local shelf estimate: component prices summed, the package's
+       * DiscountPercentage off. The percentage's scale is not stated in
+       * the spec (the example is "1.0"); 0-100 is the reading that
+       * matches Mindbody's own UI, clamped so a bad value cannot go
+       * negative. If the estimate is ever wrong the cart still shows the
+       * server's total (packagePricing carve-out above). */
+      const components = [
+        ...(Array.isArray(p?.Services) ? p.Services : []),
+        ...(Array.isArray(p?.Products) ? p.Products : []),
+      ];
+      const sum = components.reduce(
+        (n: number, c: any) => n + (num(c?.Price) ?? 0),
+        0,
+      );
+      const discountPct = Math.min(Math.max(num(p?.DiscountPercentage) ?? 0, 0), 100);
+      const price = roundToCents(sum * (1 - discountPct / 100));
+      /* Same rule as products: a $0 or negative package is unsellable
+       * config, not a free bundle. */
+      if (price <= 0) return null;
+      return {
+        id,
+        barcodeId: null,
+        productId: null,
+        name: str(p?.Name) ?? "Package",
+        price,
+        taxIncluded: null,
+        taxRate: null,
+        categoryId: null,
+        secondaryCategoryId: null,
+        taxExempt: false,
+        type: "Package",
+        count: null,
+      };
+    })
+    .filter((p: CatalogItem | null): p is CatalogItem => p !== null)
+    .filter((p: CatalogItem) => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
+}
+
 /** The most of one item a counter cart can hold. A teacher selling more
  *  than this of anything has mistyped, and an absurd quantity times a real
  *  price is exactly the number nobody should ever see on a Charge button. */
@@ -269,7 +355,7 @@ export const MAX_LINE_QUANTITY = 99;
  *  these from CatalogItems; price/taxExempt ride along ONLY to feed the
  *  local assertion and are never sent to Mindbody. */
 export interface CartLine {
-  type: "Product" | "Service";
+  type: "Product" | "Service" | "Package";
   /** Goes into Item.Metadata.Id; CatalogItem.id. */
   metadataId: string | number;
   quantity: number;
@@ -357,8 +443,21 @@ export interface PricedCart {
   grandTotal: number | null;
   /** Our local assertion, always computed. */
   expectedTotal: number;
-  /** totalsDisagree(expectedTotal, grandTotal); false while suppressed. */
+  /** totalsDisagree(expectedTotal, grandTotal); false while suppressed,
+   *  and false BY CONSTRUCTION for a package-bearing cart (see
+   *  packagePricing). */
   disagrees: boolean;
+  /**
+   * T30 carve-out: true when the cart held a Package line. The Package
+   * model (sale.yml:5950) exposes no price or tax fields for the package
+   * itself, and a package may bundle taxed and untaxed components, so
+   * our per-line tax assertion has no basis and `disagrees` is not
+   * computed for these carts. The UI renders the server's total as
+   * authoritative with a quiet "priced by Mindbody" line instead of the
+   * loud disagree block. Never widen this into a general tolerance:
+   * package-free carts keep the strict assertion unchanged.
+   */
+  packagePricing: boolean;
   /**
    * True when the Comp payment stub is what priced the cart. CONFIRMED
    * TRUE on the first live sandbox run (2026-08-30): Test-mode checkout
@@ -441,6 +540,15 @@ export async function priceCart(
 ): Promise<PricedCart> {
   assertCartLines(items, "priceCart");
   const expected = expectedTotal(items);
+  /* T30: a package line has no tax basis of its own (see PricedCart
+   * .packagePricing), so the strict assertion is skipped for the whole
+   * cart. NOTE for the sandbox probe: the Comp stub's Amount below is
+   * our local estimate, and for a package cart that estimate is the
+   * component-sum guess -- if Test-mode checkout enforces
+   * payments-equal-total, a wrong guess fails the pricing call loudly
+   * instead of returning a total. The first sandbox package pricing
+   * tells us whether that rule bites; it is on the T30 probe list. */
+  const packagePricing = items.some((line) => line.type === "Package");
   const baseBody: Record<string, unknown> = {
     Items: cartItemsPayload(items),
     ...(clientId ? { ClientId: clientId } : {}),
@@ -513,6 +621,7 @@ export async function priceCart(
       grandTotal: null,
       expectedTotal: expected,
       disagrees: false,
+      packagePricing,
       usedPaymentStub,
     };
   }
@@ -533,7 +642,11 @@ export async function priceCart(
     taxTotal: num(cart?.TaxTotal),
     grandTotal,
     expectedTotal: expected,
-    disagrees: totalsDisagree(expected, grandTotal),
+    /* The T30 carve-out: a package-bearing cart is excluded from the
+     * strict assertion (no tax basis for a package line); every other
+     * cart keeps it verbatim. */
+    disagrees: packagePricing ? false : totalsDisagree(expected, grandTotal),
+    packagePricing,
     usedPaymentStub,
   };
 }
@@ -872,7 +985,7 @@ export function parseCartLines(
       };
     }
     if (
-      (type !== "Product" && type !== "Service") ||
+      (type !== "Product" && type !== "Service" && type !== "Package") ||
       (typeof metadataId !== "string" && typeof metadataId !== "number") ||
       !Number.isInteger(quantity) ||
       quantity < 1 ||
@@ -884,7 +997,7 @@ export function parseCartLines(
       return {
         items: null,
         error:
-          "each item needs type (Product|Service), metadataId, " +
+          "each item needs type (Product|Service|Package), metadataId, " +
           `quantity (integer, 1 to ${MAX_LINE_QUANTITY}) and ` +
           "price (non-negative number)",
       };
@@ -899,4 +1012,267 @@ export function parseCartLines(
     });
   }
   return { items, error: null };
+}
+
+/* =====================================================================
+ * T30: contracts (autopay memberships). A contract is NOT a cart item:
+ * it sells through its own endpoint, POST /sale/purchasecontract
+ * (sale.yml:1859), against the list GET /sale/contracts returns
+ * (sale.yml:142). Everything here rides mindbody(), so dry run and the
+ * write guard intercept the purchase exactly as they do a checkout, and
+ * suppression is reported, never dressed as success.
+ * =================================================================== */
+
+/** AutopaySchedule (sale.yml:4757): how often the autopay runs. Null on
+ *  a contract whose AutopayTriggerType is PricingOptionRunsOutOrExpires
+ *  (sale.yml:5488). */
+export interface AutopayScheduleInfo {
+  /** SetNumberOfAutopays | MonthToMonth (sale.yml:4761). */
+  frequencyType: string | null;
+  /** Interval count; null when MonthToMonth (sale.yml:4766). */
+  frequencyValue: number | null;
+  /** Weekly | Monthly | Yearly; null when MonthToMonth (sale.yml:4771). */
+  frequencyTimeUnit: string | null;
+}
+
+/**
+ * One sellable contract, from the Contract model (sale.yml:5445), mapped
+ * to what the counter's membership dialog needs. The three payment
+ * figures are Mindbody's own precomputed totals -- first payment
+ * (FirstPaymentAmountTotal, sale.yml:5577), the ongoing charge
+ * (RecurringPaymentAmountTotal, sale.yml:5592), and the lifespan total
+ * (TotalContractAmountTotal, sale.yml:5607) -- so no local tax math is
+ * ever needed for a contract; the Test rehearsal still re-asks the
+ * server before any real purchase.
+ */
+export interface ContractSummary {
+  /** Contract.Id (sale.yml:5449). */
+  id: number;
+  name: string;
+  description: string | null;
+  /** What the client pays when signing up today (sale.yml:5577). */
+  firstPaymentTotal: number | null;
+  /** The ongoing charge per autopay run (sale.yml:5592). */
+  recurringPaymentTotal: number | null;
+  /** The lifespan total, when Mindbody computes one (sale.yml:5607). */
+  totalContractTotal: number | null;
+  /** DepositAmount (sale.yml:5516), when the contract demands one. */
+  depositAmount: number | null;
+  /** AutopayEnabled (sale.yml:5563): whether this contract establishes
+   *  an autopay at all. */
+  autopayEnabled: boolean;
+  autopaySchedule: AutopayScheduleInfo | null;
+  /** How many times the autopay runs; null when MonthToMonth
+   *  (sale.yml:5489). */
+  numberOfAutopays: number | null;
+  /** OnSetSchedule | PricingOptionRunsOutOrExpires (sale.yml:5494). */
+  autopayTriggerType: string | null;
+  /** ContractExpires | ContractAutomaticallyRenews (sale.yml:5498). */
+  actionUponCompletionOfAutopays: string | null;
+  /** When clients are charged: OnSaleDate, FirstOfTheMonth, ...,
+   *  SpecificDate (sale.yml:5502). */
+  clientsChargedOn: string | null;
+  /** The date when clientsChargedOn is SpecificDate (sale.yml:5506). */
+  clientsChargedOnSpecificDate: string | null;
+  /** Business-defined terms and conditions (sale.yml:5555). */
+  agreementTerms: string | null;
+  /** SoldOnline (sale.yml:5471): false means staff-only, which is fine
+   *  here -- this IS a staff counter. Kept for display/debug only. */
+  soldOnline: boolean;
+}
+
+/**
+ * The contracts sellable at the studio: GET /sale/contracts
+ * (sale.yml:142) with the REQUIRED `request.locationId` (sale.yml:157,
+ * "The ID of the location that has the requested contracts and AutoPay
+ * options") as the studio's 1. `request.soldOnline` is left at its
+ * default false (sale.yml:214), which returns ALL contracts -- staff-only
+ * ones included, correct for a counter. The endpoint also takes
+ * `request.promoCode` (sale.yml:206) and `request.uniqueClientId`
+ * (sale.yml:222); neither is used yet (promos are their own future
+ * ticket) and both are recorded here so the next reader does not re-dig.
+ *
+ * Filtered like the rest of the shelf: a contract that charges nothing
+ * (no first payment AND no recurring amount) is unsellable config, and
+ * LocationPurchaseRestrictionIds (sale.yml:5540, "If there are no
+ * restrictions, this value is null") must be absent or include the
+ * studio.
+ */
+export async function contractsFor(): Promise<ContractSummary[]> {
+  const body = await mindbody(
+    `/sale/contracts?request.locationId=${STUDIO_LOCATION_ID}` +
+      `&request.limit=100`,
+  );
+  const seen = new Set<number>();
+  return (body?.Contracts ?? [])
+    .filter((c: any) => {
+      const restrict: unknown = c?.LocationPurchaseRestrictionIds;
+      return (
+        !Array.isArray(restrict) ||
+        restrict.length === 0 ||
+        restrict.includes(STUDIO_LOCATION_ID)
+      );
+    })
+    .map((c: any): ContractSummary | null => {
+      const id = num(c?.Id);
+      if (id === null) return null;
+      const firstPaymentTotal = num(c?.FirstPaymentAmountTotal);
+      const recurringPaymentTotal = num(c?.RecurringPaymentAmountTotal);
+      if ((firstPaymentTotal ?? 0) <= 0 && (recurringPaymentTotal ?? 0) <= 0) {
+        return null;
+      }
+      const sched = c?.AutopaySchedule;
+      return {
+        id,
+        name: str(c?.Name) ?? "Membership",
+        description: str(c?.Description),
+        firstPaymentTotal,
+        recurringPaymentTotal,
+        totalContractTotal: num(c?.TotalContractAmountTotal),
+        depositAmount: num(c?.DepositAmount),
+        autopayEnabled: c?.AutopayEnabled === true,
+        autopaySchedule: sched
+          ? {
+              frequencyType: str(sched?.FrequencyType),
+              frequencyValue: num(sched?.FrequencyValue),
+              frequencyTimeUnit: str(sched?.FrequencyTimeUnit),
+            }
+          : null,
+        numberOfAutopays: num(c?.NumberOfAutopays),
+        autopayTriggerType: str(c?.AutopayTriggerType),
+        actionUponCompletionOfAutopays: str(c?.ActionUponCompletionOfAutopays),
+        clientsChargedOn: str(c?.ClientsChargedOn),
+        clientsChargedOnSpecificDate: str(c?.ClientsChargedOnSpecificDate),
+        agreementTerms: str(c?.AgreementTerms),
+        soldOnline: c?.SoldOnline === true,
+      };
+    })
+    .filter((c: ContractSummary | null): c is ContractSummary => c !== null)
+    .filter((c: ContractSummary) => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+}
+
+/** Outcome of a contract purchase (or its Test rehearsal); the same
+ *  suppression posture as every money write here. */
+export interface ContractPurchaseOutcome {
+  suppressed: "dry-run" | "write-guard" | null;
+  /** Whether this outcome came from a Test: true call. */
+  test: boolean;
+  /** PurchaseContractResponse.ClientContractId (sale.yml:3188), "the ID
+   *  of the specific contract being purchased by this specific client".
+   *  Null on Test and on suppression. */
+  clientContractId: number | null;
+  /** PurchaseContractResponseTotals (sale.yml:2805): Total (2809),
+   *  SubTotal (2814), Discount (2819), Tax (2824). This is the FIRST
+   *  payment's pricing -- what the card is charged today. */
+  totals: {
+    total: number | null;
+    subTotal: number | null;
+    discount: number | null;
+    tax: number | null;
+  } | null;
+}
+
+/**
+ * POST /sale/purchasecontract (sale.yml:1859), the membership sale.
+ *
+ * Request per PurchaseContractRequest (sale.yml:6210), which declares NO
+ * `required:` list at all -- every requirement below is description-level
+ * and recorded here because the T30 dialog depends on the exact reading:
+ *
+ * - ContractId (6214), LocationId (6224, "used for AutoPays"): sent.
+ * - ClientId (6229) or UniqueClientId (6233): one is REQUIRED per the
+ *   UniqueClientId note; ClientId is what this codebase holds. A
+ *   contract NEVER rides the house client: an autopay bound to the
+ *   walk-in account is a standing charge against nobody, so the route
+ *   refuses an unattached purchase outright.
+ * - Test (6219): supported, "validates input information, but does not
+ *   commit it" -- so the dialog rehearses first and shows the server's
+ *   first-payment total, same posture as the cart.
+ * - StartDate (6238): "Default: today's date". Deliberately OMITTED so
+ *   Mindbody's own today (the site's timezone, not this server's UTC
+ *   clock) is the start; the counter sells memberships that start now.
+ * - FirstPaymentOccurs (6242): "Instant" or "StartDate". Sent as
+ *   Instant: the counter charges today, on the spot. (The endpoint
+ *   description at 1866 confirms the semantics: Instant pays now,
+ *   StartDate defers the payment to the start date.)
+ * - Payment: exactly one of CreditCardInfo (6261, "only required if
+ *   StoredCardInfo is not passed and both UseDirectDebit and
+ *   UseAccountCredit are false"), StoredCardInfo (6264, the mirror
+ *   wording), UseDirectDebit (6275), UseAccountCredit (6279). The
+ *   counter sends StoredCardInfo, whose whole model is `{ LastFour }`
+ *   (sale.yml:5189-5196) -- there is NO CardId; the card on file is
+ *   addressed by its last four, exactly like a StoredCard cart payment.
+ *   No card on file means no counter membership sale, surfaced honestly.
+ * - ClientSignature (6246): OPTIONAL (no required list, and the
+ *   description only says what happens when it IS sent: a Base64 PNG
+ *   filed to the client's documents). Deliberately not collected: the
+ *   counter flow does not put a signature pad between a teacher and a
+ *   queue unless Mindbody demands one. If a site setting ever makes the
+ *   API refuse without it, that refusal renders verbatim and the pad
+ *   becomes a real ticket. Recorded on T30.
+ * - SendNotifications (6267, default true): sent as true, deliberately
+ *   unlike the cart's SendEmail: false -- a recurring agreement is
+ *   something the client should have in their inbox.
+ * - PromotionCode/PromotionCodes (6251/6255), SalesRepId (6270),
+ *   ConsumerPresent (6283)/PaymentAuthenticationCallbackUrl (6287, SCA),
+ *   ProrateDate (6291): none sent; recorded so nobody re-digs.
+ */
+export async function purchaseContract(opts: {
+  contractId: number;
+  clientId: string;
+  lastFour: string;
+  test: boolean;
+}): Promise<ContractPurchaseOutcome> {
+  const { contractId, clientId, lastFour, test } = opts;
+  if (!Number.isInteger(contractId)) {
+    throw new Error("purchaseContract needs an integer contract id.");
+  }
+  if (!clientId) throw new Error("purchaseContract needs a client id.");
+  if (!lastFour) {
+    throw new Error(
+      "purchaseContract needs the stored card's last four digits.",
+    );
+  }
+  const res = await mindbody("/sale/purchasecontract", {
+    method: "POST",
+    body: {
+      ContractId: contractId,
+      ClientId: clientId,
+      Test: test,
+      LocationId: STUDIO_LOCATION_ID,
+      FirstPaymentOccurs: "Instant",
+      StoredCardInfo: { LastFour: lastFour },
+      SendNotifications: true,
+    },
+    clientId,
+  });
+  if (res?.DryRun === true) {
+    return { suppressed: "dry-run", test, clientContractId: null, totals: null };
+  }
+  if (res?.WriteSuppressed === true) {
+    return {
+      suppressed: "write-guard",
+      test,
+      clientContractId: null,
+      totals: null,
+    };
+  }
+  const totals = res?.Totals
+    ? {
+        total: num(res.Totals?.Total),
+        subTotal: num(res.Totals?.SubTotal),
+        discount: num(res.Totals?.Discount),
+        tax: num(res.Totals?.Tax),
+      }
+    : null;
+  return {
+    suppressed: null,
+    test,
+    clientContractId: num(res?.ClientContractId),
+    totals,
+  };
 }

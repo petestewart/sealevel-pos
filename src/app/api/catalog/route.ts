@@ -5,7 +5,14 @@ import { requireSession } from "@/lib/auth";
 import { counterBundles } from "@/lib/bundles";
 import { counterCategories } from "@/lib/categories";
 import { target } from "@/lib/mindbody";
-import { catalogFor, pricingOptions, type CatalogItem } from "@/lib/sale";
+import {
+  catalogFor,
+  contractsFor,
+  pricingOptions,
+  sellablePackages,
+  type CatalogItem,
+  type ContractSummary,
+} from "@/lib/sale";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +39,11 @@ interface CatalogPayload {
   bundles: typeof counterBundles;
   products: CatalogItem[];
   passes: CatalogItem[];
+  /** T30: packages ride the same shelf/cart machinery as products. */
+  packages: CatalogItem[];
+  /** T30: contracts are NOT cart items; they feed the Memberships chip
+   *  and its dedicated purchase dialog. */
+  contracts: ContractSummary[];
 }
 
 /** Keyed by MINDBODY_TARGET for the same reason the staff-token cache is
@@ -48,15 +60,19 @@ export async function GET(request: Request) {
   }
   try {
     const categoryIds = counterCategories.flatMap((c) => c.categoryIds);
-    const [products, passes] = await Promise.all([
+    const [products, passes, packages, contracts] = await Promise.all([
       catalogFor(categoryIds),
       pricingOptions(),
+      sellablePackages(),
+      contractsFor(),
     ]);
     const data: CatalogPayload = {
       categories: counterCategories,
       bundles: counterBundles,
       products,
       passes,
+      packages,
+      contracts,
     };
     cache = { key, at: Date.now(), data };
     return NextResponse.json({ ...data, cached: false });
