@@ -1191,6 +1191,38 @@ behind its scrim. Known cost, accepted: a switch-with-cart starts the
 debounced reprice before the dialog is answered, so a slow "Empty"
 decision can burn one Test-mode pricing call.
 
+## Findings and future tickets (2026-08-30, from Pete's questions)
+
+**The walk-in client already exists on site 471.** Pete's MB POS screenshot
+shows "WALK-IN WALK-IN" as the client on an anonymous sale: Mindbody's own
+POS uses the house-client pattern this app implements. So nobody creates
+anything; find that existing client's id (search "walk-in") and set
+POS_HOUSE_CLIENT_ID to it. Verify it carries no memberships/discounts.
+
+**Per-item discounts are documented: probe B1 is mostly answered.**
+`CheckoutItemWrapper.DiscountAmount` (sale.yml:3624, "The amount the item
+is discounted. This parameter is ignored for packages.") sits beside
+Quantity on every cart line. Consequences: PLAN 2.6's $21 upgrade needs
+no special SKU (a $28 drop-in with a $7 DiscountAmount); in-store promo
+discounts need no Mindbody promo-code configuration. One `Test: true`
+probe still owed before building on it: per-unit or per-line semantics
+under quantity > 1, whether a staff discount permission gates it (MB
+validates items before permissions, so only a Test success proves it),
+and that a negative line is refused.
+
+**Future ticket: in-store promo codes** (survey reward flow). Split:
+entitlement (who earned 10%) is OURS -- Mindbody has no per-client promo
+concept and no API to create or list codes -- naturally granted by
+ai-manager when a survey completes and stored where the waiver receipts
+land (the Phase 3 database, or an ai-manager endpoint; Pete's call).
+Execution is `DiscountAmount` per line (above), so the local
+expectedTotal models the discount exactly and the disagree assertion
+keeps working; `CheckoutShoppingCartRequest.PromotionCode` (5684) stays
+available only if a named promotion in MB reporting is ever wanted. POS
+surfacing: a reward chip on attach, one tap to apply, consumed in the
+entitlement store only on a real successful charge. Blocked on: the
+DiscountAmount probe, and the entitlement-store decision.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
