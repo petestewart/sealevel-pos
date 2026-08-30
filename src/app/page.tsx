@@ -954,6 +954,49 @@ function FrontDesk() {
    *  booking-only furniture (full-class notice, pass picker, roster
    *  de-duplication) steps aside. */
   const [attachMode, setAttachMode] = useState(false);
+  /**
+   * Attach-mode furniture ONLY, all of it (T27 round three, Pete's third
+   * live test): the person a sale is for is usually standing in a class
+   * that is already on screen, so the attach modal offers the roster
+   * BEFORE the search -- an "In class" quick-pick of tappable rows, with
+   * a class dropdown above it for a student signed up for a DIFFERENT
+   * class today. The booking-mode search modal renders none of this.
+   *
+   * `attachClassId` is whose roster the quick-pick shows; it starts as
+   * the selected class, whose roster is already in memory (zero calls).
+   */
+  const [attachClassId, setAttachClassId] = useState<number | null>(null);
+  /** Whether the quick-pick's class dropdown menu is open. Pure UI. */
+  const [attachClassMenuOpen, setAttachClassMenuOpen] = useState(false);
+  /** The whole teaching day's classes, for the dropdown: fetched lazily
+   *  on the modal's first open of the day (ONE metered call, the
+   *  around-now window is too narrow), then served from the per-day
+   *  session cache below. */
+  const [dayClasses, setDayClasses] = useState<{
+    list: ClassSummary[] | null;
+    loading: boolean;
+    error: string | null;
+  }>({ list: null, loading: false, error: null });
+  /** Session cache for the day-classes call, keyed by the anchor's local
+   *  date so a counter left open overnight refetches for the new day. */
+  const dayClassesCache = useRef<{
+    key: string;
+    list: ClassSummary[];
+  } | null>(null);
+  /** Rosters fetched for the quick-pick when a NON-selected class is
+   *  picked, cached per classId for the session (the selected class's
+   *  roster is `entries`, used directly, zero calls). */
+  const attachRosterCache = useRef(new Map<number, RosterEntry[]>());
+  const [attachRoster, setAttachRoster] = useState<{
+    entries: RosterEntry[] | null;
+    loading: boolean;
+    error: string | null;
+  }>({ entries: null, loading: false, error: null });
+  /** Which class the quick-pick is showing, readable at fetch-response
+   *  time: a roster landing after the teacher picked another class must
+   *  be dropped, not rendered. Same pattern as activeIdRef. */
+  const attachClassIdRef = useRef<number | null>(null);
+  attachClassIdRef.current = attachClassId;
   /** The class currently on screen, readable from inside an async fetch:
    *  a waitlist response that comes back after the teacher has switched
    *  classes must be dropped, not written into state under the new class. */
@@ -1360,12 +1403,16 @@ function FrontDesk() {
     setQuery("");
     setFound([]);
     setAttachMode(false);
+    setAttachClassMenuOpen(false);
   }, []);
 
   /** Open the search modal as the sale's attach picker (T23): no query
    *  yet, so the modal renders its own copy of the search bar, wired to
    *  the SAME query state and submitSearch, and the one metered call
-   *  still fires on submit only. */
+   *  still fires on submit only. Since T27 round three the modal leads
+   *  with the "In class" quick-pick, so opening also points it at the
+   *  selected class (roster already in memory) and lazily fetches the
+   *  day's classes for its dropdown, once per day per session. */
   const openAttachSearch = useCallback(() => {
     setAttachMode(true);
     setSearchMsg(null);
@@ -1374,13 +1421,79 @@ function FrontDesk() {
     setFound([]);
     setQuery("");
     setSearchOpen(true);
+    setAttachClassMenuOpen(false);
+    setAttachClassId(activeIdRef.current);
+    setAttachRoster({ entries: null, loading: false, error: null });
+    /* The day window anchors on the SELECTED class's date (not the
+     * browser clock): the quick-pick is about the day that class sits
+     * in. Cached per local date, so reopening the modal all shift long
+     * costs nothing more. */
+    const anchor =
+      classes.find((c) => c.classId === activeIdRef.current)?.startsAt ||
+      new Date().toISOString();
+    const key = new Date(anchor).toDateString();
+    const cached = dayClassesCache.current;
+    if (cached && cached.key === key) {
+      setDayClasses({ list: cached.list, loading: false, error: null });
+      return;
+    }
+    setDayClasses({ list: null, loading: true, error: null });
+    fetch(`/api/roster?day=1&anchor=${encodeURIComponent(anchor)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error) throw new Error(String(d.error));
+        const list: ClassSummary[] = d.classes ?? [];
+        dayClassesCache.current = { key, list };
+        setDayClasses({ list, loading: false, error: null });
+      })
+      .catch((e) =>
+        setDayClasses({
+          list: null,
+          loading: false,
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      );
+  }, [classes]);
+
+  /** Point the quick-pick at another class. The selected class's roster
+   *  is on screen already (zero calls); any other class's is fetched
+   *  through the existing /api/roster route once and session-cached per
+   *  classId. */
+  const pickAttachClass = useCallback((classId: number) => {
+    setAttachClassMenuOpen(false);
+    setAttachClassId(classId);
+    if (classId === activeIdRef.current) return;
+    const cached = attachRosterCache.current.get(classId);
+    if (cached) {
+      setAttachRoster({ entries: cached, loading: false, error: null });
+      return;
+    }
+    setAttachRoster({ entries: null, loading: true, error: null });
+    fetch(`/api/roster?classId=${classId}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error) throw new Error(String(d.error));
+        const list: RosterEntry[] = d.entries ?? [];
+        attachRosterCache.current.set(classId, list);
+        if (attachClassIdRef.current !== classId) return;
+        setAttachRoster({ entries: list, loading: false, error: null });
+      })
+      .catch((e) => {
+        if (attachClassIdRef.current !== classId) return;
+        setAttachRoster({
+          entries: null,
+          loading: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      });
   }, []);
 
   /** The attach-mode row action: select the client for the sale and
    *  close. Writes nothing, books nothing, gates nothing -- buying a
-   *  bottle of water needs no waiver. */
+   *  bottle of water needs no waiver. Takes just id/name/balance so the
+   *  quick-pick's RosterEntry rows and the search results share it. */
   const attachSaleClient = useCallback(
-    (client: SearchResult) => {
+    (client: { id: string; name: string; balance: number | null }) => {
       setSaleClient({
         id: client.id,
         name: client.name,
@@ -1429,6 +1542,10 @@ function FrontDesk() {
       ) {
         if (walkinPicker) {
           setWalkinPicker(null);
+        } else if (attachClassMenuOpen) {
+          /* The quick-pick's class dropdown is a layer too: Escape peels
+           * it before closing the modal, same as the pass picker. */
+          setAttachClassMenuOpen(false);
         } else {
           closeSearch();
         }
@@ -1442,6 +1559,7 @@ function FrontDesk() {
     waiverPrompt,
     infoView,
     walkinPicker,
+    attachClassMenuOpen,
     closeSearch,
   ]);
 
@@ -3763,6 +3881,152 @@ function FrontDesk() {
                 ? "Attach a client to the sale"
                 : `Results for "${searchTitle}"`}
             </p>
+            {/* The "In class" quick-pick (T27 round three, attach mode
+                ONLY): the person a sale is for is usually on a roster
+                already on screen, so it renders IMMEDIATELY on open,
+                above the search. A class dropdown (the pass-dropdown
+                idiom) offers the rest of the day's classes -- fetched
+                once per day per session, see openAttachSearch -- and
+                picking one shows ITS roster (session-cached per class;
+                the selected class's roster is `entries`, zero calls).
+                Tapping a row attaches exactly like a search row does. */}
+            {attachMode
+              ? (() => {
+                  const menuClasses = dayClasses.list ?? classes;
+                  const picked =
+                    menuClasses.find((c) => c.classId === attachClassId) ??
+                    classes.find((c) => c.classId === attachClassId) ??
+                    null;
+                  const showingActive =
+                    attachClassId !== null && attachClassId === activeId;
+                  const quickEntries = showingActive
+                    ? entries
+                    : attachRoster.entries;
+                  return (
+                    <div className="attach-quick">
+                      <div className="attach-class">
+                        <span className="attach-quick-label">In class</span>
+                        <button
+                          className="class-change attach-class-btn"
+                          aria-haspopup="dialog"
+                          aria-expanded={attachClassMenuOpen}
+                          aria-label="Pick which class to show"
+                          onClick={() => setAttachClassMenuOpen((o) => !o)}
+                        >
+                          <span className="attach-class-name">
+                            {picked
+                              ? `${clockTime(picked.startsAt)} · ${picked.name}${
+                                  picked.teacher ? ` - ${picked.teacher}` : ""
+                                }`
+                              : "Pick a class"}
+                          </span>
+                          <ChevronDownIcon />
+                        </button>
+                        {attachClassMenuOpen ? (
+                          <>
+                            <div
+                              className="pass-scrim"
+                              role="presentation"
+                              onClick={() => setAttachClassMenuOpen(false)}
+                            />
+                            <div
+                              className="pass-dd attach-class-dd"
+                              role="dialog"
+                              aria-label="Classes today"
+                            >
+                              {dayClasses.loading ? (
+                                <p className="pass-empty">
+                                  <span
+                                    className="spinner"
+                                    aria-label="working"
+                                  />{" "}
+                                  Loading the day&apos;s classes...
+                                </p>
+                              ) : null}
+                              {dayClasses.error ? (
+                                /* Quiet: the around-now classes below
+                                   still work, the wider day just is not
+                                   available. */
+                                <p className="pass-empty">
+                                  Only the classes around now are
+                                  available: {dayClasses.error}
+                                </p>
+                              ) : null}
+                              {menuClasses.map((c) => {
+                                const current = c.classId === attachClassId;
+                                return (
+                                  <button
+                                    key={`ac-${c.classId}`}
+                                    className={
+                                      current ? "pass-opt current" : "pass-opt"
+                                    }
+                                    aria-pressed={current}
+                                    onClick={() => pickAttachClass(c.classId)}
+                                  >
+                                    <span className="pass-check">
+                                      {current ? <CheckIcon /> : null}
+                                    </span>
+                                    <span className="pass-opt-text">
+                                      <span className="pass-opt-name">
+                                        {clockTime(c.startsAt)} · {c.name}
+                                        {c.teacher ? ` - ${c.teacher}` : ""}
+                                      </span>
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                      {!showingActive && attachRoster.loading ? (
+                        <p className="muted">
+                          <span className="spinner" aria-label="working" />{" "}
+                          Loading the roster...
+                        </p>
+                      ) : !showingActive && attachRoster.error ? (
+                        <p className="muted">
+                          Roster unavailable: {attachRoster.error}
+                        </p>
+                      ) : quickEntries && quickEntries.length === 0 ? (
+                        <p className="muted">Nobody is booked yet.</p>
+                      ) : quickEntries ? (
+                        <ul className="roster attach-quick-list">
+                          {quickEntries.map((en) => (
+                            <li key={`aq-${en.clientId}`}>
+                              <button
+                                className="row"
+                                onClick={() =>
+                                  attachSaleClient({
+                                    id: en.clientId,
+                                    name: en.name,
+                                    balance: en.balance,
+                                  })
+                                }
+                                aria-label={`Attach ${en.name} to the sale`}
+                              >
+                                <span className="name">{en.name}</span>
+                                {en.balance !== null && en.balance !== 0 ? (
+                                  <span
+                                    className={
+                                      en.balance < 0
+                                        ? "bal-chip neg"
+                                        : "bal-chip"
+                                    }
+                                  >
+                                    {money(en.balance)}
+                                  </span>
+                                ) : null}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      <p className="attach-or">Or search everyone</p>
+                    </div>
+                  );
+                })()
+              : null}
             {/* Attach mode opens the modal BEFORE any search exists, so
                 the search bar renders here: the same query state, the
                 same submitSearch, the same one-call-on-submit rule as the

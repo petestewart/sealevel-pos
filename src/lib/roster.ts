@@ -103,6 +103,15 @@ export async function classesAroundNow(
 ): Promise<ClassSummary[]> {
   const start = new Date(now.getTime() - hoursBack * 60 * 60 * 1000);
   const end = new Date(now.getTime() + hoursForward * 60 * 60 * 1000);
+  return classesBetween(start, end);
+}
+
+/** One `/class/classes` window, mapped. Shared by the around-now window
+ *  and the whole-day one; always exactly one metered call. */
+async function classesBetween(
+  start: Date,
+  end: Date,
+): Promise<ClassSummary[]> {
   const body = await mindbody(
     `/class/classes?StartDateTime=${encodeURIComponent(start.toISOString())}` +
       `&EndDateTime=${encodeURIComponent(end.toISOString())}`,
@@ -117,6 +126,45 @@ export async function classesAroundNow(
       booked: c.TotalBooked ?? null,
     }),
   );
+}
+
+/**
+ * The studio's timezone. A constant in the same spirit as LocationId 1:
+ * there is one physical studio and it is in Seattle, so "the day" for
+ * schedule purposes is this timezone's day, not the server's (a container
+ * commonly runs on UTC, where a 6:20am class belongs to the previous
+ * UTC day's evening).
+ */
+const STUDIO_TZ = "America/Los_Angeles";
+
+/**
+ * Every class on the STUDIO-LOCAL day containing `anchor` (T27 round
+ * three: the attach quick-pick's class dropdown needs the whole teaching
+ * day, which the -2/+4h around-now window deliberately does not cover).
+ * One metered call, same as the around-now window; the caller is
+ * expected to cache per day.
+ *
+ * The bounds: take the anchor's wall-clock time in the studio's
+ * timezone and subtract it, landing on studio midnight, then add 24
+ * hours. On a DST-change day that midnight can be off by an hour at the
+ * edges, which for a 6am-9pm schedule cannot drop a class.
+ */
+export async function classesForDay(anchor: Date): Promise<ClassSummary[]> {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: STUDIO_TZ,
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(anchor);
+  const get = (type: string): number =>
+    Number(parts.find((p) => p.type === type)?.value ?? 0);
+  /* hour12: false can render midnight as "24" in some ICU versions. */
+  const msIntoDay =
+    (((get("hour") % 24) * 60 + get("minute")) * 60 + get("second")) * 1000;
+  const start = new Date(anchor.getTime() - msIntoDay);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return classesBetween(start, end);
 }
 
 /**

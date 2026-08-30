@@ -293,6 +293,12 @@ function PaymentPanel(props: {
   /** Mirrors the cash-tender modal up to SaleScreen so the Escape that
    *  closes the modal cannot also close the overlay. */
   onModalChange: (open: boolean) => void;
+  /** Bumped by SaleScreen when "Empty cart" is confirmed on a client
+   *  change (third live test): the cart is gone, so any armed method
+   *  goes with it. The clientId disarm below already cleared tender and
+   *  the client-bound methods; this catches cash/comp, which a client
+   *  change deliberately leaves armed when the cart is KEPT. */
+  cartResetNonce: number;
 }) {
   const {
     cart,
@@ -305,6 +311,7 @@ function PaymentPanel(props: {
     onSold,
     onBusyChange,
     onModalChange,
+    cartResetNonce,
   } = props;
 
   const [method, setMethod] = useState<PayMethod | null>(null);
@@ -375,6 +382,17 @@ function PaymentPanel(props: {
     setResult((r) => (r?.kind === "paid" ? null : r));
     setTendered("");
   }, [cart]);
+
+  /* "Empty cart" on the client-change dialog: the cart SaleScreen just
+   * cleared was what the armed method was for, so nothing stays armed.
+   * Tender is already gone via the clientId disarm above (a dialog only
+   * ever follows a client change); setting it again here is harmless and
+   * keeps this reset whole on its own. */
+  useEffect(() => {
+    if (cartResetNonce === 0) return;
+    setMethod(null);
+    setTendered("");
+  }, [cartResetNonce]);
 
   /* Rule 1: when credit covers the total, the card is not offered -- so a
    * stored-card selection made before the balance (or a fresh total) was
@@ -1017,6 +1035,78 @@ export default function SaleScreen(props: {
    *  guarded /api/stored-card route. Null when nobody is attached. */
   const [cardLookup, setCardLookup] = useState<CardLookup | null>(null);
 
+  /**
+   * The keep-or-empty dialog over a client CHANGE with a held cart
+   * (Pete's third live test: the cart silently surviving a switch was
+   * wrong). Non-null renders it; the switch itself has ALREADY happened
+   * by the time it opens -- the dialog only decides the cart's fate, so
+   * neither button can lose the new client. `toName` is who is now
+   * attached, or null for a detach.
+   */
+  const [cartPrompt, setCartPrompt] = useState<{
+    count: number;
+    toName: string | null;
+  } | null>(null);
+  /** Bumped when "Empty cart" is confirmed; PaymentPanel disarms any
+   *  armed method on it (see its cartResetNonce effect). */
+  const [cartResetNonce, setCartResetNonce] = useState(0);
+  /** The cart as of the latest render, readable inside the client-change
+   *  effect without making the cart a dependency (an edit must not
+   *  re-open the dialog). */
+  const cartRef = useRef<CartEntry[]>([]);
+  cartRef.current = cart;
+  /** Who was attached before the current render's client, for telling a
+   *  from-nobody attach apart from a real switch. */
+  const prevClientRef = useRef<SaleClient | null>(null);
+
+  /*
+   * Watch the attached client. THE RULE (Pete, third live test): any
+   * client CHANGE with a non-empty cart asks before the cart survives --
+   * EXCEPT attaching when nobody was attached, which keeps the cart
+   * silently: a cart built while anonymous was built for the person now
+   * being attached, and Pete's words were "when i change clients", which
+   * a first attach is not. Switching A to B, or detaching, opens the
+   * dialog; an empty cart never interrupts anything.
+   */
+  useEffect(() => {
+    const prev = prevClientRef.current;
+    prevClientRef.current = client;
+    if ((prev?.id ?? null) === (client?.id ?? null)) return;
+    /* From nobody: keep silently, per the rule above. */
+    if (prev === null) return;
+    const count = cartRef.current.reduce((n, l) => n + l.quantity, 0);
+    if (count === 0) return;
+    setCartPrompt({ count, toName: client?.name ?? null });
+  }, [client]);
+
+  /** Keep the items: the cart stands and reprices for the new client
+   *  through the ordinary pricing loop. Also the scrim/Escape outcome:
+   *  dismissal must not destroy anything. */
+  const keepCart = useCallback(() => setCartPrompt(null), []);
+
+  /** Start fresh: cart, tender and method all go (the primary action --
+   *  Pete asked for a new cart per client as the default). The client
+   *  switch already stands either way. */
+  const emptyCart = useCallback(() => {
+    setCart([]);
+    setPriced(null);
+    setPriceError(null);
+    setCartResetNonce((n) => n + 1);
+    setCartPrompt(null);
+  }, []);
+
+  /** Escape peels the cart dialog first (keeping the items: Escape is a
+   *  dismissal, and a dismissal must not empty a cart), before the
+   *  overlay's own Escape handling below. */
+  useEffect(() => {
+    if (!cartPrompt) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") keepCart();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cartPrompt, keepCart]);
+
   /** Fetch the shelf once per screen life; the route caches server-side
    *  for 10 minutes anyway. A failure renders with a retry button. */
   const loadCatalog = useCallback(() => {
@@ -1142,6 +1232,7 @@ export default function SaleScreen(props: {
         e.key === "Escape" &&
         !modalAbove &&
         !payModalOpen &&
+        !cartPrompt &&
         !pricing &&
         !charging
       ) {
@@ -1150,7 +1241,7 @@ export default function SaleScreen(props: {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, modalAbove, payModalOpen, pricing, charging, onClose]);
+  }, [open, modalAbove, payModalOpen, cartPrompt, pricing, charging, onClose]);
 
   const addItem = useCallback((item: ShelfItem) => {
     const key = `${item.type}-${item.id}`;
@@ -1248,6 +1339,7 @@ export default function SaleScreen(props: {
             onSold={() => setCart([])}
             onBusyChange={setCharging}
             onModalChange={setPayModalOpen}
+            cartResetNonce={cartResetNonce}
             attach={
               /* Who the sale is for. Anonymous is fine; attaching
                  enables stored card and account credit, and rides
@@ -1268,6 +1360,10 @@ export default function SaleScreen(props: {
                   className="row-icon sale-for-clear"
                   aria-label={`Detach ${client.name} from this sale`}
                   title="Detach"
+                  /* No client change while money is moving: mid-charge
+                     the switch is refused entirely, not queued behind
+                     the dialog. Same reason the Back button locks. */
+                  disabled={charging}
                   onClick={onDetachClient}
                 >
                   <CloseIcon />
@@ -1278,7 +1374,12 @@ export default function SaleScreen(props: {
                  line was not recognizable as tappable in live testing,
                  which orphaned the whole attach flow (and with it stored
                  card and credit). Solid surface, icon, verb-first label. */
-              <button className="sale-for" onClick={onRequestAttach}>
+              <button
+                className="sale-for"
+                /* Mid-charge, no client change; see the detach button. */
+                disabled={charging}
+                onClick={onRequestAttach}
+              >
                 <PlusIcon />
                 <span>
                   Attach a client
@@ -1492,6 +1593,40 @@ export default function SaleScreen(props: {
           </div>
         </div>
       </div>
+
+      {/* The keep-or-empty dialog (third live test). The client switch
+          already happened; this only decides the cart, so no path out of
+          here can lose the attach. Scrim and Escape KEEP the items (a
+          dismissal must not destroy a cart); "Empty cart" is the primary
+          button because a new cart per client is Pete's default. */}
+      {cartPrompt ? (
+        <div className="modal-scrim" role="presentation" onClick={keepCart}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Start a new cart?"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">Start a new cart?</p>
+            <p className="modal-note">
+              This cart has {cartPrompt.count}{" "}
+              {cartPrompt.count === 1 ? "item" : "items"}.{" "}
+              {cartPrompt.toName
+                ? `Keep them for ${cartPrompt.toName}?`
+                : "Keep them?"}
+            </p>
+            <div className="modal-actions">
+              <button className="modal-cancel" onClick={keepCart}>
+                Keep items
+              </button>
+              <button className="modal-confirm go" onClick={emptyCart}>
+                Empty cart
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

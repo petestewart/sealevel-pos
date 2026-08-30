@@ -2,13 +2,18 @@ import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
 
-import { classesAroundNow, classRoster } from "@/lib/roster";
+import { classesAroundNow, classesForDay, classRoster } from "@/lib/roster";
 
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/roster            -> classes around now
- * GET /api/roster?classId=1  -> that class plus its roster
+ * GET /api/roster                  -> classes around now
+ * GET /api/roster?classId=1        -> that class plus its roster
+ * GET /api/roster?day=1&anchor=ISO -> every class on the studio-local day
+ *                                     containing `anchor` (default now).
+ *                                     One metered call; the attach
+ *                                     quick-pick fetches it lazily and
+ *                                     caches per day (T27 round three).
  */
 export async function GET(request: Request) {
   const denied = requireSession(request);
@@ -20,6 +25,12 @@ export async function GET(request: Request) {
   try {
     if (classId) {
       return NextResponse.json(await classRoster(Number(classId)));
+    }
+    if (params.get("day") === "1") {
+      const raw = params.get("anchor");
+      const parsed = raw ? new Date(raw) : new Date();
+      const anchor = Number.isFinite(parsed.getTime()) ? parsed : new Date();
+      return NextResponse.json({ classes: await classesForDay(anchor) });
     }
     return NextResponse.json({
       classes: await classesAroundNow(new Date(), hoursBack, hoursForward),

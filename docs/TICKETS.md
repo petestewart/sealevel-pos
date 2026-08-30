@@ -1112,6 +1112,50 @@ nothing charges. A client-tampered taxRate can only skew expectedTotal
 -- the display estimate and the disagree assertion (a 409, no charge);
 the charged amount is always the server rehearsal's grandTotal.
 
+Round three (Pete's third live test, 2026-08-30), two changes:
+
+- [x] **The cart empties on a client change, with an explicit keep.**
+      The held cart silently surviving attach/switch/detach was wrong
+      (Pete). New rule, in SaleScreen: switching A to B, or detaching,
+      with a non-empty cart opens a small confirm ("Start a new cart?",
+      "This cart has N items. Keep them for NAME?" / "...Keep them?"),
+      quiet "Keep items" against primary "Empty cart" (the default Pete
+      asked for). The switch itself has ALREADY happened when the dialog
+      opens, so neither button (nor scrim/Escape, which keep: dismissal
+      must not destroy a cart) can lose the new client. Attaching from
+      NOBODY keeps the cart silently, recorded in the effect's comment:
+      an anonymous cart was built for the person now being attached, and
+      Pete's words were "when i change clients", which a first attach is
+      not. Empty clears cart, tender and method: the existing disarm
+      rules (tender + storedcard/credit on any clientId change) are
+      untouched, and a cartResetNonce prop lets PaymentPanel drop the
+      cash/comp arming those rules deliberately leave. Mid-charge a
+      client change is refused outright: the attach and detach controls
+      now disable while charging (the bag buttons and header Buy sit
+      under the full-screen overlay, so they were already unreachable).
+- [x] **The attach modal offers the roster before search.** Attach mode
+      only (booking-mode search is untouched): an "In class" quick-pick
+      renders immediately on open -- the selected class's roster as
+      tappable .row entries (name + balance chip, 64px+), attaching
+      through the SAME attachSaleClient handler as a search row (its
+      param narrowed to id/name/balance so RosterEntry maps in). Above
+      it, a class dropdown in the pass-dropdown idiom listing the WHOLE
+      teaching day, because the -2/+4h window cannot see tonight's
+      classes from the morning: new `classesForDay(anchor)` in roster.ts
+      computes studio-local midnight bounds (STUDIO_TZ constant,
+      America/Los_Angeles -- the server runs on UTC where a 6:20am class
+      belongs to the wrong day; DST edges noted, harmless for a 6am-9pm
+      schedule) and shares the one-call classesBetween helper; served by
+      `/api/roster?day=1&anchor=ISO` behind the route's existing
+      requireSession. Metered discipline: the day list is fetched
+      LAZILY on the modal's open, once per day per session (cached by
+      local date, keyed off the selected class's startsAt); picking
+      another class fetches its roster through the existing /api/roster
+      route, session-cached per classId; the selected class's roster is
+      `entries`, zero calls. A failed day fetch degrades quietly to the
+      around-now list; roster loading/errors are quiet lines. The search
+      bar stays unchanged beneath, led in by "Or search everyone".
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
