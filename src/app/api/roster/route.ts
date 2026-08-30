@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
 
-import { classesAroundNow, classesForDay, classRoster } from "@/lib/roster";
+import {
+  classesAroundNow,
+  classesForDay,
+  classRoster,
+  parseRosterAnchor,
+} from "@/lib/roster";
 
 export const dynamic = "force-dynamic";
 
@@ -27,9 +32,12 @@ export async function GET(request: Request) {
       return NextResponse.json(await classRoster(Number(classId)));
     }
     if (params.get("day") === "1") {
+      /* The anchor is usually a class's startsAt, which Mindbody serves
+       * as a NAIVE studio-local string: parseRosterAnchor reads it in
+       * STUDIO_TZ (a bare new Date() on a UTC container shifted any
+       * class before 7am into the previous studio day). */
       const raw = params.get("anchor");
-      const parsed = raw ? new Date(raw) : new Date();
-      const anchor = Number.isFinite(parsed.getTime()) ? parsed : new Date();
+      const anchor = (raw ? parseRosterAnchor(raw) : null) ?? new Date();
       return NextResponse.json({ classes: await classesForDay(anchor) });
     }
     return NextResponse.json({

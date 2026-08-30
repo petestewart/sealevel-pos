@@ -137,6 +137,59 @@ async function classesBetween(
  */
 const STUDIO_TZ = "America/Los_Angeles";
 
+/** Milliseconds the studio's wall clock is offset from UTC at `at`
+ *  (PDT: -25200000). Derived from Intl, the only timezone database a
+ *  container is guaranteed to carry; second precision, which is why the
+ *  anchor's own milliseconds are dropped before comparing. */
+function studioOffsetMs(at: Date): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: STUDIO_TZ,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(at);
+  const get = (type: string): number =>
+    Number(parts.find((p) => p.type === type)?.value ?? 0);
+  const wallAsUtc = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    /* hour12: false can render midnight as "24" in some ICU versions. */
+    get("hour") % 24,
+    get("minute"),
+    get("second"),
+  );
+  return wallAsUtc - (at.getTime() - (at.getTime() % 1000));
+}
+
+/**
+ * Parse a day-window anchor. Mindbody's datetimes (`startsAt` included)
+ * are NAIVE studio-local strings -- no offset, no Z -- and the one wrong
+ * reading is the default one: `new Date("...T06:20:00")` on a UTC
+ * container calls that 6:20am UTC, which is the previous studio EVENING,
+ * so the day dropdown anchored on a morning class fetched yesterday. A
+ * naive anchor is therefore read as STUDIO_TZ wall clock; one carrying
+ * an explicit offset or Z is an unambiguous instant and parses directly.
+ * Returns null when unparseable (the route falls back to now).
+ */
+export function parseRosterAnchor(raw: string): Date | null {
+  if (/(z|[+-]\d\d:?\d\d)$/i.test(raw)) {
+    const d = new Date(raw);
+    return Number.isFinite(d.getTime()) ? d : null;
+  }
+  const wall = Date.parse(`${raw}Z`);
+  if (!Number.isFinite(wall)) return null;
+  /* The wall time read as if UTC, minus the studio offset at roughly
+   * that instant, is the real instant; one refinement pass covers the
+   * hour around a DST edge. */
+  const guess = wall - studioOffsetMs(new Date(wall));
+  return new Date(wall - studioOffsetMs(new Date(guess)));
+}
+
 /**
  * Every class on the STUDIO-LOCAL day containing `anchor` (T27 round
  * three: the attach quick-pick's class dropdown needs the whole teaching

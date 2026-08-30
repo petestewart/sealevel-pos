@@ -1156,6 +1156,41 @@ Round three (Pete's third live test, 2026-08-30), two changes:
       around-now list; roster loading/errors are quiet lines. The search
       bar stays unchanged beneath, led in by "Or search everyone".
 
+Adversarial review of round three (2026-08-30), one real defect plus two
+race guards:
+
+- **A morning class's day dropdown fetched YESTERDAY.** Mindbody's
+  `startsAt` is a NAIVE studio-local string ("...T06:20:00", no offset;
+  the UI has always rendered it by identity), but the route parsed the
+  anchor with bare `new Date()`, which on a UTC container reads 6:20am
+  wall time as 6:20 UTC = the previous studio EVENING, so classesForDay
+  anchored on any class before 7am PT returned the wrong day. New
+  `parseRosterAnchor` in roster.ts reads a no-offset anchor as STUDIO_TZ
+  wall clock (Intl offset, one DST refinement pass; an explicit Z or
+  offset parses directly); verified against PDT, PST and both DST-edge
+  days. The client cache key had the mirror bug (`toDateString()` is
+  browser-local): now the naive startsAt's own date part, or for the
+  no-class fallback the studio-TZ date via Intl.
+- Reopening the modal before the day fetch landed fired a second
+  metered call (and a slow superseded day could render as the current
+  one): a day-key ref now dedupes the flight and drops stale answers.
+- Re-picking a class whose roster fetch was still in flight fired a
+  second metered call for the same classId: an in-flight set now skips
+  it (the first answer still renders through the attachClassIdRef
+  guard).
+
+Verified fine, deliberately unchanged: the cart dialog re-arms with
+fresh count/name on a second switch and cannot fire from the
+charge-success cart clear (effect keys on the client id, not the cart)
+or from closing the overlay (closing never detaches); scrim/Escape
+keep; Empty's cartResetNonce is consumed by PaymentPanel (cash/comp
+disarm) on top of the untouched clientId disarms; Keep reprices the
+kept cart for the new client through the [cart, clientId] pricing
+effect; attach/detach disable mid-charge and the dialog blocks Charge
+behind its scrim. Known cost, accepted: a switch-with-cart starts the
+debounced reprice before the dialog is answered, so a slow "Empty"
+decision can burn one Test-mode pricing call.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are

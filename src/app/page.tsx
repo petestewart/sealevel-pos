@@ -987,6 +987,14 @@ function FrontDesk() {
    *  picked, cached per classId for the session (the selected class's
    *  roster is `entries`, used directly, zero calls). */
   const attachRosterCache = useRef(new Map<number, RosterEntry[]>());
+  /** classIds with a quick-pick roster fetch already in flight: a
+   *  re-pick mid-flight must not fire a second metered call (the first
+   *  answer still lands, via the attachClassIdRef guard). */
+  const attachRosterFetching = useRef(new Set<number>());
+  /** The day key whose classes fetch is in flight: reopening the modal
+   *  before it lands must not fire a second metered call, and a slow
+   *  answer for a SUPERSEDED day must not render as the current one. */
+  const dayFetchKeyRef = useRef<string | null>(null);
   const [attachRoster, setAttachRoster] = useState<{
     entries: RosterEntry[] | null;
     loading: boolean;
@@ -1426,33 +1434,52 @@ function FrontDesk() {
     setAttachRoster({ entries: null, loading: false, error: null });
     /* The day window anchors on the SELECTED class's date (not the
      * browser clock): the quick-pick is about the day that class sits
-     * in. Cached per local date, so reopening the modal all shift long
-     * costs nothing more. */
-    const anchor =
-      classes.find((c) => c.classId === activeIdRef.current)?.startsAt ||
-      new Date().toISOString();
-    const key = new Date(anchor).toDateString();
+     * in. Cached per STUDIO-local date, so reopening the modal all shift
+     * long costs nothing more. startsAt is Mindbody's NAIVE studio-local
+     * string, so its own date part IS the studio date (a browser-local
+     * or UTC reading drifts a day at timezone boundaries: toDateString
+     * on a UTC-set iPad called a 5pm class tomorrow); with no class
+     * selected the anchor is "now", whose studio date comes from Intl,
+     * mirroring roster.ts's STUDIO_TZ. */
+    const startsAt =
+      classes.find((c) => c.classId === activeIdRef.current)?.startsAt ?? "";
+    const anchor = startsAt || new Date().toISOString();
+    const key = startsAt
+      ? startsAt.slice(0, 10)
+      : new Intl.DateTimeFormat("en-CA", {
+          timeZone: "America/Los_Angeles",
+        }).format(new Date());
     const cached = dayClassesCache.current;
     if (cached && cached.key === key) {
       setDayClasses({ list: cached.list, loading: false, error: null });
       return;
     }
     setDayClasses({ list: null, loading: true, error: null });
+    /* Already fetching this same day (the modal reopened before the
+     * answer landed): that flight's answer lands here, no second call. */
+    if (dayFetchKeyRef.current === key) return;
+    dayFetchKeyRef.current = key;
     fetch(`/api/roster?day=1&anchor=${encodeURIComponent(anchor)}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.error) throw new Error(String(d.error));
         const list: ClassSummary[] = d.classes ?? [];
         dayClassesCache.current = { key, list };
+        /* A newer day's fetch superseded this one (open overnight):
+         * cache it, but do not render it as the current day. */
+        if (dayFetchKeyRef.current !== key) return;
+        dayFetchKeyRef.current = null;
         setDayClasses({ list, loading: false, error: null });
       })
-      .catch((e) =>
+      .catch((e) => {
+        if (dayFetchKeyRef.current !== key) return;
+        dayFetchKeyRef.current = null;
         setDayClasses({
           list: null,
           loading: false,
           error: e instanceof Error ? e.message : String(e),
-        }),
-      );
+        });
+      });
   }, [classes]);
 
   /** Point the quick-pick at another class. The selected class's roster
@@ -1469,16 +1496,23 @@ function FrontDesk() {
       return;
     }
     setAttachRoster({ entries: null, loading: true, error: null });
+    /* A fetch for this class is already in flight (picked away and back
+     * before it landed): its answer still renders through the
+     * attachClassIdRef guard below, so no second metered call. */
+    if (attachRosterFetching.current.has(classId)) return;
+    attachRosterFetching.current.add(classId);
     fetch(`/api/roster?classId=${classId}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.error) throw new Error(String(d.error));
         const list: RosterEntry[] = d.entries ?? [];
         attachRosterCache.current.set(classId, list);
+        attachRosterFetching.current.delete(classId);
         if (attachClassIdRef.current !== classId) return;
         setAttachRoster({ entries: list, loading: false, error: null });
       })
       .catch((e) => {
+        attachRosterFetching.current.delete(classId);
         if (attachClassIdRef.current !== classId) return;
         setAttachRoster({
           entries: null,
