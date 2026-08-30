@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -78,10 +79,53 @@ interface ShelfCategory {
   categoryIds: number[];
 }
 
+/** Mirrors src/lib/bundles.ts CounterBundle, as /api/catalog serves it. */
+interface ShelfBundle {
+  name: string;
+  lines: { type: "Product" | "Service"; id: string | number; quantity: number }[];
+}
+
 interface CatalogState {
   categories: ShelfCategory[];
+  bundles: ShelfBundle[];
   products: ShelfItem[];
   passes: ShelfItem[];
+}
+
+/** A bundle every line of which resolved against the loaded catalog; only
+ *  these render. `total` is the local sum of line prices, shelf-display
+ *  only: the cart's real total still comes from /api/price-cart line by
+ *  line, exactly as if each item had been tapped individually. */
+interface ResolvedBundle {
+  name: string;
+  total: number;
+  items: { item: ShelfItem; quantity: number }[];
+}
+
+/**
+ * The pinned Favorites chip. Not a Mindbody category: its shelf is the
+ * per-device starred items plus the hardcoded bundles, both resolved
+ * against the already-loaded catalog, zero extra calls. The label cannot
+ * collide with categories.ts (labels there are hand-picked).
+ */
+const FAVORITES_LABEL = "Favorites";
+
+/** One starred type+id pair, as persisted. */
+interface FavPair {
+  type: "Product" | "Service";
+  id: string | number;
+}
+
+/** localStorage key, PER TARGET: sandbox stars must never render on the
+ *  studio's shelf (item ids differ per site, so at best they would miss;
+ *  at worst a sandbox id could collide with an unrelated prod item). */
+function favoritesKey(target: string): string {
+  return `pos.favorites.${target}`;
+}
+
+/** Same key shape the cart uses, so an item is one identity everywhere. */
+function itemKey(type: string, id: string | number): string {
+  return `${type}-${id}`;
 }
 
 /** One rung-up line. Keyed by type+id so re-tapping an item bumps its
@@ -166,6 +210,21 @@ function PlusIcon() {
         strokeWidth="2.4"
         strokeLinecap="round"
         d="M12 5v14M5 12h14"
+      />
+    </svg>
+  );
+}
+
+/** The favorite star. Outline at rest; the `.shelf-star.on` CSS fills it
+ *  with the warn/gold token. */
+function StarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+        d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8L12 3.6z"
       />
     </svg>
   );
@@ -1009,8 +1068,146 @@ export default function SaleScreen(props: {
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   /** The active category chip, by label (labels are unique in the
-   *  hardcoded list). Defaults to the first once the catalog lands. */
+   *  hardcoded list, and FAVORITES_LABEL sits outside it). Defaults once
+   *  the catalog lands: Favorites when it has anything to show, else the
+   *  first category (see the effect below). */
   const [activeCat, setActiveCat] = useState<string | null>(null);
+
+  /**
+   * The per-device stars, loaded from localStorage once the target is
+   * known (the key is per target; see favoritesKey). Held as the stored
+   * pairs so re-saving never mangles an id's string/number type; the Set
+   * of keys is derived. Storage failing (private mode, an iPad with site
+   * data blocked) degrades to an empty, non-persisting shelf, the same
+   * try/catch posture as settings.ts.
+   */
+  const [favorites, setFavorites] = useState<FavPair[]>([]);
+  const favKey = config ? favoritesKey(config.target) : null;
+
+  useEffect(() => {
+    if (favKey === null) return;
+    try {
+      const raw = window.localStorage.getItem(favKey);
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      setFavorites(
+        Array.isArray(parsed)
+          ? parsed.filter(
+              (p): p is FavPair =>
+                p !== null &&
+                typeof p === "object" &&
+                (p.type === "Product" || p.type === "Service") &&
+                (typeof p.id === "string" || typeof p.id === "number"),
+            )
+          : [],
+      );
+    } catch {
+      setFavorites([]);
+    }
+  }, [favKey]);
+
+  const favSet = useMemo(
+    () => new Set(favorites.map((f) => itemKey(f.type, f.id))),
+    [favorites],
+  );
+
+  const toggleFavorite = useCallback(
+    (item: ShelfItem) => {
+      setFavorites((prev) => {
+        const key = itemKey(item.type, item.id);
+        const next = prev.some((f) => itemKey(f.type, f.id) === key)
+          ? prev.filter((f) => itemKey(f.type, f.id) !== key)
+          : [...prev, { type: item.type, id: item.id }];
+        if (favKey !== null) {
+          try {
+            window.localStorage.setItem(favKey, JSON.stringify(next));
+          } catch {
+            /* Not persistable here; the star still works for this visit. */
+          }
+        }
+        return next;
+      });
+    },
+    [favKey],
+  );
+
+  /** Every sellable thing the catalog loaded, for star lookup and bundle
+   *  resolution. Products first, passes after, which is also the order
+   *  starred items render in. */
+  const allItems = useMemo<ShelfItem[]>(
+    () => (catalog ? [...catalog.products, ...catalog.passes] : []),
+    [catalog],
+  );
+
+  /** A starred pair whose item is missing from today's catalog simply
+   *  does not render; the star stays stored for when the item returns. */
+  const starredItems = useMemo(
+    () => allItems.filter((i) => favSet.has(itemKey(i.type, i.id))),
+    [allItems, favSet],
+  );
+
+  /** One console.warn per unresolvable bundle per catalog load. The dev
+   *  drawer is server-side and bundles never touch the server, so the
+   *  console line is the honest cheap signal. */
+  const warnedBundles = useRef(new Set<string>());
+  useEffect(() => {
+    warnedBundles.current = new Set();
+  }, [catalog]);
+
+  /** Bundles resolved against the loaded catalog. Any line that fails to
+   *  resolve (a per-site id from the other site, a retired item) drops
+   *  the WHOLE bundle: half a bundle rung up silently would be worse
+   *  than none. Ids compare as strings, since config may write a numeric
+   *  id where the catalog carries a string barcode or vice versa. */
+  const resolvedBundles = useMemo<ResolvedBundle[]>(() => {
+    if (!catalog) return [];
+    const out: ResolvedBundle[] = [];
+    for (const bundle of catalog.bundles) {
+      const items: ResolvedBundle["items"] = [];
+      let missing: ShelfBundle["lines"][number] | null = null;
+      for (const line of bundle.lines) {
+        const item = allItems.find(
+          (i) => i.type === line.type && String(i.id) === String(line.id),
+        );
+        if (!item) {
+          missing = line;
+          break;
+        }
+        items.push({ item, quantity: line.quantity });
+      }
+      if (missing === null && items.length > 0) {
+        out.push({
+          name: bundle.name,
+          total: items.reduce((n, l) => n + l.item.price * l.quantity, 0),
+          items,
+        });
+      } else if (missing !== null && !warnedBundles.current.has(bundle.name)) {
+        warnedBundles.current.add(bundle.name);
+        console.warn(
+          `[favorites] bundle "${bundle.name}" not rendered: ` +
+            `${missing.type} ${missing.id} is not in the loaded catalog ` +
+            `(bundle ids are per site; see src/lib/bundles.ts)`,
+        );
+      }
+    }
+    return out;
+  }, [catalog, allItems]);
+
+  const favoritesHasContent =
+    starredItems.length > 0 || resolvedBundles.length > 0;
+
+  /** The default chip, decided once per screen life when the catalog
+   *  lands: Favorites when it has anything to show, else the first
+   *  category. Later star changes never yank the selection around. */
+  useEffect(() => {
+    if (!catalog) return;
+    setActiveCat(
+      (cur) =>
+        cur ??
+        (favoritesHasContent
+          ? FAVORITES_LABEL
+          : (catalog.categories[0]?.label ?? null)),
+    );
+  }, [catalog, favoritesHasContent]);
 
   const [cart, setCart] = useState<CartEntry[]>([]);
   const [priced, setPriced] = useState<PricedResult | null>(null);
@@ -1116,13 +1313,14 @@ export default function SaleScreen(props: {
       .then(async (r) => {
         const body = await r.json();
         if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
-        const cats: ShelfCategory[] = body?.categories ?? [];
         setCatalog({
-          categories: cats,
+          categories: body?.categories ?? [],
+          bundles: body?.bundles ?? [],
           products: body?.products ?? [],
           passes: body?.passes ?? [],
         });
-        setActiveCat((cur) => cur ?? cats[0]?.label ?? null);
+        /* The default chip is picked by the effect above, which also
+           knows whether Favorites has anything to show. */
       })
       .catch((e) =>
         setCatalogError(e instanceof Error ? e.message : String(e)),
@@ -1258,6 +1456,34 @@ export default function SaleScreen(props: {
     });
   }, []);
 
+  /** One tap rings up every line of a bundle, bumping quantities exactly
+   *  like addItem does (same key, same MAX clamp), so a bundle is nothing
+   *  but a saved sequence of taps: the cart, the pricing loop and the
+   *  charge path never know bundles exist. */
+  const addBundle = useCallback((bundle: ResolvedBundle) => {
+    setCart((lines) => {
+      const next = [...lines];
+      for (const { item, quantity } of bundle.items) {
+        const key = `${item.type}-${item.id}`;
+        const idx = next.findIndex((l) => l.key === key);
+        const have = idx >= 0 ? next[idx] : undefined;
+        if (have) {
+          next[idx] = {
+            ...have,
+            quantity: Math.min(have.quantity + quantity, MAX_LINE_QUANTITY),
+          };
+        } else {
+          next.push({
+            key,
+            item,
+            quantity: Math.min(quantity, MAX_LINE_QUANTITY),
+          });
+        }
+      }
+      return next;
+    });
+  }, []);
+
   const bumpQuantity = useCallback((key: string, delta: number) => {
     setCart((lines) =>
       lines.map((l) =>
@@ -1280,10 +1506,14 @@ export default function SaleScreen(props: {
 
   if (!open) return null;
 
+  const onFavorites = activeCat === FAVORITES_LABEL;
   const category =
     catalog?.categories.find((c) => c.label === activeCat) ?? null;
-  const shelfItems: ShelfItem[] =
-    catalog === null || category === null
+  /** The Favorites shelf is starred items first (bundles render after the
+   *  grid maps these); a category shelf is what it always was. */
+  const shelfItems: ShelfItem[] = onFavorites
+    ? starredItems
+    : catalog === null || category === null
       ? []
       : category.categoryIds.length === 0
         ? catalog.passes
@@ -1292,6 +1522,8 @@ export default function SaleScreen(props: {
               p.categoryId !== null &&
               category.categoryIds.includes(p.categoryId),
           );
+  const shelfEmpty =
+    shelfItems.length === 0 && (!onFavorites || resolvedBundles.length === 0);
 
   /** What the totals area shows, in priority order: the amber suppression
    *  notice, the loud disagreement, a failed call, the spinner, or the
@@ -1551,6 +1783,18 @@ export default function SaleScreen(props: {
             ) : catalog ? (
               <>
                 <div className="sale-cats" role="tablist" aria-label="Categories">
+                  {/* Favorites pinned first: the per-device stars plus the
+                      hardcoded bundles, both pure reads over the loaded
+                      catalog. */}
+                  <button
+                    key={FAVORITES_LABEL}
+                    role="tab"
+                    aria-selected={onFavorites}
+                    className={onFavorites ? "cat-chip on" : "cat-chip"}
+                    onClick={() => setActiveCat(FAVORITES_LABEL)}
+                  >
+                    {FAVORITES_LABEL}
+                  </button>
                   {catalog.categories.map((c) => (
                     <button
                       key={c.label}
@@ -1566,26 +1810,74 @@ export default function SaleScreen(props: {
                   ))}
                 </div>
 
-                {shelfItems.length === 0 ? (
-                  <p className="muted">Nothing sellable in this category.</p>
+                {shelfEmpty ? (
+                  <p className="muted">
+                    {onFavorites
+                      ? "Star items on any shelf, and configure bundles in src/lib/bundles.ts."
+                      : "Nothing sellable in this category."}
+                  </p>
                 ) : (
                   <div className="shelf-grid">
-                    {shelfItems.map((item) => (
-                      <button
-                        key={`${item.type}-${item.id}`}
-                        className="shelf-item"
-                        onClick={() => addItem(item)}
-                        aria-label={`Add ${item.name}, ${money(item.price)}`}
-                      >
-                        <span className="shelf-name">{item.name}</span>
-                        <span className="shelf-price">
-                          {money(item.price)}
-                          {item.taxExempt ? (
-                            <span className="shelf-notax"> no tax</span>
-                          ) : null}
-                        </span>
-                      </button>
-                    ))}
+                    {shelfItems.map((item) => {
+                      const starred = favSet.has(itemKey(item.type, item.id));
+                      return (
+                        <div
+                          className="shelf-cell"
+                          key={`${item.type}-${item.id}`}
+                        >
+                          <button
+                            className="shelf-item"
+                            onClick={() => addItem(item)}
+                            aria-label={`Add ${item.name}, ${money(item.price)}`}
+                          >
+                            <span className="shelf-name">{item.name}</span>
+                            <span className="shelf-price">
+                              {money(item.price)}
+                              {item.taxExempt ? (
+                                <span className="shelf-notax"> no tax</span>
+                              ) : null}
+                            </span>
+                          </button>
+                          {/* Its own tap target beside (not inside) the add
+                              button: nested buttons are invalid HTML and
+                              double-fire. stopPropagation belt-and-braces. */}
+                          <button
+                            className={starred ? "shelf-star on" : "shelf-star"}
+                            aria-pressed={starred}
+                            aria-label={
+                              starred
+                                ? `Unstar ${item.name}`
+                                : `Star ${item.name} as a favorite`
+                            }
+                            title={starred ? "Unstar" : "Star"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFavorite(item);
+                            }}
+                          >
+                            <StarIcon />
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {/* Bundles, after the starred items. One card, one tap,
+                        every line into the cart. */}
+                    {onFavorites
+                      ? resolvedBundles.map((bundle) => (
+                          <button
+                            key={`bundle-${bundle.name}`}
+                            className="shelf-item shelf-bundle"
+                            onClick={() => addBundle(bundle)}
+                            aria-label={`Add the ${bundle.name} bundle, ${money(bundle.total)}, ${bundle.items.length} items`}
+                          >
+                            <span className="shelf-name">{bundle.name}</span>
+                            <span className="shelf-price">
+                              {money(bundle.total)}
+                              <span className="shelf-bundle-mark"> bundle</span>
+                            </span>
+                          </button>
+                        ))
+                      : null}
                   </div>
                 )}
               </>

@@ -2008,6 +2008,63 @@ button.sale-for:disabled {
   font-weight: 400;
 }
 
+/* A shelf item plus its star: the star is a SIBLING tap target (nested
+ * buttons are invalid HTML), absolutely placed in the card's corner, so
+ * the wrapper carries the grid cell and the relative context. */
+.shelf-cell {
+  position: relative;
+  display: grid;
+}
+
+/* Room for the star so a long name never runs under it. */
+.shelf-cell .shelf-item {
+  padding-right: 52px;
+}
+
+/* The star: quiet at rest, filled with the warn/gold pair when starred.
+ * 44px square hit area (the roster's 44px icon precedent, above the 40px
+ * floor), icon centered inside it. Both palettes come from the tokens. */
+.shelf-star {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+.shelf-star:active {
+  background: var(--action-bg);
+}
+
+.shelf-star.on {
+  color: var(--warn);
+  opacity: 1;
+}
+
+.shelf-star.on svg path {
+  fill: currentColor;
+}
+
+/* A bundle card on the Favorites shelf: dashed border says "several
+ * things in one tap" without inventing a new colour. */
+.shelf-bundle {
+  border-style: dashed;
+}
+
+.shelf-bundle-mark {
+  color: var(--muted);
+  font-weight: 400;
+}
+
 /* --- The payment seam (T24): live method cards, the cash keypad, the
  * charge button and the outcome panel. Card shape from the mockup,
  * every colour a token so both palettes hold. */

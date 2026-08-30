@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
 
+import { counterBundles } from "@/lib/bundles";
 import { counterCategories } from "@/lib/categories";
 import { target } from "@/lib/mindbody";
 import { catalogFor, pricingOptions, type CatalogItem } from "@/lib/sale";
@@ -25,6 +26,10 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 
 interface CatalogPayload {
   categories: typeof counterCategories;
+  /** Static config riding the same response the categories do: the client
+   *  resolves each bundle against the products/passes below at render, so
+   *  no extra call and no extra cache entry. */
+  bundles: typeof counterBundles;
   products: CatalogItem[];
   passes: CatalogItem[];
 }
@@ -49,6 +54,7 @@ export async function GET(request: Request) {
     ]);
     const data: CatalogPayload = {
       categories: counterCategories,
+      bundles: counterBundles,
       products,
       passes,
     };

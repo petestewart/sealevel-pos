@@ -1191,6 +1191,39 @@ behind its scrim. Known cost, accepted: a switch-with-cart starts the
 debounced reprice before the dialog is answered, so a slow "Empty"
 decision can burn one Test-mode pricing call.
 
+Addendum (2026-08-30): Favorites shelf (Pete). Mindbody's own POS has
+"Favorite Products" as the precedent; ours is a "Favorites" chip pinned
+FIRST in the category row, selected by default when it has anything to
+show (else the usual first category). Its shelf is starred items first,
+then bundles, all pure client/config concerns over the already-loaded
+catalog: zero new Mindbody calls.
+
+- [x] **Per-device stars.** Every shelf item card grew a corner star, its
+      own 44px sibling tap target (nested buttons are invalid HTML),
+      aria-pressed, quiet at rest and filled with the warn/gold token
+      pair when starred. Stored as type+id pairs in localStorage under
+      `pos.favorites.<target>` (target from the /api/config payload the
+      page already holds), so sandbox stars never render on prod's shelf:
+      item ids are PER SITE. Storage reads/writes are try/catch like
+      settings.ts. A starred item missing from today's catalog simply
+      does not render; the star stays stored.
+- [x] **Bundles as hardcoded config**, the categories.ts precedent: new
+      `src/lib/bundles.ts` exports `counterBundles` (empty by default,
+      worked commented example, per-site-ids warning in the doc comment),
+      served by /api/catalog alongside the categories. The Buy screen
+      resolves each bundle against the loaded catalog at render (ids
+      compared as strings): fully resolvable renders as ONE card (name,
+      computed line total, a small "bundle" marker, dashed border) whose
+      tap adds ALL lines to the cart through the same key/clamp logic as
+      addItem, so the cart, pricing loop and charge path never know
+      bundles exist. Any unresolvable line drops the whole bundle (half a
+      bundle rung up silently would be worse than none) and logs one
+      console.warn naming it -- the dev drawer is server-side and bundles
+      never touch the server, so the console line is the honest cheap
+      signal.
+- [x] Empty Favorites shelf says, muted: "Star items on any shelf, and
+      configure bundles in src/lib/bundles.ts."
+
 ## Findings and future tickets (2026-08-30, from Pete's questions)
 
 **The walk-in client already exists on site 471.** Pete's MB POS screenshot
