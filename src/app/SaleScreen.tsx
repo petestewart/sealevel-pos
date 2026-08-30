@@ -1154,37 +1154,49 @@ export default function SaleScreen(props: {
   }, [catalog]);
 
   /** Bundles resolved against the loaded catalog. Any line that fails to
-   *  resolve (a per-site id from the other site, a retired item) drops
-   *  the WHOLE bundle: half a bundle rung up silently would be worse
-   *  than none. Ids compare as strings, since config may write a numeric
+   *  resolve (a per-site id from the other site, a retired item, or a
+   *  quantity outside the server's 1..MAX_LINE_QUANTITY integers, which
+   *  would put a line in the cart that /api/price-cart refuses on every
+   *  call) drops the WHOLE bundle: half a bundle rung up silently would
+   *  be worse than none, and bad config should fail at render, not at
+   *  ring-up. Ids compare as strings, since config may write a numeric
    *  id where the catalog carries a string barcode or vice versa. */
   const resolvedBundles = useMemo<ResolvedBundle[]>(() => {
     if (!catalog) return [];
     const out: ResolvedBundle[] = [];
     for (const bundle of catalog.bundles) {
       const items: ResolvedBundle["items"] = [];
-      let missing: ShelfBundle["lines"][number] | null = null;
+      let bad: string | null = null;
       for (const line of bundle.lines) {
         const item = allItems.find(
           (i) => i.type === line.type && String(i.id) === String(line.id),
         );
         if (!item) {
-          missing = line;
+          bad = `${line.type} ${line.id} is not in the loaded catalog`;
+          break;
+        }
+        if (
+          !Number.isInteger(line.quantity) ||
+          line.quantity < 1 ||
+          line.quantity > MAX_LINE_QUANTITY
+        ) {
+          bad =
+            `${line.type} ${line.id} has quantity ${line.quantity} ` +
+            `(needs a whole 1 to ${MAX_LINE_QUANTITY})`;
           break;
         }
         items.push({ item, quantity: line.quantity });
       }
-      if (missing === null && items.length > 0) {
+      if (bad === null && items.length > 0) {
         out.push({
           name: bundle.name,
           total: items.reduce((n, l) => n + l.item.price * l.quantity, 0),
           items,
         });
-      } else if (missing !== null && !warnedBundles.current.has(bundle.name)) {
+      } else if (bad !== null && !warnedBundles.current.has(bundle.name)) {
         warnedBundles.current.add(bundle.name);
         console.warn(
-          `[favorites] bundle "${bundle.name}" not rendered: ` +
-            `${missing.type} ${missing.id} is not in the loaded catalog ` +
+          `[favorites] bundle "${bundle.name}" not rendered: ${bad} ` +
             `(bundle ids are per site; see src/lib/bundles.ts)`,
         );
       }
