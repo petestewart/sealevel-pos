@@ -1072,8 +1072,18 @@ export default function SaleScreen(props: {
                 </button>
               </div>
             ) : (
+              /* A real button, not receipt text: the old dashed monospace
+                 line was not recognizable as tappable in live testing,
+                 which orphaned the whole attach flow (and with it stored
+                 card and credit). Solid surface, icon, verb-first label. */
               <button className="sale-for" onClick={onRequestAttach}>
-                For: nobody. Tap to attach a client.
+                <PlusIcon />
+                <span>
+                  Attach a client
+                  <span className="sale-for-hint">
+                    for stored card or account credit
+                  </span>
+                </span>
               </button>
             )}
 

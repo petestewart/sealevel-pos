@@ -1766,18 +1766,38 @@ button.pass-opt:disabled {
 /* The "For:" affordance atop the cart: a full-width 64px quiet button
  * when nobody is attached, a name-plus-balance line with a detach X when
  * someone is. */
+/* The attach affordance is a REAL button: the first live test styled it
+ * as dashed receipt text and Pete did not recognize it as tappable, which
+ * orphaned the attach flow and with it stored card and credit. Solid
+ * surface, icon, verb-first label, action affordance. */
 .sale-for {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   min-height: 64px;
   margin: 0 0 4px;
-  padding: 8px 12px;
-  border: 1px dashed var(--line);
+  padding: 8px 14px;
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: transparent;
-  color: var(--muted);
-  font-family: inherit;
+  background: var(--action-bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
   font-size: 16px;
+  font-weight: 600;
   text-align: left;
+}
+
+.sale-for svg {
+  flex: 0 0 auto;
+}
+
+.sale-for-hint {
+  display: block;
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
 }
 
 button.sale-for:active {
