@@ -728,12 +728,28 @@ function PaymentPanel(props: {
       ? true
       : splitCreditBase === null);
 
+  /* The armed method must still be OFFERED, in the SAME render that
+   * enables the Charge button. The effects that disarm a method whose
+   * availability moved (credit vanishing under T31's post-charge balance
+   * refetch, rule 1 refusing the card once credit covers the total) run
+   * after the paint, so without this the button could restate -- and
+   * charge -- a method whose own button is already greyed or gone for a
+   * frame. Availability is read off the same reasons the buttons use, so
+   * the two can never disagree; the server re-reads everything anyway.
+   * A split's legs are already gated this way inside splitReady. */
+  const methodOffered =
+    method === "credit"
+      ? creditReason === null
+      : method === "storedcard"
+        ? cardReasonFinal === null
+        : true;
+
   const chargeable =
     cart.length > 0 &&
     !pricing &&
     total !== null &&
     !charging &&
-    (splitOn ? splitReady : method !== null && !cashShort);
+    (splitOn ? splitReady : method !== null && methodOffered && !cashShort);
 
   /** One leg of the split, as the Charge button restates it. The cash
    *  leg reads "collect $X cash": in split mode there is no tender

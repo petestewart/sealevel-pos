@@ -1812,6 +1812,30 @@ should go back to the sign-in view."
       sign-in view, not an empty cart. The receipt is cleared first, so
       reopening Buy starts clean.
 
+Review fixes (adversarial pass over T31-T34):
+
+- **"Nothing invisible stays armed" was one paint late.** The disarm
+  effect is a `useEffect`, which runs AFTER the browser paints, while
+  `chargeable` never consulted a method's own reason: for one frame after
+  T31's post-charge refetch reported the credit a charge had just spent,
+  the Credit button was gone and the Charge button still read "Charge
+  $X", enabled, with credit armed. The reachable case is an ambiguous
+  outcome (the method is deliberately left armed there, and the refetch
+  fires), which is exactly the moment a second tap must not be invited.
+  `chargeable` now requires the armed method to be offered in the SAME
+  render, read off the same `creditReason`/`cardReasonFinal` the buttons
+  are greyed by, so the button and the charge path can never disagree.
+  The effect stays: it is what clears the stored choice. Split legs were
+  already gated this way inside `splitReady`.
+- Reviewed and left alone: Credit is never hidden while it would be
+  tappable (`creditReason` is non-null whenever `balance` is null or <=
+  0, which is exactly when `creditVisible` is false), so the hiding rule
+  cannot cost a teacher a method. The split-failure exception is
+  therefore informational only, and `doCharge`'s own `setResult(null)`
+  ends it at the start of the retry it exists for; worth knowing, not
+  worth latching, since the button it keeps on screen is greyed either
+  way.
+
 ## T34. The class selector is a dropdown (Pete, 2026-08-30)
 
 Pete: "make it a drop down like the Buy view. When I drop the list down,
