@@ -2208,23 +2208,40 @@ button.sale-for:disabled {
   border-top: 1px solid var(--line);
 }
 
-/* The method row, compact (second live test): three 64px segmented
- * buttons, icon beside label, no subtitle -- the tall cards it replaced
- * pushed the receipt below the fold. Reasons move to title attrs and the
- * shared .methods-note line below. */
-.methods {
+/* --- T35: one tender model. ------------------------------------------
+ * A list of tender lines against an amount due, with the sources inline
+ * with the totals (Pete: "make the source buttons smaller and put them
+ * inline with the totals"). No split mode, no cash modal: a second line
+ * IS the split, and one inline keypad enters every amount. */
+
+.tender {
+  display: grid;
+  gap: 10px;
+}
+
+/* The sources on the left, what is still owed on the right, one row. */
+.tender-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tender-srcs {
   display: flex;
   gap: 8px;
 }
 
-.method {
-  flex: 1;
-  display: flex;
+/* Compact: icon beside label, sized to its text rather than stretched
+ * across the column, and still on the 64px tap floor. */
+.tender-src {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   min-height: 64px;
-  padding: 8px 10px;
+  padding: 0 14px;
   border: 2px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
@@ -2233,30 +2250,182 @@ button.sale-for:disabled {
   font-weight: 600;
 }
 
-.method .mi {
+.tender-src .mi {
   display: inline-flex;
   color: var(--muted);
 }
 
-.method:disabled {
+.tender-src:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-/* The selected method: accent border, quiet fill, same as a chip's "on"
- * standing but without inverting the card. */
-.method.on {
+.tender-src:active:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.method.on .mi {
+.tender-due {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.tender-due-amt {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Nothing left owing: the one figure a teacher checks before charging. */
+.tender-due-amt.settled {
+  color: var(--ok);
+}
+
+/* Over-tendered cash. Loud, beside the due line, because it is money
+ * that has to come back out of the drawer. */
+.tender-change {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.tender-lines {
+  display: grid;
+  gap: 8px;
+}
+
+/* One line: source, amount, x. Compact, one row, no labels. */
+.tender-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.tender-line.bad {
+  border-color: var(--stop);
+}
+
+.tender-src-name {
+  flex: 1;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* The amount is a BUTTON: tapping it opens the one keypad for this line.
+ * Right-aligned tabular figures, like the receipt column. */
+.tender-amt {
+  min-height: 64px;
+  min-width: 7em;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 700;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tender-amt.on {
+  border: 2px solid var(--accent);
   color: var(--accent);
 }
 
-/* ONE shared quiet line under the method row: the selected method's
- * detail, or the first unavailable method's reason. Reserves its height
- * so the receipt below does not jump. */
+.tender-amt:disabled,
+.tender-x:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tender-x {
+  min-height: 64px;
+  min-width: 64px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+}
+
+/* --- The one inline keypad, shared by every source. ------------------
+ * No OS keyboard anywhere in the payment seam (an iPad soft keyboard
+ * over a counter screen was the worst of the three divergences T35
+ * removed), and no cash-only modal. 3x4 grid on the 64px floor. */
+
+.keypad {
+  display: grid;
+  gap: 8px;
+  max-width: 300px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.keypad-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.keypad-entry {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.keypad-keys {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.keypad-key {
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.keypad-key:active:not(:disabled) {
+  background: var(--action-bg);
+}
+
+.keypad-key:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.keypad-key.done {
+  border: 2px solid var(--accent);
+  color: var(--accent);
+}
+
+/* ONE shared quiet line under the tender: the first real problem, what is
+ * still owed, or the detail of what is armed. Reserves its height so the
+ * receipt below does not jump. */
 .methods-note {
   margin: 4px 0 0;
   min-height: 1.3em;
@@ -2264,106 +2433,7 @@ button.sale-for:disabled {
   color: var(--muted);
 }
 
-/* --- Split payments (T28). ------------------------------------------ */
-
-/* The quiet Split toggle at the end of the method row. Dashed like the
- * comp hold at rest; accent standing once split mode is on. */
-.split-toggle {
-  min-height: 64px;
-  padding: 0 14px;
-  border: 1px dashed var(--line);
-  border-radius: 12px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.split-toggle.on {
-  border: 2px solid var(--accent);
-  color: var(--accent);
-  flex: 1;
-}
-
-.split-toggle:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.split-slots {
-  display: grid;
-  gap: 10px;
-  margin-top: 8px;
-}
-
-.split-slot {
-  display: grid;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-}
-
-.split-amt-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 16px;
-  color: var(--muted);
-}
-
-/* The typed amount: 20px like .search (the recorded input size), right
- * aligned with tabular figures so it reads like the receipt column. */
-.split-amt {
-  width: 8em;
-  min-height: 64px;
-  padding: 0 12px;
-  font-size: 20px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--bg);
-  color: var(--ink);
-}
-
-/* The computed remainder: read-only, so a figure, not a field. */
-.split-rest-amt {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-}
-
-.split-methods {
-  display: flex;
-  gap: 8px;
-}
-
-.split-m {
-  flex: 1;
-  min-height: 64px;
-  border: 2px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg);
-  color: var(--ink);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.split-m:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.split-m.on {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* Comp lives OUT of the method row and arms on a hold: quiet text
+/* Comp lives OUT of the tender list and arms on a hold: quiet text
  * button, stop-coloured once selected so a comped sale is unmissable. */
 .comp-hold {
   justify-self: start;
@@ -2385,103 +2455,6 @@ button.sale-for:disabled {
   background: var(--warn-bg);
   color: var(--warn);
   font-weight: 600;
-}
-
-/* --- Cash tendered: display-only change math, in its own modal since
- * the second live test (the inline panel read as part of the form; a
- * modal is the deliberate step it is). Keys keep the 64px floor. ------ */
-
-.modal-cash {
-  display: grid;
-  gap: 10px;
-}
-
-.modal-cash .modal-title {
-  margin-bottom: 0;
-}
-
-.modal-cash .modal-actions {
-  margin-top: 6px;
-}
-
-.cash-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-size: 18px;
-}
-
-.cash-label {
-  color: var(--muted);
-}
-
-.cash-amt {
-  font-size: 22px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.cash-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.cash-chip {
-  min-height: 64px;
-  padding: 0 16px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--bg);
-  color: var(--ink);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.cash-chip:active:not(:disabled) {
-  background: var(--action-bg);
-}
-
-.cash-chip:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.cash-keys {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-
-.cash-key {
-  min-height: 64px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg);
-  color: var(--ink);
-  font-size: 20px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.cash-key:active {
-  background: var(--action-bg);
-}
-
-.cash-change {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.cash-change.short {
-  color: var(--stop);
-}
-
-.cash-change.muted-note {
-  font-size: 16px;
-  font-weight: 400;
-  color: var(--muted);
 }
 
 /* --- Charge outcomes. ----------------------------------------------- */

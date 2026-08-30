@@ -1937,6 +1937,100 @@ split is just the case where there are two of them.
 - The keypad is a 64px-target grid; nothing about the money invariants
   moves into it.
 
+### What was built (2026-08-30)
+
+All of it in `PaymentPanel` (src/app/SaleScreen.tsx) plus globals.css;
+/api/checkout, src/lib and page.tsx are untouched. Typecheck and build
+clean; no live run in this container.
+
+- [x] **Tender lines replace the method row, the cash modal and split
+      mode.** State is `lines: TenderLine[]` (id, source, cents) plus a
+      separate `comped` flag; there is no `method`, no `splitOn`, no
+      `splitA/AMethod/BMethod` and no `tendered` any more. Amounts are
+      integer CENTS throughout, so lines can only sum exactly.
+- [x] **Tapping a source ADDS a line** pre-filled with the whole
+      remaining due, clamped by that source's rule: credit
+      `min(balance, due)`, card `due`, cash `due`. One tap, no typing,
+      for the ordinary whole-sale case.
+- [x] **Each line is `[source] [amount] [x]`**, one compact row, amount
+      right-aligned and tabular; the amount is a BUTTON that opens the
+      keypad for that line, the x removes it. No labels, no Split
+      toggle: the second line IS the split.
+- [x] **ONE inline keypad** (`.keypad`, a 3x4 grid of 64px keys: 1-9,
+      C, 0, Done) serves every source. Digits accumulate into cents
+      exactly as the cash-tender field did. No OS keyboard anywhere in
+      the payment seam and no cash-only modal; the number input the
+      split slot used is gone.
+- [x] **Clamping is enforced on every keystroke**, so the state never
+      holds an over-cap figure at all: `capFor` returns null for cash
+      (the only source that may exceed the due) and the total (less the
+      account balance, for credit) otherwise. Editing one line of a
+      two-line tender recomputes the OTHER as the remainder, so the
+      lines can only ever sum to the server's total.
+- [x] **Change**: `coverage` gives each line what it actually covers (in
+      list order, capped by what is still unpaid), and the surplus
+      renders as a loud "Change $X.XX" chip beside the due figure.
+- [x] **Two lines maximum**, with further sources greyed as "Two parts
+      is the maximum" (and an already-used source as "Already in the
+      payment"), never hidden.
+- [x] **Comp is unchanged**: same hold, same wording, still outside the
+      list. Arming it clears the lines; adding a line disarms it.
+- [x] **The request shapes did not move.** One line sends
+      `{ method, cashTendered? }`, two send `{ split: { legs } }`; a
+      cash leg sends what it COVERS and the over-tendered figure rides
+      as `cashTendered` on a single-line sale only. Charge is enabled
+      only when due is EXACTLY zero and every line is valid, and it
+      still restates the server's rehearsed number.
+- [x] **Every T24/T28/T31/T33 invariant kept**: the `inFlight` ref and
+      the disabled button, the suppressed-write branch, the ambiguous
+      branches word for word, the "do NOT re-run the credit step" seam
+      (which now clears the whole tender, as it used to clear the armed
+      method), `onClientDataStale` on exactly the same branches, the
+      disarm-on-client-change and cart-reset effects, and rule 1 plus
+      the $10 minimum restated in the UI and enforced on the server.
+
+Judgement calls, all reversible:
+
+- **T33's `methodOffered` became `lineReason`**, per line, read off the
+  same `creditReason`/`cardReason` the source buttons grey by and
+  computed in the SAME render that enables Charge. So the frame-late
+  disarm effect still cannot leave an unoffered source chargeable: an
+  ambiguous outcome followed by the balance refetch dropping credit to
+  zero fails `lineReason` (and the effect then drops the credit line).
+- **Rule 1 is a WHOLE-SALE rule here.** The card greys with "Credit
+  covers this" only when it would be the first and therefore only line,
+  and a card line that BECOMES the only line (its partner removed) is
+  refused by `lineReason` with the same words. A card leg of a genuine
+  split is not gated by it, which is T28's recorded reversal, and the
+  $10 minimum only bites on a two-line tender (a whole-sale card under
+  $10 still takes PLAN 2.3's credit-purchase path).
+- **Credit's own gate no longer includes "only $X on account"**: a
+  credit line clamps to the balance and a second line pays the rest,
+  which makes T28's partial-credit reversal the ordinary case. Credit
+  covering the whole total still charges as a single credit method, so
+  the server's own rule 1 path is unchanged.
+- **The keypad starts empty** (register-style: the first digit replaces
+  the figure rather than appending to it), the head shows the line's
+  live amount, and dismissing it with nothing entered REMOVES the line
+  rather than leaving a $0.00 row for Charge to refuse.
+- **A client change now clears comp too**, where before only the
+  client-bound methods and the tender went. Stricter, and the hold is
+  one gesture to redo.
+- **`onModalChange` is still used and still needed**: the keypad is
+  inline rather than a modal, but it owns Escape while open, so it
+  reports up exactly as the cash modal did (and every reset path
+  reports the close, or a keypad dismissed by a reset would leave
+  Escape blocked).
+- Cases walked in code: whole sale on one source; cash over-tender with
+  change; credit covering everything; credit part plus cash; a card leg
+  under $10; a cart edit repricing under live lines (the lines clear,
+  as the tender and split slots always did); a client change with lines
+  armed; and the ambiguous-then-refetch case above. A line whose
+  entered amount stops being fully covered (a total that moved under
+  it, unreachable in normal use) is refused with "Re-enter the amounts
+  against the current total" rather than charging a different figure
+  from the one on screen.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are

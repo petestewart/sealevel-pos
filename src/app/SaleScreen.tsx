@@ -365,10 +365,23 @@ interface CardLookup {
   error: string | null;
 }
 
-type PayMethod = "storedcard" | "credit" | "cash" | "comp";
+/** A source of tender. Comp is deliberately absent: it is a whole-sale
+ *  gesture with its own hold, not a tender line, and /api/checkout
+ *  refuses it inside a split for the same reason. */
+type TenderSource = "storedcard" | "credit" | "cash";
 
-/** The methods a T28 split leg may use: the whitelist minus comp. */
-type SplitMethod = "storedcard" | "credit" | "cash";
+/**
+ * T35: one line of the tender against the amount due. A whole sale is
+ * one line; a split is two, which is the maximum /api/checkout accepts.
+ * `cents` is what was ENTERED, in integer cents so lines can only sum
+ * exactly: only cash may be entered above what it covers, and that
+ * surplus is the teacher's change, never money charged.
+ */
+interface TenderLine {
+  id: number;
+  source: TenderSource;
+  cents: number;
+}
 
 /** Keep in sync with src/lib/sale.ts CARD_MINIMUM_USD. The server
  *  refuses a card leg under it regardless; this mirror only lets the
@@ -391,15 +404,21 @@ const COMP_HOLD_MS = 700;
 
 /**
  * THE T24 SEAM, now live, and since the second live test the whole LEFT
- * column: the compact method row above the receipt, the receipt itself
- * (passed in, so the cart and pricing loop stay outside the seam), the
- * charge button, the outcome panel, and the cash-tender modal. The
- * invariants inherited from T23 are kept verbatim: never charge an
- * empty, in-flight, suppressed, or disagreeing cart; the button restates
- * the server's number or none. On top of them: nothing fires without an
- * explicit tap, one charge can be in flight at a time (ref-guarded,
- * button disabled), and a failed or ambiguous outcome renders with
- * enough truth that re-tapping cannot quietly double-charge.
+ * column: the tender block above the receipt, the receipt itself (passed
+ * in, so the cart and pricing loop stay outside the seam), the comp hold,
+ * the charge button and the outcome panel. The invariants inherited from
+ * T23 are kept verbatim: never charge an empty, in-flight, suppressed, or
+ * disagreeing cart; the button restates the server's number or none. On
+ * top of them: nothing fires without an explicit tap, one charge can be
+ * in flight at a time (ref-guarded, button disabled), and a failed or
+ * ambiguous outcome renders with enough truth that re-tapping cannot
+ * quietly double-charge.
+ *
+ * T35 replaced the method row, the cash-tender modal and split mode with
+ * ONE model: tender lines against an amount due, entered on one inline
+ * keypad. What it did NOT touch is the money: the request shapes, the
+ * single flight, the availability rules, the honest outcomes and the
+ * server's authority over every number are all exactly as they were.
  */
 function PaymentPanel(props: {
   cart: readonly CartEntry[];
@@ -407,7 +426,7 @@ function PaymentPanel(props: {
   pricing: boolean;
   client: SaleClient | null;
   cardLookup: CardLookup | null;
-  /** The receipt ticket, rendered between the method row and the charge
+  /** The receipt ticket, rendered between the tender block and the charge
    *  button. SaleScreen still owns the cart and the pricing loop. */
   receipt: ReactNode;
   /** Clear the cart: the sale is recorded on Mindbody's side. */
@@ -427,14 +446,15 @@ function PaymentPanel(props: {
   /** Mirrors the in-flight charge up to SaleScreen so ambient Escape
    *  cannot close the overlay while money is moving. */
   onBusyChange: (busy: boolean) => void;
-  /** Mirrors the cash-tender modal up to SaleScreen so the Escape that
-   *  closes the modal cannot also close the overlay. */
+  /** Mirrors an open payment surface up to SaleScreen so the Escape that
+   *  closes it cannot also close the overlay. Since T35 that surface is
+   *  the INLINE keypad rather than the cash modal it replaced: it is not
+   *  a modal, but it owns Escape while it is open, and the prop still
+   *  reports it for exactly that reason. */
   onModalChange: (open: boolean) => void;
   /** Bumped by SaleScreen when "Empty cart" is confirmed on a client
-   *  change (third live test): the cart is gone, so any armed method
-   *  goes with it. The clientId disarm below already cleared tender and
-   *  the client-bound methods; this catches cash/comp, which a client
-   *  change deliberately leaves armed when the cart is KEPT. */
+   *  change (third live test): the cart is gone, so every tender line and
+   *  any armed comp goes with it. */
   cartResetNonce: number;
 }) {
   const {
@@ -452,29 +472,31 @@ function PaymentPanel(props: {
     cartResetNonce,
   } = props;
 
-  const [method, setMethod] = useState<PayMethod | null>(null);
   /**
-   * T28 split mode: pay one sale with TWO methods, one Charge, one
-   * server call. Slot A's amount is typed (dollars text); slot B's is
-   * the server total minus A, computed and read-only, so the two can
-   * only ever sum to the rehearsed total. Comp is excluded (it has its
-   * own hold gesture); cash is fine -- in a split the cash leg's amount
-   * IS what is collected, so the tender modal never opens here.
+   * T35: ONE tender model. There is no split MODE and no single-method
+   * arming any more -- there is a LIST of tender lines against an amount
+   * due, and a split is simply the case where the list has two. Tapping a
+   * source adds a line pre-filled with the whole remaining due, clamped by
+   * that source's rule, so the ordinary whole-sale case is one tap and no
+   * typing.
+   *
+   * Amounts live in integer CENTS throughout, so lines can only ever sum
+   * exactly; the dollars figures below are derived for display and for
+   * the request, never accumulated.
    */
-  const [splitOn, setSplitOn] = useState(false);
-  /** Slot A's dollars, as typed ("30" or "30.00"). Kept as text so a
-   *  trailing dot mid-entry does not fight the keyboard. */
-  const [splitA, setSplitA] = useState("");
-  const [splitAMethod, setSplitAMethod] = useState<SplitMethod | null>(null);
-  const [splitBMethod, setSplitBMethod] = useState<SplitMethod | null>(null);
-  /** Tendered cash in CENTS, as a digit string (POS-style entry: typing
-   *  2-0-0-0 reads $20.00). Display only; never sent to Mindbody. */
-  const [tendered, setTendered] = useState("");
-  /** The cash-tender modal (second live test: the inline keypad panel is
-   *  gone). Opens on selecting Cash, and again from the Charge button
-   *  when cash is armed with no tender recorded; its confirm fires the
-   *  SAME charge path the Charge button does. */
-  const [cashOpen, setCashOpen] = useState(false);
+  const [lines, setLines] = useState<readonly TenderLine[]>([]);
+  const nextLineId = useRef(1);
+  /** Comp stays OUT of the list: it is a whole-sale gesture with its own
+   *  hold, not a tender. Arming it clears the lines; adding a line
+   *  disarms it. The two can never both be set. */
+  const [comped, setComped] = useState(false);
+  /** The one inline keypad: the id of the line it is editing, or null.
+   *  No OS keyboard anywhere in the payment seam, and no cash-only
+   *  modal -- every source is entered here. */
+  const [keypadFor, setKeypadFor] = useState<number | null>(null);
+  /** Digits typed since the keypad opened, accumulating into CENTS
+   *  (2-0-0-0 reads $20.00), exactly as the cash tender field did. */
+  const [entry, setEntry] = useState("");
   const [charging, setCharging] = useState(false);
   const [result, setResult] = useState<ChargeResult | null>(null);
   /** The double-fire lock. State alone re-renders too late for a fast
@@ -512,71 +534,63 @@ function PaymentPanel(props: {
   const balanceCoversTotal =
     balance !== null && total !== null && balance >= total;
 
-  /* ANY client change -- detach, attach, or the per-row Buy button
-   * switching straight from one client to another -- invalidates the
-   * client-bound methods and the balance: a method armed for client A
-   * must not stay armed for client B (whose card or credit may not even
-   * exist; the server would refuse, but the button must not offer it).
-   * A recorded cash tender is against the OLD client's total, so it goes
-   * too: with none recorded, the Charge button reopens the modal. */
+  const totalCents = total === null ? null : Math.round(total * 100);
+  const balanceCents = balance === null ? null : Math.round(balance * 100);
+
   const clientId = client?.id ?? null;
 
-  /** Blank the split slots (amount and both methods). Split MODE stays
-   *  where it was; only the choices inside it reset. */
-  const resetSplitSlots = useCallback(() => {
-    setSplitA("");
-    setSplitAMethod(null);
-    setSplitBMethod(null);
-  }, []);
+  /** Put the keypad away without touching the lines, and tell SaleScreen
+   *  the payment surface is closed -- otherwise a keypad dismissed by a
+   *  reset rather than by its own Done would leave Escape blocked. */
+  const dismissKeypad = useCallback(() => {
+    setKeypadFor(null);
+    setEntry("");
+    onModalChange(false);
+  }, [onModalChange]);
 
+  /** Blank the whole tender: every line, the keypad, and comp. Used by
+   *  each of the reset paths below and by a completed sale. */
+  const resetTender = useCallback(() => {
+    setLines([]);
+    setComped(false);
+    dismissKeypad();
+  }, [dismissKeypad]);
+
+  /* ANY client change -- detach, attach, or the per-row Buy button
+   * switching straight from one client to another -- invalidates the
+   * tender: the lines were chosen against the OLD client's card, credit
+   * and total, and a line armed for client A must not stay armed for
+   * client B (whose card or credit may not even exist; the server would
+   * refuse, but the button must not offer it). */
   useEffect(() => {
     setFreshBalance(null);
-    setTendered("");
-    setMethod((m) => (m === "storedcard" || m === "credit" ? null : m));
-    /* Split slots were chosen against the OLD client's card, credit and
-     * total; none of it survives a switch. */
-    resetSplitSlots();
-  }, [clientId, resetSplitSlots]);
+    resetTender();
+  }, [clientId, resetTender]);
 
   /* A cart EDIT retires a stale receipt; warnings stay until dismissed.
    * The empty cart is skipped deliberately: a successful charge clears the
    * cart in the same commit that sets the receipt, and this effect firing
-   * on that clear would wipe the receipt before the teacher saw it (the
-   * charge's own success path already cleared the tender).
+   * on that clear would wipe the receipt before the teacher saw it.
    *
-   * The recorded cash tender goes with the edit too: it was entered
-   * against the OLD cart's total in the modal, and if it happened to
-   * cover the NEW total the Charge button would record the cash without
-   * ever reopening the modal. Cleared, the button reopens it. */
+   * The tender lines go with the edit: every amount in them was entered
+   * against the OLD cart's total, and a stale line that happened to cover
+   * the new one would let the Charge button fire on numbers nobody chose.
+   * Comp survives, as it always has: it is a gesture about the whole sale,
+   * and the button restates whatever the fresh total turns out to be. */
   useEffect(() => {
     if (cart.length === 0) return;
     setResult((r) => (r?.kind === "paid" ? null : r));
-    setTendered("");
-    /* Split slot A was typed against the OLD cart's total; a new total
-     * makes it stale exactly like a recorded tender. */
-    resetSplitSlots();
-  }, [cart, resetSplitSlots]);
+    setLines([]);
+    dismissKeypad();
+  }, [cart, dismissKeypad]);
 
   /* "Empty cart" on the client-change dialog: the cart SaleScreen just
-   * cleared was what the armed method was for, so nothing stays armed.
-   * Tender is already gone via the clientId disarm above (a dialog only
-   * ever follows a client change); setting it again here is harmless and
-   * keeps this reset whole on its own. */
+   * cleared was what the tender was for, so nothing stays armed, comp
+   * included. */
   useEffect(() => {
     if (cartResetNonce === 0) return;
-    setMethod(null);
-    setTendered("");
-    resetSplitSlots();
-  }, [cartResetNonce, resetSplitSlots]);
-
-  /* Rule 1: when credit covers the total, the card is not offered -- so a
-   * stored-card selection made before the balance (or a fresh total) was
-   * known cannot stay armed. The server refuses it too. */
-  useEffect(() => {
-    if (balanceCoversTotal) {
-      setMethod((m) => (m === "storedcard" ? null : m));
-    }
-  }, [balanceCoversTotal]);
+    resetTender();
+  }, [cartResetNonce, resetTender]);
 
   useEffect(() => {
     return () => {
@@ -584,14 +598,14 @@ function PaymentPanel(props: {
     };
   }, []);
 
-  /* PaymentPanel unmounts when the overlay closes; a cash modal that
-   * was somehow up must not leave SaleScreen believing a modal still
+  /* PaymentPanel unmounts when the overlay closes; a keypad that was
+   * somehow open must not leave SaleScreen believing something still
    * blocks Escape on the next open. */
   useEffect(() => {
     return () => onModalChange(false);
   }, [onModalChange]);
 
-  /* Method availability. Unavailable methods render greyed WITH the
+  /* Source availability. An unavailable source renders greyed WITH the
    * reason, never hidden (PLAN 2.2: "account credit ($12) greyed out
    * beats a failure"). */
   const cardReason = !client
@@ -605,21 +619,17 @@ function PaymentPanel(props: {
           : card.expired
             ? `Card ...${card.lastFour} is expired`
             : null;
-  const cardReasonFinal =
-    cardReason ??
-    /* Rule 1 of the $10 minimum: when credit covers the total, credit IS
-     * the method and the card is not offered. /api/checkout refuses it
-     * server-side too; this grey-out is the honest face of that. */
-    (balanceCoversTotal ? `Credit covers this (${money(balance as number)})` : null);
   const cardDetail = card && !card.expired ? `Card ...${card.lastFour}` : null;
 
+  /* Credit's own gate is the client and the balance EXISTING. Whether the
+   * balance covers the whole total is no longer a blocker: a credit line
+   * clamps to min(balance, due) and a second line pays the rest, which is
+   * the T28 reversal of assumption P2 (partial credit) made ordinary. */
   const creditReason = !client
     ? "Attach a client"
     : balance === null || balance <= 0
       ? "No credit on account"
-      : total !== null && balance < total
-        ? `Only ${money(balance)} on account`
-        : null;
+      : null;
   const creditLabel =
     balance !== null && balance > 0
       ? `Account credit (${money(balance)})`
@@ -635,171 +645,229 @@ function PaymentPanel(props: {
    * certainly went through, and if the balance read that follows it
    * failed, the number here is null. Hiding the honest retry (spend the
    * credit that now exists) is the worst outcome on that screen, so the
-   * button stays while that warning is up.
+   * source stays while that warning is up.
    */
   const creditVisible =
     (balance !== null && balance > 0) || result?.kind === "split";
 
-  /* A method that is no longer on screen must not stay armed behind the
-   * Charge button: credit can vanish under the teacher (the post-sale
-   * profile refetch reports the balance the sale just spent). */
+  /* A source that is no longer on screen must not stay in the tender:
+   * credit can vanish under the teacher (the post-sale profile refetch
+   * reports the balance the sale just spent). */
   useEffect(() => {
     if (creditVisible) return;
-    setMethod((m) => (m === "credit" ? null : m));
-    setSplitAMethod((m) => (m === "credit" ? null : m));
-    setSplitBMethod((m) => (m === "credit" ? null : m));
+    setLines((cur) =>
+      cur.some((l) => l.source === "credit")
+        ? cur.filter((l) => l.source !== "credit")
+        : cur,
+    );
   }, [creditVisible]);
 
-  const tenderedCents = tendered === "" ? null : parseInt(tendered, 10);
-  const tenderedUsd = tenderedCents === null ? null : tenderedCents / 100;
-  const cashShort =
-    method === "cash" &&
-    total !== null &&
-    tenderedUsd !== null &&
-    tenderedUsd < total;
+  /* ---------------------- T35: the tender math ---------------------- */
 
-  /* ------------------------- T28: split math ------------------------ */
-  /* All in integer cents so the two legs can only ever sum exactly. */
-  const totalCents = total === null ? null : Math.round(total * 100);
-  const splitACents = (() => {
-    if (splitA.trim() === "") return null;
-    const n = Number(splitA);
-    if (!Number.isFinite(n) || n <= 0) return null;
-    return Math.round(n * 100);
-  })();
-  /* Slot A must sit strictly INSIDE (0, total): a leg equal to the total
-   * is not a split, and the remainder must stay positive. */
-  const splitAInRange =
-    totalCents !== null &&
-    splitACents !== null &&
-    splitACents > 0 &&
-    splitACents < totalCents;
-  const splitBCents =
-    splitAInRange && totalCents !== null && splitACents !== null
-      ? totalCents - splitACents
-      : null;
-  const splitAUsd = splitAInRange && splitACents !== null ? splitACents / 100 : null;
-  const splitBUsd = splitBCents !== null ? splitBCents / 100 : null;
+  /**
+   * What each line actually COVERS of the total, in list order. Only cash
+   * may be given more than it owes, so a line's covered amount is its
+   * entered amount capped by what is still unpaid ahead of it; the
+   * surplus is change, never money charged.
+   */
+  const coverage = useMemo(() => {
+    const covered: number[] = [];
+    let remaining = totalCents ?? 0;
+    for (const line of lines) {
+      const c =
+        totalCents === null ? 0 : Math.max(0, Math.min(line.cents, remaining));
+      covered.push(c);
+      remaining -= c;
+    }
+    return covered;
+  }, [lines, totalCents]);
 
-  /* Per-leg availability under T24's rules. The base reasons reuse the
-   * single-method gates, EXCEPT rule 1 (credit covers the total refuses
-   * the card): a deliberate split is not the ambiguity that rule guards
-   * against, so `cardReason` (not cardReasonFinal) gates the card here.
-   * The server applies the same reading. */
-  const splitCreditBase = !client
-    ? "Attach a client"
-    : balance === null || balance <= 0
-      ? "No credit on account"
-      : null;
-  const splitCardLegUsd =
-    splitAMethod === "storedcard"
-      ? splitAUsd
-      : splitBMethod === "storedcard"
-        ? splitBUsd
-        : null;
-  const splitCreditLegUsd =
-    splitAMethod === "credit"
-      ? splitAUsd
-      : splitBMethod === "credit"
-        ? splitBUsd
-        : null;
-  /* The card minimum applies to the CARD LEG's amount; the server
-   * refuses it too, with no credit-purchase dance in a split. */
-  const splitCardUnderMin =
-    splitCardLegUsd !== null && splitCardLegUsd < CARD_MINIMUM_USD;
-  const splitCreditShort =
-    splitCreditLegUsd !== null &&
-    (balance === null || balance < splitCreditLegUsd);
+  const coveredCents = coverage.reduce((sum, c) => sum + c, 0);
+  const dueCents = totalCents === null ? null : totalCents - coveredCents;
+  /** Over-tendered cash, which is the teacher's change to hand back. */
+  const changeCents = lines.reduce(
+    (sum, line, i) => sum + Math.max(0, line.cents - (coverage[i] ?? 0)),
+    0,
+  );
 
-  const splitReady =
-    splitOn &&
-    splitAInRange &&
-    splitAUsd !== null &&
-    splitBUsd !== null &&
-    splitAMethod !== null &&
-    splitBMethod !== null &&
-    splitAMethod !== splitBMethod &&
-    !splitCardUnderMin &&
-    !splitCreditShort &&
-    (splitAMethod !== "storedcard" && splitBMethod !== "storedcard"
-      ? true
-      : cardReason === null) &&
-    (splitAMethod !== "credit" && splitBMethod !== "credit"
-      ? true
-      : splitCreditBase === null);
+  /**
+   * The most a line may be TYPED to. Cash is uncapped (null) -- it is the
+   * only source that may exceed what it owes. Card caps at the total;
+   * credit caps at the total and the account balance both. A clamped
+   * source can never be entered above its cap: the keypad clamps every
+   * keystroke, so the state never holds an over-cap figure at all.
+   *
+   * With a second line present that line is recomputed as the remainder
+   * (see keypadTap), so the cap here is the whole total less one cent --
+   * the cent that keeps the other line from falling to zero. Removing it
+   * with its x is how a split becomes a whole-sale payment.
+   */
+  const capFor = (source: TenderSource): number | null => {
+    if (source === "cash") return null;
+    if (totalCents === null) return 0;
+    const room = Math.max(0, totalCents - (lines.length === 2 ? 1 : 0));
+    if (source === "credit") {
+      return balanceCents === null ? 0 : Math.min(room, balanceCents);
+    }
+    return room;
+  };
 
-  /* The armed method must still be OFFERED, in the SAME render that
-   * enables the Charge button. The effects that disarm a method whose
-   * availability moved (credit vanishing under T31's post-charge balance
-   * refetch, rule 1 refusing the card once credit covers the total) run
-   * after the paint, so without this the button could restate -- and
-   * charge -- a method whose own button is already greyed or gone for a
-   * frame. Availability is read off the same reasons the buttons use, so
-   * the two can never disagree; the server re-reads everything anyway.
-   * A split's legs are already gated this way inside splitReady. */
-  const methodOffered =
-    method === "credit"
-      ? creditReason === null
-      : method === "storedcard"
-        ? cardReasonFinal === null
-        : true;
+  const usedSources = new Set(lines.map((l) => l.source));
+
+  /** Why this source cannot ADD a line right now, or null. */
+  const addReason = (source: TenderSource): string | null => {
+    if (usedSources.has(source)) return "Already in the payment";
+    /* Two lines is the maximum because /api/checkout accepts one method
+     * or exactly two legs. Greyed WITH that reason, never hidden. */
+    if (lines.length >= 2) return "Two parts is the maximum";
+    if (total === null) return "No total to pay yet";
+    if (dueCents !== null && dueCents <= 0) return "Nothing left to pay";
+    if (source === "credit") return creditReason;
+    if (source === "storedcard") {
+      if (cardReason !== null) return cardReason;
+      /* Rule 1 of the $10 minimum: when credit covers the total, credit
+       * IS the method and the card is not offered. It applies to a
+       * WHOLE-sale card payment only -- adding the card as the first and
+       * therefore only line -- because a deliberate two-leg split is the
+       * opposite of the ambiguity rule 1 guards against (the T28
+       * reversal). /api/checkout takes the same reading. */
+      if (lines.length === 0 && balanceCoversTotal) {
+        return `Credit covers this (${money(balance as number)})`;
+      }
+    }
+    return null;
+  };
+
+  /**
+   * Why a line already in the tender cannot be charged, or null. This is
+   * T33's methodOffered check, extended to the new model: availability is
+   * read off the same reasons the source buttons are greyed by, in the
+   * SAME render that enables the Charge button, so the two can never
+   * disagree even for the one frame before a disarm effect runs.
+   */
+  const lineReason = (line: TenderLine, index: number): string | null => {
+    if (line.cents <= 0) return "Enter an amount";
+    const covered = coverage[index] ?? 0;
+    /* A non-cash line whose entered amount is not fully covered means the
+     * total moved under it; only cash may exceed its coverage. Unreachable
+     * in normal use (every path that changes the total clears the lines),
+     * and refused here rather than silently charging a different figure
+     * from the one on screen. */
+    if (line.source !== "cash" && covered !== line.cents) {
+      return "Re-enter the amounts against the current total";
+    }
+    if (covered <= 0) return "Enter an amount";
+    if (line.source === "credit") {
+      if (creditReason !== null) return creditReason;
+      if (balanceCents === null || balanceCents < line.cents) {
+        return `Only ${money(balance ?? 0)} on account`;
+      }
+      return null;
+    }
+    if (line.source === "storedcard") {
+      if (cardReason !== null) return cardReason;
+      /* Rule 1 again, for a card that has BECOME the whole sale (the
+       * other line was removed under it). */
+      if (lines.length === 1 && balanceCoversTotal) {
+        return `Credit covers this (${money(balance as number)})`;
+      }
+      /* The $10 minimum bites on a card LEG of a split, which the server
+       * refuses outright; a whole-sale card under $10 is fine, since that
+       * is PLAN 2.3's credit-purchase path. */
+      if (lines.length === 2 && covered < CARD_MINIMUM_USD * 100) {
+        return `The card leg is under the $${CARD_MINIMUM_USD} card minimum`;
+      }
+      return null;
+    }
+    return null;
+  };
+
+  const lineReasons = lines.map((line, i) => lineReason(line, i));
+  const firstLineProblem = lineReasons.find((r) => r !== null) ?? null;
+
+  const tenderValid =
+    lines.length > 0 &&
+    lines.length <= 2 &&
+    usedSources.size === lines.length &&
+    firstLineProblem === null;
 
   const chargeable =
     cart.length > 0 &&
     !pricing &&
     total !== null &&
     !charging &&
-    (splitOn ? splitReady : method !== null && methodOffered && !cashShort);
+    (comped
+      ? lines.length === 0
+      : /* Due EXACTLY zero: the lines cover the server's total to the
+           cent, no more and no less (cash surplus is change, not
+           coverage). */
+        dueCents === 0 && tenderValid);
 
-  /** One leg of the split, as the Charge button restates it. The cash
-   *  leg reads "collect $X cash": in split mode there is no tender
-   *  modal, the leg amount IS what is collected. */
-  const splitLegLabel = (m: SplitMethod, usd: number) =>
-    m === "storedcard"
+  const sourceLabel = (s: TenderSource) =>
+    s === "storedcard" ? "Card" : s === "credit" ? "Credit" : "Cash";
+
+  /** One leg of a split, as the Charge button restates it. The cash leg
+   *  reads "collect $X cash": the leg amount IS what is collected. */
+  const legLabel = (s: TenderSource, usd: number) =>
+    s === "storedcard"
       ? `${money(usd)} card`
-      : m === "credit"
+      : s === "credit"
         ? `${money(usd)} credit`
         : `collect ${money(usd)} cash`;
 
-  const chargeLabel = splitOn
-    ? splitReady &&
-      splitAMethod !== null &&
-      splitBMethod !== null &&
-      splitAUsd !== null &&
-      splitBUsd !== null
-      ? `Charge ${splitLegLabel(splitAMethod, splitAUsd)} + ${splitLegLabel(splitBMethod, splitBUsd)}`
-      : "Charge"
+  const soleLine = lines.length === 1 ? lines[0] : undefined;
+
+  const chargeLabel = comped
+    ? total === null
+      ? "Charge"
+      : `Comp ${money(total)}`
     : total === null
       ? "Charge"
-      : method === "cash"
-        ? `Record ${money(total)} cash`
-        : method === "comp"
-          ? `Comp ${money(total)}`
-          : `Charge ${money(total)}`;
+      : lines.length === 2
+        ? `Charge ${legLabel(
+            (lines[0] as TenderLine).source,
+            (coverage[0] ?? 0) / 100,
+          )} + ${legLabel(
+            (lines[1] as TenderLine).source,
+            (coverage[1] ?? 0) / 100,
+          )}`
+        : soleLine === undefined
+          ? "Charge"
+          : soleLine.source === "cash"
+            ? `Record ${money(total)} cash`
+            : `Charge ${money(total)}`;
 
   const doCharge = async () => {
     /* Single flight: the ref refuses a second tap even in the same
      * render tick, and the button is disabled for every later one. */
     if (inFlight.current || !chargeable) return;
-    /* The one payment instruction this tap sends: the split legs (in
-     * the teacher's order, amounts only -- the server re-rehearses and
-     * charges only if they sum to ITS total), or the single method. */
-    const splitBody =
-      splitOn &&
-      splitAMethod !== null &&
-      splitBMethod !== null &&
-      splitAUsd !== null &&
-      splitBUsd !== null
-        ? {
-            split: {
-              legs: [
-                { method: splitAMethod, amount: splitAUsd },
-                { method: splitBMethod, amount: splitBUsd },
-              ],
-            },
-          }
-        : null;
-    if (splitOn ? splitBody === null : method === null) return;
+    /**
+     * The one payment instruction this tap sends, in the two shapes
+     * /api/checkout has always accepted and which T35 does not touch:
+     * one line is `{ method, cashTendered? }`, two lines are
+     * `{ split: { legs } }`. A cash leg sends what it COVERS, never the
+     * over-tendered figure; the tendered figure rides as `cashTendered`
+     * on a single-line sale only (the route refuses it beside a split,
+     * where a leg's amount already IS what is collected).
+     */
+    const legs = lines.map((line, i) => ({
+      method: line.source,
+      amount: (coverage[i] ?? 0) / 100,
+    }));
+    const payment = comped
+      ? { method: "comp" as const }
+      : legs.length === 2
+        ? { split: { legs } }
+        : soleLine !== undefined && legs[0] !== undefined
+          ? {
+              method: soleLine.source,
+              ...(soleLine.source === "cash"
+                ? { cashTendered: soleLine.cents / 100 }
+                : {}),
+            }
+          : null;
+    if (payment === null) return;
+    const isSplit = "split" in payment;
     inFlight.current = true;
     setCharging(true);
     onBusyChange(true);
@@ -818,12 +886,7 @@ function PaymentPanel(props: {
             taxRate: line.item.taxRate,
           })),
           ...(clientId ? { clientId } : {}),
-          ...(splitBody ?? {
-            method,
-            ...(method === "cash" && tenderedUsd !== null
-              ? { cashTendered: tenderedUsd }
-              : {}),
-          }),
+          ...payment,
         }),
       });
       let body: any = null;
@@ -855,21 +918,23 @@ function PaymentPanel(props: {
         /* The paid summary names how it was paid; a split names BOTH
          * legs, amounts included, so the drawer count and the statement
          * both have their line. */
-        const legDesc = (m: SplitMethod, usd: number) =>
+        const legDesc = (m: TenderSource, usd: number) =>
           m === "storedcard"
             ? `${money(usd)} on the stored card${card ? ` ...${card.lastFour}` : ""}`
             : m === "credit"
               ? `${money(usd)} account credit`
               : `${money(usd)} cash`;
-        const methodName = splitBody
-          ? splitBody.split.legs
-              .map((leg) => legDesc(leg.method, leg.amount))
-              .join(" + ")
-          : method === "storedcard"
-            ? `stored card${card ? ` ...${card.lastFour}` : ""}`
-            : method === "credit"
-              ? "account credit"
-              : String(method);
+        const methodName = isSplit
+          ? legs.map((leg) => legDesc(leg.method, leg.amount)).join(" + ")
+          : comped
+            ? "comp"
+            : soleLine === undefined
+              ? "the payment"
+              : soleLine.source === "storedcard"
+                ? `stored card${card ? ` ...${card.lastFour}` : ""}`
+                : soleLine.source === "credit"
+                  ? "account credit"
+                  : "cash";
         onSold();
         /* The sale stands, so every client number this screen holds is a
          * pre-sale snapshot: drop the one learned from a refusal and let
@@ -890,22 +955,18 @@ function PaymentPanel(props: {
             .filter(Boolean)
             .join(" ") || null,
         });
-        setMethod(null);
-        setTendered("");
-        /* A completed split is over: slots blank and the toggle drops
-         * back to single, the screen's resting state. */
-        resetSplitSlots();
-        setSplitOn(false);
+        /* The sale is over: the tender goes with it. */
+        resetTender();
       } else if (res.ok && body?.suppressed) {
         setResult({ kind: "suppressed", mode: String(body.suppressed) });
       } else if (body?.stage === "checkout-after-credit") {
         /* THE seam, rendered verbatim and prominent: the credit exists,
          * the sale does not, and the credit step must not run again. The
-         * method is DESELECTED so a bare re-tap of Charge is impossible,
-         * and the fresh balance lets Account credit light up: the honest
-         * retry is spending the credit that now exists, never re-buying
-         * it, so there is no retry affordance on the credit step. */
-        setMethod(null);
+         * tender is CLEARED so a bare re-tap of Charge is impossible,
+         * and the fresh balance lets Credit light up: the honest retry
+         * is spending the credit that now exists, never re-buying it, so
+         * there is no retry affordance on the credit step. */
+        resetTender();
         /* The credit purchase went through: their balance really did
          * change, whatever happened to the checkout after it. */
         onClientDataStale();
@@ -944,65 +1005,102 @@ function PaymentPanel(props: {
     }
   };
 
-  const pickMethod = (m: PayMethod) => {
-    setMethod((cur) => (cur === m ? null : m));
+  /** Retire a stale warning when the teacher changes the tender; a paid
+   *  receipt stays until Done. */
+  const clearStaleResult = () =>
     setResult((r) => (r && r.kind !== "paid" ? r : null));
+
+  const closeKeypad = useCallback(() => {
+    /* A line left at zero is not a tender: dismissing the keypad without
+     * an amount removes the line it was opened for, rather than leaving a
+     * $0.00 row the Charge button has to refuse. */
+    if (keypadFor !== null) {
+      setLines((ls) => ls.filter((l) => l.id !== keypadFor || l.cents > 0));
+    }
+    dismissKeypad();
+  }, [keypadFor, dismissKeypad]);
+
+  /** Tapping a source ADDS a line for the whole remaining due, clamped by
+   *  that source's rule: one tap, no typing, for the ordinary whole-sale
+   *  case. */
+  const addLine = (source: TenderSource) => {
+    if (addReason(source) !== null || charging) return;
+    if (dueCents === null || dueCents <= 0) return;
+    const cents =
+      source === "credit"
+        ? Math.min(dueCents, balanceCents ?? 0)
+        : dueCents;
+    if (cents <= 0) return;
+    const id = nextLineId.current++;
+    /* Adding a tender disarms comp: the sale is being paid for. */
+    setComped(false);
+    setLines((cur) => [...cur, { id, source, cents }]);
+    closeKeypad();
+    clearStaleResult();
   };
 
-  /** The Split toggle. Entering or leaving split mode is a fresh start
-   *  for the whole payment choice: the single method (comp included) and
-   *  any recorded tender disarm, and the slots reset. An amount or
-   *  method chosen in one mode never survives into the other. */
-  const toggleSplit = () => {
-    setSplitOn((v) => !v);
-    setMethod(null);
-    setTendered("");
-    resetSplitSlots();
-    setResult((r) => (r && r.kind !== "paid" ? r : null));
+  const removeLine = (id: number) => {
+    setLines((cur) => cur.filter((l) => l.id !== id));
+    if (keypadFor === id) dismissKeypad();
+    clearStaleResult();
   };
 
-  /** One slot's compact method picker. Availability follows T24's rules
-   *  (greyed with the reason on the title, never hidden); the method the
-   *  OTHER slot holds is greyed too, since a split's legs must differ. */
-  const renderSlotMethods = (slot: "A" | "B") => {
-    const mine = slot === "A" ? splitAMethod : splitBMethod;
-    const other = slot === "A" ? splitBMethod : splitAMethod;
-    const set = slot === "A" ? setSplitAMethod : setSplitBMethod;
-    const options: { m: SplitMethod; label: string; reason: string | null }[] =
-      [
-        /* Credit first and only when there is credit, as in the single
-         * method row above: the same rule reads the same in both. */
-        ...(creditVisible
-          ? [
-              {
-                m: "credit" as SplitMethod,
-                label: "Credit",
-                reason: splitCreditBase,
-              },
-            ]
-          : []),
-        /* cardReason, not cardReasonFinal: rule 1 (credit covers the
-         * total refuses the card) does not apply to a deliberate split;
-         * the server takes the same reading. */
-        { m: "storedcard", label: "Card", reason: cardReason },
-        { m: "cash", label: "Cash", reason: null },
-      ];
-    return options.map(({ m, label, reason }) => {
-      const taken = other === m;
-      return (
-        <button
-          key={m}
-          className={mine === m ? "split-m on" : "split-m"}
-          disabled={charging || reason !== null || taken}
-          aria-pressed={mine === m}
-          title={reason ?? (taken ? "Used by the other part" : label)}
-          onClick={() => set((cur) => (cur === m ? null : m))}
-        >
-          {label}
-        </button>
-      );
-    });
+  /** Tapping a line's amount opens the one keypad for THAT line. Entry
+   *  starts empty, register-style: the first digit replaces the figure
+   *  rather than appending to it. */
+  const openKeypad = (id: number) => {
+    setKeypadFor(id);
+    setEntry("");
+    onModalChange(true);
+    clearStaleResult();
   };
+
+  const keypadIndex = lines.findIndex((l) => l.id === keypadFor);
+  const keypadLine = keypadIndex >= 0 ? lines[keypadIndex] : undefined;
+  const keypadCap =
+    keypadLine === undefined ? null : capFor(keypadLine.source);
+
+  /** One keypad key. Digits accumulate into CENTS, and a clamped source
+   *  is clamped on every keystroke, so the state can never hold an
+   *  amount above the cap even mid-entry. */
+  const keypadTap = (key: string) => {
+    if (keypadLine === undefined) return;
+    const digits =
+      key === "clear" ? "" : (entry + key).replace(/^0+(?=\d)/, "");
+    if (digits.length > 7) return;
+    const typed = digits === "" ? 0 : parseInt(digits, 10);
+    if (!Number.isFinite(typed)) return;
+    const clamped = keypadCap === null ? typed : Math.min(typed, keypadCap);
+    setEntry(clamped === typed ? digits : String(clamped));
+    const id = keypadLine.id;
+    /* Editing one line of a two-line tender RECOMPUTES the other as the
+     * remainder (clamped by its own rule), so the lines can only ever sum
+     * to the server's total. The one exception is a cash line entered
+     * above the whole total: there is no remainder left to give the other
+     * line, so it keeps what it has and the surplus is change. */
+    const rest = totalCents === null ? null : Math.max(0, totalCents - clamped);
+    setLines((cur) =>
+      cur.map((l) => {
+        if (l.id === id) return { ...l, cents: clamped };
+        if (cur.length !== 2 || rest === null || rest <= 0) return l;
+        const cents =
+          l.source === "credit" ? Math.min(rest, balanceCents ?? 0) : rest;
+        return { ...l, cents };
+      }),
+    );
+    clearStaleResult();
+  };
+
+  /* Escape closes the keypad (never mid-charge). SaleScreen skips its own
+   * overlay-close for the same press via onModalChange. */
+  useEffect(() => {
+    if (keypadFor === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !charging) closeKeypad();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [keypadFor, charging, closeKeypad]);
 
   /* Comp arms on a HOLD, not a tap: it hands goods over for nothing, so
    * it cannot sit where a fat finger lands. Unselecting is a plain tap
@@ -1010,12 +1108,20 @@ function PaymentPanel(props: {
    * fires at the END of a completed hold so arming and disarming cannot
    * happen in the same gesture. */
   const compHeld = useRef(false);
+  const armComp = () => {
+    /* Comp is the whole sale given away, so it cannot coexist with a
+     * tender: arming it clears the lines. */
+    setLines([]);
+    dismissKeypad();
+    setComped(true);
+    clearStaleResult();
+  };
   const compHoldStart = () => {
     if (compTimer.current) clearTimeout(compTimer.current);
     compTimer.current = setTimeout(() => {
       compTimer.current = null;
       compHeld.current = true;
-      pickMethod("comp");
+      armComp();
     }, COMP_HOLD_MS);
   };
   const compHoldEnd = () => {
@@ -1036,212 +1142,205 @@ function PaymentPanel(props: {
       return;
     }
     /* A bare tap never ARMS comp; it only disarms an armed one. */
-    if (method === "comp") pickMethod("comp");
+    if (comped) {
+      setComped(false);
+      clearStaleResult();
+    }
   };
 
-  const keypadTap = (key: string) => {
-    setTendered((cur) => {
-      if (key === "back") return cur.slice(0, -1);
-      if (key === "clear") return "";
-      const next = (cur + key).replace(/^0+(?=\d)/, "");
-      return next.length > 7 ? cur : next;
-    });
-  };
-
-  const openCashModal = () => {
-    setCashOpen(true);
-    onModalChange(true);
-  };
-  /** Cancelling clears the tender too: with none recorded, the Charge
-   *  button reopens this modal rather than charging directly. */
-  const closeCashModal = useCallback(() => {
-    setCashOpen(false);
-    setTendered("");
-    onModalChange(false);
-  }, [onModalChange]);
-  /** The confirm: close the modal and fire the ONE charge path. The
-   *  tendered amount stays as entered (it rides the request for the
-   *  server-side short-tender refusal); the outcome renders where every
-   *  charge outcome renders, under the receipt. */
-  const confirmCash = () => {
-    setCashOpen(false);
-    onModalChange(false);
-    void doCharge();
-  };
-
-  /* Escape closes the cash modal (never mid-charge). SaleScreen skips
-   * its own overlay-close for the same press via onModalChange. */
-  useEffect(() => {
-    if (!cashOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !charging) closeCashModal();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [cashOpen, charging, closeCashModal]);
-
-  /* The shared quiet line under the method row (the per-card subtitle is
-   * gone with the compact buttons): the selected method's detail, else
-   * the first unavailable method's reason. The full reason also sits on
-   * each button's title attr. */
-  const methodNote = splitOn
-    ? splitCardUnderMin
-      ? `The card leg is under the $${CARD_MINIMUM_USD} card minimum`
-      : splitCreditShort
-        ? `Only ${balance !== null ? money(balance) : "$0.00"} on account for the credit leg`
-        : splitA.trim() !== "" && total !== null && !splitAInRange
-          ? "The first amount must be more than $0.00 and less than the total"
-          : splitAMethod === null || splitBMethod === null
-            ? "Two parts, two methods. Pick one for each."
-            : ""
-    : method === "storedcard"
-      ? (cardDetail ?? "")
-      : method === "credit"
-        ? creditLabel
-        : method === "cash"
-          ? tenderedUsd !== null
-            ? `Tendered ${money(tenderedUsd)}`
-            : ""
-          : method === "comp"
-            ? ""
-            : cardReasonFinal !== null
-              ? `Card: ${cardReasonFinal}`
-              : /* Only for a credit button that is actually on screen: a
-                   reason for an absent control explains nothing. */
-                creditVisible && creditReason !== null
-                ? `Credit: ${creditReason}`
+  /* ONE shared quiet line under the tender: the first real problem with
+   * what is on screen, else what is still owed, else the detail of what
+   * is armed. The full reason also sits on each control's title attr. */
+  const tenderNote = comped
+    ? "Comp: nothing is charged."
+    : firstLineProblem !== null
+      ? firstLineProblem
+      : keypadLine !== undefined && keypadCap !== null
+        ? `${sourceLabel(keypadLine.source)} tops out at ${money(keypadCap / 100)}.`
+        : keypadLine !== undefined
+          ? "Cash may be more than the total; the change shows above."
+          : dueCents !== null && dueCents > 0 && lines.length >= 2
+            ? /* Both slots are taken, so the fix is an amount, not
+                 another source. */
+              `${money(dueCents / 100)} is still unpaid. Adjust an amount, or remove a part.`
+            : dueCents !== null && dueCents > 0 && lines.length > 0
+              ? `Add a source for the remaining ${money(dueCents / 100)}.`
+              : lines.length === 0
+                ? cardReason !== null
+                  ? `Card: ${cardReason}`
+                  : /* Only for a credit source that is actually on
+                       screen: a reason for an absent control explains
+                       nothing. */
+                    creditVisible && creditReason !== null
+                    ? `Credit: ${creditReason}`
+                    : (cardDetail ?? "")
                 : "";
+
+  const sources: { s: TenderSource; label: string; icon: ReactNode }[] = [
+    /* Credit leads when there IS credit, and is absent when there is not
+       (Pete, fourth live test). */
+    ...(creditVisible
+      ? [
+          {
+            s: "credit" as TenderSource,
+            label: "Credit",
+            icon: <CreditIcon />,
+          },
+        ]
+      : []),
+    { s: "storedcard", label: "Card", icon: <CardIcon /> },
+    { s: "cash", label: "Cash", icon: <CashIcon /> },
+  ];
 
   return (
     <div className="sale-left">
-      {/* Who the sale is for lives in the screen header now (Pete, fourth
-          live test: it is identity, not a payment control, and the column
-          is the scarcer real estate). The method row it gates is first
-          here. */}
-
-      {/* The method row, compact and ABOVE the receipt (second live
-          test): three 64px segmented buttons, icon + label, no subtitle
-          line. Unavailable stays visible-but-greyed; the reason moves to
-          the title attr and the shared quiet line below. */}
-      <div>
-        <div className="methods" aria-label="Payment methods">
-          {!splitOn ? (
-          <>
-          {/* Credit leads when there IS credit, and is absent when there
-              is not (Pete, fourth live test). Rule 1 makes it the method
-              whenever it covers the total, so first-on-the-left is also
-              where the tap usually belongs. */}
-          {creditVisible ? (
-            <button
-              className={method === "credit" ? "method on" : "method"}
-              disabled={creditReason !== null || charging}
-              onClick={() => pickMethod("credit")}
-              aria-pressed={method === "credit"}
-              title={creditReason ?? creditLabel}
+      {/* T35: ONE tender block. The sources sit inline with the amount
+          due (Pete: "make the source buttons smaller and put them inline
+          with the totals"); tapping one adds a line for the whole
+          remaining due. The lines below are the payment, and a second one
+          IS the split, so there is no Split toggle and no "First part" /
+          "Remainder" labels. */}
+      <div className="tender">
+        <div className="tender-top">
+          <div className="tender-srcs" aria-label="Payment sources">
+            {sources.map(({ s, label, icon }) => {
+              const reason = addReason(s);
+              return (
+                <button
+                  key={s}
+                  className="tender-src"
+                  disabled={reason !== null || charging}
+                  onClick={() => addLine(s)}
+                  title={
+                    reason ??
+                    (s === "credit"
+                      ? creditLabel
+                      : s === "storedcard"
+                        ? (cardDetail ?? "Card on file")
+                        : "Cash")
+                  }
+                >
+                  <span className="mi">{icon}</span>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="tender-due">
+            <span>{comped ? "Comped" : "Due"}</span>
+            <span
+              className={
+                dueCents === 0 && !comped
+                  ? "tender-due-amt settled"
+                  : "tender-due-amt"
+              }
             >
-              <span className="mi">
-                <CreditIcon />
+              {comped
+                ? total !== null
+                  ? money(total)
+                  : "--"
+                : dueCents !== null
+                  ? money(dueCents / 100)
+                  : "--"}
+            </span>
+            {changeCents > 0 ? (
+              <span className="tender-change">
+                Change {money(changeCents / 100)}
               </span>
-              Credit
-            </button>
-          ) : null}
-          <button
-            className={method === "storedcard" ? "method on" : "method"}
-            disabled={cardReasonFinal !== null || charging}
-            onClick={() => pickMethod("storedcard")}
-            aria-pressed={method === "storedcard"}
-            title={cardReasonFinal ?? cardDetail ?? "Card on file"}
-          >
-            <span className="mi">
-              <CardIcon />
-            </span>
-            Card
-          </button>
-          <button
-            className={method === "cash" ? "method on" : "method"}
-            disabled={charging}
-            onClick={() => {
-              const selecting = method !== "cash";
-              pickMethod("cash");
-              /* Selecting cash opens the tender modal; a deselecting tap
-                 does not. */
-              if (selecting) openCashModal();
-            }}
-            aria-pressed={method === "cash"}
-            title="Cash"
-          >
-            <span className="mi">
-              <CashIcon />
-            </span>
-            Cash
-          </button>
-          </>
-          ) : null}
-          {/* T28: the quiet Split toggle. In split mode it is the only
-              thing left in this row; the two slots below replace the
-              single-method buttons. */}
-          <button
-            className={splitOn ? "split-toggle on" : "split-toggle"}
-            disabled={charging}
-            onClick={toggleSplit}
-            aria-pressed={splitOn}
-            title={
-              splitOn ? "Back to one payment method" : "Pay with two methods"
-            }
-          >
-            Split
-          </button>
+            ) : null}
+          </div>
         </div>
 
-        {splitOn ? (
-          <div className="split-slots" aria-label="Split payment">
-            <div className="split-slot">
-              <label className="split-amt-row">
-                <span>First part</span>
-                <input
-                  className="split-amt"
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  value={splitA}
-                  disabled={charging}
-                  aria-label="First part amount in dollars"
-                  onChange={(e) => {
-                    /* Dollars and cents only; anything else never lands
-                       in the state. */
-                    const v = e.target.value;
-                    if (/^\d{0,5}(\.\d{0,2})?$/.test(v)) setSplitA(v);
-                  }}
-                />
-              </label>
+        {lines.length > 0 ? (
+          <div className="tender-lines" aria-label="Payment lines">
+            {lines.map((line, i) => (
               <div
-                className="split-methods"
-                role="group"
-                aria-label="First part method"
+                className={
+                  lineReasons[i] ? "tender-line bad" : "tender-line"
+                }
+                key={line.id}
               >
-                {renderSlotMethods("A")}
-              </div>
-            </div>
-            <div className="split-slot">
-              <div className="split-amt-row">
-                <span>Remainder</span>
-                {/* Computed, read-only: the server total minus part one,
-                    so the legs can only ever sum to the rehearsed
-                    total. */}
-                <span className="split-rest-amt">
-                  {splitBUsd !== null ? money(splitBUsd) : "--"}
+                <span className="tender-src-name">
+                  {sourceLabel(line.source)}
                 </span>
+                <button
+                  className={
+                    keypadFor === line.id ? "tender-amt on" : "tender-amt"
+                  }
+                  disabled={charging}
+                  onClick={() =>
+                    keypadFor === line.id ? closeKeypad() : openKeypad(line.id)
+                  }
+                  aria-label={`${sourceLabel(line.source)} amount ${money(line.cents / 100)}, tap to change`}
+                  title="Tap to change this amount"
+                >
+                  {money(line.cents / 100)}
+                </button>
+                <button
+                  className="tender-x"
+                  disabled={charging}
+                  onClick={() => removeLine(line.id)}
+                  aria-label={`Remove the ${sourceLabel(line.source)} payment`}
+                  title="Remove this payment"
+                >
+                  &#215;
+                </button>
               </div>
-              <div
-                className="split-methods"
-                role="group"
-                aria-label="Remainder method"
+            ))}
+          </div>
+        ) : null}
+
+        {/* The ONE keypad, inline and shared by every source: no OS
+            keyboard anywhere in the payment seam, and no cash-only
+            modal. Digits accumulate into cents, exactly as the tender
+            field always did. */}
+        {keypadLine !== undefined ? (
+          <div className="keypad" role="group" aria-label="Amount keypad">
+            <div className="keypad-head">
+              <span>{sourceLabel(keypadLine.source)}</span>
+              <span className="keypad-entry">
+                {money(keypadLine.cents / 100)}
+              </span>
+            </div>
+            <div className="keypad-keys">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((k) => (
+                <button
+                  key={k}
+                  className="keypad-key"
+                  disabled={charging}
+                  onClick={() => keypadTap(k)}
+                >
+                  {k}
+                </button>
+              ))}
+              <button
+                className="keypad-key"
+                disabled={charging}
+                onClick={() => keypadTap("clear")}
+                aria-label="Clear the amount"
               >
-                {renderSlotMethods("B")}
-              </div>
+                C
+              </button>
+              <button
+                className="keypad-key"
+                disabled={charging}
+                onClick={() => keypadTap("0")}
+              >
+                0
+              </button>
+              <button
+                className="keypad-key done"
+                disabled={charging}
+                onClick={closeKeypad}
+                aria-label="Done entering this amount"
+              >
+                Done
+              </button>
             </div>
           </div>
         ) : null}
-        <p className="methods-note">{methodNote || " "}</p>
+
+        <p className="methods-note">{tenderNote || " "}</p>
       </div>
 
       {/* The receipt ticket; it may scroll internally, so the charge
@@ -1249,23 +1348,20 @@ function PaymentPanel(props: {
       {receipt}
 
       <div className="pay-seam">
-      {/* Comp: deliberately out of the method row and armed by holding,
-          so nobody comps a sale by grazing a card. */}
+      {/* Comp: deliberately out of the tender list and armed by holding,
+          so nobody comps a sale by grazing a control. */}
       <button
-        className={method === "comp" ? "comp-hold on" : "comp-hold"}
-        /* Comp is a whole-sale gesture and is excluded from splits; while
-           split mode is armed the hold is off rather than fighting it. */
-        disabled={charging || splitOn}
-        title={splitOn ? "Not available in a split" : undefined}
+        className={comped ? "comp-hold on" : "comp-hold"}
+        disabled={charging}
         onPointerDown={compHoldStart}
         onPointerUp={compHoldEnd}
         onPointerLeave={compHoldAbort}
         onPointerCancel={compHoldAbort}
         onClick={compClick}
         onContextMenu={(e) => e.preventDefault()}
-        aria-pressed={method === "comp"}
+        aria-pressed={comped}
       >
-        {method === "comp"
+        {comped
           ? "Comp selected. Tap to unselect."
           : "Hold to comp this sale"}
       </button>
@@ -1273,18 +1369,7 @@ function PaymentPanel(props: {
       <button
         className="charge-btn"
         disabled={!chargeable}
-        onClick={() => {
-          /* Cash armed with no tender recorded: the tap opens the tender
-             modal (whose confirm fires this same path) instead of
-             charging directly. Split mode never opens it: a split's cash
-             leg needs no tender math, its amount IS what is collected
-             (the label says "collect $X cash"). */
-          if (!splitOn && method === "cash" && tenderedCents === null) {
-            openCashModal();
-            return;
-          }
-          void doCharge();
-        }}
+        onClick={() => void doCharge()}
         aria-label={chargeLabel}
       >
         {charging ? (
@@ -1373,117 +1458,6 @@ function PaymentPanel(props: {
         </div>
       ) : null}
       </div>
-
-      {/* The cash-tender modal (second live test: the inline panel read
-          as part of the form; a modal is the deliberate step it is).
-          Keypad and chips are display-only change math; the confirm is
-          the SAME charge path as the Charge button, single-flight and
-          all, and the outcome renders under the receipt like every
-          other charge outcome. The server still refuses a short tender. */}
-      {cashOpen ? (
-        <div
-          className="modal-scrim"
-          role="presentation"
-          onClick={() => {
-            if (!charging) closeCashModal();
-          }}
-        >
-          <div
-            className="modal modal-cash"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Record a cash payment"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="modal-title">Cash</p>
-            <div className="cash-row">
-              <span className="cash-label">Total</span>
-              <span className="cash-amt">
-                {total !== null ? money(total) : "--"}
-              </span>
-            </div>
-            <div className="cash-row">
-              <span className="cash-label">Tendered</span>
-              <span className="cash-amt">
-                {tenderedUsd !== null ? money(tenderedUsd) : "--"}
-              </span>
-            </div>
-            <div className="cash-chips">
-              <button
-                className="cash-chip"
-                disabled={total === null}
-                onClick={() =>
-                  total !== null &&
-                  setTendered(String(Math.round(total * 100)))
-                }
-              >
-                Exact
-              </button>
-              {[20, 50, 100].map((usd) => (
-                <button
-                  key={usd}
-                  className="cash-chip"
-                  onClick={() => setTendered(String(usd * 100))}
-                >
-                  ${usd}
-                </button>
-              ))}
-            </div>
-            <div className="cash-keys">
-              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0"].map(
-                (k) => (
-                  <button
-                    key={k}
-                    className="cash-key"
-                    onClick={() => keypadTap(k)}
-                  >
-                    {k}
-                  </button>
-                ),
-              )}
-              <button
-                className="cash-key"
-                aria-label="Delete last digit"
-                onClick={() => keypadTap("back")}
-              >
-                &#9003;
-              </button>
-            </div>
-            {total !== null && tenderedUsd !== null ? (
-              cashShort ? (
-                <p className="cash-change short">
-                  Short {money(total - tenderedUsd)}
-                </p>
-              ) : (
-                <p className="cash-change">
-                  Change due {money(tenderedUsd - total)}
-                </p>
-              )
-            ) : (
-              <p className="cash-change muted-note">
-                Tendered is for the change math only; it is not sent to
-                Mindbody.
-              </p>
-            )}
-            <div className="modal-actions">
-              <button
-                className="modal-cancel"
-                disabled={charging}
-                onClick={closeCashModal}
-              >
-                Cancel
-              </button>
-              <button
-                className="modal-confirm go"
-                disabled={total === null || cashShort || charging || !chargeable}
-                onClick={confirmCash}
-              >
-                {total !== null ? `Record ${money(total)} cash` : "Record cash"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
