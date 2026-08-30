@@ -1287,19 +1287,19 @@ machinery is the precedent), is the real design work in that ticket.
 Approved: "def need to support this in our app." The checkout Payments
 field is an array; the design work is the honest-failure story.
 
-- [ ] The Buy screen supports paying one sale with TWO methods: the
+- [x] The Buy screen supports paying one sale with TWO methods: the
       primary case is gift-card-plus-remainder later, but the buildable
       case now is any two of stored card / account credit / cash (e.g.
       credit covers part, card the rest -- which also REVERSES the P2
       "ignore partial credit" assumption for this explicit flow only:
       a teacher deliberately splitting is not the ambiguity P2 guarded
       against; record the reversal).
-- [ ] UI: a "Split" affordance in the methods row; two amount slots
+- [x] UI: a "Split" affordance in the methods row; two amount slots
       that must sum to the server total (one editable, the other
       computed); each slot picks a method under T24's availability
       rules; Charge restates both ("Charge $30.00 card + $13.50
       credit").
-- [ ] Server: /api/checkout accepts an ordered two-payment array,
+- [x] Server: /api/checkout accepts an ordered two-payment array,
       validates sum == rehearsed total, applies the $10 card minimum to
       the CARD LEG (record the interpretation), and sends both entries
       in one checkoutshoppingcart Payments array -- ONE Mindbody call,
@@ -1307,8 +1307,78 @@ field is an array; the design work is the honest-failure story.
       Verify against sale.yml whether one call with two Payments is
       accepted (schema says array; a Test: true rehearsal with two
       payment stubs is the probe, note it for the sandbox run).
-- [ ] All T24 invariants inherited: rehearsed total only, single
+- [x] All T24 invariants inherited: rehearsed total only, single
       flight, suppression never success, ambiguity honest.
+
+How it landed (done (code): typecheck and build clean, no live run in
+this container):
+
+- **Schema verdict**: `CheckoutShoppingCartRequest.Payments`
+  (sale.yml:5643-5649) is a plain `type: array` of `CheckoutPaymentInfo`
+  with no `maxItems` and no other constraint, so nothing in the vendored
+  spec forbids two entries. The payment shapes are exactly the ones T24
+  already ships (StoredCard {Amount, LastFour}, DebitAccount {Amount},
+  Cash {Amount}); a split invents no new shape.
+- **NOTE FOR PETE'S SANDBOX RUN: a Test: true rehearsal CANNOT prove
+  two-Payments acceptance.** The rehearsal prices with the single Comp
+  stub (the T22 machinery, unchanged), so the first REAL split sale in
+  the sandbox is the proof that Mindbody accepts two entries in one
+  call. If it refuses, the refusal is a clean whole-sale failure
+  (nothing partial can exist: it is one call), rendered like any other
+  refusal.
+- `checkoutCart` in src/lib/sale.ts now takes one payment OR an ordered
+  array of one or two; every existing call site still passes a single
+  object and is behaviorally untouched.
+- /api/checkout: `split: {legs: [{method, amount}, {method, amount}]}`
+  replaces `method` (sending both is a 400, as is the same method
+  twice, a non-cents amount, or comp in a leg -- comp is a whole-sale
+  hold gesture, and half-comping through a split would dodge it). The
+  route rehearses FIRST as always; the legs must sum EXACTLY to the
+  rehearsed server total after cent rounding (409 naming both numbers)
+  -- the client sends amounts only, so the teacher's chosen split is
+  honored, but the SUM is the server's total, never the browser's. Both
+  methods re-pass their T24 availability checks against a charge-time
+  profile read: the credit leg against the re-read balance, the card
+  leg against the card on file, and the $10 minimum against the CARD
+  LEG's amount (the floor is a card-processing floor, same reading as
+  P4). A card leg under $10 is refused with the reason; there is
+  deliberately NO auto credit-purchase inside a split -- the under-$10
+  credit dance on top of a two-leg split is complexity nobody asked
+  for, and it would turn the split's one-call no-seam guarantee into a
+  two-write seam. A split always needs a real attached client (every
+  valid pair contains a client-bound leg); the house client never rides
+  one. Then ONE checkoutshoppingcart call with both Payments entries in
+  the teacher's order: a refusal refuses the whole sale, 5xx/transport
+  is T24's honest ambiguity, suppression suppresses the whole sale.
+- **Rule 1 (credit covers the total -> the card is refused) does NOT
+  apply to a split**, and P2 (ignore partial credit) is REVERSED for
+  this explicit flow only: both rules guarded against ambiguity -- a
+  teacher who never chose between credit and card -- and a deliberate
+  two-leg split is the opposite of that ambiguity. Recorded in the
+  route comment; single-method sales keep both rules unchanged.
+- UI: a quiet dashed "Split" toggle at the end of the methods row. On:
+  the three single-method buttons yield to two slots -- slot A's amount
+  typed (plain right-aligned input at 20px, the .search size; whole
+  cents, filtered at the keystroke), slot B's amount computed as the
+  server total minus A and read-only, so the legs can only ever sum to
+  the rehearsed total. Each slot picks its method from compact 64px
+  Card/Credit/Cash buttons under T24 availability (card greys with the
+  T24 reason MINUS rule 1; credit greys with no-client/no-credit; the
+  method the other slot holds greys as "Used by the other part"). A
+  cash leg opens NO tender modal: its amount IS what is collected, and
+  the Charge button says so ("Charge $30.00 card + collect $13.50
+  cash"). Charge stays disabled until both methods are chosen, A sits
+  strictly inside (0, total), the card leg clears the $10 floor and the
+  credit leg fits the balance, all on top of the inherited chargeable
+  invariants. Comp's hold disables while split mode is armed. Leaving
+  split mode, any client change, any cart edit, and the Empty-cart
+  nonce all reset the slots (the existing disarm effects, extended);
+  a completed split resets the slots and drops back to single mode.
+- Outcomes: the paid summary names both legs with amounts ("Paid $43.50
+  by $30.00 on the stored card ...1234 + $13.50 cash for Dennis.");
+  every failure shape (refusal, suppression amber, ambiguity with no
+  retry invitation) renders through the exact same blocks as a
+  single-method charge, because it is the same fetch pipeline.
 
 ## T30. Contracts and packages in Buy (Pete, 2026-08-30: essential)
 

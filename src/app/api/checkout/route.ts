@@ -11,6 +11,8 @@ import {
   parseCartLines,
   purchaseCredit,
   rehearseCheckout,
+  roundToCents,
+  type CheckoutPayment,
 } from "@/lib/sale";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +24,15 @@ export const dynamic = "force-dynamic";
  * Body: { items: CartLine[], clientId?: string,
  *         method: "storedcard"|"credit"|"cash"|"comp",
  *         cashTendered?: number }
+ *   or, since T28, `split` instead of `method`:
+ *       { items, clientId, split: { legs: [{method, amount}, {method,
+ *         amount}] } } -- exactly two legs, methods from the whitelist
+ *         minus comp, amounts in whole cents that sum EXACTLY to the
+ *         rehearsed server total, charged as two Payments entries in ONE
+ *         checkoutshoppingcart call (no two-write seam; a refusal
+ *         refuses the whole sale). The card minimum applies to the card
+ *         LEG; rule 1 (credit-covers-total refuses the card) does not
+ *         apply to a deliberate split (the recorded P2 reversal).
  *
  * Executes PLAN 2.3's table EXACTLY, and never collapses the card paths
  * (the design doc: routing every card sale through purchaseaccountcredit
@@ -77,6 +88,38 @@ function errMessage(err: unknown): string {
 
 type Method = "storedcard" | "credit" | "cash" | "comp";
 
+/* T28: the methods a split leg may use. Comp is deliberately excluded --
+ * a comp is the whole sale given away, armed by its own hold gesture in
+ * the UI, and half-comping through a split would dodge that gesture. */
+type SplitMethod = "storedcard" | "credit" | "cash";
+
+interface SplitLeg {
+  method: SplitMethod;
+  amount: number;
+}
+
+/** Parse one untrusted split leg; a string return is the 400 reason. */
+function parseSplitLeg(raw: unknown): SplitLeg | string {
+  const method = (raw as { method?: unknown })?.method;
+  if (method !== "storedcard" && method !== "credit" && method !== "cash") {
+    return "each split leg's method must be storedcard, credit or cash";
+  }
+  const amount = (raw as { amount?: unknown })?.amount;
+  if (
+    typeof amount !== "number" ||
+    !Number.isFinite(amount) ||
+    amount <= 0
+  ) {
+    return "each split leg needs a positive amount";
+  }
+  /* Whole cents only: a sub-cent leg could never sum to a real total and
+   * is a typo, not a tender. */
+  if (Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-6) {
+    return "split leg amounts must be whole cents";
+  }
+  return { method, amount };
+}
+
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
@@ -93,8 +136,45 @@ export async function POST(request: Request) {
   }
   const items = parsed.items;
 
+  /* T28: an optional `split` -- exactly two payment legs, in the
+   * teacher's order, charged in ONE checkoutshoppingcart call so there
+   * is no two-write seam. Mutually exclusive with `method`: a request
+   * carrying both is refused rather than guessed at. */
+  let split: [SplitLeg, SplitLeg] | null = null;
+  if (payload?.split !== undefined && payload?.split !== null) {
+    if (payload?.method !== undefined) {
+      return NextResponse.json(
+        { error: "send method or split, not both" },
+        { status: 400 },
+      );
+    }
+    const legsRaw: unknown = payload.split?.legs;
+    if (!Array.isArray(legsRaw) || legsRaw.length !== 2) {
+      return NextResponse.json(
+        { error: "split.legs must be exactly two legs" },
+        { status: 400 },
+      );
+    }
+    const legA = parseSplitLeg(legsRaw[0]);
+    if (typeof legA === "string") {
+      return NextResponse.json({ error: legA }, { status: 400 });
+    }
+    const legB = parseSplitLeg(legsRaw[1]);
+    if (typeof legB === "string") {
+      return NextResponse.json({ error: legB }, { status: 400 });
+    }
+    if (legA.method === legB.method) {
+      return NextResponse.json(
+        { error: "a split's two legs must use different methods" },
+        { status: 400 },
+      );
+    }
+    split = [legA, legB];
+  }
+
   const method: unknown = payload?.method;
   if (
+    split === null &&
     method !== "storedcard" &&
     method !== "credit" &&
     method !== "cash" &&
@@ -112,6 +192,15 @@ export async function POST(request: Request) {
   if ((method === "storedcard" || method === "credit") && !clientId) {
     return NextResponse.json(
       { error: `${method} needs a client attached to the sale` },
+      { status: 400 },
+    );
+  }
+  /* Every valid split includes a client-bound leg: comp is excluded and
+   * the two legs differ, so at least one is storedcard or credit. The
+   * house client never rides a split. */
+  if (split !== null && !clientId) {
+    return NextResponse.json(
+      { error: "a split sale needs a client attached" },
       { status: 400 },
     );
   }
@@ -146,6 +235,18 @@ export async function POST(request: Request) {
   ) {
     return NextResponse.json(
       { error: "cashTendered must be a non-negative number when present" },
+      { status: 400 },
+    );
+  }
+  /* In a split, a cash leg needs no tender math: the leg's amount IS
+   * what is collected, so a tendered figure has no meaning here. */
+  if (split !== null && cashTendered !== undefined) {
+    return NextResponse.json(
+      {
+        error:
+          "a split's cash leg records its leg amount; cashTendered does " +
+          "not apply",
+      },
       { status: 400 },
     );
   }
@@ -199,6 +300,169 @@ export async function POST(request: Request) {
       { error: "Tendered cash is less than the total." },
       { status: 400 },
     );
+  }
+
+  /* -------------------------- T28: split ---------------------------- */
+  if (split !== null) {
+    const [legA, legB] = split;
+
+    /* The legs must sum EXACTLY to the rehearsed server total, compared
+     * after cent rounding. The client sends AMOUNTS only, so the
+     * teacher's chosen split is honored -- but the SUM is the server's
+     * total, never the browser's: each leg is charged only because
+     * together they equal the number Mindbody just priced. */
+    const legSum = roundToCents(legA.amount + legB.amount);
+    if (legSum !== roundToCents(total)) {
+      return NextResponse.json(
+        {
+          error:
+            `The split's legs sum to ${legSum.toFixed(2)}, but Mindbody's ` +
+            `total is ${total.toFixed(2)}. Nothing was charged; re-enter ` +
+            "the split against the current total.",
+          stage: "method",
+          total,
+        },
+        { status: 409 },
+      );
+    }
+
+    /* Both methods pass their T24 availability checks server-side, on a
+     * profile read at charge time -- the browser's snapshot is never the
+     * basis for a money decision. A failure here is a failed READ;
+     * nothing has been charged. */
+    let profile;
+    try {
+      profile = await clientPaymentProfile(clientId as string);
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error: `Could not read the client's payment profile: ${errMessage(err)} Nothing was charged.`,
+          stage: "method",
+        },
+        { status: 502 },
+      );
+    }
+
+    const creditLeg =
+      legA.method === "credit" ? legA : legB.method === "credit" ? legB : null;
+    if (creditLeg !== null) {
+      if (profile.balance === null || profile.balance < creditLeg.amount) {
+        return NextResponse.json(
+          {
+            error:
+              profile.balance === null
+                ? "Mindbody reports no account balance for this client."
+                : `Account credit is ${profile.balance.toFixed(2)}, which ` +
+                  `does not cover the ${creditLeg.amount.toFixed(2)} credit leg.`,
+            stage: "method",
+            creditBalance: profile.balance,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    const cardLeg =
+      legA.method === "storedcard"
+        ? legA
+        : legB.method === "storedcard"
+          ? legB
+          : null;
+    if (cardLeg !== null) {
+      if (!profile.card) {
+        return NextResponse.json(
+          { error: "No card on file for this client.", stage: "method" },
+          { status: 409 },
+        );
+      }
+      if (profile.card.expired) {
+        return NextResponse.json(
+          {
+            error: `The card on file (ending ${profile.card.lastFour}) is expired.`,
+            stage: "method",
+          },
+          { status: 409 },
+        );
+      }
+      /* The $10 minimum applies to the CARD LEG's amount: the floor is a
+       * card-processing floor, so what matters is what the card is
+       * charged (the same reading as assumption P4). A card leg under
+       * $10 is REFUSED with the reason, never topped up: the under-$10
+       * credit dance (buy $10 of credit, then debit) on top of a two-leg
+       * split is complexity nobody asked for, and it would turn the
+       * split's one-call no-seam guarantee into a two-write seam. The
+       * teacher's fix is to move the split point or use one method. */
+      if (cardLeg.amount < CARD_MINIMUM_USD) {
+        return NextResponse.json(
+          {
+            error:
+              `The card leg is ${cardLeg.amount.toFixed(2)}, under the ` +
+              `$${CARD_MINIMUM_USD} card minimum. Make the card leg at ` +
+              `least $${CARD_MINIMUM_USD}, or use one method. Nothing was charged.`,
+            stage: "method",
+          },
+          { status: 409 },
+        );
+      }
+      /* Rule 1 of the $10 minimum ("credit covers the total -> credit IS
+       * the method, the card is refused") deliberately does NOT apply to
+       * a split. T28 records the reversal: rule 1 and assumption P2
+       * guarded against AMBIGUITY -- a teacher who never chose between
+       * credit and card -- and a deliberate two-leg split is the
+       * opposite of that ambiguity. Applying it here would also make
+       * credit+card splits impossible for exactly the clients who hold
+       * credit. */
+    }
+
+    const toPayment = (leg: SplitLeg): CheckoutPayment =>
+      leg.method === "storedcard"
+        ? {
+            type: "StoredCard",
+            amount: leg.amount,
+            lastFour: (profile.card as { lastFour: string }).lastFour,
+          }
+        : leg.method === "credit"
+          ? { type: "DebitAccount", amount: leg.amount }
+          : { type: "Cash", amount: leg.amount };
+
+    try {
+      /* ONE checkoutshoppingcart call carrying both Payments entries in
+       * the teacher's order: no partial seam exists, so a refusal
+       * refuses the WHOLE sale and nothing partial can stand. */
+      const outcome = await checkoutCart(items, clientId, [
+        toPayment(legA),
+        toPayment(legB),
+      ]);
+      if (outcome.suppressed) {
+        return NextResponse.json({ ok: false, suppressed: outcome.suppressed });
+      }
+      return NextResponse.json({
+        ok: true,
+        method: "split",
+        total,
+        saleId: outcome.saleId,
+        legs: [
+          { method: legA.method, amount: legA.amount },
+          { method: legB.method, amount: legB.amount },
+        ],
+      });
+    } catch (err) {
+      /* Same posture as the single-method catch below: only a definite
+       * 4xx refusal reports "not charged"; a 5xx or dead transport is
+       * honest ambiguity and invites no retry. */
+      const ambiguous = isAmbiguous(err);
+      return NextResponse.json(
+        {
+          error: ambiguous
+            ? "The charge did not answer. It MAY have gone through. Check " +
+              "the dev drawer or Mindbody before charging again."
+            : errMessage(err),
+          stage: "checkout",
+          ambiguous,
+        },
+        { status: 502 },
+      );
+    }
   }
 
   const m = method as Method;

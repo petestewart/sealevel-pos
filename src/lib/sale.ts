@@ -606,10 +606,21 @@ export interface CheckoutOutcome {
 
 /**
  * The REAL checkout: POST /sale/checkoutshoppingcart (sale.yml:1459) with
- * `Test: false`, `LocationId: 1`, `InStore: true`, and exactly ONE
- * Payments entry (sale.yml:5643) carrying the full server-priced total.
- * This is the call that moves money. It fires only from /api/checkout,
- * which fires only from an explicit Charge tap.
+ * `Test: false`, `LocationId: 1`, `InStore: true`, and the Payments
+ * entries (sale.yml:5643) that together carry the full server-priced
+ * total. This is the call that moves money. It fires only from
+ * /api/checkout, which fires only from an explicit Charge tap.
+ *
+ * Payments takes ONE entry for every ordinary sale, and since T28 may
+ * take TWO for an explicit split. The vendored schema is on side:
+ * `Payments` is a plain `type: array` of CheckoutPaymentInfo with no
+ * maxItems or any other constraint (sale.yml:5643-5649), so nothing
+ * forbids two entries -- though note the T28 sandbox caveat: the Test:
+ * true rehearsal prices with the Comp stub, so only the first REAL split
+ * sale proves Mindbody accepts two entries. The entries go out in the
+ * caller's order (the teacher's order, for a split). /api/checkout is
+ * responsible for the amounts summing exactly to the rehearsed total;
+ * this function only refuses shapes that could never be right.
  *
  * `clientId` goes in the body as ClientId (sale.yml:5654) when present.
  * The spec's "A 'ClientId' OR 'UniqueClientId' must be specified to
@@ -621,17 +632,25 @@ export interface CheckoutOutcome {
 export async function checkoutCart(
   items: readonly CartLine[],
   clientId: string | undefined,
-  payment: CheckoutPayment,
+  payment: CheckoutPayment | readonly CheckoutPayment[],
 ): Promise<CheckoutOutcome> {
   assertCartLines(items, "checkoutCart");
-  if (!Number.isFinite(payment.amount) || payment.amount < 0) {
-    throw new Error("checkoutCart needs a non-negative payment amount.");
+  const payments: readonly CheckoutPayment[] = Array.isArray(payment)
+    ? payment
+    : [payment as CheckoutPayment];
+  if (payments.length < 1 || payments.length > 2) {
+    throw new Error("checkoutCart takes one or two payment entries.");
+  }
+  for (const p of payments) {
+    if (!Number.isFinite(p.amount) || p.amount < 0) {
+      throw new Error("checkoutCart needs a non-negative payment amount.");
+    }
   }
   const res = await mindbody("/sale/checkoutshoppingcart", {
     method: "POST",
     body: {
       Items: cartItemsPayload(items),
-      Payments: [paymentPayload(payment)],
+      Payments: payments.map(paymentPayload),
       ...(clientId ? { ClientId: clientId } : {}),
       Test: false,
       LocationId: STUDIO_LOCATION_ID,

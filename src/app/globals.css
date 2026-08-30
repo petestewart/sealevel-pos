@@ -2090,12 +2090,12 @@ button.sale-for:disabled {
  * pushed the receipt below the fold. Reasons move to title attrs and the
  * shared .methods-note line below. */
 .methods {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
   gap: 8px;
 }
 
 .method {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2139,6 +2139,105 @@ button.sale-for:disabled {
   min-height: 1.3em;
   font-size: 16px;
   color: var(--muted);
+}
+
+/* --- Split payments (T28). ------------------------------------------ */
+
+/* The quiet Split toggle at the end of the method row. Dashed like the
+ * comp hold at rest; accent standing once split mode is on. */
+.split-toggle {
+  min-height: 64px;
+  padding: 0 14px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.split-toggle.on {
+  border: 2px solid var(--accent);
+  color: var(--accent);
+  flex: 1;
+}
+
+.split-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.split-slots {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.split-slot {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.split-amt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* The typed amount: 20px like .search (the recorded input size), right
+ * aligned with tabular figures so it reads like the receipt column. */
+.split-amt {
+  width: 8em;
+  min-height: 64px;
+  padding: 0 12px;
+  font-size: 20px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* The computed remainder: read-only, so a figure, not a field. */
+.split-rest-amt {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.split-methods {
+  display: flex;
+  gap: 8px;
+}
+
+.split-m {
+  flex: 1;
+  min-height: 64px;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.split-m:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.split-m.on {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* Comp lives OUT of the method row and arms on a hold: quiet text

@@ -307,6 +307,14 @@ interface CardLookup {
 
 type PayMethod = "storedcard" | "credit" | "cash" | "comp";
 
+/** The methods a T28 split leg may use: the whitelist minus comp. */
+type SplitMethod = "storedcard" | "credit" | "cash";
+
+/** Keep in sync with src/lib/sale.ts CARD_MINIMUM_USD. The server
+ *  refuses a card leg under it regardless; this mirror only lets the
+ *  Charge button grey with the reason instead of a round trip. */
+const CARD_MINIMUM_USD = 10;
+
 /** What the last Charge tap came back as. Every shape here is an HONEST
  *  outcome: suppression is amber and never a receipt, a split failure is
  *  a stop block, an unanswered write says it may have gone through. */
@@ -374,6 +382,20 @@ function PaymentPanel(props: {
   } = props;
 
   const [method, setMethod] = useState<PayMethod | null>(null);
+  /**
+   * T28 split mode: pay one sale with TWO methods, one Charge, one
+   * server call. Slot A's amount is typed (dollars text); slot B's is
+   * the server total minus A, computed and read-only, so the two can
+   * only ever sum to the rehearsed total. Comp is excluded (it has its
+   * own hold gesture); cash is fine -- in a split the cash leg's amount
+   * IS what is collected, so the tender modal never opens here.
+   */
+  const [splitOn, setSplitOn] = useState(false);
+  /** Slot A's dollars, as typed ("30" or "30.00"). Kept as text so a
+   *  trailing dot mid-entry does not fight the keyboard. */
+  const [splitA, setSplitA] = useState("");
+  const [splitAMethod, setSplitAMethod] = useState<SplitMethod | null>(null);
+  const [splitBMethod, setSplitBMethod] = useState<SplitMethod | null>(null);
   /** Tendered cash in CENTS, as a digit string (POS-style entry: typing
    *  2-0-0-0 reads $20.00). Display only; never sent to Mindbody. */
   const [tendered, setTendered] = useState("");
@@ -420,11 +442,23 @@ function PaymentPanel(props: {
    * A recorded cash tender is against the OLD client's total, so it goes
    * too: with none recorded, the Charge button reopens the modal. */
   const clientId = client?.id ?? null;
+
+  /** Blank the split slots (amount and both methods). Split MODE stays
+   *  where it was; only the choices inside it reset. */
+  const resetSplitSlots = useCallback(() => {
+    setSplitA("");
+    setSplitAMethod(null);
+    setSplitBMethod(null);
+  }, []);
+
   useEffect(() => {
     setFreshBalance(null);
     setTendered("");
     setMethod((m) => (m === "storedcard" || m === "credit" ? null : m));
-  }, [clientId]);
+    /* Split slots were chosen against the OLD client's card, credit and
+     * total; none of it survives a switch. */
+    resetSplitSlots();
+  }, [clientId, resetSplitSlots]);
 
   /* A cart EDIT retires a stale receipt; warnings stay until dismissed.
    * The empty cart is skipped deliberately: a successful charge clears the
@@ -440,7 +474,10 @@ function PaymentPanel(props: {
     if (cart.length === 0) return;
     setResult((r) => (r?.kind === "paid" ? null : r));
     setTendered("");
-  }, [cart]);
+    /* Split slot A was typed against the OLD cart's total; a new total
+     * makes it stale exactly like a recorded tender. */
+    resetSplitSlots();
+  }, [cart, resetSplitSlots]);
 
   /* "Empty cart" on the client-change dialog: the cart SaleScreen just
    * cleared was what the armed method was for, so nothing stays armed.
@@ -451,7 +488,8 @@ function PaymentPanel(props: {
     if (cartResetNonce === 0) return;
     setMethod(null);
     setTendered("");
-  }, [cartResetNonce]);
+    resetSplitSlots();
+  }, [cartResetNonce, resetSplitSlots]);
 
   /* Rule 1: when credit covers the total, the card is not offered -- so a
    * stored-card selection made before the balance (or a fresh total) was
@@ -517,16 +555,102 @@ function PaymentPanel(props: {
     tenderedUsd !== null &&
     tenderedUsd < total;
 
+  /* ------------------------- T28: split math ------------------------ */
+  /* All in integer cents so the two legs can only ever sum exactly. */
+  const totalCents = total === null ? null : Math.round(total * 100);
+  const splitACents = (() => {
+    if (splitA.trim() === "") return null;
+    const n = Number(splitA);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.round(n * 100);
+  })();
+  /* Slot A must sit strictly INSIDE (0, total): a leg equal to the total
+   * is not a split, and the remainder must stay positive. */
+  const splitAInRange =
+    totalCents !== null &&
+    splitACents !== null &&
+    splitACents > 0 &&
+    splitACents < totalCents;
+  const splitBCents =
+    splitAInRange && totalCents !== null && splitACents !== null
+      ? totalCents - splitACents
+      : null;
+  const splitAUsd = splitAInRange && splitACents !== null ? splitACents / 100 : null;
+  const splitBUsd = splitBCents !== null ? splitBCents / 100 : null;
+
+  /* Per-leg availability under T24's rules. The base reasons reuse the
+   * single-method gates, EXCEPT rule 1 (credit covers the total refuses
+   * the card): a deliberate split is not the ambiguity that rule guards
+   * against, so `cardReason` (not cardReasonFinal) gates the card here.
+   * The server applies the same reading. */
+  const splitCreditBase = !client
+    ? "Attach a client"
+    : balance === null || balance <= 0
+      ? "No credit on account"
+      : null;
+  const splitCardLegUsd =
+    splitAMethod === "storedcard"
+      ? splitAUsd
+      : splitBMethod === "storedcard"
+        ? splitBUsd
+        : null;
+  const splitCreditLegUsd =
+    splitAMethod === "credit"
+      ? splitAUsd
+      : splitBMethod === "credit"
+        ? splitBUsd
+        : null;
+  /* The card minimum applies to the CARD LEG's amount; the server
+   * refuses it too, with no credit-purchase dance in a split. */
+  const splitCardUnderMin =
+    splitCardLegUsd !== null && splitCardLegUsd < CARD_MINIMUM_USD;
+  const splitCreditShort =
+    splitCreditLegUsd !== null &&
+    (balance === null || balance < splitCreditLegUsd);
+
+  const splitReady =
+    splitOn &&
+    splitAInRange &&
+    splitAUsd !== null &&
+    splitBUsd !== null &&
+    splitAMethod !== null &&
+    splitBMethod !== null &&
+    splitAMethod !== splitBMethod &&
+    !splitCardUnderMin &&
+    !splitCreditShort &&
+    (splitAMethod !== "storedcard" && splitBMethod !== "storedcard"
+      ? true
+      : cardReason === null) &&
+    (splitAMethod !== "credit" && splitBMethod !== "credit"
+      ? true
+      : splitCreditBase === null);
+
   const chargeable =
     cart.length > 0 &&
     !pricing &&
     total !== null &&
-    method !== null &&
     !charging &&
-    !cashShort;
+    (splitOn ? splitReady : method !== null && !cashShort);
 
-  const chargeLabel =
-    total === null
+  /** One leg of the split, as the Charge button restates it. The cash
+   *  leg reads "collect $X cash": in split mode there is no tender
+   *  modal, the leg amount IS what is collected. */
+  const splitLegLabel = (m: SplitMethod, usd: number) =>
+    m === "storedcard"
+      ? `${money(usd)} card`
+      : m === "credit"
+        ? `${money(usd)} credit`
+        : `collect ${money(usd)} cash`;
+
+  const chargeLabel = splitOn
+    ? splitReady &&
+      splitAMethod !== null &&
+      splitBMethod !== null &&
+      splitAUsd !== null &&
+      splitBUsd !== null
+      ? `Charge ${splitLegLabel(splitAMethod, splitAUsd)} + ${splitLegLabel(splitBMethod, splitBUsd)}`
+      : "Charge"
+    : total === null
       ? "Charge"
       : method === "cash"
         ? `Record ${money(total)} cash`
@@ -537,7 +661,26 @@ function PaymentPanel(props: {
   const doCharge = async () => {
     /* Single flight: the ref refuses a second tap even in the same
      * render tick, and the button is disabled for every later one. */
-    if (inFlight.current || !chargeable || method === null) return;
+    if (inFlight.current || !chargeable) return;
+    /* The one payment instruction this tap sends: the split legs (in
+     * the teacher's order, amounts only -- the server re-rehearses and
+     * charges only if they sum to ITS total), or the single method. */
+    const splitBody =
+      splitOn &&
+      splitAMethod !== null &&
+      splitBMethod !== null &&
+      splitAUsd !== null &&
+      splitBUsd !== null
+        ? {
+            split: {
+              legs: [
+                { method: splitAMethod, amount: splitAUsd },
+                { method: splitBMethod, amount: splitBUsd },
+              ],
+            },
+          }
+        : null;
+    if (splitOn ? splitBody === null : method === null) return;
     inFlight.current = true;
     setCharging(true);
     onBusyChange(true);
@@ -556,10 +699,12 @@ function PaymentPanel(props: {
             taxRate: line.item.taxRate,
           })),
           ...(clientId ? { clientId } : {}),
-          method,
-          ...(method === "cash" && tenderedUsd !== null
-            ? { cashTendered: tenderedUsd }
-            : {}),
+          ...(splitBody ?? {
+            method,
+            ...(method === "cash" && tenderedUsd !== null
+              ? { cashTendered: tenderedUsd }
+              : {}),
+          }),
         }),
       });
       let body: any = null;
@@ -587,12 +732,24 @@ function PaymentPanel(props: {
             : `The server's answer (HTTP ${res.status}) carried no readable outcome.`,
         });
       } else if (res.ok && body?.ok === true) {
-        const methodName =
-          method === "storedcard"
+        /* The paid summary names how it was paid; a split names BOTH
+         * legs, amounts included, so the drawer count and the statement
+         * both have their line. */
+        const legDesc = (m: SplitMethod, usd: number) =>
+          m === "storedcard"
+            ? `${money(usd)} on the stored card${card ? ` ...${card.lastFour}` : ""}`
+            : m === "credit"
+              ? `${money(usd)} account credit`
+              : `${money(usd)} cash`;
+        const methodName = splitBody
+          ? splitBody.split.legs
+              .map((leg) => legDesc(leg.method, leg.amount))
+              .join(" + ")
+          : method === "storedcard"
             ? `stored card${card ? ` ...${card.lastFour}` : ""}`
             : method === "credit"
               ? "account credit"
-              : method;
+              : String(method);
         onSold();
         setResult({
           kind: "paid",
@@ -610,6 +767,10 @@ function PaymentPanel(props: {
         });
         setMethod(null);
         setTendered("");
+        /* A completed split is over: slots blank and the toggle drops
+         * back to single, the screen's resting state. */
+        resetSplitSlots();
+        setSplitOn(false);
       } else if (res.ok && body?.suppressed) {
         setResult({ kind: "suppressed", mode: String(body.suppressed) });
       } else if (body?.stage === "checkout-after-credit") {
@@ -656,6 +817,51 @@ function PaymentPanel(props: {
   const pickMethod = (m: PayMethod) => {
     setMethod((cur) => (cur === m ? null : m));
     setResult((r) => (r && r.kind !== "paid" ? r : null));
+  };
+
+  /** The Split toggle. Entering or leaving split mode is a fresh start
+   *  for the whole payment choice: the single method (comp included) and
+   *  any recorded tender disarm, and the slots reset. An amount or
+   *  method chosen in one mode never survives into the other. */
+  const toggleSplit = () => {
+    setSplitOn((v) => !v);
+    setMethod(null);
+    setTendered("");
+    resetSplitSlots();
+    setResult((r) => (r && r.kind !== "paid" ? r : null));
+  };
+
+  /** One slot's compact method picker. Availability follows T24's rules
+   *  (greyed with the reason on the title, never hidden); the method the
+   *  OTHER slot holds is greyed too, since a split's legs must differ. */
+  const renderSlotMethods = (slot: "A" | "B") => {
+    const mine = slot === "A" ? splitAMethod : splitBMethod;
+    const other = slot === "A" ? splitBMethod : splitAMethod;
+    const set = slot === "A" ? setSplitAMethod : setSplitBMethod;
+    const options: { m: SplitMethod; label: string; reason: string | null }[] =
+      [
+        /* cardReason, not cardReasonFinal: rule 1 (credit covers the
+         * total refuses the card) does not apply to a deliberate split;
+         * the server takes the same reading. */
+        { m: "storedcard", label: "Card", reason: cardReason },
+        { m: "credit", label: "Credit", reason: splitCreditBase },
+        { m: "cash", label: "Cash", reason: null },
+      ];
+    return options.map(({ m, label, reason }) => {
+      const taken = other === m;
+      return (
+        <button
+          key={m}
+          className={mine === m ? "split-m on" : "split-m"}
+          disabled={charging || reason !== null || taken}
+          aria-pressed={mine === m}
+          title={reason ?? (taken ? "Used by the other part" : label)}
+          onClick={() => set((cur) => (cur === m ? null : m))}
+        >
+          {label}
+        </button>
+      );
+    });
   };
 
   /* Comp arms on a HOLD, not a tap: it hands goods over for nothing, so
@@ -738,8 +944,17 @@ function PaymentPanel(props: {
    * gone with the compact buttons): the selected method's detail, else
    * the first unavailable method's reason. The full reason also sits on
    * each button's title attr. */
-  const methodNote =
-    method === "storedcard"
+  const methodNote = splitOn
+    ? splitCardUnderMin
+      ? `The card leg is under the $${CARD_MINIMUM_USD} card minimum`
+      : splitCreditShort
+        ? `Only ${balance !== null ? money(balance) : "$0.00"} on account for the credit leg`
+        : splitA.trim() !== "" && total !== null && !splitAInRange
+          ? "The first amount must be more than $0.00 and less than the total"
+          : splitAMethod === null || splitBMethod === null
+            ? "Two parts, two methods. Pick one for each."
+            : ""
+    : method === "storedcard"
       ? (cardDetail ?? "")
       : method === "credit"
         ? creditLabel
@@ -767,6 +982,8 @@ function PaymentPanel(props: {
           the title attr and the shared quiet line below. */}
       <div>
         <div className="methods" aria-label="Payment methods">
+          {!splitOn ? (
+          <>
           <button
             className={method === "storedcard" ? "method on" : "method"}
             disabled={cardReasonFinal !== null || charging}
@@ -809,7 +1026,72 @@ function PaymentPanel(props: {
             </span>
             Cash
           </button>
+          </>
+          ) : null}
+          {/* T28: the quiet Split toggle. In split mode it is the only
+              thing left in this row; the two slots below replace the
+              single-method buttons. */}
+          <button
+            className={splitOn ? "split-toggle on" : "split-toggle"}
+            disabled={charging}
+            onClick={toggleSplit}
+            aria-pressed={splitOn}
+            title={
+              splitOn ? "Back to one payment method" : "Pay with two methods"
+            }
+          >
+            Split
+          </button>
         </div>
+
+        {splitOn ? (
+          <div className="split-slots" aria-label="Split payment">
+            <div className="split-slot">
+              <label className="split-amt-row">
+                <span>First part</span>
+                <input
+                  className="split-amt"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  value={splitA}
+                  disabled={charging}
+                  aria-label="First part amount in dollars"
+                  onChange={(e) => {
+                    /* Dollars and cents only; anything else never lands
+                       in the state. */
+                    const v = e.target.value;
+                    if (/^\d{0,5}(\.\d{0,2})?$/.test(v)) setSplitA(v);
+                  }}
+                />
+              </label>
+              <div
+                className="split-methods"
+                role="group"
+                aria-label="First part method"
+              >
+                {renderSlotMethods("A")}
+              </div>
+            </div>
+            <div className="split-slot">
+              <div className="split-amt-row">
+                <span>Remainder</span>
+                {/* Computed, read-only: the server total minus part one,
+                    so the legs can only ever sum to the rehearsed
+                    total. */}
+                <span className="split-rest-amt">
+                  {splitBUsd !== null ? money(splitBUsd) : "--"}
+                </span>
+              </div>
+              <div
+                className="split-methods"
+                role="group"
+                aria-label="Remainder method"
+              >
+                {renderSlotMethods("B")}
+              </div>
+            </div>
+          </div>
+        ) : null}
         <p className="methods-note">{methodNote || " "}</p>
       </div>
 
@@ -822,7 +1104,10 @@ function PaymentPanel(props: {
           so nobody comps a sale by grazing a card. */}
       <button
         className={method === "comp" ? "comp-hold on" : "comp-hold"}
-        disabled={charging}
+        /* Comp is a whole-sale gesture and is excluded from splits; while
+           split mode is armed the hold is off rather than fighting it. */
+        disabled={charging || splitOn}
+        title={splitOn ? "Not available in a split" : undefined}
         onPointerDown={compHoldStart}
         onPointerUp={compHoldEnd}
         onPointerLeave={compHoldAbort}
@@ -842,8 +1127,10 @@ function PaymentPanel(props: {
         onClick={() => {
           /* Cash armed with no tender recorded: the tap opens the tender
              modal (whose confirm fires this same path) instead of
-             charging directly. */
-          if (method === "cash" && tenderedCents === null) {
+             charging directly. Split mode never opens it: a split's cash
+             leg needs no tender math, its amount IS what is collected
+             (the label says "collect $X cash"). */
+          if (!splitOn && method === "cash" && tenderedCents === null) {
             openCashModal();
             return;
           }
