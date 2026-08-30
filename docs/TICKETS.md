@@ -1310,6 +1310,35 @@ field is an array; the design work is the honest-failure story.
 - [ ] All T24 invariants inherited: rehearsed total only, single
       flight, suppression never success, ambiguity honest.
 
+## T30. Contracts and packages in Buy (Pete, 2026-08-30: essential)
+
+Mindbody's POS has a Contracts / Packages tab; ours sells only retail
+products and pricing options. Two mechanisms under one label:
+
+- [ ] PACKAGES are cart items (sale.yml's package model bundles
+      services/products; DiscountAmount's "ignored for packages" proves
+      they ride the cart): fetch the sellable list (find the endpoint in
+      sale.yml), give them a shelf chip, sell through the existing cart
+      with the package item Type; Metadata shape probe-noted like the
+      others.
+- [ ] CONTRACTS (autopay memberships) sell through their own endpoint
+      (grep sale.yml for /sale/contracts and /sale/purchasecontract):
+      list contracts, and a purchase flow with the fields the schema
+      demands (client REQUIRED, start date, first payment, stored card
+      per the schema's rules; signature image field exists -- note what
+      is required vs optional). This is the studio's membership sale at
+      the counter, so it gets its own confirm restating the autopay
+      terms ("$130 today, then $130 monthly from Oct 1") -- nothing
+      recurring is ever started without those words on screen.
+- [ ] All money rails inherited: rehearse/validate where the API allows
+      (check whether purchasecontract has Test), explicit tap, single
+      flight, suppression never success, ambiguity honest.
+- [ ] Pete sandbox: one package sale and one write-guarded contract
+      purchase watched in the drawer before this counts live-verified.
+
+Ordering: T28 (in flight) -> T30 -> T29 (database), since contracts are
+counter-essential and the database is admin infrastructure.
+
 ## T29. The database, pulled forward (Pete, 2026-08-30)
 
 Approved, with the hard requirement: LOCAL TESTING MUST STILL WORK.
