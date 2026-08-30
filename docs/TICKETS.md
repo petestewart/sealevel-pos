@@ -1276,6 +1276,64 @@ SELLING (a Gift cards chip fed by /sale/giftcards; checkout item
 Metadata shape needs the usual Test: true probe) and REDEEMING (balance
 lookup + a GiftCard payment entry, shape also probe-bound since the
 payment Type enum is truncated in Mindbody's own docs). Not scheduled.
+Redeeming splits into whole-card and PARTIAL coverage: the checkout
+Payments field is an array, so split payments (gift card + card/cash
+remainder) look schema-possible; that split, and its honest-failure
+handling when one leg lands and the other does not (the under-$10
+machinery is the precedent), is the real design work in that ticket.
+
+## T28. Split payments (Pete, 2026-08-30)
+
+Approved: "def need to support this in our app." The checkout Payments
+field is an array; the design work is the honest-failure story.
+
+- [ ] The Buy screen supports paying one sale with TWO methods: the
+      primary case is gift-card-plus-remainder later, but the buildable
+      case now is any two of stored card / account credit / cash (e.g.
+      credit covers part, card the rest -- which also REVERSES the P2
+      "ignore partial credit" assumption for this explicit flow only:
+      a teacher deliberately splitting is not the ambiguity P2 guarded
+      against; record the reversal).
+- [ ] UI: a "Split" affordance in the methods row; two amount slots
+      that must sum to the server total (one editable, the other
+      computed); each slot picks a method under T24's availability
+      rules; Charge restates both ("Charge $30.00 card + $13.50
+      credit").
+- [ ] Server: /api/checkout accepts an ordered two-payment array,
+      validates sum == rehearsed total, applies the $10 card minimum to
+      the CARD LEG (record the interpretation), and sends both entries
+      in one checkoutshoppingcart Payments array -- ONE Mindbody call,
+      so there is no two-write seam; a refusal refuses the whole sale.
+      Verify against sale.yml whether one call with two Payments is
+      accepted (schema says array; a Test: true rehearsal with two
+      payment stubs is the probe, note it for the sandbox run).
+- [ ] All T24 invariants inherited: rehearsed total only, single
+      flight, suppression never success, ambiguity honest.
+
+## T29. The database, pulled forward (Pete, 2026-08-30)
+
+Approved, with the hard requirement: LOCAL TESTING MUST STILL WORK.
+The rule that makes that automatic: the app runs FULLY without
+DATABASE_URL -- every DB feature falls back to today's behavior
+(bundles from src/lib/bundles.ts, waiver receipts to Notes + server
+log, banner from POS_BANNER_TEXT, promos simply absent) and the dev
+drawer/config shows which mode storage is in. The charter is the
+design doc's: the database holds what Mindbody has no home for, NEVER
+a copy of what it does (no clients, classes, passes, prices, visits).
+
+- [ ] Railway Postgres; DATABASE_URL optional; schema migrations as
+      plain SQL run on boot (idempotent), tables: waiver_receipts,
+      promo_entitlements, bundles, settings (banner text first).
+- [ ] Waiver receipts write to the table AND keep the Notes line (the
+      Notes copy is what staff see in Mindbody; the table is the
+      durable record with the full hash).
+- [ ] Bundles read from the table when present (falling back to code
+      config), plus a minimal admin surface to create/edit/disable
+      bundles (behind the PIN session like everything else).
+- [ ] docker-compose (or a documented one-liner) for a local Postgres
+      when Pete wants to test DB features locally; .env.example notes.
+- [ ] Promo entitlements TABLE ships (schema per the granularity notes
+      above); the promo POS flow itself stays its own future ticket.
 
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
