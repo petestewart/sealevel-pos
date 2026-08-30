@@ -412,6 +412,8 @@ function PaymentPanel(props: {
   receipt: ReactNode;
   /** Clear the cart: the sale is recorded on Mindbody's side. */
   onSold: () => void;
+  /** The paid receipt's Done: close the overlay back to the roster. */
+  onDone: () => void;
   /**
    * A charge finished in a state that may have moved money, so everything
    * this screen shows about the client (credit above all, and the roster
@@ -443,6 +445,7 @@ function PaymentPanel(props: {
     cardLookup,
     receipt,
     onSold,
+    onDone,
     onClientDataStale,
     onBusyChange,
     onModalChange,
@@ -621,6 +624,31 @@ function PaymentPanel(props: {
     balance !== null && balance > 0
       ? `Account credit (${money(balance)})`
       : "Account credit";
+
+  /**
+   * Whether Credit is OFFERED at all (Pete, fourth live test: "if there's
+   * no balance, it shouldn't be a visible option"). Most sales are to
+   * people with no account credit, and a permanently greyed button is
+   * noise on the one row that has to be read at a glance.
+   *
+   * The one exception is the split-failure seam: a $10 credit purchase
+   * certainly went through, and if the balance read that follows it
+   * failed, the number here is null. Hiding the honest retry (spend the
+   * credit that now exists) is the worst outcome on that screen, so the
+   * button stays while that warning is up.
+   */
+  const creditVisible =
+    (balance !== null && balance > 0) || result?.kind === "split";
+
+  /* A method that is no longer on screen must not stay armed behind the
+   * Charge button: credit can vanish under the teacher (the post-sale
+   * profile refetch reports the balance the sale just spent). */
+  useEffect(() => {
+    if (creditVisible) return;
+    setMethod((m) => (m === "credit" ? null : m));
+    setSplitAMethod((m) => (m === "credit" ? null : m));
+    setSplitBMethod((m) => (m === "credit" ? null : m));
+  }, [creditVisible]);
 
   const tenderedCents = tendered === "" ? null : parseInt(tendered, 10);
   const tenderedUsd = tenderedCents === null ? null : tenderedCents / 100;
@@ -926,11 +954,21 @@ function PaymentPanel(props: {
     const set = slot === "A" ? setSplitAMethod : setSplitBMethod;
     const options: { m: SplitMethod; label: string; reason: string | null }[] =
       [
+        /* Credit first and only when there is credit, as in the single
+         * method row above: the same rule reads the same in both. */
+        ...(creditVisible
+          ? [
+              {
+                m: "credit" as SplitMethod,
+                label: "Credit",
+                reason: splitCreditBase,
+              },
+            ]
+          : []),
         /* cardReason, not cardReasonFinal: rule 1 (credit covers the
          * total refuses the card) does not apply to a deliberate split;
          * the server takes the same reading. */
         { m: "storedcard", label: "Card", reason: cardReason },
-        { m: "credit", label: "Credit", reason: splitCreditBase },
         { m: "cash", label: "Cash", reason: null },
       ];
     return options.map(({ m, label, reason }) => {
@@ -1051,8 +1089,10 @@ function PaymentPanel(props: {
           : method === "comp"
             ? ""
             : cardReasonFinal !== null
-              ? `Stored card: ${cardReasonFinal}`
-              : creditReason !== null
+              ? `Card: ${cardReasonFinal}`
+              : /* Only for a credit button that is actually on screen: a
+                   reason for an absent control explains nothing. */
+                creditVisible && creditReason !== null
                 ? `Credit: ${creditReason}`
                 : "";
 
@@ -1071,29 +1111,35 @@ function PaymentPanel(props: {
         <div className="methods" aria-label="Payment methods">
           {!splitOn ? (
           <>
+          {/* Credit leads when there IS credit, and is absent when there
+              is not (Pete, fourth live test). Rule 1 makes it the method
+              whenever it covers the total, so first-on-the-left is also
+              where the tap usually belongs. */}
+          {creditVisible ? (
+            <button
+              className={method === "credit" ? "method on" : "method"}
+              disabled={creditReason !== null || charging}
+              onClick={() => pickMethod("credit")}
+              aria-pressed={method === "credit"}
+              title={creditReason ?? creditLabel}
+            >
+              <span className="mi">
+                <CreditIcon />
+              </span>
+              Credit
+            </button>
+          ) : null}
           <button
             className={method === "storedcard" ? "method on" : "method"}
             disabled={cardReasonFinal !== null || charging}
             onClick={() => pickMethod("storedcard")}
             aria-pressed={method === "storedcard"}
-            title={cardReasonFinal ?? cardDetail ?? "Stored card"}
+            title={cardReasonFinal ?? cardDetail ?? "Card on file"}
           >
             <span className="mi">
               <CardIcon />
             </span>
-            Stored card
-          </button>
-          <button
-            className={method === "credit" ? "method on" : "method"}
-            disabled={creditReason !== null || charging}
-            onClick={() => pickMethod("credit")}
-            aria-pressed={method === "credit"}
-            title={creditReason ?? creditLabel}
-          >
-            <span className="mi">
-              <CreditIcon />
-            </span>
-            Credit
+            Card
           </button>
           <button
             className={method === "cash" ? "method on" : "method"}
@@ -1249,7 +1295,17 @@ function PaymentPanel(props: {
           {result.detail ? (
             <p className="pay-done-detail">{result.detail}</p>
           ) : null}
-          <button className="class-change" onClick={() => setResult(null)}>
+          {/* Done means the sale is finished, so it goes back to the
+              roster (Pete, fourth live test): the counter's resting
+              screen is the sign-in view, not an empty cart. The receipt
+              is cleared first so reopening Buy starts clean. */}
+          <button
+            className="class-change"
+            onClick={() => {
+              setResult(null);
+              onDone();
+            }}
+          >
             Done
           </button>
         </div>
@@ -2716,6 +2772,7 @@ export default function SaleScreen(props: {
             client={client}
             cardLookup={cardLookup}
             onSold={() => setCart([])}
+            onDone={onClose}
             onBusyChange={setCharging}
             onModalChange={setPayModalOpen}
             cartResetNonce={cartResetNonce}
