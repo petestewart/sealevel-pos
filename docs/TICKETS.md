@@ -1863,6 +1863,80 @@ modal did. The Buy view's picker lists the whole teaching day. Widening
 this one to the day is a small change if the -2/+4h window turns out to
 be the wrong reach at the counter.
 
+## T35. One tender model for every payment (Pete, 2026-08-30)
+
+Pete, on the split view and the payment seam generally: "these can also be
+compacted. Get rid of 'First part' and 'Remainder'. Make the source
+buttons smaller and put them inline with the totals. And instead of a
+'Split' button once I'm in split view, put an X next to the payment
+sources. Also, there is too much divergence: cash sale brings up a keypad
+with numbers and options; store credit only applies to the total; split
+payments use the keyboard. Need a unified way that works for all these.
+The system can automatically tell the teacher if they owe change when
+more cash has been given than the sale amount. More credit than the total
+sale amount can never be entered. Same with credit/debit card. Come up
+with a quality seamless way for these all to work."
+
+He is right that three interactions had grown for one job. This is the
+design of record; the divergences below are the thing being removed.
+
+### The model: tender lines against an amount due
+
+There is no split MODE any more. There is a list of tender lines, and a
+split is just the case where there are two of them.
+
+- The receipt's server total is the target. **Due** is that total minus
+  what the lines already cover.
+- Tapping a source (Credit, Card, Cash) ADDS a line for it, pre-filled
+  with the whole remaining due, clamped by that source's own rule. So the
+  common case is one tap and no typing: tap Cash, the line reads the
+  total, Charge.
+- Each line is `[source] [amount] [x]`, compact, one row, the amount
+  right-aligned and tabular like the receipt. The x removes that line.
+  That is Pete's "X next to the payment sources", and it is what leaves a
+  split, so the Split toggle is gone.
+- Tapping a line's AMOUNT opens the one keypad, inline, for that line.
+  One keypad for every source: no OS keyboard anywhere in the payment
+  seam (an iPad soft keyboard over a counter screen was the worst of the
+  three divergences), and no cash-only modal.
+- Adding a second source is the split. Editing line one's amount
+  recomputes line two, so the lines can only ever sum to the total.
+- **Two lines is the maximum**, because /api/checkout accepts one method
+  or exactly two legs. With two lines present the sources that would add
+  a third are greyed with that reason. Raising the cap is a server
+  change, not a UI one, and nobody has asked for three.
+
+### The per-source rules, enforced in the UI and again on the server
+
+- **Credit** clamps to `min(account balance, due)`. It can never be typed
+  above either, per Pete. Absent entirely when there is no balance (T33).
+- **Card** clamps to `due`. Never above. The $10 card minimum still
+  belongs to the server: a card leg under it takes PLAN 2.3's
+  credit-purchase path, unchanged.
+- **Cash** is the only source that may be given MORE than it owes. The
+  keypad accepts any amount; the line charges `min(entered, due)` and the
+  surplus renders as **Change $X.XX**, loud, next to the due line. The
+  amount SENT for a cash leg is what it covers; the tendered figure rides
+  along as `cashTendered` exactly as it does today, for the drawer.
+- **Comp** is untouched and stays outside this list: it is a whole-sale
+  gesture with its own hold, not a tender. Arming comp clears the lines;
+  adding a line disarms comp.
+
+### What must not change
+
+- **The request shapes stay exactly as they are.** One line maps to
+  `{ method, cashTendered? }`; two lines map to `{ split: { legs } }`.
+  /api/checkout is NOT touched by this ticket, so every money rule it
+  enforces -- the fresh rehearsal, legs summing to the server's own
+  total, rule 1, the $10 minimum, the credit-purchase seam -- keeps
+  standing behind the new screen.
+- Charge stays enabled only when due is exactly zero and every line is
+  valid, and it still restates the server's number.
+- The single-flight ref, the ambiguity wording, the suppressed-write
+  handling and T31's post-charge refetch all stay as they are.
+- The keypad is a 64px-target grid; nothing about the money invariants
+  moves into it.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
