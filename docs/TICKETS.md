@@ -1607,19 +1607,59 @@ drawer/config shows which mode storage is in. The charter is the
 design doc's: the database holds what Mindbody has no home for, NEVER
 a copy of what it does (no clients, classes, passes, prices, visits).
 
-- [ ] Railway Postgres; DATABASE_URL optional; schema migrations as
+- [x] Railway Postgres; DATABASE_URL optional; schema migrations as
       plain SQL run on boot (idempotent), tables: waiver_receipts,
       promo_entitlements, bundles, settings (banner text first).
-- [ ] Waiver receipts write to the table AND keep the Notes line (the
+      (Code side done: src/lib/db.ts migrates on first use, never at
+      build; provisioning the Railway Postgres service and setting
+      DATABASE_URL there is Pete's deploy step, documented in
+      .env.example.)
+- [x] Waiver receipts write to the table AND keep the Notes line (the
       Notes copy is what staff see in Mindbody; the table is the
       durable record with the full hash).
-- [ ] Bundles read from the table when present (falling back to code
+- [x] Bundles read from the table when present (falling back to code
       config), plus a minimal admin surface to create/edit/disable
       bundles (behind the PIN session like everything else).
-- [ ] docker-compose (or a documented one-liner) for a local Postgres
+- [x] docker-compose (or a documented one-liner) for a local Postgres
       when Pete wants to test DB features locally; .env.example notes.
-- [ ] Promo entitlements TABLE ships (schema per the granularity notes
+- [x] Promo entitlements TABLE ships (schema per the granularity notes
       above); the promo POS flow itself stays its own future ticket.
+
+Shipped 2026-08-30. How the rules landed:
+
+- The iron rule verified live: with DATABASE_URL unset, /api/config
+  says storage "none", /api/admin/* answer honestly (available: false,
+  503 on write), and every feature runs on its fallback -- bundles from
+  src/lib/bundles.ts, receipts to Notes + the log line, banner from
+  POS_BANNER_TEXT. A CONFIGURED-but-dead database degrades identically
+  (every db.ts helper catches, logs once per failure kind per process,
+  returns a fallback signal); it can never take a counter request down.
+- The charter is written in src/lib/db.ts where the next schema change
+  will read it, and restated in CLAUDE.md's locked decision.
+- Bundle admin lives in the dev drawer's Bundles tab (PIN + devtools
+  gated, like /api/devlog: same audience). Listing, create form with a
+  catalog item picker, enable/disable toggles, and the banner field.
+  No DELETE anywhere: disable is the safe verb. FUTURE WORK: a proper
+  admin surface outside the dev drawer, once someone who is not Pete
+  needs to edit bundles or the banner.
+- /api/catalog serves DB bundles (enabled only) when the table has
+  rows, else code config, recording bundleSource: "db" | "config" in
+  the payload (visible in the dev drawer, nowhere teacher-facing).
+  Bundles read per request, outside the 10-minute Mindbody cache:
+  they are local and an admin toggle must show on the next load. A
+  non-empty table with every row disabled serves ZERO bundles -- that
+  is the admin's deliberate off switch, not a fallback case.
+- Lines are validated into storage with the same shape/quantity rules
+  SaleScreen's resolver enforces at render (validateBundleLines in
+  bundles.ts); whether an id resolves stays the client's render-time
+  check, because ids are per site and a sandbox-created bundle must
+  fail visibly on prod, not be refused from storage.
+- Banner: app_settings.banner_text wins when set; clearing DELETES the
+  row so the env var takes back over (design doc option 1 stays the
+  base layer, option 2 sits on top). The lock screen shows the DB
+  banner too.
+- The build never connects: `next build` verified clean with no
+  database listening.
 
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 

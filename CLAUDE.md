@@ -80,7 +80,14 @@ sandbox token against production.
   is a back-office worker with a different uptime story and different users.
   The two share an API, not a codebase: `src/lib/mindbody.ts` is adapted from
   ai-manager's client and deliberately not imported from it.
-- **No database, and no client cache.** Reads go to Mindbody when needed.
+- **A small Postgres, on a charter (superseded "no database", Pete,
+  2026-08-30, T29).** It holds what Mindbody has no home for -- waiver
+  receipts, bundle config, banner text, promo entitlements -- and NEVER a
+  copy of what Mindbody has: no clients, classes, passes, prices or visits,
+  not even for speed. `DATABASE_URL` unset runs the app fully on fallbacks
+  (code bundles, Notes + log receipts, env banner); a dead database degrades
+  the same way, never an outage. Charter enforced in `src/lib/db.ts`. Still
+  no client cache: reads go to Mindbody when needed.
 - **Nothing auto-charges.** Phase 2 will move money only on an explicit tap.
 - **Sandbox and dry run are the defaults.** See above.
 - **Pricing and schedule come from the live Mindbody API**, never from a cache
