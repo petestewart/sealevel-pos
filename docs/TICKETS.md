@@ -1700,6 +1700,85 @@ Three things wrong with what stayed on screen afterwards.
       credit card. Pete asked for "dollar sign, money bag, or something
       like that."
 
+## T32. The attach modal, in reading order (Pete, 2026-08-30)
+
+Pete, from the same live test: "The Attach a client modal should have the
+search bar at the top always, class selector and student rows underneath.
+And once I search, if the name matches someone in the currently selected
+class, that should be at top with the class visible. Below that should be
+other matches... Mandy Wang with a divider under her name (and if room, a
+checked-in/signed-up pill) with the add icon, which is missing rn, then
+underneath that would be Richard Wang."
+
+T27 round three had built the quick-pick as a block ABOVE the search bar,
+which put the bar in the middle of the modal and moved it down the screen
+as rosters of different sizes rendered. Attach mode only throughout; the
+booking-flow search modal is untouched.
+
+- [x] **The search bar is first, always**, directly under the title, then
+      the "In class" picker, then the rows. The bar is the one control
+      that is always useful, and a bar whose position depends on how many
+      people are booked is a bar a teacher has to look for. Same query
+      state, same submitSearch, same one-call-on-submit rule: this is a
+      move, not a rewrite, so nothing about how search runs changed.
+- [x] **The class picker doubles as the first group's heading.** It
+      already names the class; a separate "In class X" heading under a
+      dropdown that says "In class X" would be the same fact twice. With
+      no search run it heads the whole roster; after a search it heads
+      the matches who are in that class.
+- [x] **Two groups after a search, disjoint by construction.** The
+      matches are partitioned (page.tsx:4170) against a Map of the picked
+      class's roster by client id: on it, they render first; not on it,
+      under "Other matches". Nobody can appear twice because the two
+      arrays are built from one predicate and its negation.
+- [x] **The in-class group renders from the ROSTER's facts, not the
+      search result's** (`rosterAsResult`, page.tsx:99). The question a
+      teacher is answering is "is this the person in front of me, the one
+      in this class", so the row shows that class's status and the
+      roster's balance. It also means the pre-search rows and the
+      post-search in-class rows are literally the same rows.
+- [x] **One row renderer for both groups** (`attachRowItem`,
+      page.tsx:3352): the search-result row's own `.rrow` grid, marker
+      line and 52px add button, so the two groups differ only in the
+      facts they carry, and the roster rows finally get the add icon Pete
+      found missing. Attach mode's row is the simple one: nothing books,
+      charges or checks anyone in, so no waiver gate, no pass picker and
+      no in-flight dimming ride on it. The tap still only sets the sale's
+      client and closes.
+- [x] **The status pill** sits on the marker line beside the M chip and
+      the no-waiver pill, sized to that line rather than the roster's
+      104px chip, and it is text, not a control: attaching a sale moves
+      no attendance. New tokens-only classes `.mini-in` (the roster
+      chip's ok pairing, so "checked in" reads the same on both screens)
+      and `.mini-signed` (quiet: it is the ordinary state), both palettes.
+
+Judgement calls, all reversible:
+
+- **"waitlist" is not a state the pill can show.** A waitlisted person is
+  not a roster entry at all (the queue is its own fetch, and only for the
+  active class), so the roster knows exactly two states. Saying so in the
+  type rather than leaving a third case to rot.
+- **"Other matches" renders even when the in-class group is empty.**
+  Strictly a heading on the only group is redundant, but without it those
+  rows sit directly under the "In class" picker and read as if they were
+  that class's, which is the one misreading this layout exists to
+  prevent.
+- **Both groups scroll in ONE region** (`.attach-rows`, 46vh). The modal
+  is centred in a fixed scrim and does not scroll itself, so two lists
+  each capped at their own height could stack past the top and bottom of
+  the screen. The bar and the picker sit outside it and stay put.
+- **The grouping keys on whether a search has RUN** (`searchTitle`), not
+  on whether the box has text. Clearing the box with the X leaves the
+  results up, exactly as it did before; a cleared box that silently threw
+  away the results a teacher was reading would be worse.
+- **No column header over the attach rows.** The group headings do that
+  job now, and repeating Name/Passes/Balance over each group is noise.
+- Zero new Mindbody calls: the picker's day list and the per-class
+  rosters are the same session-cached fetches T27 added, the search is
+  the same submit-triggered one call, and the pass sweep was not
+  touched (a roster person's passes show if a sweep already landed them,
+  and the cell stays empty otherwise rather than claiming "no passes").
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are

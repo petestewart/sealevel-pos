@@ -88,6 +88,42 @@ interface SearchResult {
 }
 
 /**
+ * A roster row read as a search result (T32), so the attach modal's two
+ * groups render through ONE row renderer: the class's own people and the
+ * rest of the search look the same, differing only in the facts they
+ * carry. Every field but the email is on the roster entry already; the
+ * unknown waiver (null, the lookup failed) fails open here exactly as it
+ * does on the roster, and attaching a client to a sale gates on the
+ * waiver anyway not at all.
+ */
+function rosterAsResult(en: RosterEntry): SearchResult {
+  return {
+    id: en.clientId,
+    name: en.name,
+    email: null,
+    waiverSigned: en.waiverSigned !== false,
+    redAlert: en.redAlert,
+    yellowAlert: en.yellowAlert,
+    balance: en.balance,
+    member: en.member === true,
+    notes: en.notes,
+    mindbodyId: en.mindbodyId,
+  };
+}
+
+/**
+ * One row of the attach modal's list: the person, plus their standing in
+ * the class the picker names when they are in it. `status` is null for a
+ * match who is not on that roster. The roster knows only these two
+ * states -- a waitlisted person is not a roster entry at all -- so the
+ * pill never says "waitlist".
+ */
+interface AttachRow {
+  client: SearchResult;
+  status: "checked in" | "signed up" | null;
+}
+
+/**
  * Who the waiver dialog is about, and which flow resumes once the
  * student's agreement is recorded (T19, T20): a roster row continues
  * into the normal check-in path, a search result into the normal
@@ -3304,6 +3340,119 @@ function FrontDesk() {
     void setSignedIn(entry, true);
   };
 
+  /**
+   * One attach-mode row (T32), used by BOTH groups: the same .rrow grid,
+   * marker line and add button the search results have always used, so
+   * the class's own people and the rest of the search read identically
+   * and only the facts differ. Attach mode's row is the simple one --
+   * nothing here books, charges or checks anyone in, so there is no
+   * waiver gate, no pass choice and no in-flight dimming; the tap sets
+   * the sale's client and closes the modal.
+   */
+  const attachRowItem = ({ client, status }: AttachRow) => {
+    /* Whatever the background pass sweep has already landed for this
+     * client, from a roster sweep or a search one; this renderer never
+     * asks for more. Null means nothing fetched, and the cell stays
+     * empty rather than claiming "no passes". */
+    const passList = passLists[client.id]?.data ?? null;
+    const shownPass = passList?.[0] ?? null;
+    return (
+      <li key={`attach-${client.id}`}>
+        <div className="rrow">
+          <div className="cell-name">
+            <span className="name-text">{client.name}</span>
+            <span className="marker-line">
+              {client.member ? (
+                <span className="m-chip" title="Member" aria-label="Member">
+                  M
+                </span>
+              ) : null}
+              <button
+                className={
+                  client.redAlert || client.yellowAlert || client.notes
+                    ? "row-icon"
+                    : "row-icon dim"
+                }
+                aria-label={`Alerts and notes for ${client.name}`}
+                title="Alerts and notes"
+                onClick={() =>
+                  openInfoView({
+                    clientId: client.id,
+                    name: client.name,
+                    redAlert: client.redAlert,
+                    yellowAlert: client.yellowAlert,
+                    notes: client.notes,
+                  })
+                }
+              >
+                <InfoIcon />
+              </button>
+              {/* Their standing in the picked class, and TEXT rather than
+                  a control: attaching a sale moves no attendance. Only
+                  the in-class group carries one. */}
+              {status !== null ? (
+                <span
+                  className={
+                    status === "checked in" ? "mini-in" : "mini-signed"
+                  }
+                >
+                  {status}
+                </span>
+              ) : null}
+              {!client.waiverSigned ? (
+                <span className="mini-stop">no waiver</span>
+              ) : null}
+            </span>
+          </div>
+          <div className="cell-pay">
+            <span className="pay-stack">
+              {passList !== null ? (
+                shownPass ? (
+                  <>
+                    <span className="pay-name" title={shownPass.name}>
+                      {shortPassName(shownPass.name)}
+                    </span>
+                    <PassFactsLine
+                      remaining={shownPass.remaining}
+                      count={shownPass.count}
+                      expires={shownPass.expires}
+                    />
+                  </>
+                ) : (
+                  <span className="pay-name muted">No current passes</span>
+                )
+              ) : null}
+            </span>
+          </div>
+          <span
+            className={
+              client.balance !== null && client.balance < 0
+                ? "cell-bal neg"
+                : "cell-bal"
+            }
+          >
+            {client.balance !== null && client.balance !== 0
+              ? money(client.balance)
+              : ""}
+          </span>
+          <div className="cell-actions">
+            <button
+              className="add-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                attachSaleClient(client);
+              }}
+              aria-label={`Attach ${client.name} to the sale`}
+              title="Attach to the sale"
+            >
+              <PersonCheckIcon />
+            </button>
+          </div>
+        </div>
+      </li>
+    );
+  };
+
   return (
     <main className="shell">
       {config?.configError ? <p className="note">{config.configError}</p> : null}
@@ -3936,15 +4085,67 @@ function FrontDesk() {
                 ? "Attach a client to the sale"
                 : `Results for "${searchTitle}"`}
             </p>
-            {/* The "In class" quick-pick (T27 round three, attach mode
+            {/* Attach mode opens the modal BEFORE any search exists, so
+                the search bar renders here: the same query state, the
+                same submitSearch, the same one-call-on-submit rule as the
+                page's own bar. It sits at the TOP of the modal (T32),
+                above the class picker and the rows: it is the one control
+                that is always useful, and a bar that moves down the modal
+                as the rows change is a bar a teacher has to look for. */}
+            {attachMode ? (
+              <div className="search-bar">
+                <div className="search-wrap">
+                  <input
+                    className="search"
+                    value={query}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      setSearchMsg(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        submitSearch();
+                      }
+                    }}
+                    enterKeyHint="search"
+                    placeholder="Who is the sale for? (press Enter)"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    autoFocus
+                  />
+                  {query ? (
+                    <button
+                      type="button"
+                      className="search-clear"
+                      aria-label="Clear search"
+                      onClick={() => setQuery("")}
+                    >
+                      <CloseIcon />
+                    </button>
+                  ) : null}
+                </div>
+                <button className="search-go" onClick={submitSearch}>
+                  Search
+                </button>
+              </div>
+            ) : null}
+            {attachMode && searchMsg ? (
+              <p className="search-quiet">{searchMsg}</p>
+            ) : null}
+            {/* The "In class" picker (T27 round three, attach mode
                 ONLY): the person a sale is for is usually on a roster
-                already on screen, so it renders IMMEDIATELY on open,
-                above the search. A class dropdown (the pass-dropdown
+                already on screen. A class dropdown (the pass-dropdown
                 idiom) offers the rest of the day's classes -- fetched
                 once per day per session, see openAttachSearch -- and
                 picking one shows ITS roster (session-cached per class;
                 the selected class's roster is `entries`, zero calls).
-                Tapping a row attaches exactly like a search row does. */}
+                Since T32 the picker is also the HEADING of the first
+                group of rows: with no search run it heads the whole
+                roster, and after a search it heads the matches who are
+                in that class. Tapping a row attaches exactly like a
+                search row does. */}
             {attachMode
               ? (() => {
                   const menuClasses = dayClasses.list ?? classes;
@@ -3957,6 +4158,36 @@ function FrontDesk() {
                   const quickEntries = showingActive
                     ? entries
                     : attachRoster.entries;
+                  /* The two groups (T32). With no search run yet the rows
+                     ARE the picked class's roster. After a search they are
+                     the matches, split by client id: the ones on that
+                     roster first, rendered from the ROSTER's own facts
+                     (status pill, balance) because the question a teacher
+                     is answering is "is this the person in front of me,
+                     the one in this class"; then everyone else. The Map is
+                     what makes the split disjoint by construction, so
+                     nobody can appear in both groups. */
+                  const searched = searchTitle !== "";
+                  const onRoster = new Map(
+                    (quickEntries ?? []).map(
+                      (en) => [en.clientId, en] as const,
+                    ),
+                  );
+                  const rosterRow = (en: RosterEntry): AttachRow => ({
+                    client: rosterAsResult(en),
+                    status: en.checkedIn ? "checked in" : "signed up",
+                  });
+                  const inClass: AttachRow[] = searched
+                    ? found.flatMap((f) => {
+                        const en = onRoster.get(f.id);
+                        return en ? [rosterRow(en)] : [];
+                      })
+                    : (quickEntries ?? []).map(rosterRow);
+                  const others: AttachRow[] = searched
+                    ? found
+                        .filter((f) => !onRoster.has(f.id))
+                        .map((f) => ({ client: f, status: null }))
+                    : [];
                   return (
                     <div className="attach-quick">
                       <div className="attach-class">
@@ -4034,7 +4265,12 @@ function FrontDesk() {
                           </>
                         ) : null}
                       </div>
-                      {!showingActive && attachRoster.loading ? (
+                      {/* The roster's own states, before any search: once
+                          one has run the groups below are the answer, and
+                          the search's spinner and messages speak under
+                          them. */}
+                      {searched ? null : !showingActive &&
+                        attachRoster.loading ? (
                         <p className="muted">
                           <span className="spinner" aria-label="working" />{" "}
                           Loading the roster...
@@ -4045,89 +4281,41 @@ function FrontDesk() {
                         </p>
                       ) : quickEntries && quickEntries.length === 0 ? (
                         <p className="muted">Nobody is booked yet.</p>
-                      ) : quickEntries ? (
-                        <ul className="roster attach-quick-list">
-                          {quickEntries.map((en) => (
-                            <li key={`aq-${en.clientId}`}>
-                              <button
-                                className="row"
-                                onClick={() =>
-                                  attachSaleClient({
-                                    id: en.clientId,
-                                    name: en.name,
-                                    balance: en.balance,
-                                  })
-                                }
-                                aria-label={`Attach ${en.name} to the sale`}
-                              >
-                                <span className="name">{en.name}</span>
-                                {en.balance !== null && en.balance !== 0 ? (
-                                  <span
-                                    className={
-                                      en.balance < 0
-                                        ? "bal-chip neg"
-                                        : "bal-chip"
-                                    }
-                                  >
-                                    {money(en.balance)}
-                                  </span>
-                                ) : null}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
                       ) : null}
-                      <p className="attach-or">Or search everyone</p>
+                      {/* Both groups share ONE scroll region: the modal is
+                          centred in a fixed scrim and does not scroll
+                          itself, so two independently scrolling lists
+                          could stack past the top and bottom of the
+                          screen. The picker and the search bar stay put
+                          above it. */}
+                      {inClass.length > 0 || others.length > 0 ? (
+                        <div className="attach-rows">
+                          {inClass.length > 0 ? (
+                            <ul className="roster">
+                              {inClass.map(attachRowItem)}
+                            </ul>
+                          ) : null}
+                          {/* No heading on an empty group, and `others` is
+                              empty until a search has run, so this one
+                              only ever exists as the remainder of a
+                              search. It renders even when the in-class
+                              group is empty: without it the rows sit
+                              directly under the class picker and read as
+                              if they were that class's. */}
+                          {others.length > 0 ? (
+                            <>
+                              <p className="attach-group">Other matches</p>
+                              <ul className="roster">
+                                {others.map(attachRowItem)}
+                              </ul>
+                            </>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })()
               : null}
-            {/* Attach mode opens the modal BEFORE any search exists, so
-                the search bar renders here: the same query state, the
-                same submitSearch, the same one-call-on-submit rule as the
-                page's own bar. */}
-            {attachMode ? (
-              <div className="search-bar">
-                <div className="search-wrap">
-                  <input
-                    className="search"
-                    value={query}
-                    onChange={(e) => {
-                      setQuery(e.target.value);
-                      setSearchMsg(null);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        submitSearch();
-                      }
-                    }}
-                    enterKeyHint="search"
-                    placeholder="Who is the sale for? (press Enter)"
-                    autoComplete="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    autoFocus
-                  />
-                  {query ? (
-                    <button
-                      type="button"
-                      className="search-clear"
-                      aria-label="Clear search"
-                      onClick={() => setQuery("")}
-                    >
-                      <CloseIcon />
-                    </button>
-                  ) : null}
-                </div>
-                <button className="search-go" onClick={submitSearch}>
-                  Search
-                </button>
-              </div>
-            ) : null}
-            {attachMode && searchMsg ? (
-              <p className="search-quiet">{searchMsg}</p>
-            ) : null}
             {/* A class-level fact, said once here rather than stamped on
                 every result row: with the class full, every add offers
                 the waiting list instead. Booking flow only; a sale does
@@ -4153,7 +4341,11 @@ function FrontDesk() {
                     : "Nobody found. Check the spelling, or try fewer letters."}
               </p>
             ) : null}
-            {shownResults.length > 0 ? (
+            {/* The booking flow's results list. Attach mode renders its
+                own grouped rows above (T32) through attachRowItem, so
+                this one is now booking-only and its rows carry no attach
+                branches. */}
+            {!attachMode && shownResults.length > 0 ? (
               <>
                 <div className="roster-head">
                   <span aria-hidden="true">Name</span>
@@ -4299,7 +4491,7 @@ function FrontDesk() {
                                 action beyond updating this cell. Booking
                                 flow only: attaching a client to a sale
                                 picks no pass. */}
-                            {!attachMode && choosable.length >= 2 ? (
+                            {choosable.length >= 2 ? (
                               <button
                                 className="row-icon pass-toggle"
                                 disabled={working}
@@ -4444,24 +4636,6 @@ function FrontDesk() {
                               : ""}
                           </span>
                           <div className="cell-actions">
-                            {/* In attach mode the row's one action is a
-                                person-check: select this client for the
-                                sale and close. No waiver gate, no
-                                waitlist offer, nothing written (T23). */}
-                            {attachMode ? (
-                              <button
-                                className="add-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  attachSaleClient(client);
-                                }}
-                                aria-label={`Attach ${client.name} to the sale`}
-                                title="Attach to the sale"
-                              >
-                                <PersonCheckIcon />
-                              </button>
-                            ) : (
-                            <>
                             {/* Buy for a searched person without booking
                                 them: the modal closes and the Buy overlay
                                 opens with them attached. No gates -- a
@@ -4514,8 +4688,6 @@ function FrontDesk() {
                                 <PlusIcon />
                               )}
                             </button>
-                            </>
-                            )}
                           </div>
                         </div>
                       </li>

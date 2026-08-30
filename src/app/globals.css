@@ -363,6 +363,31 @@ button {
   font-weight: 600;
 }
 
+/* The attach row's standing pill (T32): where this person sits in the
+ * class the picker names. Same size and shape as the "no waiver" pill it
+ * shares the marker line with, and TEXT rather than a control, because
+ * attaching a sale moves no attendance. Checked in takes the roster
+ * chip's ok pairing so it reads the same on both screens; signed up is
+ * deliberately quiet, being the ordinary state. Tokens, both palettes. */
+.mini-in,
+.mini-signed {
+  flex: 0 0 auto;
+  padding: 1px 10px;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.mini-in {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.mini-signed {
+  background: var(--line);
+  color: var(--muted);
+}
+
 .cell-name {
   min-width: 0;
 }
@@ -1267,12 +1292,15 @@ button.pass-opt:disabled {
   width: min(860px, 100%);
 }
 
-/* --- Attach quick-pick (T27 round three, attach mode only) ----------
- * The "In class" block at the top of the attach modal: a class dropdown
- * (the pass-dropdown idiom, two columns since there are no pass facts)
- * over the picked class's roster as plain tappable rows, then the quiet
- * "Or search everyone" lead-in to the unchanged search bar. Tokens only,
- * so both palettes come from :root and the dark block as usual. */
+/* --- Attach picker (T27 round three, reordered in T32) --------------
+ * Attach mode only. Under the modal's search bar: the "In class" class
+ * dropdown (the pass-dropdown idiom, two columns since there are no pass
+ * facts), then the rows it heads -- the picked class's roster before a
+ * search, that class's matches after one -- and then the rest of the
+ * search under its own heading. The rows themselves are the search
+ * result row (.rrow and the modal's --roster-cols), shared by both
+ * groups. Tokens only, so both palettes come from :root and the dark
+ * block as usual. */
 .attach-quick {
   display: grid;
   gap: 10px;
@@ -1326,15 +1354,24 @@ button.pass-opt:disabled {
   grid-template-columns: 20px minmax(0, 1fr);
 }
 
-/* The quick-pick roster scrolls internally past a few rows, so a full
- * hot room cannot push the search bar off the modal. */
-.attach-quick-list {
-  max-height: min(38vh, 340px);
+/* BOTH groups of rows scroll together in one region (T32): the modal is
+ * centred in a fixed scrim and does not scroll itself, so two lists each
+ * capped at their own height could stack past the top and bottom of the
+ * screen. The search bar and the class picker sit above it and stay put,
+ * which is the point of putting them there. */
+.attach-rows {
+  max-height: min(46vh, 420px);
   overflow-y: auto;
+  display: grid;
+  gap: 8px;
+  align-content: start;
 }
 
-.attach-or {
-  margin: 4px 0 0;
+/* The second group's heading. The first group needs none: the "In class"
+ * picker directly above it IS its heading, naming the class the rows
+ * belong to. */
+.attach-group {
+  margin: 6px 0 0;
   font-size: 16px;
   font-weight: 600;
   color: var(--muted);
