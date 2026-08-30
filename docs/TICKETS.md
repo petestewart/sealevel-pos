@@ -835,6 +835,12 @@ not have gone through" and invites no retry. Spec findings:
   Pete: create the house client in Mindbody and set the id. NOTE for
   guarded testing: POS_WRITE_CLIENT_IDS must include the house client id,
   or the write guard suppresses every anonymous sale.
+  House-client rules from the review (Pete, when creating it): keep it
+  PRICING-NEUTRAL (no memberships or contracts, or anonymous totals
+  diverge and every sale hits the totals-disagree stop); NEVER store a
+  card on it (the UI cannot reach one, and no card on file makes any
+  explicit misuse a clean refusal); and know that anonymous sales land
+  on this client in Mindbody's revenue-by-client reporting.
 - **Card on file comes on the ordinary client record**: GET
   /client/clients (client.yml:1323) returns ClientWithSuspensionInfo
   (GetClientsResponse, 7106) carrying `ClientCreditCard` (6257; model at
