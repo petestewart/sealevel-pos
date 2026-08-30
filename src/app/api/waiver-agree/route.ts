@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 
 import { recordLiabilityRelease, updateClientNotes } from "@/lib/clients";
+import { insertWaiverReceipt } from "@/lib/db";
 import { getWaiver } from "@/lib/waiver";
 
 export const dynamic = "force-dynamic";
@@ -21,16 +22,17 @@ export const dynamic = "force-dynamic";
  *    Mindbody stores no waiver content or version: (a) one structured log
  *    line with the client id, timestamp and the sha256 of the exact text
  *    served (the dialog echoes the hash from /api/waiver; it is verified
- *    against the server's own copy before the release), and (b) the
- *    same fact appended to the client's Mindbody Notes through the
- *    existing surgical notes write, so the receipt travels with the
- *    client where staff already look.
+ *    against the server's own copy before the release), (b) a row in
+ *    waiver_receipts when a database is configured (T29) -- the durable
+ *    record, with the full hash -- and (c) the same fact appended to the
+ *    client's Mindbody Notes through the existing surgical notes write,
+ *    so the receipt travels with the client where staff already look.
  *
  * The caller passes the row's current notes for the append. A stale value
  * loses at most a concurrent edit made from another surface in the same
  * moment, which is acceptable: the roster refetches notes on every load,
- * and the durable receipt store waits for the database (design doc,
- * Phase 3).
+ * and the durable record is the waiver_receipts row (or, with no
+ * database, the log line).
  *
  * A notes-append failure must NOT fail the agreement -- the release
  * already stands in Mindbody and un-standing it over a bookkeeping line
@@ -103,6 +105,15 @@ export async function POST(request: Request) {
         textSha256: waiver.sha256,
       }),
     );
+
+    /* T29: the durable receipt row, with the FULL sha256 (Notes truncates
+     * to 12 chars for staff readability). Only on a real release, like
+     * everything below this point. Best effort by design: with no
+     * database, or a failed insert, the helper returns false and the
+     * behavior is exactly pre-T29 -- the log line above already holds the
+     * receipt, and the Notes append still runs. receiptNoted keeps
+     * meaning what it always meant: the Mindbody Notes copy. */
+    await insertWaiverReceipt(clientId, at, waiver.sha256);
 
     const receiptLine = `Waiver agreed at the counter ${at}, text sha256:${waiver.sha256.slice(0, 12)}`;
     const current = typeof notes === "string" ? notes : "";
