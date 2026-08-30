@@ -1256,6 +1256,27 @@ surfacing: a reward chip on attach, one tap to apply, consumed in the
 entitlement store only on a real successful charge. Blocked on: the
 DiscountAmount probe, and the entitlement-store decision.
 
+Granularity (Pete, 2026-08-30): the entitlement schema carries it all,
+none of it constrained by Mindbody since WE compute per-line
+DiscountAmount: kind + display name; percent-off or fixed amount-off;
+grantedAt/expiresAt (expired renders greyed with the date, never
+vanishes); item scope (all, categories, specific per-site item ids,
+products-only or passes-only); per-redemption quantity scope (1 item,
+up to X items, whole cart -- applied to the N qualifying lines, receipt
+shows which); maxUses/usesSoFar consumed only on a real successful
+charge (suppressed or failed charges never burn a use); optional
+minimum spend and no-stacking guards.
+
+**Gift cards (Pete asked 2026-08-30): NOT currently sellable.** The
+catalog pulls only /sale/products and /sale/services; gift cards are a
+third source, GET /sale/giftcards (sale.yml:398, purchasable cards with
+LocationIds and layouts) plus GET /sale/giftcardbalance (333, balance
+by barcode). A future ticket has two halves that can ship separately:
+SELLING (a Gift cards chip fed by /sale/giftcards; checkout item
+Metadata shape needs the usual Test: true probe) and REDEEMING (balance
+lookup + a GiftCard payment entry, shape also probe-bound since the
+payment Type enum is truncated in Mindbody's own docs). Not scheduled.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
