@@ -84,6 +84,12 @@ interface CartEntry {
 
 /** Mirrors src/lib/sale.ts PricedCart, as /api/price-cart returns it. */
 interface PricedResult {
+  /** True when the cart has no client and no POS_HOUSE_CLIENT_ID is
+   *  configured: Mindbody refuses to price a client-less cart (confirmed
+   *  live 2026-08-30), so the route answered instantly with only the
+   *  local expectedTotal. Rendered as a muted estimate, never an error
+   *  and NEVER a chargeable total. */
+  needsClient?: boolean;
   suppressed: boolean;
   subTotal: number | null;
   discountTotal: number | null;
@@ -709,6 +715,15 @@ function PaymentPanel(props: {
         )}
       </button>
 
+      {/* Bug-1 branch (b): no client, no house client, so Mindbody could
+          not price the cart and there is no total to charge. The local
+          estimate on the ticket is never chargeable. */}
+      {cart.length > 0 && !pricing && priced?.needsClient ? (
+        <p className="muted-note">
+          Attach a client (or set a house client) to charge.
+        </p>
+      ) : null}
+
       {result?.kind === "paid" ? (
         <div className="pay-done" role="status">
           <p className="pay-done-line">{result.summary}</p>
@@ -1087,7 +1102,11 @@ export default function SaleScreen(props: {
                       </button>
                       <span className="t-qty">
                         x{line.quantity}
-                        {line.quantity > 1
+                        {/* No "at $0.00" clause: a zero unit price cannot
+                            reach the shelf any more (the catalog filters
+                            it), but a line that somehow carries one reads
+                            better bare than absurd. */}
+                        {line.quantity > 1 && line.item.price > 0
                           ? ` at ${money(line.item.price)}`
                           : ""}
                       </span>
@@ -1124,6 +1143,22 @@ export default function SaleScreen(props: {
                   <div className="sale-stop">
                     Pricing failed: {priceError}
                   </div>
+                ) : totals?.needsClient ? (
+                  <>
+                    {/* Bug-1 branch (b): the LOCAL estimate, muted and
+                        labelled as such. The Charge button never sees a
+                        total from this state; only a server-priced total
+                        charges (the T23/T24 invariant). */}
+                    <div className="t-line t-total t-muted">
+                      <span>Estimated</span>
+                      <span className="amt">
+                        {money(totals.expectedTotal)}
+                      </span>
+                    </div>
+                    <p className="muted-note">
+                      Estimated. Attach a client to price with Mindbody.
+                    </p>
+                  </>
                 ) : totals?.suppressed ? (
                   <div className="pass-note t-suppressed">
                     Suppressed (dry run or write guard): Mindbody did not

@@ -7,6 +7,7 @@ import {
   CARD_MINIMUM_USD,
   checkoutCart,
   clientPaymentProfile,
+  houseClientId,
   parseCartLines,
   purchaseCredit,
   rehearseCheckout,
@@ -114,6 +115,26 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  /* Mindbody requires a client on EVERY sale, pricing included (confirmed
+   * live 2026-08-30). An anonymous cash/comp sale rides the configured
+   * house client server-side -- the UI still says "nobody" -- and without
+   * one it is refused here, before any Mindbody call, with the same
+   * reason the disabled Charge button gave. During guarded testing
+   * POS_WRITE_CLIENT_IDS must include this id or the write guard
+   * suppresses every anonymous sale; see the T24 ticket notes. */
+  const saleClientId = clientId ?? houseClientId() ?? undefined;
+  if (!saleClientId) {
+    return NextResponse.json(
+      {
+        error:
+          "Mindbody requires a client on every sale. Attach a client, or " +
+          "set POS_HOUSE_CLIENT_ID to a house walk-in client for " +
+          "anonymous counter sales. Nothing was charged.",
+        stage: "method",
+      },
+      { status: 409 },
+    );
+  }
   /* Tendered cash is DISPLAY-ONLY arithmetic for the change line; the
    * spec gives Cash no tendered/change metadata to send, so it is
    * validated for sanity and then deliberately not forwarded. */
@@ -139,7 +160,7 @@ export async function POST(request: Request) {
    * bought, and the failure costs nothing. */
   let priced;
   try {
-    priced = await rehearseCheckout(items, clientId);
+    priced = await rehearseCheckout(items, saleClientId);
   } catch (err) {
     return NextResponse.json(
       { error: errMessage(err), stage: "rehearsal" },
@@ -185,7 +206,7 @@ export async function POST(request: Request) {
     if (m === "comp" || m === "cash") {
       const outcome = await checkoutCart(
         items,
-        clientId,
+        saleClientId,
         m === "cash"
           ? { type: "Cash", amount: total }
           : { type: "Comp", amount: total },

@@ -1668,6 +1668,15 @@ button.pass-opt:disabled {
   color: var(--muted);
 }
 
+/* Quiet guidance lines: the needs-client estimate note on the ticket and
+ * the charge-gate reason under the button. Muted, not an error. */
+.muted-note {
+  margin: 0;
+  padding: 4px 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
 /* The spinner line while Mindbody prices the cart: the totals area IS the
  * wait, same posture as check-in. */
 .t-pricing {

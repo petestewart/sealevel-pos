@@ -703,6 +703,28 @@ POST /api/price-cart. Spec findings worth keeping:
   `suppressed: true` with no totals; the T23 UI must render that state,
   never a made-up number.
 
+First live sandbox run (2026-08-30) findings, fixed same day:
+
+- **A cart with no client cannot be priced.** /sale/checkoutshoppingcart
+  refused Test: true with "At least one of the following parameters must
+  be passed: ClientId, UniqueClientId" -- the ClientId requirement the
+  spec attached to "complete a sale" (sale.yml:5656) actually bites at
+  pricing. Resolution under T24 (POS_HOUSE_CLIENT_ID); /api/price-cart
+  now answers a structured `needsClient: true` without calling Mindbody
+  when no client is attached and no house client is configured, and the
+  UI renders the local expectedTotal as a muted estimate, never a
+  chargeable total.
+- **The catalog contained duplicate rows** (the same product returned for
+  more than one queried category; duplicate pricing-option rows sharing a
+  ProductId, the Personal Training triplicates again), which surfaced as
+  duplicate React keys on the shelf. catalogFor/pricingOptions now
+  de-duplicate at assembly -- products by id, services by ProductId,
+  keeping the first row -- so the shelf key is unique by construction.
+- **$0 and priceless items rendered as sellable.** Both lists now exclude
+  any row without a positive Price: a $0 catalog price is unsellable
+  config, not a free item (comps go through the comp path), and a missing
+  Price excludes the row rather than coercing to 0.
+
 ## T23. The sale screen (PLAN 2.1 UI)
 
 - [x] Two panes per the approved mockups: receipt-style cart left
@@ -797,14 +819,22 @@ not have gone through" and invites no retry. Spec findings:
   `PaymentInfo.Metadata` (PaymentInfo at 4808, a CheckoutPaymentInfo),
   confirming the design doc's "dynamic, not a preconfigured SKU". The
   $10 floor is CARD_MINIMUM_USD, policy not API.
-- **A completed sale may require a client.** CheckoutShoppingCartRequest
-  ClientId (sale.yml:5654) says "A 'ClientId' OR 'UniqueClientId' must
-  be specified to complete a sale" -- a description absent from the Test
-  path we have exercised. An anonymous cash/comp sale is therefore
-  expected to be refused; the route lets it through and surfaces
-  Mindbody's refusal verbatim rather than pre-empting a description that
-  might be wrong. If the sandbox confirms it, the fix is a house
-  walk-in client, decided with Pete.
+- **A sale requires a client, and it bites at PRICING.** CONFIRMED LIVE
+  (first sandbox run, 2026-08-30): checkoutshoppingcart refused a
+  client-less cart even under Test: true with "At least one of the
+  following parameters must be passed: ClientId, UniqueClientId", so an
+  anonymous cash sale could neither be priced nor charged. The house
+  walk-in client is now the decided fix, as the optional
+  POS_HOUSE_CLIENT_ID env var (.env.example): when set, /api/price-cart
+  and /api/checkout substitute it server-side whenever no client is
+  attached (the UI still shows "nobody"); when unset, /api/price-cart
+  answers `needsClient: true` instantly without calling Mindbody, the UI
+  shows the local estimate muted ("Estimated. Attach a client to price
+  with Mindbody.") and Charge stays disabled with the reason. The
+  server-priced-total-only invariant is untouched. STILL OPEN, for
+  Pete: create the house client in Mindbody and set the id. NOTE for
+  guarded testing: POS_WRITE_CLIENT_IDS must include the house client id,
+  or the write guard suppresses every anonymous sale.
 - **Card on file comes on the ordinary client record**: GET
   /client/clients (client.yml:1323) returns ClientWithSuspensionInfo
   (GetClientsResponse, 7106) carrying `ClientCreditCard` (6257; model at

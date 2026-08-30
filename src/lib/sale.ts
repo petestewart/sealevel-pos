@@ -36,6 +36,24 @@ import { mindbody } from "./mindbody";
  *  reserved online store. A constant, not a choice; see CLAUDE.md. */
 export const STUDIO_LOCATION_ID = 1;
 
+/**
+ * POS_HOUSE_CLIENT_ID: the house/walk-in client the studio creates in
+ * Mindbody for anonymous counter sales. The first live sandbox run
+ * (2026-08-30) proved what the spec's ClientId note (sale.yml:5656) only
+ * hinted at: /sale/checkoutshoppingcart refuses a cart with no client even
+ * under Test: true ("At least one of the following parameters must be
+ * passed: ClientId, UniqueClientId"), so an anonymous cart can be neither
+ * priced nor charged. When this is set, /api/price-cart and /api/checkout
+ * substitute it server-side whenever no client is attached; the UI still
+ * shows "nobody". When unset, an unattached cart shows only the local
+ * estimate and cannot be charged. Creating the client is Pete's task; see
+ * the T24 ticket notes.
+ */
+export function houseClientId(): string | null {
+  const id = (process.env["POS_HOUSE_CLIENT_ID"] ?? "").trim();
+  return id || null;
+}
+
 /** The studio's sales tax at location 1, from the live /site/locations dump
  *  in the design doc. An in-studio total is Price x 1.1035, which is the
  *  cheap invariant priceCart asserts against the server. */
@@ -121,13 +139,24 @@ export async function catalogFor(
     `&request.locationId=${STUDIO_LOCATION_ID}` +
     `&request.limit=200`;
   const body = await mindbody(`/sale/products?${query}`);
+  /* The first live sandbox run returned the same product twice (a product
+   * can live in more than one of the queried categories), which duplicated
+   * shelf rows and React keys. De-duplicate by id, keeping the FIRST row:
+   * the rows describe the same sellable thing, so any of them will do, and
+   * first is deterministic. This makes the shelf key (`Product-<id>`)
+   * unique by construction. */
+  const seen = new Set<string | number>();
   return (body?.Products ?? [])
     .map((p: any): CatalogItem | null => {
       const barcodeId = str(p?.Id);
       const productId = num(p?.ProductId);
       const price = num(p?.Price);
       const id = barcodeId ?? productId;
-      if (id === null || price === null) return null;
+      /* `price <= 0` excludes both a literal $0.00 and anything negative,
+       * and num() already returns null for a missing Price rather than
+       * coercing it to 0. A $0 catalog price is unsellable config, not a
+       * free item; comps go through the comp path. */
+      if (id === null || price === null || price <= 0) return null;
       const secondary = num(p?.SecondaryCategoryId);
       return {
         id,
@@ -144,7 +173,12 @@ export async function catalogFor(
         count: null,
       };
     })
-    .filter((p: CatalogItem | null): p is CatalogItem => p !== null);
+    .filter((p: CatalogItem | null): p is CatalogItem => p !== null)
+    .filter((p: CatalogItem) => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
 }
 
 /**
@@ -170,6 +204,13 @@ export async function pricingOptions(): Promise<CatalogItem[]> {
     `/sale/services?request.locationId=${STUDIO_LOCATION_ID}` +
       `&request.limit=200`,
   );
+  /* The sandbox returns duplicate pricing-option rows sharing a ProductId
+   * (the Personal Training triplicates, seen before in the design work,
+   * and duplicated React keys on the first live run). ProductId is the id
+   * the cart's Metadata refers to, so rows sharing one are the same
+   * sellable thing; keep the FIRST and drop the rest, which also makes
+   * the shelf key (`Service-<id>`) unique by construction. */
+  const seen = new Set<string | number>();
   return (body?.Services ?? [])
     .filter((s: any) => {
       const sellAt: unknown = s?.SellAtLocationIds;
@@ -184,7 +225,11 @@ export async function pricingOptions(): Promise<CatalogItem[]> {
       const barcodeId = str(s?.Id);
       const price = num(s?.Price);
       const id = productId ?? barcodeId;
-      if (id === null || price === null) return null;
+      /* Same rule as products: a missing Price stays null (never coerced
+       * to 0) and excludes the row, and a $0 or negative catalog price is
+       * unsellable config, not a free pass; comps go through the comp
+       * path. */
+      if (id === null || price === null || price <= 0) return null;
       return {
         id,
         barcodeId,
@@ -203,7 +248,12 @@ export async function pricingOptions(): Promise<CatalogItem[]> {
         count: num(s?.Count),
       };
     })
-    .filter((s: CatalogItem | null): s is CatalogItem => s !== null);
+    .filter((s: CatalogItem | null): s is CatalogItem => s !== null)
+    .filter((s: CatalogItem) => {
+      if (seen.has(s.id)) return false;
+      seen.add(s.id);
+      return true;
+    });
 }
 
 /** The most of one item a counter cart can hold. A teacher selling more
@@ -324,9 +374,12 @@ export interface PricedCart {
  *
  * `clientId` rides mindbody()'s options for the POS_WRITE_CLIENT_IDS guard
  * and, when present, goes in the body as ClientId (sale.yml:5654) since
- * client attachment can change pricing (memberships, contracts later). An
- * anonymous cart sends no ClientId; under a configured write guard that
- * means suppression, which is the guard doing its job.
+ * client attachment can change pricing (memberships, contracts later).
+ * A cart with no client at all cannot be priced: the live API refuses it
+ * ("At least one of the following parameters must be passed: ClientId,
+ * UniqueClientId") even under Test: true, which is why /api/price-cart
+ * substitutes houseClientId() for an unattached cart and answers
+ * `needsClient` instead of calling here when none is configured.
  */
 /** Shared cart validation: T22's rules, needed identically by the Test
  *  pricing call and T24's real checkout. Throws on a bad cart. */
@@ -514,11 +567,11 @@ export interface CheckoutOutcome {
  * which fires only from an explicit Charge tap.
  *
  * `clientId` goes in the body as ClientId (sale.yml:5654) when present.
- * The spec notes "A 'ClientId' OR 'UniqueClientId' must be specified to
- * complete a sale" (5656), so an anonymous cash/comp sale is expected to
- * be refused by Mindbody; that refusal surfaces verbatim rather than
- * being second-guessed here, and if the sandbox confirms it, the fix is a
- * house walk-in client, decided with Pete rather than invented.
+ * The spec's "A 'ClientId' OR 'UniqueClientId' must be specified to
+ * complete a sale" (5656) was confirmed live on 2026-08-30 -- it bites at
+ * PRICING, Test: true included -- so /api/checkout substitutes
+ * houseClientId() for an anonymous cash/comp sale and refuses cleanly
+ * when none is configured; this function never invents a client.
  */
 export async function checkoutCart(
   items: readonly CartLine[],
