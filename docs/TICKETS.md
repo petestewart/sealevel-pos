@@ -1380,6 +1380,27 @@ this container):
   retry invitation) renders through the exact same blocks as a
   single-method charge, because it is the same fetch pipeline.
 
+Adversarial money review (2026-08-30), one fix:
+
+- **A parsed split leg is snapped to its exact cent value.** The
+  whole-cent check's 1e-6 epsilon (needed because 10.05 * 100 is
+  1005.0000000000001 in a double) admitted a crafted 10.000000001 and
+  then forwarded the RAW float into the sum check, the card-minimum and
+  balance comparisons, and the Payments entry itself. parseSplitLeg now
+  returns Math.round(amount * 100) / 100, so everything downstream --
+  Mindbody included -- carries the validated cent amount. Verified
+  fine, deliberately unchanged: the sum check compares both sides
+  through roundToCents (float-safe); 10.005 is still refused; every
+  path that can change the total (client change, cart edit, Empty-cart
+  nonce, mode toggle) resets the slots, so a stale slot A cannot
+  outlive its total, and a server-side price drift between rehearsals
+  lands on the 409 that names both numbers; the split-needs-a-client
+  check runs BEFORE the house-client substitution, so the house client
+  genuinely cannot ride a leg; the split branch makes exactly one
+  checkoutshoppingcart call, and mindbody()'s 401-retry safety argument
+  (refused at the auth gate, before endpoint logic) is unchanged by a
+  second Payments entry.
+
 ## T30. Contracts and packages in Buy (Pete, 2026-08-30: essential)
 
 Mindbody's POS has a Contracts / Packages tab; ours sells only retail

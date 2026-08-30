@@ -113,11 +113,18 @@ function parseSplitLeg(raw: unknown): SplitLeg | string {
     return "each split leg needs a positive amount";
   }
   /* Whole cents only: a sub-cent leg could never sum to a real total and
-   * is a typo, not a tender. */
-  if (Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-6) {
+   * is a typo, not a tender. The epsilon absorbs float dust (10.05 * 100
+   * is 1005.0000000000001 in a double) without admitting 10.005. */
+  const cents = Math.round(amount * 100);
+  if (Math.abs(amount * 100 - cents) > 1e-6) {
     return "split leg amounts must be whole cents";
   }
-  return { method, amount };
+  /* Snap to the exact cent value: everything downstream -- the sum
+   * check, the card-minimum and balance comparisons, and above all the
+   * Payments entry sent to Mindbody -- must carry the validated cent
+   * amount, never the raw float it arrived as (10.000000001 passes the
+   * epsilon but is not a tender anyone typed). */
+  return { method, amount: cents / 100 };
 }
 
 export async function POST(request: Request) {
