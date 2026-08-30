@@ -1390,9 +1390,16 @@ function PaymentPanel(props: {
 /** How often the autopay charges, in words, from the schema's fields
  *  (AutopaySchedule, sale.yml:4757; AutopayTriggerType, 5494). */
 function frequencyPhrase(c: ContractInfo): string {
-  if (c.autopayTriggerType === "PricingOptionRunsOutOrExpires" || !c.autopaySchedule) {
+  if (c.autopayTriggerType === "PricingOptionRunsOutOrExpires") {
     /* The schedule is null exactly in this case (sale.yml:5488). */
     return "each time the included pass runs out or expires";
+  }
+  if (!c.autopaySchedule) {
+    /* A null schedule WITHOUT that trigger is a data hole, not the
+     * pass-runs-out story; never claim a trigger Mindbody did not
+     * state. scheduleProblem() refuses to sell this shape, so the
+     * vague phrase only ever reaches the shelf card. */
+    return "on the contract's autopay schedule";
   }
   const s = c.autopaySchedule;
   if (s.frequencyType === "MonthToMonth") return "monthly";
@@ -1407,6 +1414,51 @@ function frequencyPhrase(c: ContractInfo): string {
     default:
       return "on the contract's autopay schedule";
   }
+}
+
+/**
+ * The reason this contract's recurring commitment CANNOT be stated
+ * honestly, or null when it can. A recurring purchase whose terms the
+ * dialog cannot restate must refuse to sell -- a vague label on the
+ * commitment button ("on the contract's autopay schedule") is exactly
+ * the thing the T30 confirm exists to prevent. The unsellable shapes:
+ * a recurring amount Mindbody did not return, a set-schedule autopay
+ * with no schedule, and a frequency time unit outside the schema's
+ * Weekly | Monthly | Yearly. Refusing here costs nothing real: these
+ * are data holes, and the membership can still be sold from Mindbody
+ * itself.
+ */
+function scheduleProblem(c: ContractInfo): string | null {
+  if (!c.autopayEnabled) return null;
+  if (c.recurringPaymentTotal === null) {
+    return (
+      "Mindbody returned no recurring amount for this contract, so the " +
+      "commitment cannot be stated here. Sell it from Mindbody instead."
+    );
+  }
+  if (c.recurringPaymentTotal <= 0) return null;
+  if (c.autopayTriggerType === "PricingOptionRunsOutOrExpires") return null;
+  const s = c.autopaySchedule;
+  if (!s) {
+    return (
+      "Mindbody returned no autopay schedule for this contract, so how " +
+      "often it charges cannot be stated here. Sell it from Mindbody " +
+      "instead."
+    );
+  }
+  if (s.frequencyType === "MonthToMonth") return null;
+  if (
+    s.frequencyTimeUnit !== "Weekly" &&
+    s.frequencyTimeUnit !== "Monthly" &&
+    s.frequencyTimeUnit !== "Yearly"
+  ) {
+    return (
+      "This contract's autopay frequency could not be read from " +
+      "Mindbody, so the commitment cannot be stated here. Sell it from " +
+      "Mindbody instead."
+    );
+  }
+  return null;
 }
 
 function fmtDay(d: Date): string {
@@ -1495,6 +1547,11 @@ function commitmentText(c: ContractInfo, firstTotal: number | null): string {
     chargedOnClause(c);
   if (c.numberOfAutopays !== null && c.numberOfAutopays > 0) {
     text += `, for ${c.numberOfAutopays} payment${c.numberOfAutopays === 1 ? "" : "s"}`;
+  } else if (c.autopaySchedule?.frequencyType === "SetNumberOfAutopays") {
+    /* A set-number schedule whose count Mindbody did not return: say
+     * the run is limited without inventing a count, rather than
+     * reading as open-ended. */
+    text += ", for a set number of payments (see the agreement)";
   }
   if (c.actionUponCompletionOfAutopays === "ContractAutomaticallyRenews") {
     text += ", renewing automatically";
@@ -1559,10 +1616,18 @@ function ContractDialog(props: {
   const clientId = client?.id ?? null;
   const card = cardLookup?.card ?? null;
 
+  /* An unrenderable schedule refuses the sale outright: nothing
+   * recurring starts without its terms stated, so terms that cannot be
+   * stated mean no sale from this counter. Checked before everything
+   * else -- attaching a client cannot fix it. */
+  const schedProblem = scheduleProblem(contract);
+
   /* Why the purchase cannot proceed yet, or null. The same
    * greyed-with-the-reason posture as the method cards; the server
-   * re-checks all of it at purchase time. */
-  const blockReason = !client
+   * re-checks the client and card at purchase time. */
+  const blockReason = schedProblem
+    ? schedProblem
+    : !client
     ? "A membership needs a client attached."
     : cardLookup?.loading
       ? "Checking for a card on file..."
@@ -1650,10 +1715,20 @@ function ContractDialog(props: {
     onBusyChange(true);
     setOutcome(null);
     try {
+      /* The number the confirm button displayed. The route rehearses
+       * again at purchase time and REFUSES if Mindbody now prices the
+       * first payment differently: the tap agreed to these words, so a
+       * changed price must come back to the screen, never be charged
+       * silently. */
+      const shownFirst = serverTotal ?? contract.firstPaymentTotal;
       const res = await fetch("/api/purchase-contract", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ contractId: contract.id, clientId }),
+        body: JSON.stringify({
+          contractId: contract.id,
+          clientId,
+          ...(shownFirst !== null ? { expectedFirstTotal: shownFirst } : {}),
+        }),
       });
       let body: any = null;
       try {
@@ -1694,6 +1769,11 @@ function ContractDialog(props: {
           message: String(body?.error ?? "The purchase did not answer."),
         });
       } else {
+        if (body?.stage === "reprice") {
+          /* The price moved between the label and the tap: re-rehearse
+           * so the commitment button restates the CURRENT number. */
+          setRehearseNonce((n) => n + 1);
+        }
         setOutcome({
           kind: "error",
           message: String(body?.error ?? `HTTP ${res.status}`),
@@ -1773,6 +1853,15 @@ function ContractDialog(props: {
                 {money(contract.recurringPaymentTotal)}{" "}
                 {frequencyPhrase(contract)}
               </span>
+            </div>
+          ) : contract.autopayEnabled &&
+            contract.recurringPaymentTotal === null ? (
+            /* Autopay is ON but Mindbody returned no amount: never say
+               "none" about a recurring charge that exists. The sale is
+               refused above (scheduleProblem). */
+            <div className="contract-row">
+              <span>Recurring</span>
+              <span>amount unavailable</span>
             </div>
           ) : (
             <div className="contract-row">
@@ -1858,8 +1947,10 @@ function ContractDialog(props: {
           </div>
         ) : outcome?.kind === "ambiguous" ? (
           <div className="sale-stop modal-note-gap" role="alert">
-            The membership purchase may or may not have gone through. Check
-            the dev drawer or Mindbody before trying again.
+            The membership purchase may or may not have gone through, and a
+            contract may now exist. Check the client&apos;s account in
+            Mindbody for the contract (or the dev drawer) before trying
+            again.
             {outcome.message ? ` (${outcome.message})` : ""}
           </div>
         ) : outcome?.kind === "error" ? (
@@ -1888,6 +1979,10 @@ function ContractDialog(props: {
                 <>
                   <span className="spinner" aria-label="working" /> Starting...
                 </>
+              ) : schedProblem ? (
+                /* Never display a commitment the schedule cannot back;
+                   the refusal above says why. */
+                "Not sellable here"
               ) : (
                 commitment
               )}
@@ -2808,9 +2903,12 @@ export default function SaleScreen(props: {
                                   package no price of its own); the cart
                                   total is Mindbody's, as always. */}
                               {item.type === "Package" ? (
+                                /* "est." because this number is OUR
+                                   component-sum guess, not a Mindbody
+                                   price; the cart total is Mindbody's. */
                                 <span className="shelf-bundle-mark">
                                   {" "}
-                                  package
+                                  package, est.
                                 </span>
                               ) : null}
                             </span>

@@ -1529,6 +1529,70 @@ wrong).
   renders verbatim in the dialog and the signature pad becomes its own
   ticket.
 
+Review pass (2026-08-30), adversarial, on the first recurring-money
+write:
+
+- **An unrenderable schedule refuses to sell.** scheduleProblem() in
+  SaleScreen.tsx blocks the dialog (and the rehearsal call) whenever
+  the commitment cannot be stated from the data: autopay enabled with
+  no RecurringPaymentAmountTotal, a set-schedule autopay with a null
+  AutopaySchedule, or a FrequencyTimeUnit outside Weekly | Monthly |
+  Yearly. Before this, those shapes rendered "then $X on the
+  contract's autopay schedule" (or, worse, "No recurring payments"
+  for a live autopay whose amount was merely missing) on the confirm
+  button. The refusal is honest ("Sell it from Mindbody instead");
+  the confirm label becomes "Not sellable here", never a vague
+  commitment. Related: frequencyPhrase no longer claims "each time
+  the included pass runs out or expires" for a null schedule unless
+  AutopayTriggerType actually says PricingOptionRunsOutOrExpires, and
+  a SetNumberOfAutopays contract whose count is missing says "for a
+  set number of payments (see the agreement)" instead of reading
+  open-ended.
+- **The house client is refused BY ID server-side**: /api/purchase-
+  contract compares against houseClientId(), not just "some client
+  present". An autopay on the walk-in account was only UI-prevented
+  before.
+- **Price drift refuses instead of charging.** The dialog now sends
+  the figure its confirm button displayed (expectedFirstTotal); the
+  route's purchase-time rehearsal must match it to the cent or the
+  purchase refuses with stage "reprice" (409) and the dialog
+  re-rehearses so the button restates the current number. Checkout
+  already had this property by construction (the payments carry the
+  rehearsed amounts); purchasecontract sends no amount at all, so the
+  gate had to be explicit. When the rehearsal returns no Totals the
+  gate cannot check (probe below) and Mindbody prices the real call
+  as it always does.
+- **Ambiguity names the CONTRACT.** Both ambiguous wordings (route
+  and dialog) now say a contract may have been started and to check
+  the client's account in Mindbody for it, not merely that a charge
+  may exist -- for a recurring purchase the standing agreement is the
+  thing to go look for.
+- Package shelf cards say "package, est." -- the number is our
+  component-sum guess, and "package" alone did not say so.
+- Argued fine, unchanged: the 401 retry in mindbody() holds for
+  purchasecontract (401 is the auth gate refusing before endpoint
+  logic; no SCA callback is in play since
+  PaymentAuthenticationCallbackUrl is never sent); suppression at the
+  rehearsal stops the whole purchase; a package whose components all
+  price to zero is hidden like any $0 item (no local price basis, and
+  comps have their own path); the schedule gate is UI-only (a
+  server-side check would cost a /sale/contracts read per purchase;
+  the route is not a public API).
+- KNOWN CACHE SEAM, recorded: the recurring amount and cadence on the
+  commitment come from the /api/catalog response (cached up to 10
+  minutes); the rehearsal re-prices only the FIRST payment. A
+  contract edited in Mindbody mid-cache could restate a stale
+  recurring figure. Tolerated: contracts change rarely, the agreement
+  terms render verbatim, and Mindbody's own confirmation email
+  (SendNotifications: true) carries the authoritative terms.
+
+Two more probes for Pete's sandbox run: (1) whether purchasecontract
+Test: true returns Totals at all -- the price-drift gate and the
+dialog's server-priced first payment both depend on it, and the spec
+does not say; (2) watch the drawer for the reprice refusal never
+firing spuriously (tax rounding between our display and the
+rehearsal would show up as a 409 with stage "reprice").
+
 Ordering: T28 (in flight) -> T30 -> T29 (database), since contracts are
 counter-essential and the database is admin infrastructure.
 

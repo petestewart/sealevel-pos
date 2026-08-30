@@ -3,7 +3,12 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { isDryRun, mindbodyHttpStatus } from "@/lib/mindbody";
 
-import { clientPaymentProfile, purchaseContract } from "@/lib/sale";
+import {
+  clientPaymentProfile,
+  houseClientId,
+  purchaseContract,
+  roundToCents,
+} from "@/lib/sale";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +17,13 @@ export const dynamic = "force-dynamic";
  * from the contract dialog's explicit tap; nothing here auto-charges,
  * and NOTHING auto-retries.
  *
- * Body: { contractId: number, clientId: string, test?: boolean }
+ * Body: { contractId: number, clientId: string, test?: boolean,
+ *         expectedFirstTotal?: number }
+ *
+ * `expectedFirstTotal` is the figure the dialog's confirm button showed;
+ * a real purchase whose fresh rehearsal prices differently refuses with
+ * stage "reprice" (409) instead of charging a number the teacher never
+ * saw.
  *
  * `test: true` is the dialog's rehearsal: POST /sale/purchasecontract
  * with Test: true (sale.yml:6219, "validates input information, but
@@ -94,7 +105,30 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  /* The house client is refused BY ID, not just by the UI never sending
+   * it: an autopay on the walk-in account is a standing charge against
+   * nobody, and this route is the last gate before the write. */
+  const house = houseClientId();
+  if (house !== null && clientId === house) {
+    return NextResponse.json(
+      {
+        error:
+          "That is the house walk-in client. A membership must be sold " +
+          "to the real client's own account.",
+      },
+      { status: 400 },
+    );
+  }
   const test = payload?.test === true;
+  /* The first-payment figure the dialog's confirm button displayed, when
+   * the browser had one. Compared against the fresh rehearsal below: a
+   * tap agrees to the words on the button, so a price that has moved
+   * since must refuse and re-render, never charge silently. */
+  const expectedFirstTotal =
+    typeof payload?.expectedFirstTotal === "number" &&
+    Number.isFinite(payload.expectedFirstTotal)
+      ? payload.expectedFirstTotal
+      : null;
 
   /* The stored card, re-read at purchase time -- the browser's snapshot
    * is never the basis for a money decision. The schema demands exactly
@@ -168,6 +202,30 @@ export async function POST(request: Request) {
     });
   }
 
+  /* The price-drift gate: when the dialog said what its button showed
+   * and this rehearsal has a number, they must agree to the cent. A
+   * rehearsal with NO total cannot be checked (whether Test returns
+   * Totals at all is on the sandbox probe list); Mindbody then prices
+   * the real call itself, as it always does. */
+  const rehearsedTotal = rehearsed.totals?.total ?? null;
+  if (
+    expectedFirstTotal !== null &&
+    rehearsedTotal !== null &&
+    roundToCents(rehearsedTotal) !== roundToCents(expectedFirstTotal)
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          `The first payment now prices at ${rehearsedTotal.toFixed(2)}, ` +
+          `not the ${expectedFirstTotal.toFixed(2)} the button showed. ` +
+          "Nothing was charged; confirm against the new amount.",
+        stage: "reprice",
+        total: rehearsedTotal,
+      },
+      { status: 409 },
+    );
+  }
+
   /* Step 2: the real purchase. ONE call, no auto-retry in any shape; a
    * refusal renders Mindbody's reason, a 5xx or dead transport is
    * honest ambiguity. */
@@ -191,8 +249,9 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error: ambiguous
-          ? "The membership purchase did not answer. It MAY have gone " +
-            "through. Check the dev drawer or Mindbody before trying again."
+          ? "The membership purchase did not answer. The contract MAY " +
+            "have been started. Check the client's account in Mindbody " +
+            "for the contract (or the dev drawer) before trying again."
           : errMessage(err),
         stage: "purchase",
         ambiguous,
