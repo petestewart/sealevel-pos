@@ -58,6 +58,16 @@ export async function PUT(request: Request) {
         { status: 400 },
       );
     }
+    /* One line of announcement, not a document: the banner renders as a
+     * single strip on the counter and lock screens, and an accidental
+     * paste should bounce here rather than be served on every
+     * /api/config until someone notices. */
+    if (typeof text === "string" && text.trim().length > 300) {
+      return NextResponse.json(
+        { error: "banner text must be 300 characters or fewer" },
+        { status: 400 },
+      );
+    }
     const saved = await setSetting(BANNER_SETTING_KEY, text);
     if (!saved) {
       return NextResponse.json(

@@ -73,6 +73,44 @@ function getPool(): Pool | null {
   return pool;
 }
 
+/* --- Dead-database cooldown ------------------------------------------ */
+
+/**
+ * A configured-but-unreachable database must not tax the counter. The
+ * timeouts bound any single attempt at 5s, but /api/config and
+ * /api/catalog read the database per request, and a black-holed host
+ * (stopped Railway service, dropped firewall) would otherwise cost every
+ * one of those requests its own 5s probe. So a connection-level failure
+ * puts the whole layer on a cooldown: for the next 30s every helper falls
+ * back instantly, then one request probes again. Query-level errors (a
+ * unique violation on rename, say) are not outages and set no cooldown.
+ */
+const RETRY_COOLDOWN_MS = 30_000;
+let unavailableUntil = 0;
+
+const CONNECTION_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "EHOSTUNREACH",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "08001", // sqlclient_unable_to_establish_sqlconnection
+  "08006", // connection_failure
+  "57P01", // admin_shutdown
+  "57P02", // crash_shutdown
+  "57P03", // cannot_connect_now
+]);
+
+function isConnectionError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && CONNECTION_ERROR_CODES.has(code)) {
+    return true;
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return /timeout|timed out|terminat|connect/i.test(message);
+}
+
 /* --- Once-per-kind error logging ------------------------------------ */
 
 const loggedKinds = new Set<string>();
@@ -81,6 +119,9 @@ const loggedKinds = new Set<string>();
  *  should not turn the server log into a scroll of identical stacks while
  *  every feature is already degrading correctly. */
 function logDbError(kind: string, err: unknown): void {
+  if (isConnectionError(err)) {
+    unavailableUntil = Date.now() + RETRY_COOLDOWN_MS;
+  }
   if (loggedKinds.has(kind)) return;
   loggedKinds.add(kind);
   const message = err instanceof Error ? err.message : String(err);
@@ -171,6 +212,12 @@ function ensureMigrated(p: Pool): Promise<boolean> {
     const client = await p.connect();
     try {
       await client.query("BEGIN");
+      /* Two processes sharing one database (a second dev server, a future
+       * second Railway instance) must not race the CREATE TABLEs: IF NOT
+       * EXISTS does not make concurrent creation safe (duplicate pg_type
+       * errors). The transaction-scoped advisory lock serializes them; the
+       * loser finds schema_version already advanced and does nothing. */
+      await client.query("SELECT pg_advisory_xact_lock(729117)");
       await client.query(`
         CREATE TABLE IF NOT EXISTS schema_version (
           version     integer PRIMARY KEY,
@@ -208,6 +255,7 @@ function ensureMigrated(p: Pool): Promise<boolean> {
 /** The shared preamble of every helper: a configured, migrated pool, or
  *  null meaning "fall back". */
 async function ready(): Promise<Pool | null> {
+  if (Date.now() < unavailableUntil) return null;
   const p = getPool();
   if (!p) return null;
   const ok = await ensureMigrated(p);
