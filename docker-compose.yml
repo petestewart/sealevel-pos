@@ -1,0 +1,25 @@
+# Local Postgres for testing the T29 database features. NOT needed for
+# normal local work: with DATABASE_URL unset the app runs fully on its
+# fallbacks (bundles from src/lib/bundles.ts, waiver receipts to Notes +
+# the server log, banner from POS_BANNER_TEXT). Start this only when a DB
+# feature itself is what you are testing:
+#
+#   docker compose up -d
+#   DATABASE_URL=postgres://pos:pos@localhost:5432/sealevel_pos npm run dev
+#
+# The schema migrates itself on first use. The volume keeps data across
+# restarts; `docker compose down -v` wipes it.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pos
+      POSTGRES_PASSWORD: pos
+      POSTGRES_DB: sealevel_pos
+    ports:
+      - "5432:5432"
+    volumes:
+      - pos-pgdata:/var/lib/postgresql/data
+
+volumes:
+  pos-pgdata:
