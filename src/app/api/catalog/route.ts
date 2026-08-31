@@ -70,7 +70,24 @@ export async function GET(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
   const key = target();
-  if (cache && cache.key === key && Date.now() - cache.at < CACHE_TTL_MS) {
+  /**
+   * `?refresh=1` skips the cache and refetches (Pete, fifth live test).
+   * A cart whose total disagrees with Mindbody's is most likely a shelf
+   * priced from a cached catalog that has since changed, and the teacher
+   * needs a way OUT of that state at the counter, not a refusal they can
+   * only escape by clearing the cart. This is the one deliberate bypass;
+   * it costs the four catalog reads and is only ever reached by an
+   * explicit tap. Rate is not a concern: the button that calls it is
+   * disabled while it runs, and it changes no state on Mindbody's side.
+   */
+  const refresh =
+    new URL(request.url).searchParams.get("refresh") === "1";
+  if (
+    !refresh &&
+    cache &&
+    cache.key === key &&
+    Date.now() - cache.at < CACHE_TTL_MS
+  ) {
     return NextResponse.json({
       ...cache.data,
       ...(await currentBundles()),
