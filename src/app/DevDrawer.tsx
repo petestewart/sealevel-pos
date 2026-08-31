@@ -59,11 +59,16 @@ export default function DevDrawer() {
     void poll();
   }, [poll]);
 
-  /** Only poll while the drawer is open; a closed drawer should cost
-   *  nothing on a machine that is also serving the counter. */
+  /**
+   * Poll whether the drawer is open or not (Pete, fifth live test: the
+   * pill read "API 0" until the drawer had been opened once, which reads
+   * as "nothing is being recorded" -- the server records every call from
+   * the moment it starts, and the count should say so). Open, it is live
+   * at 1.5s; closed, it ticks slowly enough to cost nothing on a machine
+   * that is also serving the counter, and only ever hits our own route.
+   */
   useEffect(() => {
-    if (!open) return;
-    const t = setInterval(() => void poll(), 1500);
+    const t = setInterval(() => void poll(), open ? 1500 : 6000);
     return () => clearInterval(t);
   }, [open, poll]);
 

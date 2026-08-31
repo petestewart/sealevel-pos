@@ -33,7 +33,13 @@ export function devtoolsEnabled(): boolean {
   );
 }
 
-const LIMIT = 60;
+/* 60 was too few to diagnose anything after the fact: by the time a
+ * teacher reaches the drawer, the call that misbehaved has usually been
+ * pushed out by the roster refreshes since (Pete, fifth live test, on a
+ * search that rendered every row nameless and could not be chased). At
+ * the clip below this is a few MB in the worst case and far less in
+ * practice, on a dev-only buffer. */
+const LIMIT = 300;
 /** Bodies are truncated: a full client page is 200 records of JSON and
  *  nobody reads that in a drawer. */
 const BODY_LIMIT = 6000;

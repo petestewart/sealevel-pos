@@ -176,12 +176,21 @@ export async function search(
     `/client/clients?searchText=${encodeURIComponent(q)}&limit=${limit}`,
   );
   const results: SearchResult[] = [];
+  /* Pete's fifth live test: a search once rendered EVERY row as
+   * "(unnamed)" and recovered on the next search, with no way to see what
+   * came back. The rows are counted here so a repeat leaves a trace in
+   * the server log even after the dev drawer's buffer has rolled. */
+  let nameless = 0;
   for (const row of body?.Clients ?? []) {
     if (row?.Id === null || row?.Id === undefined) continue;
     const name = `${row.FirstName ?? ""} ${row.LastName ?? ""}`.trim();
+    if (!name) nameless += 1;
     results.push({
       id: String(row.Id),
-      name: name || "(unnamed)",
+      /* An email beats "(unnamed)": a nameless row is still a person the
+       * teacher may need to pick. */
+      name: name || (typeof row.Email === "string" ? row.Email : "") ||
+        "(unnamed)",
       email: row.Email ?? null,
       waiverSigned: Boolean(row?.Liability?.IsReleased),
       redAlert:
@@ -205,6 +214,17 @@ export async function search(
           : null,
       mindbodyId: typeof row?.UniqueId === "number" ? row.UniqueId : null,
     });
+  }
+  if (results.length > 0 && nameless === results.length) {
+    /* Keys only, never values: this line goes to a server log. If it ever
+     * appears, the shape Mindbody returned is the question, and the dev
+     * drawer holds the same call's raw body. */
+    const first = (body?.Clients ?? [])[0];
+    console.warn(
+      `[search] every one of ${results.length} results came back without a ` +
+        `name for query length ${q.length}; row keys: ` +
+        `${first ? Object.keys(first).join(",") : "none"}`,
+    );
   }
   return { results };
 }
