@@ -7,19 +7,27 @@
 <style>
 /* ================================================================
  * Buy screen layout mockups for sealevel-pos.
- * Companion to docs/design/sale-screen-layout.md.
+ * Companion to docs/design/sale-screen-layout.md (revised after
+ * Pete's review, 2026-08-31).
  *
- * Static and self-contained: no external requests, no images, no
- * script. Each frame paints its own palette explicitly (.pal-light /
- * .pal-dark) using the app's real token names, so the page renders
- * identically whatever the viewer's OS theme is, and so a token that
- * only works in one palette is visible here as a bug.
+ * Three columns, in Pete's order: vertical category rail LEFT, item
+ * grid MIDDLE, cart RIGHT. Static and self-contained: no external
+ * requests, no images, no script. Each frame paints its own palette
+ * explicitly (.pal-light / .pal-dark) using the app's real token
+ * names, so a colour that only works in one theme shows up here as a
+ * bug.
  *
- * Items and prices are the studio's real ones (in-studio Price, before
- * the 10.35% tax the receipt adds). Cart arithmetic is exact:
- *   230.00 + 2.72 + 2.72 + 3.62 = 239.06 subtotal
- *   239.06 x 0.1035 = 24.74 tax
- *                     263.80 total
+ * Items and prices are the studio's real ones (in-studio Price,
+ * before the 10.35% tax the receipt adds). Cart arithmetic is exact:
+ *   230.00 + 2.72 + 2.72 + 3.62 + 2.72 + 3.62 + 5.64 = 251.04
+ *   251.04 x 0.1035 = 25.98
+ *                     277.02 total, 9 items
+ * Tender: $40.00 account credit, $250.00 cash covering $237.02,
+ *   change $12.98.
+ *
+ * DENSITY: every padding, gap and margin here is the audited number
+ * from section 2.8, not a comfortable default. The 16px type floor
+ * and the 64px tap floor are held everywhere; nothing else is.
  * ================================================================ */
 
 * { box-sizing: border-box; }
@@ -28,37 +36,38 @@ html, body {
   margin: 0;
   padding: 0;
   /* Neutral gallery shell, painted explicitly so it does not follow the
-   * viewer's theme and confuse the two frames below it. */
+   * viewer's theme and confuse the frames below it. */
   background: #24221e;
   color: #e8e4db;
-  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 
-.gallery { max-width: 1240px; margin: 0 auto; padding: 32px 24px 96px; }
+.gallery { max-width: 1460px; margin: 0 auto; padding: 32px 24px 96px; }
 .gallery-head { margin: 0 0 8px; font-size: 28px; font-weight: 700; letter-spacing: -0.01em; }
-.gallery-sub { margin: 0 0 28px; color: #b5afa3; font-size: 16px; max-width: 78ch; }
+.gallery-sub { margin: 0 0 28px; color: #b5afa3; font-size: 16px; max-width: 82ch; }
 .gallery-sub code { color: #e8e4db; }
 
-.panel { margin: 0 0 56px; }
-.panel-cap { margin: 0 0 12px; font-size: 17px; color: #cfc9bc; max-width: 92ch; }
+.panel { margin: 0 0 52px; }
+.panel-cap { margin: 0 0 12px; font-size: 17px; color: #cfc9bc; max-width: 96ch; }
 .panel-cap b { color: #f3efe7; font-weight: 700; }
 
 .frame {
   width: 100%;
-  max-width: 1132px;   /* the app shell's 1100 plus its 16px padding */
-  border-radius: 22px;
+  max-width: 1400px;          /* the widened Buy shell (2.1) */
+  border-radius: 20px;
   overflow: hidden;
   border: 1px solid #454136;
   box-shadow: 0 18px 60px rgb(0 0 0 / 0.45);
 }
 
-.frame.narrow { max-width: 560px; }
+.frame.floor { max-width: 1080px; }   /* the three-column minimum */
+.frame.narrow { max-width: 520px; }
 
 /* ================================================================
- * Palettes. Every token below exists in src/app/globals.css, in BOTH
- * :root and the prefers-color-scheme: dark block, except the two this
- * plan adds (--accent-ink, --shadow), which are written here in both
- * so they can be reviewed the same way.
+ * Palettes. Every token exists in src/app/globals.css, in BOTH :root
+ * and the prefers-color-scheme: dark block, except the two this plan
+ * adds (--accent-ink, --shadow), written here in both so they can be
+ * reviewed the same way.
  * ================================================================ */
 
 .pal-light {
@@ -75,8 +84,8 @@ html, body {
   --stop-bg: #fbe9e9;
   --accent: #1d4ed8;
   --action-bg: #e0d9cc;
-  --accent-ink: #ffffff;                                  /* NEW */
-  --shadow: 0 -1px 0 rgb(29 27 24 / 0.06), 0 -8px 24px rgb(29 27 24 / 0.06);  /* NEW */
+  --accent-ink: #ffffff;                                                     /* NEW */
+  --shadow: 0 -1px 0 rgb(29 27 24 / 0.06), 0 -8px 22px rgb(29 27 24 / 0.06); /* NEW */
   background: var(--bg);
   color: var(--ink);
 }
@@ -95,47 +104,41 @@ html, body {
   --stop-bg: #341616;
   --accent: #7ea2ff;
   --action-bg: #464036;
-  --accent-ink: #14130f;                                  /* NEW: dark accent is light */
-  --shadow: 0 -1px 0 rgb(0 0 0 / 0.5), 0 -8px 24px rgb(0 0 0 / 0.4);          /* NEW */
+  --accent-ink: #14130f;                                              /* NEW: dark accent is light */
+  --shadow: 0 -1px 0 rgb(0 0 0 / 0.5), 0 -8px 22px rgb(0 0 0 / 0.4);  /* NEW */
   background: var(--bg);
   color: var(--ink);
 }
 
 /* ================================================================
- * The overlay shell: banner, header, panes, sticky action bar.
+ * Shell chrome: banner, header, action bar. Padding audited in 2.8.
  * ================================================================ */
 
-.screen { padding: 16px 16px 0; font-size: 16px; }
+.screen { padding: 12px 12px 0; font-size: 16px; }
 
 .banner {
-  margin: 0 0 12px;
-  padding: 10px 16px;
-  border-radius: 12px;
+  margin: 0 0 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
   font-weight: 600;
   font-size: 16px;
   background: var(--ok-bg);
   color: var(--ok);
 }
 
-.sale-top {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 0 0 12px;
-}
-
-.sale-title { margin: 0; flex: 0 0 auto; font-size: 24px; font-weight: 700; }
+.sale-top { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; }
+.sale-title { margin: 0; flex: 0 0 auto; font-size: 20px; font-weight: 700; }
 
 .sale-for {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-height: 64px;
-  max-width: 460px;
+  max-width: 420px;
   margin-right: auto;
-  padding: 0 12px 0 16px;
+  padding: 0 8px 0 14px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface);
   font-size: 16px;
 }
@@ -143,7 +146,7 @@ html, body {
 .sale-for-name { font-weight: 600; }
 
 .bal-chip {
-  padding: 4px 12px;
+  padding: 3px 10px;
   border-radius: 999px;
   background: var(--ok-bg);
   color: var(--ok);
@@ -152,8 +155,8 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Quiet 44px icon sibling: the existing exception to the 64px floor,
- * limited to non-destructive icons (detach, star, roster row icons). */
+/* The 44px quiet-icon exception: non-destructive icons only (detach,
+ * favourite star, the roster's row icons). No money control is 44px. */
 .row-icon {
   display: inline-flex;
   align-items: center;
@@ -172,126 +175,56 @@ html, body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
   min-height: 64px;
-  padding: 0 20px;
+  padding: 0 18px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface);
   color: var(--ink);
   font-size: 16px;
   font-weight: 600;
 }
 
-.sale-panes {
+/* Three columns, all visible at once. */
+.panes {
   display: grid;
-  grid-template-columns: 400px minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: 132px minmax(0, 1fr) 340px;
+  gap: 12px;
   align-items: start;
 }
 
-/* ================================================================
- * LEFT: the receipt. Unchanged position in BOTH modes, which is the
- * point of 2.5: the eye keeps its anchor across the mode switch.
- * ================================================================ */
-
-.ticket {
-  padding: 20px 20px 22px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 16px;
-}
-
-.ticket h3 { margin: 0 0 2px; font-size: 18px; font-weight: 700; text-align: center; font-family: inherit; }
-.t-sub { margin: 0 0 14px; text-align: center; color: var(--muted); font-size: 16px; }
-.t-rule { height: 0; margin: 12px 0; border: 0; border-top: 1px dashed var(--line); }
-
-.t-lines { display: grid; gap: 6px; }
-
-/* A cart line: name and total on top, "2 @ $1.81" beneath. Two lines of
- * type instead of the shipped three-button quantity row (2.3). */
-.t-item {
-  padding: 8px 8px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-}
-
-.t-line { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.t-name { min-width: 0; overflow-wrap: anywhere; }
-.amt { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
-.t-qty-note { margin: 2px 0 0; color: var(--muted); font-size: 16px; font-variant-numeric: tabular-nums; }
-
-/* Only the SELECTED line reveals its controls, at the 64px floor. */
-.t-item.sel { border-color: var(--accent); background: var(--bg); }
-
-.t-controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-
-.qty-btn {
-  min-width: 64px;
-  min-height: 64px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--ink);
-  font: inherit;
-  font-size: 22px;
-  font-weight: 700;
-}
-
-.t-qty {
-  min-width: 3em;
-  text-align: center;
-  font-size: 20px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.qty-btn.t-remove { margin-left: auto; color: var(--stop); border-color: var(--stop); font-size: 18px; }
-
-.t-total { font-size: 18px; font-weight: 700; }
-.t-muted { color: var(--muted); }
-
-.pass-note {
-  margin: 10px 0 0;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--warn-bg);
-  color: var(--warn);
-  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  font-size: 16px;
-}
+/* Payment mode: the rail collapses, the payment surface takes the
+ * middle, and the cart does not move (2.5). */
+.panes.paying { grid-template-columns: minmax(0, 1fr) 340px; }
 
 /* ================================================================
- * RIGHT, shelf mode: one non-wrapping category row, then the grid.
+ * LEFT: the category rail.
  * ================================================================ */
 
-.sale-right { display: grid; gap: 16px; }
+.rail { display: grid; gap: 4px; align-content: start; }
 
-.sale-cats {
+.rail-item {
   display: flex;
-  gap: 8px;
-  overflow-x: auto;      /* scrolls sideways rather than wrapping (2.1) */
-  padding-bottom: 2px;
-}
-
-.cat-chip {
-  flex: 0 0 auto;
+  align-items: center;
   min-height: 64px;
-  padding: 0 20px;
+  padding: 0 12px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface);
   color: var(--ink);
-  font: inherit;
   font-size: 16px;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
-.cat-chip.on { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+.rail-item.on { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
 
-.shelf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+/* ================================================================
+ * MIDDLE: the item grid.
+ * ================================================================ */
+
+.shelf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
 
 .shelf-cell { position: relative; display: grid; }
 
@@ -299,24 +232,29 @@ html, body {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 2px;
-  min-height: 76px;
-  padding: 12px 56px 12px 14px;   /* room for the star and the count badge */
+  gap: 1px;
+  min-height: 64px;
+  padding: 8px 40px 8px 10px;   /* 40px reserved for the star, nothing else */
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface);
   color: var(--ink);
   text-align: left;
-  font: inherit;
 }
 
 .shelf-name { font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
-.shelf-price { font-size: 16px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Price and cart count on ONE line: a corner badge would reserve a
+ * zone in every card for something most cards never carry (2.2). */
+.shelf-foot { display: flex; align-items: baseline; gap: 8px; font-size: 16px; font-variant-numeric: tabular-nums; }
+.shelf-price { color: var(--muted); }
+.shelf-count { color: var(--ok); font-weight: 700; }
 
 .shelf-star {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 50%;
+  right: 2px;
+  transform: translateY(-50%);
   width: 44px;
   height: 44px;
   display: inline-flex;
@@ -326,97 +264,122 @@ html, body {
   border-radius: 999px;
   background: transparent;
   color: var(--muted);
-  font-size: 20px;
+  font-size: 19px;
   line-height: 1;
 }
 
 .shelf-star.on { color: var(--warn); }
 
-/* NEW (2.2): an item already in the cart says how many, bottom-right,
- * opposite the star. Same pairing as the roster's balance chip. */
-.shelf-count {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  min-width: 34px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: var(--ok-bg);
-  color: var(--ok);
-  font-size: 16px;
-  font-weight: 700;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-
 .shelf-bundle { border-style: dashed; }
-.shelf-bundle-mark { font-size: 16px; color: var(--muted); }
+.shelf-bundle-mark { color: var(--muted); font-size: 16px; }
 
 /* ================================================================
- * RIGHT, payment mode: three figures, method tiles, tender lines.
+ * RIGHT: the cart. Same column, same width, in BOTH modes.
+ * ================================================================ */
+
+.cart {
+  padding: 12px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px;
+}
+
+.t-rule { height: 0; margin: 8px 0; border: 0; border-top: 1px dashed var(--line); }
+.t-lines { display: grid; gap: 2px; }
+
+.t-item { padding: 4px 6px; border: 1px solid transparent; border-radius: 8px; }
+.t-line { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.t-name { min-width: 0; overflow-wrap: anywhere; }
+.amt { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+
+/* Rendered ONLY above quantity one: at one it repeats the total. */
+.t-qty-note { margin: 1px 0 0; color: var(--muted); font-size: 16px; font-variant-numeric: tabular-nums; }
+
+/* Only the SELECTED line reveals its controls, at the 64px floor. */
+.t-item.sel { border-color: var(--accent); background: var(--bg); }
+.t-controls { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+
+.qty-btn {
+  min-width: 64px;
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.t-qty { min-width: 2.5em; text-align: center; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.qty-btn.t-remove { margin-left: auto; color: var(--stop); border-color: var(--stop); font-size: 16px; padding: 0 12px; }
+
+.t-total { font-size: 18px; font-weight: 700; }
+.t-muted { color: var(--muted); }
+
+/* ================================================================
+ * MIDDLE, payment mode.
  * ================================================================ */
 
 .pay-surface {
   display: grid;
-  gap: 16px;
-  padding: 18px;
+  gap: 10px;
+  padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--surface);
 }
 
-.pay-figures { display: flex; flex-wrap: wrap; gap: 12px; }
+.pay-figures { display: flex; flex-wrap: wrap; gap: 10px; }
 
 .figure {
-  flex: 1 1 180px;
-  padding: 12px 16px;
+  flex: 1 1 170px;
+  padding: 10px 14px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--bg);
 }
 
 .figure .lbl { display: block; color: var(--muted); font-size: 16px; }
-.figure .val { display: block; margin-top: 2px; font-size: 34px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.figure .val { display: block; font-size: 30px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
 
-/* Due at zero is the one figure a teacher checks before charging. */
 .figure.settled { border-color: var(--ok); background: var(--ok-bg); }
 .figure.settled .val, .figure.settled .lbl { color: var(--ok); }
-
-/* Change is loud: it is money that comes back out of the drawer. */
 .figure.change { border-color: var(--warn); background: var(--warn-bg); }
 .figure.change .val, .figure.change .lbl { color: var(--warn); }
 
-.pay-lbl { margin: 0; color: var(--muted); font-size: 16px; }
-
-.tender-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.tender-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 
 .tile {
   position: relative;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 2px;
-  min-height: 84px;
-  padding: 12px 14px;
+  gap: 1px;
+  min-height: 72px;
+  padding: 10px 12px;
   border: 2px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface);
   color: var(--ink);
-  font: inherit;
   text-align: left;
 }
 
 .tile .tname { font-size: 18px; font-weight: 700; }
+/* Rendered only when there IS a reason: an always-present muted line
+ * is a reserved band for an exception (2.8). */
 .tile .treason { font-size: 16px; color: var(--muted); }
 .tile.off { opacity: 0.5; }
 
-/* The one detail worth taking outright from the reference: the
- * available balance as a corner badge, not a title attribute. */
 .tile-badge {
   position: absolute;
-  top: 8px;
+  top: 6px;
   right: 8px;
-  padding: 3px 10px;
+  padding: 2px 9px;
   border-radius: 999px;
   background: var(--ok-bg);
   color: var(--ok);
@@ -425,15 +388,15 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
-.tender-lines { display: grid; gap: 8px; }
+.tender-lines { display: grid; gap: 6px; }
 
 .tender-line {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 4px 6px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--bg);
 }
 
@@ -442,36 +405,51 @@ html, body {
 
 .tender-amt {
   min-height: 64px;
-  min-width: 7em;
+  min-width: 6.5em;
   padding: 0 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--surface);
   color: var(--ink);
-  font: inherit;
   font-size: 20px;
   font-weight: 700;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .tender-x {
   min-width: 64px;
   min-height: 64px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
-  font: inherit;
   font-size: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .quiet-note { margin: 0; color: var(--muted); font-size: 16px; }
 
-.comp-row { display: flex; align-items: center; gap: 12px; }
+/* Comp: payment mode only, quiet, below the tender (2.9). */
+.comp-row { display: flex; align-items: center; gap: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.comp-row .quiet-note { flex: 1; }
+
+.pass-note {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 16px;
+}
 
 /* ================================================================
- * The sticky action bar: one primary control that never moves.
+ * The sticky action bar.
  * ================================================================ */
 
 .actionbar {
@@ -479,9 +457,9 @@ html, body {
   bottom: 0;
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 16px;
-  padding: 12px 16px;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
   border-top: 1px solid var(--line);
   background: var(--bg);
   box-shadow: var(--shadow);
@@ -492,35 +470,35 @@ html, body {
 .primary {
   display: inline-flex;
   align-items: baseline;
-  gap: 12px;
+  gap: 10px;
   min-height: 64px;
-  padding: 0 26px;
+  padding: 0 24px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--accent);
   color: var(--accent-ink);
-  font: inherit;
   font-size: 19px;
   font-weight: 700;
+  align-self: stretch;
+  align-items: center;
 }
 
 .primary .count { font-size: 16px; font-weight: 600; opacity: 0.85; }
 .primary .sum { font-variant-numeric: tabular-nums; }
-.primary.off { opacity: 0.5; }
 
 /* ================================================================
  * The amount modal (Pete's keypad, with the cash chips).
  * ================================================================ */
 
-.modal-scrim { padding: 26px; background: rgb(0 0 0 / 0.45); }
+.modal-scrim { padding: 22px; background: rgb(0 0 0 / 0.45); }
 
 .modal {
   display: grid;
-  gap: 10px;
-  max-width: 420px;
+  gap: 8px;
+  max-width: 400px;
   margin: 0 auto;
-  padding: 18px;
-  border-radius: 16px;
+  padding: 14px;
+  border-radius: 14px;
   background: var(--surface);
   color: var(--ink);
 }
@@ -538,9 +516,10 @@ html, body {
   border-radius: 999px;
   background: var(--bg);
   color: var(--ink);
-  font: inherit;
   font-size: 16px;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
 }
 
 .pad-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
@@ -548,28 +527,31 @@ html, body {
 .pad-key {
   min-height: 64px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--bg);
   color: var(--ink);
-  font: inherit;
   font-size: 22px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .pad-change { margin: 0; font-size: 18px; font-weight: 700; color: var(--warn); }
-.modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
 .modal-cancel, .modal-confirm {
   min-height: 64px;
-  padding: 0 22px;
+  padding: 0 20px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface);
   color: var(--ink);
-  font: inherit;
   font-size: 16px;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
 }
 
 .modal-confirm { background: var(--action-bg); border-color: transparent; }
@@ -579,12 +561,13 @@ html, body {
 <main class="gallery">
   <h1 class="gallery-head">Buy screen layout mockups</h1>
   <p class="gallery-sub">
-    Static visuals for <code>docs/design/sale-screen-layout.md</code>. Nothing
-    here is wired up. Every frame paints the app's own tokens explicitly, in
-    both palettes, so it looks the same on any device and so a colour that
-    only works in one theme shows up here as a bug. Items and prices are the
-    studio's real ones at the in-studio rate, before the 10.35% tax the
-    receipt adds. No photos, by decision: the type and the layout carry it.
+    Static visuals for <code>docs/design/sale-screen-layout.md</code>, revised
+    after Pete's review: vertical category rail on the left, item grid in the
+    middle, cart on the right, and a density pass over every padding, gap and
+    label. Nothing here is wired up. Every frame paints the app's own tokens
+    explicitly, in both palettes. Items and prices are the studio's real ones
+    at the in-studio rate, before the 10.35% tax the cart adds. No photos, by
+    decision: the type and the layout carry it.
   </p>
 
   <!-- ============================================================ -->
@@ -592,14 +575,15 @@ html, body {
   <!-- ============================================================ -->
   <section class="panel">
     <p class="panel-cap">
-      <b>1. Buy, shelf mode, full cart. Light palette.</b> Receipt left and it
-      never moves; one non-wrapping category row with Favorites pinned first;
-      three shelf columns at 190px minimum; a count badge on anything already
-      rung up; and the sticky action bar carrying one primary control with the
-      item count and the server's total. Liquid IV is the selected receipt
-      line, so it is the only one showing quantity controls.
+      <b>1. Buy, shelf mode. Light palette, 1400px shell.</b> Pete's three
+      columns: rail left, grid middle, cart right. A realistic seven-line
+      cart, nine items, and none of it scrolls. Liquid IV is the selected
+      cart line, so it is the only one showing quantity controls; the
+      single-quantity lines are one line of type each, because "1 @ $2.72"
+      only repeats the total beside it. Cards already in the cart carry their
+      count inline after the price. No Comp control anywhere on this screen.
     </p>
-    <div class="frame pal-light">
+    <div class="frame  pal-light">
       <div class="screen">
         <div class="banner">Dry run: taps are rehearsed, nothing reaches Mindbody.</div>
 
@@ -612,12 +596,119 @@ html, body {
           </div>
           <span class="btn">&#215;&nbsp; Back</span>
         </div>
-
-        <div class="sale-panes">
-          <div class="ticket">
-            <h3>Sealevel Hot Yoga</h3>
-            <p class="t-sub">Fremont</p>
-            <hr class="t-rule">
+        <div class="panes">
+          <div class="rail">
+            <div class="rail-item on">Favorites</div>
+            <div class="rail-item">Towel and Mat</div>
+            <div class="rail-item">Food/Drink</div>
+            <div class="rail-item">Passes</div>
+            <div class="rail-item">Accessories</div>
+            <div class="rail-item">Clothing</div>
+            <div class="rail-item">more</div>
+          </div>
+          <div>
+          <div class="shelf-grid">
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Mat rental</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$2.72</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Towel rental</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$2.72</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Parking token</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$2.72</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Liquid IV</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$1.81</span>
+                    <span class="shelf-count">x2</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Vita Coco 11.1oz</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$2.82</span>
+                    <span class="shelf-count">x2</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Boxed water</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$3.62</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Drop In</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$28.00</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">10 Class Pack</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$230.00</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">New Student 2 Week Unlimited</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$49.00</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item shelf-bundle">
+                  <span class="shelf-name">Mat, towel and water</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$9.06</span>
+                    <span class="shelf-bundle-mark">bundle, 3 lines</span>
+                  </span>
+                </div>
+                <span class="shelf-star">&#9734;</span>
+              </div>
+            </div>
+          </div>
+          <div class="cart">
             <div class="t-lines">
               <div class="t-item">
                 <div class="t-line"><span class="t-name">10 Class Pack</span><span class="amt">230.00</span></div>
@@ -638,84 +729,28 @@ html, body {
                   <span class="qty-btn t-remove">Remove</span>
                 </div>
               </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Parking token</span><span class="amt">2.72</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Boxed water</span><span class="amt">3.62</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Vita Coco 11.1oz</span><span class="amt">5.64</span></div>
+                <p class="t-qty-note">2 @ 2.82</p>
+              </div>
             </div>
             <hr class="t-rule">
-            <div class="t-line t-muted"><span>Subtotal</span><span class="amt">239.06</span></div>
-            <div class="t-line t-muted"><span>Tax</span><span class="amt">24.74</span></div>
+            <div class="t-line t-muted"><span>Subtotal</span><span class="amt">251.04</span></div>
+            <div class="t-line t-muted"><span>Tax</span><span class="amt">25.98</span></div>
             <hr class="t-rule">
-            <div class="t-line t-total"><span>Total</span><span class="amt">263.80</span></div>
-            <p class="pass-note">Dry run: nothing will be charged.</p>
-          </div>
-
-          <div class="sale-right">
-            <div class="sale-cats">
-              <span class="cat-chip on">Favorites</span>
-              <span class="cat-chip">Towel and Mat</span>
-              <span class="cat-chip">Food/Drink</span>
-              <span class="cat-chip">Passes</span>
-              <span class="cat-chip">Accessories</span>
-              <span class="cat-chip">Clothing</span>
-              <span class="cat-chip">more</span>
-            </div>
-
-            <div class="shelf-grid">
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Mat rental</span><span class="shelf-price">$2.72</span></div>
-                <span class="shelf-star on">&#9733;</span>
-                <span class="shelf-count">1</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Towel rental</span><span class="shelf-price">$2.72</span></div>
-                <span class="shelf-star on">&#9733;</span>
-                <span class="shelf-count">1</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Parking token</span><span class="shelf-price">$2.72</span></div>
-                <span class="shelf-star on">&#9733;</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Liquid IV</span><span class="shelf-price">$1.81</span></div>
-                <span class="shelf-star on">&#9733;</span>
-                <span class="shelf-count">2</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Vita Coco 11.1oz</span><span class="shelf-price">$2.82</span></div>
-                <span class="shelf-star on">&#9733;</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Boxed water</span><span class="shelf-price">$3.62</span></div>
-                <span class="shelf-star on">&#9733;</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Drop In</span><span class="shelf-price">$28.00</span></div>
-                <span class="shelf-star on">&#9733;</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">10 Class Pack</span><span class="shelf-price">$230.00</span></div>
-                <span class="shelf-star on">&#9733;</span>
-                <span class="shelf-count">1</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">New Student 2 Week Unlimited</span><span class="shelf-price">$49.00</span></div>
-                <span class="shelf-star on">&#9733;</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item shelf-bundle">
-                  <span class="shelf-name">Mat, towel and water</span>
-                  <span class="shelf-price">$9.06</span>
-                  <span class="shelf-bundle-mark">bundle, 3 lines</span>
-                </div>
-                <span class="shelf-star">&#9734;</span>
-              </div>
-            </div>
+            <div class="t-line t-total"><span>Total</span><span class="amt">277.02</span></div>
           </div>
         </div>
-
         <div class="actionbar">
           <span class="btn">Empty cart</span>
-          <span class="btn">Comp this sale</span>
           <span class="spacer"></span>
-          <span class="primary">Pay <span class="count">4 items</span> <span class="sum">$263.80</span></span>
+          <span class="primary">Pay <span class="count">9 items</span> <span class="sum">$277.02</span></span>
         </div>
       </div>
     </div>
@@ -726,13 +761,15 @@ html, body {
   <!-- ============================================================ -->
   <section class="panel">
     <p class="panel-cap">
-      <b>2. Buy, payment mode, mid-tender. Light palette.</b> The receipt has
-      not moved. The right pane is the payment surface: three figures across
-      the top (Total, Due, Change), method tiles with the available balance as
-      a corner badge, and T35's tender lines underneath. Two lines here, which
-      is the split: $40.00 of account credit and $250.00 cash covering the
-      $223.80 that was left, so $26.20 comes back out of the drawer. Due is
-      zero, so Charge is live and restates the server's number.
+      <b>2. Buy, payment mode, mid-tender. Light palette.</b> The cart has not
+      moved: same column, same width, same content. The rail has collapsed and
+      the payment surface has taken the middle, because at tender time there
+      is nothing left to choose. Three figures across the top, method tiles
+      with the available balance as a corner badge, and T35's tender lines
+      below: $40.00 of account credit and $250.00 cash covering the $237.02
+      that was left, so $12.98 comes back out of the drawer. Due is zero, so
+      Charge is live and restates the server's number. Comp appears here and
+      only here.
     </p>
     <div class="frame pal-light">
       <div class="screen">
@@ -747,52 +784,14 @@ html, body {
           </div>
           <span class="btn">&#215;&nbsp; Back</span>
         </div>
-
-        <div class="sale-panes">
-          <div class="ticket">
-            <h3>Sealevel Hot Yoga</h3>
-            <p class="t-sub">Fremont</p>
-            <hr class="t-rule">
-            <div class="t-lines">
-              <div class="t-item">
-                <div class="t-line"><span class="t-name">10 Class Pack</span><span class="amt">230.00</span></div>
-              </div>
-              <div class="t-item">
-                <div class="t-line"><span class="t-name">Mat rental</span><span class="amt">2.72</span></div>
-              </div>
-              <div class="t-item">
-                <div class="t-line"><span class="t-name">Towel rental</span><span class="amt">2.72</span></div>
-              </div>
-              <div class="t-item">
-                <div class="t-line"><span class="t-name">Liquid IV</span><span class="amt">3.62</span></div>
-                <p class="t-qty-note">2 @ 1.81</p>
-              </div>
-            </div>
-            <hr class="t-rule">
-            <div class="t-line t-muted"><span>Subtotal</span><span class="amt">239.06</span></div>
-            <div class="t-line t-muted"><span>Tax</span><span class="amt">24.74</span></div>
-            <hr class="t-rule">
-            <div class="t-line t-total"><span>Total</span><span class="amt">263.80</span></div>
-            <p class="pass-note">Dry run: nothing will be charged.</p>
-          </div>
-
+        <div class="panes paying">
           <div class="pay-surface">
             <div class="pay-figures">
-              <div class="figure">
-                <span class="lbl">Total</span>
-                <span class="val">$263.80</span>
-              </div>
-              <div class="figure settled">
-                <span class="lbl">Due</span>
-                <span class="val">$0.00</span>
-              </div>
-              <div class="figure change">
-                <span class="lbl">Change</span>
-                <span class="val">$26.20</span>
-              </div>
+              <div class="figure"><span class="lbl">Total</span><span class="val">$277.02</span></div>
+              <div class="figure settled"><span class="lbl">Due</span><span class="val">$0.00</span></div>
+              <div class="figure change"><span class="lbl">Change</span><span class="val">$12.98</span></div>
             </div>
 
-            <p class="pay-lbl">Take payment from</p>
             <div class="tender-tiles">
               <div class="tile off">
                 <span class="tname">Credit</span>
@@ -818,24 +817,59 @@ html, body {
               <div class="tender-line">
                 <span class="tender-src-name">
                   Cash
-                  <span class="sub">covers $223.80</span>
+                  <span class="sub">covers $237.02</span>
                 </span>
                 <span class="tender-amt">$250.00</span>
                 <span class="tender-x">&#215;</span>
               </div>
             </div>
 
-            <p class="quiet-note">
-              Tap an amount to change it. Cash is the only part that may be more
-              than it owes.
-            </p>
+            <p class="quiet-note">Tap an amount to change it.</p>
+
+            <div class="comp-row">
+              <p class="quiet-note">Nothing to pay, on the studio.</p>
+              <span class="btn">Comp this sale</span>
+            </div>
+
+            <p class="pass-note">Dry run: nothing will be charged.</p>
+          </div>
+          <div class="cart">
+            <div class="t-lines">
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">10 Class Pack</span><span class="amt">230.00</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Mat rental</span><span class="amt">2.72</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Towel rental</span><span class="amt">2.72</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Liquid IV</span><span class="amt">3.62</span></div>
+                <p class="t-qty-note">2 @ 1.81</p>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Parking token</span><span class="amt">2.72</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Boxed water</span><span class="amt">3.62</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Vita Coco 11.1oz</span><span class="amt">5.64</span></div>
+                <p class="t-qty-note">2 @ 2.82</p>
+              </div>
+            </div>
+            <hr class="t-rule">
+            <div class="t-line t-muted"><span>Subtotal</span><span class="amt">251.04</span></div>
+            <div class="t-line t-muted"><span>Tax</span><span class="amt">25.98</span></div>
+            <hr class="t-rule">
+            <div class="t-line t-total"><span>Total</span><span class="amt">277.02</span></div>
           </div>
         </div>
-
         <div class="actionbar">
           <span class="btn">&#8592;&nbsp; Back to items</span>
           <span class="spacer"></span>
-          <span class="primary">Charge <span class="sum">$263.80</span></span>
+          <span class="primary">Charge <span class="sum">$277.02</span></span>
         </div>
       </div>
     </div>
@@ -849,10 +883,11 @@ html, body {
       <b>3. Buy, shelf mode. Dark palette.</b> The same markup with the dark
       token block swapped in, including the two tokens this plan adds:
       <code>--accent-ink</code> flips to the dark ground so text on the light
-      dark-mode accent stays legible, and <code>--shadow</code> is a heavier
-      black so the sticky bar still lifts off the panes.
+      dark-mode accent stays legible on both the rail's active entry and the
+      bar's primary, and <code>--shadow</code> is a heavier black so the
+      sticky bar still lifts off the columns.
     </p>
-    <div class="frame pal-dark">
+    <div class="frame  pal-dark">
       <div class="screen">
         <div class="banner">Dry run: taps are rehearsed, nothing reaches Mindbody.</div>
 
@@ -865,12 +900,119 @@ html, body {
           </div>
           <span class="btn">&#215;&nbsp; Back</span>
         </div>
-
-        <div class="sale-panes">
-          <div class="ticket">
-            <h3>Sealevel Hot Yoga</h3>
-            <p class="t-sub">Fremont</p>
-            <hr class="t-rule">
+        <div class="panes">
+          <div class="rail">
+            <div class="rail-item on">Favorites</div>
+            <div class="rail-item">Towel and Mat</div>
+            <div class="rail-item">Food/Drink</div>
+            <div class="rail-item">Passes</div>
+            <div class="rail-item">Accessories</div>
+            <div class="rail-item">Clothing</div>
+            <div class="rail-item">more</div>
+          </div>
+          <div>
+          <div class="shelf-grid">
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Mat rental</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$2.72</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Towel rental</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$2.72</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Parking token</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$2.72</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Liquid IV</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$1.81</span>
+                    <span class="shelf-count">x2</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Vita Coco 11.1oz</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$2.82</span>
+                    <span class="shelf-count">x2</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Boxed water</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$3.62</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Drop In</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$28.00</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">10 Class Pack</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$230.00</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">New Student 2 Week Unlimited</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$49.00</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item shelf-bundle">
+                  <span class="shelf-name">Mat, towel and water</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$9.06</span>
+                    <span class="shelf-bundle-mark">bundle, 3 lines</span>
+                  </span>
+                </div>
+                <span class="shelf-star">&#9734;</span>
+              </div>
+            </div>
+          </div>
+          <div class="cart">
             <div class="t-lines">
               <div class="t-item">
                 <div class="t-line"><span class="t-name">10 Class Pack</span><span class="amt">230.00</span></div>
@@ -891,83 +1033,28 @@ html, body {
                   <span class="qty-btn t-remove">Remove</span>
                 </div>
               </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Parking token</span><span class="amt">2.72</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Boxed water</span><span class="amt">3.62</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Vita Coco 11.1oz</span><span class="amt">5.64</span></div>
+                <p class="t-qty-note">2 @ 2.82</p>
+              </div>
             </div>
             <hr class="t-rule">
-            <div class="t-line t-muted"><span>Subtotal</span><span class="amt">239.06</span></div>
-            <div class="t-line t-muted"><span>Tax</span><span class="amt">24.74</span></div>
+            <div class="t-line t-muted"><span>Subtotal</span><span class="amt">251.04</span></div>
+            <div class="t-line t-muted"><span>Tax</span><span class="amt">25.98</span></div>
             <hr class="t-rule">
-            <div class="t-line t-total"><span>Total</span><span class="amt">263.80</span></div>
-          </div>
-
-          <div class="sale-right">
-            <div class="sale-cats">
-              <span class="cat-chip on">Favorites</span>
-              <span class="cat-chip">Towel and Mat</span>
-              <span class="cat-chip">Food/Drink</span>
-              <span class="cat-chip">Passes</span>
-              <span class="cat-chip">Accessories</span>
-              <span class="cat-chip">Clothing</span>
-              <span class="cat-chip">more</span>
-            </div>
-
-            <div class="shelf-grid">
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Mat rental</span><span class="shelf-price">$2.72</span></div>
-                <span class="shelf-star on">&#9733;</span>
-                <span class="shelf-count">1</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Towel rental</span><span class="shelf-price">$2.72</span></div>
-                <span class="shelf-star on">&#9733;</span>
-                <span class="shelf-count">1</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Parking token</span><span class="shelf-price">$2.72</span></div>
-                <span class="shelf-star on">&#9733;</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Liquid IV</span><span class="shelf-price">$1.81</span></div>
-                <span class="shelf-star on">&#9733;</span>
-                <span class="shelf-count">2</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Vita Coco 11.1oz</span><span class="shelf-price">$2.82</span></div>
-                <span class="shelf-star on">&#9733;</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Boxed water</span><span class="shelf-price">$3.62</span></div>
-                <span class="shelf-star on">&#9733;</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">Drop In</span><span class="shelf-price">$28.00</span></div>
-                <span class="shelf-star on">&#9733;</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">10 Class Pack</span><span class="shelf-price">$230.00</span></div>
-                <span class="shelf-star on">&#9733;</span>
-                <span class="shelf-count">1</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item"><span class="shelf-name">New Student 2 Week Unlimited</span><span class="shelf-price">$49.00</span></div>
-                <span class="shelf-star on">&#9733;</span>
-              </div>
-              <div class="shelf-cell">
-                <div class="shelf-item shelf-bundle">
-                  <span class="shelf-name">Mat, towel and water</span>
-                  <span class="shelf-price">$9.06</span>
-                  <span class="shelf-bundle-mark">bundle, 3 lines</span>
-                </div>
-                <span class="shelf-star">&#9734;</span>
-              </div>
-            </div>
+            <div class="t-line t-total"><span>Total</span><span class="amt">277.02</span></div>
           </div>
         </div>
-
         <div class="actionbar">
           <span class="btn">Empty cart</span>
-          <span class="btn">Comp this sale</span>
           <span class="spacer"></span>
-          <span class="primary">Pay <span class="count">4 items</span> <span class="sum">$263.80</span></span>
+          <span class="primary">Pay <span class="count">9 items</span> <span class="sum">$277.02</span></span>
         </div>
       </div>
     </div>
@@ -979,9 +1066,9 @@ html, body {
   <section class="panel">
     <p class="panel-cap">
       <b>4. Buy, payment mode, mid-tender. Dark palette.</b> Same tender: two
-      lines and change due. Note that Credit is present here only because
-      there is a balance; with no balance the tile is absent and the grid is
-      two tiles wide, never a dead slot (T33).
+      lines and change due. Credit is present here only because there is a
+      balance; with no balance the tile is absent and the grid is two tiles
+      wide, never a dead slot (T33).
     </p>
     <div class="frame pal-dark">
       <div class="screen">
@@ -996,51 +1083,14 @@ html, body {
           </div>
           <span class="btn">&#215;&nbsp; Back</span>
         </div>
-
-        <div class="sale-panes">
-          <div class="ticket">
-            <h3>Sealevel Hot Yoga</h3>
-            <p class="t-sub">Fremont</p>
-            <hr class="t-rule">
-            <div class="t-lines">
-              <div class="t-item">
-                <div class="t-line"><span class="t-name">10 Class Pack</span><span class="amt">230.00</span></div>
-              </div>
-              <div class="t-item">
-                <div class="t-line"><span class="t-name">Mat rental</span><span class="amt">2.72</span></div>
-              </div>
-              <div class="t-item">
-                <div class="t-line"><span class="t-name">Towel rental</span><span class="amt">2.72</span></div>
-              </div>
-              <div class="t-item">
-                <div class="t-line"><span class="t-name">Liquid IV</span><span class="amt">3.62</span></div>
-                <p class="t-qty-note">2 @ 1.81</p>
-              </div>
-            </div>
-            <hr class="t-rule">
-            <div class="t-line t-muted"><span>Subtotal</span><span class="amt">239.06</span></div>
-            <div class="t-line t-muted"><span>Tax</span><span class="amt">24.74</span></div>
-            <hr class="t-rule">
-            <div class="t-line t-total"><span>Total</span><span class="amt">263.80</span></div>
-          </div>
-
+        <div class="panes paying">
           <div class="pay-surface">
             <div class="pay-figures">
-              <div class="figure">
-                <span class="lbl">Total</span>
-                <span class="val">$263.80</span>
-              </div>
-              <div class="figure settled">
-                <span class="lbl">Due</span>
-                <span class="val">$0.00</span>
-              </div>
-              <div class="figure change">
-                <span class="lbl">Change</span>
-                <span class="val">$26.20</span>
-              </div>
+              <div class="figure"><span class="lbl">Total</span><span class="val">$277.02</span></div>
+              <div class="figure settled"><span class="lbl">Due</span><span class="val">$0.00</span></div>
+              <div class="figure change"><span class="lbl">Change</span><span class="val">$12.98</span></div>
             </div>
 
-            <p class="pay-lbl">Take payment from</p>
             <div class="tender-tiles">
               <div class="tile off">
                 <span class="tname">Credit</span>
@@ -1066,35 +1116,256 @@ html, body {
               <div class="tender-line">
                 <span class="tender-src-name">
                   Cash
-                  <span class="sub">covers $223.80</span>
+                  <span class="sub">covers $237.02</span>
                 </span>
                 <span class="tender-amt">$250.00</span>
                 <span class="tender-x">&#215;</span>
               </div>
             </div>
 
-            <p class="quiet-note">
-              Tap an amount to change it. Cash is the only part that may be more
-              than it owes.
-            </p>
+            <p class="quiet-note">Tap an amount to change it.</p>
+
+            <div class="comp-row">
+              <p class="quiet-note">Nothing to pay, on the studio.</p>
+              <span class="btn">Comp this sale</span>
+            </div>
+
+            <p class="pass-note">Dry run: nothing will be charged.</p>
+          </div>
+          <div class="cart">
+            <div class="t-lines">
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">10 Class Pack</span><span class="amt">230.00</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Mat rental</span><span class="amt">2.72</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Towel rental</span><span class="amt">2.72</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Liquid IV</span><span class="amt">3.62</span></div>
+                <p class="t-qty-note">2 @ 1.81</p>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Parking token</span><span class="amt">2.72</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Boxed water</span><span class="amt">3.62</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Vita Coco 11.1oz</span><span class="amt">5.64</span></div>
+                <p class="t-qty-note">2 @ 2.82</p>
+              </div>
+            </div>
+            <hr class="t-rule">
+            <div class="t-line t-muted"><span>Subtotal</span><span class="amt">251.04</span></div>
+            <div class="t-line t-muted"><span>Tax</span><span class="amt">25.98</span></div>
+            <hr class="t-rule">
+            <div class="t-line t-total"><span>Total</span><span class="amt">277.02</span></div>
           </div>
         </div>
-
         <div class="actionbar">
           <span class="btn">&#8592;&nbsp; Back to items</span>
           <span class="spacer"></span>
-          <span class="primary">Charge <span class="sum">$263.80</span></span>
+          <span class="primary">Charge <span class="sum">$277.02</span></span>
         </div>
       </div>
     </div>
   </section>
 
   <!-- ============================================================ -->
-  <!-- 5. The amount modal                                           -->
+  <!-- 5. The three-column floor                                     -->
   <!-- ============================================================ -->
   <section class="panel">
     <p class="panel-cap">
-      <b>5. The amount modal, cash line.</b> Where the quick denominations
+      <b>5. The same screen at 1080 CSS px</b>, the narrowest iPad the studio
+      would plausibly put at the counter, and the documented minimum for three
+      columns: 12px padding either side leaves 1056, two 12px gaps leave 1032,
+      minus the 132px rail and the 340px cart leaves 560px of grid, which is
+      three columns of 181px. Below about 1040 the rail folds back into a
+      horizontal chip row above the grid; below 860 the cart folds under it.
+      Neither fold is a target.
+    </p>
+    <div class="frame floor pal-light">
+      <div class="screen">
+        <div class="banner">Dry run: taps are rehearsed, nothing reaches Mindbody.</div>
+
+        <div class="sale-top">
+          <h2 class="sale-title">Buy</h2>
+          <div class="sale-for">
+            <span class="sale-for-name">For: Alida Abbott</span>
+            <span class="bal-chip">$40.00</span>
+            <span class="row-icon" aria-hidden="true">&#215;</span>
+          </div>
+          <span class="btn">&#215;&nbsp; Back</span>
+        </div>
+        <div class="panes">
+          <div class="rail">
+            <div class="rail-item on">Favorites</div>
+            <div class="rail-item">Towel and Mat</div>
+            <div class="rail-item">Food/Drink</div>
+            <div class="rail-item">Passes</div>
+            <div class="rail-item">Accessories</div>
+            <div class="rail-item">Clothing</div>
+            <div class="rail-item">more</div>
+          </div>
+          <div>
+          <div class="shelf-grid">
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Mat rental</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$2.72</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Towel rental</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$2.72</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Parking token</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$2.72</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Liquid IV</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$1.81</span>
+                    <span class="shelf-count">x2</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Vita Coco 11.1oz</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$2.82</span>
+                    <span class="shelf-count">x2</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Boxed water</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$3.62</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">Drop In</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$28.00</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">10 Class Pack</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$230.00</span>
+                    <span class="shelf-count">x1</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item">
+                  <span class="shelf-name">New Student 2 Week Unlimited</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$49.00</span>
+                  </span>
+                </div>
+                <span class="shelf-star on">&#9733;</span>
+              </div>
+              <div class="shelf-cell">
+                <div class="shelf-item shelf-bundle">
+                  <span class="shelf-name">Mat, towel and water</span>
+                  <span class="shelf-foot">
+                    <span class="shelf-price">$9.06</span>
+                    <span class="shelf-bundle-mark">bundle, 3 lines</span>
+                  </span>
+                </div>
+                <span class="shelf-star">&#9734;</span>
+              </div>
+            </div>
+          </div>
+          <div class="cart">
+            <div class="t-lines">
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">10 Class Pack</span><span class="amt">230.00</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Mat rental</span><span class="amt">2.72</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Towel rental</span><span class="amt">2.72</span></div>
+              </div>
+              <div class="t-item sel">
+                <div class="t-line"><span class="t-name">Liquid IV</span><span class="amt">3.62</span></div>
+                <p class="t-qty-note">2 @ 1.81</p>
+                <div class="t-controls">
+                  <span class="qty-btn">&#8722;</span>
+                  <span class="t-qty">2</span>
+                  <span class="qty-btn">+</span>
+                  <span class="qty-btn t-remove">Remove</span>
+                </div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Parking token</span><span class="amt">2.72</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Boxed water</span><span class="amt">3.62</span></div>
+              </div>
+              <div class="t-item">
+                <div class="t-line"><span class="t-name">Vita Coco 11.1oz</span><span class="amt">5.64</span></div>
+                <p class="t-qty-note">2 @ 2.82</p>
+              </div>
+            </div>
+            <hr class="t-rule">
+            <div class="t-line t-muted"><span>Subtotal</span><span class="amt">251.04</span></div>
+            <div class="t-line t-muted"><span>Tax</span><span class="amt">25.98</span></div>
+            <hr class="t-rule">
+            <div class="t-line t-total"><span>Total</span><span class="amt">277.02</span></div>
+          </div>
+        </div>
+        <div class="actionbar">
+          <span class="btn">Empty cart</span>
+          <span class="spacer"></span>
+          <span class="primary">Pay <span class="count">9 items</span> <span class="sum">$277.02</span></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- 6. The amount modal                                           -->
+  <!-- ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">
+      <b>6. The amount modal, cash line.</b> Where the quick denominations
       live, and the reason the reference's bottom denomination row is not
       duplicated on the payment surface: here the line is named, the cap is
       known, and the change math is on screen as a chip is tapped. Tapping the
@@ -1106,7 +1377,7 @@ html, body {
       <div class="modal-scrim">
         <div class="modal">
           <p class="modal-title">Cash</p>
-          <div class="pad-row"><span class="pad-label">Amount due</span><span class="pad-amt">$223.80</span></div>
+          <div class="pad-row"><span class="pad-label">Amount due</span><span class="pad-amt">$237.02</span></div>
           <div class="pad-row"><span class="pad-label">Entered</span><span class="pad-amt">$250.00</span></div>
           <div class="pad-chips">
             <span class="pad-chip">Exact</span>
@@ -1120,7 +1391,7 @@ html, body {
             <span class="pad-key">7</span><span class="pad-key">8</span><span class="pad-key">9</span>
             <span class="pad-key">00</span><span class="pad-key">0</span><span class="pad-key">&#9003;</span>
           </div>
-          <p class="pad-change">Change due $26.20</p>
+          <p class="pad-change">Change due $12.98</p>
           <div class="modal-actions">
             <span class="modal-cancel">Cancel</span>
             <span class="modal-confirm">Done</span>
