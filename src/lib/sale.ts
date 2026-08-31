@@ -369,6 +369,31 @@ export interface CartLine {
   taxRate: number | null;
 }
 
+/**
+ * One line, as BOTH sides priced it. Built only when a cart disagrees
+ * (Pete, fifth live test: our math said $130.20 against Mindbody's
+ * $258.85, and the disagree block could not say which line was wrong,
+ * which left the studio with a correct refusal and no way to fix it).
+ * Diagnostic only: nothing here is ever charged, and it exists solely so
+ * the screen can name the line whose price or tax rate diverged.
+ */
+export interface LineAudit {
+  /** Mindbody's name for the matched item, when it returned one. */
+  name: string | null;
+  type: CartLine["type"];
+  metadataId: string;
+  quantity: number;
+  /** What the browser's catalog said, and what we asserted from it. */
+  ourPrice: number;
+  ourTaxRate: number | null;
+  ourExtended: number;
+  /** What Mindbody's own cart says. Null when no line matched, which is
+   *  itself the answer: the item we sent is not the item it priced. */
+  theirPrice: number | null;
+  theirTaxRate: number | null;
+  theirQuantity: number | null;
+}
+
 /** Round half-up to cents. The epsilon absorbs float dust like
  *  2.9999999999999996 from 2.72 * 1.1035 so .995-style boundaries land on
  *  the cent the arithmetic means. */
@@ -458,6 +483,13 @@ export interface PricedCart {
    * package-free carts keep the strict assertion unchanged.
    */
   packagePricing: boolean;
+  /**
+   * Per-line comparison, present ONLY when `disagrees` is true. The
+   * refusal is right either way; this is what makes it fixable, by
+   * naming the line whose price or tax rate the two sides read
+   * differently. Never used for pricing or charging.
+   */
+  lineAudit?: LineAudit[];
   /**
    * True when the Comp payment stub is what priced the cart. CONFIRMED
    * TRUE on the first live sandbox run (2026-08-30): Test-mode checkout
@@ -635,6 +667,9 @@ export async function priceCart(
       "Mindbody accepted the pricing request but returned no GrandTotal.",
     );
   }
+  const disagrees = packagePricing
+    ? false
+    : totalsDisagree(expected, grandTotal);
   return {
     suppressed: false,
     subTotal: num(cart?.SubTotal),
@@ -642,13 +677,46 @@ export async function priceCart(
     taxTotal: num(cart?.TaxTotal),
     grandTotal,
     expectedTotal: expected,
+    ...(disagrees ? { lineAudit: auditLines(items, cart) } : {}),
     /* The T30 carve-out: a package-bearing cart is excluded from the
      * strict assertion (no tax basis for a package line); every other
      * cart keeps it verbatim. */
-    disagrees: packagePricing ? false : totalsDisagree(expected, grandTotal),
+    disagrees,
     packagePricing,
     usedPaymentStub,
   };
+}
+
+/**
+ * Pair our cart lines with Mindbody's priced ones for the disagree block.
+ * A Service line carries the ProductId and a Product line the barcode Id,
+ * and Mindbody's CartItem exposes both, so either may match. No match at
+ * all is left null deliberately: "Mindbody priced something else" is the
+ * most useful finding this can report.
+ */
+function auditLines(items: readonly CartLine[], cart: any): LineAudit[] {
+  const theirs: any[] = Array.isArray(cart?.CartItems) ? cart.CartItems : [];
+  return items.map((line) => {
+    const id = String(line.metadataId);
+    const match = theirs.find(
+      (t) =>
+        String(t?.Item?.Id ?? "") === id ||
+        String(t?.Item?.ProductId ?? "") === id,
+    );
+    const rate = line.taxExempt ? 0 : (line.taxRate ?? STUDIO_TAX_RATE);
+    return {
+      name: typeof match?.Item?.Name === "string" ? match.Item.Name : null,
+      type: line.type,
+      metadataId: id,
+      quantity: line.quantity,
+      ourPrice: line.price,
+      ourTaxRate: line.taxExempt ? 0 : line.taxRate,
+      ourExtended: roundToCents(line.price * line.quantity * (1 + rate)),
+      theirPrice: num(match?.Item?.Price),
+      theirTaxRate: num(match?.Item?.TaxRate),
+      theirQuantity: num(match?.Quantity),
+    };
+  });
 }
 
 /* =====================================================================
