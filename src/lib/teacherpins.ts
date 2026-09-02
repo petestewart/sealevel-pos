@@ -22,11 +22,13 @@ import type { TeacherIdentity } from "./auth";
  * finally checked against. `pin_lookup` is an HMAC of the PIN under a
  * server-side key, so a check is one indexed read rather than a scrypt
  * per enrolled teacher, and UNIQUE on it is what refuses a second teacher
- * choosing a PIN already in use. The HMAC key is POS_SESSION_SECRET when
- * set (production, .env.example says so) and an app constant otherwise;
- * it is deliberately NOT the device PIN, so rotating POS_PIN does not
- * silently orphan every teacher's PIN. Changing the secret does, and
- * teachers enroll again.
+ * choosing a PIN already in use. The HMAC key is POS_PIN_PEPPER when set,
+ * else POS_SESSION_SECRET (production sets at least that, .env.example
+ * says so), else an app constant; it is deliberately NOT the device PIN,
+ * so rotating POS_PIN does not silently orphan every teacher's PIN.
+ * Changing whichever key is in use does, and teachers enroll again; the
+ * dedicated pepper exists so the session secret can be rotated (which
+ * revokes every session and comp token, its job) without that cost.
  *
  * With no database, a dev-only POS_TEACHER_PINS="<staffId>:<pin>,..." in
  * the environment stands in, refused on the production target: a PIN in
@@ -39,8 +41,10 @@ export { isPinShape, PIN_MAX, PIN_MIN } from "./comp";
 const LOOKUP_KEY_FALLBACK = "sealevel-pos/teacher-pin-lookup/v1";
 
 function lookupKey(): string {
-  const pepper = (process.env.POS_SESSION_SECRET ?? "").trim();
-  return pepper.length > 0 ? pepper : LOOKUP_KEY_FALLBACK;
+  const pepper = (process.env.POS_PIN_PEPPER ?? "").trim();
+  if (pepper.length > 0) return pepper;
+  const secret = (process.env.POS_SESSION_SECRET ?? "").trim();
+  return secret.length > 0 ? secret : LOOKUP_KEY_FALLBACK;
 }
 
 /** The indexed, keyed lookup value for a PIN. */

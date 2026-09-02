@@ -4940,13 +4940,14 @@ no source for one. The T44 cookie, `/api/teacher`, `/api/teacher/login`,
 text not null, pin_lookup text not null unique, set_at timestamptz not
 null default now(), set_via text not null)`. `pin_hash` is scrypt of the
 PIN with a random per-row salt (`s1$<salt>$<hash>`); `pin_lookup` is
-HMAC-SHA256 of the PIN under `POS_SESSION_SECRET` (an app constant when
-unset), so a check is one indexed read and UNIQUE on it refuses a PIN
-another teacher holds ("That PIN is taken, choose another."). 4 to 6
+HMAC-SHA256 of the PIN under `POS_PIN_PEPPER` (review; falling back to
+`POS_SESSION_SECRET`, then an app constant), so a check is one indexed
+read and UNIQUE on it refuses a PIN another teacher holds ("That PIN is
+taken, choose another."). 4 to 6
 digits (`comp.ts` `PIN_MIN`/`PIN_MAX`/`isPinShape`, shared by the dialog
 and the routes). The key is deliberately not the device PIN: rotating
-`POS_PIN` must not orphan every teacher's PIN; rotating the secret does,
-and `.env.example` says so. No phone numbers anywhere: `staff.ts` reads
+`POS_PIN` must not orphan every teacher's PIN; rotating the key in use
+does, and `.env.example` says so. No phone numbers anywhere: `staff.ts` reads
 names and ids only, `pinDigits` and `noPhone` are gone. With no
 `DATABASE_URL`, a dev-only `POS_TEACHER_PINS="100:1234,106:5678"` stands
 in, refused with a warning on `MINDBODY_TARGET=prod`, a PIN listed twice
@@ -4963,10 +4964,10 @@ thing that arms. `POST /api/teacher/verify {pin}` (device session,
 rate-limited on its own counter: five misses, 30s) answers `{ok,
 teacher: {id, name}, token}`. The token is `c1.<staff id>.<name
 b64url>.<issued-at>.<hmac>`, ten minutes, signed with the session key
-when a `POS_PIN` or `POS_SESSION_SECRET` exists and with a random
-per-process key when neither does (the session key is then scrypt of an
-empty string with a public salt, and a token forged with it would be
-the T48 bug back again). The charge body carries `teacherToken`;
+when `POS_SESSION_SECRET` exists and with a random per-process key
+otherwise (review: the build also used the session key with `POS_PIN`
+alone, but that key is scrypt of the device PIN, which every teacher
+knows; see the review below). The charge body carries `teacherToken`;
 `/api/checkout` for `method: "comp"` verifies it right after the method
 check, before the client, the reason and the staff read, and refuses
 401 `{error, reason: "teacher"}` without one in every configuration; it
@@ -5111,8 +5112,9 @@ Escape closed the dialog with nothing armed and no charge sent.
   minutes; a restart forgets it and (with no `POS_PIN` and no secret)
   the key too, so a token from before a restart is refused, which the
   dialog handles.
-- **Changing `POS_SESSION_SECRET` orphans every stored PIN** (the lookup
-  key changes); teachers enroll again. Documented in `.env.example`.
+- **Changing the PIN lookup key orphans every stored PIN** (`POS_PIN_PEPPER`,
+  else `POS_SESSION_SECRET`, else the constant); teachers enroll again.
+  Documented in `.env.example`.
 - Every enroll attempt, including a 400 shape error and a 403, claims a
   slot on the enroll counter, as T44's login did; conservative rather
   than wrong.
@@ -5122,6 +5124,131 @@ Escape closed the dialog with nothing armed and no charge sent.
   columns on `comp_receipts`, now filled from the comp token; the
   limiter factory; the `safeEqual`/`sign` helpers the comp token reuses.
   Its cookie, prompt, routes and phone reading are gone.
+
+### Review (separate reviewer), T48
+
+Read as a security review first, against `ef78200`, `3b84155`, `48d7290`
+and `ddcface`; the T48 build rebuilt and run under `next start` in five
+postures against the T48 mock (`scratchpad/t48-review/`: `review-node.js`,
+`node-*.log`, the browser harnesses re-run as `t48b/c/d-review.js`, shots
+`dark-1..6`, `light-7..12`), plus one `next dev` run.
+
+**REAL, fixed: a comp token could be minted by anyone who knows the device
+PIN.** With `POS_PIN` set and no `POS_SESSION_SECRET` (the posture the
+build's own db run used), the comp token was signed with the session key,
+which is scrypt of the device PIN and a public salt. The device PIN is the
+one secret every teacher at the counter knows, so anyone who can unlock
+the iPad could sign `c1.<any staff id>.<any name>.<now>.<hmac>` and comp
+as a colleague with no PIN typed; the build's harness even proved it
+("a fresh one was 200, which proves the derivation"). That is the T48 bug
+through a different door. Sequence: `POS_PIN=2468`, no secret, device
+login, `POST /api/checkout {method: "comp", teacherToken: forge(106, "Kim
+Farrell", now, scrypt("2468", KEY_SALT, 32))}` was 200 with a sale at the
+mock. Fix in `auth.ts` `compTokenKey()`: the session key signs comp tokens
+only when `POS_SESSION_SECRET` is set; otherwise the random per-process key
+(the no-PIN path already had it). Cost: without the secret a restart
+mid-dialog asks for the PIN again, which the dialog handles and
+`.env.example` now says. Verified: the same forge is 401 with the mock
+unmoved, a token from before a real restart is 401 (`node-restart.log`;
+the first attempt at that test had left the old server running behind
+`EADDRINUSE`, so kill by port, not the npx pid), and under a secret the
+device-PIN forge is 401 too.
+
+**Made, small: `POS_PIN_PEPPER`.** The lookup HMAC was keyed on
+`POS_SESSION_SECRET`, whose rotation has another job (revoking every
+session and, now, every comp token); tying every teacher's PIN to it made
+that rotation cost a re-enrollment for the whole staff. `teacherpins.ts`
+`lookupKey()` now reads `POS_PIN_PEPPER` first, then the session secret,
+then the constant, so an existing deploy changes nothing until the pepper
+is set. `.env.example` documents it. Seen in passing: two servers on one
+database with different keys orphan each other's rows, which is the
+documented behaviour and the reason to set the pepper once.
+
+**Hunted and NOT A BUG**, with the request:
+
+- The gate: no token, `null`, a number, a six-part token, an expired token
+  under the real key, a garbage signature, a token under a previous
+  process key, `teacherToken` beside cash or a split (400): every one 401
+  `reason: "teacher"` (or the 400) with the mock's checkout and total
+  counters unmoved, in all of db, pin, env, prod-with-env-pins and
+  no-store postures. The signature is compared constant-time
+  (`safeEqual`, sha256 both sides) before the issued-at is parsed; the
+  shape checks before it are on public structure only. The token carries
+  id, name (base64url, `[A-Za-z0-9_-]*`), issued-at and the HMAC, nothing
+  else; the verify answer is `{ok, teacher, token}` and nothing else.
+- Spend order: spent after every 400-class check and before the
+  rehearsal. A refused write (mock client 100000999: 502, two checkout
+  calls) then a replay of the same token: 401, checkout unmoved. A 400
+  (bad reason) leaves the token usable. Two concurrent charges on one
+  token: one 200, one 401, two checkout calls (rehearsal and write of the
+  winner), because `spendCompToken` is synchronous. Spending before the
+  rehearsal is right: a refused or ambiguous charge is a second decision
+  and should cost the PIN again; the dialog says why.
+- Token for Kim with `forStaffId` Pete: 200, the receipt and note name Kim
+  (the token), Pete is the "for". That is the design: the comper and the
+  beneficiary are different people.
+- PIN storage: `pin_hash` is `s1$<16-byte salt>$<scrypt 32>`, checked
+  with `timingSafeEqual`; a miss runs the same scrypt against a real hash
+  of a seven-digit PIN. UNIQUE `teacher_pins_pin_lookup_key` is read back
+  by constraint name and reported as "taken" with no id; a teacher
+  re-setting their own PIN is 200, not "taken" (the upsert is by
+  staff_id). `1234567` and `5678` (a number) are 400 at both routes.
+  `POS_TEACHER_PINS` on `MINDBODY_TARGET=prod`: the warning line logged,
+  verify 503, the comp still 401. The admin route's `gate()` is
+  character-for-character the banner route's (session, then
+  `devtoolsEnabled()`, else 404): 401 with no session, 404 with devtools
+  off; `listTeacherPins` selects `staff_id, name, set_at, set_via` only.
+- Enrollment: `signInAsStaff` and `revokeStaffToken` are plain `fetch`
+  with no `record()` (the four `record` calls in `mindbody.ts` are all
+  inside `mindbody()`), and an enroll on a `POS_DEVTOOLS=true` server put
+  nothing in `/api/devlog`. No `console` line in the route or the client
+  carries the body; the transport catch answers a fixed string and the
+  server logs no stack (`node-outage.log`, mock stopped: 502 "Could not
+  reach Mindbody to check that sign-in."). Wrong password and unknown
+  user answer the identical body. `Id` 0 is 403, an id outside
+  `listTeachers()` 403, both after the revoke was started; revoke has a
+  10s `AbortSignal.timeout` and swallows everything. Own limiter: the
+  enroll burst never touched the device door. `grep -n "secret\|nope\|
+  password" server-*.log` is empty.
+- Removal: no `requireTeacher`, `teacherFrom`, `TeacherPrompt`,
+  `pinDigits`, `noPhone` or `api/teacher/login` anywhere under `src/`,
+  the docs or `.env.example`; every route still calls `requireSession`
+  (grep count per file). The page wrapper locks on any `/api/` 401 whose
+  body lacks `reason: "teacher"` and leaves that one to the dialog; the
+  dialog's 401 branch disarms comp, keeps the reason and lands on the
+  PIN step (`light-10`). Every `.teacher-*` rule is gone from the CSS and
+  each new class (`reason-sub`, `pin-dots`, `reason-link`, `reason-who`)
+  is used; no hex in the component, no em dash in either commit.
+- The dialog, from the harness DOM: eleven 66px keys, three 64px buttons,
+  no font under 16px on the PIN step; three 64px inputs at 18px on the
+  enroll form; Done off at three digits and on at four; wrong PIN clears
+  the dots; the keyboard's digits, Backspace and Enter drive the pad on
+  the PIN step only; the lockout disables all eleven keys and Done and
+  typing adds no dot; a 409 keeps the password and a 401 clears it;
+  Escape closes with nothing armed and no charge; `chargeable` reads
+  `comp.teacher.id > 0 && comp.token.length > 0` in the same render as
+  `!reasonOpen`, and `armComp` still refuses on `chargingRef`; the scrim
+  closes only on a click whose pointerdown was on it. `resetCompSteps`
+  runs on open, close and disarm, so a token never outlives its dialog.
+- Money path: `git diff a762fa3..HEAD -- src/lib/sale.ts` is empty; the
+  checkout route's diff is the two gate blocks and `gate.teacher` becoming
+  `teacher`, nothing in the payload, the outcome wording or `inFlight`.
+- `ddcface`: `state` is `globalThis.__posCallLog ??= {...}`, `record`,
+  `recent` and `clear` all go through that one object (`clear` empties
+  `state.entries` rather than rebinding a module variable), and nothing
+  else imports the buffer. Under `next start`: DELETE took the log from
+  one entry to zero and the next uncached call appeared. Under `next dev`
+  with no PIN and no secret, a token from `/api/teacher/verify` verified
+  at `/api/checkout` after a third route had compiled, so the per-process
+  key and the spent set are one instance across routes in dev too; an
+  edit to `auth.ts` mid-dialog would reset them, which is a PIN re-entry.
+
+**Left, recorded:** the database path of `verifyTeacherPin` does not
+re-check the row's staff id against `listTeachers()`, so a teacher who has
+left the studio keeps a working comp PIN until someone changes it (the
+admin route can overwrite it; there is no delete). And the review's fix
+means a deploy with `POS_PIN` and no `POS_SESSION_SECRET` now forgets comp
+tokens on restart, which the `.env.example` note and the dialog cover.
 
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 

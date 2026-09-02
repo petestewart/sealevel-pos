@@ -276,18 +276,22 @@ export interface TeacherIdentity {
   name: string;
 }
 
-/** The comp token's signing key. With a device PIN or a pepper configured
- *  it is the session key, so a rotation revokes outstanding comp tokens
- *  along with the sessions. With NEITHER set (local dev, auth disabled)
- *  the session key is scrypt of an empty string and a public salt, which
- *  anyone can derive; a token forged with it would be a comp with no PIN
- *  typed, the T48 bug back again. So that case gets a random per-process
- *  key instead: a restart mid-dialog costs one more PIN entry, which the
- *  dialog handles, and nobody outside the process can sign. */
+/** The comp token's signing key. With POS_SESSION_SECRET set it is the
+ *  session key, so a rotation revokes outstanding comp tokens along with
+ *  the sessions and a restart keeps them. WITHOUT the secret it is a
+ *  random per-process key, even when a device PIN is set (T48 review):
+ *  the session key is then scrypt of the device PIN and a public salt,
+ *  and the device PIN is the one secret every teacher at the counter
+ *  knows, so a token signed with it could be minted by anyone who can
+ *  unlock the iPad, naming any teacher, with no PIN typed, which is the
+ *  T48 bug back again with a different door. (With NEITHER set the
+ *  session key is scrypt of an empty string, forgeable by anyone at
+ *  all.) A restart mid-dialog then costs one more PIN entry, which the
+ *  dialog handles; production sets the secret, .env.example says so. */
 let processKey: Buffer | null = null;
 function compTokenKey(): Buffer {
   const pepper = (process.env.POS_SESSION_SECRET ?? "").trim();
-  if (configuredPin().length > 0 || pepper.length > 0) return sessionKey();
+  if (pepper.length > 0) return sessionKey();
   if (processKey === null) processKey = randomBytes(32);
   return processKey;
 }
