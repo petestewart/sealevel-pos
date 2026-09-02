@@ -267,9 +267,12 @@ while `git clone` works, so clone the repo rather than fetching files.
   authorization but not that a charge reaches Stripe. Re-run
   `mindbody:probe-payments --live` in ai-manager against a client with a
   current card to close this.
-- **No teacher identity.** The app acts as one service account; a shared PIN
-  is stubbed in `.env.example` but not implemented. See the design doc's open
-  question 3, which needs confirming against payroll reporting.
+- **Teacher identity is ours, not Mindbody's.** A teacher session (T44: the
+  last four of their phone, matched against `GET /staff/staff`, a second
+  signed cookie for twelve hours) names every write in our receipts and
+  logs, but Mindbody still attributes each sale and check-in to the service
+  account; and the API account's permission to read staff phones is
+  unverified live.
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It

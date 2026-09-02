@@ -4086,6 +4086,111 @@ NOT A BUG, checked:
   no em dash in the diffs; the done, suppressed, split, ambiguous and
   error branches diff clean against T42 apart from the reason line.
 
+## T44. Teacher identity: the last four of your phone (Pete, 2026-09-02)
+
+Pete: "let's do teacher identity with a PIN per teacher ... last 4
+digits of their phone # would be ideal." That closes the design doc's
+open question 3: the POS keeps acting as the service account against
+Mindbody, and WHO is at the counter is a second layer of ours, named
+in our receipts and logs.
+
+### The design (decided)
+
+Two layers. The device session (`POS_PIN`, 30 days, T21) is untouched.
+On top of it a TEACHER session, for a shift:
+
+1. **Staff read** (`src/lib/staff.ts`): `GET /staff/staff` with
+   `Filters=ClassInstructor`, and the same rule applied to the answer
+   (`ClassTeacher !== false`, `Active !== false`), mapped to `{id, name,
+   pinDigits}` where `pinDigits` is the last four digits of MobilePhone,
+   else HomePhone, else WorkPhone, digits only, or null. Cached ten
+   minutes in memory per target, never persisted (the T29 charter); a
+   failed read serves the stale cache when there is one, else throws.
+   No phone number leaves the server: the `/api/*` answers carry names
+   and ids only.
+2. **Teacher session** (`src/lib/auth.ts`): a second cookie
+   `pos_teacher` holding `t1.<staff id>.<name, base64url>.<issued-at
+   ms>.<hmac>`, signed with the same derived key (pepper included, so a
+   PIN or pepper change revokes both cookies), twelve hours, httpOnly,
+   SameSite=Strict, Secure when the request came over https
+   (`x-forwarded-proto` or the URL). `teacherFrom`, `teacherSetCookie`,
+   `teacherClearCookie`, and `requireTeacher`, which lets a write
+   through with auth disabled and answers 401 `{error, reason:
+   "teacher"}` without a teacher when auth is required. The login
+   limiter became a factory: two counters, same rules, so a teacher
+   fumbling digits cannot lock the device door.
+3. **Routes.** `POST /api/teacher/login` `{pin}` (four digits) behind
+   the device session, rate-limited on its own counter: a unique match
+   answers `{ok, teacher: {id, name}}` and sets the cookie; several
+   answer 200 `{ok: false, choices: [{id, name}]}` and the browser posts
+   again with `{pin, staffId}`, which must be one of THAT pin's matches
+   (a staff id alone names nobody); none is 401; a staff read that
+   fails with nothing cached is 502 with the reason. Every teacher is
+   compared constant-time with no early exit. `GET /api/teacher` answers
+   the current teacher or null plus `required`, `pinsAvailable`,
+   `noPhone` (names of teachers with no usable phone) and `staffError`.
+   `POST /api/teacher/logout` clears the cookie.
+4. **The prompt** (`src/app/TeacherPrompt.tsx`): after the device
+   unlock, or straight away with auth disabled and nobody named, a
+   full-screen overlay in the lock screen's idiom: "Who is at the
+   counter?", "Enter the last four digits of your phone", the same 3x4
+   keypad, four fixed dots, the fourth digit submits. A collision lists
+   the names as 64px buttons with "Not me, start over". Under the
+   keypad a quiet 16px line "No phone on file in Mindbody for: A, B",
+   the staff-read error when there is one, and the 429 lockout line as
+   the device lock shows it. No Skip with `POS_PIN` set; with auth
+   disabled a "Continue without a name" control exists for dev. The
+   header shows the teacher's first name as a 64px control beside Buy;
+   tapping it clears the cookie and asks again. A write answering 401
+   `reason: "teacher"` (the twelve hours ran out mid-shift) brings the
+   prompt back and retries nothing; any other 401 is still the lock.
+5. **Writes carry the teacher.** `requireTeacher` after `requireSession`
+   in checkin, book, cancel-visit, visit-payment, waiver-agree,
+   purchase-contract and checkout. `comp_receipts` gains `teacher_id`
+   and `teacher_name` (migration 3, additive); the `[comp]` lines and
+   the `waiver-agreed` line carry `teacher=<id|none>`. The Mindbody
+   payloads, the single flight and the outcome wording are unchanged;
+   `src/lib/sale.ts` has no diff.
+
+### What was built and checked
+
+Against the dev server with `POS_PIN` set and Mindbody mocked (a staff
+fixture with a unique match, a collision pair whose phones are written
+"+1 206-555-7788" and "425.555.7788", a teacher with no phone, a
+non-teacher and an inactive teacher, both filtered), at 1180x820 in both
+palettes: the device lock, the prompt with the no-phone line, the
+collision picker, the header with a name on one row with the counters,
+the switch tap bringing the prompt back, the lockout line on the sixth
+wrong entry with the keys disabled. Every target in the prompt measured
+64px. Node-level: a check-in and a comp with a device session and no
+teacher cookie answer 401 `reason: "teacher"` (as do book, cancel-visit,
+visit-payment, waiver-agree and purchase-contract); a four-digit shape
+check is 400; a wrong pin with a staff id attached is 401; the collision
+answers the pair; the pair's pin with an id outside it is 401; after a
+unique login the check-in reaches the mock and the comp logs
+`[comp] sandbox sale=777001 client=100000123 total=3.00
+reason="Teacher" teacher=100`; after logout the check-in is 401 again.
+`typecheck` and `build` clean.
+
+### Left
+
+- **The staff-phone permission is unverified live.** The spec says
+  `/staff/staff` returns only names, ids, bio and image without a token
+  whose group may view staff; whether the API account's "API Sales"
+  group returns `MobilePhone` is the first thing to check on the
+  studio. If it does not, `GET /api/teacher` reports `pinsAvailable: 0`
+  and the prompt says nobody can sign in.
+- The `Filters=ClassInstructor` query parameter is spelled from the
+  spec's `request.filters`; the local filter covers it being ignored.
+- Mindbody still attributes every sale and check-in to the service
+  account (the payroll caveat in the design doc's question 3).
+- The check-in, booking and pass-change routes have no outcome log line
+  of their own, so their teacher is recorded only by the comp and
+  waiver lines; if per-check-in attribution is ever wanted, the dev
+  call log is where a `teacher` field would go.
+- With auth disabled the prompt can be skipped; the four-digit match
+  then still works, it is just optional.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are

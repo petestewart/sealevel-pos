@@ -298,8 +298,8 @@ a starting point. Copy it, do not try to share it: a published package between
 two repos for ~200 lines of HTTP is more coupling than it saves. If a third
 consumer ever appears, extract it then.
 
-Auth: Clerk if we want teacher-level attribution, or a single studio device
-session with a PIN if we do not. See open question 3.
+Auth: a studio device session with a PIN, and a teacher session on top of it
+from the last four of the teacher's phone (T44). See open question 3.
 
 ## The speed argument
 
@@ -1013,13 +1013,29 @@ account is wired up and enumerate any custom payment types.
 client's first-ever purchase, about one a day. Option C is dead; options A and B
 cover the rest.
 
-**3. Teacher identity. Decided for now: one service account.** The POS acts as
-`sealevelapiuser` and records who was on shift on its own side if we ever want
-that. Mindbody will attribute every check-in and sale to the service account.
-Pete is checking whether that disturbs commission or payroll reporting; if it
-does, the fallback is per-teacher staff logins, which is why auth in Phase 1.5
-should not assume a single identity is permanent. Until it is answered, a comp
-receipt (T43) carries the reason the teacher wrote but no teacher name.
+**3. Teacher identity. Answered (Pete, 2026-09-02, T44): a PIN per teacher,
+the last four digits of their phone, on top of the device PIN.** The POS still
+acts as `sealevelapiuser` against Mindbody; the teacher layer is ours. After
+the device unlock a full-screen prompt asks "Who is at the counter?" and takes
+four digits, matched server-side against the last four of each active
+teacher's phone on file (`GET /staff/staff`, mobile then home then work,
+cached ten minutes in memory and never stored). A unique match sets a second
+signed cookie for twelve hours; two teachers sharing the digits get a name
+list; a teacher with no phone on file is named on the prompt so they know to
+add one. Every write route refuses without a teacher session, and the comp
+receipt and the `[comp]` and waiver log lines carry the teacher's staff id
+and name. The header shows the first name, and tapping it is the shift
+change. Nothing is configured: a teacher's PIN is their phone, so adding a
+teacher is adding them in Mindbody.
+
+The payroll caveat stands: Mindbody's sale and check-in records still name
+the API staff account, not the teacher, so commission or payroll reporting
+inside Mindbody cannot see who was at the counter. Our receipts and logs are
+the attribution. If Mindbody-side attribution ever matters, the fallback is
+still per-teacher staff logins, which this layer does not preclude. One
+thing is unverified live: the API account's permission group must be allowed
+to read staff phone numbers, or `/staff/staff` answers with names only and
+nobody can sign in (the prompt says so rather than "wrong digits").
 
 **4. Wifi at the counter. Proposed answer: do not build offline.** The design
 already forbids queuing a sale. And a queued check-in is exactly the failure
