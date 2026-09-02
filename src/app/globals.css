@@ -2765,11 +2765,8 @@ button.sale-for:disabled {
  * charge button and the outcome panel. Card shape from the mockup,
  * every colour a token so both palettes hold. */
 
-/* The cart column since the second live test: the tender block, the
- * receipt, then the seam (comp, charge, outcomes). T39.4: a flex column
- * instead of a grid, so the ticket is the one child that grows to the
- * pane's height while everything else keeps its own; the tender and the
- * seam leave in T39.6. */
+/* The cart column: since T39.6 the ticket alone. A flex column so the
+ * ticket is the one child that grows to the pane's height. */
 .sale-left {
   display: flex;
   flex-direction: column;
@@ -2784,123 +2781,253 @@ button.sale-for:disabled {
   flex: 1 1 auto;
 }
 
-.pay-seam {
-  display: grid;
-  gap: 12px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-}
-
-/* --- T35: one tender model. ------------------------------------------
- * A list of tender lines against an amount due, with the sources inline
- * with the totals (Pete: "make the source buttons smaller and put them
- * inline with the totals"). No split mode, no cash modal: a second line
- * IS the split, and one inline keypad enters every amount. */
-
-.tender {
-  display: grid;
-  gap: 10px;
-}
-
-/* The sources on the left, what is still owed on the right, one row. */
-.tender-top {
+/* --- T39.6: pay mode. -------------------------------------------------
+ * The panes drop to `minmax(0, 1fr) 388px`: the rail and grid are hidden,
+ * the payment surface takes the middle, the cart column is the SAME
+ * element in the same place (layout plan 2.5). The surface pane is
+ * `hidden` in shelf mode -- hidden, not unmounted, so T35's state lives
+ * on -- and the attribute needs its own rule here because the pane's
+ * `display: flex` would otherwise beat the UA stylesheet's. */
+.sale-pay {
+  grid-column: 1;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-.tender-srcs {
-  display: flex;
-  /* T39.4: the three sources share one row (they wrapped to two at 340,
-   * and every row here is a row the ticket cannot have); each takes a
-   * third and its label is centred. Style only, and T39.6 moves the
-   * tender to the middle column where this stops mattering. */
-  flex: 1 1 auto;
-  gap: 8px;
+.sale-pay[hidden] {
+  display: none;
 }
 
-/* Compact: icon beside label, sized to its text rather than stretched
- * across the column, and still on the 64px tap floor. */
-.tender-src {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 64px;
-  padding: 0 8px;
-  border: 2px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  color: var(--ink);
-  font-size: 16px;
-  font-weight: 600;
+.sale-panes.pay {
+  grid-template-columns: minmax(0, 1fr) 388px;
+  grid-template-rows: none;
 }
 
-.tender-src .mi {
-  display: inline-flex;
-  color: var(--muted);
+.sale-panes.pay .sale-cats,
+.sale-panes.pay .sale-right {
+  display: none;
 }
 
-.tender-src:disabled {
-  opacity: 0.5;
+.sale-panes.pay .sale-left {
+  grid-column: 2;
+  grid-row: auto;
+}
+
+/* The pay-mode ticket has no controls: rows are not selectable there. */
+.sale-panes.pay .t-row {
   cursor: default;
 }
 
-.tender-src:active:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
+@media (max-width: 1190px) {
+  .sale-panes.pay {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
 }
 
-.tender-due {
+@media (max-width: 900px) {
+  .sale-panes.pay {
+    grid-template-columns: 1fr;
+  }
+
+  .sale-pay,
+  .sale-panes.pay .sale-left {
+    grid-column: auto;
+    min-height: auto;
+    overflow: visible;
+  }
+}
+
+/* The bar's primary slot: nothing of its own, its child (the panel's
+ * portalled button) joins the bar's row directly. */
+.sale-bar-slot {
+  display: contents;
+}
+
+/* --- T39.7: the payment surface (0.2), Counter. ---------------------
+ * Radius 16 on the surface, padding 18, 12px gaps, filling the pane;
+ * the foot is pushed to the bottom with margin-top: auto. */
+.pay-surface {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-size: 16px;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 12px;
+  min-height: 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.pay-surface > .sale-stop,
+.pay-surface > .pass-note {
+  margin: 0;
+}
+
+/* The three figures: Total, Due, Change, on the frame ground, a 14px
+ * uppercase label over a 34px mono figure. Due is the loudest of the
+ * three (decided): the ink border. Settled Due takes the ok pair, a
+ * positive Change the warn pair; the tinted tiles' borders are the pair's
+ * text colour at reduced opacity rather than two more tokens (0.2). */
+.pay-figures {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pay-fig {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.pay-fig-label {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
-.tender-due-amt {
-  font-size: 22px;
+.pay-fig-amt {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 34px;
   font-weight: 700;
-  color: var(--ink);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-/* Nothing left owing: the one figure a teacher checks before charging. */
-.tender-due-amt.settled {
+.pay-fig.due {
+  border-color: var(--ink);
+  border-width: 1.5px;
+}
+
+.pay-fig.due .pay-fig-label {
+  color: var(--ink);
+}
+
+.pay-fig.due.settled {
+  border-color: color-mix(in srgb, var(--ok) 55%, transparent);
+  background: var(--ok-bg);
   color: var(--ok);
 }
 
-/* Over-tendered cash. Loud, beside the due line, because it is money
- * that has to come back out of the drawer. */
-.tender-change {
-  padding: 4px 12px;
-  border-radius: 999px;
+.pay-fig.due.settled .pay-fig-label {
+  color: var(--ok);
+}
+
+.pay-fig.change {
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
   background: var(--warn-bg);
   color: var(--warn);
+}
+
+.pay-fig.change .pay-fig-label {
+  color: var(--warn);
+}
+
+/* Source tiles: three across (two when Credit is absent, no dead slot),
+ * min-height 82, a 1.5px accent border when available and a soft one at
+ * half opacity when not; the name at 18px, T35's reason under it at
+ * 14px only when there is one, Credit's balance badge top-right in the
+ * ok pair. */
+.pay-tiles {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.pay-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 3px;
+  min-height: 82px;
+  padding: 14px 16px;
+  border: 1.5px solid var(--accent);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+
+.pay-tile.off {
+  border-color: color-mix(in srgb, var(--line-soft) 50%, transparent);
+  cursor: default;
+}
+
+.pay-tile.off .pay-tile-name,
+.pay-tile.off .pay-tile-badge,
+.pay-tile.off .mi {
+  opacity: 0.5;
+}
+
+.pay-tile:active:not(:disabled) {
+  background: var(--action-bg);
+}
+
+.pay-tile-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 18px;
   font-weight: 700;
+}
+
+.pay-tile .mi {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.pay-tile-reason {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.pay-tile-badge {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--ok-bg);
+  color: var(--ok);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
   font-variant-numeric: tabular-nums;
 }
 
+/* Tender rows (0.2): on the frame ground, radius 12, padding 8/10; the
+ * name 16px/600 with the `covers $X` sub-line under an over-tendered cash
+ * line; the amount a 64px mono button, the x a 64px square. A second row
+ * IS the split (T35). */
 .tender-lines {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 
-/* One line: source, amount, x. Compact, one row, no labels. */
 .tender-line {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 10px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--surface);
+  background: var(--bg);
 }
 
 .tender-line.bad {
@@ -2909,22 +3036,32 @@ button.sale-for:disabled {
 
 .tender-src-name {
   flex: 1;
+  min-width: 0;
   font-size: 16px;
   font-weight: 600;
 }
 
-/* The amount is a BUTTON: tapping it opens the one keypad for this line.
- * Right-aligned tabular figures, like the receipt column. */
+.tender-sub {
+  display: block;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
 .tender-amt {
   min-height: 64px;
-  min-width: 7em;
-  padding: 0 12px;
-  border: 1px solid var(--line);
+  min-width: 6.5em;
+  padding: 0 14px;
+  border: 1px solid var(--line-soft);
   border-radius: 10px;
-  background: var(--bg);
+  background: var(--surface);
   color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 20px;
   font-weight: 700;
+  line-height: 1;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -2941,14 +3078,39 @@ button.sale-for:disabled {
 }
 
 .tender-x {
+  width: 64px;
   min-height: 64px;
-  min-width: 64px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-soft);
   border-radius: 10px;
   background: transparent;
   color: var(--muted);
   font-size: 22px;
   line-height: 1;
+}
+
+/* The hint under the rows. It carries a rule, so 16px. */
+.pay-hint {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* The foot: a hairline above, the quiet line left, Comp right. */
+.pay-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.pay-quiet {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
 }
 
 /* --- The amount modal, shared by every source. ------------------------
@@ -3051,27 +3213,21 @@ button.sale-for:disabled {
   color: var(--muted);
 }
 
-/* ONE shared quiet line under the tender: the first real problem, what is
- * still owed, or the detail of what is armed. Reserves its height so the
- * receipt below does not jump. */
-.methods-note {
-  margin: 4px 0 0;
-  min-height: 1.3em;
-  font-size: 16px;
-  color: var(--muted);
-}
-
-/* Comp lives OUT of the tender list and arms on a hold: quiet text
- * button, stop-coloured once selected so a comped sale is unmissable. */
+/* Comp lives OUT of the tender list and arms on a hold: outlined at 64px
+ * at the foot's right (0.2), warn-coloured once armed so a comped sale is
+ * unmissable. */
 .comp-hold {
-  justify-self: start;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
   min-height: 64px;
-  padding: 0 14px;
-  border: 1px dashed var(--line);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--muted);
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
   font-size: 16px;
+  font-weight: 600;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -3125,22 +3281,6 @@ button.sale-for:disabled {
 .pay-dismiss {
   display: block;
   margin-top: 8px;
-}
-
-/* The one filled button, restating the amount. Disabled until T24. */
-.charge-btn {
-  min-height: 64px;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-size: 19px;
-  font-weight: 700;
-}
-
-.charge-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 /* --- Pay and check in (T25): the unpaid row's dialog ------------------

@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 
 /**
  * The sale screen (T23, PLAN 2.1 UI). A full-screen overlay over the
@@ -540,9 +541,28 @@ function PaymentPanel(props: {
   pricing: boolean;
   client: SaleClient | null;
   cardLookup: CardLookup | null;
-  /** The receipt ticket, rendered between the tender block and the charge
-   *  button. SaleScreen still owns the cart and the pricing loop. */
-  receipt: ReactNode;
+  /**
+   * T39.6: whether the payment surface is on screen. SaleScreen keeps this
+   * panel MOUNTED in both modes and hides it in shelf mode, so the tender
+   * lines and the keypad survive Back to items without lifting T35's
+   * state out of here. Going hidden dismisses an open keypad (reported
+   * up, so Escape is not left blocked) and clears an armed comp: comp is
+   * never armed while invisible (T33's rule, layout plan 5).
+   */
+  visible: boolean;
+  /**
+   * T39.6: the bar's primary slot. In pay mode the panel renders the
+   * bar's `Due $X` / `Charge $total` button THROUGH this element (a
+   * portal), so the button and `chargeable` come out of the same render:
+   * the bar reads the gate the panel computed, never a copy reported by
+   * an effect after paint. Null until the bar has mounted.
+   */
+  barSlot: HTMLElement | null;
+  /** T39.6: what SaleScreen wants said above the figures in pay mode --
+   *  the suppressed notice, the disagree stop with T38's audit table --
+   *  so the figures never stand next to a total they contradict. The
+   *  ticket keeps its own copy. */
+  notice: ReactNode;
   /** Clear the cart: the sale is recorded on Mindbody's side. */
   onSold: () => void;
   /** The paid receipt's Done: close the overlay back to the roster. */
@@ -576,7 +596,9 @@ function PaymentPanel(props: {
     pricing,
     client,
     cardLookup,
-    receipt,
+    visible,
+    barSlot,
+    notice,
     onSold,
     onDone,
     onClientDataStale,
@@ -614,6 +636,13 @@ function PaymentPanel(props: {
   const [entry, setEntry] = useState("");
   const [charging, setCharging] = useState(false);
   const [result, setResult] = useState<ChargeResult | null>(null);
+  /** T39.6: leaving pay mode with comp armed clears it (never armed while
+   *  invisible), and the surface says so ONCE on return, in the quiet
+   *  line, until the next tender gesture. */
+  const [compCleared, setCompCleared] = useState(false);
+  /** A bare tap on Comp (which arms on a hold, not a tap) shows how in
+   *  the quiet line rather than doing nothing. */
+  const [compHint, setCompHint] = useState(false);
   /** The double-fire lock. State alone re-renders too late for a fast
    *  double tap; the ref is checked synchronously in the handler. */
   const inFlight = useRef(false);
@@ -670,6 +699,8 @@ function PaymentPanel(props: {
   const resetTender = useCallback(() => {
     setLines([]);
     setComped(false);
+    setCompCleared(false);
+    setCompHint(false);
     dismissPad();
   }, [dismissPad]);
 
@@ -721,6 +752,25 @@ function PaymentPanel(props: {
   useEffect(() => {
     return () => onModalChange(false);
   }, [onModalChange]);
+
+  /* T39.6: the panel going HIDDEN (Back to items, Escape out of pay mode)
+   * is a path that leaves pay mode, so it dismisses an open keypad and
+   * reports the close upward like every other one (T35 review), and it
+   * clears an armed comp: comp arms only in pay mode and is never armed
+   * while invisible. The comp button itself cannot be held while hidden
+   * (display: none takes no pointer), and every mode switch is a discrete
+   * event whose effects React flushes before paint, so no frame ever
+   * shows the shelf with comp armed behind it. The lines stay: a
+   * last-second towel must not cost a re-entered split (layout plan 2.5). */
+  useEffect(() => {
+    if (visible) return;
+    dismissPad();
+    setCompHint(false);
+    if (comped) {
+      setComped(false);
+      setCompCleared(true);
+    }
+  }, [visible, comped, dismissPad]);
 
   /* Source availability. An unavailable source renders greyed WITH the
    * reason, never hidden (PLAN 2.2: "account credit ($12) greyed out
@@ -1175,6 +1225,8 @@ function PaymentPanel(props: {
     const id = nextLineId.current++;
     /* Adding a tender disarms comp: the sale is being paid for. */
     setComped(false);
+    setCompCleared(false);
+    setCompHint(false);
     setLines((cur) => [...cur, { id, source, cents }]);
     dismissPad();
     clearStaleResult();
@@ -1183,6 +1235,8 @@ function PaymentPanel(props: {
   const removeLine = (id: number) => {
     setLines((cur) => cur.filter((l) => l.id !== id));
     if (padFor === id) dismissPad();
+    setCompCleared(false);
+    setCompHint(false);
     clearStaleResult();
   };
 
@@ -1194,6 +1248,8 @@ function PaymentPanel(props: {
     setPadFor(id);
     setEntry("");
     onModalChange(true);
+    setCompCleared(false);
+    setCompHint(false);
     clearStaleResult();
   };
 
@@ -1317,11 +1373,18 @@ function PaymentPanel(props: {
    * happen in the same gesture. */
   const compHeld = useRef(false);
   const armComp = () => {
+    /* T39.6: never armed while invisible. The hold cannot start on a
+     * hidden button, but a hold that began just before Back to items
+     * could complete after it; the timer's callback lands here and is
+     * refused. */
+    if (!visible) return;
     /* Comp is the whole sale given away, so it cannot coexist with a
      * tender: arming it clears the lines. */
     setLines([]);
     dismissPad();
     setComped(true);
+    setCompCleared(false);
+    setCompHint(false);
     clearStaleResult();
   };
   const compHoldStart = () => {
@@ -1349,10 +1412,15 @@ function PaymentPanel(props: {
       compHeld.current = false;
       return;
     }
-    /* A bare tap never ARMS comp; it only disarms an armed one. */
+    /* A bare tap never ARMS comp; it only disarms an armed one. On an
+     * unarmed one it says how, since a button that does nothing when
+     * tapped reads as broken (T39.7: the label is the canvas's "Comp
+     * this sale", not "Hold to comp"). */
     if (comped) {
       setComped(false);
       clearStaleResult();
+    } else {
+      setCompHint(true);
     }
   };
 
@@ -1360,7 +1428,12 @@ function PaymentPanel(props: {
    * what is on screen, else what is still owed, else the detail of what
    * is armed. The full reason also sits on each control's title attr. */
   const tenderNote = comped
-    ? "Comp: nothing is charged."
+    ? /* The canvas's line (0.2): the sale is on the studio. */
+      "Nothing to pay, on the studio."
+    : compCleared
+      ? "Comp was cleared."
+      : compHint
+        ? "Hold Comp this sale for a moment to arm it."
     : firstLineProblem !== null
       ? firstLineProblem
       : dueCents !== null && dueCents > 0 && lines.length >= 2
@@ -1395,220 +1468,318 @@ function PaymentPanel(props: {
     { s: "cash", label: "Cash", icon: <CashIcon /> },
   ];
 
-  return (
-    <div className="sale-left">
-      {/* T35: ONE tender block. The sources sit inline with the amount
-          due (Pete: "make the source buttons smaller and put them inline
-          with the totals"); tapping one adds a line for the whole
-          remaining due. The lines below are the payment, and a second one
-          IS the split, so there is no Split toggle and no "First part" /
-          "Remainder" labels. */}
-      <div className="tender">
-        <div className="tender-top">
-          <div className="tender-srcs" aria-label="Payment sources">
-            {sources.map(({ s, label, icon }) => {
-              const reason = addReason(s);
-              return (
-                <button
-                  key={s}
-                  className="tender-src"
-                  disabled={reason !== null || charging}
-                  onClick={() => addLine(s)}
-                  title={
-                    reason ??
-                    (s === "credit"
-                      ? creditLabel
-                      : s === "storedcard"
-                        ? (cardDetail ?? "Card on file")
-                        : "Cash")
-                  }
-                >
-                  <span className="mi">{icon}</span>
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-          <div className="tender-due">
-            <span>{comped ? "Comped" : "Due"}</span>
-            <span
-              className={
-                dueCents === 0 && !comped
-                  ? "tender-due-amt settled"
-                  : "tender-due-amt"
-              }
-            >
-              {comped
-                ? total !== null
-                  ? money(total)
-                  : "--"
-                : dueCents !== null
-                  ? money(dueCents / 100)
-                  : "--"}
-            </span>
-            {changeCents > 0 ? (
-              <span className="tender-change">
-                Change {money(changeCents / 100)}
-              </span>
-            ) : null}
-          </div>
-        </div>
+  /* The three figures (0.2): Due is settled once the lines cover the
+   * total with at least one line present (or the sale is comped), and
+   * Change is loud whenever cash was over-tendered. */
+  const dueSettled = comped
+    ? total !== null
+    : dueCents === 0 && lines.length > 0;
 
-        {lines.length > 0 ? (
-          <div className="tender-lines" aria-label="Payment lines">
-            {lines.map((line, i) => (
-              <div
-                className={
-                  lineReasons[i] ? "tender-line bad" : "tender-line"
-                }
-                key={line.id}
-              >
-                <span className="tender-src-name">
-                  {sourceLabel(line.source)}
-                </span>
-                <button
-                  className={
-                    padFor === line.id ? "tender-amt on" : "tender-amt"
-                  }
-                  disabled={charging}
-                  onClick={() => openPad(line.id)}
-                  aria-label={`${sourceLabel(line.source)} amount ${money(line.cents / 100)}, tap to change`}
-                  title="Tap to change this amount"
-                >
-                  {money(line.cents / 100)}
-                </button>
-                <button
-                  className="tender-x"
-                  disabled={charging}
-                  onClick={() => removeLine(line.id)}
-                  aria-label={`Remove the ${sourceLabel(line.source)} payment`}
-                  title="Remove this payment"
-                >
-                  &#215;
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-
-        <p className="methods-note">{tenderNote || " "}</p>
-      </div>
-
-      {/* The receipt ticket; it may scroll internally, so the charge
-          button below stays on screen for a long cart. */}
-      {receipt}
-
-      <div className="pay-seam">
-      {/* Comp: deliberately out of the tender list and armed by holding,
-          so nobody comps a sale by grazing a control. */}
+  /**
+   * T39.6: the bar's primary in pay mode, rendered by THIS component
+   * through the portal so it is gated by the `chargeable` of this very
+   * render. It reads `Due $X` (disabled, the prototype's label: the
+   * disabled state turned into information) while anything is unpaid,
+   * `Charge $total` once due is zero, `Comp $total` when comped, and it
+   * is the one Charge control on the screen. Not `disabled` but
+   * aria-disabled, like the shelf's Pay, so its title can say why; the
+   * click guard and doCharge's own checks refuse the tap.
+   */
+  const primaryLabel = comped ? "Comp" : dueSettled ? "Charge" : "Due";
+  const primaryAmount = comped || dueSettled
+    ? total
+    : dueCents !== null
+      ? dueCents / 100
+      : null;
+  const primaryOn = dueSettled && chargeable;
+  const primaryWhy = primaryOn
+    ? null
+    : charging
+      ? "Charging..."
+      : total === null
+        ? pricing
+          ? "Pricing with Mindbody..."
+          : "No total to pay yet"
+        : dueCents !== null && dueCents > 0
+          ? tenderNote || `${money(dueCents / 100)} still to pay`
+          : firstLineProblem ?? (lines.length === 0 && !comped ? "Choose how they are paying" : "Not ready to charge");
+  const primary =
+    result?.kind === "paid" ? null : (
       <button
-        className={comped ? "comp-hold on" : "comp-hold"}
-        disabled={charging}
-        onPointerDown={compHoldStart}
-        onPointerUp={compHoldEnd}
-        onPointerLeave={compHoldAbort}
-        onPointerCancel={compHoldAbort}
-        onClick={compClick}
-        onContextMenu={(e) => e.preventDefault()}
-        aria-pressed={comped}
-      >
-        {comped
-          ? "Comp selected. Tap to unselect."
-          : "Hold to comp this sale"}
-      </button>
-
-      <button
-        className="charge-btn"
-        disabled={!chargeable}
-        onClick={() => void doCharge()}
-        aria-label={chargeLabel}
+        className={primaryOn ? "sale-bar-pay" : "sale-bar-pay off"}
+        aria-disabled={!primaryOn}
+        aria-label={primaryOn ? chargeLabel : `${primaryLabel}: ${primaryWhy ?? ""}`}
+        title={primaryOn ? chargeLabel : (primaryWhy ?? undefined)}
+        onClick={() => {
+          if (!primaryOn) return;
+          void doCharge();
+        }}
       >
         {charging ? (
           <>
-            <span className="spinner" aria-label="working" /> Charging...
+            <span className="spinner" aria-label="working" />
+            <span>Charging...</span>
           </>
         ) : (
-          chargeLabel
+          <>
+            <span>{primaryLabel}</span>
+            {primaryAmount !== null ? (
+              <span className="sale-bar-amt">{money(primaryAmount)}</span>
+            ) : null}
+          </>
         )}
       </button>
+    );
 
-      {/* Bug-1 branch (b): no client, no house client, so Mindbody could
-          not price the cart and there is no total to charge. The local
-          estimate on the ticket is never chargeable. */}
-      {cart.length > 0 && !pricing && priced?.needsClient ? (
-        <p className="muted-note">
-          Attach a client (or set a house client) to charge.
-        </p>
-      ) : null}
+  return (
+    <>
+      {/* T39.6: the payment surface, the middle column in pay mode and
+          hidden (not unmounted) in shelf mode, so T35's state lives on
+          across Back to items. The `hidden` attribute is the whole
+          mechanism; .sale-pay[hidden] backs it in the CSS. */}
+      <div className="sale-pay" hidden={!visible}>
+        <div className="pay-surface">
+          {notice}
 
-      {result?.kind === "paid" ? (
-        <div className="pay-done" role="status">
-          <p className="pay-done-line">{result.summary}</p>
-          {result.detail ? (
-            <p className="pay-done-detail">{result.detail}</p>
-          ) : null}
-          {/* Done means the sale is finished, so it goes back to the
-              roster (Pete, fourth live test): the counter's resting
-              screen is the sign-in view, not an empty cart. The receipt
-              is cleared first so reopening Buy starts clean. */}
-          <button
-            className="class-change"
-            onClick={() => {
-              setResult(null);
-              onDone();
-            }}
-          >
-            Done
-          </button>
+          {result?.kind === "paid" ? (
+            <div className="pay-done" role="status">
+              <p className="pay-done-line">{result.summary}</p>
+              {result.detail ? (
+                <p className="pay-done-detail">{result.detail}</p>
+              ) : null}
+              {/* Done means the sale is finished, so it goes back to the
+                  roster (Pete, fourth live test): the counter's resting
+                  screen is the sign-in view, not an empty cart. The
+                  receipt is cleared first so reopening Buy starts clean. */}
+              <button
+                className="class-change"
+                onClick={() => {
+                  setResult(null);
+                  onDone();
+                }}
+              >
+                Done
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* The three figures (0.2): Total is the server's, Due is
+                  what the lines have not covered, Change is over-tendered
+                  cash. Due carries the most weight of the three (decided):
+                  it is the one figure a teacher checks before charging. */}
+              <div className="pay-figures">
+                <div className="pay-fig">
+                  <span className="pay-fig-label">Total</span>
+                  <span className="pay-fig-amt">
+                    {total !== null ? money(total) : "--"}
+                  </span>
+                </div>
+                <div
+                  className={dueSettled ? "pay-fig due settled" : "pay-fig due"}
+                >
+                  <span className="pay-fig-label">Due</span>
+                  <span className="pay-fig-amt">
+                    {comped
+                      ? total !== null
+                        ? money(0)
+                        : "--"
+                      : dueCents !== null
+                        ? money(dueCents / 100)
+                        : "--"}
+                  </span>
+                </div>
+                <div
+                  className={changeCents > 0 ? "pay-fig change" : "pay-fig"}
+                >
+                  <span className="pay-fig-label">Change</span>
+                  <span className="pay-fig-amt">
+                    {money(changeCents / 100)}
+                  </span>
+                </div>
+              </div>
+
+              {/* T35: tapping a source ADDS a line for the whole remaining
+                  due, clamped by that source's rule. The tiles (0.2) carry
+                  T35's reason when a source cannot add a line, never
+                  hidden; Credit is absent when there is no balance (T33)
+                  and wears it as a badge when there is. */}
+              <div className="pay-tiles" aria-label="Payment sources">
+                {sources.map(({ s, label, icon }) => {
+                  const reason = addReason(s);
+                  const off = reason !== null;
+                  const shown = off
+                    ? reason
+                    : s === "credit"
+                      ? /* The prototype's word for an available Credit:
+                           rule 1 makes it the first thing applied. */
+                        "Applies first"
+                      : null;
+                  return (
+                    <button
+                      key={s}
+                      className={off ? "pay-tile off" : "pay-tile"}
+                      disabled={off || charging}
+                      onClick={() => addLine(s)}
+                      title={
+                        reason ??
+                        (s === "credit"
+                          ? creditLabel
+                          : s === "storedcard"
+                            ? (cardDetail ?? "Card on file")
+                            : "Cash")
+                      }
+                    >
+                      <span className="pay-tile-name">
+                        <span className="mi">{icon}</span>
+                        {label}
+                      </span>
+                      {shown ? (
+                        <span className="pay-tile-reason">{shown}</span>
+                      ) : null}
+                      {s === "credit" && balance !== null && balance > 0 ? (
+                        <span className="pay-tile-badge">{money(balance)}</span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {lines.length > 0 ? (
+                <div className="tender-lines" aria-label="Payment lines">
+                  {lines.map((line, i) => {
+                    const covers = coverage[i] ?? 0;
+                    return (
+                      <div
+                        className={
+                          lineReasons[i] ? "tender-line bad" : "tender-line"
+                        }
+                        key={line.id}
+                      >
+                        <span className="tender-src-name">
+                          {sourceLabel(line.source)}
+                          {/* Over-tendered cash: what the line actually
+                              covers, under the name (0.2). Only cash can
+                              exceed its coverage; the surplus is Change. */}
+                          {line.cents > covers ? (
+                            <span className="tender-sub">
+                              covers {money(covers / 100)}
+                            </span>
+                          ) : null}
+                        </span>
+                        <button
+                          className={
+                            padFor === line.id ? "tender-amt on" : "tender-amt"
+                          }
+                          disabled={charging}
+                          onClick={() => openPad(line.id)}
+                          aria-label={`${sourceLabel(line.source)} amount ${money(line.cents / 100)}, tap to change`}
+                          title="Tap to change this amount"
+                        >
+                          {money(line.cents / 100)}
+                        </button>
+                        <button
+                          className="tender-x"
+                          disabled={charging}
+                          onClick={() => removeLine(line.id)}
+                          aria-label={`Remove the ${sourceLabel(line.source)} payment`}
+                          title="Remove this payment"
+                        >
+                          &#215;
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+
+              <p className="pay-hint">
+                {lines.length > 0
+                  ? "Tap an amount to change it."
+                  : "Choose how they are paying."}
+              </p>
+
+              {/* Bug-1 branch (b): no client, no house client, so Mindbody
+                  could not price the cart and there is no total to charge.
+                  The local estimate on the ticket is never chargeable. */}
+              {cart.length > 0 && !pricing && priced?.needsClient ? (
+                <p className="muted-note">
+                  Attach a client (or set a house client) to charge.
+                </p>
+              ) : null}
+
+              {result?.kind === "suppressed" ? (
+                <div className="pass-note t-suppressed" role="status">
+                  {result.mode === "dry-run"
+                    ? "Dry run: nothing was charged."
+                    : "Write guard: nothing was charged."}{" "}
+                  The write was suppressed on the server; the cart is untouched.
+                  <button
+                    className="class-change pay-dismiss"
+                    onClick={() => setResult(null)}
+                  >
+                    OK
+                  </button>
+                </div>
+              ) : result?.kind === "split" ? (
+                <div className="sale-stop pay-split" role="alert">
+                  <p className="pay-split-head">{result.message}</p>
+                  <p className="pay-split-why">Mindbody said: {result.mindbody}</p>
+                  <button
+                    className="class-change pay-dismiss"
+                    onClick={() => setResult(null)}
+                  >
+                    Understood
+                  </button>
+                </div>
+              ) : result?.kind === "ambiguous" ? (
+                <div className="sale-stop" role="alert">
+                  The charge may or may not have gone through. Check the dev
+                  drawer or Mindbody before charging again.
+                  {result.message ? ` (${result.message})` : ""}
+                  <button
+                    className="class-change pay-dismiss"
+                    onClick={() => setResult(null)}
+                  >
+                    Understood
+                  </button>
+                </div>
+              ) : result?.kind === "error" ? (
+                <div className="sale-stop" role="alert">
+                  Not charged: {result.message}
+                  <button
+                    className="class-change pay-dismiss"
+                    onClick={() => setResult(null)}
+                  >
+                    OK
+                  </button>
+                </div>
+              ) : null}
+
+              {/* The foot (0.2), pushed to the bottom under a hairline: the
+                  quiet line at the left, Comp at the right. Comp is
+                  deliberately out of the tender list and armed by holding,
+                  so nobody comps a sale by grazing a control; and it lives
+                  only here, in pay mode (layout plan 2.9). */}
+              <div className="pay-foot">
+                <p className="pay-quiet">{tenderNote || " "}</p>
+                <button
+                  className={comped ? "comp-hold on" : "comp-hold"}
+                  disabled={charging}
+                  onPointerDown={compHoldStart}
+                  onPointerUp={compHoldEnd}
+                  onPointerLeave={compHoldAbort}
+                  onPointerCancel={compHoldAbort}
+                  onClick={compClick}
+                  onContextMenu={(e) => e.preventDefault()}
+                  aria-pressed={comped}
+                  title={comped ? "Tap to unselect" : "Hold to comp this sale"}
+                >
+                  {comped ? "Comped. Tap to unselect." : "Comp this sale"}
+                </button>
+              </div>
+            </>
+          )}
         </div>
-      ) : result?.kind === "suppressed" ? (
-        <div className="pass-note t-suppressed" role="status">
-          {result.mode === "dry-run"
-            ? "Dry run: nothing was charged."
-            : "Write guard: nothing was charged."}{" "}
-          The write was suppressed on the server; the cart is untouched.
-          <button
-            className="class-change pay-dismiss"
-            onClick={() => setResult(null)}
-          >
-            OK
-          </button>
-        </div>
-      ) : result?.kind === "split" ? (
-        <div className="sale-stop pay-split" role="alert">
-          <p className="pay-split-head">{result.message}</p>
-          <p className="pay-split-why">Mindbody said: {result.mindbody}</p>
-          <button
-            className="class-change pay-dismiss"
-            onClick={() => setResult(null)}
-          >
-            Understood
-          </button>
-        </div>
-      ) : result?.kind === "ambiguous" ? (
-        <div className="sale-stop" role="alert">
-          The charge may or may not have gone through. Check the dev drawer
-          or Mindbody before charging again.
-          {result.message ? ` (${result.message})` : ""}
-          <button
-            className="class-change pay-dismiss"
-            onClick={() => setResult(null)}
-          >
-            Understood
-          </button>
-        </div>
-      ) : result?.kind === "error" ? (
-        <div className="sale-stop" role="alert">
-          Not charged: {result.message}
-          <button
-            className="class-change pay-dismiss"
-            onClick={() => setResult(null)}
-          >
-            OK
-          </button>
-        </div>
-      ) : null}
-      </div>
 
       {/* T36: the amount modal. T35 put this keypad INLINE in the payment
           column, where it pushed the receipt down the screen; Pete, on
@@ -1731,7 +1902,13 @@ function PaymentPanel(props: {
           </div>
         </div>
       ) : null}
-    </div>
+      </div>
+
+      {/* T39.6: the bar's primary, out through the slot. Only in pay mode
+          (the slot is the shelf's Pay otherwise) and only once the bar
+          has mounted. */}
+      {visible && barSlot ? createPortal(primary, barSlot) : null}
+    </>
   );
 }
 
@@ -2572,6 +2749,31 @@ export default function SaleScreen(props: {
    *  closes it must not also close the overlay. */
   const [payModalOpen, setPayModalOpen] = useState(false);
 
+  /**
+   * T39.6: the two modes (layout plan 2.5). Shelf is rail, grid, cart;
+   * pay is the payment surface across the rail and grid's width with the
+   * cart column unmoved. One screen, no route, nothing unmounted: the
+   * PaymentPanel is hidden rather than removed in shelf mode, so a split
+   * entered in pay mode survives Back to items. Reset to shelf on every
+   * open and on every close (Done included), so Buy never opens on the
+   * previous sale's tender.
+   */
+  const [saleMode, setSaleMode] = useState<"shelf" | "pay">("shelf");
+  /** The bar's primary slot, handed to PaymentPanel so it can render the
+   *  pay-mode button through it (see the panel's `barSlot`). A callback
+   *  ref into state, since the element exists only after the first
+   *  commit. */
+  const [barSlot, setBarSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (open) setSaleMode("shelf");
+  }, [open]);
+  /** Every close goes through here so the mode resets with it. */
+  const close = useCallback(() => {
+    setSaleMode("shelf");
+    onClose();
+  }, [onClose]);
+  const leavePay = useCallback(() => setSaleMode("shelf"), []);
+
   /** T30: the contract whose purchase dialog is open, or null. The
    *  dialog is its own modal layer; its Escape/scrim handling lives in
    *  ContractDialog, and the overlay's Escape below skips while it is
@@ -2896,25 +3098,35 @@ export default function SaleScreen(props: {
     return () => clearTimeout(timer);
   }, [cart, clientId]);
 
-  /** Escape closes the overlay like the X does -- unless a modal is
-   *  stacked above (that layer takes the press), not mid-pricing (a
-   *  total is on its way, and the screen waits to show it), and never
-   *  mid-charge: money is moving and its outcome renders HERE. */
+  /**
+   * Escape peels one layer per press, in this order (T39.6, layout plan
+   * 2.5): the keypad modal (the panel's own listener dismisses it and
+   * `payModalOpen` keeps this handler out of the same press), then any
+   * confirm (cart change, Clear cart, the contract dialog, each with its
+   * own listener), then pay mode back to shelf, then the overlay, like
+   * the X does -- not mid-pricing (a total is on its way, and the screen
+   * waits to show it), and never mid-charge: money is moving and its
+   * outcome renders HERE, so neither the overlay nor pay mode leaves.
+   */
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
       if (
-        e.key === "Escape" &&
-        !modalAbove &&
-        !payModalOpen &&
-        !cartPrompt &&
-        clearPrompt === null &&
-        !contractDialog &&
-        !pricing &&
-        !charging
+        modalAbove ||
+        payModalOpen ||
+        cartPrompt ||
+        clearPrompt !== null ||
+        contractDialog
       ) {
-        onClose();
+        return;
       }
+      if (charging) return;
+      if (saleMode === "pay") {
+        leavePay();
+        return;
+      }
+      if (!pricing) close();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -2927,7 +3139,9 @@ export default function SaleScreen(props: {
     contractDialog,
     pricing,
     charging,
-    onClose,
+    saleMode,
+    leavePay,
+    close,
   ]);
 
   /**
@@ -3027,8 +3241,6 @@ export default function SaleScreen(props: {
    * "N more below" line. Display only.
    */
   const linesRef = useRef<HTMLDivElement | null>(null);
-  /** T39.5: the bar's Pay brings the payment column into view. */
-  const overlayRef = useRef<HTMLDivElement | null>(null);
   const [hiddenBelow, setHiddenBelow] = useState(0);
   const measureLines = useCallback(() => {
     const el = linesRef.current;
@@ -3135,9 +3347,13 @@ export default function SaleScreen(props: {
       ? recheckReport
       : null;
   const cartCount = cart.reduce((n, l) => n + l.quantity, 0);
-  /** T39.4: the selection, only while its line is in the cart. */
+  const inPay = saleMode === "pay";
+  /** T39.4: the selection, only while its line is in the cart; T39.6:
+   *  never in pay mode, where the ticket has no controls (the canvas's
+   *  pay-mode ticket is read-only, and the way to a cart edit is Back to
+   *  items). */
   const selected =
-    selectedKey !== null && cart.some((l) => l.key === selectedKey)
+    !inPay && selectedKey !== null && cart.some((l) => l.key === selectedKey)
       ? selectedKey
       : null;
   /** T39.4: the tax row's label carries the rate only when the server
@@ -3150,8 +3366,8 @@ export default function SaleScreen(props: {
    * `Pay` with the count and no figure, because a number on the one
    * button that moves money must never be the browser's. `payWhy` is
    * the reason it is disabled, or null; it is the button's title, so a
-   * greyed Pay says why when asked. Display only: the charge itself is
-   * still PaymentPanel's button until T39.6.
+   * greyed Pay says why when asked. Pay enters pay mode (T39.6); the
+   * charge itself is the panel's, rendered on the bar through the slot.
    */
   const payWhy: string | null = charging
     ? "Charging..."
@@ -3178,6 +3394,135 @@ export default function SaleScreen(props: {
    *  pill reads it and nothing is fetched. */
   const inCart = new Map(cart.map((l) => [l.key, l.quantity]));
 
+  /**
+   * T38's audit table, one element used in two places: inside the
+   * ticket's stop, and (T39.6) inside the copy of the stop the payment
+   * surface shows above its figures, so the figures never stand next to
+   * a total they contradict. `totals` is checked non-null by both.
+   */
+  const auditTable = totals ? (
+    totals.lineAudit && totals.lineAudit.length > 0 ? (
+      <div className="audit-wrap">
+        <table className="audit">
+          <thead>
+            <tr>
+              <th>Line</th>
+              <th>Ours</th>
+              <th>Mindbody</th>
+            </tr>
+          </thead>
+          <tbody>
+            {totals.lineAudit.map((a, i) => {
+              const ours = cart.find(
+                (l) => l.key === itemKey(a.type, a.metadataId),
+              );
+              const unmatched =
+                a.theirPrice === null &&
+                a.theirTaxRate === null &&
+                a.theirQuantity === null;
+              const priceOff =
+                a.theirPrice !== null && a.theirPrice !== a.ourPrice;
+              /* A line the catalog carried no rate
+                 for was asserted at the studio
+                 fallback, so that is the figure
+                 Mindbody's rate is measured against
+                 (the second live test's 13% against
+                 10.35% is exactly this case). With no
+                 fallback in hand, nothing to compare. */
+              const ourRate =
+                a.ourTaxRate ?? config?.studioTaxRate ?? null;
+              const rateOff =
+                a.theirTaxRate !== null &&
+                ourRate !== null &&
+                a.theirTaxRate !== ourRate;
+              const qtyOff =
+                a.theirQuantity !== null && a.theirQuantity !== a.quantity;
+              return (
+                <tr key={`${a.type}-${a.metadataId}-${i}`}>
+                  <td>
+                    {ours?.item.name ?? a.name ?? `${a.type} ${a.metadataId}`}
+                    {a.name !== null && ours && a.name !== ours.item.name ? (
+                      <span className="audit-sub">
+                        Mindbody calls it {a.name}
+                      </span>
+                    ) : null}
+                  </td>
+                  <td>
+                    {money(a.ourPrice)} x{a.quantity}
+                    <span className="audit-sub">
+                      {a.ourTaxRate === null
+                        ? "studio fallback rate"
+                        : pct(a.ourTaxRate)}
+                      {" = "}
+                      {money(a.ourExtended)}
+                    </span>
+                  </td>
+                  <td className={unmatched ? "audit-bad" : undefined}>
+                    {unmatched ? (
+                      "no line matched: Mindbody priced something else"
+                    ) : (
+                      <>
+                        <span className={priceOff ? "audit-bad" : undefined}>
+                          {a.theirPrice !== null ? money(a.theirPrice) : "no price"}
+                        </span>{" "}
+                        <span className={qtyOff ? "audit-bad" : undefined}>
+                          x{a.theirQuantity ?? "?"}
+                        </span>
+                        <span
+                          className={
+                            rateOff ? "audit-sub audit-bad" : "audit-sub"
+                          }
+                        >
+                          {pct(a.theirTaxRate)}
+                        </span>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    ) : null
+  ) : null;
+
+  /**
+   * T39.6: what the payment surface says above its figures. The amber
+   * suppressed notice and the disagree stop (with the audit table and
+   * Recheck) render there as well as in the ticket, because in pay mode
+   * the figures are the thing on screen and must not stand beside a
+   * total the server did not give. Nothing else of the ticket's travels.
+   */
+  const payNotice: ReactNode =
+    cart.length > 0 && !pricing && totals?.suppressed ? (
+      <div className="pass-note t-suppressed">
+        Suppressed (dry run or write guard): Mindbody did not price this
+        cart, so there is no total to show. Nothing was written.
+      </div>
+    ) : cart.length > 0 && !pricing && totals?.disagrees ? (
+      <div className="sale-stop">
+        Totals disagree. Our math says {money(totals.expectedTotal)},
+        Mindbody says{" "}
+        {totals.grandTotal !== null ? money(totals.grandTotal) : "nothing"}.
+        Do not charge; this is a bug to report.
+        {auditTable}
+        <button
+          className="audit-recheck"
+          disabled={rechecking || charging}
+          onClick={() => void recheckPrices()}
+        >
+          {rechecking ? (
+            <>
+              <span className="spinner" aria-label="working" /> Rechecking...
+            </>
+          ) : (
+            "Recheck prices"
+          )}
+        </button>
+      </div>
+    ) : null;
+
   /** The balance shown beside the attached name: the profile lookup's
    *  number when it is this client's (it is refetched after every charge,
    *  so it is post-sale), otherwise the snapshot the roster row attached
@@ -3192,7 +3537,7 @@ export default function SaleScreen(props: {
         : client.balance;
 
   return (
-    <div className="sale-overlay" role="dialog" aria-label="Buy" ref={overlayRef}>
+    <div className="sale-overlay" role="dialog" aria-label="Buy">
       <div className="sale-shell">
         <ModeBanner config={config} />
 
@@ -3265,7 +3610,7 @@ export default function SaleScreen(props: {
               money is moving. */}
           <button
             className="class-change sale-back"
-            onClick={onClose}
+            onClick={close}
             disabled={charging}
             aria-label="Back to the roster"
           >
@@ -3276,7 +3621,7 @@ export default function SaleScreen(props: {
           </button>
         </div>
 
-        <div className="sale-panes">
+        <div className={inPay ? "sale-panes pay" : "sale-panes"}>
           {/* RAIL (T39.2): the first column, 154px, Favorites pinned first
               and filled when active, Packages and Memberships in T30's
               order after Passes. Past the seventh entry the rest collapse
@@ -3512,26 +3857,34 @@ export default function SaleScreen(props: {
             ) : null}
           </div>
 
-          {/* CART, the right column since T39.2 (rail, grid, cart is the
-              layout of record): the whole payment column (PaymentPanel
-              since the second live test): the compact method row, the
-              receipt, the charge button and the outcomes. The ticket
-              rides in as a prop; the cart and the pricing loop stay here
-              in SaleScreen. T39.6 moves the tender into the middle
-              column; until then it lives above the receipt as before. */}
+          {/* THE PAYMENT SURFACE (T39.6): the middle column in pay mode,
+              across the width the rail and grid share; hidden, not
+              unmounted, in shelf mode. The tender, comp, the keypad and
+              the outcomes are PaymentPanel's; the cart and the pricing
+              loop stay here. */}
           <PaymentPanel
             cart={cart}
             priced={priced}
             pricing={pricing}
             client={client}
             cardLookup={cardLookup}
+            visible={inPay}
+            barSlot={barSlot}
+            notice={payNotice}
             onSold={() => setCart([])}
-            onDone={onClose}
+            onDone={close}
             onBusyChange={setCharging}
             onModalChange={setPayModalOpen}
             cartResetNonce={cartResetNonce}
             onClientDataStale={onClientDataStale}
-            receipt={
+          />
+
+          {/* CART, the right column (rail, grid, cart is the layout of
+              record), the SAME element in both modes: it does not move,
+              resize or remount when the mode switches (layout plan 2.5),
+              so the teacher's eye keeps its anchor. In pay mode its rows
+              are not selectable. */}
+          <div className="sale-left">
               <div className="ticket">
             {/* T39.4: 1a's ticket. A head line, the count beside it, and
                 no studio heading: the teacher knows where she is. */}
@@ -3588,17 +3941,21 @@ export default function SaleScreen(props: {
                     <div
                       className={sel ? "t-row sel" : "t-row"}
                       key={line.key}
-                      role="button"
-                      tabIndex={0}
-                      aria-pressed={sel}
+                      role={inPay ? undefined : "button"}
+                      tabIndex={inPay ? undefined : 0}
+                      aria-pressed={inPay ? undefined : sel}
                       aria-label={`${line.item.name}, ${line.quantity} at ${money(line.item.price)}${sel ? ", selected" : ""}`}
-                      onClick={() => toggleSelected(line.key)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          toggleSelected(line.key);
-                        }
-                      }}
+                      onClick={inPay ? undefined : () => toggleSelected(line.key)}
+                      onKeyDown={
+                        inPay
+                          ? undefined
+                          : (e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                toggleSelected(line.key);
+                              }
+                            }
+                      }
                     >
                       <div className="t-line">
                         <span className="t-name">{line.item.name}</span>
@@ -3764,90 +4121,7 @@ export default function SaleScreen(props: {
                             WHICH line. A line with no Mindbody side is
                             the loudest finding: the item we sent is not
                             the item it priced. Diagnostic only. */}
-                        {totals.lineAudit && totals.lineAudit.length > 0 ? (
-                          <div className="audit-wrap">
-                            <table className="audit">
-                              <thead>
-                                <tr>
-                                  <th>Line</th>
-                                  <th>Ours</th>
-                                  <th>Mindbody</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {totals.lineAudit.map((a, i) => {
-                                  const ours = cart.find(
-                                    (l) => l.key === itemKey(a.type, a.metadataId),
-                                  );
-                                  const unmatched =
-                                    a.theirPrice === null &&
-                                    a.theirTaxRate === null &&
-                                    a.theirQuantity === null;
-                                  const priceOff =
-                                    a.theirPrice !== null && a.theirPrice !== a.ourPrice;
-                                  /* A line the catalog carried no rate
-                                     for was asserted at the studio
-                                     fallback, so that is the figure
-                                     Mindbody's rate is measured against
-                                     (the second live test's 13% against
-                                     10.35% is exactly this case). With no
-                                     fallback in hand, nothing to compare. */
-                                  const ourRate =
-                                    a.ourTaxRate ?? config?.studioTaxRate ?? null;
-                                  const rateOff =
-                                    a.theirTaxRate !== null &&
-                                    ourRate !== null &&
-                                    a.theirTaxRate !== ourRate;
-                                  const qtyOff =
-                                    a.theirQuantity !== null && a.theirQuantity !== a.quantity;
-                                  return (
-                                    <tr key={`${a.type}-${a.metadataId}-${i}`}>
-                                      <td>
-                                        {ours?.item.name ?? a.name ?? `${a.type} ${a.metadataId}`}
-                                        {a.name !== null && ours && a.name !== ours.item.name ? (
-                                          <span className="audit-sub">
-                                            Mindbody calls it {a.name}
-                                          </span>
-                                        ) : null}
-                                      </td>
-                                      <td>
-                                        {money(a.ourPrice)} x{a.quantity}
-                                        <span className="audit-sub">
-                                          {a.ourTaxRate === null
-                                            ? "studio fallback rate"
-                                            : pct(a.ourTaxRate)}
-                                          {" = "}
-                                          {money(a.ourExtended)}
-                                        </span>
-                                      </td>
-                                      <td className={unmatched ? "audit-bad" : undefined}>
-                                        {unmatched ? (
-                                          "no line matched: Mindbody priced something else"
-                                        ) : (
-                                          <>
-                                            <span className={priceOff ? "audit-bad" : undefined}>
-                                              {a.theirPrice !== null ? money(a.theirPrice) : "no price"}
-                                            </span>{" "}
-                                            <span className={qtyOff ? "audit-bad" : undefined}>
-                                              x{a.theirQuantity ?? "?"}
-                                            </span>
-                                            <span
-                                              className={
-                                                rateOff ? "audit-sub audit-bad" : "audit-sub"
-                                              }
-                                            >
-                                              {pct(a.theirTaxRate)}
-                                            </span>
-                                          </>
-                                        )}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        ) : null}
+                        {auditTable}
                         {/* T38: the way out of the stop. Recheck refetches
                             the catalog past its cache and reprices through
                             the ordinary loop; Clear cart is on the foot
@@ -3911,8 +4185,7 @@ export default function SaleScreen(props: {
               </>
             )}
               </div>
-            }
-          />
+          </div>
         </div>
       </div>
 
@@ -3925,46 +4198,60 @@ export default function SaleScreen(props: {
           behind a dialog. */}
       <div className="sale-bar">
         <div className="sale-bar-in">
-          <button
-            className="sale-bar-empty"
-            disabled={cart.length === 0 || charging}
-            onClick={() => setClearPrompt(cartCount)}
-          >
-            Empty cart
-          </button>
-          <button
-            className={payWhy === null ? "sale-bar-pay" : "sale-bar-pay off"}
-            aria-disabled={payWhy !== null}
-            title={payWhy ?? `Pay ${money(payAmount ?? 0)}`}
-            onClick={() => {
-              if (payWhy !== null) return;
-              /* TODO(T39.6): this is where the mode switch goes (shelf to
-                 pay: the rail collapses, the payment surface replaces
-                 the grid). Until then the tender lives in the cart
-                 column, so Pay brings it into view and hands focus to
-                 the first source that can take it. */
-              const col =
-                overlayRef.current?.querySelector<HTMLElement>(".sale-left");
-              col?.scrollIntoView({ block: "nearest" });
-              col
-                ?.querySelector<HTMLElement>(".tender-src:not(:disabled)")
-                ?.focus({ preventScroll: true });
-            }}
-          >
-            <span>Pay</span>
-            {cartCount > 0 ? (
-              <span className="sale-bar-count">
-                {"\u00b7"} {cartCount} {cartCount === 1 ? "item" : "items"}
-              </span>
-            ) : null}
-            {payAmount !== null ? (
-              <span className="sale-bar-amt">
-                {"\u00b7"} {money(payAmount)}
-              </span>
-            ) : pricing && cart.length > 0 ? (
-              <span className="spinner" aria-label="pricing" />
-            ) : null}
-          </button>
+          {inPay ? (
+            /* T39.6: the way back to the shelf, the same quiet control
+               Empty cart is in shelf mode. Locked mid-charge like every
+               other exit: the outcome renders on the surface. */
+            <button
+              className="sale-bar-empty"
+              disabled={charging}
+              onClick={leavePay}
+            >
+              {"\u2190"} Back to items
+            </button>
+          ) : (
+            <button
+              className="sale-bar-empty"
+              disabled={cart.length === 0 || charging}
+              onClick={() => setClearPrompt(cartCount)}
+            >
+              Empty cart
+            </button>
+          )}
+          {/* T39.6: the primary's slot. In pay mode PaymentPanel renders
+              `Due $X` / `Charge $total` INTO it through a portal, so the
+              button is gated by the same render's `chargeable`; in shelf
+              mode it is empty and the shelf's Pay stands beside it. */}
+          <span className="sale-bar-slot" ref={setBarSlot} />
+          {inPay ? null : (
+            <button
+              className={payWhy === null ? "sale-bar-pay" : "sale-bar-pay off"}
+              aria-disabled={payWhy !== null}
+              title={payWhy ?? `Pay ${money(payAmount ?? 0)}`}
+              onClick={() => {
+                if (payWhy !== null) return;
+                /* Into pay mode: the rail and grid give way to the
+                   payment surface, the cart stays put, and the selection
+                   goes (the pay-mode ticket has no controls). */
+                setSelectedKey(null);
+                setSaleMode("pay");
+              }}
+            >
+              <span>Pay</span>
+              {cartCount > 0 ? (
+                <span className="sale-bar-count">
+                  {"\u00b7"} {cartCount} {cartCount === 1 ? "item" : "items"}
+                </span>
+              ) : null}
+              {payAmount !== null ? (
+                <span className="sale-bar-amt">
+                  {"\u00b7"} {money(payAmount)}
+                </span>
+              ) : pricing && cart.length > 0 ? (
+                <span className="spinner" aria-label="pricing" />
+              ) : null}
+            </button>
+          )}
         </div>
       </div>
 
