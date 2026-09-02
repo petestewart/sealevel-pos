@@ -44,8 +44,19 @@ const LIMIT = 300;
  *  nobody reads that in a drawer. */
 const BODY_LIMIT = 6000;
 
-let entries: CallRecord[] = [];
-let nextId = 1;
+/* The buffer lives on globalThis, not in module scope (Pete, 2026-09-02:
+ * the drawer emptied after a browser refresh with no restart). In `next
+ * dev` a route is compiled lazily on first hit and a recompile can
+ * instantiate this module afresh, so a module-level array is a NEW empty
+ * array for the next route that imports it. The global survives every
+ * recompile for the life of the process, which is the lifetime the
+ * drawer promises. Production bundles once and sees no difference. */
+interface CallLogState {
+  entries: CallRecord[];
+  nextId: number;
+}
+const G = globalThis as typeof globalThis & { __posCallLog?: CallLogState };
+const state: CallLogState = (G.__posCallLog ??= { entries: [], nextId: 1 });
 
 function clip(value: unknown): string | null {
   if (value === undefined || value === null) return null;
@@ -63,21 +74,21 @@ export interface CallInput extends Omit<CallRecord, "id" | "at" | "requestBody" 
 
 export function record(entry: CallInput): void {
   if (!devtoolsEnabled()) return;
-  entries.unshift({
+  state.entries.unshift({
     ...entry,
-    id: nextId++,
+    id: state.nextId++,
     at: new Date().toISOString(),
     requestBody: clip(entry.requestBody),
     responseBody: clip(entry.responseBody),
   });
-  if (entries.length > LIMIT) entries = entries.slice(0, LIMIT);
+  if (state.entries.length > LIMIT) state.entries = state.entries.slice(0, LIMIT);
 }
 
 /** Records newer than `since`, newest first. */
 export function recent(since = 0): CallRecord[] {
-  return entries.filter((e) => e.id > since);
+  return state.entries.filter((e) => e.id > since);
 }
 
 export function clear(): void {
-  entries = [];
+  state.entries = [];
 }
