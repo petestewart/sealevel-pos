@@ -1395,12 +1395,19 @@ function PaymentPanel(props: {
    * fires at the END of a completed hold so arming and disarming cannot
    * happen in the same gesture. */
   const compHeld = useRef(false);
-  const armComp = () => {
+  /* `visible` as of the latest render, for the hold timer: its callback
+   * is the closure of the render the hold STARTED in, whose `visible`
+   * was true by definition, so the prop itself can never refuse it
+   * (T39.6-7 review). */
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  /** Arm comp; false when refused. */
+  const armComp = (): boolean => {
     /* T39.6: never armed while invisible. The hold cannot start on a
      * hidden button, but a hold that began just before Back to items
      * could complete after it; the timer's callback lands here and is
      * refused. */
-    if (!visible) return;
+    if (!visibleRef.current) return false;
     /* Comp is the whole sale given away, so it cannot coexist with a
      * tender: arming it clears the lines. */
     setLines([]);
@@ -1409,13 +1416,16 @@ function PaymentPanel(props: {
     setCompCleared(false);
     setCompHint(false);
     clearStaleResult();
+    return true;
   };
   const compHoldStart = () => {
     if (compTimer.current) clearTimeout(compTimer.current);
     compTimer.current = setTimeout(() => {
       compTimer.current = null;
-      compHeld.current = true;
-      armComp();
+      /* The swallow flag only for a hold that ARMED: a refused hold
+       * produces no click to swallow, and the flag would eat the next
+       * tap on Comp instead. */
+      if (armComp()) compHeld.current = true;
     }, COMP_HOLD_MS);
   };
   const compHoldEnd = () => {

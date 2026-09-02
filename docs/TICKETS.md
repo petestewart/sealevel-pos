@@ -2726,6 +2726,126 @@ inside its pane (the dark 820 and 768 shots), the bar never covers it.
 - The dev indicator and the drawer's pill still sit over the bar's
   left and right ends in a dev build (recorded in T39.4-5).
 
+### Review (separate reviewer), T39.6-7
+
+Read against the money first, in this order: the bar's primary is
+rendered by PaymentPanel through `createPortal` into `.sale-bar-slot`,
+and both its `aria-disabled` (`primaryOn = dueSettled && chargeable`)
+and its click handler (`if (!primaryOn) return; void doCharge()`) are
+values of the SAME render as the tiles' reasons and the lines'
+`lineReason`; nothing is copied upward through an effect or a ref. The
+slot is a callback ref into state, so the first render has no target
+and renders no button, which is the shelf's Pay anyway; it is the same
+element in both modes (it sits between the bar's two branches and is
+never conditional), so switching modes neither loses nor duplicates it.
+The portal is guarded by `visible && barSlot`, so in shelf mode the
+slot holds nothing (`slotChildren: 0`, one `.sale-bar-pay` on the
+screen, the shelf's) and the Charge button is unreachable: there is no
+hidden button to focus, not merely a hidden one.
+
+Request bodies, captured through a mocked `/api/checkout` (the
+reviewer's `scratchpad/review3r.js`, `bodies`), a $253.22 cart of nine
+items, a $40 balance:
+
+- one cash line entered at $300.00: `{ clientId, method: "cash",
+  cashTendered: 300 }`, no `split`; the done block reads `Charged
+  $253.22 · 9 items` and `Change $46.78 from the drawer`.
+- Credit + Card: `{ clientId, split: { legs: [{ method: "credit",
+  amount: 40 }, { method: "storedcard", amount: 213.22 }] } }`, no
+  `method`, no `cashTendered`.
+- Credit + Cash at $300.00: `split.legs` `[{ credit, 40 }, { cash,
+  213.22 }]`, the cash leg what it covers, no `cashTendered`; change
+  $86.78 on the tile and in the done block.
+- comp: `{ clientId, method: "comp" }`.
+- one card line (no balance): `{ clientId, method: "storedcard" }`.
+- four taps on Charge inside 30ms (two in one task, two a frame later)
+  against a 1500ms checkout: ONE request. Mid-flight the bar reads
+  `Charging...` disabled, Back to items, the header's Back and detach
+  are disabled, Escape leaves neither pay mode nor the overlay, and a
+  forced click on Back to items does nothing.
+
+All five match T35's shapes and the route's validation (`cashTendered`
+only beside `method: "cash"`, never beside `split`; two legs of
+different methods summing to the rehearsed total).
+
+One fix, no money path involved:
+
+- **The hold timer's `visible` guard was dead code.** `armComp` refused
+  with `if (!visible) return`, but the callback `compHoldStart` hands
+  to `setTimeout` is the closure of the render the hold STARTED in,
+  whose `visible` was true by definition, so the guard could never
+  refuse the case it was written for. Sequence: pointer down on Comp in
+  pay mode, Back to items 300ms later, the timer lands with the panel
+  hidden. Observed pre-fix (a MutationObserver on the hidden button):
+  `aria-pressed="true"` in shelf mode, then the `visible` effect
+  clearing it in the next passive flush, then "Comp was cleared." on
+  return for a comp the teacher never saw, and `compHeld` left true so
+  the next tap on Comp was swallowed. No frame could charge it: with
+  `visible` false the portal renders no Charge button at all, and the
+  effect had it disarmed before any tap could land. In Chromium the
+  sequence is unreachable with a real pointer (the element going
+  `display: none` fires pointercancel, and `compHoldAbort` clears the
+  timer); a touch platform that keeps the pointer is the case. Now
+  `armComp` reads a `visibleRef` kept current on every render and
+  returns whether it armed; the swallow flag is set only for a hold
+  that did arm. Same sequence post-fix: no arming, no message, the
+  next bare tap shows the hint.
+
+Checked and deliberately left as they are:
+
+- **Escape and exits.** Press by press: keypad (the panel's listener,
+  `payModalOpen` keeping the overlay handler out), the cart-change
+  confirm, pay mode, the overlay; reopened in shelf mode with no lines,
+  no comp and no keypad, because PaymentPanel unmounts with the overlay
+  (`if (!open) return null`) and `saleMode` resets on open and in
+  `close`. Done after a paid sale closes the overlay. `charging` returns
+  before the pay-mode branch in the overlay handler, and the panel's
+  own Escape listener is gated on `!charging` too. After an AMBIGUOUS
+  outcome Escape leaves pay mode and then the overlay: that is what the
+  pre-cycle handler did (it gated on `charging`, `pricing` and the
+  modals only), and T24's rule is mid-charge ("Back is disabled
+  mid-charge so the outcome panel cannot be unmounted while money
+  moves"), so nothing changed here.
+- **The cart moving under pay mode** (detach then Keep items, a 1200ms
+  reprice): the lines clear, the figures read `--`, the tiles grey with
+  "Pricing with Mindbody..." and the bar reads `Due` disabled, for the
+  whole reprice. The clearing is the T35 cart-edit effect, post-commit
+  as it always was; every path that changes the cart in pay mode is a
+  discrete event, whose effects React flushes before paint.
+- **The credit-visibility filter** under an ambiguous outcome whose
+  refetch reports a zero balance: the credit line goes, the cash line
+  stays, Due reads $40.00 and the bar is disabled; the tile is gone
+  rather than greyed (T33).
+- **The done block's figures** are captured at the tap (`itemCount`,
+  `changeAtTap`, `comped`) and `total` is the server's `body.total`;
+  `onSold` empties the cart in the same commit, so nothing it shows can
+  be recomputed from moved state. "Sale rehearsed" renders for
+  `mode === "dry-run"` only; the write-guard branch reads "Write guard:
+  nothing was charged." with no title; neither suppression reaches the
+  paid branch (the lines and the cart stay, the bar still offers
+  Charge). The suppressed, split, ambiguous and error branches diff
+  clean against eb834c4 apart from the title and a JSX line wrap that
+  renders the same text.
+- **Layout**, both palettes at 1366x1024, 1180x820 and 1080x768 under
+  `scratchpad/t39-3-review/`: pay mode empty, two lines, the keypad at
+  $300.00, the over-tender, paid, suppressed (dry run), the disagree
+  stop, plus the write-guard wording at 1366. The bar's bottom edge is
+  the viewport's at every size and state; the document and the overlay
+  never scroll; only `.sale-pay` (the suppressed notice at 820 and 768,
+  the two stops at 768) and `.t-lines` (768) do. With the keypad open
+  the point over the Charge button is the scrim. The pay-mode rows
+  carry no `role="button"` and no `tabIndex`. `.shelf-grid` has
+  `align-content: start`.
+- **Conventions.** No hex outside the two palette blocks; the three
+  `color-mix` borders mix a token's own text colour with transparent,
+  so each is a tint of a colour already right on that ground. 14px is
+  on the figure-tile labels, the tile reasons and badge, the cash
+  sub-line and the done block's detail, all the plan's 0.2 exceptions;
+  the hint and the quiet line are 16px. Every target measured at or
+  above 64px: the amount button and x (64), the chips (64), the keys
+  (66), Cancel and Done (64), Comp (64), the bar's controls (64 and
+  68), Done on the paid block (64). No em dashes in the cycle's diff.
+
 ## T38. The cart: more rows, an estimate while pricing, the audit, and a way out (Pete, 2026-08-31)
 
 Four things from the fifth live test, all on the receipt side of the Buy
