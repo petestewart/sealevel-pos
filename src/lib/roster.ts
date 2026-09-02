@@ -297,6 +297,14 @@ function personName(v: any): string | null {
   return joined || null;
 }
 
+/** A pricing option whose session count means nothing: ClassPass (and
+ *  any other partner pass) is booked against a placeholder Mindbody never
+ *  decrements. Matched on the name, which is the only handle the visit
+ *  payload gives. Shared by the roster and the pass sweep. */
+export function sessionless(name: unknown): boolean {
+  return typeof name === "string" && /class\s*pass/i.test(name);
+}
+
 export async function rosterFor(classId: number): Promise<RosterEntry[]> {
   const body = await mindbody(`/class/classvisits?ClassId=${classId}`);
   const visits = body?.Class?.Visits ?? body?.Visits ?? [];
@@ -313,8 +321,12 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
       name: personName(v) ?? "",
       visitId: typeof v.Id === "number" ? v.Id : null,
       pricingOption: service?.Name ?? v.ServiceName ?? null,
-      passRemaining: num(service?.Remaining),
-      passCount: num(service?.Count),
+      /* A ClassPass booking rides a placeholder pricing option that
+       * Mindbody never decrements, so its Remaining is always 0 and read
+       * as "0 remaining" it looks like a spent pass (Pete, live pass
+       * 2026-09-02). No session count is shown for it; the expiry stays. */
+      passRemaining: sessionless(service?.Name) ? null : num(service?.Remaining),
+      passCount: sessionless(service?.Name) ? null : num(service?.Count),
       passExpires:
         typeof service?.ExpirationDate === "string" && service.ExpirationDate
           ? service.ExpirationDate

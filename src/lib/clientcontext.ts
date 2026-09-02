@@ -1,4 +1,5 @@
 import { mindbody } from "./mindbody";
+import { sessionless } from "./roster";
 
 /**
  * Per-client reads that cannot ride the roster's one batched lookup:
@@ -110,8 +111,10 @@ export async function fetchPasses(
         id: num(s?.Id),
         productId: num(s?.ProductId),
         name: str(s?.Name) ?? "Pass",
-        remaining: num(s?.Remaining),
-        count: num(s?.Count),
+        /* ClassPass and its kin carry no real session count (roster.ts
+         * `sessionless`): show the expiry, never "0 remaining". */
+        remaining: sessionless(s?.Name) ? null : num(s?.Remaining),
+        count: sessionless(s?.Name) ? null : num(s?.Count),
         expires: str(s?.ExpirationDate),
       }),
     );
