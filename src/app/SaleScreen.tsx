@@ -3403,6 +3403,24 @@ export default function SaleScreen(props: {
     if (top < box.scrollTop) box.scrollTop = top;
   }, [selectedKey]);
 
+  /* T42 live pass (Pete): "tapping outside the row should re-hide them".
+     A tap that lands anywhere but on a ticket row puts the controls
+     away, so the reveal reads as a momentary tool and not a mode. The
+     listener exists only while a row is selected, runs on pointerdown so
+     the deselect and whatever the tap does (a shelf add, Pay) land in
+     the same gesture, and leaves the selected row's own controls alone
+     because they are inside `.t-row`. */
+  useEffect(() => {
+    if (selectedKey === null) return;
+    const onDown = (e: PointerEvent) => {
+      const el = e.target instanceof Element ? e.target : null;
+      if (el?.closest(".t-row")) return;
+      setSelectedKey(null);
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [selectedKey]);
+
   /* T39.8: the dev drawer's pill is fixed bottom-right, which is where
      the bar's amount is. While the overlay is open the body carries a
      class the pill's CSS reads to move into the bar's empty middle. A
