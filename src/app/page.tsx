@@ -4810,6 +4810,22 @@ function FrontDesk() {
                             {contact ? (
                               <span className="contact-line">{contact}</span>
                             ) : null}
+                            {/* T42 review: the info icon left the search
+                                rows, and with it the only cue that a
+                                client carries an alert, which T20 put
+                                there because a red alert is exactly what
+                                a teacher must see BEFORE the add tap. The
+                                alert text itself rides under the name
+                                instead, red for red. */}
+                            {client.redAlert ? (
+                              <span className="subline stop-text">
+                                Alert: {client.redAlert}
+                              </span>
+                            ) : client.yellowAlert ? (
+                              <span className="subline">
+                                Note: {client.yellowAlert}
+                              </span>
+                            ) : null}
                             {subline ? (
                               <span className="subline">{subline}</span>
                             ) : null}

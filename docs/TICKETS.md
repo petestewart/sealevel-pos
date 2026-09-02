@@ -3711,6 +3711,15 @@ fixture) at 1366x1024 in both palettes, screenshots under
       order is assumed stable between calls, and `TotalResults` present;
       a missing total falls back to the short-page rule.
 
+### Follow-up (2026-09-02)
+
+The review's first open item is closed: a walk-in search row now prints
+its red alert under the name in the stop colour (and a yellow alert as a
+plain note), so the cue T20 relied on survives the info icon's removal.
+The attach rows stay without a profile icon on purpose: Pete's design
+for that modal is a bare tappable row, and the profile is one tap away on
+the roster once the client is in the class.
+
 ### Review (separate reviewer), T42
 
 Adversarial pass on `b150cd3`, `e54dfec`, `eb375c0` with its own
