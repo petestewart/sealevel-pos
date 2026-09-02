@@ -3415,6 +3415,18 @@ mode with one. Not verified live (no credentials here): the revenue
 category name on the studio's rental options, and the visits
 endpoint's `Order` parameter.
 
+### Follow-up from the live pass (2026-09-02)
+
+Pete: "there is no Towel and Mat visible at all". The guessed revenue
+category name did not match, so the shelf was empty and the rail hid it.
+The studio's items are "Mat Rental", "Towel Rental" and "Mat & Towel
+COMBO" (ai-manager's sales table; the $2.72 on the shelf is the $3.00
+rental before tax). `nameMatches` on the category (`rental`, `towel`) now
+routes a pricing option by its name as well, so the shelf fills whatever
+the revenue category says. Still worth reading the real
+`RevenueCategory` off the dev drawer's `/sale/services` body once, so the
+name match becomes the fallback rather than the rule.
+
 ### Review (separate reviewer), T41
 
 Read the five commits against 60cc7db, ran the harness (mocked API) at

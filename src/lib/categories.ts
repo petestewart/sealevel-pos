@@ -46,6 +46,17 @@ export interface CounterCategory {
    * button hides itself until then (an empty category never renders).
    */
   revenueCategories?: string[];
+  /**
+   * Case-insensitive regular-expression sources matched against a pricing
+   * option's NAME, the second handle for the same problem. Pete's first
+   * live pass had "Towel and Mat" hidden as empty: the rental options'
+   * real revenue category was not the guessed name, and nothing in this
+   * container can read it. The studio's items (ai-manager's sales table,
+   * 2026-08-31) are "Mat Rental", "Towel Rental" and "Mat & Towel
+   * COMBO", so the names are a handle that does not depend on how the
+   * revenue category was spelled in Mindbody. Either match routes.
+   */
+  nameMatches?: string[];
 }
 
 /**
@@ -63,6 +74,7 @@ export const counterCategories: readonly CounterCategory[] = [
     label: "Towel and Mat",
     categoryIds: [-14],
     revenueCategories: ["Towel and Mat"],
+    nameMatches: ["rental", "towel"],
   },
   { label: "Food/Drink", categoryIds: [36] },
   { label: "Passes", categoryIds: [] },

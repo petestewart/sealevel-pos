@@ -77,18 +77,26 @@ async function currentBundles(): Promise<{
  */
 function routeServices(passes: CatalogItem[]): CatalogItem[] {
   const byName = new Map<string, number>();
+  const byPattern: { re: RegExp; id: number }[] = [];
   for (const c of counterCategories) {
     const id = c.categoryIds[0];
     if (id === undefined) continue;
     for (const name of c.revenueCategories ?? []) {
       byName.set(name.trim().toLowerCase(), id);
     }
+    /* T41 follow-up: the option's own name is the second handle (see
+     * categories.ts `nameMatches`); a revenue-category match wins when
+     * both apply. */
+    for (const source of c.nameMatches ?? []) {
+      byPattern.push({ re: new RegExp(source, "i"), id });
+    }
   }
-  if (byName.size === 0) return passes;
+  if (byName.size === 0 && byPattern.length === 0) return passes;
   return passes.map((p) => {
-    const routed = p.revenueCategory
-      ? byName.get(p.revenueCategory.trim().toLowerCase())
-      : undefined;
+    const routed =
+      (p.revenueCategory
+        ? byName.get(p.revenueCategory.trim().toLowerCase())
+        : undefined) ?? byPattern.find(({ re }) => re.test(p.name))?.id;
     return routed === undefined ? p : { ...p, categoryId: routed };
   });
 }
