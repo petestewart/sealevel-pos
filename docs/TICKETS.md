@@ -2122,6 +2122,48 @@ reported; the work was verified (typecheck, build, diff read) and landed
 by the orchestrator. Adversarial review is owed and follows with the
 next batch.
 
+### Review (separate reviewer)
+
+Read against the money invariants first: `chargeable` still requires
+`!pricing`, a non-suppressed, non-disagreeing SERVER price, due exactly
+zero and every line valid, all computed in the same render as the source
+and line reasons; `addLine` pre-fills from `dueCents`, which is null
+until Mindbody answers, so no estimate can become a line's amount. The
+request shapes are byte for byte T35's. One fix:
+
+- **The modal promised one change figure and the tender showed another,
+  then refused.** Reachable: a $20 total, tap Cash (a $20 line), tap its
+  amount, type 15.00, Done ("Short $5.00"), tap Credit (adds $5.00 from
+  a balance that has it), tap the cash amount again, type 25.00. The
+  modal reads "Change due $10.00", which is right: the credit part keeps
+  its $5 and cash covers the other $15. On Done, `coverage` ran in LIST
+  order, so cash (first) took the whole $20, credit covered nothing, the
+  Due chip read "Change $5.00" and the credit line failed `lineReason`
+  with "Re-enter the amounts against the current total". With credit
+  first in the list the same entry charged as promised, so the outcome
+  depended on which source the teacher happened to tap first. Cash now
+  covers last whatever its position: the other line is clamped and
+  recomputed as the remainder on Done, so it is exactly what the teacher
+  chose to spend from it, and only cash can carry a surplus. Indexes stay
+  aligned with `lines`, so the legs the request sends still read
+  `coverage[i]` and still sum to the server's total when due is zero. No
+  money path is otherwise touched.
+
+Checked and deliberately left: the Escape order (the modal's own listener
+dismisses; the overlay's guard reads `payModalOpen`, set in the same
+batch as `padFor` on every open and close, so the same press cannot fall
+through); `onModalChange` is true exactly while the modal renders (open
+sets both, `dismissPad` clears both, T35's guard effect covers a line
+removed under it, unmount reports false); Done with nothing typed leaves
+the line, Cancel, scrim and Escape leave it, and a modal cannot be open
+mid-charge (the amount button is disabled while charging and the scrim
+covers Charge); "the other part becomes $X" is the same `min(rest,
+balance)` for credit and `rest` otherwise that `applyPad` writes; the
+entry is digits only, leading zeros are stripped ("00" on an empty entry
+reads "0"), seven digits is the cap, and a clamped source is clamped on
+every key and chip. Not verifiable here: nothing in this ticket reaches
+Mindbody.
+
 ## T39. Implement the POS design (Pete, 2026-09-02)
 
 Pete sent `docs/design/mockups/POSDesign.pdf`: four frames, two visual
@@ -2284,6 +2326,49 @@ mirror were added to SaleScreen for it.
 - The debounce, the single flight, suppression-is-not-success, and the
   server's authority over every number are exactly as T35 and T36 left
   them.
+
+### Review (separate reviewer)
+
+The estimate was checked by hand against `expectedTotal` for a single
+taxable item, two of a $1.81 item at 10.35% ($3.99 both ways), and a mix
+with a rateless line at the fallback, an exempt line and a 13% line
+($45.84 both ways): same per-line rate source, same single round at the
+end. `studioTaxRate` is null on the lock screen's trimmed answer and the
+trimmed answer carries nothing new. The estimate is not passed to
+PaymentPanel at all; `total` there is null while `pricing` is true, so
+the sources grey with the wait and Charge cannot enable. Recheck keeps
+each line's `key` and quantity, hands the rebuilt array to the ordinary
+loop (new generation, new debounce, the cart-edit reset clears any
+tender), retires its report on the next edit by array identity, and
+cannot lift the stop itself: the old `priced` still disagrees until the
+fresh POST lands, so `total` is null throughout. Clear cart calls
+`emptyCart` exactly and only from the confirm button; Escape and the
+scrim keep the items, and the overlay's Escape guard includes the
+prompt. The hidden-row count re-measures on every cart change (quantity,
+Clear, Recheck, the last hidden row removed), on scroll and on resize,
+with the listener removed on cleanup; the fade is `var(--surface)` in
+both palettes. One fix:
+
+- **The audit did not colour the one rate mismatch it was built for.**
+  `rateOff` compared Mindbody's rate to ours only when ours was a real
+  catalog rate; for a line the catalog carried no rate for, ours renders
+  as "studio fallback rate" and the comparison was skipped, so a 13%
+  against the 10.35% fallback (the second live test's exact finding)
+  showed Mindbody's rate in plain ink. It now compares against
+  `config.studioTaxRate` when the line has no rate of its own, and stays
+  uncoloured only when there is no fallback in hand to compare with.
+  Display only.
+
+Checked and deliberately left: the recheck report says "no price
+changed" when only a line's tax rate or exemption moved (the line is
+still rebuilt from the fresh item and repriced, and the stop's own lift
+or the audit table is what says so); a recheck that drops every line
+leaves an armed comp standing on an empty cart, as removing the last
+line with its x always has, and comp cannot charge without a total; a
+double tap on Recheck before the disabled state paints could fire the
+refetch twice, which costs four reads and changes nothing on Mindbody's
+side. Not verifiable here: whether `/api/catalog?refresh=1` returns a
+changed price in practice, and the audit table against a live disagree.
 
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 

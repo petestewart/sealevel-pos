@@ -787,18 +787,31 @@ function PaymentPanel(props: {
   /* ---------------------- T35: the tender math ---------------------- */
 
   /**
-   * What each line actually COVERS of the total, in list order. Only cash
-   * may be given more than it owes, so a line's covered amount is its
-   * entered amount capped by what is still unpaid ahead of it; the
-   * surplus is change, never money charged.
+   * What each line actually COVERS of the total. Only cash may be given
+   * more than it owes, so a line's covered amount is its entered amount
+   * capped by what is still unpaid; the surplus is change, never money
+   * charged. Cash covers LAST, whatever its position in the list (T36
+   * review): the other line is clamped to its cap and recomputed as the
+   * remainder on Done, so it is exactly what the teacher chose to spend
+   * from it, and only cash can be the line with a surplus. With cash
+   * first in the list and entered above the whole total, list order
+   * gave cash everything and left the partner uncovered, which refused
+   * the tender with "Re-enter the amounts" and showed a different change
+   * figure from the one the modal had just promised. The indexes stay
+   * aligned with `lines`: the request legs read `coverage[i]`.
    */
   const coverage = useMemo(() => {
-    const covered: number[] = [];
+    const covered: number[] = lines.map(() => 0);
     let remaining = totalCents ?? 0;
-    for (const line of lines) {
+    const order = [
+      ...lines.map((_, i) => i).filter((i) => lines[i]?.source !== "cash"),
+      ...lines.map((_, i) => i).filter((i) => lines[i]?.source === "cash"),
+    ];
+    for (const i of order) {
+      const line = lines[i] as TenderLine;
       const c =
         totalCents === null ? 0 : Math.max(0, Math.min(line.cents, remaining));
-      covered.push(c);
+      covered[i] = c;
       remaining -= c;
     }
     return covered;
@@ -3381,9 +3394,19 @@ export default function SaleScreen(props: {
                                     a.theirQuantity === null;
                                   const priceOff =
                                     a.theirPrice !== null && a.theirPrice !== a.ourPrice;
+                                  /* A line the catalog carried no rate
+                                     for was asserted at the studio
+                                     fallback, so that is the figure
+                                     Mindbody's rate is measured against
+                                     (the second live test's 13% against
+                                     10.35% is exactly this case). With no
+                                     fallback in hand, nothing to compare. */
+                                  const ourRate =
+                                    a.ourTaxRate ?? config?.studioTaxRate ?? null;
                                   const rateOff =
                                     a.theirTaxRate !== null &&
-                                    a.theirTaxRate !== (a.ourTaxRate ?? a.theirTaxRate);
+                                    ourRate !== null &&
+                                    a.theirTaxRate !== ourRate;
                                   const qtyOff =
                                     a.theirQuantity !== null && a.theirQuantity !== a.quantity;
                                   return (
