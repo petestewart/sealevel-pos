@@ -3245,6 +3245,176 @@ Not verifiable here (no credentials in the container). Pete: reload at a
 studio hour and confirm the dropdown shows the classes actually around
 now, and that a genuinely cancelled class is absent.
 
+## T41. Buy screen tweaks from the first live pass (Pete, 2026-09-02)
+
+Pete ran the redesigned Buy screen against production Mindbody under dry
+run and listed five things. Each below in his words, then what changed.
+
+- [x] **Cart row controls only on tap.** "the 1/+/Remove buttons should
+  not be visible unless I tap on that item. Currently there is always a
+  row that has those buttons visible at all times." T39.4 had `addItem`
+  and `addBundle` select the line they touched, so the cart never had a
+  quiet state after the first tap. Neither selects anything now: only a
+  row tap does, a shelf tap leaves the selection where it is, and
+  remove/empty still clear it. The T39.4 review's scroll-into-view
+  stays for the tapped row (a visible row can still push its own
+  controls under the edge). Harness: after seven shelf taps `.t-row.sel`
+  is 0; after a row tap 1; after another shelf tap still 1 on the same
+  row.
+- [x] **Trash icon for Remove.** "instead of 'Remove' use a trash can
+  icon". A 64px square, the stop outline the word had, holding the
+  roster's trash glyph (the same path as page.tsx's `TrashIcon`, copied
+  since page.tsx was out of scope), `aria-label="Remove <item> from the
+  sale"` and `title="Remove <item>"`. Tokens only; nothing under 16px
+  was touched.
+- [x] **Empty categories.** "not sure why there are no items in 'Towel
+  and Mat' ... when a category has no items it should not even display
+  in the UI as a button at all." Two changes and a finding, below.
+- [x] **Anonymous sale.** "even though the search modal says 'Search for
+  the client the sale is for, or close to sell anonymously.', i am
+  unable to enter the Pay screen if no one is selected". See below.
+- [x] **Client profile data layer.** "there should be a profile icon and
+  when i click it, a modal with the same basic info as the mindbody
+  client-info page should show". The read and the card are built; the
+  icon and the modal in page.tsx are the next agent's.
+
+### Towel and Mat: why it was empty
+
+Towel and Mat is Mindbody category **-14**, and the design doc's
+category dump marks it `Service: true`. `/api/catalog` fills a category
+button by filtering `GET /sale/products` on category ids, and a service
+category never matches a retail product: `/sale/products?categoryIds=-14`
+is empty by construction. The rentals ($2.72 towel, $2.72 mat, the
+design doc's top sellers) are pricing options, which the route fetched
+from `GET /sale/services` and lumped wholesale under Passes.
+
+Checked against the vendored spec (`sale.yml`, the `Service` model at
+5197): a pricing option carries **no category id**. Its
+category-shaped fields are `ProgramId` (5216, "the program that this
+pricing option applies to"), `RevenueCategory` (5270, a string: "the
+revenue category of the pricing option") and `MembershipId` (5290).
+There is no `CategoryId`, `ServiceCategoryId` or `SubCategoryId` on a
+Service, and `/sale/services` filters only by `classId`,
+`classScheduleId`, `programIds`, `sellOnline` and the usual paging.
+`/site/categories` returns revenue categories (`Category.CategoryName`,
+site.yml:2248), so the name is the one handle both sides share.
+
+Built on that: `pricingOptions` keeps `RevenueCategory` on each
+`CatalogItem` (`revenueCategory`, null for products and packages);
+`categories.ts` gives Towel and Mat `revenueCategories: ["Towel and
+Mat"]`; `/api/catalog` stamps a pass whose revenue category matches a
+counter category's name (case-insensitive) with that category's id.
+Every pass still rides the `passes` array in the same shape; the screen
+reads `categoryId: null` as Passes and anything else as that category's
+shelf, alongside its products (`categoryShelf` in SaleScreen). **Not
+verified live**: whether the studio's rental options carry the revenue
+category "Towel and Mat" exactly is a question for the dev drawer's
+`/sale/services` body on Pete's next run. If they carry something else,
+add that name to `revenueCategories`; until then the button simply does
+not render, because of the second change:
+
+**The rail renders only categories whose shelf has something to sell.**
+`shownCategories` filters the config list against the loaded catalog;
+Favorites keeps its own rule (always rendered), and Packages and
+Memberships already hid when empty (T30). Nothing hides while the
+catalog is loading, since the rail does not render until it lands. The
+default chip is the first category WITH a shelf, and an active category
+that loses its last item on a recheck falls back the same way rather
+than leaving a selected button the rail no longer shows. Harness: with
+Accessories emptied and two rental services routed to Towel and Mat,
+the rail reads Favorites, Towel and Mat, Food/Drink, Passes, Packages,
+Memberships, Clothing; the Towel and Mat shelf lists the rentals with
+the studio mat and towel, and Passes no longer lists them.
+
+### Anonymous sale: what was actually wrong
+
+Mindbody prices and charges nothing without a client (confirmed live
+2026-08-30, T24), so an unattached cart rides `POS_HOUSE_CLIENT_ID`:
+`/api/price-cart` substitutes it, and answers `needsClient` without a
+Mindbody call when it is unset; `/api/checkout` refuses with a 409
+naming the variable. Pete's server has it unset, so the estimate
+rendered, Pay stayed disabled, and the attach modal's footer promised
+"close to sell anonymously" all the same.
+
+- `GET /api/config` now reports `houseClient: boolean` (never the id),
+  on the authenticated answer only.
+- With it set, nothing changed and nothing needed to: the unattached
+  cart prices and Pay enables like an attached one; in pay mode Cash is
+  live, Card is greyed "Attach a client", Credit is not offered (no
+  balance to offer), Comp is available. Screenshots
+  `unattached-house-set-*`.
+- With it unset, the totals area says in one line: "Anonymous sales
+  need POS_HOUSE_CLIENT_ID set on the server; attach a client instead."
+  (`NEEDS_HOUSE_CLIENT_LINE`, exported). The bar's reason reads "No
+  house client for an anonymous sale; attach a client". Pay stays
+  disabled exactly as before.
+- `attachSearchHint(config)` is exported from SaleScreen for page.tsx's
+  attach modal: the anonymous promise only when `houseClient` is true, a
+  sentence naming the variable when false, and no promise before config
+  loads. **page.tsx still renders the old sentence** (line ~4342) until
+  the next agent wires it; the harness confirms the mismatch persists in
+  the unset state for now.
+- Money path untouched: `/api/checkout`'s refusal, `priceCart`, the
+  tender model and every request shape are as T35 left them.
+
+### Client profile: the data layer
+
+Pete's Mindbody client-info page shows phone, email, visits with the
+join date, the client id, the waiver with its date, the last visit
+(class, date, time), membership status, and each pass with sessions
+remaining and expiry. `GET /api/client-profile?clientId=`
+(`requireSession`, read-only, 502 on a whole-read failure like
+`/api/stored-card`) returns a `ClientProfile` (`src/lib/clientprofile.ts`)
+from three parallel reads, each optional via `Promise.allSettled`: a
+failed sub-read leaves its section null and names the reason in
+`errors.{client,visits,passes}`.
+
+- `/client/clients?clientIds=` (the spelling the roster verified live):
+  name, Email, MobilePhone else HomePhone else WorkPhone, UniqueId as
+  `mindbodyId`, CreationDate as `joined`, FirstClassDate, Status,
+  MembershipIcon as `member`, Liability {IsReleased, AgreementDate},
+  RedAlert, YellowAlert, Notes.
+- `/client/clientvisits?ClientId=`: `StartDate` ten years back and
+  `EndDate` now, both as studio wall-clock strings (`studioWall`, now
+  exported from roster.ts; the spec defaults StartDate to the END date,
+  and T40 showed Mindbody ignores an offset). `Order=desc` per the spec
+  (1879) and the page sorted again locally in case it is ignored; the
+  count is `PaginationResponse.TotalResults` (6734), falling back to the
+  page length; the last visit is the newest non-missed, non-late-
+  cancelled row.
+- Passes reuse `fetchPasses` from clientcontext.ts, spill guard
+  included; not duplicated.
+
+`ClientProfileCard` (`src/app/ClientProfileCard.tsx`, props `profile`,
+`loading`, `error`) renders it in the Buy header's card idiom (`.sale-for`
+shape: bordered surface, muted uppercase label over 17px values), with
+the red alert in the stop pair and the yellow in warn, an unsigned
+waiver in the warn pair, passes as "4 of 10 left, expires Sep 2, 2026"
+or "Unlimited". Dates are rendered digit for digit from Mindbody's
+site-local strings (`wallDate`, `wallDateTime`, exported), never through
+`Date`, so the iPad's zone cannot shift a 9:00 class. Every colour a
+token in both palettes; 14px only on the label, the recorded exception.
+Not screenshotted: nothing mounts it until page.tsx does.
+
+### For page.tsx (next agent)
+
+Imports: `attachSearchHint`, `NEEDS_HOUSE_CLIENT_LINE` and `ModeConfig`
+(with `houseClient`) from `./SaleScreen`; `ClientProfileCard`, `wallDate`,
+`wallDateTime` from `./ClientProfileCard`; `type ClientProfile` from
+`@/lib/clientprofile`. The profile icon belongs beside the attached
+name in the Buy header (SaleScreen's `.sale-for.attached`), left for the
+same commit as the modal so the icon never opens nothing; fetch
+`/api/client-profile?clientId=` on open, not on attach, since it is
+three metered reads.
+
+Verified: `npm run typecheck`, `npm run build`; the Playwright harness
+(`scratchpad/t41.js`, mocked API) at 1366x1024 in both palettes: the
+cart with no row selected and one selected, the rail with Accessories
+hidden, the unattached cart with and without a house client, and pay
+mode with one. Not verified live (no credentials here): the revenue
+category name on the studio's rental options, and the visits
+endpoint's `Order` parameter.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
