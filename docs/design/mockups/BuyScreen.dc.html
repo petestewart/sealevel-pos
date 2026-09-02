@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics><meta name="design_doc_mode" content="canvas"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Archivo:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet"><style>body{margin:0;background:#efece6;font-family:'Instrument Sans',system-ui,sans-serif}a{color:#0f5c55}a:hover{color:#0b423d}.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08);scroll-margin-top:16px}.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}.dv-tname{font:600 13px/1.2 system-ui,sans-serif;color:#1a1a1a}.dv-opts{display:flex;flex-wrap:wrap;gap:36px;align-items:flex-start}.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:rgba(0,0,0,.55)}.dv-opt:target .dv-oid{background:#0f5c55;color:#fff}.dv-next{margin:22px 0 0;font:12px/1.5 system-ui,sans-serif;color:rgba(0,0,0,.5)}.pad{font-variant-numeric:tabular-nums}</style></helmet>
+
+<section class="dv-turn" id="t1">
+<div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Buy screen — same arrangement as the mockups, three new skins</span></div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="1a">
+<div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Counter — warm paper, one teal accent, mono only for money. Live: tap items, select cart lines, pay, keypad.</div>
+<div style="padding:14px;background:#22201c;border-radius:34px;box-shadow:0 24px 70px rgba(0,0,0,.35)">
+<div style="position:relative;width:1366px;height:1024px;border-radius:20px;overflow:hidden;background:#f6f3ec;color:#1a1815;display:flex;flex-direction:column">
+
+<sc-if value="{{ dryRun }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;align-items:center;gap:10px;height:30px;padding:0 20px;background:#e7f1ea;color:#0d6b47;font-size:13px;font-weight:600;letter-spacing:.02em;flex:none">
+<span style="width:7px;height:7px;border-radius:99px;background:#0d6b47"></span>Dry run — taps are rehearsed, nothing reaches Mindbody.</div>
+</sc-if>
+
+<div style="display:flex;align-items:center;gap:14px;height:76px;padding:0 20px;border-bottom:1px solid #e4ded2;flex:none">
+<h2 style="margin:0;font-size:23px;font-weight:700;letter-spacing:-.02em">Buy</h2>
+<div style="display:flex;align-items:center;gap:12px;height:60px;padding:0 8px 0 16px;border:1px solid #e4ded2;border-radius:12px;background:#fffdf8">
+<div style="display:flex;flex-direction:column;line-height:1.15"><span style="font-size:12px;color:#7a7163;letter-spacing:.04em;text-transform:uppercase">Sale for</span><span style="font-size:17px;font-weight:600">Alida Abbott</span></div>
+<span class="pad" style="padding:5px 11px;border-radius:99px;background:#e7f1ea;color:#0d6b47;font:600 15px/1 'IBM Plex Mono',monospace">{{ creditFmt }} credit</span>
+<span style="display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:99px;color:#7a7163;font-size:19px">&#215;</span>
+</div>
+<span style="margin-left:auto"></span>
+<span style="display:inline-flex;align-items:center;height:60px;padding:0 20px;border:1px solid #e4ded2;border-radius:12px;background:#fffdf8;font-size:16px;font-weight:600">&#8592;&nbsp; Back</span>
+</div>
+
+<sc-if value="{{ shelfMode }}" hint-placeholder-val="{{ true }}">
+<div style="display:grid;grid-template-columns:154px minmax(0,1fr) 388px;gap:14px;padding:16px 20px;flex:1;min-height:0">
+<div style="display:flex;flex-direction:column;gap:6px;overflow:auto">
+<sc-for list="{{ cats }}" as="c" hint-placeholder-count="6">
+<button onClick="{{ c.pick }}" style="{{ c.style }}" style-hover="border-color:#0f5c55">{{ c.label }}</button>
+</sc-for>
+</div>
+<div style="overflow:auto;padding-right:2px">
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(184px,1fr));gap:10px;align-content:start">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="10">
+<button onClick="{{ it.add }}" style="position:relative;display:flex;flex-direction:column;justify-content:space-between;gap:10px;min-height:96px;padding:14px;border:1px solid #e4ded2;border-radius:14px;background:#fffdf8;color:#1a1815;text-align:left;cursor:pointer" style-hover="border-color:#0f5c55;transform:translateY(-1px)" style-active="background:#f1ede4">
+<span style="font-size:17px;font-weight:600;line-height:1.25;letter-spacing:-.01em">{{ it.name }}</span>
+<span style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">
+<span class="pad" style="font:500 16px/1 'IBM Plex Mono',monospace;color:#5f5749">{{ it.priceFmt }}</span>
+<sc-if value="{{ it.inCart }}" hint-placeholder-val="{{ false }}"><span class="pad" style="padding:3px 9px;border-radius:99px;background:#0f5c55;color:#fff;font:600 13px/1.3 'IBM Plex Mono',monospace">{{ it.countFmt }}</span></sc-if>
+</span>
+</button>
+</sc-for>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;border:1px solid #e4ded2;border-radius:16px;background:#fffdf8;overflow:hidden">
+<div style="display:flex;align-items:baseline;justify-content:space-between;padding:14px 16px 10px;border-bottom:1px dashed #ded7ca;flex:none">
+<span style="font-size:15px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#7a7163">Ticket</span>
+<span class="pad" style="font:500 14px/1 'IBM Plex Mono',monospace;color:#7a7163">{{ countLabel }}</span>
+</div>
+<div style="flex:1;min-height:0;overflow:auto;padding:8px">
+<sc-for list="{{ lines }}" as="l" hint-placeholder-count="7">
+<div onClick="{{ l.pick }}" style="{{ l.style }}">
+<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px">
+<span style="font-size:16px;font-weight:500;line-height:1.3">{{ l.name }}</span>
+<span class="pad" style="font:500 16px/1.3 'IBM Plex Mono',monospace">{{ l.amt }}</span>
+</div>
+<sc-if value="{{ l.multi }}" hint-placeholder-val="{{ false }}"><div class="pad" style="margin-top:2px;font:400 14px/1.3 'IBM Plex Mono',monospace;color:#7a7163">{{ l.note }}</div></sc-if>
+<sc-if value="{{ l.sel }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+<button onClick="{{ l.dec }}" style="width:64px;height:64px;border:1px solid #ded7ca;border-radius:10px;background:#fffdf8;font-size:24px;font-weight:600;color:#1a1815;cursor:pointer">&#8722;</button>
+<span class="pad" style="min-width:2.4em;text-align:center;font:600 20px/1 'IBM Plex Mono',monospace">{{ l.qty }}</span>
+<button onClick="{{ l.inc }}" style="width:64px;height:64px;border:1px solid #ded7ca;border-radius:10px;background:#fffdf8;font-size:24px;font-weight:600;color:#1a1815;cursor:pointer">+</button>
+<button onClick="{{ l.remove }}" style="margin-left:auto;height:64px;padding:0 16px;border:1px solid #b0332c;border-radius:10px;background:transparent;color:#b0332c;font:600 15px/1 'Instrument Sans',sans-serif;cursor:pointer">Remove</button>
+</div>
+</sc-if>
+</div>
+</sc-for>
+</div>
+<div style="flex:none;padding:12px 16px 16px;border-top:1px dashed #ded7ca">
+<div style="display:flex;justify-content:space-between;font:400 15px/1.9 'IBM Plex Mono',monospace;color:#7a7163"><span>Subtotal</span><span class="pad">{{ subtotalFmt }}</span></div>
+<div style="display:flex;justify-content:space-between;font:400 15px/1.9 'IBM Plex Mono',monospace;color:#7a7163"><span>Tax {{ taxLabel }}</span><span class="pad">{{ taxFmt }}</span></div>
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:8px;padding-top:10px;border-top:1px solid #e4ded2"><span style="font-size:17px;font-weight:700">Total</span><span class="pad" style="font:700 26px/1 'IBM Plex Mono',monospace;letter-spacing:-.02em">{{ totalFmt }}</span></div>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ payMode }}" hint-placeholder-val="{{ false }}">
+<div style="display:grid;grid-template-columns:minmax(0,1fr) 388px;gap:14px;padding:16px 20px;flex:1;min-height:0">
+<div style="display:flex;flex-direction:column;gap:12px;padding:18px;border:1px solid #e4ded2;border-radius:16px;background:#fffdf8;overflow:auto">
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+<div style="padding:14px 16px;border:1px solid #e4ded2;border-radius:12px;background:#f6f3ec"><span style="display:block;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#7a7163">Total</span><span class="pad" style="display:block;font:700 34px/1.15 'IBM Plex Mono',monospace;letter-spacing:-.02em">{{ totalFmt }}</span></div>
+<div style="{{ dueStyle }}"><span style="display:block;font-size:13px;letter-spacing:.06em;text-transform:uppercase;opacity:.7">Due</span><span class="pad" style="display:block;font:700 34px/1.15 'IBM Plex Mono',monospace;letter-spacing:-.02em">{{ dueFmt }}</span></div>
+<div style="{{ changeStyle }}"><span style="display:block;font-size:13px;letter-spacing:.06em;text-transform:uppercase;opacity:.7">Change</span><span class="pad" style="display:block;font:700 34px/1.15 'IBM Plex Mono',monospace;letter-spacing:-.02em">{{ changeFmt }}</span></div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+<sc-for list="{{ tiles }}" as="t" hint-placeholder-count="3">
+<button onClick="{{ t.tap }}" style="{{ t.style }}" style-hover="border-color:#0f5c55">
+<span style="font-size:18px;font-weight:700">{{ t.name }}</span>
+<sc-if value="{{ t.hasReason }}" hint-placeholder-val="{{ false }}"><span style="font-size:14px;color:#7a7163">{{ t.reason }}</span></sc-if>
+<sc-if value="{{ t.hasBadge }}" hint-placeholder-val="{{ false }}"><span class="pad" style="position:absolute;top:10px;right:12px;padding:2px 9px;border-radius:99px;background:#e7f1ea;color:#0d6b47;font:600 13px/1.4 'IBM Plex Mono',monospace">{{ t.badge }}</span></sc-if>
+</button>
+</sc-for>
+</div>
+<div style="display:flex;flex-direction:column;gap:8px">
+<sc-for list="{{ tenders }}" as="td" hint-placeholder-count="0">
+<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid #e4ded2;border-radius:12px;background:#f6f3ec">
+<span style="flex:1;font-size:16px;font-weight:600">{{ td.name }}<span style="display:block;font-weight:400;font-size:14px;color:#7a7163">{{ td.sub }}</span></span>
+<button onClick="{{ td.edit }}" class="pad" style="min-width:6.5em;height:60px;padding:0 14px;border:1px solid #ded7ca;border-radius:10px;background:#fffdf8;color:#1a1815;font:700 20px/1 'IBM Plex Mono',monospace;text-align:right;cursor:pointer">{{ td.amt }}</button>
+<button onClick="{{ td.remove }}" style="width:60px;height:60px;border:1px solid #ded7ca;border-radius:10px;background:transparent;color:#7a7163;font-size:22px;cursor:pointer">&#215;</button>
+</div>
+</sc-for>
+</div>
+<p style="margin:0;font-size:14px;color:#7a7163">{{ tenderHint }}</p>
+<div style="display:flex;align-items:center;gap:12px;margin-top:auto;padding-top:14px;border-top:1px solid #e4ded2">
+<p style="flex:1;margin:0;font-size:14px;color:#7a7163">Nothing to pay, on the studio.</p>
+<span style="display:inline-flex;align-items:center;height:60px;padding:0 18px;border:1px solid #e4ded2;border-radius:12px;background:#fffdf8;font-size:15px;font-weight:600">Comp this sale</span>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;border:1px solid #e4ded2;border-radius:16px;background:#fffdf8;overflow:hidden">
+<div style="display:flex;align-items:baseline;justify-content:space-between;padding:14px 16px 10px;border-bottom:1px dashed #ded7ca;flex:none">
+<span style="font-size:15px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#7a7163">Ticket</span>
+<span class="pad" style="font:500 14px/1 'IBM Plex Mono',monospace;color:#7a7163">{{ countLabel }}</span>
+</div>
+<div style="flex:1;min-height:0;overflow:auto;padding:8px">
+<sc-for list="{{ lines }}" as="l" hint-placeholder-count="7">
+<div style="padding:8px 10px">
+<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px">
+<span style="font-size:16px;font-weight:500;line-height:1.3">{{ l.name }}</span>
+<span class="pad" style="font:500 16px/1.3 'IBM Plex Mono',monospace">{{ l.amt }}</span>
+</div>
+<sc-if value="{{ l.multi }}" hint-placeholder-val="{{ false }}"><div class="pad" style="margin-top:2px;font:400 14px/1.3 'IBM Plex Mono',monospace;color:#7a7163">{{ l.note }}</div></sc-if>
+</div>
+</sc-for>
+</div>
+<div style="flex:none;padding:12px 16px 16px;border-top:1px dashed #ded7ca">
+<div style="display:flex;justify-content:space-between;font:400 15px/1.9 'IBM Plex Mono',monospace;color:#7a7163"><span>Subtotal</span><span class="pad">{{ subtotalFmt }}</span></div>
+<div style="display:flex;justify-content:space-between;font:400 15px/1.9 'IBM Plex Mono',monospace;color:#7a7163"><span>Tax {{ taxLabel }}</span><span class="pad">{{ taxFmt }}</span></div>
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:8px;padding-top:10px;border-top:1px solid #e4ded2"><span style="font-size:17px;font-weight:700">Total</span><span class="pad" style="font:700 26px/1 'IBM Plex Mono',monospace;letter-spacing:-.02em">{{ totalFmt }}</span></div>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ doneMode }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:40px">
+<div style="display:flex;align-items:center;justify-content:center;width:88px;height:88px;border-radius:99px;background:#e7f1ea;color:#0d6b47;font-size:40px">&#10003;</div>
+<div style="font-size:30px;font-weight:700;letter-spacing:-.02em">Sale rehearsed</div>
+<div class="pad" style="font:500 19px/1.5 'IBM Plex Mono',monospace;color:#5f5749;text-align:center">{{ doneLine }}<br>Change {{ changeFmt }} from the drawer</div>
+<button onClick="{{ reset }}" style="height:64px;padding:0 26px;border:none;border-radius:12px;background:#0f5c55;color:#fff;font:700 17px/1 'Instrument Sans',sans-serif;cursor:pointer">New sale</button>
+</div>
+</sc-if>
+
+<sc-if value="{{ notDone }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;align-items:center;gap:12px;height:92px;padding:0 20px;border-top:1px solid #e4ded2;background:#f2efe7;flex:none">
+<button onClick="{{ secondary }}" style="height:64px;padding:0 20px;border:1px solid #e4ded2;border-radius:12px;background:#fffdf8;color:#1a1815;font:600 16px/1 'Instrument Sans',sans-serif;cursor:pointer">{{ secondaryLabel }}</button>
+<span style="margin-left:auto"></span>
+<button onClick="{{ primary }}" style="{{ primaryStyle }}">
+<span>{{ primaryLabel }}</span><span class="pad" style="font:700 22px/1 'IBM Plex Mono',monospace">{{ primaryAmt }}</span>
+</button>
+</div>
+</sc-if>
+
+<sc-if value="{{ padOpen }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(26,24,21,.42)">
+<div style="display:flex;flex-direction:column;gap:10px;width:420px;padding:20px;border-radius:20px;background:#fffdf8;box-shadow:0 30px 80px rgba(0,0,0,.35)">
+<p style="margin:0;font-size:20px;font-weight:700">{{ padTitle }}</p>
+<div style="display:flex;justify-content:space-between;font-size:16px;color:#7a7163"><span>Amount due</span><span class="pad" style="font:600 18px/1 'IBM Plex Mono',monospace;color:#1a1815">{{ padDue }}</span></div>
+<div style="display:flex;align-items:baseline;justify-content:space-between;padding:10px 14px;border-radius:12px;background:#f2efe7"><span style="font-size:16px;color:#7a7163">Entered</span><span class="pad" style="font:700 30px/1 'IBM Plex Mono',monospace">{{ padEntered }}</span></div>
+<div style="display:flex;gap:8px">
+<sc-for list="{{ padChips }}" as="ch" hint-placeholder-count="4">
+<button onClick="{{ ch.tap }}" style="flex:1;height:60px;border:1px solid #ded7ca;border-radius:99px;background:#f6f3ec;color:#1a1815;font:600 15px/1 'Instrument Sans',sans-serif;cursor:pointer">{{ ch.label }}</button>
+</sc-for>
+</div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+<sc-for list="{{ padKeys }}" as="k" hint-placeholder-count="12">
+<button onClick="{{ k.tap }}" class="pad" style="height:66px;border:1px solid #ded7ca;border-radius:12px;background:#f6f3ec;color:#1a1815;font:600 23px/1 'IBM Plex Mono',monospace;cursor:pointer" style-active="background:#e8e3d8">{{ k.label }}</button>
+</sc-for>
+</div>
+<p class="pad" style="margin:0;font:700 18px/1.4 'IBM Plex Mono',monospace;color:#8a5a00">{{ padChange }}</p>
+<div style="display:flex;gap:8px;justify-content:flex-end">
+<button onClick="{{ padCancel }}" style="height:60px;padding:0 20px;border:1px solid #e4ded2;border-radius:12px;background:#fffdf8;color:#1a1815;font:600 16px/1 'Instrument Sans',sans-serif;cursor:pointer">Cancel</button>
+<button onClick="{{ padDone }}" style="height:60px;padding:0 26px;border:none;border-radius:12px;background:#0f5c55;color:#fff;font:700 16px/1 'Instrument Sans',sans-serif;cursor:pointer">Done</button>
+</div>
+</div>
+</div>
+</sc-if>
+
+</div>
+</div>
+</div>
+
+<div class="dv-opt" id="1b">
+<div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Counter, dark — same tokens flipped; teal lifts, paper goes to ink.</div>
+<div style="padding:14px;background:#000;border-radius:34px;box-shadow:0 24px 70px rgba(0,0,0,.4)">
+<div style="width:1366px;height:1024px;border-radius:20px;overflow:hidden;background:#131311;color:#f2efe7;display:flex;flex-direction:column;font-family:'Instrument Sans',sans-serif">
+<div style="display:flex;align-items:center;gap:10px;height:30px;padding:0 20px;background:#0f2a20;color:#68c79b;font-size:13px;font-weight:600;flex:none"><span style="width:7px;height:7px;border-radius:99px;background:#68c79b"></span>Dry run — taps are rehearsed, nothing reaches Mindbody.</div>
+<div style="display:flex;align-items:center;gap:14px;height:76px;padding:0 20px;border-bottom:1px solid #2c2b26;flex:none">
+<h2 style="margin:0;font-size:23px;font-weight:700;letter-spacing:-.02em">Buy</h2>
+<div style="display:flex;align-items:center;gap:12px;height:60px;padding:0 8px 0 16px;border:1px solid #2c2b26;border-radius:12px;background:#1c1b18">
+<div style="display:flex;flex-direction:column;line-height:1.15"><span style="font-size:12px;color:#9b9284;letter-spacing:.04em;text-transform:uppercase">Sale for</span><span style="font-size:17px;font-weight:600">Alida Abbott</span></div>
+<span class="pad" style="padding:5px 11px;border-radius:99px;background:#0f2a20;color:#68c79b;font:600 15px/1 'IBM Plex Mono',monospace">$40.00 credit</span>
+<span style="display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:99px;color:#9b9284;font-size:19px">&#215;</span>
+</div>
+<span style="margin-left:auto"></span>
+<span style="display:inline-flex;align-items:center;height:60px;padding:0 20px;border:1px solid #2c2b26;border-radius:12px;background:#1c1b18;font-size:16px;font-weight:600">&#8592;&nbsp; Back</span>
+</div>
+<div style="display:grid;grid-template-columns:minmax(0,1fr) 388px;gap:14px;padding:16px 20px;flex:1;min-height:0">
+<div style="display:flex;flex-direction:column;gap:12px;padding:18px;border:1px solid #2c2b26;border-radius:16px;background:#1c1b18">
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+<div style="padding:14px 16px;border:1px solid #2c2b26;border-radius:12px;background:#131311"><span style="display:block;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#9b9284">Total</span><span class="pad" style="display:block;font:700 34px/1.15 'IBM Plex Mono',monospace">$277.02</span></div>
+<div style="padding:14px 16px;border:1px solid #2b6b4c;border-radius:12px;background:#0f2a20"><span style="display:block;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#68c79b">Due</span><span class="pad" style="display:block;font:700 34px/1.15 'IBM Plex Mono',monospace;color:#68c79b">$0.00</span></div>
+<div style="padding:14px 16px;border:1px solid #6b5321;border-radius:12px;background:#2e2410"><span style="display:block;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#e0b264">Change</span><span class="pad" style="display:block;font:700 34px/1.15 'IBM Plex Mono',monospace;color:#e0b264">$12.98</span></div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+<div style="position:relative;display:flex;flex-direction:column;justify-content:center;gap:3px;min-height:82px;padding:14px 16px;border:1.5px solid #2c2b26;border-radius:12px;background:#1c1b18;opacity:.55"><span style="font-size:18px;font-weight:700">Credit</span><span style="font-size:14px;color:#9b9284">In the payment</span><span class="pad" style="position:absolute;top:10px;right:12px;padding:2px 9px;border-radius:99px;background:#0f2a20;color:#68c79b;font:600 13px/1.4 'IBM Plex Mono',monospace">$40.00</span></div>
+<div style="display:flex;flex-direction:column;justify-content:center;gap:3px;min-height:82px;padding:14px 16px;border:1.5px solid #2c2b26;border-radius:12px;background:#1c1b18;opacity:.55"><span style="font-size:18px;font-weight:700">Card</span><span style="font-size:14px;color:#9b9284">Two parts is the maximum</span></div>
+<div style="display:flex;flex-direction:column;justify-content:center;gap:3px;min-height:82px;padding:14px 16px;border:1.5px solid #2c2b26;border-radius:12px;background:#1c1b18;opacity:.55"><span style="font-size:18px;font-weight:700">Cash</span><span style="font-size:14px;color:#9b9284">In the payment</span></div>
+</div>
+<div style="display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid #2c2b26;border-radius:12px;background:#131311"><span style="flex:1;font-size:16px;font-weight:600">Credit</span><span class="pad" style="display:inline-flex;align-items:center;justify-content:flex-end;min-width:6.5em;height:60px;padding:0 14px;border:1px solid #2c2b26;border-radius:10px;background:#1c1b18;font:700 20px/1 'IBM Plex Mono',monospace">$40.00</span><span style="display:inline-flex;align-items:center;justify-content:center;width:60px;height:60px;border:1px solid #2c2b26;border-radius:10px;color:#9b9284;font-size:22px">&#215;</span></div>
+<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid #2c2b26;border-radius:12px;background:#131311"><span style="flex:1;font-size:16px;font-weight:600">Cash<span style="display:block;font-weight:400;font-size:14px;color:#9b9284">covers $237.02</span></span><span class="pad" style="display:inline-flex;align-items:center;justify-content:flex-end;min-width:6.5em;height:60px;padding:0 14px;border:1px solid #2c2b26;border-radius:10px;background:#1c1b18;font:700 20px/1 'IBM Plex Mono',monospace">$250.00</span><span style="display:inline-flex;align-items:center;justify-content:center;width:60px;height:60px;border:1px solid #2c2b26;border-radius:10px;color:#9b9284;font-size:22px">&#215;</span></div>
+</div>
+<p style="margin:0;font-size:14px;color:#9b9284">Tap an amount to change it.</p>
+<div style="display:flex;align-items:center;gap:12px;margin-top:auto;padding-top:14px;border-top:1px solid #2c2b26"><p style="flex:1;margin:0;font-size:14px;color:#9b9284">Nothing to pay, on the studio.</p><span style="display:inline-flex;align-items:center;height:60px;padding:0 18px;border:1px solid #2c2b26;border-radius:12px;background:#1c1b18;font-size:15px;font-weight:600">Comp this sale</span></div>
+</div>
+<div style="display:flex;flex-direction:column;border:1px solid #2c2b26;border-radius:16px;background:#1c1b18;overflow:hidden">
+<div style="display:flex;align-items:baseline;justify-content:space-between;padding:14px 16px 10px;border-bottom:1px dashed #33322b"><span style="font-size:15px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9b9284">Ticket</span><span class="pad" style="font:500 14px/1 'IBM Plex Mono',monospace;color:#9b9284">9 items</span></div>
+<div style="flex:1;min-height:0;overflow:hidden;padding:8px;font-family:'IBM Plex Mono',monospace">
+<div style="display:flex;justify-content:space-between;padding:8px 10px;font-size:16px"><span style="font-family:'Instrument Sans',sans-serif;font-weight:500">10 Class Pack</span><span class="pad">230.00</span></div>
+<div style="display:flex;justify-content:space-between;padding:8px 10px;font-size:16px"><span style="font-family:'Instrument Sans',sans-serif;font-weight:500">Mat rental</span><span class="pad">2.72</span></div>
+<div style="display:flex;justify-content:space-between;padding:8px 10px;font-size:16px"><span style="font-family:'Instrument Sans',sans-serif;font-weight:500">Towel rental</span><span class="pad">2.72</span></div>
+<div style="padding:8px 10px"><div style="display:flex;justify-content:space-between;font-size:16px"><span style="font-family:'Instrument Sans',sans-serif;font-weight:500">Liquid IV</span><span class="pad">3.62</span></div><div class="pad" style="margin-top:2px;font-size:14px;color:#9b9284">2 @ 1.81</div></div>
+<div style="display:flex;justify-content:space-between;padding:8px 10px;font-size:16px"><span style="font-family:'Instrument Sans',sans-serif;font-weight:500">Parking token</span><span class="pad">2.72</span></div>
+<div style="display:flex;justify-content:space-between;padding:8px 10px;font-size:16px"><span style="font-family:'Instrument Sans',sans-serif;font-weight:500">Boxed water</span><span class="pad">3.62</span></div>
+<div style="padding:8px 10px"><div style="display:flex;justify-content:space-between;font-size:16px"><span style="font-family:'Instrument Sans',sans-serif;font-weight:500">Vita Coco 11.1oz</span><span class="pad">5.64</span></div><div class="pad" style="margin-top:2px;font-size:14px;color:#9b9284">2 @ 2.82</div></div>
+</div>
+<div style="padding:12px 16px 16px;border-top:1px dashed #33322b">
+<div style="display:flex;justify-content:space-between;font:400 15px/1.9 'IBM Plex Mono',monospace;color:#9b9284"><span>Subtotal</span><span class="pad">251.04</span></div>
+<div style="display:flex;justify-content:space-between;font:400 15px/1.9 'IBM Plex Mono',monospace;color:#9b9284"><span>Tax 10.35%</span><span class="pad">25.98</span></div>
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:8px;padding-top:10px;border-top:1px solid #2c2b26"><span style="font-size:17px;font-weight:700">Total</span><span class="pad" style="font:700 26px/1 'IBM Plex Mono',monospace">277.02</span></div>
+</div>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:12px;height:92px;padding:0 20px;border-top:1px solid #2c2b26;background:#191816;flex:none">
+<span style="display:inline-flex;align-items:center;height:64px;padding:0 20px;border:1px solid #2c2b26;border-radius:12px;background:#1c1b18;font-size:16px;font-weight:600">&#8592;&nbsp; Back to items</span>
+<span style="margin-left:auto"></span>
+<span style="display:inline-flex;align-items:center;gap:14px;height:68px;padding:0 30px;border-radius:14px;background:#5fd2a4;color:#0b1a14;font-size:20px;font-weight:700">Charge <span class="pad" style="font-family:'IBM Plex Mono',monospace;font-size:22px">$277.02</span></span>
+</div>
+</div>
+</div>
+</div>
+
+<div class="dv-opt" id="1c">
+<div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Slate — cool graphite, borderless cards on a tinted ground, amber accent, price-first tiles, statement-style cart.</div>
+<div style="padding:14px;background:#0b0d10;border-radius:34px;box-shadow:0 24px 70px rgba(0,0,0,.4)">
+<div style="width:1366px;height:1024px;border-radius:20px;overflow:hidden;background:#14171c;color:#eef1f5;display:flex;flex-direction:column;font-family:'Archivo',sans-serif">
+<div style="display:flex;align-items:center;gap:16px;height:84px;padding:0 24px;flex:none">
+<h2 style="margin:0;font-size:26px;font-weight:700;letter-spacing:-.03em">Buy</h2>
+<div style="display:flex;align-items:center;gap:12px;height:56px;padding:0 18px;border-radius:99px;background:#1d2229">
+<span style="font-size:17px;font-weight:600">Alida Abbott</span>
+<span class="pad" style="padding:4px 10px;border-radius:99px;background:#2a3a2f;color:#7ddba6;font-size:14px;font-weight:700">$40.00</span>
+</div>
+<span style="display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-radius:99px;background:#2a2415;color:#e8b45c;font-size:13px;font-weight:600">DRY RUN</span>
+<span style="margin-left:auto"></span>
+<span style="display:inline-flex;align-items:center;height:56px;padding:0 22px;border-radius:99px;background:#1d2229;font-size:16px;font-weight:600">Back</span>
+</div>
+<div style="display:grid;grid-template-columns:168px minmax(0,1fr) 400px;gap:16px;padding:0 24px 16px;flex:1;min-height:0">
+<div style="display:flex;flex-direction:column;gap:8px">
+<span style="display:flex;align-items:center;height:60px;padding:0 18px;border-radius:14px;background:#e8b45c;color:#191400;font-size:16px;font-weight:700">Favorites</span>
+<span style="display:flex;align-items:center;height:60px;padding:0 18px;border-radius:14px;background:#1d2229;font-size:16px;font-weight:600">Towel and Mat</span>
+<span style="display:flex;align-items:center;height:60px;padding:0 18px;border-radius:14px;background:#1d2229;font-size:16px;font-weight:600">Food/Drink</span>
+<span style="display:flex;align-items:center;height:60px;padding:0 18px;border-radius:14px;background:#1d2229;font-size:16px;font-weight:600">Passes</span>
+<span style="display:flex;align-items:center;height:60px;padding:0 18px;border-radius:14px;background:#1d2229;font-size:16px;font-weight:600">Accessories</span>
+<span style="display:flex;align-items:center;height:60px;padding:0 18px;border-radius:14px;background:#1d2229;font-size:16px;font-weight:600">Clothing</span>
+<span style="display:flex;align-items:center;height:60px;padding:0 18px;border-radius:14px;background:#1d2229;color:#98a2b0;font-size:16px;font-weight:600">more</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);grid-auto-rows:min-content;gap:12px;align-content:start;overflow:hidden">
+<div style="display:flex;flex-direction:column;justify-content:space-between;min-height:110px;padding:16px;border-radius:16px;background:#1d2229"><span class="pad" style="font-size:28px;font-weight:700;letter-spacing:-.03em">$2.72</span><span style="font-size:16px;color:#aab3bf">Mat rental<span style="margin-left:8px;color:#e8b45c;font-weight:700">&#215;1</span></span></div>
+<div style="display:flex;flex-direction:column;justify-content:space-between;min-height:110px;padding:16px;border-radius:16px;background:#1d2229"><span class="pad" style="font-size:28px;font-weight:700;letter-spacing:-.03em">$2.72</span><span style="font-size:16px;color:#aab3bf">Towel rental<span style="margin-left:8px;color:#e8b45c;font-weight:700">&#215;1</span></span></div>
+<div style="display:flex;flex-direction:column;justify-content:space-between;min-height:110px;padding:16px;border-radius:16px;background:#1d2229"><span class="pad" style="font-size:28px;font-weight:700;letter-spacing:-.03em">$2.72</span><span style="font-size:16px;color:#aab3bf">Parking token<span style="margin-left:8px;color:#e8b45c;font-weight:700">&#215;1</span></span></div>
+<div style="display:flex;flex-direction:column;justify-content:space-between;min-height:110px;padding:16px;border-radius:16px;background:#1d2229"><span class="pad" style="font-size:28px;font-weight:700;letter-spacing:-.03em">$1.81</span><span style="font-size:16px;color:#aab3bf">Liquid IV<span style="margin-left:8px;color:#e8b45c;font-weight:700">&#215;2</span></span></div>
+<div style="display:flex;flex-direction:column;justify-content:space-between;min-height:110px;padding:16px;border-radius:16px;background:#1d2229"><span class="pad" style="font-size:28px;font-weight:700;letter-spacing:-.03em">$2.82</span><span style="font-size:16px;color:#aab3bf">Vita Coco 11.1oz<span style="margin-left:8px;color:#e8b45c;font-weight:700">&#215;2</span></span></div>
+<div style="display:flex;flex-direction:column;justify-content:space-between;min-height:110px;padding:16px;border-radius:16px;background:#1d2229"><span class="pad" style="font-size:28px;font-weight:700;letter-spacing:-.03em">$3.62</span><span style="font-size:16px;color:#aab3bf">Boxed water<span style="margin-left:8px;color:#e8b45c;font-weight:700">&#215;1</span></span></div>
+<div style="display:flex;flex-direction:column;justify-content:space-between;min-height:110px;padding:16px;border-radius:16px;background:#1d2229"><span class="pad" style="font-size:28px;font-weight:700;letter-spacing:-.03em">$28.00</span><span style="font-size:16px;color:#aab3bf">Drop In</span></div>
+<div style="display:flex;flex-direction:column;justify-content:space-between;min-height:110px;padding:16px;border-radius:16px;background:#1d2229"><span class="pad" style="font-size:28px;font-weight:700;letter-spacing:-.03em">$230.00</span><span style="font-size:16px;color:#aab3bf">10 Class Pack<span style="margin-left:8px;color:#e8b45c;font-weight:700">&#215;1</span></span></div>
+<div style="display:flex;flex-direction:column;justify-content:space-between;min-height:110px;padding:16px;border-radius:16px;background:#1d2229"><span class="pad" style="font-size:28px;font-weight:700;letter-spacing:-.03em">$49.00</span><span style="font-size:16px;color:#aab3bf">New Student 2 Week Unlimited</span></div>
+<div style="display:flex;flex-direction:column;justify-content:space-between;min-height:110px;padding:16px;border-radius:16px;background:#1a1f26;outline:1.5px dashed #39424f;outline-offset:-1.5px"><span class="pad" style="font-size:28px;font-weight:700;letter-spacing:-.03em">$9.06</span><span style="font-size:16px;color:#aab3bf">Mat, towel and water &#183; bundle</span></div>
+<div style="display:flex;flex-direction:column;justify-content:space-between;min-height:110px;padding:16px;border-radius:16px;background:#1d2229"><span class="pad" style="font-size:28px;font-weight:700;letter-spacing:-.03em">$68.00</span><span style="font-size:16px;color:#aab3bf">Studio mat</span></div>
+<div style="display:flex;flex-direction:column;justify-content:space-between;min-height:110px;padding:16px;border-radius:16px;background:#1d2229"><span class="pad" style="font-size:28px;font-weight:700;letter-spacing:-.03em">$32.00</span><span style="font-size:16px;color:#aab3bf">Studio tee</span></div>
+</div>
+<div style="display:flex;flex-direction:column;border-radius:20px;background:#1d2229;overflow:hidden">
+<div style="padding:18px 20px 10px"><span style="font-size:14px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#8f99a6">Cart &#183; 9 items</span></div>
+<div style="flex:1;min-height:0;overflow:hidden;padding:0 12px">
+<div style="display:flex;justify-content:space-between;align-items:baseline;padding:12px 8px;border-bottom:1px solid #262c34"><span style="font-size:17px;font-weight:500">10 Class Pack</span><span class="pad" style="font-size:19px;font-weight:600">230.00</span></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;padding:12px 8px;border-bottom:1px solid #262c34"><span style="font-size:17px;font-weight:500">Mat rental</span><span class="pad" style="font-size:19px;font-weight:600">2.72</span></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;padding:12px 8px;border-bottom:1px solid #262c34"><span style="font-size:17px;font-weight:500">Towel rental</span><span class="pad" style="font-size:19px;font-weight:600">2.72</span></div>
+<div style="padding:12px 8px;border-radius:12px;background:#252d37"><div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:17px;font-weight:600">Liquid IV<span style="margin-left:8px;font-weight:400;font-size:15px;color:#98a2b0">2 &#215; 1.81</span></span><span class="pad" style="font-size:19px;font-weight:700">3.62</span></div>
+<div style="display:flex;align-items:center;gap:8px;margin-top:10px"><span style="display:inline-flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:12px;background:#141a21;font-size:24px">&#8722;</span><span class="pad" style="min-width:2.4em;text-align:center;font-size:20px;font-weight:700">2</span><span style="display:inline-flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:12px;background:#141a21;font-size:24px">+</span><span style="margin-left:auto;display:inline-flex;align-items:center;height:64px;padding:0 16px;border-radius:12px;background:#3a1d1d;color:#ff9a9a;font-size:15px;font-weight:600">Remove</span></div></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;padding:12px 8px;border-bottom:1px solid #262c34"><span style="font-size:17px;font-weight:500">Parking token</span><span class="pad" style="font-size:19px;font-weight:600">2.72</span></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;padding:12px 8px;border-bottom:1px solid #262c34"><span style="font-size:17px;font-weight:500">Boxed water</span><span class="pad" style="font-size:19px;font-weight:600">3.62</span></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;padding:12px 8px"><span style="font-size:17px;font-weight:500">Vita Coco 11.1oz<span style="margin-left:8px;font-weight:400;font-size:15px;color:#98a2b0">2 &#215; 2.82</span></span><span class="pad" style="font-size:19px;font-weight:600">5.64</span></div>
+</div>
+<div style="margin:12px;padding:16px 18px;border-radius:16px;background:#141a21">
+<div style="display:flex;justify-content:space-between;font-size:15px;color:#98a2b0;line-height:1.9"><span>Subtotal</span><span class="pad">251.04</span></div>
+<div style="display:flex;justify-content:space-between;font-size:15px;color:#98a2b0;line-height:1.9"><span>Tax 10.35%</span><span class="pad">25.98</span></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:10px"><span style="font-size:16px;font-weight:600;color:#98a2b0">Total</span><span class="pad" style="font-size:34px;font-weight:700;letter-spacing:-.03em">$277.02</span></div>
+</div>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:12px;height:96px;padding:0 24px;background:#101317;flex:none">
+<span style="display:inline-flex;align-items:center;height:64px;padding:0 22px;border-radius:99px;background:#1d2229;font-size:16px;font-weight:600">Empty cart</span>
+<span style="margin-left:auto"></span>
+<span style="display:inline-flex;align-items:center;gap:16px;height:72px;padding:0 34px;border-radius:99px;background:#e8b45c;color:#191400;font-size:21px;font-weight:700">Pay <span style="font-size:15px;font-weight:600;opacity:.7">9 items</span> <span class="pad" style="font-size:24px">$277.02</span></span>
+</div>
+</div>
+</div>
+</div>
+
+<div class="dv-opt" id="1d">
+<div class="dv-olabel"><a class="dv-oid" href="#1d">1d</a>Chalk — light, no hairlines, oversized numerals, keypad always on the payment surface instead of a modal.</div>
+<div style="padding:14px;background:#d8d5cd;border-radius:34px;box-shadow:0 24px 70px rgba(0,0,0,.2)">
+<div style="width:1366px;height:1024px;border-radius:20px;overflow:hidden;background:#eceae4;color:#12130f;display:flex;flex-direction:column;font-family:'Space Grotesk',sans-serif">
+<div style="display:flex;align-items:center;gap:16px;height:88px;padding:0 26px;flex:none">
+<h2 style="margin:0;font-size:28px;font-weight:700;letter-spacing:-.03em">Payment</h2>
+<span style="display:inline-flex;align-items:center;height:52px;padding:0 18px;border-radius:14px;background:#fff;font-size:17px;font-weight:500">Alida Abbott<span class="pad" style="margin-left:10px;color:#3f6b3f;font-weight:700">$40.00</span></span>
+<span style="margin-left:auto"></span>
+<span style="display:inline-flex;align-items:center;height:52px;padding:0 16px;border-radius:14px;background:#f5efdc;color:#7a5a10;font-size:14px;font-weight:700;letter-spacing:.06em">DRY RUN</span>
+<span style="display:inline-flex;align-items:center;height:52px;padding:0 22px;border-radius:14px;background:#fff;font-size:16px;font-weight:500">Back to items</span>
+</div>
+<div style="display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:18px;padding:0 26px 18px;flex:1;min-height:0">
+<div style="display:flex;flex-direction:column;gap:14px;min-height:0">
+<div style="display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:14px">
+<div style="padding:18px 20px;border-radius:18px;background:#12130f;color:#f4f2ec"><span style="display:block;font-size:14px;letter-spacing:.08em;text-transform:uppercase;opacity:.6">Due</span><span class="pad" style="display:block;font-size:56px;font-weight:700;letter-spacing:-.04em;line-height:1.05">$0.00</span></div>
+<div style="padding:18px 20px;border-radius:18px;background:#fff"><span style="display:block;font-size:14px;letter-spacing:.08em;text-transform:uppercase;color:#6c6a60">Total</span><span class="pad" style="display:block;font-size:32px;font-weight:700;letter-spacing:-.03em;line-height:1.6">$277.02</span></div>
+<div style="padding:18px 20px;border-radius:18px;background:#f5efdc"><span style="display:block;font-size:14px;letter-spacing:.08em;text-transform:uppercase;color:#7a5a10">Change</span><span class="pad" style="display:block;font-size:32px;font-weight:700;letter-spacing:-.03em;line-height:1.6;color:#7a5a10">$12.98</span></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;flex:1;min-height:0">
+<div style="display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;align-items:center;gap:12px;padding:14px 18px;border-radius:16px;background:#fff"><span style="flex:1;font-size:18px;font-weight:600">Credit</span><span class="pad" style="font-size:22px;font-weight:700">$40.00</span><span style="display:inline-flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:14px;background:#eceae4;color:#6c6a60;font-size:20px">&#215;</span></div>
+<div style="display:flex;align-items:center;gap:12px;padding:14px 18px;border-radius:16px;background:#fff;box-shadow:inset 0 0 0 2.5px #12130f"><span style="flex:1;font-size:18px;font-weight:600">Cash<span style="display:block;font-size:14px;font-weight:400;color:#6c6a60">covers $237.02</span></span><span class="pad" style="font-size:22px;font-weight:700">$250.00</span><span style="display:inline-flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:14px;background:#eceae4;color:#6c6a60;font-size:20px">&#215;</span></div>
+<div style="display:flex;gap:10px">
+<span style="flex:1;display:inline-flex;align-items:center;justify-content:center;height:64px;border-radius:16px;background:#dedbd3;color:#6c6a60;font-size:16px;font-weight:600">+ Card</span>
+<span style="flex:1;display:inline-flex;align-items:center;justify-content:center;height:64px;border-radius:16px;background:#dedbd3;color:#6c6a60;font-size:16px;font-weight:600">+ Cash</span>
+</div>
+<div style="margin-top:auto;padding:16px 18px;border-radius:16px;background:#fff"><div style="display:flex;align-items:center;gap:12px"><span style="flex:1;font-size:15px;color:#6c6a60">Nothing to pay, on the studio.</span><span style="display:inline-flex;align-items:center;height:56px;padding:0 18px;border-radius:14px;background:#eceae4;font-size:15px;font-weight:600">Comp</span></div></div>
+</div>
+<div style="display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:18px;background:#fff">
+<div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:15px;color:#6c6a60">Cash entered</span><span class="pad" style="font-size:30px;font-weight:700;letter-spacing:-.03em">$250.00</span></div>
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+<span style="display:inline-flex;align-items:center;justify-content:center;height:52px;border-radius:12px;background:#eceae4;font-size:15px;font-weight:600">Exact</span>
+<span style="display:inline-flex;align-items:center;justify-content:center;height:52px;border-radius:12px;background:#eceae4;font-size:15px;font-weight:600">$5</span>
+<span style="display:inline-flex;align-items:center;justify-content:center;height:52px;border-radius:12px;background:#eceae4;font-size:15px;font-weight:600">$20</span>
+<span style="display:inline-flex;align-items:center;justify-content:center;height:52px;border-radius:12px;background:#eceae4;font-size:15px;font-weight:600">$100</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;flex:1">
+<span class="pad" style="display:inline-flex;align-items:center;justify-content:center;border-radius:14px;background:#eceae4;font-size:26px;font-weight:600">1</span>
+<span class="pad" style="display:inline-flex;align-items:center;justify-content:center;border-radius:14px;background:#eceae4;font-size:26px;font-weight:600">2</span>
+<span class="pad" style="display:inline-flex;align-items:center;justify-content:center;border-radius:14px;background:#eceae4;font-size:26px;font-weight:600">3</span>
+<span class="pad" style="display:inline-flex;align-items:center;justify-content:center;border-radius:14px;background:#eceae4;font-size:26px;font-weight:600">4</span>
+<span class="pad" style="display:inline-flex;align-items:center;justify-content:center;border-radius:14px;background:#eceae4;font-size:26px;font-weight:600">5</span>
+<span class="pad" style="display:inline-flex;align-items:center;justify-content:center;border-radius:14px;background:#eceae4;font-size:26px;font-weight:600">6</span>
+<span class="pad" style="display:inline-flex;align-items:center;justify-content:center;border-radius:14px;background:#eceae4;font-size:26px;font-weight:600">7</span>
+<span class="pad" style="display:inline-flex;align-items:center;justify-content:center;border-radius:14px;background:#eceae4;font-size:26px;font-weight:600">8</span>
+<span class="pad" style="display:inline-flex;align-items:center;justify-content:center;border-radius:14px;background:#eceae4;font-size:26px;font-weight:600">9</span>
+<span class="pad" style="display:inline-flex;align-items:center;justify-content:center;border-radius:14px;background:#eceae4;font-size:26px;font-weight:600">00</span>
+<span class="pad" style="display:inline-flex;align-items:center;justify-content:center;border-radius:14px;background:#eceae4;font-size:26px;font-weight:600">0</span>
+<span class="pad" style="display:inline-flex;align-items:center;justify-content:center;border-radius:14px;background:#eceae4;font-size:22px;font-weight:600">&#9003;</span>
+</div>
+</div>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;border-radius:20px;background:#fff;overflow:hidden">
+<div style="padding:20px 22px 8px"><span style="font-size:14px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#6c6a60">Receipt &#183; 9 items</span></div>
+<div style="flex:1;min-height:0;overflow:hidden;padding:0 22px">
+<div style="display:flex;justify-content:space-between;align-items:baseline;padding:11px 0"><span style="font-size:17px">10 Class Pack</span><span class="pad" style="font-size:19px;font-weight:600">230.00</span></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;padding:11px 0"><span style="font-size:17px">Mat rental</span><span class="pad" style="font-size:19px;font-weight:600">2.72</span></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;padding:11px 0"><span style="font-size:17px">Towel rental</span><span class="pad" style="font-size:19px;font-weight:600">2.72</span></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;padding:11px 0"><span style="font-size:17px">Liquid IV<span style="margin-left:8px;font-size:15px;color:#6c6a60">2 &#215; 1.81</span></span><span class="pad" style="font-size:19px;font-weight:600">3.62</span></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;padding:11px 0"><span style="font-size:17px">Parking token</span><span class="pad" style="font-size:19px;font-weight:600">2.72</span></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;padding:11px 0"><span style="font-size:17px">Boxed water</span><span class="pad" style="font-size:19px;font-weight:600">3.62</span></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;padding:11px 0"><span style="font-size:17px">Vita Coco 11.1oz<span style="margin-left:8px;font-size:15px;color:#6c6a60">2 &#215; 2.82</span></span><span class="pad" style="font-size:19px;font-weight:600">5.64</span></div>
+</div>
+<div style="padding:18px 22px;background:#12130f;color:#f4f2ec">
+<div style="display:flex;justify-content:space-between;font-size:15px;opacity:.65;line-height:1.9"><span>Subtotal</span><span class="pad">251.04</span></div>
+<div style="display:flex;justify-content:space-between;font-size:15px;opacity:.65;line-height:1.9"><span>Tax 10.35%</span><span class="pad">25.98</span></div>
+<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><span style="font-size:17px;font-weight:600">Total</span><span class="pad" style="font-size:36px;font-weight:700;letter-spacing:-.04em">$277.02</span></div>
+</div>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:14px;height:100px;padding:0 26px;flex:none">
+<span style="font-size:15px;color:#6c6a60">Dry run — nothing will be charged.</span>
+<span style="margin-left:auto"></span>
+<span style="display:inline-flex;align-items:center;gap:16px;height:76px;padding:0 38px;border-radius:20px;background:#12130f;color:#f4f2ec;font-size:22px;font-weight:700">Charge <span class="pad" style="font-size:26px">$277.02</span></span>
+</div>
+</div>
+</div>
+</div>
+
+</div>
+<p class="dv-next">Try next: "build out <a class="dv-oid" href="#1c">1c</a> as the live one" · "put <a class="dv-oid" href="#1d">1d</a>'s inline keypad into <a class="dv-oid" href="#1a">1a</a>" · "one direction, tighter grid, 4 columns"</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;dryRun&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Sale&quot;},&quot;taxRate&quot;:{&quot;editor&quot;:&quot;float&quot;,&quot;default&quot;:10.35,&quot;min&quot;:0,&quot;max&quot;:20,&quot;step&quot;:0.01,&quot;unit&quot;:&quot;%&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Sale&quot;},&quot;clientCredit&quot;:{&quot;editor&quot;:&quot;float&quot;,&quot;default&quot;:40,&quot;min&quot;:0,&quot;max&quot;:500,&quot;step&quot;:5,&quot;unit&quot;:&quot;$&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Sale&quot;}}">
+class Component extends DCLogic {
+  constructor(p){
+    super(p);
+    this.catalog = [
+      {id:'mat', name:'Mat rental', price:2.72, cats:['Favorites','Towel and Mat']},
+      {id:'towel', name:'Towel rental', price:2.72, cats:['Favorites','Towel and Mat']},
+      {id:'park', name:'Parking token', price:2.72, cats:['Favorites','Accessories']},
+      {id:'liq', name:'Liquid IV', price:1.81, cats:['Favorites','Food/Drink']},
+      {id:'coco', name:'Vita Coco 11.1oz', price:2.82, cats:['Favorites','Food/Drink']},
+      {id:'water', name:'Boxed water', price:3.62, cats:['Favorites','Food/Drink']},
+      {id:'drop', name:'Drop In', price:28.00, cats:['Favorites','Passes']},
+      {id:'pack10', name:'10 Class Pack', price:230.00, cats:['Favorites','Passes']},
+      {id:'new2', name:'New Student 2 Week Unlimited', price:49.00, cats:['Favorites','Passes']},
+      {id:'bundle', name:'Mat, towel and water', price:9.06, cats:['Favorites','Towel and Mat']},
+      {id:'kom', name:'Kombucha', price:4.53, cats:['Food/Drink']},
+      {id:'bar', name:'Protein bar', price:3.17, cats:['Food/Drink']},
+      {id:'smat', name:'Studio mat', price:68.00, cats:['Towel and Mat','Accessories']},
+      {id:'strap', name:'Mat strap', price:14.00, cats:['Towel and Mat','Accessories']},
+      {id:'block', name:'Cork block', price:18.00, cats:['Accessories']},
+      {id:'stowel', name:'Studio towel', price:24.00, cats:['Towel and Mat']},
+      {id:'pack5', name:'5 Class Pack', price:125.00, cats:['Passes']},
+      {id:'unlim', name:'Monthly Unlimited', price:165.00, cats:['Passes']},
+      {id:'tee', name:'Studio tee', price:32.00, cats:['Clothing']},
+      {id:'tank', name:'Studio tank', price:34.00, cats:['Clothing']},
+      {id:'legg', name:'Leggings', price:88.00, cats:['Clothing']}
+    ];
+    this.state = {
+      mode:'shelf', cat:'Favorites', sel:'liq', tenders:[], pad:null,
+      cart:[
+        {id:'pack10', qty:1},{id:'mat', qty:1},{id:'towel', qty:1},
+        {id:'liq', qty:2},{id:'park', qty:1},{id:'water', qty:1},{id:'coco', qty:2}
+      ]
+    };
+  }
+  item(id){ return this.catalog.find(function(c){ return c.id===id; }); }
+  money(n){ return '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  totals(){
+    var self = this;
+    var sub = this.state.cart.reduce(function(a,l){ return a + self.item(l.id).price * l.qty; }, 0);
+    sub = Math.round(sub*100)/100;
+    var rate = this.props.taxRate != null ? this.props.taxRate : 10.35;
+    var tax = Math.round(sub*rate)/100;
+    var total = Math.round((sub+tax)*100)/100;
+    var paid = this.state.tenders.reduce(function(a,t){ return a+t.amount; }, 0);
+    return {sub:sub, tax:tax, total:total, paid:paid,
+      due:Math.max(0, Math.round((total-paid)*100)/100),
+      change:Math.max(0, Math.round((paid-total)*100)/100)};
+  }
+  add(id){
+    this.setState(function(s){
+      var cart = s.cart.slice();
+      var i = cart.findIndex(function(l){ return l.id===id; });
+      if (i>=0) cart[i] = {id:id, qty:cart[i].qty+1}; else cart.push({id:id, qty:1});
+      return {cart:cart, sel:id};
+    });
+  }
+  bump(id, d){
+    this.setState(function(s){
+      var cart = s.cart.map(function(l){ return l.id===id ? {id:id, qty:l.qty+d} : l; })
+        .filter(function(l){ return l.qty>0; });
+      return {cart:cart};
+    });
+  }
+  drop(id){
+    this.setState(function(s){ return {cart:s.cart.filter(function(l){ return l.id!==id; }), sel:null}; });
+  }
+  addTender(src, amount){
+    if (amount<=0) return;
+    this.setState(function(s){ return {tenders:s.tenders.concat([{src:src, amount:amount}]), pad:null}; });
+  }
+  renderVals(){
+    var self = this, s = this.state, t = this.totals();
+    var credit = this.props.clientCredit != null ? this.props.clientCredit : 40;
+    var creditLeft = credit - s.tenders.filter(function(x){ return x.src==='Credit'; })
+      .reduce(function(a,x){ return a+x.amount; }, 0);
+    var count = s.cart.reduce(function(a,l){ return a+l.qty; }, 0);
+
+    var cats = ['Favorites','Towel and Mat','Food/Drink','Passes','Accessories','Clothing','more'].map(function(c){
+      var on = c===s.cat;
+      return {label:c, on:on,
+        style:{display:'flex', alignItems:'center', height:62, padding:'0 14px', borderStyle:'solid', borderWidth:1, borderRadius:12, textAlign:'left', cursor:'pointer', flex:'none', font:"600 15px/1.2 'Instrument Sans',sans-serif",
+          background: on ? '#0f5c55' : '#fffdf8', color: on ? '#ffffff' : (c==='more' ? '#7a7163' : '#1a1815'), borderColor: on ? '#0f5c55' : '#e4ded2'},
+        pick:function(){ self.setState({cat:c}); }};
+    });
+
+    var items = this.catalog.filter(function(c){ return c.cats.indexOf(s.cat)>=0; }).map(function(c){
+      var line = s.cart.find(function(l){ return l.id===c.id; });
+      return {name:c.name, priceFmt:self.money(c.price), inCart:!!line,
+        countFmt: line ? ('\u00d7' + line.qty) : '',
+        add:function(){ self.add(c.id); }};
+    });
+
+    var lines = s.cart.map(function(l){
+      var it = self.item(l.id), sel = s.sel===l.id;
+      return {name:it.name, qty:l.qty, multi:l.qty>1, sel:sel,
+        amt:(Math.round(it.price*l.qty*100)/100).toFixed(2),
+        note:l.qty + ' @ ' + it.price.toFixed(2),
+        style:{padding:'8px 10px', borderStyle:'solid', borderWidth:1, borderRadius:10, cursor:'pointer', marginBottom:2,
+          borderColor: sel ? '#0f5c55' : 'transparent', background: sel ? '#f2efe7' : 'transparent'},
+        pick:function(){ self.setState({sel: sel ? null : l.id}); },
+        inc:function(e){ e.stopPropagation(); self.bump(l.id, 1); },
+        dec:function(e){ e.stopPropagation(); self.bump(l.id, -1); },
+        remove:function(e){ e.stopPropagation(); self.drop(l.id); }};
+    });
+
+    var used = function(src){ return s.tenders.some(function(x){ return x.src===src; }); };
+    var tileDefs = [];
+    if (creditLeft > 0.001 || used('Credit')) tileDefs.push({name:'Credit', badge:self.money(credit), reason: used('Credit') ? 'In the payment' : 'Applies first'});
+    tileDefs.push({name:'Card', reason: used('Card') ? 'In the payment' : (t.due<=0 ? 'Nothing left to cover' : '')});
+    tileDefs.push({name:'Cash', reason: used('Cash') ? 'In the payment' : (t.due<=0 ? 'Nothing left to cover' : '')});
+    var tiles = tileDefs.map(function(d){
+      var off = used(d.name) || t.due<=0;
+      return {name:d.name, reason:d.reason||'', hasReason:!!d.reason, hasBadge:!!d.badge, badge:d.badge||'',
+        style:{position:'relative', display:'flex', flexDirection:'column', justifyContent:'center', gap:3, minHeight:82, padding:'14px 16px',
+          border:'1.5px solid ' + (off ? '#ded7ca' : '#0f5c55'), borderRadius:12, background:'#fffdf8', color:'#1a1815', textAlign:'left',
+          cursor: off ? 'default' : 'pointer', opacity: off ? 0.5 : 1},
+        tap:function(){
+          if (off) return;
+          if (d.name==='Credit') self.addTender('Credit', Math.min(creditLeft, t.due));
+          else if (d.name==='Card') self.addTender('Card', t.due);
+          else self.setState({pad:{src:'Cash', cents:String(Math.round(t.due*100))}});
+        }};
+    });
+
+    var tenders = s.tenders.map(function(x, i){
+      return {name:x.src, amt:self.money(x.amount),
+        sub: x.amount > t.total - (t.paid - x.amount) ? 'covers ' + self.money(Math.min(x.amount, Math.max(0, t.total - (t.paid - x.amount)))) : '',
+        edit:function(){ self.setState({pad:{src:x.src, cents:String(Math.round(x.amount*100)), replace:i}}); },
+        remove:function(){ self.setState(function(st){ var n = st.tenders.slice(); n.splice(i,1); return {tenders:n}; }); }};
+    });
+
+    var pad = s.pad;
+    var padVal = pad ? Number(pad.cents||'0')/100 : 0;
+    var padBase = pad && pad.replace != null ? t.due + s.tenders[pad.replace].amount : t.due;
+    var padKeys = ['1','2','3','4','5','6','7','8','9','00','0','\u232b'].map(function(k){
+      return {label:k, tap:function(){
+        self.setState(function(st){
+          var c = st.pad.cents || '';
+          if (k==='\u232b') c = c.slice(0,-1); else c = (c + k).replace(/^0+(?=\d)/,'').slice(0,7);
+          return {pad:Object.assign({}, st.pad, {cents:c})};
+        });
+      }};
+    });
+    var padChips = [['Exact', padBase],['$5',5],['$10',10],['$20',20]].map(function(c){
+      return {label:c[0], tap:function(){
+        self.setState(function(st){
+          var cur = c[0]==='Exact' ? padBase : Number(st.pad.cents||'0')/100 + c[1];
+          return {pad:Object.assign({}, st.pad, {cents:String(Math.round(cur*100))})};
+        });
+      }};
+    });
+
+    return {
+      dryRun: this.props.dryRun !== false,
+      shelfMode: s.mode==='shelf', payMode: s.mode==='pay', doneMode: s.mode==='done', notDone: s.mode!=='done',
+      creditFmt: this.money(credit), taxLabel: (this.props.taxRate != null ? this.props.taxRate : 10.35) + '%',
+      countLabel: count + (count===1 ? ' item' : ' items'),
+      subtotalFmt: t.sub.toFixed(2), taxFmt: t.tax.toFixed(2), totalFmt: this.money(t.total),
+      dueFmt: this.money(t.due), changeFmt: this.money(t.change),
+      dueStyle: Object.assign({padding:'14px 16px', border:'1px solid #e4ded2', borderRadius:12, background:'#f6f3ec', color:'#1a1815'},
+        t.due<=0 && s.tenders.length ? {borderColor:'#0f5c55', background:'#e7f1ea', color:'#0d6b47'} : {}),
+      changeStyle: Object.assign({padding:'14px 16px', border:'1px solid #e4ded2', borderRadius:12, background:'#f6f3ec', color:'#1a1815'},
+        t.change>0 ? {borderColor:'#c69a4a', background:'#faf1de', color:'#7a5a10'} : {}),
+      cats:cats, items:items, lines:lines, tiles:tiles, tenders:tenders,
+      tenderHint: s.tenders.length ? 'Tap an amount to change it.' : 'Choose how they are paying.',
+      doneLine: 'Charged ' + this.money(t.total) + ' \u00b7 ' + count + ' items',
+      secondaryLabel: s.mode==='shelf' ? 'Empty cart' : '\u2190  Back to items',
+      secondary: function(){
+        if (s.mode==='shelf') self.setState({cart:[], sel:null});
+        else self.setState({mode:'shelf', tenders:[], pad:null});
+      },
+      primaryLabel: s.mode==='shelf' ? 'Pay' : (t.due>0 ? 'Due' : 'Charge'),
+      primaryAmt: s.mode==='shelf' ? this.money(t.total) : (t.due>0 ? this.money(t.due) : this.money(t.total)),
+      primaryStyle: Object.assign({display:'inline-flex', alignItems:'center', gap:14, height:68, padding:'0 30px', border:'none', borderRadius:14,
+        background:'#0f5c55', color:'#ffffff', font:"700 20px/1 'Instrument Sans',sans-serif", cursor:'pointer'},
+        (s.mode==='shelf' && !s.cart.length) || (s.mode==='pay' && t.due>0) ? {background:'#d5cfc2', color:'#7a7163', cursor:'default'} : {}),
+      primary: function(){
+        if (s.mode==='shelf') { if (s.cart.length) self.setState({mode:'pay', sel:null}); }
+        else if (s.mode==='pay' && t.due<=0) self.setState({mode:'done'});
+      },
+      reset: function(){ self.setState({mode:'shelf', tenders:[], cart:[{id:'drop',qty:1}], sel:null}); },
+      padOpen: !!pad,
+      padTitle: pad ? pad.src : '',
+      padDue: this.money(padBase),
+      padEntered: this.money(padVal),
+      padChange: padVal > padBase ? 'Change due ' + this.money(Math.round((padVal-padBase)*100)/100) : 'No change due',
+      padKeys: padKeys, padChips: padChips,
+      padCancel: function(){ self.setState({pad:null}); },
+      padDone: function(){
+        var p = s.pad;
+        self.setState(function(st){
+          var n = st.tenders.slice();
+          var entry = {src:p.src, amount:Number(p.cents||'0')/100};
+          if (p.replace != null) n[p.replace] = entry; else n.push(entry);
+          return {tenders:n, pad:null};
+        });
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>
