@@ -3710,6 +3710,108 @@ fixture) at 1366x1024 in both palettes, screenshots under
 - [ ] Not verified live: `/client/clients?searchText=&offset=` paging
       order is assumed stable between calls, and `TotalResults` present;
       a missing total falls back to the short-page rule.
+
+### Review (separate reviewer), T42
+
+Adversarial pass on `b150cd3`, `e54dfec`, `eb375c0` with its own
+Playwright harness (`scratchpad/t42-review.js`, mocked API, screenshots
+under `scratchpad/t42-review/`). Four real bugs, all in `page.tsx`, each
+fixed in place; the rest of the hunt list came back clean.
+
+**Real, fixed:**
+
+- **Enter on a control inside a walk-in row booked the client.** The
+  row's `onKeyDown` took every keydown that bubbled up through it, so
+  Enter on the focused profile icon (and on the pass chevron) went to
+  `tapWalkIn`, while the row's `preventDefault` swallowed the button's
+  own click: one `/api/book` POST, no profile. Sequence: search "wang",
+  focus a tappable row's profile icon, Enter: `book calls 1, profile
+  open false`. Now the row handler ignores keys whose target is not the
+  row itself; same guard on `attachRowItem`. After: `book calls 0,
+  profile open true`, and the chevron opens its picker.
+- **A requery mid-page pinned `searchMore` on.** `fetchSearchPage`
+  aborts the page in flight, whose `finally` returns early on the abort
+  and never clears the next-page flag; a first page did not clear it
+  either. Sequence: "wang", scroll (page two in flight), Enter on "wan":
+  the new list showed "Loading more..." for good and scrolling never
+  fetched page two (`loadMoreResults` refused on `searchMore`). Seen in
+  both modals. A first page now clears the flag. After: "wan" pages
+  normally (`offset=12` fetched on scroll).
+- **A failing page retried itself in a loop.** On a next-page error the
+  sentinel stayed mounted and in view, the observer effect re-armed on
+  the flag change, and the new observer fired at once: 14 metered calls
+  in three seconds against a page answering 429. A failed page now ends
+  the paging (`done: true`, sentinel unmounts); the error line shows and
+  a new submit starts over. After: 1 call in the same three seconds.
+- **The walk-in list carried its scroll into the next query.** The
+  `<ul>` persisted across queries at its old `scrollTop`; a list opening
+  already scrolled to its sentinel asked for page two unbidden
+  (measured: scrollTop 480, `wan&offset=12` fetched with no scroll). The
+  list is keyed by the query, so a new search remounts it at the top.
+  After: scrollTop 0, one call. The attach modal's `.attach-rows`
+  already reset (its rows remount through the searching state).
+
+**Checked, not a bug:**
+
+- Walk-in gates through the row: the waiver dialog opens for
+  `waiverSigned === false` with no book call; a full class opens the
+  waiting-list confirm with no book call; the booked row spins in the
+  chip column with "Talking to Mindbody..." under the name, every other
+  row dims and loses its `role`, and the modal stays until the answer
+  (3s mock). Roster and waitlist people render the chip with no role,
+  label, or handler. Two Playwright taps on one row: one POST.
+- Three `el.click()`s in ONE task made three POSTs. That is React
+  flushing the discrete update in a microtask, so same-tick clicks share
+  the stale `bookingIds`; real taps are separate tasks and the second
+  saw the lock. The "+" had the identical guard. Not changed; a ref lock
+  (T24's `payFlight`) would close it if it ever matters.
+- Attach transitions: off with "wa" says the three-letter line and makes
+  no call; Enter while off with "wa" the same; back on restores the
+  roster filtered by the kept query ("wa" gives the four Wangs, message
+  cleared); off with "wang" is one call; toggling on mid-page aborts it
+  and shows the roster; off again is one new call; scroll, scroll: 45
+  rows over 3 calls for the query, a third scroll makes none; the X
+  leaves zero rows, empty box, no call. Empty class: "Loading the
+  roster..." then "Nobody is booked yet."; a failed roster: "Roster
+  unavailable: ..." whichever segment. Reopening resets to on / current
+  class / All deliberately (`openAttachSearch`), which is Pete's "I land
+  on this" and right. Waitlist people are not roster entries and
+  appear in neither segment, which is correct: they are not booked.
+- Sort: "Mary Ann de la Cruz" under the Cs, "Émile Ortega" after
+  "Dennis Ortega", one-word "zoe" by that word, last. (The comment said
+  "de la Cruz" sits with the Ds; corrected to the Cs.)
+- Profile: open A (slow), close, open B: B renders and A's late answer
+  does not replace it; a 502 renders "Profile unavailable: ..."; Escape
+  closes only the profile and the search modal stays. The fetch is not
+  aborted on close, only dropped, which is fine: the metered reads are
+  already spent by then.
+- Roster actions column at 1080, 1180 and 1366: cell 328, children 120
+  + 44 x 4, no horizontal overflow, and the "checked in" chip starts 12px
+  right of where "-$1,234.50" ends (T39's overlap is gone).
+- Font sizes under 16px in the search rows: `contact-line` and
+  `pass-facts` only, both recorded. Rows 64px or more. No hex outside
+  `globals.css`, no em dashes in the diff.
+- Money and check-in paths: `git diff 8660287..HEAD` touches only
+  `page.tsx`, `globals.css`, `clients.ts`, `api/search/route.ts` and
+  this file; `api/book`, `api/checkin`, `api/checkout`, `api/cancel-visit`,
+  `api/visit-payment`, `api/waiver-agree`, `lib/sale.ts`, `lib/roster.ts`
+  are untouched.
+
+**Open, for Pete:**
+
+- A red alert on a walk-in search row has no visible cue now. T20 took
+  the alert off the gate on the grounds that it sat behind the row's
+  info icon; that icon left the search rows in T42, so the alert is
+  only inside the profile modal. The row for a client with `RedAlert`
+  set renders exactly like any other. Either the red alert should mark
+  the row, or that trade is accepted.
+- The attach modal's search rows carry no profile icon (only the
+  walk-in rows and the roster do). The ticket's design said "at the
+  right edge of search rows"; in attach mode the contact line is the
+  only disambiguator. Say if the icon belongs there too.
+- `/api/search` accepts any non-negative `offset` and `limit` uncapped;
+  only our modals call it and Mindbody answers an empty page past the
+  end, so it is not a fault, but a cap would be one line.
 - [ ] The profile icon in the Buy header beside the attached name (T41's
       suggestion) is not added: SaleScreen is out of this ticket's
       scope. The roster and search rows cover the counter.

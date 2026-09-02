@@ -155,7 +155,7 @@ const ATTACH_PAGE_SIZE = 20;
  * Alphabetical by last name then first (T42, Pete: "the list of clients
  * in a class should be in alphabetical order"). The last space splits the
  * display name, the roster sort's rule; a one-word name sorts by that
- * word. Case-insensitive so "de la Cruz" sits with the Ds.
+ * word. Case-insensitive, so "de la Cruz" sorts as "cruz", with the Cs.
  */
 function byLastThenFirst(a: { name: string }, b: { name: string }): number {
   const split = (name: string): [string, string] => {
@@ -1497,8 +1497,14 @@ function FrontDesk() {
       const ctl = new AbortController();
       searchAbort.current = ctl;
       const first = offset === 0;
-      if (first) setSearching(true);
-      else setSearchMore(true);
+      /* A first page also clears the next-page flag: the page it just
+       * aborted returns early from its finally and would otherwise leave
+       * `searchMore` stuck on, which blocked every later page of the new
+       * query and pinned "Loading more..." under it (T42 review). */
+      if (first) {
+        setSearching(true);
+        setSearchMore(false);
+      } else setSearchMore(true);
       fetch(
         `/api/search?q=${encodeURIComponent(q)}&limit=${limit}` +
           (offset > 0 ? `&offset=${offset}` : ""),
@@ -1507,7 +1513,11 @@ function FrontDesk() {
         .then((r) => r.json())
         .then((d) => {
           if (ctl.signal.aborted) return;
-          if (d.error) return setSearchError(String(d.error));
+          if (d.error) {
+            setSearchError(String(d.error));
+            endPaging();
+            return;
+          }
           const page: SearchResult[] = d.results ?? [];
           const total = typeof d.total === "number" ? d.total : null;
           setFound((prev) => {
@@ -1526,12 +1536,20 @@ function FrontDesk() {
         .catch((e) => {
           if (ctl.signal.aborted) return;
           setSearchError(e instanceof Error ? e.message : String(e));
+          endPaging();
         })
         .finally(() => {
           if (ctl.signal.aborted) return;
           if (first) setSearching(false);
           else setSearchMore(false);
         });
+      /* A failed page ends the paging: with the sentinel still in view
+       * the observer re-armed on every flag change and asked again, 14
+       * metered calls in three seconds against a page that answered 429
+       * (T42 review). The error shows; a new submit starts over. */
+      function endPaging() {
+        setSearchPage((p) => ({ ...p, done: true }));
+      }
     },
     [],
   );
@@ -3652,6 +3670,7 @@ function FrontDesk() {
           aria-label={`Attach ${client.name}`}
           onClick={() => attachSaleClient(client)}
           onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
               attachSaleClient(client);
@@ -4694,6 +4713,11 @@ function FrontDesk() {
                   <span aria-hidden="true" />
                 </div>
                 <ul
+                  /* Keyed by the query so a new search remounts the list
+                   * at the top: the old scroll position carried over, and
+                   * a list opening already scrolled to its sentinel asked
+                   * Mindbody for page two unbidden (T42 review). */
+                  key={`results-${searchTitle}`}
                   className="roster modal-roster"
                   /* The picker is position: fixed, so scrolling the list
                      would slide its row out from under it; close it
@@ -4760,6 +4784,14 @@ function FrontDesk() {
                           onKeyDown={
                             tappable
                               ? (e) => {
+                                  /* Only the ROW's own keys: a keydown
+                                   * bubbles up from the profile icon, the
+                                   * pass chevron and the picker's options
+                                   * inside the row, and Enter on any of
+                                   * them booked the client while the
+                                   * preventDefault swallowed the button's
+                                   * own click (T42 review). */
+                                  if (e.target !== e.currentTarget) return;
                                   if (e.key === "Enter" || e.key === " ") {
                                     e.preventDefault();
                                     tapWalkIn(client);
