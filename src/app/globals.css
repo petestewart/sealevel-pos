@@ -3643,3 +3643,134 @@ button.sale-for:disabled {
   line-height: 1.3;
   white-space: normal;
 }
+
+/* T41: the client profile card (ClientProfileCard.tsx), what the Buy
+ * header's profile icon opens. The header's client card shape
+ * (.sale-for): bordered surface, muted uppercase 14px label (the recorded
+ * metadata exception, same as .sale-for-label) over 17px values; every
+ * colour a token, nothing else under 16px. */
+.profile-card {
+  padding: 12px 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.profile-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-bottom: 12px;
+}
+
+.profile-label {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.profile-section {
+  flex: none;
+  margin: 16px 0 6px;
+}
+
+.profile-name {
+  font-size: 20px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* The Mindbody id, mono because it is a number a teacher may read aloud. */
+.profile-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-alert {
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+}
+
+.profile-row {
+  display: contents;
+}
+
+.profile-k {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--muted);
+  padding-top: 1px;
+}
+
+.profile-v {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.profile-sub {
+  color: var(--muted);
+}
+
+.profile-missing {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* An unsigned waiver is the one fact here that gates a check-in, so it
+ * keeps the warn pair the roster's waiver chip uses. */
+.profile-unsigned {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.profile-passes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.profile-pass {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.profile-pass:last-child {
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.profile-pass-name {
+  font-weight: 500;
+}
+
+.profile-pass-meta {
+  font-size: 16px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

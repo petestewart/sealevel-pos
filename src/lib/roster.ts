@@ -170,7 +170,7 @@ function staffName(staff: any): string {
 
 /** `at` as the studio's wall clock, `YYYY-MM-DDTHH:mm:ss` with no offset:
  *  the shape Mindbody reads correctly (see classesBetween). */
-function studioWall(at: Date): string {
+export function studioWall(at: Date): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: STUDIO_TZ,
     hour12: false,
