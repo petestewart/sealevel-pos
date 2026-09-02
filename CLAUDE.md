@@ -273,12 +273,16 @@ while `git clone` works, so clone the repo rather than fetching files.
   authorization but not that a charge reaches Stripe. Re-run
   `mindbody:probe-payments --live` in ai-manager against a client with a
   current card to close this.
-- **Teacher identity is ours, not Mindbody's.** A teacher session (T44: the
-  last four of their phone, matched against `GET /staff/staff`, a second
-  signed cookie for twelve hours) names every write in our receipts and
-  logs, but Mindbody still attributes each sale and check-in to the service
-  account; and the API account's permission to read staff phones is
-  unverified live.
+- **Teacher identity is ours, not Mindbody's, and only a comp asks for
+  it.** T48 (superseding T44's shift sign-in): a comp takes the teacher's
+  own PIN in the dialog, every time, in every configuration; the PIN is
+  stored hashed and unique in `teacher_pins`, enrolled through a one-time
+  Mindbody sign-in (`/usertoken/issue` with the teacher's credentials) or
+  the devtools-gated admin route. Routine writes (check-in, booking, pass
+  changes, the waiver) carry no teacher at all, and Mindbody still
+  attributes every sale and check-in to the service account. Unverified
+  live: that a teacher's Mindbody login issues a token through the studio's
+  API key (`/usertoken/issue` has only been called with the API user).
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It

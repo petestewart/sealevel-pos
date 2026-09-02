@@ -298,8 +298,9 @@ a starting point. Copy it, do not try to share it: a published package between
 two repos for ~200 lines of HTTP is more coupling than it saves. If a third
 consumer ever appears, extract it then.
 
-Auth: a studio device session with a PIN, and a teacher session on top of it
-from the last four of the teacher's phone (T44). See open question 3.
+Auth: a studio device session with a PIN (T21). Teacher identity is asked
+for only where it matters, a comp, with a PIN of the teacher's own (T48).
+See open question 3.
 
 ## The speed argument
 
@@ -1013,29 +1014,37 @@ account is wired up and enumerate any custom payment types.
 client's first-ever purchase, about one a day. Option C is dead; options A and B
 cover the rest.
 
-**3. Teacher identity. Answered (Pete, 2026-09-02, T44): a PIN per teacher,
-the last four digits of their phone, on top of the device PIN.** The POS still
-acts as `sealevelapiuser` against Mindbody; the teacher layer is ours. After
-the device unlock a full-screen prompt asks "Who is at the counter?" and takes
-four digits, matched server-side against the last four of each active
-teacher's phone on file (`GET /staff/staff`, mobile then home then work,
-cached ten minutes in memory and never stored). A unique match sets a second
-signed cookie for twelve hours; two teachers sharing the digits get a name
-list; a teacher with no phone on file is named on the prompt so they know to
-add one. Every write route refuses without a teacher session, and the comp
-receipt and the `[comp]` and waiver log lines carry the teacher's staff id
-and name. The header shows the first name, and tapping it is the shift
-change. Nothing is configured: a teacher's PIN is their phone, so adding a
-teacher is adding them in Mindbody.
+**3. Teacher identity. Answered twice (Pete, 2026-09-02): T44 tried a
+shift sign-in from the last four of a teacher's phone; T48 replaced it after
+Pete's live test with a PIN per teacher, ours, asked for by a comp and by
+nothing else.** The POS still acts as `sealevelapiuser` against Mindbody;
+the teacher layer is ours. Nothing asks who is at the counter at the start
+of a shift: check-ins, bookings, pass changes and the waiver carry no
+teacher, since (Pete) "probably don't need to require a pin for everything.
+comp is something where we do." A comp asks every time, inside the comp
+dialog, after the reason and before anything is armed: "Who is comping
+this? Enter your PIN", 4 to 6 digits. The answer is a one-shot token, ten
+minutes, signed server-side for the teacher whose PIN matched, and
+`/api/checkout` refuses a comp without a valid one before its first
+Mindbody call, with the device lock on or off. That last clause is the
+point: T44's layer was optional with no `POS_PIN`, and a real $2 comp went
+to Mindbody with `teacher=none`.
+
+The PINs are stored by us, hashed with a per-row salt, indexed by a keyed
+HMAC and UNIQUE on it, so two teachers cannot hold the same PIN (a phone's
+last four could not promise that, and not everyone has a phone on file). A
+teacher sets or changes theirs from the PIN step by signing in to Mindbody
+once with their own username and password: `/usertoken/issue` with THOSE
+credentials names the staff id, which must be an active teacher, and the
+token is revoked as soon as it has been read. Someone with no Mindbody
+login gets a PIN set by staff id through the devtools-gated admin route.
 
 The payroll caveat stands: Mindbody's sale and check-in records still name
 the API staff account, not the teacher, so commission or payroll reporting
-inside Mindbody cannot see who was at the counter. Our receipts and logs are
-the attribution. If Mindbody-side attribution ever matters, the fallback is
-still per-teacher staff logins, which this layer does not preclude. One
-thing is unverified live: the API account's permission group must be allowed
-to read staff phone numbers, or `/staff/staff` answers with names only and
-nobody can sign in (the prompt says so rather than "wrong digits").
+inside Mindbody cannot see who was at the counter. Our comp receipts, the
+`[comp]` log line and the Formula Note on the client are the attribution,
+and only for comps. Unverified live: that a teacher's Mindbody login issues
+a token through the studio's API key, which is the enrollment path.
 
 **4. Wifi at the counter. Proposed answer: do not build offline.** The design
 already forbids queuing a sale. And a queued check-in is exactly the failure

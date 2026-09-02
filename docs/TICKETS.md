@@ -4086,7 +4086,7 @@ NOT A BUG, checked:
   no em dash in the diffs; the done, suppressed, split, ambiguous and
   error branches diff clean against T42 apart from the reason line.
 
-## T44. Teacher identity: the last four of your phone (Pete, 2026-09-02)
+## T44. Teacher identity: the last four of your phone (Pete, 2026-09-02; SUPERSEDED by T48)
 
 Pete: "let's do teacher identity with a PIN per teacher ... last 4
 digits of their phone # would be ideal." That closes the design doc's
@@ -4903,6 +4903,225 @@ service id on the guest's visit. Accepted: a "guest of NAME" action on
 the member's roster row. Refused: search the guest, sell the $0 pass with
 the member as payer (`PayerClientId` exists on the checkout request),
 book.
+
+## T48. Teacher identity, take two: a PIN of your own, asked for by a comp (Pete, 2026-09-02)
+
+Pete's live test of T44, his five points verbatim:
+
+1. "we dont have phone #s for everyone"
+2. "probably don't need to require a pin for everything. comp is
+   something where we do"
+3. "is it possible to use a mindbody sign in for identification of the
+   teacher?"
+4. "if we are going to do PINs we likely need to store them in our own
+   db. even with phone #'s it's not impossible that 2 people could have
+   the same last 4 digits"
+5. "comp just let me right through without entering a PIN even though I
+   selected Continue without a name at the front. that's exactly what we
+   don't want"
+
+Point 5 is the one that matters: his server had no `POS_PIN`, so T44's
+teacher layer was optional there, and a real $2 comp went to Mindbody
+with `teacher=none`. T48 replaces T44's design; T44's heading says so.
+
+### The design (decided)
+
+**A. No shift-level sign-in.** The "Who is at the counter?" prompt,
+the `AuthGate` teacher step, the header badge and `requireTeacher` are
+gone from app start and from every routine write (checkin, book,
+cancel-visit, visit-payment, waiver-agree, purchase-contract,
+client-field, and `/api/staff`). Routine writes carry no teacher; the
+`waiver-agreed` log line dropped its `teacher=` field, since there is
+no source for one. The T44 cookie, `/api/teacher`, `/api/teacher/login`,
+`/api/teacher/logout` and `TeacherPrompt.tsx` are deleted, not kept.
+
+**B. PINs are ours, stored hashed, unique.** Migration 5,
+`teacher_pins (staff_id text primary key, name text not null, pin_hash
+text not null, pin_lookup text not null unique, set_at timestamptz not
+null default now(), set_via text not null)`. `pin_hash` is scrypt of the
+PIN with a random per-row salt (`s1$<salt>$<hash>`); `pin_lookup` is
+HMAC-SHA256 of the PIN under `POS_SESSION_SECRET` (an app constant when
+unset), so a check is one indexed read and UNIQUE on it refuses a PIN
+another teacher holds ("That PIN is taken, choose another."). 4 to 6
+digits (`comp.ts` `PIN_MIN`/`PIN_MAX`/`isPinShape`, shared by the dialog
+and the routes). The key is deliberately not the device PIN: rotating
+`POS_PIN` must not orphan every teacher's PIN; rotating the secret does,
+and `.env.example` says so. No phone numbers anywhere: `staff.ts` reads
+names and ids only, `pinDigits` and `noPhone` are gone. With no
+`DATABASE_URL`, a dev-only `POS_TEACHER_PINS="100:1234,106:5678"` stands
+in, refused with a warning on `MINDBODY_TARGET=prod`, a PIN listed twice
+naming nobody. `src/lib/teacherpins.ts` holds all of it; a miss costs the
+same scrypt as a hit, and the env list is compared constant-time with no
+early exit.
+
+**C. The comp gate ALWAYS asks, regardless of `POS_PIN`.** The comp
+dialog is three steps: the reason (T45, its button now reads Next), then
+"Who is comping this? Enter your PIN" with six dots, the amount pad's
+keys (the keyboard stands in), Done from four digits, then "Comping as
+Kim Farrell" with the reason line and the Comp button, which is the only
+thing that arms. `POST /api/teacher/verify {pin}` (device session,
+rate-limited on its own counter: five misses, 30s) answers `{ok,
+teacher: {id, name}, token}`. The token is `c1.<staff id>.<name
+b64url>.<issued-at>.<hmac>`, ten minutes, signed with the session key
+when a `POS_PIN` or `POS_SESSION_SECRET` exists and with a random
+per-process key when neither does (the session key is then scrypt of an
+empty string with a public salt, and a token forged with it would be
+the T48 bug back again). The charge body carries `teacherToken`;
+`/api/checkout` for `method: "comp"` verifies it right after the method
+check, before the client, the reason and the staff read, and refuses
+401 `{error, reason: "teacher"}` without one in every configuration; it
+then SPENDS the token after every validation and before the rehearsal,
+so a second charge on the same token, however it got there, is the same
+401 with no Mindbody call. `teacherToken` beside any other method is
+400. The receipt, the `[comp]` line and the Formula Note carry the
+teacher the token names, never a name from the browser. `chargeable`
+in the same render requires `comp.teacher` and `comp.token`; a refused
+token sends the dialog back to the PIN step with the reason kept, arms
+nothing and retries nothing. The page's fetch wrapper treats a 401 with
+`reason: "teacher"` as the dialog's business, not the lock.
+
+**D. Enrollment through a Mindbody sign-in** (point 3: yes). From the
+PIN step, "Set up or change your PIN" opens a form: Mindbody username
+(email), password, new PIN, 18px inputs at 64px. `POST
+/api/teacher/enroll {username, password, pin}` calls `/usertoken/issue`
+with THOSE credentials through `signInAsStaff()` in `mindbody.ts`, which
+never caches the token, never logs the body and is never recorded in
+the call log (like the service account's issue); reads `User.Id` and
+the name; refuses `Id` 0 (the spec: "always 0 for Admin and Owner type
+users") and any id not in `listTeachers()`; stores the PIN (B); revokes
+the token with `DELETE /usertoken/revoke` (user-token.yml has it) in
+the background; answers `{ok, teacher}` with the name as the staff list
+spells it. Rate-limited on its own counter. Every Mindbody refusal is
+the same 401 "Mindbody did not accept that sign-in.", so an unknown
+username and a wrong password read alike. The password never touches a
+log, a row or an answer. For a staff member with no Mindbody login:
+`POS_TEACHER_PINS` in dev, or `PUT /api/admin/teacher-pins {staffId,
+pin}` guarded exactly as `admin/banner` (device session, then
+`devtoolsEnabled()`, else 404), with `GET` listing who has a PIN (id,
+name, when, how; never a hash).
+
+**E. The teacher picker filters placeholders.** `listTeachers()` drops
+`Id <= 0` and names matching `/\b(tba|no class|front ?desk|account|
+teacher|staff)\b/i` (`isPlaceholderTeacher` in `staff.ts`); the live
+list carried "TBA .", "TBA TBA", "TBA Teacher", "No Class No Class", "No
+Class Today" and "FrontDesk Account". The rule applies to the comp
+picker, the enroll check and the admin route alike.
+
+### What was built and checked
+
+Node-level against `next start` on the T48 build, Mindbody mocked on
+:4545 (`t48-mock.js`: `/usertoken/issue` answering BY CREDENTIALS,
+`DELETE /usertoken/revoke`, six placeholder staff rows, a call counter),
+in three postures (`t48-node.js`, logs under `scratchpad/t48/`):
+
+- **db** (`POS_PIN=2468`, a local Postgres 16, `POS_DEVTOOLS=true`):
+  migration 5 applied on first use (`schema_version` 1 to 5). A check-in
+  with the device session alone reached the route (no teacher gate);
+  `GET /api/teacher` is 404. `/api/staff` listed five teachers and none
+  of the six placeholders. A comp with no token, a garbage token and a
+  token forged under the wrong key were each 401 `reason: "teacher"`
+  with the mock's checkout count unmoved; cash with a `teacherToken` was
+  400. Enrollment: a two-digit PIN 400; Kim (`kim@example.com`) 200; Pete
+  taking Kim's PIN 409 "That PIN is taken, choose another."; Pete on
+  another PIN 200; Kim changing hers 200, after which her old PIN was
+  401 and Pete's verified to a token; an unknown user and a wrong
+  password the same 401 with the same words; the owner login 403; the
+  front-desk login 403. The mock saw 9 issues and 6 revokes and no
+  password anywhere in our logs. Admin: GET listed Kim and Pete as
+  `mindbody-signin`; PUT for Sam with Pete's PIN 409, with another 200
+  (`admin`), for placeholder 205 400. Kim's PIN verified to `{ok,
+  teacher: {106, "Kim Farrell"}, token: c1.106.<name>.<ms>.<hmac>}`; the
+  comp with it was 200 (rehearsal + write + note at the mock) and logged
+
+      [comp] prod sale=777001 client=100000123 total=233.00 reason="Teacher: Pete Stewart, covering for Pete" kind=teacher for=100 teacher=106 note=555003
+
+  with the note `Comped $233.00 at the counter: Teacher (Pete Stewart).
+  Note: covering for Pete. By Kim Farrell. Sale 777001.`; the same token
+  again was 401 with the checkout count unmoved. A token forged under
+  the REAL key (scrypt of `2468`, the T21 derivation) dated 11 minutes
+  back was 401; a fresh one was 200, which proves the derivation and the
+  expiry both. A burst of eight wrong PINs answered five 401s and three
+  429s; Kim during the lockout 429; the device login during it 200
+  (separate counters); the enroll burst likewise.
+- **env** (no `POS_PIN`, no database, `POS_TEACHER_PINS` with two
+  teachers sharing 7777): the same gate results with no device session
+  at all (the comp with no token still 401 before any call), Kim's PIN
+  verified through the env list with her name from the staff read, the
+  comp logged `teacher=106`, the shared 7777 named nobody.
+- **none** (no `POS_PIN`, no database, prod target with
+  `POS_TEACHER_PINS` set): the server logged `POS_TEACHER_PINS is set
+  but MINDBODY_TARGET=prod; ignored`, verify was 503 "No teacher PINs are
+  set up on this server", enroll 503 "No database to keep a PIN in", and
+  the comp with no token 401 as everywhere.
+
+`git diff -- src/lib/sale.ts` is empty; the mock logged the checkout
+keys as `Items,ClientId,Test,LocationId,InStore,CalculateTax,Payments`
+for the rehearsal and `Items,Payments,ClientId,Test,LocationId,InStore,
+CalculateTax,SendEmail` for the write, T43's exactly, with `Payments:
+[{Type: "Comp", Metadata: {Amount}}]`.
+
+In the browser (`t48.js`, then `t48b.js`/`t48c.js` with a two-item cart
+after the nine-item ring proved slow, `t48d.js` for the lockout DOM;
+mocked `/api` in the page, shots under `scratchpad/t48/` at 1366x1024,
+both palettes): the app start renders the desk with NO prompt, no
+badge and no `/api/teacher` probe (`prompt: 0, badge: 0, teacherCalls:
+0`, `*-1-start-no-prompt.png`). The hold opens the reason step with its
+five chips and Next disabled; Goodwill with a note enables Next; Next
+lands on "Who is comping this? Enter your PIN." with six ring slots,
+eleven 66px keys, the 64px "Set up or change your PIN", Back and Done
+(64px), nothing under 16px (`*-2-pin-step.png`). Three digits leave
+Done off, the fourth turns it on; a wrong PIN clears the dots and says
+"That PIN does not match any teacher." (`*-3-pin-wrong.png`); `5678`
+typed on the keyboard with Enter lands on "Comping as Kim Farrell" over
+"Goodwill: spilled tea" with the Comp button (`*-4-comping-as.png`);
+Comp arms with the quiet line "Nothing to pay, on the studio. Comped:
+Goodwill: spilled tea. By Kim Farrell." (`*-5-armed.png`); the charge
+body was `{method: "comp", compReason: {kind: "goodwill", detail:
+"spilled tea"}, teacherToken: "c1.106..."}` and the done screen read
+"Comped: Goodwill" (`*-6-done.png`). The enrollment form: email,
+password and PIN inputs, each 64px at 18px, Save PIN off until all
+three are filled, the PIN field keeping digits only (`12ab34` became
+`1234`); a wrong password showed "Mindbody did not accept that
+sign-in." and cleared the password field, the post carrying it exactly
+once; a taken PIN showed "That PIN is taken, choose another." and kept
+the password (a review of the first run: the dialog had cleared it on
+a 409 too, and Save went dark for a sign-in that had just succeeded);
+`5678` then answered "PIN set for Kim Farrell. Enter it to comp." back
+on the PIN step (`light-7-enroll-form.png`, `light-8-enroll-refused.png`,
+`light-9-enroll-done.png`). With `/api/checkout` answering 401 `reason:
+"teacher"` once: comp disarmed, no result rendered, and the dialog came
+back on the PIN step with "Your PIN check ran out. Enter it again."
+(`light-10-token-refused-back-to-pin.png`); Back from there kept Kim
+Farrell selected and "covering for Pete" in the note. A 503 from verify
+showed its message on the PIN step (`light-11-no-pin-store.png`); a 429
+showed "Too many attempts. Try again in 30s." with all eleven keys and
+Done disabled and typing adding no dot (`light-12-lockout.png`);
+Escape closed the dialog with nothing armed and no charge sent.
+
+### Left
+
+- **A teacher's Mindbody login issuing a token through the studio's API
+  key is unverified live.** `/usertoken/issue` has only ever been called
+  with the API user; if Mindbody refuses other staff through this key,
+  enrollment falls back to the admin route and `POS_TEACHER_PINS` is
+  dev only. First thing to try on the studio, with Pete's own login.
+- **`/usertoken/revoke` is best effort** and its answer is not read; a
+  token nobody holds expires on its own.
+- **The one-shot set is in memory**, per process, pruned by the ten
+  minutes; a restart forgets it and (with no `POS_PIN` and no secret)
+  the key too, so a token from before a restart is refused, which the
+  dialog handles.
+- **Changing `POS_SESSION_SECRET` orphans every stored PIN** (the lookup
+  key changes); teachers enroll again. Documented in `.env.example`.
+- Every enroll attempt, including a 400 shape error and a 403, claims a
+  slot on the enroll counter, as T44's login did; conservative rather
+  than wrong.
+- Mindbody still attributes every sale and check-in to the service
+  account (the payroll caveat in the design doc's question 3).
+- What T44 leaves behind: migration 3's `teacher_id`/`teacher_name`
+  columns on `comp_receipts`, now filled from the comp token; the
+  limiter factory; the `safeEqual`/`sign` helpers the comp token reuses.
+  Its cookie, prompt, routes and phone reading are gone.
 
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 

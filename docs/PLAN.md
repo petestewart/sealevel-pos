@@ -114,7 +114,7 @@ Not a feature, and the step that turns a laptop demo into something teachers
 use. **Until this is done the app must not sit at the counter**: it is an open
 endpoint against live student data.
 
-- [x] Auth: shared device PIN (T21) plus a per-teacher session from the last four of their phone (T44)
+- [x] Auth: shared device PIN (T21); teacher identity only where it matters, a comp, by the teacher's own stored PIN (T48, superseding T44's shift sign-in)
 - [ ] Railway service, deployed
 - [ ] `POS_DEVTOOLS=false`, `POS_DRY_RUN=false`, mode banner verified
 - [ ] Add to Home Screen on the studio iPad
