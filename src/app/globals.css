@@ -2764,6 +2764,12 @@ button.sale-for:disabled {
     padding: 0 20px;
   }
 
+  /* The 64 pitch is the column's; in the row the chips sit on 8px gaps
+   * and the reach would only stretch into the header's margin. Off. */
+  .sale-cats .cat-chip::before {
+    display: none;
+  }
+
   .sale-right {
     grid-column: 1;
     grid-row: 2;

@@ -2944,6 +2944,106 @@ document, and PLAN.md and CLAUDE.md describe neither the Buy screen's
 layout nor the Charge button's position, so there was no sentence to
 correct.
 
+### Review (separate reviewer), T39.8-9 and the whole
+
+Cycle 4 read against f1b510b and 030097f, then everything since 2abed48
+run with the API mocked in Playwright (the reviewer's `scratchpad/
+t39-4r.js` over the implementer's fixture, plus a roster fixture with a
+checked-in row carrying a balance, a member, an unpaid row, a no-waiver
+row owing money, and a last-session row), both palettes, shots under
+`scratchpad/t39-4-review/`. One fix, one pre-existing bug recorded, the
+rest measured and left.
+
+- **The rail's `::before` was live in the chip-row fold.** The 64 pitch
+  is the column's; under 1040 the same element wraps on 8px gaps, and
+  the reach only stretched into the header's margin and the row gap
+  (measured: 2px of each 8px row gap went to the upper chip, 3 to the
+  lower, the rest to the rail; nothing was mis-captured, so not a bug
+  in behaviour). It is now `display: none` inside the 1040 query, where
+  the notes said it should be. Re-measured: every row-gap pixel hits
+  the rail, the horizontal gaps likewise.
+
+The rail, measured in the column at 1080x768, 1180x820 and 1366x1024:
+entries 60 tall on a 64 pitch, active fill 60 (the pseudo-element paints
+nothing), `scrollHeight` equal to `clientHeight` at every size (508 in
+543 at 768). Every pixel of every 4px gap returns an entry from
+`elementFromPoint`, never the rail; a click 1px under an entry's edge
+activates that entry, a click 1px over the next activates the next. The
+split is not the 2/2 the notes describe: with the rail at a fractional
+top (120.39) the upper entry keeps about 1px of the gap and the lower
+takes about 3, so each entry's target is 63 to 64, and the first entry
+reaches 1px above the rail into the header's margin (nothing there) and
+the last 2px into the rail's own foot. Keyboard focus (Tab from Back)
+draws the UA ring whole on the first and last entries in the column and
+on the bottom row of the fold (`rail-*-kbfocus-*.png`); nothing clips
+it because the rail has no padding to clip against and the pseudo does
+not affect the outline.
+
+The `sale-open` class: on the body while the overlay is open and gone
+after Done on a paid sale, Escape and the header's Back (`body.className`
+empty each time, the pill back at the right edge), and the effect's
+cleanup runs on unmount by React's contract, which covers the lock
+screen and an error unmount. With it on, the pill sits centred in the
+bar with `.sale-bar-in` on all three sides at 1080, 1180 and 1366 in
+shelf, pay and done; at 800x1100 with an empty cart the pill floats
+below the bar, since the sticky bar sits at the end of content shorter
+than the viewport (bar 926 to 1019 in 1100), which is the narrow fold's
+own pre-cycle behaviour and not the pill's.
+
+The 768 cuts: the banner is 32px, 16px, the overlay's full 1080 width
+and one line in all six states (dry run on sandbox and prod, live on
+both, write-guarded with two ids, a config error), both palettes
+(`banner-*.png`). At 1180x820 with a twenty-line cart the head is 41px
+and reads `TICKET` at 837 to 906, `11 more below` at 935 to 1054, the
+separator, `20 items` ending at 1143 inside the 340 cart, no wrap, no
+overlap; with Liquid IV selected the controls are 64 with `margin-top:
+6px` and the cue reads `12 more below`. The totals rows are 16px at
+24px (1.5). A target audit of every button, `role="button"` and input
+in the overlay at 1080x768 in shelf, pay and keypad found nothing under
+64 beyond the recorded 44s (the detach x, the card stars, the 44px cart
+rows) and the 60px rail entries on their 64 pitch.
+
+The whole redesign, both palettes at 1366x1024 (`app-*.png`): the
+roster with checked-in, check-in, unpaid, no-waiver and negative-balance
+rows, the M chip and the last-session badge; the class dropdown; the
+search modal with results; the attach modal before a search and split
+into the class's rows and Other matches; the waiver prompt and the
+waiver text with its disabled confirm; the dev drawer's calls and
+settings tabs; the studio banner; the contract dialog with its
+no-card warning; the cart-change confirm over a selected row; the lock
+screen empty and with two dots. Every pair reads on its ground; the
+computed colours of `.chip.in`, `.chip.unpaid`, `.chip.stop`,
+`.cell-bal.neg`, `.m-chip`, `.banner` and `.studio-banner` are the
+palette's tokens; the two `theme-color` metas are `#f6f3ec` and
+`#131311`, equal to `--bg` in each block; no hex outside the two palette
+blocks in the CSS and none in a component (the `#` hits in
+`SaleScreen.tsx` are HTML entities).
+
+**Pre-existing, not the redesign's:** on a checked-in row with a
+balance the `checked in` chip (120px at 16px/600) is 16px wider than the
+104 the actions column budgets, and its left edge covers the last digit
+of the balance (`$40.0` with the `0` under the chip). Measured
+identical at 2abed48 and HEAD in both palettes at 1366, 1180 and 1080
+(`roster-base-*.png`, `roster-head-*.png`: chip left 924, balance right
+928 at 1366), so it predates T39 and is left for its own ticket rather
+than fixed in a review commit.
+
+Documents: section 6's deviations spot-checked against the code (the
+rail 60/4 with the `::before`; the head 10/16/8; the totals rows
+16px/1.5 and the block 10/16/10; the lines padding 6 and the controls
+6 under the line; light `--disabled-ink` `#5f5749`; the 1190 query; the
+header's arrow; the item count on the bar) and all match, with the
+rail's gap split corrected above. The T39 checklist is fully ticked;
+the layout plan's Status names the implementation plan as the newer
+document; no em dashes and no model identifiers in the diff since
+2abed48 beyond the commit trailers. `npm run typecheck` and `npm run
+build` clean; `git diff 2abed48..HEAD -- src/app/api src/lib` is empty.
+
+Left as it is: the attach modal shows "No current passes" for roster
+rows (T32's `rosterAsResult` carries no pass), which predates the
+cycle; the light lock screen's disabled Unlock is the accent at reduced
+opacity with `--accent-ink`, the same idiom as before the retheme.
+
 ## T38. The cart: more rows, an estimate while pricing, the audit, and a way out (Pete, 2026-08-31)
 
 Four things from the fifth live test, all on the receipt side of the Buy
