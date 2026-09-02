@@ -2122,6 +2122,40 @@ reported; the work was verified (typecheck, build, diff read) and landed
 by the orchestrator. Adversarial review is owed and follows with the
 next batch.
 
+## T39. Implement the POS design (Pete, 2026-09-02)
+
+Pete sent `docs/design/mockups/POSDesign.pdf`: four frames, two visual
+directions (A "Counter": warm paper, teal, mono for money; B: amber,
+price-first cards, mode as a chip), one structure. The structure is the
+layout of record (`docs/design/sale-screen-layout.md`): rail, grid, cart,
+bottom bar, a payment mode that replaces the grid while the cart stays.
+
+The plan is `docs/design/pos-design-implementation.md`: nine serial
+steps, each its own ticket and review, each leaving the app shippable.
+
+- [ ] T39.1 Shell to 1400, `--accent-ink` and `--shadow`, accent retheme,
+      the header's client card.
+- [ ] T39.2 The vertical rail, Favorites pinned, `more`, the 1040 fold.
+- [ ] T39.3 Grid cards at 64px with the count pill.
+- [ ] T39.4 Cart column: TICKET header, select-to-reveal row controls,
+      sub-line only above quantity one. Built on T38.
+- [ ] T39.5 Sticky bottom bar: Empty cart left, Pay / Charge right, below
+      every scrim.
+- [ ] T39.6 Two modes: PaymentPanel to the middle column, rail collapses,
+      Escape order, comp never armed while invisible.
+- [ ] T39.7 Payment surface: Total / Due / Change, tiles or buttons per
+      Pete's call, keypad per Pete's call.
+- [ ] T39.8 Density and degradation pass, both palettes, 768 tall.
+- [ ] T39.9 What the roster inherits.
+
+Blocked on Pete (plan section 3), steps 1 through 6 proceed meanwhile:
+direction A or B (recommend A); keypad modal (T36) or frame 4's panel
+(recommend modal, panel as a follow-up); teal accent app-wide or Buy-only.
+
+What must not change: the money (T35's request shapes, clamps, single
+flight, `chargeable` in the same render); the mode banner's presence in
+every state; comp arms only in payment mode; T38 lands first.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
