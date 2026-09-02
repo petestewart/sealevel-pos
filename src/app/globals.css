@@ -3929,3 +3929,104 @@ button.sale-for:disabled {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* --- Teacher prompt (T44) --------------------------------------------
+ * "Who is at the counter?" over the desk after the device unlock: the
+ * lock card and keypad reused, four fixed dots (the fourth digit
+ * submits), a name list on a collision, quiet notes underneath. Tokens
+ * only, both palettes come from the variable swap. z-index 40: above
+ * the sale overlay (18), the dev drawer (19/20) and every modal scrim
+ * (30); nothing on the desk is reachable until a teacher is named. */
+
+.teacher-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  overflow-y: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--bg);
+}
+
+.teacher-card {
+  width: 420px;
+  max-width: 100%;
+}
+
+/* Four slots, always drawn: an empty one is a ring in the card's line
+ * colour, a filled one the ink dot the device lock uses. */
+.teacher-dots {
+  min-height: 56px;
+  gap: 16px;
+}
+
+.lock-dot.empty {
+  background: transparent;
+  border: 2px solid var(--line-soft);
+}
+
+.teacher-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.teacher-choice {
+  min-height: 64px;
+  padding: 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.teacher-choice:active:not(:disabled) {
+  background: var(--action-bg);
+}
+
+/* The quiet exits: "Not me, start over" and dev's "Continue without a
+ * name". Full height, no fill, muted text. */
+.teacher-skip {
+  min-height: 64px;
+  padding: 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.teacher-skip:active:not(:disabled) {
+  background: var(--action-bg);
+}
+
+.teacher-choice:disabled,
+.teacher-skip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.teacher-note {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.teacher-note.stop {
+  color: var(--stop);
+}
+
+/* The header's teacher control: a first name beside Buy, clipped rather
+ * than wrapping so the counters keep their row at 1180. */
+.teacher-badge {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
