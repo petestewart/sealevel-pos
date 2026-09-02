@@ -359,10 +359,15 @@ button {
    * alert and notes icons into one. */
   /* The balance column (7em) fits a five-figure negative (-$12,345.67)
    * at 16px tabular figures without ellipsizing. */
-  /* Actions 260px = chip 104 + undo/trash 44 + buy 44 + Mindbody link 44
-   * + three 8px gaps (the Buy bag joined the cell for the second live
-   * test); the header's sort icon rides the same column. */
-  --roster-cols: minmax(0, 2fr) 74px minmax(0, 1.8fr) 7em 260px;
+  /* Actions 328px = chip 120 + undo/trash 44 + buy 44 + profile 44 +
+   * Mindbody link 44 + four 8px gaps (the Buy bag joined the cell for
+   * the second live test, the profile icon in T42); the header's sort
+   * icon rides the same column. The chip is budgeted at what "checked
+   * in" actually renders (120px at 16px/600 with its padding), not its
+   * 104px min-width: the T39 review found the widest chip overlapping
+   * the undo control in a 260px column sized to the minimum. Every slot
+   * is always occupied (a spacer stands in for a missing control). */
+  --roster-cols: minmax(0, 2fr) 74px minmax(0, 1.8fr) 7em 328px;
 }
 
 .roster-head,
@@ -397,30 +402,27 @@ button {
   transition: opacity 120ms ease-out;
 }
 
-/* The row body is deliberately NOT a tap target (T16 reversal: row-tap
- * check-in caused accidental check-ins in live use). The chip in the
- * actions cell is the one check-in/add trigger; the row keeps the
- * default cursor. */
-
-/* "no waiver" pill riding a walk-in result's name line: same stop pairing
- * as the roster's blocked chip, sized to the line. Tokens, both palettes. */
-.mini-stop {
-  flex: 0 0 auto;
-  margin-left: 6px;
-  padding: 1px 10px;
-  border-radius: 999px;
-  background: var(--stop-bg);
-  color: var(--stop);
-  font-size: 16px;
-  font-weight: 600;
+/* The ROSTER row body is deliberately NOT a tap target (T16 reversal:
+ * row-tap check-in caused accidental check-ins in live use). The chip in
+ * the actions cell is the one check-in trigger; the row keeps the default
+ * cursor. The search modal's rows are the exception since T42 (Pete:
+ * "tapping on the row at all should select the client", "remove the +
+ * icon and make the whole row clickable"): attaching a sale writes
+ * nothing, and a walk-in add keeps every gate it had on the "+". */
+.rrow.rrow-tap {
+  cursor: pointer;
 }
 
-/* The attach row's standing pill (T32): where this person sits in the
- * class the picker names. Same size and shape as the "no waiver" pill it
- * shares the marker line with, and TEXT rather than a control, because
- * attaching a sale moves no attendance. Checked in takes the roster
- * chip's ok pairing so it reads the same on both screens; signed up is
- * deliberately quiet, being the ordinary state. Tokens, both palettes. */
+.rrow.rrow-tap:active {
+  background: var(--action-bg);
+}
+
+/* The standing pill on a search row (T32, T42): where this person sits
+ * in the class in question, TEXT rather than a control, because neither
+ * attaching a sale nor reading a search result moves attendance. Checked
+ * in takes the roster chip's ok pairing so it reads the same on both
+ * screens; signed up and waitlist are deliberately quiet, being ordinary
+ * states. Tokens, both palettes. */
 .mini-in,
 .mini-signed {
   flex: 0 0 auto;
@@ -428,6 +430,31 @@ button {
   border-radius: 999px;
   font-size: 16px;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+/* The pill's own grid column (T42, Pete: "the pills should all be lined
+ * up vertically"): a fixed column in --roster-cols rather than a flow
+ * item trailing the name, so every chip starts at the same x. */
+.cell-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+/* The email and phone line under a search result's name (T42): the
+ * studio has duplicate names, and this is how Mindbody's own search
+ * tells them apart. 14px muted, the recorded metadata exception (same
+ * standing as .pass-facts); truncates rather than wrapping the row. */
+.contact-line {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--muted);
 }
 
 .mini-in {
@@ -1350,49 +1377,81 @@ body.sale-open .dev-handle {
 /* The search-results modal: wider still, because its rows reuse the
  * roster's grid layout. The column template is a sibling of
  * --roster-cols, redefined in scope so the shared .roster-head/.rrow
- * rules pick it up unchanged. Four columns since T17 -- name | passes |
- * balance | action -- because the icon column is gone: the markers moved
- * onto the name cell's second line, which is what gives the name the
- * row's whole first line. */
+ * rules pick it up unchanged. Five columns since T42 -- name (with the
+ * contact line under it) | passes | balance | standing chip | profile
+ * icon: the "+" and the Buy bag left the row, the whole row being the
+ * add now, and the chip got its own column so the chips line up. */
 .modal-search {
-  /* Actions 104px = buy bag 44 + "+" add 52 + the 8px gap; attach mode
-   * shows one button and right-aligns in the same slot. */
-  --roster-cols: minmax(0, 2.4fr) minmax(0, 1.6fr) 7em 104px;
+  --roster-cols: minmax(0, 2.4fr) minmax(0, 1.6fr) 7em 118px 44px;
   position: relative;
   width: min(860px, 100%);
 }
 
-/* --- Attach picker (T27 round three, reordered in T32) --------------
- * Attach mode only. Under the modal's search bar: the "In class" class
- * dropdown (the pass-dropdown idiom, two columns since there are no pass
- * facts), then the rows it heads -- the picked class's roster before a
- * search, that class's matches after one -- and then the rest of the
- * search under its own heading. The rows themselves are the search
- * result row (.rrow and the modal's --roster-cols), shared by both
- * groups. Tokens only, so both palettes come from :root and the dark
- * block as usual. */
+/* Attach mode's rows (T42) carry only the name and the standing chip:
+ * no passes, no balance, no icons ("don't need all the info here"). */
+.modal-search.attach-mode {
+  --roster-cols: minmax(0, 1fr) 118px;
+}
+
+/* --- Attach picker (T27 round three, T32, reshaped in T42) ----------
+ * Attach mode only. Under the modal's search bar: the filter row (the
+ * "In class" toggle, the class dropdown in the pass-dropdown idiom, and
+ * the three-way segment), then ONE fixed-height scroll region of rows.
+ * Tokens only, so both palettes come from :root and the dark block. */
 .attach-quick {
   display: grid;
   gap: 10px;
   margin: 0 0 14px;
 }
 
+/* The filter row: toggle | dropdown (about half the row) | segment. The
+ * dropdown and the segment grey out TOGETHER when the toggle is off. */
+.attach-filters {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.attach-filters.off .attach-class,
+.attach-filters.off .seg {
+  opacity: 0.5;
+}
+
+/* The "In class" toggle: the class-change button's shape, filled with
+ * the accent while on. 64px, the tap-target floor. */
+.filter-toggle {
+  flex: 0 0 auto;
+  min-height: 64px;
+  padding: 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.filter-toggle.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.filter-toggle:active {
+  opacity: 0.85;
+}
+
 .attach-class {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
+  min-width: 0;
 }
 
-.attach-quick-label {
-  flex: 0 0 auto;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--muted);
-}
-
-/* Native-select-shaped: the picked class with a chevron, full width so
- * the menu below can anchor to it. */
+/* Native-select-shaped: the picked class with a chevron, the width of
+ * its grid column so the menu below can anchor to it. */
 .attach-class-btn {
   flex: 1;
   min-width: 0;
@@ -1400,6 +1459,7 @@ body.sale-open .dev-handle {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding: 0 14px;
   text-align: left;
 }
 
@@ -1424,53 +1484,92 @@ body.sale-open .dev-handle {
   grid-template-columns: 20px minmax(0, 1fr);
 }
 
-/* BOTH groups of rows scroll together in one region (T32): the modal is
- * centred in a fixed scrim and does not scroll itself, so two lists each
- * capped at their own height could stack past the top and bottom of the
- * screen. The search bar and the class picker sit above it and stay put,
- * which is the point of putting them there. */
+/* The three-way segment (All | Signed in | Not yet): one bordered pill
+ * of 64px buttons, icon over a short label, exactly one filled with the
+ * accent. Disabled together with the dropdown when the toggle is off. */
+.seg {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.seg-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 88px;
+  min-height: 64px;
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.seg-btn:first-child {
+  border-left: 0;
+}
+
+.seg-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.seg-btn.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.seg-btn:disabled {
+  cursor: default;
+}
+
+/* ONE scroll region of a FIXED height (T42, Pete: "the modal temporarily
+ * shrinks vertically while the request is made. should stay the same size
+ * always"): about five rows, whatever the rows are doing. The modal is
+ * centred in a fixed scrim and does not scroll itself, so the region
+ * scrolls; the search bar and the filter row above it stay put. */
 .attach-rows {
-  max-height: min(46vh, 420px);
+  height: min(46vh, 420px);
   overflow-y: auto;
   display: grid;
   gap: 8px;
   align-content: start;
 }
 
-/* The second group's heading. The first group needs none: the "In class"
- * picker directly above it IS its heading, naming the class the rows
- * belong to. */
-.attach-group {
-  margin: 6px 0 0;
+/* The previous rows stay on screen, dimmed, while a search is in flight,
+ * under the quiet "Searching..." line. */
+.attach-rows.searching .roster {
+  opacity: 0.4;
+  transition: opacity 120ms ease-out;
+}
+
+.attach-line {
+  margin: 4px 0;
   font-size: 16px;
-  font-weight: 600;
   color: var(--muted);
 }
 
-/* The "+" add button on a search-result row: the .chip.action pairing in
- * a round filled button, 52px so it stays an easy target with a queue.
- * Both halves are tokens, both palettes; the spinner replaces the plus
- * while a booking is in flight. */
-.add-btn {
-  flex: 0 0 auto;
-  display: inline-flex;
+/* The paging sentinel at the end of a scroll-loaded list: the observer
+ * asks for the next page as it comes into view. Tall enough to be seen,
+ * quiet, and it carries the "Loading more..." line while a page is in
+ * flight. */
+.attach-more {
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: 52px;
-  height: 52px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--action-bg);
-  color: var(--ink);
-}
-
-.add-btn:active {
-  background: var(--line);
-}
-
-.add-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
+  gap: 6px;
+  min-height: 40px;
+  list-style: none;
+  font-size: 16px;
+  color: var(--muted);
 }
 
 /* The one column that can NEVER ellipsize (T17): the name owns its full
@@ -1486,23 +1585,25 @@ body.sale-open .dev-handle {
   overflow-wrap: anywhere;
 }
 
-/* The markers line under the name: M chip, info icon, no-waiver chip, in
- * that fixed order (the info icon is on every result row since T20). The
- * mini-stop drops the after-the-name offset it carries on a name line. */
-.marker-line {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.marker-line .mini-stop {
-  margin-left: 0;
-}
-
 /* Room for the X so a long query's title never runs under it. */
 .modal-search .modal-title {
   padding-right: 48px;
+}
+
+/* The client profile modal (T42): opened from a roster or search row, so
+ * it must paint ABOVE the search modal's scrim (both are .modal-scrim at
+ * 30; this one goes one up) and scroll its card rather than the screen. */
+.modal-scrim.profile-scrim {
+  z-index: 31;
+}
+
+.modal-profile {
+  width: min(640px, 100%);
+}
+
+.profile-scroll {
+  max-height: min(72vh, 720px);
+  overflow-y: auto;
 }
 
 /* The modal's close-with-no-action X: the row-icon idiom (44px circle),

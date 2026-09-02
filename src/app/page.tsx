@@ -14,10 +14,13 @@ import DevDrawer from "./DevDrawer";
 import LockScreen from "./LockScreen";
 import SaleScreen, {
   ModeBanner,
+  attachSearchHint,
   type ModeConfig,
   type SaleClient,
 } from "./SaleScreen";
+import { ClientProfileCard } from "./ClientProfileCard";
 import { useSettings } from "./settings";
+import type { ClientProfile } from "@/lib/clientprofile";
 
 /**
  * The counter screen. One class selector, one roster, one search box.
@@ -78,6 +81,10 @@ interface SearchResult {
   id: string;
   name: string;
   email: string | null;
+  /** The small line under a search result's name carries email and
+   *  phone (T42): duplicate names are real at this studio, and this is
+   *  how Mindbody's own search tells them apart. */
+  phone: string | null;
   waiverSigned: boolean;
   redAlert: string | null;
   yellowAlert: string | null;
@@ -101,6 +108,7 @@ function rosterAsResult(en: RosterEntry): SearchResult {
     id: en.clientId,
     name: en.name,
     email: null,
+    phone: null,
     waiverSigned: en.waiverSigned !== false,
     redAlert: en.redAlert,
     yellowAlert: en.yellowAlert,
@@ -121,6 +129,50 @@ function rosterAsResult(en: RosterEntry): SearchResult {
 interface AttachRow {
   client: SearchResult;
   status: "checked in" | "signed up" | null;
+}
+
+/**
+ * The attach modal's in-class segment (T42): which of the picked class's
+ * people the list shows. "in" is checkedIn on the roster entry, "not" is
+ * booked and not yet checked in. A filter over rows already in memory,
+ * so switching it never calls Mindbody.
+ */
+type AttachSegment = "all" | "in" | "not";
+
+const ATTACH_SEGMENTS: { value: AttachSegment; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "in", label: "Signed in" },
+  { value: "not", label: "Not yet" },
+];
+
+/** The attach modal's page size (T42). Raised from the walk-in search's
+ *  12: the list scroll-loads now, and a first page that fills the fixed
+ *  five-row window with some to spare saves the second call a teacher
+ *  would otherwise trigger by reflex. Still one metered call per page. */
+const ATTACH_PAGE_SIZE = 20;
+
+/**
+ * Alphabetical by last name then first (T42, Pete: "the list of clients
+ * in a class should be in alphabetical order"). The last space splits the
+ * display name, the roster sort's rule; a one-word name sorts by that
+ * word. Case-insensitive so "de la Cruz" sits with the Ds.
+ */
+function byLastThenFirst(a: { name: string }, b: { name: string }): number {
+  const split = (name: string): [string, string] => {
+    const t = name.trim().toLowerCase();
+    const cut = t.lastIndexOf(" ");
+    return cut === -1 ? [t, ""] : [t.slice(cut + 1), t.slice(0, cut)];
+  };
+  const [al, af] = split(a.name);
+  const [bl, bf] = split(b.name);
+  return al.localeCompare(bl) || af.localeCompare(bf);
+}
+
+/** The small email and phone line under a search result's name (T42):
+ *  whichever of the two Mindbody has, joined with a middle dot. Empty
+ *  when neither is on file, and then the line does not render. */
+function contactLine(c: { email: string | null; phone: string | null }): string {
+  return [c.email, c.phone].filter(Boolean).join(" · ");
 }
 
 /**
@@ -317,47 +369,25 @@ function TrashIcon() {
 
 /** Plus sign: the add action on a search-result row (books, or offers the
  *  waiting list on a full class -- the aria-label says which). */
-function PlusIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        d="M12 5v14M5 12h14"
-      />
-    </svg>
-  );
-}
-
 /** A person with a check: the search modal's row action in attach mode
  *  (T23). Selects the client for the sale and closes; books nothing. */
-function PersonCheckIcon() {
+/** A person silhouette: the profile icon on roster and search rows
+ *  (T42), opening the client profile modal. */
+function PersonIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-      <circle
-        cx="10"
-        cy="8"
-        r="3.4"
-        stroke="currentColor"
-        strokeWidth="2"
-        fill="none"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        fill="none"
-        d="M4 19.5c.6-3.4 3-5.2 6-5.2 1.2 0 2.3.3 3.2.8"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M14.5 17.5l2.2 2.2 3.8-4.4"
-      />
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" />
     </svg>
   );
 }
@@ -758,6 +788,49 @@ function FrontDesk() {
   /** Rows with a check-in in flight. */
   const [busy, setBusy] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
+  /**
+   * The scroll-loaded search (T42, Pete: "we should lazy load as the user
+   * scrolls"). `offset` is where the next page starts, `total` is
+   * Mindbody's TotalResults for the query (null when it omitted it), and
+   * `done` says there is nothing more to ask for: a short page, or the
+   * total reached. `searchMore` is the NEXT page's in-flight flag, kept
+   * apart from `searching` so the held rows stay on screen under it.
+   */
+  const [searchPage, setSearchPage] = useState<{
+    offset: number;
+    total: number | null;
+    done: boolean;
+  }>({ offset: 0, total: null, done: true });
+  const [searchMore, setSearchMore] = useState(false);
+  /** The in-flight search call, aborted by the next query, the next page,
+   *  the X and the close: a page that lands after the query changed must
+   *  not append itself to the new query's rows. */
+  const searchAbort = useRef<AbortController | null>(null);
+  /** The sentinel at the end of the results list, as a state-held node so
+   *  the IntersectionObserver effect re-arms when the list (re)mounts. */
+  const [searchSentinel, setSearchSentinel] = useState<HTMLElement | null>(
+    null,
+  );
+  /** The attach modal's "In class" toggle (T42): on, the rows are the
+   *  picked class's roster filtered in memory; off, the search bar asks
+   *  Mindbody about everyone. On by default with the roster's current
+   *  class, which is what Pete asked to land on. */
+  const [attachInClass, setAttachInClass] = useState(true);
+  const [attachSeg, setAttachSeg] = useState<AttachSegment>("all");
+  /** The client profile modal (T42): who it is about, and the read. The
+   *  fetch fires on OPEN, not on the icon's render, since the profile is
+   *  three metered reads; `profileGen` drops an answer that lands after
+   *  the modal closed or reopened for someone else. */
+  const [profileView, setProfileView] = useState<{
+    clientId: string;
+    name: string;
+  } | null>(null);
+  const [profileState, setProfileState] = useState<{
+    profile: ClientProfile | null;
+    loading: boolean;
+    error: string | null;
+  }>({ profile: null, loading: false, error: null });
+  const profileGen = useRef(0);
   /** Tunables live in the dev drawer's settings tab, so the ones that have
    *  already been wrong once can be adjusted without a commit. */
   const { settings } = useSettings();
@@ -1314,13 +1387,13 @@ function FrontDesk() {
   useEffect(() => {
     if (counterModal === null) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !waiverPrompt && !infoView) {
+      if (e.key === "Escape" && !waiverPrompt && !infoView && !profileView) {
         setCounterModal(null);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [counterModal, waiverPrompt, infoView]);
+  }, [counterModal, waiverPrompt, infoView, profileView]);
 
   /** Escape closes the sort menu (outside taps close it via its scrim).
    *  Nothing here ever writes, so no in-flight guard is needed. */
@@ -1410,8 +1483,100 @@ function FrontDesk() {
    * Three letters by default, because two returns hundreds of matches
    * that nobody scrolls, at the cost of a metered call.
    */
+  /**
+   * One page of the search, appended or replacing (T42). Aborts whatever
+   * page was in flight first: a new query, a next page, the X and the
+   * close all go through here or through `stopSearch`, so at most one
+   * search call is ever outstanding and a late answer for a superseded
+   * query can never land in the list. Appends de-duplicate by id, since
+   * a client created between two pages shifts Mindbody's offsets.
+   */
+  const fetchSearchPage = useCallback(
+    (q: string, offset: number, limit: number) => {
+      searchAbort.current?.abort();
+      const ctl = new AbortController();
+      searchAbort.current = ctl;
+      const first = offset === 0;
+      if (first) setSearching(true);
+      else setSearchMore(true);
+      fetch(
+        `/api/search?q=${encodeURIComponent(q)}&limit=${limit}` +
+          (offset > 0 ? `&offset=${offset}` : ""),
+        { signal: ctl.signal },
+      )
+        .then((r) => r.json())
+        .then((d) => {
+          if (ctl.signal.aborted) return;
+          if (d.error) return setSearchError(String(d.error));
+          const page: SearchResult[] = d.results ?? [];
+          const total = typeof d.total === "number" ? d.total : null;
+          setFound((prev) => {
+            if (first) return page;
+            const seen = new Set(prev.map((p) => p.id));
+            return [...prev, ...page.filter((p) => !seen.has(p.id))];
+          });
+          const next = offset + page.length;
+          setSearchPage({
+            offset: next,
+            total,
+            done:
+              page.length < limit || (total !== null && next >= total),
+          });
+        })
+        .catch((e) => {
+          if (ctl.signal.aborted) return;
+          setSearchError(e instanceof Error ? e.message : String(e));
+        })
+        .finally(() => {
+          if (ctl.signal.aborted) return;
+          if (first) setSearching(false);
+          else setSearchMore(false);
+        });
+    },
+    [],
+  );
+
+  /** Abort the in-flight search and drop the held results: the X, the
+   *  close, and the in-class toggle coming back on all mean the same
+   *  thing, that the query on screen no longer has results. */
+  const stopSearch = useCallback(() => {
+    searchAbort.current?.abort();
+    searchAbort.current = null;
+    setSearching(false);
+    setSearchMore(false);
+    setFound([]);
+    setSearchTitle("");
+    setSearchError(null);
+    setSearchPage({ offset: 0, total: null, done: true });
+  }, []);
+
+  /** A NEW search for `q`, page one: the state reset every submit shares,
+   *  whichever control fired it (Enter, the Search button, or the in-class
+   *  toggle going off with a query already typed). */
+  const startSearch = useCallback(
+    (q: string) => {
+      setSearchMsg(null);
+      setSearchTitle(q);
+      setSearchOpen(true);
+      setSearchError(null);
+      setSearchPage({ offset: 0, total: null, done: true });
+      /* A new search is a new set of people: any pass chosen for the old
+       * results must not silently apply to a same-id row in the new ones. */
+      setWalkinPassChoice({});
+      setWalkinPicker(null);
+      fetchSearchPage(q, 0, attachMode ? ATTACH_PAGE_SIZE : settings.searchLimit);
+    },
+    [attachMode, fetchSearchPage, settings.searchLimit],
+  );
+
   const submitSearch = useCallback(() => {
-    if (searching) return;
+    /* With the attach modal's in-class filter on, the query filters the
+     * roster in memory as it is typed (T42), so Enter has nothing to ask
+     * Mindbody for. */
+    if (attachMode && attachInClass) {
+      setSearchMsg(null);
+      return;
+    }
     const q = query.trim();
     if (q.length < settings.minQueryLength) {
       setSearchMsg(
@@ -1419,25 +1584,53 @@ function FrontDesk() {
       );
       return;
     }
+    startSearch(q);
+  }, [attachInClass, attachMode, query, settings.minQueryLength, startSearch]);
+
+  /** The next page, when the list's sentinel scrolls into view (T42).
+   *  One metered call, and only when the last page said there is more;
+   *  never while a page is already in flight. */
+  const loadMoreResults = useCallback(() => {
+    if (searching || searchMore || searchPage.done || !searchTitle) return;
+    fetchSearchPage(
+      searchTitle,
+      searchPage.offset,
+      attachMode ? ATTACH_PAGE_SIZE : settings.searchLimit,
+    );
+  }, [
+    attachMode,
+    fetchSearchPage,
+    searchMore,
+    searchPage,
+    searchTitle,
+    searching,
+    settings.searchLimit,
+  ]);
+
+  useEffect(() => {
+    if (!searchSentinel) return;
+    /* The observer accounts for the scrolling ancestor's clipping, so a
+     * viewport root is right; the margin asks for the page a little before
+     * the sentinel is actually in view, and since the sentinel sits BELOW
+     * a full page of rows in a five-row window, the observer cannot fire
+     * again until the teacher scrolls: no page is prefetched. */
+    const io = new IntersectionObserver(
+      (ents) => {
+        if (ents.some((en) => en.isIntersecting)) loadMoreResults();
+      },
+      { rootMargin: "96px" },
+    );
+    io.observe(searchSentinel);
+    return () => io.disconnect();
+  }, [searchSentinel, loadMoreResults]);
+
+  /** The X in either search bar (T42, Pete: "the search results should
+   *  disappear"): the query AND the results go together. */
+  const clearSearch = useCallback(() => {
+    setQuery("");
     setSearchMsg(null);
-    setSearchTitle(q);
-    setSearchOpen(true);
-    setSearching(true);
-    setSearchError(null);
-    setFound([]);
-    /* A new search is a new set of people: any pass chosen for the old
-     * results must not silently apply to a same-id row in the new ones. */
-    setWalkinPassChoice({});
-    setWalkinPicker(null);
-    fetch(`/api/search?q=${encodeURIComponent(q)}&limit=${settings.searchLimit}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.error) return setSearchError(String(d.error));
-        setFound(d.results ?? []);
-      })
-      .catch((e) => setSearchError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setSearching(false));
-  }, [query, searching, settings.minQueryLength, settings.searchLimit]);
+    stopSearch();
+  }, [stopSearch]);
 
   /** Closing the results modal, by any path, also clears the input and
    *  the held results: a closed search is a finished search, and stale
@@ -1445,10 +1638,10 @@ function FrontDesk() {
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
     setQuery("");
-    setFound([]);
+    stopSearch();
     setAttachMode(false);
     setAttachClassMenuOpen(false);
-  }, []);
+  }, [stopSearch]);
 
   /** Open the search modal as the sale's attach picker (T23): no query
    *  yet, so the modal renders its own copy of the search bar, wired to
@@ -1468,6 +1661,9 @@ function FrontDesk() {
     setAttachClassMenuOpen(false);
     setAttachClassId(activeIdRef.current);
     setAttachRoster({ entries: null, loading: false, error: null });
+    /* T42: land on the current class's whole roster every time. */
+    setAttachInClass(true);
+    setAttachSeg("all");
     /* The day window anchors on the SELECTED class's date (not the
      * browser clock): the quick-pick is about the day that class sits
      * in. Cached per STUDIO-local date, so reopening the modal all shift
@@ -1558,6 +1754,79 @@ function FrontDesk() {
       });
   }, []);
 
+  /**
+   * The attach modal's "In class" toggle (T42). Coming ON drops whatever
+   * search was up: the rows are the roster again and the box filters
+   * them locally. Going OFF with a long-enough query already typed asks
+   * Mindbody for everyone matching it, one call, so the teacher who
+   * typed the name first and then widened the net is not made to press
+   * Enter again; with a short or empty query the hint shows instead.
+   */
+  const toggleAttachInClass = useCallback(() => {
+    setAttachClassMenuOpen(false);
+    const next = !attachInClass;
+    setAttachInClass(next);
+    if (next) {
+      stopSearch();
+      setSearchMsg(null);
+      return;
+    }
+    const q = query.trim();
+    if (q.length >= settings.minQueryLength) startSearch(q);
+    else if (q.length > 0) {
+      setSearchMsg(
+        `Type at least ${settings.minQueryLength} letters, then search.`,
+      );
+    }
+  }, [attachInClass, query, settings.minQueryLength, startSearch, stopSearch]);
+
+  /**
+   * The client profile modal (T42): fetched at open, never at render,
+   * since /api/client-profile is three metered reads. A stale answer
+   * (closed, or reopened for someone else) is dropped by generation.
+   */
+  const openProfile = useCallback((clientId: string, name: string) => {
+    const gen = ++profileGen.current;
+    setProfileView({ clientId, name });
+    setProfileState({ profile: null, loading: true, error: null });
+    fetch(`/api/client-profile?clientId=${encodeURIComponent(clientId)}`)
+      .then(async (r) => {
+        const body = await r.json();
+        if (!r.ok || body?.error) {
+          throw new Error(body?.error ?? `HTTP ${r.status}`);
+        }
+        return body as ClientProfile;
+      })
+      .then((profile) => {
+        if (profileGen.current !== gen) return;
+        setProfileState({ profile, loading: false, error: null });
+      })
+      .catch((e) => {
+        if (profileGen.current !== gen) return;
+        setProfileState({
+          profile: null,
+          loading: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      });
+  }, []);
+
+  const closeProfile = useCallback(() => {
+    profileGen.current += 1;
+    setProfileView(null);
+  }, []);
+
+  /** Escape closes the profile modal. It stacks above the search modal,
+   *  whose own Escape handler stands down while this is open. */
+  useEffect(() => {
+    if (!profileView) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeProfile();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [profileView, closeProfile]);
+
   /** The attach-mode row action: select the client for the sale and
    *  close. Writes nothing, books nothing, gates nothing -- buying a
    *  bottle of water needs no waiver. Takes just id/name/balance so the
@@ -1629,7 +1898,8 @@ function FrontDesk() {
         e.key === "Escape" &&
         !waitlistPrompt &&
         !waiverPrompt &&
-        !infoView
+        !infoView &&
+        !profileView
       ) {
         if (walkinPicker) {
           setWalkinPicker(null);
@@ -1649,6 +1919,7 @@ function FrontDesk() {
     waitlistPrompt,
     waiverPrompt,
     infoView,
+    profileView,
     walkinPicker,
     attachClassMenuOpen,
     closeSearch,
@@ -2379,10 +2650,25 @@ function FrontDesk() {
     () => found.filter((f) => !rosterIds.has(f.id)),
     [found, rosterIds],
   );
-  /** What the search modal lists. Attach mode (T23) shows EVERY match:
-   *  someone already on the roster can still buy a drink, so the
-   *  booking-flow de-duplication does not apply to a sale. */
-  const shownResults = attachMode ? found : walkIns;
+  /** What the search modal lists: EVERY match, in both modes (T42).
+   *  Booking mode used to hide people already on the roster, which read
+   *  as "nobody found" for the very person standing there; now they
+   *  show with a "signed up" / "checked in" / "waitlist" chip and no add
+   *  action. `walkIns` still scopes the pass sweep to the bookable ones. */
+  const shownResults = found;
+  /** The active class's standing for a search result (T42): who is on
+   *  the roster and whether they are in, and who is queued, from the
+   *  waitlist already loaded for a full class (never fetched for this). */
+  const rosterStatus = useMemo(() => {
+    const m = new Map<string, "checked in" | "signed up" | "waitlist">();
+    for (const en of entries) {
+      m.set(en.clientId, en.checkedIn ? "checked in" : "signed up");
+    }
+    for (const w of waitlist ?? []) {
+      if (!m.has(w.clientId)) m.set(w.clientId, "waitlist");
+    }
+    return m;
+  }, [entries, waitlist]);
 
   /**
    * Forms of payment for the DISPLAYED walk-in results: once a submitted
@@ -2402,6 +2688,9 @@ function FrontDesk() {
    * per novel search.
    */
   useEffect(() => {
+    /* T42: the attach rows carry no pass cell any more (Pete: "don't need
+     * all the info here"), so a sale's search sweeps nothing. */
+    if (attachMode) return;
     const ids = walkIns
       .map((w) => w.id)
       .filter((id) => !passSweepCache.current.has(id));
@@ -2439,7 +2728,7 @@ function FrontDesk() {
     return () => {
       cancelled = true;
     };
-  }, [walkIns]);
+  }, [walkIns, attachMode]);
 
   const activeClass = classes.find((c) => c.classId === activeId) ?? null;
   /** Full means TotalBooked has reached MaxCapacity. Unknown counts are
@@ -3341,113 +3630,49 @@ function FrontDesk() {
   };
 
   /**
-   * One attach-mode row (T32), used by BOTH groups: the same .rrow grid,
-   * marker line and add button the search results have always used, so
-   * the class's own people and the rest of the search read identically
-   * and only the facts differ. Attach mode's row is the simple one --
-   * nothing here books, charges or checks anyone in, so there is no
-   * waiver gate, no pass choice and no in-flight dimming; the tap sets
-   * the sale's client and closes the modal.
+   * One attach-mode row (T32, reshaped in T42). The WHOLE row is the tap
+   * target (Pete: "tapping on the row at all should select the client";
+   * the person-check button is gone): nothing here books, charges or
+   * checks anyone in, so there is no waiver gate, no pass cell, no info
+   * icon and no M -- "don't need all the info here". A class row shows
+   * only what the class says, its standing chip; a search row shows the
+   * email and phone line instead, since duplicate names are real. The
+   * chip sits in its own grid column so the chips line up down the list.
    */
   const attachRowItem = ({ client, status }: AttachRow) => {
-    /* Whatever the background pass sweep has already landed for this
-     * client, from a roster sweep or a search one; this renderer never
-     * asks for more. Null means nothing fetched, and the cell stays
-     * empty rather than claiming "no passes". */
-    const passList = passLists[client.id]?.data ?? null;
-    const shownPass = passList?.[0] ?? null;
+    /* Search rows carry the contact line whether or not they also
+     * happen to be on the picked roster; class rows never do. */
+    const contact = attachInClass ? "" : contactLine(client);
     return (
       <li key={`attach-${client.id}`}>
-        <div className="rrow">
+        <div
+          className="rrow rrow-tap"
+          role="button"
+          tabIndex={0}
+          aria-label={`Attach ${client.name}`}
+          onClick={() => attachSaleClient(client)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              attachSaleClient(client);
+            }
+          }}
+        >
           <div className="cell-name">
             <span className="name-text">{client.name}</span>
-            <span className="marker-line">
-              {client.member ? (
-                <span className="m-chip" title="Member" aria-label="Member">
-                  M
-                </span>
-              ) : null}
-              <button
-                className={
-                  client.redAlert || client.yellowAlert || client.notes
-                    ? "row-icon"
-                    : "row-icon dim"
-                }
-                aria-label={`Alerts and notes for ${client.name}`}
-                title="Alerts and notes"
-                onClick={() =>
-                  openInfoView({
-                    clientId: client.id,
-                    name: client.name,
-                    redAlert: client.redAlert,
-                    yellowAlert: client.yellowAlert,
-                    notes: client.notes,
-                  })
-                }
+            {contact ? <span className="contact-line">{contact}</span> : null}
+          </div>
+          {/* Their standing in the picked class, and TEXT rather than
+              a control: attaching a sale moves no attendance. */}
+          <span className="cell-chip">
+            {status !== null ? (
+              <span
+                className={status === "checked in" ? "mini-in" : "mini-signed"}
               >
-                <InfoIcon />
-              </button>
-              {/* Their standing in the picked class, and TEXT rather than
-                  a control: attaching a sale moves no attendance. Only
-                  the in-class group carries one. */}
-              {status !== null ? (
-                <span
-                  className={
-                    status === "checked in" ? "mini-in" : "mini-signed"
-                  }
-                >
-                  {status}
-                </span>
-              ) : null}
-              {!client.waiverSigned ? (
-                <span className="mini-stop">no waiver</span>
-              ) : null}
-            </span>
-          </div>
-          <div className="cell-pay">
-            <span className="pay-stack">
-              {passList !== null ? (
-                shownPass ? (
-                  <>
-                    <span className="pay-name" title={shownPass.name}>
-                      {shortPassName(shownPass.name)}
-                    </span>
-                    <PassFactsLine
-                      remaining={shownPass.remaining}
-                      count={shownPass.count}
-                      expires={shownPass.expires}
-                    />
-                  </>
-                ) : (
-                  <span className="pay-name muted">No current passes</span>
-                )
-              ) : null}
-            </span>
-          </div>
-          <span
-            className={
-              client.balance !== null && client.balance < 0
-                ? "cell-bal neg"
-                : "cell-bal"
-            }
-          >
-            {client.balance !== null && client.balance !== 0
-              ? money(client.balance)
-              : ""}
+                {status}
+              </span>
+            ) : null}
           </span>
-          <div className="cell-actions">
-            <button
-              className="add-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                attachSaleClient(client);
-              }}
-              aria-label={`Attach ${client.name} to the sale`}
-              title="Attach to the sale"
-            >
-              <PersonCheckIcon />
-            </button>
-          </div>
         </div>
       </li>
     );
@@ -3679,7 +3904,7 @@ function FrontDesk() {
               type="button"
               className="search-clear"
               aria-label="Clear search"
-              onClick={() => setQuery("")}
+              onClick={clearSearch}
             >
               <CloseIcon />
             </button>
@@ -4029,6 +4254,20 @@ function FrontDesk() {
                   >
                     <BagIcon />
                   </button>
+                  {/* The client profile (T42): the same basic facts as
+                      Mindbody's client-info page, in a modal, read at
+                      open. */}
+                  <button
+                    className="row-icon"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openProfile(entry.clientId, entry.name);
+                    }}
+                    aria-label={`Profile for ${entry.name}`}
+                    title="Client profile"
+                  >
+                    <PersonIcon />
+                  </button>
                   {/* The one thing this app deliberately does not do
                       (edit a client) is a tap away in the tool that does.
                       Opens the staff web app; the teacher must already be
@@ -4067,7 +4306,11 @@ function FrontDesk() {
       {searchOpen ? (
         <div className="modal-scrim" onClick={closeSearch} role="presentation">
           <div
-            className="modal modal-list modal-search"
+            className={
+              attachMode
+                ? "modal modal-list modal-search attach-mode"
+                : "modal modal-list modal-search"
+            }
             role="dialog"
             aria-modal="true"
             aria-label={
@@ -4124,7 +4367,7 @@ function FrontDesk() {
                       type="button"
                       className="search-clear"
                       aria-label="Clear search"
-                      onClick={() => setQuery("")}
+                      onClick={clearSearch}
                     >
                       <CloseIcon />
                     </button>
@@ -4138,18 +4381,16 @@ function FrontDesk() {
             {attachMode && searchMsg ? (
               <p className="search-quiet">{searchMsg}</p>
             ) : null}
-            {/* The "In class" picker (T27 round three, attach mode
-                ONLY): the person a sale is for is usually on a roster
-                already on screen. A class dropdown (the pass-dropdown
-                idiom) offers the rest of the day's classes -- fetched
-                once per day per session, see openAttachSearch -- and
-                picking one shows ITS roster (session-cached per class;
-                the selected class's roster is `entries`, zero calls).
-                Since T32 the picker is also the HEADING of the first
-                group of rows: with no search run it heads the whole
-                roster, and after a search it heads the matches who are
-                in that class. Tapping a row attaches exactly like a
-                search row does. */}
+            {/* The filter row and the rows (T27 round three, T32, reshaped
+                in T42, attach mode ONLY): an "In class" toggle, on by
+                default with the roster's current class, whose dropdown
+                (the pass-dropdown idiom, the day's classes fetched once
+                per day per session, see openAttachSearch) and three-way
+                segment grey out together when it is off. On, the rows
+                are the picked class's roster (session-cached per class;
+                the selected class's is `entries`, zero calls) filtered
+                in memory by the segment and the typed query; off, they
+                are the search's pages. Tapping a row attaches. */}
             {attachMode
               ? (() => {
                   const menuClasses = dayClasses.list ?? classes;
@@ -4162,16 +4403,13 @@ function FrontDesk() {
                   const quickEntries = showingActive
                     ? entries
                     : attachRoster.entries;
-                  /* The two groups (T32). With no search run yet the rows
-                     ARE the picked class's roster. After a search they are
-                     the matches, split by client id: the ones on that
-                     roster first, rendered from the ROSTER's own facts
-                     (status pill, balance) because the question a teacher
-                     is answering is "is this the person in front of me,
-                     the one in this class"; then everyone else. The Map is
-                     what makes the split disjoint by construction, so
-                     nobody can appear in both groups. */
-                  const searched = searchTitle !== "";
+                  /* The rows (T42). In-class ON: the picked class's
+                     roster, alphabetical by last name, cut by the segment
+                     and then by the typed query, all in memory -- no
+                     minimum length, no call. In-class OFF: the search's
+                     pages as they land, with a standing chip for anyone
+                     who happens to be on the picked roster. */
+                  const q = query.trim().toLowerCase();
                   const onRoster = new Map(
                     (quickEntries ?? []).map(
                       (en) => [en.clientId, en] as const,
@@ -4181,141 +4419,232 @@ function FrontDesk() {
                     client: rosterAsResult(en),
                     status: en.checkedIn ? "checked in" : "signed up",
                   });
-                  const inClass: AttachRow[] = searched
-                    ? found.flatMap((f) => {
+                  const rows: AttachRow[] = attachInClass
+                    ? (quickEntries ?? [])
+                        .filter((en) =>
+                          attachSeg === "all"
+                            ? true
+                            : attachSeg === "in"
+                              ? en.checkedIn
+                              : !en.checkedIn,
+                        )
+                        .filter(
+                          (en) => !q || en.name.toLowerCase().includes(q),
+                        )
+                        .sort(byLastThenFirst)
+                        .map(rosterRow)
+                    : found.map((f) => {
                         const en = onRoster.get(f.id);
-                        return en ? [rosterRow(en)] : [];
-                      })
-                    : (quickEntries ?? []).map(rosterRow);
-                  const others: AttachRow[] = searched
-                    ? found
-                        .filter((f) => !onRoster.has(f.id))
-                        .map((f) => ({ client: f, status: null }))
-                    : [];
+                        return en
+                          ? { client: f, status: rosterRow(en).status }
+                          : { client: f, status: null };
+                      });
+                  const rosterEmpty =
+                    attachInClass &&
+                    quickEntries !== null &&
+                    quickEntries.length === 0;
+                  const searched = !attachInClass && searchTitle !== "";
+                  /* The one quiet line under the rows, or in their place:
+                     the roster's own states first, then the search's. */
+                  const line = attachInClass
+                    ? !showingActive && attachRoster.loading
+                      ? "loading"
+                      : !showingActive && attachRoster.error
+                        ? `Roster unavailable: ${attachRoster.error}`
+                        : rosterEmpty
+                          ? "Nobody is booked yet."
+                          : rows.length === 0
+                            ? q
+                              ? "Nobody in this class matches."
+                              : attachSeg === "in"
+                                ? "Nobody is signed in yet."
+                                : "Everyone booked is signed in."
+                            : null
+                    : searchError
+                      ? null
+                      : searched && !searching && rows.length === 0
+                        ? "Nobody found. Check the spelling, or try fewer letters."
+                        : !searched && !searching
+                          ? attachSearchHint(config)
+                          : null;
                   return (
                     <div className="attach-quick">
-                      <div className="attach-class">
-                        <span className="attach-quick-label">In class</span>
+                      {/* The filter row (T42): the In class toggle, then
+                          the class dropdown and the three-way segment it
+                          governs, which grey out together when it is off. */}
+                      <div
+                        className={
+                          attachInClass
+                            ? "attach-filters"
+                            : "attach-filters off"
+                        }
+                      >
                         <button
-                          className="class-change attach-class-btn"
-                          aria-haspopup="dialog"
-                          aria-expanded={attachClassMenuOpen}
-                          aria-label="Pick which class to show"
-                          onClick={() => setAttachClassMenuOpen((o) => !o)}
+                          type="button"
+                          className={
+                            attachInClass ? "filter-toggle on" : "filter-toggle"
+                          }
+                          aria-pressed={attachInClass}
+                          onClick={toggleAttachInClass}
                         >
-                          <span className="attach-class-name">
-                            {picked
-                              ? `${clockTime(picked.startsAt)} · ${picked.name}${
-                                  picked.teacher ? ` - ${picked.teacher}` : ""
-                                }`
-                              : "Pick a class"}
-                          </span>
-                          <ChevronDownIcon />
+                          In class
                         </button>
-                        {attachClassMenuOpen ? (
-                          <>
-                            <div
-                              className="pass-scrim"
-                              role="presentation"
-                              onClick={() => setAttachClassMenuOpen(false)}
-                            />
-                            <div
-                              className="pass-dd attach-class-dd"
-                              role="dialog"
-                              aria-label="Classes today"
-                            >
-                              {dayClasses.loading ? (
-                                <p className="pass-empty">
-                                  <span
-                                    className="spinner"
-                                    aria-label="working"
-                                  />{" "}
-                                  Loading the day&apos;s classes...
-                                </p>
-                              ) : null}
-                              {dayClasses.error ? (
-                                /* Quiet: the around-now classes below
-                                   still work, the wider day just is not
-                                   available. */
-                                <p className="pass-empty">
-                                  Only the classes around now are
-                                  available: {dayClasses.error}
-                                </p>
-                              ) : null}
-                              {menuClasses.map((c) => {
-                                const current = c.classId === attachClassId;
-                                return (
-                                  <button
-                                    key={`ac-${c.classId}`}
-                                    className={
-                                      current ? "pass-opt current" : "pass-opt"
-                                    }
-                                    aria-pressed={current}
-                                    onClick={() => pickAttachClass(c.classId)}
-                                  >
-                                    <span className="pass-check">
-                                      {current ? <CheckIcon /> : null}
-                                    </span>
-                                    <span className="pass-opt-text">
-                                      <span className="pass-opt-name">
-                                        {clockTime(c.startsAt)} · {c.name}
-                                        {c.teacher ? ` - ${c.teacher}` : ""}
-                                      </span>
-                                    </span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </>
-                        ) : null}
-                      </div>
-                      {/* The roster's own states, before any search: once
-                          one has run the groups below are the answer, and
-                          the search's spinner and messages speak under
-                          them. */}
-                      {searched ? null : !showingActive &&
-                        attachRoster.loading ? (
-                        <p className="muted">
-                          <span className="spinner" aria-label="working" />{" "}
-                          Loading the roster...
-                        </p>
-                      ) : !showingActive && attachRoster.error ? (
-                        <p className="muted">
-                          Roster unavailable: {attachRoster.error}
-                        </p>
-                      ) : quickEntries && quickEntries.length === 0 ? (
-                        <p className="muted">Nobody is booked yet.</p>
-                      ) : null}
-                      {/* Both groups share ONE scroll region: the modal is
-                          centred in a fixed scrim and does not scroll
-                          itself, so two independently scrolling lists
-                          could stack past the top and bottom of the
-                          screen. The picker and the search bar stay put
-                          above it. */}
-                      {inClass.length > 0 || others.length > 0 ? (
-                        <div className="attach-rows">
-                          {inClass.length > 0 ? (
-                            <ul className="roster">
-                              {inClass.map(attachRowItem)}
-                            </ul>
-                          ) : null}
-                          {/* No heading on an empty group, and `others` is
-                              empty until a search has run, so this one
-                              only ever exists as the remainder of a
-                              search. It renders even when the in-class
-                              group is empty: without it the rows sit
-                              directly under the class picker and read as
-                              if they were that class's. */}
-                          {others.length > 0 ? (
+                        <div className="attach-class">
+                          <button
+                            className="class-change attach-class-btn"
+                            disabled={!attachInClass}
+                            aria-haspopup="dialog"
+                            aria-expanded={attachClassMenuOpen}
+                            aria-label="Pick which class to show"
+                            onClick={() => setAttachClassMenuOpen((o) => !o)}
+                          >
+                            <span className="attach-class-name">
+                              {picked
+                                ? `${clockTime(picked.startsAt)} · ${picked.name}${
+                                    picked.teacher ? ` - ${picked.teacher}` : ""
+                                  }`
+                                : "Pick a class"}
+                            </span>
+                            <ChevronDownIcon />
+                          </button>
+                          {attachClassMenuOpen ? (
                             <>
-                              <p className="attach-group">Other matches</p>
-                              <ul className="roster">
-                                {others.map(attachRowItem)}
-                              </ul>
+                              <div
+                                className="pass-scrim"
+                                role="presentation"
+                                onClick={() => setAttachClassMenuOpen(false)}
+                              />
+                              <div
+                                className="pass-dd attach-class-dd"
+                                role="dialog"
+                                aria-label="Classes today"
+                              >
+                                {dayClasses.loading ? (
+                                  <p className="pass-empty">
+                                    <span
+                                      className="spinner"
+                                      aria-label="working"
+                                    />{" "}
+                                    Loading the day&apos;s classes...
+                                  </p>
+                                ) : null}
+                                {dayClasses.error ? (
+                                  /* Quiet: the around-now classes below
+                                     still work, the wider day just is not
+                                     available. */
+                                  <p className="pass-empty">
+                                    Only the classes around now are
+                                    available: {dayClasses.error}
+                                  </p>
+                                ) : null}
+                                {menuClasses.map((c) => {
+                                  const current = c.classId === attachClassId;
+                                  return (
+                                    <button
+                                      key={`ac-${c.classId}`}
+                                      className={
+                                        current
+                                          ? "pass-opt current"
+                                          : "pass-opt"
+                                      }
+                                      aria-pressed={current}
+                                      onClick={() =>
+                                        pickAttachClass(c.classId)
+                                      }
+                                    >
+                                      <span className="pass-check">
+                                        {current ? <CheckIcon /> : null}
+                                      </span>
+                                      <span className="pass-opt-text">
+                                        <span className="pass-opt-name">
+                                          {clockTime(c.startsAt)} · {c.name}
+                                          {c.teacher ? ` - ${c.teacher}` : ""}
+                                        </span>
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
                             </>
                           ) : null}
                         </div>
-                      ) : null}
+                        <div
+                          className="seg"
+                          role="radiogroup"
+                          aria-label="Who in the class to show"
+                        >
+                          {ATTACH_SEGMENTS.map((sg) => (
+                            <button
+                              key={sg.value}
+                              type="button"
+                              className={
+                                attachSeg === sg.value ? "seg-btn on" : "seg-btn"
+                              }
+                              role="radio"
+                              aria-checked={attachSeg === sg.value}
+                              disabled={!attachInClass}
+                              onClick={() => setAttachSeg(sg.value)}
+                            >
+                              {sg.value === "all" ? (
+                                <PersonIcon />
+                              ) : sg.value === "in" ? (
+                                <CheckIcon />
+                              ) : (
+                                <UndoIcon />
+                              )}
+                              <span>{sg.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      {/* One scroll region of a FIXED height (T42, Pete:
+                          "should stay the same size always"): the modal
+                          used to shrink while a search was in flight.
+                          The last rows stay put, dimmed, under a quiet
+                          "Searching..." line until the answer replaces
+                          them. */}
+                      <div
+                        className={
+                          searching ? "attach-rows searching" : "attach-rows"
+                        }
+                        aria-busy={searching || searchMore}
+                      >
+                        {searching ? (
+                          <p className="attach-line">
+                            <span className="spinner" aria-label="working" />{" "}
+                            Searching Mindbody...
+                          </p>
+                        ) : null}
+                        {line === "loading" ? (
+                          <p className="attach-line">
+                            <span className="spinner" aria-label="working" />{" "}
+                            Loading the roster...
+                          </p>
+                        ) : line ? (
+                          <p className="attach-line">{line}</p>
+                        ) : null}
+                        {searchError ? (
+                          <p className="note">{searchError}</p>
+                        ) : null}
+                        {rows.length > 0 ? (
+                          <ul className="roster">{rows.map(attachRowItem)}</ul>
+                        ) : null}
+                        {/* The paging sentinel and its quiet line: only
+                            while the search says there is more. */}
+                        {!attachInClass && !searchPage.done ? (
+                          <div
+                            className="attach-more"
+                            ref={setSearchSentinel}
+                          >
+                            {searchMore ? (
+                              <>
+                                <span className="spinner" aria-label="working" />{" "}
+                                Loading more...
+                              </>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   );
                 })()
@@ -4324,31 +4653,35 @@ function FrontDesk() {
                 every result row: with the class full, every add offers
                 the waiting list instead. Booking flow only; a sale does
                 not care whether the class is full. */}
-            {!attachMode && classFull && walkIns.length > 0 ? (
+            {!attachMode && classFull && shownResults.length > 0 ? (
               <p className="muted">Class is full. Adding goes to the waiting list.</p>
             ) : null}
-            {searching ? (
+            {!attachMode && searching ? (
               <p className="muted">
                 <span className="spinner" aria-label="working" /> Searching
                 Mindbody...
               </p>
             ) : null}
-            {searchError ? <p className="note">{searchError}</p> : null}
-            {!searching && !searchError && shownResults.length === 0 ? (
+            {!attachMode && searchError ? (
+              <p className="note">{searchError}</p>
+            ) : null}
+            {!attachMode &&
+            !searching &&
+            !searchError &&
+            shownResults.length === 0 ? (
               <p className="muted">
-                {attachMode
-                  ? searchTitle
-                    ? "Nobody found. Check the spelling, or try fewer letters."
-                    : "Search for the client the sale is for, or close to sell anonymously."
-                  : found.length > 0
-                    ? "Everyone matching is already on this class's roster."
-                    : "Nobody found. Check the spelling, or try fewer letters."}
+                Nobody found. Check the spelling, or try fewer letters.
               </p>
             ) : null}
             {/* The booking flow's results list. Attach mode renders its
-                own grouped rows above (T32) through attachRowItem, so
-                this one is now booking-only and its rows carry no attach
-                branches. */}
+                own rows above through attachRowItem. Since T42 the whole
+                row is the add target again for a walk-in (Pete: "remove
+                the + icon and make the whole row clickable"): the tap
+                goes through tapWalkIn with every gate it always had (the
+                waiver, the unpaid confirm, a full class's waitlist
+                confirm), and someone already on the roster or the
+                waiting list gets a chip and no tap at all. The Buy bag
+                left these rows; it stays on the roster's. */}
             {!attachMode && shownResults.length > 0 ? (
               <>
                 <div className="roster-head">
@@ -4357,6 +4690,7 @@ function FrontDesk() {
                   <span className="cell-bal" aria-hidden="true">
                     Balance
                   </span>
+                  <span aria-hidden="true" />
                   <span aria-hidden="true" />
                 </div>
                 <ul
@@ -4371,18 +4705,21 @@ function FrontDesk() {
                   {shownResults.map((client) => {
                     const working = bookingIds.includes(client.id);
                     const msg = bookMsg[client.id];
-                    /* Under the markers: an in-flight call or an outcome
-                     * message only. Email is gone from the row entirely
-                     * (T17), and the full-class notice is a class-level
-                     * fact said ONCE under the modal title, not stamped on
-                     * every row. */
+                    const standing = rosterStatus.get(client.id) ?? null;
+                    /* A row already in the class (or queued for it) is not
+                     * an add target: the chip says where they stand. */
+                    const tappable =
+                      standing === null && !working && bookingIds.length === 0;
+                    /* Under the name: the email and phone line (T42), and
+                     * under that an in-flight call or an outcome message. */
+                    const contact = contactLine(client);
                     const subline = working ? "Talking to Mindbody..." : (msg ?? null);
                     /* The pass summary, once the background fetch has
                      * landed: the same two-line format as the roster's
                      * payment cell. With more than one current pass the
                      * cell grows the roster's chevron and which pass will
                      * pay becomes choosable (T17): the choice is LOCAL --
-                     * rendered here, sent only when the "+" books --
+                     * rendered here, sent only when the row books --
                      * defaulting to the list's first pass, which is what
                      * the summary always showed. Only passes carrying an
                      * id are choosable; a pass Mindbody returned without
@@ -4398,19 +4735,37 @@ function FrontDesk() {
                         : null;
                     const shownPass = chosen ?? passList?.[0] ?? null;
                     const pickerOpen = walkinPicker?.id === client.id;
+                    const rowClass = [
+                      "rrow",
+                      tappable ? "rrow-tap" : "",
+                      bookingIds.length > 0 && !working ? "row-dim" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ");
+                    const addLabel = classFull
+                      ? `Add ${client.name} to the waitlist`
+                      : `Add ${client.name} to this class`;
                     return (
                       <li key={`walkin-${client.id}`}>
-                        {/* The row body is not an add target (T16, same
-                            principle as roster check-in): the add chip is
-                            the only action. While ONE row's booking is in
-                            flight every other row dims: the single-flight
-                            lock already made them inert, this makes it
-                            visible. */}
+                        {/* While ONE row's booking is in flight every
+                            other row dims: the single-flight lock already
+                            made them inert, this makes it visible. */}
                         <div
-                          className={
-                            bookingIds.length > 0 && !working
-                              ? "rrow row-dim"
-                              : "rrow"
+                          className={rowClass}
+                          role={tappable ? "button" : undefined}
+                          tabIndex={tappable ? 0 : undefined}
+                          aria-label={tappable ? addLabel : undefined}
+                          title={tappable ? (classFull ? "Add to waitlist" : "Add to this class") : undefined}
+                          onClick={tappable ? () => tapWalkIn(client) : undefined}
+                          onKeyDown={
+                            tappable
+                              ? (e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    tapWalkIn(client);
+                                  }
+                                }
+                              : undefined
                           }
                         >
                           <div className="cell-name">
@@ -4420,47 +4775,9 @@ function FrontDesk() {
                                 long name wraps; "..." is not an option
                                 here (T17). */}
                             <span className="name-text">{client.name}</span>
-                            {/* The second line holds the markers, in a
-                                fixed order: M, info, no-waiver. The info
-                                icon is on every result row (T20), same
-                                grey/bright treatment as the roster's, so
-                                the line always renders. */}
-                            <span className="marker-line">
-                              {client.member ? (
-                                <span
-                                  className="m-chip"
-                                  title="Member"
-                                  aria-label="Member"
-                                >
-                                  M
-                                </span>
-                              ) : null}
-                              <button
-                                className={
-                                  client.redAlert ||
-                                  client.yellowAlert ||
-                                  client.notes
-                                    ? "row-icon"
-                                    : "row-icon dim"
-                                }
-                                aria-label={`Alerts and notes for ${client.name}`}
-                                title="Alerts and notes"
-                                onClick={() =>
-                                  openInfoView({
-                                    clientId: client.id,
-                                    name: client.name,
-                                    redAlert: client.redAlert,
-                                    yellowAlert: client.yellowAlert,
-                                    notes: client.notes,
-                                  })
-                                }
-                              >
-                                <InfoIcon />
-                              </button>
-                              {!client.waiverSigned ? (
-                                <span className="mini-stop">no waiver</span>
-                              ) : null}
-                            </span>
+                            {contact ? (
+                              <span className="contact-line">{contact}</span>
+                            ) : null}
                             {subline ? (
                               <span className="subline">{subline}</span>
                             ) : null}
@@ -4492,9 +4809,9 @@ function FrontDesk() {
                             {/* The chevron only when there is a real
                                 choice: two or more choosable passes. The
                                 tap opens the picker; picking takes NO
-                                action beyond updating this cell. Booking
-                                flow only: attaching a client to a sale
-                                picks no pass. */}
+                                action beyond updating this cell, and the
+                                stopPropagation keeps it off the row's
+                                add tap. */}
                             {choosable.length >= 2 ? (
                               <button
                                 className="row-icon pass-toggle"
@@ -4639,67 +4956,86 @@ function FrontDesk() {
                               ? money(client.balance)
                               : ""}
                           </span>
+                          {/* The standing chip column (T42): fixed, so
+                              chips line up down the list. A row being
+                              booked shows the spinner here. */}
+                          <span className="cell-chip">
+                            {working ? (
+                              <span className="spinner" aria-label="working" />
+                            ) : standing === "checked in" ? (
+                              <span className="mini-in">checked in</span>
+                            ) : standing !== null ? (
+                              <span className="mini-signed">{standing}</span>
+                            ) : null}
+                          </span>
                           <div className="cell-actions">
-                            {/* Buy for a searched person without booking
-                                them: the modal closes and the Buy overlay
-                                opens with them attached. No gates -- a
-                                purchase needs no waiver. */}
                             <button
                               className="row-icon"
-                              disabled={working || bookingIds.length > 0}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                openBuyFor({
-                                  id: client.id,
-                                  name: client.name,
-                                  balance: client.balance,
-                                });
+                                openProfile(client.id, client.name);
                               }}
-                              aria-label={`Buy for ${client.name}`}
-                              title={`Buy for ${client.name}`}
+                              aria-label={`Profile for ${client.name}`}
+                              title="Client profile"
                             >
-                              <BagIcon />
-                            </button>
-                            {/* A "+" icon, not a text chip (T17): the one
-                                booking action on the row, a 52px filled
-                                circle in the same action pairing as the
-                                check-in chip. The aria-label carries what
-                                the label text used to: whether the tap
-                                books or offers the waiting list. All
-                                gates are in tapWalkIn, unchanged. */}
-                            <button
-                              className="add-btn"
-                              /* Every row's "+" goes inert while ANY booking
-                                 is in flight; the spinner stays on the row
-                                 that is actually booking. */
-                              disabled={working || bookingIds.length > 0}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                tapWalkIn(client);
-                              }}
-                              aria-label={
-                                classFull
-                                  ? `Add ${client.name} to the waitlist`
-                                  : `Add ${client.name} to this class`
-                              }
-                              title={
-                                classFull ? "Add to waitlist" : "Add to this class"
-                              }
-                            >
-                              {working ? (
-                                <span className="spinner" aria-label="working" />
-                              ) : (
-                                <PlusIcon />
-                              )}
+                              <PersonIcon />
                             </button>
                           </div>
                         </div>
                       </li>
                     );
                   })}
+                  {/* The paging sentinel (T42): only while the search
+                      says there is more; the observer asks for the next
+                      page as it scrolls into view. */}
+                  {!searchPage.done ? (
+                    <li className="attach-more" ref={setSearchSentinel}>
+                      {searchMore ? (
+                        <>
+                          <span className="spinner" aria-label="working" />{" "}
+                          Loading more...
+                        </>
+                      ) : null}
+                    </li>
+                  ) : null}
                 </ul>
               </>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {/* The client profile modal (T42): what the person icon on a roster
+          or search row opens, above the search modal when it came from
+          there. Read-only, fetched at open; Escape and the scrim close. */}
+      {profileView ? (
+        <div
+          className="modal-scrim profile-scrim"
+          onClick={closeProfile}
+          role="presentation"
+        >
+          <div
+            className="modal modal-list modal-profile"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Profile for ${profileView.name}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="row-icon modal-x"
+              aria-label="Close profile"
+              onClick={closeProfile}
+            >
+              <CloseIcon />
+            </button>
+            <p className="modal-title">{profileView.name}</p>
+            <div className="profile-scroll">
+              <ClientProfileCard
+                profile={profileState.profile}
+                loading={profileState.loading}
+                error={profileState.error}
+              />
+            </div>
           </div>
         </div>
       ) : null}
@@ -5489,7 +5825,12 @@ function FrontDesk() {
         client={saleClient}
         onRequestAttach={openAttachSearch}
         onDetachClient={() => setSaleClient(null)}
-        modalAbove={searchOpen || infoView !== null || waiverPrompt !== null}
+        modalAbove={
+          searchOpen ||
+          infoView !== null ||
+          waiverPrompt !== null ||
+          profileView !== null
+        }
         onContractPurchased={refreshClientState}
         onSaleCompleted={refreshClientState}
       />
