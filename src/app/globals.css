@@ -2164,40 +2164,6 @@ button.pass-opt:disabled {
   font-size: 16px;
 }
 
-/* Under the lines: Clear cart, until T39.5 moves it to the bar. */
-.t-foot {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  flex: none;
-  padding: 0 8px 8px;
-}
-
-/* Clear cart: quiet stop treatment, a real bordered button on the 64px
- * floor because it empties the whole cart. It confirms before it acts. */
-.t-clear {
-  flex: 0 0 auto;
-  min-height: 64px;
-  padding: 0 18px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--stop);
-  font-family: inherit;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.t-clear:active:not(:disabled) {
-  background: var(--action-bg);
-}
-
-.t-clear:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
 /* One cart line (T39.4): name and total on one line, the `n @ price`
  * sub-line above quantity one, padded 8/10 with a 2px gap, a transparent
  * border that the selection fills in. The whole row width is the tap
@@ -2611,6 +2577,99 @@ button.sale-for:disabled {
 .shelf-bundle-mark {
   color: var(--muted);
   font-weight: 400;
+}
+
+/* --- T39.5: the action bar. ------------------------------------------
+ * The overlay's last child: 92px on its own ground across the full
+ * width, a hairline above and --shadow lifting it off the columns, its
+ * contents aligned to the shell's 1400. Sticky, so on the narrow fold
+ * where the overlay scrolls it stays at the viewport's edge; in the
+ * bounded layout sticky is inert. z-index 5 keeps it under every modal
+ * scrim (30) in the overlay's stacking context. --- */
+.sale-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  flex: none;
+  width: 100%;
+  border-top: 1px solid var(--line);
+  background: var(--bar-bg);
+  box-shadow: var(--shadow);
+}
+
+.sale-bar-in {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 92px;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+/* Empty cart: the secondary, quiet at the left, outlined on the surface
+ * at 64px. T38's confirm stands behind it. */
+.sale-bar-empty {
+  height: 64px;
+  padding: 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.sale-bar-empty:active:not(:disabled) {
+  background: var(--action-bg);
+}
+
+.sale-bar-empty:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The primary: 68px, radius 14, the accent pairing, a 20px label with
+ * the count and a 22px mono amount. `.off` is the disabled pair (Pay on
+ * an empty cart, or with no server total to show); it stays a real
+ * button with aria-disabled so its title can say why. */
+.sale-bar-pay {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  height: 68px;
+  padding: 0 30px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.sale-bar-pay.off {
+  background: var(--disabled-bg);
+  color: var(--disabled-ink);
+  cursor: default;
+}
+
+.sale-bar-pay:active:not(.off) {
+  filter: brightness(0.92);
+}
+
+.sale-bar-count {
+  font-size: 16px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.sale-bar-amt {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 /* --- The Buy overlay's folds (T39.2, T39.3). After the base rules

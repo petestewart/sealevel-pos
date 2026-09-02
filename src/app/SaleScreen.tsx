@@ -3027,6 +3027,8 @@ export default function SaleScreen(props: {
    * "N more below" line. Display only.
    */
   const linesRef = useRef<HTMLDivElement | null>(null);
+  /** T39.5: the bar's Pay brings the payment column into view. */
+  const overlayRef = useRef<HTMLDivElement | null>(null);
   const [hiddenBelow, setHiddenBelow] = useState(0);
   const measureLines = useCallback(() => {
     const el = linesRef.current;
@@ -3119,6 +3121,36 @@ export default function SaleScreen(props: {
    *  sent one (`/api/config`'s studioTaxRate, T38); never a literal. */
   const taxLabel =
     config?.studioTaxRate != null ? `Tax ${pct(config.studioTaxRate)}` : "Tax";
+  /**
+   * T39.5: the bar's primary. The amount is the SERVER's grandTotal and
+   * nothing else: while T38's estimate is on the ticket the bar reads
+   * `Pay` with the count and no figure, because a number on the one
+   * button that moves money must never be the browser's. `payWhy` is
+   * the reason it is disabled, or null; it is the button's title, so a
+   * greyed Pay says why when asked. Display only: the charge itself is
+   * still PaymentPanel's button until T39.6.
+   */
+  const payWhy: string | null = charging
+    ? "Charging..."
+    : cart.length === 0
+      ? "Nothing rung up yet"
+      : pricing
+        ? "Pricing with Mindbody..."
+        : priceError
+          ? "Pricing failed; nothing to pay against"
+          : priced === null
+            ? "No total yet"
+            : priced.suppressed
+              ? "Suppressed: Mindbody did not price this cart"
+              : priced.disagrees
+                ? "Totals disagree; do not charge"
+                : priced.needsClient
+                  ? "Attach a client to price with Mindbody"
+                  : priced.grandTotal === null
+                    ? "No total yet"
+                    : null;
+  const payAmount =
+    payWhy === null && priced !== null ? priced.grandTotal : null;
   /** T39.3: quantity per shelf card, from the cart's own keys; the count
    *  pill reads it and nothing is fetched. */
   const inCart = new Map(cart.map((l) => [l.key, l.quantity]));
@@ -3137,7 +3169,7 @@ export default function SaleScreen(props: {
         : client.balance;
 
   return (
-    <div className="sale-overlay" role="dialog" aria-label="Buy">
+    <div className="sale-overlay" role="dialog" aria-label="Buy" ref={overlayRef}>
       <div className="sale-shell">
         <ModeBanner config={config} />
 
@@ -3598,21 +3630,6 @@ export default function SaleScreen(props: {
                 </div>
                 </div>
 
-                {/* T38: Clear cart, on the foot row under the lines while
-                    the cart holds anything, in every totals state, so the
-                    way out never depends on the totals. It confirms
-                    before it destroys anything. T39.5 moves it to the
-                    action bar as Empty cart. */}
-                <div className="t-foot">
-                  <button
-                    className="t-clear"
-                    disabled={charging}
-                    onClick={() => setClearPrompt(cartCount)}
-                  >
-                    Clear cart
-                  </button>
-                </div>
-
                 <div className="t-totals">
                 {/* T38: what a recheck found, kept while this cart is the
                     one it rebuilt. Rendered above whatever the totals
@@ -3866,6 +3883,58 @@ export default function SaleScreen(props: {
               </div>
             }
           />
+        </div>
+      </div>
+
+      {/* T39.5: the action bar, the overlay's last child so it sits at
+          the bottom of the viewport under the columns (sticky, for the
+          narrow fold where the overlay scrolls). Empty cart left, behind
+          T38's confirm exactly; the primary right. It stacks BELOW every
+          modal scrim (the scrims are z-index 30 in the overlay's own
+          stacking context, the bar 5), so nothing on it is tappable
+          behind a dialog. */}
+      <div className="sale-bar">
+        <div className="sale-bar-in">
+          <button
+            className="sale-bar-empty"
+            disabled={cart.length === 0 || charging}
+            onClick={() => setClearPrompt(cartCount)}
+          >
+            Empty cart
+          </button>
+          <button
+            className={payWhy === null ? "sale-bar-pay" : "sale-bar-pay off"}
+            aria-disabled={payWhy !== null}
+            title={payWhy ?? `Pay ${money(payAmount ?? 0)}`}
+            onClick={() => {
+              if (payWhy !== null) return;
+              /* TODO(T39.6): this is where the mode switch goes (shelf to
+                 pay: the rail collapses, the payment surface replaces
+                 the grid). Until then the tender lives in the cart
+                 column, so Pay brings it into view and hands focus to
+                 the first source that can take it. */
+              const col =
+                overlayRef.current?.querySelector<HTMLElement>(".sale-left");
+              col?.scrollIntoView({ block: "nearest" });
+              col
+                ?.querySelector<HTMLElement>(".tender-src:not(:disabled)")
+                ?.focus({ preventScroll: true });
+            }}
+          >
+            <span>Pay</span>
+            {cartCount > 0 ? (
+              <span className="sale-bar-count">
+                {"\u00b7"} {cartCount} {cartCount === 1 ? "item" : "items"}
+              </span>
+            ) : null}
+            {payAmount !== null ? (
+              <span className="sale-bar-amt">
+                {"\u00b7"} {money(payAmount)}
+              </span>
+            ) : pricing && cart.length > 0 ? (
+              <span className="spinner" aria-label="pricing" />
+            ) : null}
+          </button>
         </div>
       </div>
 
