@@ -2656,6 +2656,7 @@ export default function SaleScreen(props: {
    *  switch already stands either way. */
   const emptyCart = useCallback(() => {
     setCart([]);
+    setSelectedKey(null);
     setPriced(null);
     setPriceError(null);
     setCartResetNonce((n) => n + 1);
@@ -2929,8 +2930,22 @@ export default function SaleScreen(props: {
     onClose,
   ]);
 
+  /**
+   * T39.4: which cart line is showing its controls. One line at most,
+   * selected by a tap on the row, and it is what buys back the column's
+   * height: the per-row stepper on every line is gone, so a seven-line
+   * cart fits where four used to. Adding from the shelf selects the line
+   * it touched (the prototype does this, and it reads well: the row you
+   * just changed is the one showing its count); removing a line or
+   * emptying the cart clears it. Derived against the cart below, so a
+   * key that leaves the cart by any path (recheck dropping a line, a
+   * sale clearing it) can never point at a row that is not there.
+   */
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+
   const addItem = useCallback((item: ShelfItem) => {
     const key = `${item.type}-${item.id}`;
+    setSelectedKey(key);
     setCart((lines) => {
       const have = lines.find((l) => l.key === key);
       if (have) {
@@ -2949,6 +2964,10 @@ export default function SaleScreen(props: {
    *  but a saved sequence of taps: the cart, the pricing loop and the
    *  charge path never know bundles exist. */
   const addBundle = useCallback((bundle: ResolvedBundle) => {
+    /* T39.4: a bundle touches several lines; the last one it rang up is
+       the one left selected, the same as tapping its cards in turn. */
+    const last = bundle.items[bundle.items.length - 1];
+    if (last) setSelectedKey(`${last.item.type}-${last.item.id}`);
     setCart((lines) => {
       const next = [...lines];
       for (const { item, quantity } of bundle.items) {
@@ -2989,7 +3008,13 @@ export default function SaleScreen(props: {
   }, []);
 
   const removeLine = useCallback((key: string) => {
+    setSelectedKey(null);
     setCart((lines) => lines.filter((l) => l.key !== key));
+  }, []);
+
+  /** T39.4: the row tap. The selected row again, or nothing, deselects. */
+  const toggleSelected = useCallback((key: string) => {
+    setSelectedKey((cur) => (cur === key ? null : key));
   }, []);
 
   /**
@@ -3020,7 +3045,22 @@ export default function SaleScreen(props: {
   useEffect(() => {
     measureLines();
     window.addEventListener("resize", measureLines);
-    return () => window.removeEventListener("resize", measureLines);
+    /* T39.4: the lines box is no longer a fixed vh cap but whatever the
+       column leaves it, which moves when a row reveals its controls or
+       the totals area changes shape (estimate to server rows, a stop
+       appearing). A ResizeObserver on the box itself catches every one
+       of those without listing them; the cart dependency stays for the
+       row count changing inside an unchanged box. */
+    const el = linesRef.current;
+    const ro =
+      el && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => measureLines())
+        : null;
+    if (el && ro) ro.observe(el);
+    return () => {
+      window.removeEventListener("resize", measureLines);
+      ro?.disconnect();
+    };
   }, [cart, open, measureLines]);
 
   if (!open) return null;
@@ -3070,6 +3110,15 @@ export default function SaleScreen(props: {
       ? recheckReport
       : null;
   const cartCount = cart.reduce((n, l) => n + l.quantity, 0);
+  /** T39.4: the selection, only while its line is in the cart. */
+  const selected =
+    selectedKey !== null && cart.some((l) => l.key === selectedKey)
+      ? selectedKey
+      : null;
+  /** T39.4: the tax row's label carries the rate only when the server
+   *  sent one (`/api/config`'s studioTaxRate, T38); never a literal. */
+  const taxLabel =
+    config?.studioTaxRate != null ? `Tax ${pct(config.studioTaxRate)}` : "Tax";
   /** T39.3: quantity per shelf card, from the cart's own keys; the count
    *  pill reads it and nothing is fetched. */
   const inCart = new Map(cart.map((l) => [l.key, l.quantity]));
@@ -3429,13 +3478,26 @@ export default function SaleScreen(props: {
             onClientDataStale={onClientDataStale}
             receipt={
               <div className="ticket">
-            <h3>Sealevel Hot Yoga</h3>
-            <p className="t-sub">Fremont</p>
-
-            <hr className="t-rule" />
+            {/* T39.4: 1a's ticket. A head line, the count beside it, and
+                no studio heading: the teacher knows where she is. */}
+            <div className="t-head">
+              <span className="t-head-name">Ticket</span>
+              <span>
+                {/* T38's cue, here since T39.4: the head never moves, so
+                    the cue cannot change the box it measures. */}
+                {hiddenBelow > 0 ? (
+                  <span className="t-more" aria-live="polite">
+                    {hiddenBelow} more below
+                  </span>
+                ) : null}
+                <span className="t-head-count">
+                  {cartCount} {cartCount === 1 ? "item" : "items"}
+                </span>
+              </span>
+            </div>
 
             {cart.length === 0 ? (
-              <>
+              <div className="t-lines-wrap">
                 <p className="t-empty">Nothing rung up yet.</p>
                 {/* T38: a recheck that dropped every line lands here,
                     and the teacher must still be told what went. */}
@@ -3447,79 +3509,101 @@ export default function SaleScreen(props: {
                     .
                   </p>
                 ) : null}
-              </>
+              </div>
             ) : (
               <>
-                {/* The lines scroll internally past a few items, so the
-                    totals and the charge button below never leave an
-                    iPad-landscape screen. T38 made the clipping visible:
-                    a fade over the last row and a count under it while
-                    rows are hidden below. */}
+                {/* The lines box takes whatever height the column leaves
+                    it (T39.4: flex, not a vh cap), so the totals below
+                    never leave the screen for any cart length. T38 made
+                    the clipping visible: a fade over the last row and a
+                    count riding it while rows are hidden below. */}
                 <div
                   className={hiddenBelow > 0 ? "t-lines-wrap more" : "t-lines-wrap"}
                 >
                 <div className="t-lines" ref={linesRef} onScroll={measureLines}>
-                {cart.map((line) => (
-                  <div className="t-item" key={line.key}>
-                    <div className="t-line">
-                      <span className="t-name">{line.item.name}</span>
-                      <span className="amt">
-                        {money(line.item.price * line.quantity)}
-                      </span>
+                {cart.map((line) => {
+                  const sel = line.key === selected;
+                  return (
+                    /* T39.4: select to reveal. The row is the tap target
+                       (a div with the button role: a <button> may not
+                       contain the buttons the controls are), and only
+                       the selected row shows minus / count / plus and
+                       Remove. The controls stop propagation so a tap on
+                       plus does not also deselect the row. */
+                    <div
+                      className={sel ? "t-row sel" : "t-row"}
+                      key={line.key}
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={sel}
+                      aria-label={`${line.item.name}, ${line.quantity} at ${money(line.item.price)}${sel ? ", selected" : ""}`}
+                      onClick={() => toggleSelected(line.key)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          toggleSelected(line.key);
+                        }
+                      }}
+                    >
+                      <div className="t-line">
+                        <span className="t-name">{line.item.name}</span>
+                        <span className="amt">
+                          {money(line.item.price * line.quantity)}
+                        </span>
+                      </div>
+                      {/* The sub-line only above quantity one (0.1): a
+                          single item's price IS its total. No "@ 0.00"
+                          clause: a zero unit price cannot reach the shelf
+                          (the catalog filters it), but a line that
+                          somehow carries one reads better bare. */}
+                      {line.quantity > 1 && line.item.price > 0 ? (
+                        <div className="t-sub-line">
+                          {line.quantity} @ {line.item.price.toFixed(2)}
+                        </div>
+                      ) : null}
+                      {sel ? (
+                        <div className="t-ctl" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            className="t-ctl-btn"
+                            disabled={line.quantity <= 1 || charging}
+                            aria-label={`One fewer ${line.item.name}`}
+                            onClick={() => bumpQuantity(line.key, -1)}
+                          >
+                            <MinusIcon />
+                          </button>
+                          <span className="t-ctl-qty" aria-live="polite">
+                            {line.quantity}
+                          </span>
+                          <button
+                            className="t-ctl-btn"
+                            disabled={line.quantity >= MAX_LINE_QUANTITY || charging}
+                            aria-label={`One more ${line.item.name}`}
+                            onClick={() => bumpQuantity(line.key, 1)}
+                          >
+                            <PlusIcon />
+                          </button>
+                          <button
+                            className="t-ctl-remove"
+                            disabled={charging}
+                            aria-label={`Remove ${line.item.name} from the sale`}
+                            onClick={() => removeLine(line.key)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
-                    <div className="t-qty-row">
-                      <button
-                        className="qty-btn"
-                        disabled={line.quantity <= 1}
-                        aria-label={`One fewer ${line.item.name}`}
-                        onClick={() => bumpQuantity(line.key, -1)}
-                      >
-                        <MinusIcon />
-                      </button>
-                      <span className="t-qty">
-                        x{line.quantity}
-                        {/* No "at $0.00" clause: a zero unit price cannot
-                            reach the shelf any more (the catalog filters
-                            it), but a line that somehow carries one reads
-                            better bare than absurd. */}
-                        {line.quantity > 1 && line.item.price > 0
-                          ? ` at ${money(line.item.price)}`
-                          : ""}
-                      </span>
-                      <button
-                        className="qty-btn"
-                        disabled={line.quantity >= MAX_LINE_QUANTITY}
-                        aria-label={`One more ${line.item.name}`}
-                        onClick={() => bumpQuantity(line.key, 1)}
-                      >
-                        <PlusIcon />
-                      </button>
-                      <button
-                        className="qty-btn t-remove"
-                        aria-label={`Remove ${line.item.name} from the sale`}
-                        title="Remove"
-                        onClick={() => removeLine(line.key)}
-                      >
-                        <CloseIcon />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
                 </div>
                 </div>
 
-                {/* T38: the foot row under the lines. Left, the count
-                    of rows the scroll box is hiding (or the item count
-                    when nothing is); right, Clear cart, which confirms
-                    before it destroys anything. Always present while the
-                    cart holds something, so the way out never depends on
-                    which state the totals area is in. */}
+                {/* T38: Clear cart, on the foot row under the lines while
+                    the cart holds anything, in every totals state, so the
+                    way out never depends on the totals. It confirms
+                    before it destroys anything. T39.5 moves it to the
+                    action bar as Empty cart. */}
                 <div className="t-foot">
-                  <span className="t-foot-hint" aria-live="polite">
-                    {hiddenBelow > 0
-                      ? `${hiddenBelow} more below`
-                      : `${cartCount} ${cartCount === 1 ? "item" : "items"}`}
-                  </span>
                   <button
                     className="t-clear"
                     disabled={charging}
@@ -3529,8 +3613,7 @@ export default function SaleScreen(props: {
                   </button>
                 </div>
 
-                <hr className="t-rule" />
-
+                <div className="t-totals">
                 {/* T38: what a recheck found, kept while this cart is the
                     one it rebuilt. Rendered above whatever the totals
                     area then says, since the two are read together: the
@@ -3572,7 +3655,7 @@ export default function SaleScreen(props: {
                         <span className="amt">{money(estimate.subTotal)}</span>
                       </div>
                       <div className="t-line t-muted">
-                        <span>Tax</span>
+                        <span>{taxLabel}</span>
                         <span className="amt">
                           {estimate.taxTotal !== null
                             ? money(estimate.taxTotal)
@@ -3749,7 +3832,7 @@ export default function SaleScreen(props: {
                     ) : null}
                     {totals.taxTotal !== null ? (
                       <div className="t-line t-muted">
-                        <span>Tax</span>
+                        <span>{taxLabel}</span>
                         <span className="amt">{money(totals.taxTotal)}</span>
                       </div>
                     ) : null}
@@ -3777,6 +3860,7 @@ export default function SaleScreen(props: {
                         already carries which shape priced the cart. */}
                   </>
                 ) : null}
+                </div>
               </>
             )}
               </div>

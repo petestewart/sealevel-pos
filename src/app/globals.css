@@ -1776,6 +1776,14 @@ button.pass-opt:disabled {
   inset: 0;
   z-index: 18;
   overflow-y: auto;
+  /* T39.4: a column the viewport bounds. The shell and the panes take
+   * flex: 1 with min-height: 0, so each pane scrolls inside itself (the
+   * grid, the rail, the cart's lines) instead of the overlay scrolling
+   * as a whole, and the action bar (T39.5) is simply the last child at
+   * the bottom. Under 900 the folds below give the height back and the
+   * overlay scrolls with the bar stuck to its edge. */
+  display: flex;
+  flex-direction: column;
   /* A scroll that hits the overlay's end must not chain into the roster
    * behind it: closing the sale should land exactly where the teacher
    * was, not where a rubber-band scrolled the page to. */
@@ -1787,9 +1795,14 @@ button.pass-opt:disabled {
  * padding, so three columns fit at the studio's real numbers. The
  * roster's .shell stays at 1100 (layout plan question 9). */
 .sale-shell {
+  width: 100%;
   max-width: 1400px;
   margin: 0 auto;
   padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* The mode banner runs edge to edge inside the overlay, as 1a draws it:
@@ -1843,56 +1856,94 @@ button.pass-opt:disabled {
   display: grid;
   grid-template-columns: 154px minmax(0, 1fr) 388px;
   gap: 14px;
-  align-items: start;
+  /* T39.4: the panes are the rest of the viewport; the columns stretch
+   * to it and each bounds its own overflow (min-height: 0 is what lets
+   * a grid item be shorter than its content). */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .sale-cats {
   grid-column: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .sale-right {
   grid-column: 2;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .sale-left {
   grid-column: 3;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-/* The receipt ticket, translated from the mockup to tokens. */
+/* The receipt ticket (T39.4): 1a's, as tokens. A flex column filling
+ * what the cart column leaves it: the head and totals are flex: none,
+ * the lines box between them takes the rest and scrolls. Sans for
+ * words, mono only for money (.amt, .t-line, the sub-line), which is
+ * most of what makes Counter read as a receipt. min-height keeps a few
+ * rows visible if the column ever has to scroll (a long audit table
+ * under the stop); overflow-y lets the ticket itself scroll past that
+ * rather than clip the totals. */
 .ticket {
-  padding: 22px 22px 26px;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 260px;
+  overflow-y: auto;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--surface);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 16px;
 }
 
-.ticket h3 {
-  margin: 0 0 2px;
-  font-size: 18px;
-  font-weight: 700;
-  text-align: center;
-  font-family: inherit;
+/* The head line: TICKET, uppercase and letter-spaced in muted, the item
+ * count beside it in mono (14px, the recorded metadata exception), a
+ * dashed rule under both. */
+.t-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex: none;
+  padding: 14px 16px 10px;
+  border-bottom: 1px dashed var(--line-soft);
 }
 
-.ticket .t-sub {
-  margin: 0 0 14px;
-  text-align: center;
+.t-head-name {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
+}
+
+.t-head-count {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .t-rule {
   border: 0;
-  border-top: 2px dashed var(--line);
-  margin: 12px 0;
+  border-top: 1px solid var(--line);
+  margin: 8px 0 2px;
 }
 
+/* A totals row: label and figure, both mono, muted, at 1.9 line-height
+ * (the canvas's 15px brought to the floor). */
 .t-line {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  padding: 3px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px;
+  line-height: 1.9;
 }
 
 .t-line .amt {
@@ -1909,16 +1960,40 @@ button.pass-opt:disabled {
   color: var(--muted);
 }
 
+/* Total: the label in the body face at 17px/700, the figure at 26px
+ * mono, on a hairline. The estimate's row keeps the muted treatment
+ * through .t-muted (T38: never a number dressed as the total). */
 .t-total {
-  font-size: 20px;
+  align-items: baseline;
+  padding-top: 8px;
+  line-height: 1.2;
+}
+
+.t-total > span:first-child {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  font-size: 17px;
   font-weight: 700;
+}
+
+.t-total .amt {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .t-empty {
   margin: 0;
-  padding: 8px 0;
+  padding: 16px 0;
   text-align: center;
   color: var(--muted);
+}
+
+/* The totals block: flex: none under the lines, a dashed rule above. */
+.t-totals {
+  flex: none;
+  padding: 12px 16px 16px;
+  border-top: 1px dashed var(--line-soft);
 }
 
 /* Quiet guidance lines: the needs-client estimate note on the ticket and
@@ -2032,29 +2107,30 @@ button.pass-opt:disabled {
     sans-serif;
 }
 
-/* The cart lines scroll internally past a few items (second live test),
- * so the totals and the charge button below the receipt stay on an
- * iPad-landscape screen for any cart length.
- *
- * T38 (Pete: "the cart only shows a max of 4 rows, then i can't see what
- * else is put in there"): the cap was min(34vh, 320px), which at ~86px a
- * row was the four he saw, with nothing to say the box scrolled. Now
- * min(44vh, 540px) over rows trimmed to ~74px: about six rows on a
- * 1024px-tall iPad, five on an 820px one, and the whole ticket plus
- * Charge still fits the taller screen for any cart length (the overlay
- * scrolls on the shorter one as it did before). The remaining rows are
- * announced rather than hidden: the wrapper fades the clipped edge and
- * the foot row under it counts what is below. `position: relative` makes
- * the box the rows' offsetParent, which is what the count is measured
- * against. */
-.t-lines {
-  position: relative;
-  max-height: min(44vh, 540px);
-  overflow-y: auto;
-}
-
+/* The cart lines scroll internally, so the totals and the charge button
+ * stay on screen for any cart length (second live test). T38 capped
+ * them at min(44vh, 540px) and made the clipping visible: a fade over
+ * the last row and a count of what is below. T39.4 replaces the cap
+ * with the column's own height: the wrap is the ticket's flex: 1 child
+ * and the box inside it scrolls, so it is the viewport that bounds the
+ * lines, not a vh figure. `position: relative` makes the box the rows'
+ * offsetParent, which is what the hidden-row count is measured against;
+ * the wrap's min-height keeps two rows in view if the ticket ever has
+ * to scroll as a whole. */
 .t-lines-wrap {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 104px;
+}
+
+.t-lines {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
 }
 
 /* The fade: the ticket's own surface over the last visible row, so the
@@ -2078,24 +2154,28 @@ button.pass-opt:disabled {
   opacity: 1;
 }
 
-/* Under the lines: the hidden-row count (or the item count) on the left,
- * Clear cart on the right. One 64px row doing both jobs, because every
- * pixel here is a pixel the lines cannot have. */
+/* T38's "N more below" cue, in the head line beside the count (T39.4):
+ * the head never moves, so showing the cue never changes the box it
+ * measures, and it cannot land on the selected row's controls the way a
+ * pill over the fade did. 16px: it is read, not glanced. */
+.t-more {
+  margin-right: 10px;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+/* Under the lines: Clear cart, until T39.5 moves it to the bar. */
 .t-foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
-  padding-top: 4px;
+  flex: none;
+  padding: 0 8px 8px;
 }
 
-.t-foot-hint {
-  color: var(--muted);
-}
-
-/* Clear cart: quiet stop treatment like the per-line remove, but a real
- * bordered button on the 64px floor because it empties the whole cart.
- * It confirms before it acts. */
+/* Clear cart: quiet stop treatment, a real bordered button on the 64px
+ * floor because it empties the whole cart. It confirms before it acts. */
 .t-clear {
   flex: 0 0 auto;
   min-height: 64px;
@@ -2118,55 +2198,118 @@ button.pass-opt:disabled {
   cursor: default;
 }
 
-/* One cart line's stepper row, under its receipt line. Paddings trimmed
- * in T38 so more rows fit the scroll box; the 44px steppers are the row's
- * height and stay. */
-.t-item {
-  padding: 0;
+/* One cart line (T39.4): name and total on one line, the `n @ price`
+ * sub-line above quantity one, padded 8/10 with a 2px gap, a transparent
+ * border that the selection fills in. The whole row width is the tap
+ * target, at 44px: the recorded secondary standing (the row icons, the
+ * old steppers), not the 64px floor, because a row is a selection with
+ * an immediate visible answer and no consequence, and at 64 a seven-line
+ * cart is 460px of rows and never fits a 768px screen, which is what
+ * this ticket exists to do. Every control it reveals is 64. */
+.t-row {
+  min-height: 44px;
+  margin-bottom: 2px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.t-qty-row {
+.t-row:last-child {
+  margin-bottom: 0;
+}
+
+/* The selected row: an accent border on the bar's ground, and its
+ * controls under the line. */
+.t-row.sel {
+  border-color: var(--accent);
+  background: var(--bar-bg);
+}
+
+.t-row .t-line {
+  align-items: baseline;
+  line-height: 1.3;
+}
+
+.t-row .t-name {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  font-weight: 500;
+}
+
+.t-row .amt {
+  font-weight: 500;
+}
+
+/* `2 @ 1.81`: 14px mono muted, the recorded metadata exception, and
+ * only above quantity one. */
+.t-sub-line {
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  line-height: 1.3;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The selected row's controls: minus / count / plus at 64px, Remove
+ * pushed right, outlined in the stop colour. */
+.t-ctl {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 0 4px;
+  margin-top: 10px;
+  cursor: default;
 }
 
-.t-qty {
-  min-width: 3em;
-  color: var(--muted);
-}
-
-/* 44px steppers: occasional deliberate taps, the same recorded standing
- * as the row icons. */
-.qty-btn {
+.t-ctl-btn {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  border: 1px solid var(--line);
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--line-soft);
   border-radius: 10px;
   background: var(--surface);
   color: var(--ink);
 }
 
-.qty-btn:active:not(:disabled) {
+.t-ctl-btn:active:not(:disabled) {
   background: var(--action-bg);
 }
 
-.qty-btn:disabled {
+.t-ctl-btn:disabled,
+.t-ctl-remove:disabled {
   opacity: 0.4;
   cursor: default;
 }
 
-/* Remove sits apart from the steppers, in the quiet stop colour. */
-.qty-btn.t-remove {
+.t-ctl-qty {
+  min-width: 2.4em;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.t-ctl-remove {
   margin-left: auto;
-  border: 0;
+  height: 64px;
+  padding: 0 16px;
+  border: 1px solid var(--stop);
+  border-radius: 10px;
   background: transparent;
   color: var(--stop);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.t-ctl-remove:active:not(:disabled) {
+  background: var(--stop-bg);
 }
 
 /* The "For:" affordance atop the cart: a full-width 64px quiet button
@@ -2524,8 +2667,18 @@ button.sale-for:disabled {
   }
 }
 
-/* One column on a narrow screen, in DOM order: rail, grid, cart. */
+/* One column on a narrow screen, in DOM order: rail, grid, cart. The
+ * viewport bound (T39.4) is given back here: three stacked panes cannot
+ * share 768px, so the overlay scrolls as it did before, the bar (T39.5)
+ * sticks to its bottom edge, and the ticket's lines take T38's cap
+ * again so the totals stay near. */
 @media (max-width: 900px) {
+  .sale-shell,
+  .sale-panes {
+    flex: none;
+    min-height: auto;
+  }
+
   .sale-panes {
     grid-template-columns: 1fr;
     grid-template-rows: none;
@@ -2536,6 +2689,16 @@ button.sale-for:disabled {
   .sale-left {
     grid-column: auto;
     grid-row: auto;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .ticket {
+    overflow: visible;
+  }
+
+  .t-lines {
+    max-height: min(44vh, 540px);
   }
 }
 
@@ -2543,13 +2706,23 @@ button.sale-for:disabled {
  * charge button and the outcome panel. Card shape from the mockup,
  * every colour a token so both palettes hold. */
 
-/* The left column since the second live test: attach control, compact
- * method row, receipt, then the seam (comp, charge, outcomes). One grid
- * so the pieces stack with even rhythm. */
+/* The cart column since the second live test: the tender block, the
+ * receipt, then the seam (comp, charge, outcomes). T39.4: a flex column
+ * instead of a grid, so the ticket is the one child that grows to the
+ * pane's height while everything else keeps its own; the tender and the
+ * seam leave in T39.6. */
 .sale-left {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  align-content: start;
+}
+
+.sale-left > * {
+  flex: none;
+}
+
+.sale-left > .ticket {
+  flex: 1 1 auto;
 }
 
 .pay-seam {
@@ -2581,10 +2754,11 @@ button.sale-for:disabled {
 
 .tender-srcs {
   display: flex;
-  /* T39.2 narrows the cart column to 340 under 1190, where three sources
-   * no longer sit on one line; they wrap rather than clip. T39.6 moves
-   * the tender to the middle column and this stops mattering. */
-  flex-wrap: wrap;
+  /* T39.4: the three sources share one row (they wrapped to two at 340,
+   * and every row here is a row the ticket cannot have); each takes a
+   * third and its label is centred. Style only, and T39.6 moves the
+   * tender to the middle column where this stops mattering. */
+  flex: 1 1 auto;
   gap: 8px;
 }
 
@@ -2595,8 +2769,10 @@ button.sale-for:disabled {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 64px;
-  padding: 0 14px;
+  padding: 0 8px;
   border: 2px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
