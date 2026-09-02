@@ -96,11 +96,23 @@ button {
  * wrapper is the anchor .pass-dd positions against. */
 .class-pick {
   position: relative;
+  /* Capped (T46): with the day control carrying a date beside it, the
+   * row would otherwise push the counters onto a second line at 1080
+   * wide (a wrapping flex row packs by content width, so a shrinkable
+   * item still wraps). The class title ellipsizes past the cap; the
+   * date and time line above it never does, and the dropdown carries
+   * the full line. */
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: min(340px, 28vw);
   display: flex;
 }
 
+/* The button keeps its content width (the wrapper takes the slack, so
+ * a short class name does not stretch it); it only ever shrinks. */
 .class-pick-btn {
+  flex: 0 1 auto;
+  max-width: 100%;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -122,6 +134,136 @@ button {
 /* No pass columns here: a check and the class line. */
 .class-pick-dd .pass-opt {
   grid-template-columns: 20px minmax(0, 1fr);
+}
+
+/* --- Day control (T46) -----------------------------------------------
+ * Beside the class dropdown: a 64px outlined button carrying the
+ * calendar glyph, and the chosen date as text on any day but today.
+ * Same shell as .class-change; the glyph is the whole label on today so
+ * the header keeps its width. */
+.cal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 64px;
+  padding: 0 18px;
+}
+
+.cal-btn.viewing {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.cal-btn-date {
+  white-space: nowrap;
+}
+
+/* The header's quiet "Viewing Wed Aug 27" line: its own row under the
+ * header (a full-width flex item), muted, 16px. */
+.class-viewing {
+  flex: 1 0 100%;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* A picked day with nothing on it: the message takes the class's slot. */
+.class-none {
+  margin: 0;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+}
+
+/* The day banner above the roster: the warn pair, both palettes, 16px.
+ * The mode banner at the top keeps its own shape. */
+.day-banner {
+  margin: 12px 0 0;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+/* The calendar modal: a month grid. Seven 64px columns plus the gaps is
+ * 472px, which the modal's 24px padding wraps at 520; on a screen too
+ * narrow for that the cells shrink to the 44px icon floor. */
+.modal.modal-cal {
+  width: min(520px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+}
+
+.cal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.cal-title {
+  flex: 1;
+  margin: 0;
+  text-align: center;
+}
+
+.cal-nav {
+  flex: 0 0 auto;
+  width: 64px;
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cal-nav:active {
+  background: var(--action-bg);
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(44px, 64px));
+  justify-content: center;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.cal-wd {
+  text-align: center;
+  font-size: 16px;
+  color: var(--muted);
+  padding: 4px 0;
+}
+
+.cal-day {
+  aspect-ratio: 1;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.cal-day:active {
+  background: var(--action-bg);
+}
+
+/* Today is ringed; the chosen day is filled. Today chosen is both, and
+ * the fill wins visually while the ring stays as the outline. */
+.cal-day.today {
+  border-color: var(--accent);
+}
+
+.cal-day.sel {
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .class-current {
@@ -985,6 +1127,14 @@ button.pass-opt:disabled {
  * failure, because to a teacher mid-queue it means the same thing: this tap
  * does not check anyone in. Both halves are tokens, defined in both
  * palettes. */
+/* T46: the check-in chip on a future day. Disabled and muted, both
+ * halves tokens: it says "not yet", not "blocked" or "failed". */
+.chip.future {
+  background: var(--line);
+  color: var(--muted);
+  cursor: default;
+}
+
 .chip.stop {
   background: var(--stop-bg);
   color: var(--stop);

@@ -2,6 +2,7 @@
 
 import {
   Suspense,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -531,6 +532,55 @@ function ChevronDownIcon() {
   );
 }
 
+/** The calendar glyph on the header's day control (T46). */
+function CalendarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <g
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      >
+        <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
+        <path d="M3.5 10h17M8 3v4M16 3v4" />
+      </g>
+    </svg>
+  );
+}
+
+/** Month stepping in the calendar. */
+function ChevronLeftIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M14.5 5.5 8 12l6.5 6.5"
+      />
+    </svg>
+  );
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M9.5 5.5 16 12l-6.5 6.5"
+      />
+    </svg>
+  );
+}
+
 /** Checkmark marking the pass currently paying, in the change dropdown. */
 function CheckIcon() {
   return (
@@ -567,6 +617,83 @@ function dayDate(iso: string): string {
 function shortDate(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+/** The studio's timezone, mirroring roster.ts's STUDIO_TZ: there is one
+ *  physical studio and it is in Seattle, so "today" and "a day" on this
+ *  screen are that timezone's, never the iPad's or a container's. */
+const STUDIO_TZ = "America/Los_Angeles";
+
+/** Today as a studio-local `YYYY-MM-DD` (en-CA formats exactly that). */
+function studioToday(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: STUDIO_TZ }).format(
+    new Date(),
+  );
+}
+
+/** Minutes past studio midnight right now, for picking the class on
+ *  another day nearest to this time of day. */
+function studioMinutesNow(): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: STUDIO_TZ,
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(new Date());
+  const get = (type: string): number =>
+    Number(parts.find((p) => p.type === type)?.value ?? 0);
+  /* hour12: false can render midnight as "24" in some ICU versions. */
+  return (get("hour") % 24) * 60 + get("minute");
+}
+
+/** A `YYYY-MM-DD` key as a local calendar date. Date-only, so the
+ *  browser's zone cannot shift it: the parts are used as numbers. */
+function keyToDate(key: string): Date {
+  return new Date(
+    Number(key.slice(0, 4)),
+    Number(key.slice(5, 7)) - 1,
+    Number(key.slice(8, 10)),
+  );
+}
+
+/** "Wed Aug 27" for a day key, the same shape dayDate gives a class. */
+function dayKeyLabel(key: string): string {
+  const d = keyToDate(key);
+  return `${d.toLocaleDateString([], { weekday: "short" })} ${d.toLocaleDateString(
+    [],
+    { month: "short", day: "numeric" },
+  )}`;
+}
+
+/** `{y, m, d}` numbers to a `YYYY-MM-DD` key. */
+function dateKey(y: number, m: number, d: number): string {
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+/** Whether a class's naive studio-local `startsAt` falls on a day after
+ *  the studio's current day. Its date part IS the studio date (T27 round
+ *  three), so a string compare on `YYYY-MM-DD` is exact. */
+function isFutureDay(startsAt: string): boolean {
+  return startsAt.slice(0, 10) > studioToday();
+}
+
+/** The class on a picked day nearest to this time of day, or the first
+ *  one: at 6:15pm on a Wednesday the teacher asking about "last Monday"
+ *  most likely means last Monday's evening class. */
+function nearestClassId(list: ClassSummary[]): number | null {
+  const now = studioMinutesNow();
+  let best: ClassSummary | null = null;
+  let bestGap = Infinity;
+  for (const c of list) {
+    const mins =
+      Number(c.startsAt.slice(11, 13)) * 60 + Number(c.startsAt.slice(14, 16));
+    const gap = Math.abs(mins - now);
+    if (gap < bestGap) {
+      best = c;
+      bestGap = gap;
+    }
+  }
+  return best?.classId ?? list[0]?.classId ?? null;
 }
 
 /** "3rd", "21st". Plain numeric ordinals, no lookup table to run out of. */
@@ -1102,12 +1229,21 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
     loading: boolean;
     error: string | null;
   }>({ list: null, loading: false, error: null });
-  /** Session cache for the day-classes call, keyed by the anchor's local
-   *  date so a counter left open overnight refetches for the new day. */
-  const dayClassesCache = useRef<{
-    key: string;
-    list: ClassSummary[];
-  } | null>(null);
+  /** Session cache for the day-classes call, keyed by STUDIO-local date
+   *  (`YYYY-MM-DD`), so a counter left open overnight refetches for the
+   *  new day. ONE cache for both readers (T46): the attach quick-pick's
+   *  dropdown and the calendar's picked day both go through
+   *  `loadDayClasses`, so a day the teacher viewed costs the attach
+   *  modal nothing and vice versa. Class lists only, for the page's
+   *  life; never rosters, passes or clients. */
+  const dayClassesCache = useRef(new Map<string, ClassSummary[]>());
+  /** Day keys with a classes fetch in flight, each holding the flight
+   *  itself: a second reader for the same day (the modal reopened, the
+   *  same date tapped twice) joins that promise instead of firing a
+   *  second metered call. */
+  const dayClassesInFlight = useRef(
+    new Map<string, Promise<ClassSummary[]>>(),
+  );
   /** Rosters fetched for the quick-pick when a NON-selected class is
    *  picked, cached per classId for the session (the selected class's
    *  roster is `entries`, used directly, zero calls). */
@@ -1116,10 +1252,37 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
    *  re-pick mid-flight must not fire a second metered call (the first
    *  answer still lands, via the attachClassIdRef guard). */
   const attachRosterFetching = useRef(new Set<number>());
-  /** The day key whose classes fetch is in flight: reopening the modal
-   *  before it lands must not fire a second metered call, and a slow
-   *  answer for a SUPERSEDED day must not render as the current one. */
-  const dayFetchKeyRef = useRef<string | null>(null);
+  /** The day key the attach modal is showing, readable at fetch-response
+   *  time: a slow answer for a SUPERSEDED day (the modal reopened
+   *  overnight) must not render as the current one. The dedupe itself
+   *  lives in loadDayClasses. */
+  const attachDayKeyRef = useRef<string | null>(null);
+  /**
+   * T46: the day the roster screen is showing, as a studio-local
+   * `YYYY-MM-DD`, or null for the around-now window the app starts in.
+   * The class dropdown, the header and the roster all read the same
+   * `classes` array in both modes; this only says which window filled
+   * it, which decides the header's "Viewing" line, the roster banner,
+   * whether check-in is open (future days: booking only) and whether
+   * the settings-driven around-now refetch runs.
+   */
+  const [viewDate, setViewDate] = useState<string | null>(null);
+  /** Whether the picked day's classes are still on the wire. The old
+   *  list stays on screen until the answer lands (a blank header would
+   *  take the calendar button with it). */
+  const [viewLoading, setViewLoading] = useState(false);
+  const [viewError, setViewError] = useState<string | null>(null);
+  /** Bumped on every day pick and on the return to today, so a slow
+   *  answer for a superseded pick is dropped rather than rendered over
+   *  the newer one. Same pattern as waiverGen. */
+  const viewGen = useRef(0);
+  /** Whether the calendar modal is open, and which month it shows
+   *  (`{y, m}` with m 1-12; pure UI, no timezone in it). */
+  const [calOpen, setCalOpen] = useState(false);
+  const [calMonth, setCalMonth] = useState<{ y: number; m: number }>(() => {
+    const k = studioToday();
+    return { y: Number(k.slice(0, 4)), m: Number(k.slice(5, 7)) };
+  });
   const [attachRoster, setAttachRoster] = useState<{
     entries: RosterEntry[] | null;
     loading: boolean;
@@ -1135,6 +1298,10 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
    *  classes must be dropped, not written into state under the new class. */
   const activeIdRef = useRef<number | null>(null);
   activeIdRef.current = activeId;
+  /** The selected class's naive startsAt, readable from tapCheckIn (which
+   *  is defined before activeClass is computed): the future-day refusal
+   *  reads it. Assigned where activeClass is. */
+  const activeStartsAtRef = useRef("");
 
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1201,11 +1368,19 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
   }, []);
 
   useEffect(() => {
+    /* T46: another day is showing. Its list came from the calendar pick
+     * and must not be overwritten by the around-now window; the settings
+     * change (or the return to today, which flips viewDate back to null
+     * and re-runs this) applies then. */
+    if (viewDate !== null) return;
+    const gen = ++viewGen.current;
     fetch(
       `/api/roster?hoursBack=${settings.hoursBack}&hoursForward=${settings.hoursForward}`,
     )
       .then((r) => r.json())
       .then((d) => {
+        /* A day was picked while this was on the wire: its answer wins. */
+        if (viewGen.current !== gen) return;
         if (d.error) return setError(d.error);
         const list: ClassSummary[] = d.classes ?? [];
         setClasses(list);
@@ -1222,8 +1397,98 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
         setActiveId(chosen);
         syncClassParam(chosen);
       })
-      .catch((e) => setError(String(e)));
-  }, [settings.hoursBack, settings.hoursForward, syncClassParam]);
+      .catch((e) => {
+        if (viewGen.current !== gen) return;
+        setError(String(e));
+      });
+  }, [settings.hoursBack, settings.hoursForward, syncClassParam, viewDate]);
+
+  /**
+   * Every class on one studio-local day, through the existing
+   * `GET /api/roster?day=1&anchor=` (T27 round three): ONE metered call
+   * per day for the page's life, served from `dayClassesCache` after
+   * that, and a fetch already in flight for the same day is joined, not
+   * repeated. The anchor is the day's studio-local NOON as a naive
+   * string, which parseRosterAnchor reads in STUDIO_TZ; noon sits as far
+   * as possible from both midnights and any DST edge.
+   */
+  const loadDayClasses = useCallback((key: string): Promise<ClassSummary[]> => {
+    const cached = dayClassesCache.current.get(key);
+    if (cached) return Promise.resolve(cached);
+    const inFlight = dayClassesInFlight.current.get(key);
+    if (inFlight) return inFlight;
+    const flight = fetch(
+      `/api/roster?day=1&anchor=${encodeURIComponent(`${key}T12:00:00`)}`,
+    )
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error) throw new Error(String(d.error));
+        const list: ClassSummary[] = d.classes ?? [];
+        dayClassesCache.current.set(key, list);
+        return list;
+      })
+      .finally(() => {
+        dayClassesInFlight.current.delete(key);
+      });
+    dayClassesInFlight.current.set(key, flight);
+    return flight;
+  }, []);
+
+  /**
+   * T46: show another day. `key` is a studio-local `YYYY-MM-DD`; null
+   * (or today's own date) returns to the around-now window exactly as
+   * the app starts, by flipping viewDate back to null so the effect
+   * above re-runs. Any other day loads its classes once (cached after)
+   * and selects the class nearest to this time of day; the activeId
+   * effect then fetches that roster as it does for any class switch.
+   * The old list stays on screen until the answer lands.
+   */
+  const pickViewDate = useCallback(
+    (key: string | null) => {
+      setCalOpen(false);
+      setClassPickerOpen(false);
+      const wanted = key === studioToday() ? null : key;
+      const gen = ++viewGen.current;
+      setViewError(null);
+      setViewDate(wanted);
+      if (wanted === null) {
+        setViewLoading(false);
+        return;
+      }
+      setViewLoading(true);
+      loadDayClasses(wanted)
+        .then((list) => {
+          if (viewGen.current !== gen) return;
+          setViewLoading(false);
+          setClasses(list);
+          const chosen = nearestClassId(list);
+          if (chosen === null) {
+            /* A day with no classes: nothing to select, so the previous
+             * class's roster must not linger under the new banner. */
+            setEntries([]);
+            setWaiverError(null);
+          }
+          setActiveId(chosen);
+          syncClassParam(chosen);
+        })
+        .catch((e) => {
+          if (viewGen.current !== gen) return;
+          setViewLoading(false);
+          setViewError(e instanceof Error ? e.message : String(e));
+        });
+    },
+    [loadDayClasses, syncClassParam],
+  );
+
+  /** Escape closes the calendar. Nothing in it writes. */
+  useEffect(() => {
+    if (!calOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCalOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [calOpen]);
 
   /**
    * The roster for one class, also called after a booking so the new visit
@@ -1709,44 +1974,32 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
      * mirroring roster.ts's STUDIO_TZ. */
     const startsAt =
       classes.find((c) => c.classId === activeIdRef.current)?.startsAt ?? "";
-    const anchor = startsAt || new Date().toISOString();
-    const key = startsAt
-      ? startsAt.slice(0, 10)
-      : new Intl.DateTimeFormat("en-CA", {
-          timeZone: "America/Los_Angeles",
-        }).format(new Date());
-    const cached = dayClassesCache.current;
-    if (cached && cached.key === key) {
-      setDayClasses({ list: cached.list, loading: false, error: null });
+    const key = startsAt ? startsAt.slice(0, 10) : studioToday();
+    attachDayKeyRef.current = key;
+    const cached = dayClassesCache.current.get(key);
+    if (cached) {
+      setDayClasses({ list: cached, loading: false, error: null });
       return;
     }
     setDayClasses({ list: null, loading: true, error: null });
-    /* Already fetching this same day (the modal reopened before the
-     * answer landed): that flight's answer lands here, no second call. */
-    if (dayFetchKeyRef.current === key) return;
-    dayFetchKeyRef.current = key;
-    fetch(`/api/roster?day=1&anchor=${encodeURIComponent(anchor)}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.error) throw new Error(String(d.error));
-        const list: ClassSummary[] = d.classes ?? [];
-        dayClassesCache.current = { key, list };
-        /* A newer day's fetch superseded this one (open overnight):
-         * cache it, but do not render it as the current day. */
-        if (dayFetchKeyRef.current !== key) return;
-        dayFetchKeyRef.current = null;
+    /* loadDayClasses joins a flight already in the air for this day (the
+     * modal reopened before the answer landed): no second call. */
+    loadDayClasses(key)
+      .then((list) => {
+        /* A newer day superseded this one (open overnight): it is
+         * cached, but must not render as the current day. */
+        if (attachDayKeyRef.current !== key) return;
         setDayClasses({ list, loading: false, error: null });
       })
       .catch((e) => {
-        if (dayFetchKeyRef.current !== key) return;
-        dayFetchKeyRef.current = null;
+        if (attachDayKeyRef.current !== key) return;
         setDayClasses({
           list: null,
           loading: false,
           error: e instanceof Error ? e.message : String(e),
         });
       });
-  }, [classes]);
+  }, [classes, loadDayClasses]);
 
   /** Point the quick-pick at another class. The selected class's roster
    *  is on screen already (zero calls); any other class's is fetched
@@ -2392,6 +2645,11 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
   const tapCheckIn = useCallback(
     (entry: RosterEntry) => {
       if (busy.includes(entry.clientId) || entry.checkedIn) return;
+      /* T46: a class on a later day. Booking is open, check-in is not:
+       * a sign-in recorded days early is attendance nobody took. The
+       * chip is disabled too; this is the refusal behind it, so no
+       * path (a keyboard, a stale render) reaches the API. */
+      if (isFutureDay(activeStartsAtRef.current)) return;
       /**
        * No released waiver stops everything, BEFORE the pay dialog: an
        * unpaid no-waiver client meets the waiver gate first, and only a
@@ -2765,6 +3023,15 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
   }, [walkIns, attachMode]);
 
   const activeClass = classes.find((c) => c.classId === activeId) ?? null;
+  activeStartsAtRef.current = activeClass?.startsAt ?? "";
+  /** T46: the selected class sits on a day after the studio's current
+   *  one. Check-in closes (chip disabled, tapCheckIn refuses); booking,
+   *  waitlist moves and cancellations stay open. A class later TODAY is
+   *  not future in this sense and behaves exactly as before. */
+  const futureClass = activeClass !== null && isFutureDay(activeClass.startsAt);
+  /** Today's studio date, once per render, for the calendar and the
+   *  past/future banner. */
+  const todayKey = studioToday();
   /** Full means TotalBooked has reached MaxCapacity. Unknown counts are
    *  treated as room: Mindbody is the arbiter and will refuse a booking a
    *  stale count would have allowed. */
@@ -3713,6 +3980,48 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
     );
   };
 
+  /* T46: the calendar control beside the class dropdown. A 64px outlined
+     button in the header's own idiom, the glyph alone on today and the
+     chosen date as text on any other day. Rendered from a const so the
+     header without a class (a picked day with nothing on it) can still
+     carry it: the button that got a teacher onto another day must never
+     vanish with that day's empty schedule. */
+  const calendarButton = (
+    <button
+      className={viewDate ? "class-change cal-btn viewing" : "class-change cal-btn"}
+      aria-haspopup="dialog"
+      aria-expanded={calOpen}
+      aria-label={
+        viewDate
+          ? `Pick a day. Viewing ${dayKeyLabel(viewDate)}.`
+          : "Pick a day"
+      }
+      onClick={() => {
+        setClassPickerOpen(false);
+        setSortMenuOpen(false);
+        setPickerFor(null);
+        /* Open on the month of the day being viewed, else this month. */
+        const k = viewDate ?? todayKey;
+        setCalMonth({ y: Number(k.slice(0, 4)), m: Number(k.slice(5, 7)) });
+        setCalOpen(true);
+      }}
+    >
+      <CalendarIcon />
+      {viewDate ? <span className="cal-btn-date">{dayKeyLabel(viewDate)}</span> : null}
+    </button>
+  );
+
+  /* The header's quiet line and the roster's banner for a day other than
+     today. Both read viewDate; the banner's wording turns on whether the
+     day is behind or ahead, because what a tap can do differs. */
+  const viewingLine = viewDate ? (
+    <span className="class-viewing" role="status">
+      {viewLoading ? "Loading " : "Viewing "}
+      {dayKeyLabel(viewDate)}
+      {viewLoading ? "..." : ""}
+    </span>
+  ) : null;
+
   return (
     <main className="shell">
       {config?.configError ? <p className="note">{config.configError}</p> : null}
@@ -3744,8 +4053,23 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
           this is bookkeeping to chase, not a broken counter. */}
       {waiverReceiptWarn ? <p className="muted">{waiverReceiptWarn}</p> : null}
 
+      {viewError ? <p className="note">{viewError}</p> : null}
+
+      {/* No classes in the window (an empty around-now window at 3am, or
+          a picked day with nothing on it): the line takes the class's
+          slot in a header row that still carries the calendar button, or
+          there would be no way onto another day, or back from one, but a
+          reload. */}
       {classes.length === 0 && !error ? (
-        <p className="muted">No classes in the next few hours.</p>
+        <header className="class-header">
+          <p className="muted class-none">
+            {viewDate && !viewLoading
+              ? `No classes on ${dayKeyLabel(viewDate)}.`
+              : "No classes in the next few hours."}
+          </p>
+          {calendarButton}
+          {viewingLine}
+        </header>
       ) : null}
 
       {/* ONE header row for the class (the horizontal class bar it
@@ -3840,6 +4164,7 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
               </>
             ) : null}
           </div>
+          {calendarButton}
           {/* Opens the Buy overlay (T23; "Buy" since the second live
               test -- the counter conversation is the student's, "I want
               to buy a mat"). Quiet like "Change class": selling is
@@ -3923,6 +4248,7 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
             <span className="counter-label">waitlist</span>
           </button>
           </div>
+          {viewingLine}
         </header>
       ) : null}
 
@@ -4032,6 +4358,17 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
             ) : null}
           </span>
         </div>
+      ) : null}
+
+      {/* T46: the day banner. Warn pair, 16px, above the list: a past
+          day's edits are real and attributed (T44), a future day's
+          check-in is closed. The mode banner at the top is untouched. */}
+      {viewDate && activeClass ? (
+        <p className="day-banner" role="status">
+          {futureClass
+            ? "A future class. Booking only; check-in opens on the day."
+            : "Editing a past class. Every change is recorded with your name."}
+        </p>
       ) : null}
 
       <ul className="roster">
@@ -4238,8 +4575,14 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
                     <span className={chipClass}>{chipLabel}</span>
                   ) : (
                     <button
-                      className={chipClass}
-                      disabled={working}
+                      /* T46: on a future day the chip is a closed door,
+                         not a target: muted pair, disabled, and the
+                         reason in its title. tapCheckIn refuses too. */
+                      className={
+                        futureClass && !working ? "chip future" : chipClass
+                      }
+                      disabled={working || futureClass}
+                      title={futureClass ? "Check-in opens on the day" : undefined}
                       onClick={() => tapCheckIn(entry)}
                       aria-label={`Check in ${entry.name}`}
                     >
@@ -5504,6 +5847,110 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      ) : null}
+
+      {/* T46: the calendar. A month grid in the app's own idiom rather
+          than the OS date picker: 64px previous/next, a weekday header,
+          64px day cells (44px on a narrow screen, the icon idiom), today
+          ringed, the chosen day filled with the accent, Today and Cancel
+          at the foot. Pure UI: the pick is what fetches, once per day.
+          Escape and the scrim close it. */}
+      {calOpen ? (
+        <div
+          className="modal-scrim"
+          onClick={() => setCalOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="modal modal-cal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Pick a day"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="cal-head">
+              <button
+                className="cal-nav"
+                aria-label="Previous month"
+                onClick={() =>
+                  setCalMonth(({ y, m }) =>
+                    m === 1 ? { y: y - 1, m: 12 } : { y, m: m - 1 },
+                  )
+                }
+              >
+                <ChevronLeftIcon />
+              </button>
+              <p className="modal-title cal-title">
+                {keyToDate(dateKey(calMonth.y, calMonth.m, 1)).toLocaleDateString(
+                  [],
+                  { month: "long", year: "numeric" },
+                )}
+              </p>
+              <button
+                className="cal-nav"
+                aria-label="Next month"
+                onClick={() =>
+                  setCalMonth(({ y, m }) =>
+                    m === 12 ? { y: y + 1, m: 1 } : { y, m: m + 1 },
+                  )
+                }
+              >
+                <ChevronRightIcon />
+              </button>
+            </div>
+            <div className="cal-grid" role="grid" aria-label="Days">
+              {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+                <span key={`wd-${d}`} className="cal-wd" aria-hidden="true">
+                  {d}
+                </span>
+              ))}
+              {(() => {
+                /* Leading blanks to the month's first weekday, then the
+                 * days. Pure y/m/d arithmetic: no instant, no zone. */
+                const first = keyToDate(dateKey(calMonth.y, calMonth.m, 1));
+                const lead = first.getDay();
+                const count = new Date(calMonth.y, calMonth.m, 0).getDate();
+                const cells: ReactNode[] = [];
+                for (let i = 0; i < lead; i++) {
+                  cells.push(<span key={`blank-${i}`} className="cal-blank" />);
+                }
+                const selected = viewDate ?? todayKey;
+                for (let d = 1; d <= count; d++) {
+                  const key = dateKey(calMonth.y, calMonth.m, d);
+                  const isToday = key === todayKey;
+                  const isSel = key === selected;
+                  cells.push(
+                    <button
+                      key={key}
+                      className={
+                        "cal-day" +
+                        (isToday ? " today" : "") +
+                        (isSel ? " sel" : "")
+                      }
+                      aria-pressed={isSel}
+                      aria-label={dayKeyLabel(key) + (isToday ? ", today" : "")}
+                      onClick={() => pickViewDate(key)}
+                    >
+                      {d}
+                    </button>,
+                  );
+                }
+                return cells;
+              })()}
+            </div>
+            <div className="modal-actions">
+              <button className="modal-cancel" onClick={() => setCalOpen(false)}>
+                Cancel
+              </button>
+              <button
+                className="modal-confirm go"
+                onClick={() => pickViewDate(null)}
+              >
+                Today
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
