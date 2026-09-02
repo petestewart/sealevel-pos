@@ -137,6 +137,11 @@ export interface SearchResult {
   id: string;
   name: string;
   email: string | null;
+  /** MobilePhone, else HomePhone, else WorkPhone; null when none. With
+   *  the email it is the small line under a search result's name (T42):
+   *  the studio has duplicate names, and this is how Mindbody's own
+   *  search tells them apart. */
+  phone: string | null;
   /**
    * Context carried FREE from the search: `searchText` returns full Client
    * records, so the same fields the roster's batched lookup extracts ride
@@ -163,18 +168,34 @@ export interface SearchResult {
 
 export interface SearchResponse {
   results: SearchResult[];
+  /** `PaginationResponse.TotalResults` (client.yml:6753), the size of the
+   *  whole match set, so a scrolling list knows when to stop asking.
+   *  Null when Mindbody omitted it; the caller then stops on a short
+   *  page. */
+  total: number | null;
 }
 
+/**
+ * One page of matches. `offset` is `/client/clients`' own page offset
+ * (client.yml:1392, "Page offset, defaults to 0"): the attach modal and
+ * the walk-in search load the next page as the list scrolls (T42), and
+ * every page is one metered call, so nothing here prefetches.
+ */
 export async function search(
   query: string,
   limit = 12,
+  offset = 0,
 ): Promise<SearchResponse> {
   const q = query.trim();
-  if (q.length < 2) return { results: [] };
+  if (q.length < 2) return { results: [], total: 0 };
 
   const body = await mindbody(
-    `/client/clients?searchText=${encodeURIComponent(q)}&limit=${limit}`,
+    `/client/clients?searchText=${encodeURIComponent(q)}&limit=${limit}` +
+      (offset > 0 ? `&offset=${offset}` : ""),
   );
+  const totalRaw = body?.PaginationResponse?.TotalResults;
+  const total =
+    typeof totalRaw === "number" && Number.isFinite(totalRaw) ? totalRaw : null;
   const results: SearchResult[] = [];
   /* Pete's fifth live test: a search once rendered EVERY row as
    * "(unnamed)" and recovered on the next search, with no way to see what
@@ -192,6 +213,7 @@ export async function search(
       name: name || (typeof row.Email === "string" ? row.Email : "") ||
         "(unnamed)",
       email: row.Email ?? null,
+      phone: phoneOf(row),
       waiverSigned: Boolean(row?.Liability?.IsReleased),
       redAlert:
         typeof row?.RedAlert === "string" && row.RedAlert.trim()
@@ -226,5 +248,18 @@ export async function search(
         `${first ? Object.keys(first).join(",") : "none"}`,
     );
   }
-  return { results };
+  return { results, total };
+}
+
+/** The first non-empty phone in the order Mindbody's own client page
+ *  reads them, mirroring clientprofile.ts. */
+function phoneOf(row: {
+  MobilePhone?: unknown;
+  HomePhone?: unknown;
+  WorkPhone?: unknown;
+}): string | null {
+  for (const v of [row.MobilePhone, row.HomePhone, row.WorkPhone]) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
 }
