@@ -203,6 +203,12 @@ while `git clone` works, so clone the repo rather than fetching files.
   `LocationId: 1` and `InStore: true` so the server prices what the screen
   showed. Alternative payments (Apple Pay) support only location 98, and
   therefore only online pricing.
+- **`/client/addclientformulanote` is the dated, staff-only note on a
+  client** (the Formula Notes tab on the profile), and the right home for
+  an internal record per sale: the checkout request carries no notes
+  field, so a comp's reason is filed there afterwards (T45), through
+  `mindbody()` with the client id in the options so dry run and the
+  write guard apply.
 - **Categories live in `site.yml`, not `sale.yml`.** `GET /site/categories`
   exists; grepping only the Sale tag missed it once. `/site/liabilitywaiver`
   (the waiver's actual text) and `/site/paymenttypes` are next to it.

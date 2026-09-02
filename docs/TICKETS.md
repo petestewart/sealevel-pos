@@ -4311,6 +4311,158 @@ Left as before, plus: the login limiter counts a 502 as a failed guess,
 so a Mindbody outage during a shift change locks the door for 30 s after
 five tries, which is a nuisance rather than a risk.
 
+## T45. The comp reason is data, and the teacher is picked from a list (Pete, 2026-09-02)
+
+Pete, after T43 and T44: "if teacher is chosen, the teacher should be
+selected from a list (can default to the teacher of the current class).
+also, looks like the buttons merely paste strings in? so we aren't
+saving an enum with the row is that right? we should. and see if there's
+a field in mindbody to write to for our own internal eyes."
+
+Yes, T43's chips pasted their label into the text field, so the row
+held "Teacher" or "teacher, covering" or anything else, and nothing
+could be counted. And yes, Mindbody has a home for an internal note:
+`POST /client/addclientformulanote` (client.yml), the dated staff-only
+Formula Notes tab on a client's profile, which the checkout request
+itself cannot carry (no notes field, T43).
+
+### The design (decided)
+
+1. **Reason kinds.** `compReason` becomes `{ kind: "teacher" | "trade" |
+   "goodwill" | "damaged" | "other", detail, forStaffId?, forStaffName? }`
+   (`src/lib/comp.ts`, shared by the dialog and the route). The chips
+   choose the kind; the field is `detail`, required (3 to 200) only
+   for `other`, optional otherwise ("Add a note (optional)").
+   `compValid` replaces `compReasonValid`: a kind, the detail when the
+   kind needs it, a teacher for a teacher comp.
+2. **Teacher picker.** The Teacher chip shows, inside the dialog, the
+   active teachers from a new read-only `GET /api/staff` (device and
+   teacher session, `[{id, name}]` from the T44 staff cache, never a
+   phone), 64px rows with the first name bold, the roster's current
+   class's teacher preselected (SaleScreen's new `classTeacher` prop
+   from page.tsx's active class summary, matched to a staff name
+   case-insensitively: the full name, else a unique first name). A
+   failed read shows "Could not load teachers. Tap Teacher to try
+   again." and leaves Comp disabled for that kind. Loaded once per
+   panel life, on the first Teacher tap.
+3. **The route** validates before any Mindbody call: the kind in the
+   enum; `detail` a string, trimmed, at most 200, at least 3 for
+   `other`; `forStaffId` a positive integer required for `teacher` and
+   refused for every other kind; `forStaffName` from the browser is
+   ignored and resolved from `listTeachers()` by id (a miss, an
+   inactive teacher or a non-teacher is 400; a staff read that fails
+   with nothing cached is 502 "Nothing was charged"). Nothing in the
+   checkout payload changes.
+4. **Storage.** Migration 4, additive on `comp_receipts`: `kind`,
+   `detail`, `for_staff_id`, `for_staff_name`, `formula_note_id`. The
+   `reason` column keeps a rendered line (`Teacher: Kim Farrell,
+   covering for Pete`, `Goodwill: spilled tea`, `Goodwill`) so T43 rows
+   and T45 rows read alike. The `[comp]` line gains `kind=<kind>
+   for=<id|none>` and, when filed, `note=<id>`.
+5. **The Formula Note.** After a REAL comp (not suppressed, refused or
+   ambiguous) for a NAMED client (a `clientId` that is not the house
+   client), the route posts `/client/addclientformulanote` with
+   `ClientId` and `Note` = `Comped $233.00 at the counter: Teacher (Kim
+   Farrell). Note: covering for Pete. By Pete Stewart. Sale 777001.`,
+   empty parts omitted. Through `mindbody()` with the client id in the
+   options, so dry run and the write guard apply as to any write. It
+   runs after the outcome is decided, never throws, and never changes
+   the answer or its wording: a failure is `[comp] formula-note failed:
+   <reason>` and a null on the receipt; the house client is `[comp]
+   formula-note skipped: house client`.
+6. **Done screen**: `Comped: Teacher (Kim Farrell)` (or `Comped:
+   Goodwill`) with the detail on a muted second line when present.
+
+### What was built and observed
+
+Harness `scratchpad/t45.js` (the review3r fixture with `/api/staff` and
+`/api/teacher` routed in the browser), mock `t45-mock.js` (the T44
+staff fixture plus Kim Farrell, the checkout mock refusing client
+100000999, `/client/addclientformulanote` refusing 100000555 and
+answering an id otherwise), `t45-node.js` against the real route with
+`POS_PIN=2468`, `POS_DRY_RUN=false`, `POS_HOUSE_CLIENT_ID=100000777`
+and the write guard allowing the four ids. Shots under `scratchpad/t45/`
+in both palettes at 1366x1024: Teacher chosen with Pete Stewart
+preselected from the roster's "Pete", Other with two characters typed
+and Comp disabled, comp armed, the done screen; light only, the staff
+read failing.
+
+The comp body the browser sends:
+
+    { "items": [ { "type": "Service", "metadataId": 1002, "quantity": 1,
+        "price": 230, "taxExempt": true, "taxRate": null,
+        "name": "10 Class Pack" }, ... ],
+      "clientId": "100000123", "method": "comp",
+      "compReason": { "kind": "teacher", "detail": "covering for Pete",
+                      "forStaffId": 106, "forStaffName": "Kim Farrell" } }
+
+A goodwill comp with nothing written: `"compReason": { "kind":
+"goodwill", "detail": "" }`. The Mindbody checkout keys and Payments
+were exactly T43's (`Items, Payments, ClientId, Test, LocationId,
+InStore, CalculateTax, SendEmail`, `[{Type: "Comp", Metadata:
+{Amount}}]`); `git diff -- src/lib/sale.ts` is empty.
+
+What the mock received after the teacher comp, with a forged
+`forStaffName: "Nobody Real"` in the request:
+
+    POST /client/addclientformulanote
+    {"ClientId":"100000123","Note":"Comped $233.00 at the counter: Teacher (Kim Farrell). Note: covering for Pete. By Pete Stewart. Sale 777001."}
+
+and the log:
+
+    [comp] formula-note filed: id=555001 client=100000123
+    [comp] prod sale=777001 client=100000123 total=233.00 reason="Teacher: Kim Farrell, covering for Pete" kind=teacher for=106 teacher=100 note=555001
+    [comp] prod sale=777001 client=100000123 total=233.00 reason="Goodwill" kind=goodwill for=none teacher=100 note=555002
+    [comp] formula-note skipped: house client
+    [comp] prod sale=777001 client=house total=233.00 reason="Other: spilled tea on the mat" kind=other for=none teacher=100
+    [comp] prod sale=none outcome=refused client=100000999 total=233.00 reason="Trade: for a class" kind=trade for=none teacher=100 error="Refused by the mock"
+    [comp] formula-note failed: Note refused by the mock
+    [comp] prod sale=777001 client=100000555 total=233.00 reason="Trade" kind=trade for=none teacher=100
+
+The house client's comp, whether the id was omitted or sent
+explicitly, posted no note; the refused checkout posted no note and
+answered 502 as before; the note Mindbody refused left the checkout's
+answer `{ok: true, saleId: "777001"}` untouched. The 400s, each before
+the mock saw a call: a T43-shaped string, no kind, "Teacher" as a kind,
+a numeric detail, 201 characters, `other` with nothing, two characters
+or spaces, `teacher` with no id, a string id, 0, 1.5, an unknown id
+(999), the inactive teacher (105), the non-teacher (104), `goodwill`
+with a `forStaffId`, and `compReason` beside cash or a split.
+`/api/staff` is 401 with no device session, 401 `reason: "teacher"`
+with no teacher, and `[{id, name}]` x 5 after the login (no phones).
+
+In the browser: the Teacher chip loaded the list once (`staffCalls: 1`
+across a switch to Other and back), preselected Pete Stewart, and a
+tap on Kim Farrell moved the selection; Other cleared the picker and
+disabled Comp until three characters (Enter on two did nothing);
+Goodwill with the same two characters was chargeable; every target in
+the dialog measured 64px and the dialog with five teachers fit at
+1024 without the list scrolling. With the staff read failing the chip
+showed the line, a typed note left Comp disabled, and the next Teacher
+tap read again and preselected. The quiet line reads "Nothing to pay,
+on the studio. Comped: Teacher: Kim Farrell, covering for Pete"; the
+done screen "Comped: Teacher (Kim Farrell)" with "covering for Pete"
+under it, and "Comped: Goodwill" with no second line.
+
+### Left
+
+- **The Formula Note permission is unverified live.** The spec wants
+  a staff token whose group may view client profiles (or both
+  ViewAppointmentDetails and ModifyAppointment). If the API account
+  lacks it, every comp logs `[comp] formula-note failed:` with
+  Mindbody's message and the sale stands; check the first live comp's
+  log line.
+- **The note waits.** The route awaits the note before answering, so
+  a real comp for a named client costs one more Mindbody call (and up
+  to the 20s transport timeout if Mindbody hangs on it) before the
+  done screen. Filing it in the background would lose
+  `formula_note_id` on the receipt; kept simple until it is felt.
+- **Preselection is by name.** The class summary carries a display
+  name, not a staff id; a class whose teacher shares a first name with
+  another teacher and is listed by first name only preselects nobody.
+- `comp_receipts.kind` is text rather than an enum type, so the closed
+  list lives in `comp.ts` and the route, not in Postgres.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
