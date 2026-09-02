@@ -506,7 +506,20 @@ const CARD_MINIMUM_USD = 10;
  *  outcome: suppression is amber and never a receipt, a split failure is
  *  a stop block, an unanswered write says it may have gone through. */
 type ChargeResult =
-  | { kind: "paid"; summary: string; detail: string | null }
+  | {
+      kind: "paid";
+      summary: string;
+      detail: string | null;
+      /** T39.7: the done block's figures, captured at the tap because
+       *  the cart is cleared in the same commit. Display only: the
+       *  total is the server's answer (or the rehearsed figure it
+       *  confirmed), the count is the cart's, the change is what the
+       *  drawer owes back on a cash over-tender. */
+      total: number;
+      count: number;
+      changeCents: number;
+      comped: boolean;
+    }
   | { kind: "suppressed"; mode: string }
   | { kind: "split"; message: string; mindbody: string }
   | { kind: "ambiguous"; message: string }
@@ -922,7 +935,7 @@ function PaymentPanel(props: {
     if (total === null) {
       return pricing ? "Pricing with Mindbody..." : "No total to pay yet";
     }
-    if (dueCents !== null && dueCents <= 0) return "Nothing left to pay";
+    if (dueCents !== null && dueCents <= 0) return "Nothing left to cover";
     if (source === "credit") return creditReason;
     if (source === "storedcard") {
       if (cardReason !== null) return cardReason;
@@ -1017,6 +1030,9 @@ function PaymentPanel(props: {
         : `collect ${money(usd)} cash`;
 
   const soleLine = lines.length === 1 ? lines[0] : undefined;
+  /** The cash line, if one is in the payment: the Cash tile reopens its
+   *  keypad (T39.7). */
+  const cashLine = lines.find((l) => l.source === "cash");
 
   const chargeLabel = comped
     ? total === null
@@ -1069,6 +1085,9 @@ function PaymentPanel(props: {
           : null;
     if (payment === null) return;
     const isSplit = "split" in payment;
+    /* For the done block (T39.7); the cart is gone by the time it renders. */
+    const itemCount = cart.reduce((n, l) => n + l.quantity, 0);
+    const changeAtTap = changeCents;
     inFlight.current = true;
     setCharging(true);
     onBusyChange(true);
@@ -1144,6 +1163,10 @@ function PaymentPanel(props: {
         onClientDataStale();
         setResult({
           kind: "paid",
+          total: typeof body?.total === "number" ? body.total : total,
+          count: itemCount,
+          changeCents: changeAtTap,
+          comped,
           summary: `Paid ${money(body?.total ?? total)} by ${methodName}${
             client ? ` for ${client.name}` : ""
           }.`,
@@ -1542,7 +1565,27 @@ function PaymentPanel(props: {
           {notice}
 
           {result?.kind === "paid" ? (
+            /* T39.7: the prototype's done shape (plan 0.3), for the ONE
+               branch that is a completed sale: the check, the charged
+               line, and the change from the drawer, which is the figure
+               a teacher most needs after a cash sale. The summary and the
+               sale id stay under it; the button is Done, not New sale,
+               and still returns to the roster (T33). Suppression never
+               reaches this branch. */
             <div className="pay-done" role="status">
+              <span className="pay-done-check" aria-hidden="true">
+                &#10003;
+              </span>
+              <p className="pay-done-title">Sale complete</p>
+              <p className="pay-done-charged">
+                {result.comped ? "Comped" : "Charged"} {money(result.total)}{" "}
+                {"\u00b7"} {result.count} {result.count === 1 ? "item" : "items"}
+                {result.changeCents > 0 ? (
+                  <span className="pay-done-change">
+                    Change {money(result.changeCents / 100)} from the drawer
+                  </span>
+                ) : null}
+              </p>
               <p className="pay-done-line">{result.summary}</p>
               {result.detail ? (
                 <p className="pay-done-detail">{result.detail}</p>
@@ -1552,7 +1595,7 @@ function PaymentPanel(props: {
                   screen is the sign-in view, not an empty cart. The
                   receipt is cleared first so reopening Buy starts clean. */}
               <button
-                className="class-change"
+                className="pay-done-btn"
                 onClick={() => {
                   setResult(null);
                   onDone();
@@ -1606,20 +1649,34 @@ function PaymentPanel(props: {
               <div className="pay-tiles" aria-label="Payment sources">
                 {sources.map(({ s, label, icon }) => {
                   const reason = addReason(s);
-                  const off = reason !== null;
+                  /* Layout plan 2.7: tapping Cash when a cash line is
+                     already in the payment opens THAT line's keypad
+                     rather than refusing, so Exact / $5 / $10 / $20 stay
+                     one tap from the surface. Card and Credit keep T35's
+                     refusal with its reason: their amount is a clamp,
+                     and the keypad is a tap away on the line itself. */
+                  const reopen =
+                    s === "cash" && cashLine !== undefined && reason === "Already in the payment";
+                  const off = reason !== null && !reopen;
                   const shown = off
                     ? reason
-                    : s === "credit"
-                      ? /* The prototype's word for an available Credit:
-                           rule 1 makes it the first thing applied. */
-                        "Applies first"
-                      : null;
+                    : reopen
+                      ? "In the payment. Tap to change it."
+                      : s === "credit"
+                        ? /* The prototype's word for an available Credit:
+                             rule 1 makes it the first thing applied. */
+                          "Applies first"
+                        : null;
                   return (
                     <button
                       key={s}
                       className={off ? "pay-tile off" : "pay-tile"}
                       disabled={off || charging}
-                      onClick={() => addLine(s)}
+                      onClick={() =>
+                        reopen && cashLine !== undefined
+                          ? openPad(cashLine.id)
+                          : addLine(s)
+                      }
                       title={
                         reason ??
                         (s === "credit"
@@ -1708,7 +1765,15 @@ function PaymentPanel(props: {
               ) : null}
 
               {result?.kind === "suppressed" ? (
+                /* Suppression is never success: amber, no check, the
+                   cart and the tender untouched. A dry run takes the
+                   canvas's word for it ("Sale rehearsed", plan 0.3), which
+                   is exactly what a dry run is; a write-guard suppression
+                   is not a rehearsal and keeps its own wording. */
                 <div className="pass-note t-suppressed" role="status">
+                  {result.mode === "dry-run" ? (
+                    <p className="pay-rehearsed">Sale rehearsed</p>
+                  ) : null}
                   {result.mode === "dry-run"
                     ? "Dry run: nothing was charged."
                     : "Write guard: nothing was charged."}{" "}
@@ -1816,9 +1881,12 @@ function PaymentPanel(props: {
                 {padDueCents !== null ? money(padDueCents / 100) : "--"}
               </span>
             </div>
-            <div className="pad-row">
+            {/* T39.7: the Entered box (0.2), on the bar's ground with the
+                30px figure, so what has been typed is the loudest thing
+                in the modal. */}
+            <div className="pad-entered">
               <span className="pad-label">Entered</span>
-              <span className="pad-amt">{money(draftCents / 100)}</span>
+              <span className="pad-entered-amt">{money(draftCents / 100)}</span>
             </div>
 
             {/* Chips are CASH ONLY, per Pete ("for cash, it was helpful
@@ -4235,6 +4303,10 @@ export default function SaleScreen(props: {
                    goes (the pay-mode ticket has no controls). */
                 setSelectedKey(null);
                 setSaleMode("pay");
+                /* The lines box may be scrolled to the row the last tap
+                   selected; with no selection to show, start the ticket
+                   from its first row, and T38's cue counts the rest. */
+                linesRef.current?.scrollTo({ top: 0 });
               }}
             >
               <span>Pay</span>

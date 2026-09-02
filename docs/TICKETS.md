@@ -2183,9 +2183,9 @@ steps, each its own ticket and review, each leaving the app shippable.
       sub-line only above quantity one. Built on T38.
 - [x] T39.5 Sticky bottom bar: Empty cart left, Pay / Charge right, below
       every scrim.
-- [ ] T39.6 Two modes: PaymentPanel to the middle column, rail collapses,
+- [x] T39.6 Two modes: PaymentPanel to the middle column, rail collapses,
       Escape order, comp never armed while invisible.
-- [ ] T39.7 Payment surface: Total / Due / Change, tiles or buttons per
+- [x] T39.7 Payment surface: Total / Due / Change, tiles or buttons per
       Pete's call, keypad per Pete's call.
 - [ ] T39.8 Density and degradation pass, both palettes, 768 tall.
 - [ ] T39.9 What the roster inherits.
@@ -2549,6 +2549,182 @@ switch that keeps the cart, which is right: it is the same line. A
 `role="button"` row containing buttons is nested interactive content
 under the ARIA rules; the notes record why a `<button>` could not hold
 the controls, and the row carries `aria-label` and `aria-pressed`.
+
+### T39.6-7: what was built
+
+Modes and the payment surface, per the plan's 0.2, 0.3 and section 1,
+and Pete's calls (Counter, the T36 modal keypad, Due the loudest figure).
+`/api/*` and `src/lib/sale.ts` are untouched; in PaymentPanel, `coverage`,
+`capFor`, `addReason`, `lineReason`, `chargeable`, `doCharge` and the
+request mapping have no hunk beyond one string ("Nothing left to pay"
+became the prototype's "Nothing left to cover", plan 0.3) and the done
+block's captured figures.
+
+**T39.6, two modes.** `saleMode: "shelf" | "pay"` in SaleScreen, reset
+on every open and through one `close` on every way out (Back, Escape,
+Done). `Pay` enters when T39.5's chain allows and clears the selection;
+in pay mode `.sale-panes.pay` is `minmax(0, 1fr) 388px` (340 under
+1190), the rail and grid are `display: none`, the surface pane takes the
+middle, and the cart column is the same element in the same place: its
+rows lose `role="button"`, `tabIndex` and their handlers, so the
+pay-mode ticket has no controls, and the lines box is scrolled to its
+first row on entry. The bar's left control is `Back to items` (disabled
+mid-charge) and Empty cart is shelf-only.
+
+**The panel stays mounted in both modes.** Its root is `.sale-pay` with
+the `hidden` attribute in shelf mode (`.sale-pay[hidden] { display:
+none }`, since the pane's own `display: flex` would otherwise beat the
+UA rule), so T35's lines, comp and keypad state are the same React state
+across Back to items; the ticket moved OUT of the panel (the `receipt`
+prop is gone) into `.sale-left` in SaleScreen, since nothing sits
+between the tender and a charge button any more. Verified: Credit $40 +
+Cash $300 entered in pay mode, Back to items, Pay, the same two lines
+with the same amounts; the same for Credit + Card.
+
+**The comp-clearing rule.** Comp arms only in pay mode and is never
+armed while invisible. The panel takes `visible`; an effect on it going
+false dismisses an open keypad (through `dismissPad`, which reports
+`onModalChange(false)`) and, if comp was armed, clears it and sets a
+one-shot `compCleared` that the quiet line shows as "Comp was cleared."
+until the next tender gesture (a source tap, an x, an amount tap, a
+hold) or reset. `armComp` also refuses while hidden, for a hold that
+began a moment before Back to items and whose timer lands after. The
+button cannot be pressed while hidden (no pointer on `display: none`),
+and every mode switch is a discrete event whose effects React flushes
+before paint, so no frame shows the shelf with comp armed behind it.
+Verified: armed, Back to items, `aria-pressed` false on the hidden
+button, "Comp was cleared." on return, gone after a Cash tap. The
+button's label is the canvas's "Comp this sale" (no "Hold to" in it),
+so a bare tap now writes "Hold Comp this sale for a moment to arm it."
+in the quiet line rather than doing nothing.
+
+**The Escape order, as implemented.** One handler in SaleScreen, one
+press peels one layer: (1) the keypad, dismissed by the panel's own
+listener as Cancel, with `payModalOpen` keeping the overlay handler out
+of the same press; (2) the cart-change confirm, the Clear cart confirm
+and the contract dialog, each with its own listener and each a return
+for the overlay handler; (3) pay mode to shelf; (4) the overlay, not
+mid-pricing. Nothing leaves mid-charge: `charging` returns before (3).
+Verified press by press: keypad closed and still in pay mode; the
+cart-change confirm closed (keeping the items) and still in pay mode;
+shelf; closed; reopened in shelf mode with the cart intact.
+
+**One Charge, on the bar, gated in the panel's render.** The panel's
+own Charge button is gone. In pay mode the bar's primary is rendered BY
+PaymentPanel through `createPortal` into `.sale-bar-slot` (a callback
+ref into SaleScreen state, `display: contents`), so the button reads the
+`chargeable` of the same render as the tiles' reasons and there is no
+effect-after-paint gap and no gate copied upward. It reads `Due $X`
+disabled while due is above zero (the prototype's label, plan 0.3),
+`Charge $total` at zero, `Comp $total` when comped, a spinner with
+"Charging..." in flight, and nothing once the done block is up;
+`aria-disabled` like the shelf's Pay so its title can carry the reason,
+the click guard and `doCharge`'s own checks refuse the tap, and the
+aria-label is T35's full `chargeLabel` (the legs restated). The
+suppressed notice and the disagree stop with T38's audit table and
+Recheck render above the figures in pay mode from a `notice` prop; the
+audit table is one element (`auditTable`) used in both the ticket and
+the surface.
+
+**T39.7, the surface.** `.pay-surface`: radius 16 on `--surface`,
+padding 18, 12px gaps, the foot pushed down with `margin-top: auto`
+under a hairline. Figures: three tiles on `--bg`, 14px uppercase label
+over a 34px mono figure; Due has a 1.5px ink border and ink label
+(decided: the loudest), takes the `--ok` pair once the lines cover the
+total with at least one line present (or comped), Change takes the
+`--warn` pair when positive; the tinted borders are the pair's text
+colour through `color-mix` at 55%, not new tokens. Source tiles:
+`grid-auto-flow: column` so two or three share the row with no dead
+slot, min-height 82, a 1.5px accent border when available and
+`--line-soft` at half opacity when not, the 18px name with the existing
+icon, the reason under it at 14px only when there is one, Credit's
+balance badge top-right in the `--ok` pair. Reasons: T35's own where it
+has them; "Applies first" on an available Credit and "Nothing left to
+cover" once due is zero (plan 0.3). **Tapping Cash with a cash line
+present opens that line's keypad** (layout plan 2.7): the tile stays
+available with "In the payment. Tap to change it."; a second Card or
+Credit tap keeps T35's refusal. Tender rows: `--bg` fill, radius 12,
+padding 8/10, the name 16px/600, "covers $X" in 14px mono under a cash
+line entered above what it covers, the amount a 64px mono button at
+min-width 6.5em, the x a 64px square. The hint under the rows at 16px.
+The foot: the quiet line ("Nothing to pay, on the studio." when comped,
+"Comp was cleared." once, else the first line problem and T35's chain)
+and `Comp this sale` outlined at 64px, the hold unchanged.
+
+**The keypad** is T36's, restyled: 420 wide, radius 20, padding 20, 10px
+gaps, the title at 20px, the Amount due row (16px muted, 18px mono), the
+Entered box on `--bar-bg` with the 30px mono figure, chips as 64px pills
+sharing the row (cash only, and they SET the entry as decided), 66px
+keys in 23px mono, the change / short / partner line in 18px mono
+`--warn`, Cancel outlined and Done in the accent at 64px, right-aligned.
+Nothing in its logic moved.
+
+**The done block** for the one branch that is a completed sale: an 88px
+`--ok-bg` circle with the check, "Sale complete" at 30px, the 19px mono
+`Charged $253.22 · 9 items` (Comped when comped) with `Change $46.78
+from the drawer` under it on a cash over-tender, then the T24 summary
+and the sale id, then Done in the accent, still back to the roster
+(T33). The paid result now carries `total`, `count`, `changeCents` and
+`comped`, captured at the tap because `onSold` empties the cart in the
+same commit. Suppression never reaches it: a dry-run suppression keeps
+the amber notice and its sentence and gains the title "Sale rehearsed"
+(plan 0.3); a write-guard suppression is unchanged; the split, ambiguous
+and error branches are word for word.
+
+**Also.** `.shelf-grid { align-content: start }` (cycle 2's stretched
+cards). Under 1190 the surface tightens to 14px padding and 10px gaps
+and the tiles to 12/14: at 1080x768 the pane is 531 tall and the surface
+with two rows and a wrapped tile reason ("Two parts is the maximum")
+ran to its last pixel, Comp's lower edge one under the pane's; with the
+tweak Comp ends 15px clear of it. The tweak sits AFTER the surface's
+base rules in `globals.css`, since the first cut had it before them and
+the base padding won at equal specificity (T39.2's lesson, again).
+
+**The request bodies, observed** through the harness's mocked
+`/api/checkout` (`scratchpad/review3.js`, the `bodies` and `sizes`
+runs):
+
+- One cash line entered at $300.00 against $253.22: `{ ..., "clientId":
+  "100000123", "method": "cash", "cashTendered": 300 }`. No `split`.
+- Credit + Card (a $40 balance, a card on file): `{ ..., "split": {
+  "legs": [{ "method": "credit", "amount": 40 }, { "method":
+  "storedcard", "amount": 213.22 }] } }`. No `cashTendered`, no
+  `method`.
+- Credit + Cash at $300.00: `split.legs` `[{ credit, 40 }, { cash,
+  213.22 }]`, the cash leg what it COVERS, no `cashTendered`; the Change
+  tile and the done block both read $86.78.
+- Back to items then Pay: the same lines, and the same body on Charge.
+
+**Verified.** `npm run typecheck` and `npm run build` clean. Playwright
+with the API mocked, both palettes at 1366x1024, 1180x820 and 1080x768
+under `scratchpad/t39-3/`: pay mode with no lines, Credit + Cash, the
+keypad at $300.00, the over-tender, Back to items, pay again, and the
+outcome (paid in light, suppressed dry-run in dark); plus the single
+cash over-tender's done block, Credit + Card, the disagree stop in pay
+mode (two stops, two audit tables, the figures reading `--` and the bar
+`Due` disabled), comp armed and cleared, and the Escape sequence. At
+every size the surface and the cart column fit without scrolling with
+two tender rows; with an outcome notice up as well the surface scrolls
+inside its pane (the dark 820 and 768 shots), the bar never covers it.
+
+**Left, with the reason.**
+
+- After a paid sale the bar shows `Back to items` alone; the prototype
+  hides its bar in the done state and offers `New sale`. Ours keeps the
+  bar's shape stable and Done is the one control, per T33. Back to
+  items from the done block returns to an empty shelf with the paid
+  block still held (it clears on the next cart edit, as T35 has it).
+- The keypad's scrim covers the bar, so the only way out of pay mode
+  with a keypad open is Escape (which closes the keypad first); the
+  `visible` effect still covers the hidden-with-keypad case for any
+  future path.
+- The tile icons (T33's) stay beside the names; the canvas draws none.
+  One line to drop if Pete prefers the canvas's plain tiles.
+- Under 900 the surface stacks above the cart in DOM order and the
+  overlay scrolls, as the other panes do; not screenshot-checked this
+  cycle (T39.8).
+- The dev indicator and the drawer's pill still sit over the bar's
+  left and right ends in a dev build (recorded in T39.4-5).
 
 ## T38. The cart: more rows, an estimate while pricing, the audit, and a way out (Pete, 2026-08-31)
 

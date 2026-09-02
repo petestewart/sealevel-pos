@@ -2442,6 +2442,9 @@ button.sale-for:disabled {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
   gap: 10px;
+  /* T39.7: the grid is the pane's height (T39.4's bound); without this
+   * a short shelf stretched its one row of cards to fill it. */
+  align-content: start;
 }
 
 /* One sellable thing, 1a's card: the name at the top, a bottom row with
@@ -3113,31 +3116,51 @@ button.sale-for:disabled {
   color: var(--muted);
 }
 
+/* T39.7: the 768 budget. At 1080x768 the pane is 531 tall and the surface
+ * with two tender rows and a wrapped tile reason ran to its last pixel
+ * (Comp's lower edge one under the pane's); the padding and gaps give
+ * back 16px so the foot never meets the bar. AFTER the base rules above
+ * on purpose: same specificity, later wins (the T39.2 lesson). */
+@media (max-width: 1190px) {
+  .pay-surface {
+    padding: 14px;
+    gap: 10px;
+  }
+
+  .pay-tile {
+    padding: 12px 14px;
+  }
+}
+
 /* --- The amount modal, shared by every source. ------------------------
  * T35 had this keypad INLINE in the payment column, where it pushed the
  * receipt down the screen; Pete asked for the old cash modal back ("the
  * old keypad design was good ... having it be a modal is def better"),
  * so these are that modal's rules, renamed off "cash" because they now
- * serve card and credit too. Keys and chips keep the 64px floor. */
+ * serve card and credit too. T39.7 restyles it to the canvas (0.2): 420
+ * wide, radius 20, padding 20, 10px gaps, the Entered box on the bar's
+ * ground with a 30px figure, chips as pills, 66px keys with 23px mono,
+ * Cancel outlined and Done in the accent, right-aligned. Everything on
+ * the 64px floor. */
 
 .modal-amount {
   display: grid;
   gap: 10px;
+  width: min(420px, 100%);
+  padding: 20px;
+  border-radius: 20px;
 }
 
 .modal-amount .modal-title {
   margin-bottom: 0;
-}
-
-.modal-amount .modal-actions {
-  margin-top: 6px;
+  font-size: 20px;
 }
 
 .pad-row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .pad-label {
@@ -3145,21 +3168,41 @@ button.sale-for:disabled {
 }
 
 .pad-amt {
-  font-size: 22px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.pad-entered {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--bar-bg);
+  font-size: 16px;
+}
+
+.pad-entered-amt {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 30px;
   font-weight: 700;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
 .pad-chips {
   display: flex;
-  flex-wrap: wrap;
   gap: 8px;
 }
 
 .pad-chip {
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 64px;
-  padding: 0 16px;
-  border: 1px solid var(--line);
+  padding: 0 12px;
+  border: 1px solid var(--line-soft);
   border-radius: 999px;
   background: var(--bg);
   color: var(--ink);
@@ -3183,13 +3226,15 @@ button.sale-for:disabled {
 }
 
 .pad-key {
-  min-height: 64px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  min-height: 66px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
   background: var(--bg);
   color: var(--ink);
-  font-size: 20px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 23px;
   font-weight: 600;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
@@ -3197,20 +3242,50 @@ button.sale-for:disabled {
   background: var(--action-bg);
 }
 
+/* The change / short / partner line: 18px mono in the warn colour (0.2).
+ * The cap note under it is the quiet exception. */
 .pad-change {
   margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 18px;
   font-weight: 700;
+  line-height: 1.4;
+  color: var(--warn);
+  font-variant-numeric: tabular-nums;
 }
 
 .pad-change.short {
-  color: var(--stop);
+  color: var(--warn);
 }
 
 .pad-change.muted-note {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
   font-size: 16px;
   font-weight: 400;
   color: var(--muted);
+}
+
+.modal-amount .modal-actions {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.modal-amount .modal-actions button {
+  flex: none;
+  min-height: 64px;
+  padding: 0 20px;
+  font-size: 16px;
+}
+
+.modal-amount .modal-cancel {
+  background: var(--surface);
+}
+
+.modal-amount .modal-confirm.go {
+  padding: 0 26px;
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 /* Comp lives OUT of the tender list and arms on a hold: outlined at 64px
@@ -3243,26 +3318,91 @@ button.sale-for:disabled {
 
 /* --- Charge outcomes. ----------------------------------------------- */
 
-/* The paid confirmation: the ok pairing, with the sale summary. */
+/* The paid confirmation (T39.7, the canvas's done state): centred in the
+ * surface, an 88px ok-bg circle with the check, a 30px title, the charged
+ * line and the change from the drawer in 19px mono, the summary under
+ * them, and Done in the accent. Only a completed sale renders it. */
 .pay-done {
-  display: grid;
-  gap: 8px;
-  justify-items: start;
-  padding: 12px 14px;
-  border-radius: 12px;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+}
+
+.pay-done-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 88px;
+  height: 88px;
+  border-radius: 999px;
   background: var(--ok-bg);
   color: var(--ok);
+  font-size: 40px;
+}
+
+.pay-done-title {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.pay-done-charged {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pay-done-change {
+  display: block;
+  color: var(--warn);
+  font-weight: 700;
 }
 
 .pay-done-line {
   margin: 0;
-  font-size: 18px;
-  font-weight: 700;
+  max-width: 34em;
+  font-size: 16px;
+  color: var(--ink);
 }
 
 .pay-done-detail {
   margin: 0;
   font-size: 16px;
+  color: var(--muted);
+}
+
+.pay-done-btn {
+  min-height: 64px;
+  margin-top: 6px;
+  padding: 0 26px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.pay-done-btn:active {
+  filter: brightness(0.92);
+}
+
+/* A dry run's suppressed outcome takes the canvas's title; still amber,
+ * still no check: suppression is never success. */
+.pay-rehearsed {
+  margin: 0 0 6px;
+  font-size: 22px;
+  font-weight: 700;
 }
 
 /* The under-$10 split failure: stop treatment, structured, prominent.
