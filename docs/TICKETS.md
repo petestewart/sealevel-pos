@@ -2233,7 +2233,8 @@ radius 12, 16px/600, active in the accent fill with `--accent-ink`,
 Favorites pinned first and default-selected as before. Past seven
 entries the rest fold behind a muted `more` that expands the rail in
 place (`RAIL_LIMIT`), and the rail expands on its own when the active
-entry would be hidden; the studio's six never trigger it. The panes are a
+entry would be hidden; the studio's eight (see the review below) show
+whole. The panes are a
 `154px minmax(0,1fr) 388px` grid placed by column, so the PaymentPanel
 (still holding the tender and the receipt, until T39.6) is the right
 column without any change to its markup. Under 1040 the same element
@@ -2285,6 +2286,64 @@ pill is on cards only, never on a bundle card (a bundle is several
 lines). The rail's `more` has no collapse, since nothing on the studio's
 catalog ever shows it. The tender and receipt in the cart column are
 untouched and look like T38 inside a Counter frame until T39.4 and T39.6.
+
+### Review (separate reviewer), T39.1-3
+
+Reviewed against the plan's 0.2 and the 1a/1b frames, with the API
+mocked in Playwright at 1366x1024, 1180x820, 1080x768, 1000x768 and
+800x1100 in both palettes, and the roster in both palettes with every
+chip state (checked in, check in, unpaid, no waiver, the M chip, a
+negative balance). One fix:
+
+- **The rail folded the studio's own catalog, hiding one entry behind a
+  button that took its slot.** `RAIL_LIMIT` is seven, and the fixture
+  the implementer shot with had no packages and no contracts, so the
+  rail was six. The studio's rail is eight: Favorites, the five
+  categories, Packages and Memberships. At eight the rail showed seven
+  plus `more`, with Clothing alone behind it, and `more` is itself a
+  64px entry, so the fold saved nothing and cost a tap on every visit
+  to Clothing (shot: `real-light-1366x1024-rail.png`, before the fix).
+  The fold now happens only when it would hide at least two entries
+  (`all.length > RAIL_LIMIT + 1`); eight show whole, nine fold two.
+  The comments and the T39.2 note above that said the studio never
+  triggers it are corrected. Auto-expansion for a hidden active entry,
+  the tap's stickiness, and the fold's survival across a catalog
+  reload are unchanged and were exercised with twelve entries.
+
+Checked and clean: no hex outside the two palette blocks (`layout.tsx`'s
+two `themeColor` values equal `--bg` exactly); every `background:
+var(--accent)` in the CSS pairs with `--accent-ink`; every ok / warn /
+stop pairing takes both halves from the same palette; the check-in chip,
+the M chip, the balance pill, the class dropdown, the sort bar, the lock
+screen, the dev drawer and the settings tab read in both palettes.
+Contrast at 16px: accent-ink on accent 7.8 / 9.6 (light / dark), ok on
+ok-bg 5.7 / 7.5, warn on warn-bg 5.7 / 7.8, stop on stop-bg 5.3 / 6.8,
+muted on surface 4.7 / 5.6, muted on bg 4.3 / 6.1. The two below 4.5 are
+the canvas's own numbers: light muted on bg (4.34, the 1a frame's
+`#7a7163` on `#f6f3ec`) and the light disabled primary pair (3.10,
+unused until T39.5 and drawn that way in 1a); noted for T39.8 rather
+than changed here. Light muted on `--line` (3.59) is `.chip.busy`, which
+shows a spinner rather than text, and `.mini-signed`; both predate the
+retheme. Layout: measured bounding boxes at every size above, no pane or
+card overlaps, no horizontal overflow, the banner the overlay's full
+width at 16px in dry-run, live and write-guarded states, cards 96px,
+rail entries and Back 64px; three columns at 1366 and 1180, three at
+1080 with the 340 cart, the chip row and the two-row cart at 1000, one
+column at 800. The count pill reads `${type}-${id}`, the key `addItem`
+and `addBundle` write, and a bundle tap raised the pills on its
+component cards while the bundle card itself carried none. The money
+path: the `<PaymentPanel>` element is byte-identical before and after
+the column move, no hunk in the three commits touches the PaymentPanel
+function, `/api/*` or `src/lib`, and `.sale-left`'s move is one
+`grid-column` rule.
+
+Left as it is: the rail is a `nav` with `role="tablist"` whose `more`
+entry is not a `tab`, and the tabs have no arrow-key handling (neither
+did the chip row); an iPad counter has no keyboard, and the tablist
+predates this cycle. Auto-expansion for a hidden active entry collapses
+again when a visible entry is tapped, since only the `more` tap is
+sticky; with the fix the studio's rail never folds, so this is a
+catalog-growth case for the day it comes.
 
 ## T38. The cart: more rows, an estimate while pricing, the audit, and a way out (Pete, 2026-08-31)
 

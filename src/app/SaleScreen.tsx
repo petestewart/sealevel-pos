@@ -157,7 +157,11 @@ const MEMBERSHIPS_LABEL = "Memberships";
 
 /** T39.2: rail entries shown before the rest fold behind "more". Seven
  *  is the canvas's count and what a 768px-tall column holds at 64px
- *  entries with 6px gaps. */
+ *  entries with 6px gaps. The fold only happens when it hides at least
+ *  two: "more" takes a slot of its own, so folding one entry behind it
+ *  saves nothing and costs a tap. The studio's rail is exactly eight
+ *  (Favorites, five categories, Packages, Memberships), which is the
+ *  case that bit. */
 const RAIL_LIMIT = 7;
 
 /** One starred type+id pair, as persisted. Packages star like anything
@@ -3172,10 +3176,11 @@ export default function SaleScreen(props: {
           {/* RAIL (T39.2): the first column, 154px, Favorites pinned first
               and filled when active, Packages and Memberships in T30's
               order after Passes. Past the seventh entry the rest collapse
-              behind a muted "more" that expands the rail in place; the
-              studio's catalog never gets there, so this is the simplest
-              thing that is correct. Under 1040px the CSS folds the same
-              element back into the chip row above the grid. */}
+              behind a muted "more" that expands the rail in place, but
+              only when at least two would hide (RAIL_LIMIT); the studio's
+              rail is exactly eight and shows whole. Under 1040px the CSS
+              folds the same element back into the chip row above the
+              grid. */}
           {catalog && !catalogLoading && !catalogError ? (
             <nav className="sale-cats" role="tablist" aria-label="Categories">
               {(() => {
@@ -3198,11 +3203,12 @@ export default function SaleScreen(props: {
                   ...extras,
                 );
                 const all = [FAVORITES_LABEL, ...labels];
-                /* Expanded by the tap, or because the active entry
+                /* Expanded by the tap, because there is nothing worth
+                   folding (see RAIL_LIMIT), or because the active entry
                    would otherwise be hidden behind "more". */
                 const expanded =
                   railExpanded ||
-                  all.length <= RAIL_LIMIT ||
+                  all.length <= RAIL_LIMIT + 1 ||
                   all.indexOf(activeCat ?? "") >= RAIL_LIMIT;
                 const shown = expanded ? all : all.slice(0, RAIL_LIMIT);
                 return (
