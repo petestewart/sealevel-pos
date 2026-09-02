@@ -5913,6 +5913,7 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
         }
         onContractPurchased={refreshClientState}
         onSaleCompleted={refreshClientState}
+        classTeacher={activeClass?.teacher || null}
       />
 
       <DevDrawer />

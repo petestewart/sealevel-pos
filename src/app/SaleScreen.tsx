@@ -10,6 +10,18 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import {
+  COMP_DETAIL_MAX,
+  COMP_DETAIL_MIN,
+  COMP_KIND_LABELS,
+  COMP_KINDS,
+  compHeadline,
+  compReasonLine,
+  compValid,
+  type CompKind,
+  type CompReason,
+} from "@/lib/comp";
+
 /**
  * The sale screen (T23, PLAN 2.1 UI). A full-screen overlay over the
  * roster: receipt-style cart on the left, category chips and the item
@@ -531,8 +543,9 @@ type ChargeResult =
       changeCents: number;
       comped: boolean;
       /** T43: the reason the teacher gave for a comp, for the done
-       *  screen's "Comped: <reason>" line. Null on a paid sale. */
-      compReason: string | null;
+       *  screen's "Comped: <reason>" line. Null on a paid sale. Since
+       *  T45 it is the kind, the detail and the teacher it was for. */
+      compReason: CompReason | null;
     }
   | { kind: "suppressed"; mode: string }
   | { kind: "split"; message: string; mindbody: string }
@@ -543,15 +556,59 @@ type ChargeResult =
  *  cannot select it, short enough to not feel broken. */
 const COMP_HOLD_MS = 700;
 
-/** T43: a comp needs a written reason. The presets fill the field and
- *  can be edited; the bounds mirror /api/checkout's validation exactly,
- *  so a reason the dialog accepts is one the route accepts. */
-const COMP_REASONS = ["Teacher", "Trade", "Goodwill", "Damaged item"] as const;
-const COMP_REASON_MIN = 3;
-const COMP_REASON_MAX = 200;
-const compReasonValid = (reason: string): boolean =>
-  reason.trim().length >= COMP_REASON_MIN &&
-  reason.trim().length <= COMP_REASON_MAX;
+/** T43: a comp needs a reason; T45: the reason is a KIND from comp.ts's
+ *  closed list, an optional note, and for a teacher comp the teacher it
+ *  was for, picked from the staff list. The dialog's draft is that
+ *  shape with nothing chosen yet; compValid (shared with /api/checkout)
+ *  says when it is complete, so what the dialog accepts is what the
+ *  route accepts. */
+interface CompDraft {
+  kind: CompKind | null;
+  detail: string;
+  forStaffId: number | null;
+  forStaffName: string | null;
+}
+const EMPTY_COMP_DRAFT: CompDraft = {
+  kind: null,
+  detail: "",
+  forStaffId: null,
+  forStaffName: null,
+};
+
+/** A teacher as /api/staff lists them: id and name, nothing else. */
+interface StaffChoice {
+  id: number;
+  name: string;
+}
+
+/** The teacher of the roster's current class, matched to the staff list
+ *  by name: the exact full name first, then a first name that names
+ *  exactly one teacher. The roster's class summary carries a display
+ *  name (sometimes just a first name) rather than a staff id, so this
+ *  is a guess at a default, and only ever a default: the picker shows
+ *  it selected and the teacher can change it. */
+function matchClassTeacher(
+  list: readonly StaffChoice[],
+  classTeacher: string | null,
+): StaffChoice | null {
+  const wanted = (classTeacher ?? "").trim().toLowerCase();
+  if (!wanted) return null;
+  const exact = list.find((t) => t.name.trim().toLowerCase() === wanted);
+  if (exact) return exact;
+  const byFirst = list.filter(
+    (t) => t.name.trim().split(/\s+/)[0]?.toLowerCase() === wanted,
+  );
+  return byFirst.length === 1 ? (byFirst[0] as StaffChoice) : null;
+}
+
+/** "Kim Farrell" as a bold first name and the rest. */
+function splitName(name: string): [string, string] {
+  const trimmed = name.trim();
+  const at = trimmed.indexOf(" ");
+  return at < 0
+    ? [trimmed, ""]
+    : [trimmed.slice(0, at), trimmed.slice(at + 1).trim()];
+}
 
 /**
  * THE T24 SEAM, now live, and since the second live test the whole LEFT
@@ -626,6 +683,10 @@ function PaymentPanel(props: {
    *  change (third live test): the cart is gone, so every tender line and
    *  any armed comp goes with it. */
   cartResetNonce: number;
+  /** T45: the teacher of the roster's current class, as the class
+   *  summary names them, for the comp dialog's picker to preselect.
+   *  Null when no class is active or the class has no teacher. */
+  classTeacher: string | null;
 }) {
   const {
     cart,
@@ -642,6 +703,7 @@ function PaymentPanel(props: {
     onBusyChange,
     onModalChange,
     cartResetNonce,
+    classTeacher,
   } = props;
 
   /**
@@ -667,13 +729,83 @@ function PaymentPanel(props: {
    *  reason or null, not a boolean beside a string, so no render can
    *  find comp armed with nothing written; `chargeable` still checks the
    *  text in the same render, belt and braces. */
-  const [comp, setComp] = useState<{ reason: string } | null>(null);
+  const [comp, setComp] = useState<{ reason: CompReason } | null>(null);
   const comped = comp !== null;
-  /** The reason dialog the hold opens (T43): open, and the draft text
-   *  the chips fill and the teacher may edit. Nothing arms until Comp
-   *  in the dialog is tapped with at least COMP_REASON_MIN characters. */
+  /** The reason dialog the hold opens (T43): open, and the draft the
+   *  chips, the teacher picker and the note field build. Nothing arms
+   *  until Comp in the dialog is tapped with the draft complete. */
   const [reasonOpen, setReasonOpen] = useState(false);
-  const [reasonDraft, setReasonDraft] = useState("");
+  const [reasonDraft, setReasonDraft] = useState<CompDraft>(EMPTY_COMP_DRAFT);
+  /** T45: the teacher picker's list, from /api/staff, read once the
+   *  first time the Teacher kind is chosen and kept for this panel's
+   *  life (it unmounts with the overlay). An error is shown in the
+   *  dialog and leaves the teacher kind unchargeable rather than
+   *  guessed; the next Teacher tap tries again. */
+  const [staff, setStaff] = useState<{
+    status: "idle" | "loading" | "ready" | "error";
+    list: StaffChoice[];
+  }>({ status: "idle", list: [] });
+  const staffRef = useRef(staff);
+  staffRef.current = staff;
+  /** Select a teacher in the draft, keeping the kind. */
+  const pickTeacher = (t: StaffChoice | null) =>
+    setReasonDraft((d) => ({
+      ...d,
+      forStaffId: t?.id ?? null,
+      forStaffName: t?.name ?? null,
+    }));
+  /** Choose a kind. Teacher brings the picker up, preselecting the
+   *  current class's teacher when the list is here (or once it lands,
+   *  below); any other kind drops a picked teacher, since the route
+   *  refuses forStaffId beside them. */
+  const chooseKind = (kind: CompKind) => {
+    setReasonDraft((d) => {
+      if (kind !== "teacher") {
+        return { ...d, kind, forStaffId: null, forStaffName: null };
+      }
+      const preset =
+        d.forStaffId !== null
+          ? null
+          : matchClassTeacher(staffRef.current.list, classTeacher);
+      return preset
+        ? { ...d, kind, forStaffId: preset.id, forStaffName: preset.name }
+        : { ...d, kind };
+    });
+    if (kind === "teacher" && staffRef.current.status !== "ready") {
+      void loadStaff();
+    }
+  };
+  const loadStaff = async () => {
+    if (staffRef.current.status === "loading") return;
+    setStaff({ status: "loading", list: [] });
+    try {
+      const res = await fetch("/api/staff");
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !Array.isArray(body)) {
+        throw new Error(String(body?.error ?? `HTTP ${res.status}`));
+      }
+      const list: StaffChoice[] = body
+        .filter(
+          (t: unknown): t is StaffChoice =>
+            typeof (t as StaffChoice)?.id === "number" &&
+            typeof (t as StaffChoice)?.name === "string",
+        )
+        .map((t) => ({ id: t.id, name: t.name }));
+      setStaff({ status: "ready", list });
+      /* The list landed after the Teacher chip: preselect now, if the
+       * dialog is still on that kind with nobody chosen. */
+      const preset = matchClassTeacher(list, classTeacher);
+      if (preset) {
+        setReasonDraft((d) =>
+          d.kind === "teacher" && d.forStaffId === null
+            ? { ...d, forStaffId: preset.id, forStaffName: preset.name }
+            : d,
+        );
+      }
+    } catch {
+      setStaff({ status: "error", list: [] });
+    }
+  };
   /** Whether the pointer went down on the reason dialog's scrim, so the
    *  scrim closes on a real tap on it and not on the click a touch
    *  pointer fires when the hold that opened the dialog lifts. */
@@ -753,7 +885,7 @@ function PaymentPanel(props: {
    *  SaleScreen believing something still blocks Escape. */
   const closeReason = useCallback(() => {
     setReasonOpen(false);
-    setReasonDraft("");
+    setReasonDraft(EMPTY_COMP_DRAFT);
     onModalChange(false);
   }, [onModalChange]);
 
@@ -1075,7 +1207,12 @@ function PaymentPanel(props: {
            shape already makes an armed comp carry one; this re-checks
            the text in the SAME render that enables the button, so no
            state slip could ever leave a reasonless comp chargeable. */
-        lines.length === 0 && compReasonValid(comp.reason)
+        lines.length === 0 &&
+        compValid({
+          kind: comp.reason.kind,
+          detail: comp.reason.detail,
+          forStaffId: comp.reason.forStaffId ?? null,
+        })
       : /* Due EXACTLY zero: the lines cover the server's total to the
            cent, no more and no less (cash surplus is change, not
            coverage). */
@@ -1140,7 +1277,9 @@ function PaymentPanel(props: {
      * Mindbody, whose checkout request has no notes field; the route
      * records it in comp_receipts and the server log. */
     const payment = comp !== null
-      ? { method: "comp" as const, compReason: comp.reason }
+      ? /* T45: the reason as data. The route re-resolves the teacher's
+           name from the staff id and ignores the name sent here. */
+        { method: "comp" as const, compReason: comp.reason }
       : legs.length === 2
         ? { split: { legs } }
         : soleLine !== undefined && legs[0] !== undefined
@@ -1500,7 +1639,7 @@ function PaymentPanel(props: {
      * could complete after it; the timer's callback lands here and is
      * refused. */
     if (!visibleRef.current || chargingRef.current) return false;
-    setReasonDraft("");
+    setReasonDraft(EMPTY_COMP_DRAFT);
     setReasonOpen(true);
     onModalChange(true);
     setCompCleared(false);
@@ -1508,12 +1647,24 @@ function PaymentPanel(props: {
     return true;
   };
   /** Comp in the reason dialog: arm comp WITH the reason. Refused, and
-   *  the dialog left open, unless the trimmed text is long enough; the
-   *  button is disabled on the same test, so this guard is for a
-   *  keyboard Enter on a short draft. */
+   *  the dialog left open, unless the draft is complete (a kind, the
+   *  teacher for a teacher comp, the note for `other`); the button is
+   *  disabled on the same test, so this guard is for a keyboard Enter
+   *  on an incomplete draft. */
   const confirmComp = () => {
-    const reason = reasonDraft.trim();
-    if (!compReasonValid(reason) || charging) return;
+    if (!compValid(reasonDraft) || charging || reasonDraft.kind === null) {
+      return;
+    }
+    const reason: CompReason = {
+      kind: reasonDraft.kind,
+      detail: reasonDraft.detail.trim(),
+      ...(reasonDraft.kind === "teacher" && reasonDraft.forStaffId !== null
+        ? {
+            forStaffId: reasonDraft.forStaffId,
+            forStaffName: reasonDraft.forStaffName ?? undefined,
+          }
+        : {}),
+    };
     /* Comp is the whole sale given away, so it cannot coexist with a
      * tender: arming it clears the lines. */
     setLines([]);
@@ -1572,7 +1723,7 @@ function PaymentPanel(props: {
     ? /* The canvas's line (0.2): the sale is on the studio, and since
          T43 the reason sits beside it so what was written is on the
          surface before Charge. */
-      `Nothing to pay, on the studio. Comped: ${comp.reason}`
+      `Nothing to pay, on the studio. Comped: ${compReasonLine(comp.reason)}`
     : compCleared
       ? "Comp was cleared."
       : compHint
@@ -1702,8 +1853,18 @@ function PaymentPanel(props: {
               </p>
               {result.comped && result.compReason ? (
                 /* T43: the reason, under the comped line, so the done
-                   screen says why the sale was on the studio. */
-                <p className="pay-done-reason">Comped: {result.compReason}</p>
+                   screen says why the sale was on the studio. T45: the
+                   kind and the teacher on the line, the note under it. */
+                <>
+                  <p className="pay-done-reason">
+                    Comped: {compHeadline(result.compReason)}
+                  </p>
+                  {result.compReason.detail ? (
+                    <p className="pay-done-reason-detail">
+                      {result.compReason.detail}
+                    </p>
+                  ) : null}
+                </>
               ) : null}
               <p className="pay-done-line">{result.summary}</p>
               {result.detail ? (
@@ -2127,30 +2288,69 @@ function PaymentPanel(props: {
                 {total !== null ? money(total) : "--"}
               </span>
             </div>
+            {/* T45: the chips choose a KIND (Pete: "we aren't saving an
+                enum with the row"), never paste text. */}
             <div className="pad-chips reason-chips">
-              {COMP_REASONS.map((label) => (
+              {COMP_KINDS.map((kind) => (
                 <button
-                  key={label}
+                  key={kind}
                   className={
-                    reasonDraft === label ? "pad-chip on" : "pad-chip"
+                    reasonDraft.kind === kind ? "pad-chip on" : "pad-chip"
                   }
-                  aria-pressed={reasonDraft === label}
-                  onClick={() => setReasonDraft(label)}
+                  aria-pressed={reasonDraft.kind === kind}
+                  onClick={() => chooseKind(kind)}
                 >
-                  {label}
+                  {COMP_KIND_LABELS[kind]}
                 </button>
               ))}
             </div>
+            {reasonDraft.kind === "teacher" ? (
+              /* The teacher picker: the active teachers from /api/staff,
+                 the current class's teacher preselected. A list that
+                 could not load says so and leaves Comp disabled; a name
+                 is never typed or guessed. */
+              <div className="reason-teachers" aria-label="Which teacher">
+                {staff.status === "loading" ? (
+                  <p className="reason-note">Loading teachers...</p>
+                ) : null}
+                {staff.status === "error" ? (
+                  <p className="reason-note">
+                    Could not load teachers. Tap Teacher to try again.
+                  </p>
+                ) : null}
+                {staff.list.map((t) => {
+                  const [first, rest] = splitName(t.name);
+                  const on = reasonDraft.forStaffId === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      className={on ? "reason-teacher on" : "reason-teacher"}
+                      aria-pressed={on}
+                      onClick={() => pickTeacher(t)}
+                    >
+                      <span className="reason-teacher-first">{first}</span>
+                      {rest ? ` ${rest}` : ""}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
             <input
               className="reason-input"
               type="text"
-              value={reasonDraft}
-              maxLength={COMP_REASON_MAX}
+              value={reasonDraft.detail}
+              maxLength={COMP_DETAIL_MAX}
               autoComplete="off"
               autoFocus
-              placeholder="Why is this sale on the studio?"
-              aria-label="Reason for the comp"
-              onChange={(e) => setReasonDraft(e.target.value)}
+              placeholder={
+                reasonDraft.kind === "other"
+                  ? "What happened?"
+                  : "Add a note (optional)"
+              }
+              aria-label="Note for the comp"
+              onChange={(e) =>
+                setReasonDraft((d) => ({ ...d, detail: e.target.value }))
+              }
               onKeyDown={(e) => {
                 if (e.key === "Enter") confirmComp();
               }}
@@ -2161,11 +2361,15 @@ function PaymentPanel(props: {
               </button>
               <button
                 className="modal-confirm go"
-                disabled={!compReasonValid(reasonDraft.trim())}
+                disabled={!compValid(reasonDraft)}
                 title={
-                  compReasonValid(reasonDraft.trim())
+                  compValid(reasonDraft)
                     ? "Comp this sale"
-                    : `Write at least ${COMP_REASON_MIN} characters`
+                    : reasonDraft.kind === null
+                      ? "Choose a reason"
+                      : reasonDraft.kind === "teacher"
+                        ? "Choose the teacher"
+                        : `Write at least ${COMP_DETAIL_MIN} characters`
                 }
                 onClick={confirmComp}
               >
@@ -2824,6 +3028,11 @@ export default function SaleScreen(props: {
    *  the overlay must not keep showing the pre-sale numbers (Pete, fourth
    *  live test). Best-effort; the sale stands whatever happens here. */
   onSaleCompleted?: (clientId: string) => void;
+  /** T45: the teacher of the roster's current class, for the comp
+   *  dialog's picker to preselect. The class summary's display name,
+   *  matched to the staff list by name in the panel; null with no
+   *  active class. */
+  classTeacher?: string | null;
 }) {
   const {
     open,
@@ -2835,6 +3044,7 @@ export default function SaleScreen(props: {
     modalAbove,
     onContractPurchased,
     onSaleCompleted,
+    classTeacher = null,
   } = props;
 
   const [catalog, setCatalog] = useState<CatalogState | null>(null);
@@ -4199,6 +4409,7 @@ export default function SaleScreen(props: {
             onModalChange={setPayModalOpen}
             cartResetNonce={cartResetNonce}
             onClientDataStale={onClientDataStale}
+            classTeacher={classTeacher}
           />
 
           {/* CART, the right column (rail, grid, cart is the layout of

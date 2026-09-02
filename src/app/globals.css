@@ -3523,6 +3523,61 @@ button.sale-for:disabled {
   color: var(--warn);
 }
 
+/* T45: the note under the done screen's comped line, muted, wrapping
+ * like the line above it. */
+.pay-done-reason-detail {
+  margin: 0;
+  max-width: 34em;
+  overflow-wrap: anywhere;
+  font-size: 17px;
+  color: var(--muted);
+}
+
+/* T45: the teacher picker inside the comp dialog. A column of 64px rows
+ * (first name bold, last name after it) in the prompt's choice idiom,
+ * scrolling inside the dialog once a studio's staff list outgrows the
+ * screen; the chosen row takes the accent pairing like a chosen chip.
+ * The quiet line above it (loading, could not load) is 16px muted. */
+.reason-teachers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.reason-teacher {
+  flex: 0 0 auto;
+  min-height: 64px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 18px;
+  text-align: left;
+}
+
+.reason-teacher:active:not(:disabled) {
+  background: var(--action-bg);
+}
+
+.reason-teacher.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.reason-teacher-first {
+  font-weight: 700;
+}
+
+.reason-note {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
 /* --- Charge outcomes. ----------------------------------------------- */
 
 /* The paid confirmation (T39.7, the canvas's done state): centred in the
