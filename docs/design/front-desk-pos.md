@@ -1018,7 +1018,8 @@ cover the rest.
 that. Mindbody will attribute every check-in and sale to the service account.
 Pete is checking whether that disturbs commission or payroll reporting; if it
 does, the fallback is per-teacher staff logins, which is why auth in Phase 1.5
-should not assume a single identity is permanent.
+should not assume a single identity is permanent. Until it is answered, a comp
+receipt (T43) carries the reason the teacher wrote but no teacher name.
 
 **4. Wifi at the counter. Proposed answer: do not build offline.** The design
 already forbids queuing a sale. And a queued check-in is exactly the failure

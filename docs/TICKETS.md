@@ -3825,6 +3825,144 @@ fixed in place; the rest of the hunt list came back clean.
       suggestion) is not added: SaleScreen is out of this ticket's
       scope. The roster and search rows cover the counter.
 
+## T43. A comp needs a reason (Pete, 2026-09-02)
+
+Pete: "is there a way to force the teacher to write a reason for
+comping?" Yes, and the reason has to live on our side: Mindbody's
+checkout request has no notes field (the request schema in
+`docs/mindbody-openapi/sale.yml` carries none; the response's `Notes` is
+customer-written), so the comp payment stub goes out exactly as it did
+and the reason is ours to keep.
+
+### The design (approved)
+
+1. **A reason dialog on arm.** Holding `Comp this sale` no longer arms
+   comp directly; the completed hold opens a modal: title `Comp this
+   sale`, the total, four preset chips (`Teacher`, `Trade`, `Goodwill`,
+   `Damaged item`), a free-text field (max 200 characters), `Cancel`
+   and `Comp`. A chip fills the field with its label and the teacher may
+   edit; `Comp` is enabled only when the trimmed text has at least three
+   characters. Cancel, Escape and the scrim leave comp unarmed and drop
+   the draft. Tapping the armed Comp control unselects and clears the
+   reason. Leaving pay mode clears both.
+2. **The gate.** `chargeable` requires the reason whenever comp is
+   armed, in the same render; the state makes an armed comp without a
+   reason unrepresentable.
+3. **The request.** The comp body carries `compReason`, only beside
+   `method: "comp"`; the route validates it (string, trimmed, 3 to 200)
+   and refuses it on any other method or a split. Nothing goes to
+   Mindbody.
+4. **Storage.** `comp_receipts` in Postgres, our line list and the
+   reason, on the T29 charter; and ALWAYS a `[comp]` server log line so
+   a comp is on record with no database.
+5. **The done screen** says `Comped: <reason>`.
+6. **Teacher identity** stays open question 3: the receipt has no
+   teacher name until it is answered.
+
+### What was built
+
+**SaleScreen.tsx, PaymentPanel.** `comped: boolean` became `comp: {
+reason: string } | null` (`comped` is derived from it), so the reason
+cannot be absent from an armed comp; `chargeable` re-checks
+`compReasonValid(comp.reason)` in the same render regardless. `armComp`
+(the hold timer's callback, still reading `visibleRef` so a hold that
+lands after Back to items is refused) now opens the dialog and reports
+`onModalChange(true)`; `confirmComp` is what arms: it clears the lines,
+dismisses the keypad, sets `comp` and closes the dialog. `closeReason`
+(Cancel, Escape, the scrim, every reset path, the `visible` effect)
+drops the draft and reports the close upward like `dismissPad`, so a
+dialog dismissed by a reset never leaves Escape blocked. The dialog is
+a `.modal-reason` inside the keypad's `.modal-amount` shape over the
+same `.modal-scrim`, with its own Escape listener; the input is a 64px
+target at 18px with `autoComplete="off"`, Enter confirms only when the
+text is long enough. The quiet line reads "Nothing to pay, on the
+studio. Comped: <reason>" while armed, so the reason is on the surface
+before Charge. The paid result carries `compReason` and the done block
+renders `Comped: <reason>` under the charged line. Every other comp rule
+is as T35/T39 left it: arming clears the lines, a tender disarms, a
+client change and a cart reset clear it, leaving pay mode clears it with
+"Comp was cleared." on return.
+
+**CSS.** `.modal-reason .reason-chips` wraps the four chips at 64px,
+`.pad-chip.on` takes the accent pairing, `.reason-input` and
+`.pay-done-reason` in tokens only; both palettes come from the variable
+swap.
+
+**/api/checkout.** `compReason` parsed before the house-client
+substitution and the rehearsal, so a reasonless comp costs no metered
+call: 400 when missing, short, long or not a string on a comp; 400 when
+present on any other method or on a split. Each item may carry a `name`
+on a comp, read into the receipt's line list and never forwarded (the
+Mindbody payload is built from the validated `items` alone, verified
+against a mock: the request keys are `Items, Payments, ClientId, Test,
+LocationId, InStore, CalculateTax, SendEmail`, as before). After the
+Mindbody call resolves, `recordComp` writes ONE log line and then the
+table row; a refused or ambiguous call logs the attempt with its
+outcome and records no row. The single flight, the payload and every
+outcome's wording are untouched.
+
+**db.ts.** `comp_receipts (id serial, recorded_at, sale_id text null,
+client_id text null, total_cents integer, items jsonb, reason text,
+target text, suppressed boolean)` as migration version 2, since version
+1 has already run on the deployed database and is skipped there; the
+runner's own comment asks for a numbered block. `insertCompReceipt`
+follows `insertWaiverReceipt` exactly: never throws, `logDbError` once
+per kind, returns whether it stored.
+
+### Observed (harness `scratchpad/t43.js`, shots under `scratchpad/t43/`)
+
+The request body for a comp charge, the mocked route capturing it:
+
+    { "items": [ { "type": "Service", "metadataId": 1002, "quantity": 1,
+        "price": 230, "taxExempt": true, "taxRate": null,
+        "name": "10 Class Pack" }, ... ],
+      "clientId": "100000123", "method": "comp",
+      "compReason": "Teacher, covering for Pete" }
+
+`method: "comp"` unchanged; `compReason` beside it; `name` on the items
+of a comp only (a cash or split body is byte for byte what T39 recorded).
+
+Against the real route with `DATABASE_URL` unset, a mock Mindbody on
+`MINDBODY_API_BASE_URL`, `POS_DRY_RUN=false` and the write guard
+allowing one client:
+
+    [comp] prod sale=777001 client=100000123 total=31.00 reason="Teacher, covering for Pete"
+    [comp] prod sale=none outcome=refused client=100000123 total=3.00 reason="Goodwill" error="Refused by the mock"
+
+No `[db]` line: with no database the insert returns false silently and
+the log line is the record. The validation answers: no reason, two
+characters, 201 characters each `400 "a comp needs a compReason of 3 to
+200 characters"`; `compReason` beside `method: "cash"` or a split `400
+"compReason applies only to method comp"`. The reason is trimmed on the
+way in.
+
+The gate: with two characters typed `Comp` is disabled and Enter does
+nothing; spaces only likewise; Cancel leaves the bar at `Due $253.22`
+disabled and a forced click on it sends no request; the next hold opens
+an empty field. Escape and the scrim close the dialog and stay in pay
+mode; two Escapes with the dialog open peel the dialog, then pay mode.
+Armed with `Trade`, a tap on the control unselects and the quiet line
+returns to the card reason; Back to items with comp armed clears it and
+the return says "Comp was cleared."; a Cash tap disarms. Every target in
+the dialog measured 64px. Both palettes shot at 1366x1024: the dialog
+open, `Teacher` chosen, comp armed with the reason on the surface, the
+done screen.
+
+### Left, with the reason
+
+- **Teacher identity.** The receipt carries the reason and no name;
+  open question 3 in the design doc, and the sentence added there.
+- **A suppressed comp never reaches the receipt path** as the route is
+  built: dry run and the write guard suppress the Test: true rehearsal
+  first, and the route answers `suppressed` before the comp branch. The
+  `suppressed: true` row is written for the case where a rehearsal
+  passes and the write is eaten, which today cannot happen; it stays
+  because the guard's order could change and a comp must not go
+  unrecorded when it does.
+- **`review3r-lib.js`'s `attach()` predates T42's attach modal** (the
+  "In class" scope is on by default, so an everyone search needs the
+  toggle off); `t43.js` carries its own. The lib is unchanged.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
