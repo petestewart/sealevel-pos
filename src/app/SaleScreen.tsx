@@ -3066,6 +3066,9 @@ export default function SaleScreen(props: {
       ? recheckReport
       : null;
   const cartCount = cart.reduce((n, l) => n + l.quantity, 0);
+  /** T39.3: quantity per shelf card, from the cart's own keys; the count
+   *  pill reads it and nothing is fetched. */
+  const inCart = new Map(cart.map((l) => [l.key, l.quantity]));
 
   /** The balance shown beside the attached name: the profile lookup's
    *  number when it is this client's (it is refetched after every charge,
@@ -3262,16 +3265,29 @@ export default function SaleScreen(props: {
                         onClick={() => setContractDialog(c)}
                         aria-label={`Start the ${c.name} membership`}
                       >
-                        <span className="shelf-name">{c.name}</span>
-                        <span className="shelf-price">
-                          {c.autopayEnabled &&
-                          c.recurringPaymentTotal !== null &&
-                          c.recurringPaymentTotal > 0
-                            ? `${money(c.recurringPaymentTotal)} ${frequencyPhrase(c)}`
-                            : c.firstPaymentTotal !== null
-                              ? money(c.firstPaymentTotal)
-                              : ""}
+                        <span className="shelf-name">
+                          {c.name}
                           <span className="shelf-bundle-mark"> membership</span>
+                        </span>
+                        <span className="shelf-foot">
+                          <span className="shelf-price">
+                            {c.autopayEnabled &&
+                            c.recurringPaymentTotal !== null &&
+                            c.recurringPaymentTotal > 0 ? (
+                              <>
+                                <span className="shelf-amt">
+                                  {money(c.recurringPaymentTotal)}
+                                </span>{" "}
+                                {frequencyPhrase(c)}
+                              </>
+                            ) : c.firstPaymentTotal !== null ? (
+                              <span className="shelf-amt">
+                                {money(c.firstPaymentTotal)}
+                              </span>
+                            ) : (
+                              ""
+                            )}
+                          </span>
                         </span>
                       </button>
                     ))}
@@ -3286,6 +3302,7 @@ export default function SaleScreen(props: {
                   <div className="shelf-grid">
                     {shelfItems.map((item) => {
                       const starred = favSet.has(itemKey(item.type, item.id));
+                      const count = inCart.get(itemKey(item.type, item.id)) ?? 0;
                       return (
                         <div
                           className="shelf-cell"
@@ -3297,22 +3314,38 @@ export default function SaleScreen(props: {
                             aria-label={`Add ${item.name}, ${money(item.price)}`}
                           >
                             <span className="shelf-name">{item.name}</span>
-                            <span className="shelf-price">
-                              {money(item.price)}
-                              {item.taxExempt ? (
-                                <span className="shelf-notax"> no tax</span>
-                              ) : null}
-                              {/* A package's shelf price is a local
-                                  component-sum estimate (the API gives a
-                                  package no price of its own); the cart
-                                  total is Mindbody's, as always. */}
-                              {item.type === "Package" ? (
-                                /* "est." because this number is OUR
-                                   component-sum guess, not a Mindbody
-                                   price; the cart total is Mindbody's. */
-                                <span className="shelf-bundle-mark">
-                                  {" "}
-                                  package, est.
+                            <span className="shelf-foot">
+                              <span className="shelf-price">
+                                <span className="shelf-amt">
+                                  {money(item.price)}
+                                </span>
+                                {item.taxExempt ? (
+                                  <span className="shelf-notax"> no tax</span>
+                                ) : null}
+                                {/* A package's shelf price is a local
+                                    component-sum estimate (the API gives a
+                                    package no price of its own); the cart
+                                    total is Mindbody's, as always. */}
+                                {item.type === "Package" ? (
+                                  /* "est." because this number is OUR
+                                     component-sum guess, not a Mindbody
+                                     price; the cart total is Mindbody's. */
+                                  <span className="shelf-bundle-mark">
+                                    {" "}
+                                    package, est.
+                                  </span>
+                                ) : null}
+                              </span>
+                              {/* T39.3: how many are rung up, from cart
+                                  state. Reads "x2" so a teacher can see a
+                                  double tap landed without looking at
+                                  the ticket. */}
+                              {count > 0 ? (
+                                <span
+                                  className="shelf-count"
+                                  aria-label={`${count} in the cart`}
+                                >
+                                  &#215;{count}
                                 </span>
                               ) : null}
                             </span>
@@ -3349,10 +3382,16 @@ export default function SaleScreen(props: {
                             onClick={() => addBundle(bundle)}
                             aria-label={`Add the ${bundle.name} bundle, ${money(bundle.total)}, ${bundle.items.length} items`}
                           >
-                            <span className="shelf-name">{bundle.name}</span>
-                            <span className="shelf-price">
-                              {money(bundle.total)}
+                            <span className="shelf-name">
+                              {bundle.name}
                               <span className="shelf-bundle-mark"> bundle</span>
+                            </span>
+                            <span className="shelf-foot">
+                              <span className="shelf-price">
+                                <span className="shelf-amt">
+                                  {money(bundle.total)}
+                                </span>
+                              </span>
                             </span>
                           </button>
                         ))

@@ -2175,10 +2175,10 @@ bottom bar, a payment mode that replaces the grid while the cart stays.
 The plan is `docs/design/pos-design-implementation.md`: nine serial
 steps, each its own ticket and review, each leaving the app shippable.
 
-- [ ] T39.1 Shell to 1400, `--accent-ink` and `--shadow`, accent retheme,
+- [x] T39.1 Shell to 1400, `--accent-ink` and `--shadow`, accent retheme,
       the header's client card.
-- [ ] T39.2 The vertical rail, Favorites pinned, `more`, the 1040 fold.
-- [ ] T39.3 Grid cards at 64px with the count pill.
+- [x] T39.2 The vertical rail, Favorites pinned, `more`, the 1040 fold.
+- [x] T39.3 Grid cards at 64px with the count pill.
 - [ ] T39.4 Cart column: TICKET header, select-to-reveal row controls,
       sub-line only above quantity one. Built on T38.
 - [ ] T39.5 Sticky bottom bar: Empty cart left, Pay / Charge right, below
@@ -2204,6 +2204,87 @@ payment surface), T39.8-9 (density, degradation, roster).
 What must not change: the money (T35's request shapes, clamps, single
 flight, `chargeable` in the same render); the mode banner's presence in
 every state; comp arms only in payment mode; T38 lands first.
+
+### T39.1-3: what was built
+
+Shelf mode, per the plan's 0.2 and Pete's calls. Nothing in PaymentPanel's
+logic, `/api/*` or `src/lib/sale.ts` changed; the cart column is the old
+column moved, not rebuilt (that is T39.4-6).
+
+**T39.1, shell, tokens, header.** Both palette blocks re-valued to
+Counter's (1a light, 1b dark) with `--accent-ink`, `--line-soft`,
+`--bar-bg`, `--shadow` and `--disabled-bg` / `--disabled-ink` added
+(`--stop`, `--stop-bg` and the dark `--action-bg` keep their values, the
+canvas does not draw them). Every accent fill that painted `--surface` as
+its text now paints `--accent-ink`: the M chip, undo, the lock button,
+the active chip, Charge, the pay confirm. `themeColor` follows `--bg`.
+The retheme is app-wide through the tokens, as decided. The overlay's
+shell is 1400 wide at 16/20; the mode banner runs edge to edge inside it
+as a 16px line; the header is a 76px row under a hairline: `Buy` at
+23px, the client card at 60px (SALE FOR at 14px, the name at 17px, the
+balance as a mono pill in the `--ok` pair reading `$40.00 credit`, owed
+money keeping the stop pair; a 44px detach), the unattached state the
+same card carrying the plus, "Attach a client" and its 16px hint; Back
+outlined at the far right, 64px (the house rule over the canvas's 60).
+
+**T39.2, the rail.** `.sale-cats` is a 154px column of 64px entries
+(the canvas's 62 brought up to the floor), 6px gaps, 14px side padding,
+radius 12, 16px/600, active in the accent fill with `--accent-ink`,
+Favorites pinned first and default-selected as before. Past seven
+entries the rest fold behind a muted `more` that expands the rail in
+place (`RAIL_LIMIT`), and the rail expands on its own when the active
+entry would be hidden; the studio's six never trigger it. The panes are a
+`154px minmax(0,1fr) 388px` grid placed by column, so the PaymentPanel
+(still holding the tender and the receipt, until T39.6) is the right
+column without any change to its markup. Under 1040 the same element
+folds back to a wrapping chip row above the grid, the cart spanning both
+rows (`grid-template-rows: auto 1fr`, or the span's height leaks into row
+one); under 900 the one-column stack stays, in DOM order. The folds sit
+AFTER the base rules in `globals.css`: same specificity, later wins, and
+the first cut had them earlier, where the base `flex-direction: column`
+beat the fold silently.
+
+**T39.3, the grid.** `.shelf-grid` at `minmax(184px, 1fr)`, 10px gaps;
+cards min-height 96, padding 14, radius 14, name at 17px/600 line-height
+1.25 on top, a bottom row with the price bottom-left (16px, the figure
+alone in mono, the "no tax" / "package, est." note beside it in the body
+face) and, when the item is in the cart, the count pill bottom-right
+(accent fill, `--accent-ink`, 14px mono, `×2`), read from cart state by
+the same `${type}-${id}` key the cart uses, no call. The star stays a
+44px sibling top-right; only the name gives it room now, so the pill
+keeps the card's own corner. Bundle cards: dashed `--line-soft` border
+and "bundle" after the name (from Slate, decided). Contract cards keep
+`.shelf-contract` and T30's dialog; "membership" moves after the name
+to match. Under 1190 the cart narrows to 340 and the card minimum to 166.
+
+**Two arithmetic corrections to the plan's T39.3.** (1) At 1366 the grid
+gets 756px, and four cards of 184 need 766 (three 10px gaps), so the
+grid is THREE columns of about 245, not four. That is what 1a itself
+draws: the designer's "try next" line offers "a tighter four-column
+grid" as a follow-up, which means the design of record is three. Left at
+184 per the spec; a four-column iPad would be `minmax(181px)`, one
+number, if Pete wants it. (2) Three columns of 184 with a 388 cart hold
+from 1182 up, not 1180, so the narrowing query sits at 1190; at the 1080
+floor the grid is 518, three of 166 with two gaps exactly, as planned.
+
+**Also touched.** `.tender-srcs` wraps: at 340 the three sources no
+longer fit one line and were clipping. Style only, and T39.6 moves the
+row.
+
+**Verified.** `npm run typecheck` and `npm run build` clean. Screenshots
+in both palettes at 1366x1024, 1180x820, 1080x768 and 1000x768 with the
+API mocked (no Mindbody credentials here; a fixture catalog of the
+studio's real names and prices, a fixture client with $40 credit, the
+cart priced locally at 10.35%), compared by eye against 1a and 1b: the
+header, rail, cards and count pill match; the cart column is still the
+pre-T39.4 receipt and tender, as expected at this step.
+
+**Left for the next cycles, on purpose.** The disabled primary pair is
+defined but unused until T39.5's bar; `--shadow` likewise. The count
+pill is on cards only, never on a bundle card (a bundle is several
+lines). The rail's `more` has no collapse, since nothing on the studio's
+catalog ever shows it. The tender and receipt in the cart column are
+untouched and look like T38 inside a Counter frame until T39.4 and T39.6.
 
 ## T38. The cart: more rows, an estimate while pricing, the audit, and a way out (Pete, 2026-08-31)
 
