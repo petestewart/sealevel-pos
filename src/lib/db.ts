@@ -234,6 +234,24 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         ADD COLUMN IF NOT EXISTS teacher_name text;
     `,
   },
+  {
+    /* T45: the reason as data. `kind` is one of comp.ts's COMP_KINDS,
+     * `detail` the optional free text, `for_staff_id` and `for_staff_name`
+     * the teacher a teacher comp was for (a handle plus the name as it
+     * read, like teacher_id), and `formula_note_id` the Mindbody Formula
+     * Note the route filed on the client afterwards, when it did. All
+     * nullable and additive: rows from T43 and T44 keep their rendered
+     * `reason`, which the route still fills for every new row too. */
+    version: 4,
+    sql: `
+      ALTER TABLE comp_receipts
+        ADD COLUMN IF NOT EXISTS kind text,
+        ADD COLUMN IF NOT EXISTS detail text,
+        ADD COLUMN IF NOT EXISTS for_staff_id text,
+        ADD COLUMN IF NOT EXISTS for_staff_name text,
+        ADD COLUMN IF NOT EXISTS formula_note_id integer;
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -358,6 +376,13 @@ export async function insertCompReceipt(receipt: {
   suppressed: boolean;
   teacherId: string | null;
   teacherName: string | null;
+  /** T45: the reason as data, beside the rendered `reason` line. */
+  kind: string;
+  detail: string | null;
+  forStaffId: string | null;
+  forStaffName: string | null;
+  /** The Formula Note Mindbody filed for this comp, when one was. */
+  formulaNoteId: number | null;
 }): Promise<boolean> {
   try {
     const p = await ready();
@@ -365,8 +390,10 @@ export async function insertCompReceipt(receipt: {
     await p.query(
       `INSERT INTO comp_receipts
          (sale_id, client_id, total_cents, items, reason, target, suppressed,
-          teacher_id, teacher_name)
-       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)`,
+          teacher_id, teacher_name, kind, detail, for_staff_id,
+          for_staff_name, formula_note_id)
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12,
+               $13, $14)`,
       [
         receipt.saleId,
         receipt.clientId,
@@ -377,6 +404,11 @@ export async function insertCompReceipt(receipt: {
         receipt.suppressed,
         receipt.teacherId,
         receipt.teacherName,
+        receipt.kind,
+        receipt.detail,
+        receipt.forStaffId,
+        receipt.forStaffName,
+        receipt.formulaNoteId,
       ],
     );
     return true;

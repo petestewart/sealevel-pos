@@ -1,8 +1,22 @@
 import { NextResponse } from "next/server";
 
 import { requireSession, requireTeacher, teacherLogTag } from "@/lib/auth";
+import {
+  COMP_DETAIL_MAX,
+  COMP_DETAIL_MIN,
+  compHeadline,
+  compReasonLine,
+  isCompKind,
+  type CompReason,
+} from "@/lib/comp";
 import { insertCompReceipt, type CompReceiptItem } from "@/lib/db";
-import { isDryRun, mindbodyHttpStatus, target } from "@/lib/mindbody";
+import {
+  isDryRun,
+  mindbody,
+  mindbodyHttpStatus,
+  target,
+} from "@/lib/mindbody";
+import { listTeachers } from "@/lib/staff";
 
 import {
   CARD_MINIMUM_USD,
@@ -25,13 +39,22 @@ export const dynamic = "force-dynamic";
  * Body: { items: CartLine[], clientId?: string,
  *         method: "storedcard"|"credit"|"cash"|"comp",
  *         cashTendered?: number,
- *         compReason?: string }  -- T43: required with method "comp"
- *         (3 to 200 characters after trimming), refused beside any other
- *         method or a split. It never reaches Mindbody, whose checkout
- *         request has no notes field; it is recorded in comp_receipts
- *         when a database is configured and ALWAYS as one `[comp]` server
- *         log line. Each item may carry a `name` on a comp, for that
- *         record only; it is never forwarded.
+ *         compReason?: { kind, detail, forStaffId?, forStaffName? } }
+ *         -- T43: required with method "comp", refused beside any other
+ *         method or a split. Since T45 it is data rather than a string:
+ *         `kind` from comp.ts's COMP_KINDS, `detail` trimmed and at most
+ *         200 characters (at least 3 for `other`, else may be empty),
+ *         `forStaffId` a positive integer required for `teacher` and
+ *         refused for every other kind. `forStaffName` from the browser
+ *         is IGNORED: the name is resolved here from the staff list by
+ *         id, and an id the list does not carry is a 400. All of it is
+ *         checked before any Mindbody call. None of it reaches the
+ *         checkout payload, whose request has no notes field; it is
+ *         recorded in comp_receipts when a database is configured and
+ *         ALWAYS as one `[comp]` server log line, and after a REAL comp
+ *         for a named client it is filed on the client as a Formula Note
+ *         (see recordComp below). Each item may carry a `name` on a comp,
+ *         for that record only; it is never forwarded.
  *   or, since T28, `split` instead of `method`:
  *       { items, clientId, split: { legs: [{method, amount}, {method,
  *         amount}] } } -- exactly two legs, methods from the whitelist
@@ -95,11 +118,6 @@ function errMessage(err: unknown): string {
 }
 
 type Method = "storedcard" | "credit" | "cash" | "comp";
-
-/* T43: the bounds a comp reason must fit, mirrored in SaleScreen's
- * dialog so what the dialog accepts is what this route accepts. */
-const COMP_REASON_MIN = 3;
-const COMP_REASON_MAX = 200;
 
 /* T28: the methods a split leg may use. Comp is deliberately excluded --
  * a comp is the whole sale given away, armed by its own hold gesture in
@@ -243,25 +261,110 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  let compReason: string | null = null;
+  let compReason: CompReason | null = null;
   if (method === "comp") {
-    const trimmed =
-      typeof compReasonRaw === "string" ? compReasonRaw.trim() : "";
-    if (
-      typeof compReasonRaw !== "string" ||
-      trimmed.length < COMP_REASON_MIN ||
-      trimmed.length > COMP_REASON_MAX
-    ) {
+    /* T45: the reason is data. A kind from the closed list, the detail
+     * within its bounds (required only for `other`, the one kind that
+     * says nothing by itself), and for a teacher comp a staff id that the
+     * staff list can name. The browser's `forStaffName` is not read at
+     * all: the name on the receipt is the one Mindbody's staff row
+     * carries for that id, resolved here. */
+    const raw =
+      compReasonRaw && typeof compReasonRaw === "object"
+        ? (compReasonRaw as Record<string, unknown>)
+        : null;
+    if (raw === null || !isCompKind(raw["kind"])) {
       return NextResponse.json(
         {
           error:
-            `a comp needs a compReason of ${COMP_REASON_MIN} to ` +
-            `${COMP_REASON_MAX} characters`,
+            "a comp needs a compReason with a kind of teacher, trade, " +
+            "goodwill, damaged or other",
         },
         { status: 400 },
       );
     }
-    compReason = trimmed;
+    const kind = raw["kind"];
+    const detailRaw = raw["detail"];
+    if (detailRaw !== undefined && typeof detailRaw !== "string") {
+      return NextResponse.json(
+        { error: "compReason.detail must be a string when present" },
+        { status: 400 },
+      );
+    }
+    const detail = typeof detailRaw === "string" ? detailRaw.trim() : "";
+    if (detail.length > COMP_DETAIL_MAX) {
+      return NextResponse.json(
+        {
+          error: `compReason.detail is at most ${COMP_DETAIL_MAX} characters`,
+        },
+        { status: 400 },
+      );
+    }
+    if (kind === "other" && detail.length < COMP_DETAIL_MIN) {
+      return NextResponse.json(
+        {
+          error:
+            `a comp of kind other needs a detail of ${COMP_DETAIL_MIN} to ` +
+            `${COMP_DETAIL_MAX} characters`,
+        },
+        { status: 400 },
+      );
+    }
+    const forStaffRaw = raw["forStaffId"];
+    if (kind !== "teacher") {
+      if (forStaffRaw !== undefined) {
+        return NextResponse.json(
+          { error: "compReason.forStaffId applies only to kind teacher" },
+          { status: 400 },
+        );
+      }
+      compReason = { kind, detail };
+    } else {
+      if (
+        typeof forStaffRaw !== "number" ||
+        !Number.isInteger(forStaffRaw) ||
+        forStaffRaw <= 0
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "a teacher comp needs compReason.forStaffId, a positive integer",
+          },
+          { status: 400 },
+        );
+      }
+      /* The staff list is the cached read the four-digit prompt uses;
+       * cold, it is one metered staff read, never a money call. A read
+       * that fails with nothing cached is answered as such: the comp is
+       * refused rather than filed for a name nobody could check. */
+      let teachers;
+      try {
+        teachers = await listTeachers();
+      } catch (err) {
+        return NextResponse.json(
+          {
+            error: `Could not read the staff list to name the teacher: ${errMessage(err)} Nothing was charged.`,
+            stage: "method",
+          },
+          { status: 502 },
+        );
+      }
+      const forStaff = teachers.find((t) => t.id === forStaffRaw);
+      if (!forStaff) {
+        return NextResponse.json(
+          {
+            error: `compReason.forStaffId ${forStaffRaw} is not an active teacher`,
+          },
+          { status: 400 },
+        );
+      }
+      compReason = {
+        kind,
+        detail,
+        forStaffId: forStaff.id,
+        forStaffName: forStaff.name,
+      };
+    }
   }
   /* The comp receipt's line list: OUR record of what was given away
    * (type, id, name, quantity, price), read off the validated items with
@@ -545,26 +648,97 @@ export async function POST(request: Request) {
    * Nothing here touches the payload, the single flight or the outcome
    * wording: the record is a side effect of an answer, never a step
    * before one. */
+  const reasonLine = compReason === null ? "" : compReasonLine(compReason);
+  /* T45: the log line's data tags, on every [comp] line. */
+  const compTags =
+    `reason=${JSON.stringify(reasonLine)} ` +
+    `kind=${compReason?.kind ?? "none"} for=${compReason?.forStaffId ?? "none"} ` +
+    teacherLogTag(gate.teacher);
+
+  /* T45: the Formula Note. Mindbody's checkout carries no notes field,
+   * but a client has Formula Notes: dated, staff-only entries on the
+   * profile (`POST /client/addclientformulanote`, client.yml), which is
+   * where a record of the comp belongs for the studio's own eyes. Filed
+   * only after a REAL comp (not suppressed, not refused, not ambiguous)
+   * for a NAMED client: the house client is a catch-all and a note on it
+   * names nobody. It goes through mindbody() with the client id in the
+   * options, so dry run and the write guard apply to it as to any write.
+   * It runs AFTER the outcome is decided and can never change it: the
+   * sale already happened, so a failure here is one log line and a null
+   * on the receipt, and it never throws. */
+  const fileFormulaNote = async (
+    saleId: string | null,
+  ): Promise<number | null> => {
+    if (compReason === null) return null;
+    const house = houseClientId();
+    if (clientId === undefined || (house !== null && clientId === house)) {
+      console.log(`[comp] formula-note skipped: house client`);
+      return null;
+    }
+    const note = [
+      `Comped $${total.toFixed(2)} at the counter: ${compHeadline(compReason)}.`,
+      compReason.detail ? `Note: ${compReason.detail}.` : null,
+      gate.teacher ? `By ${gate.teacher.name}.` : null,
+      saleId ? `Sale ${saleId}.` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    try {
+      const res = await mindbody("/client/addclientformulanote", {
+        method: "POST",
+        body: { ClientId: clientId, Note: note },
+        clientId,
+      });
+      if (res?.DryRun || res?.WriteSuppressed) {
+        console.log(
+          `[comp] formula-note suppressed: ${res?.DryRun ? "dry-run" : "write-guard"}`,
+        );
+        return null;
+      }
+      const id = res?.Id;
+      if (typeof id !== "number" || !Number.isInteger(id)) {
+        console.log(
+          `[comp] formula-note failed: no note id in the answer ${JSON.stringify(res).slice(0, 200)}`,
+        );
+        return null;
+      }
+      console.log(`[comp] formula-note filed: id=${id} client=${clientId}`);
+      return id;
+    } catch (err) {
+      console.log(`[comp] formula-note failed: ${errMessage(err)}`);
+      return null;
+    }
+  };
+
   const recordComp = async (outcome: {
     saleId: string | null;
     suppressed: boolean;
+    formulaNoteId: number | null;
   }) => {
-    const reason = compReason ?? "";
     console.log(
       `[comp] ${target()} sale=${outcome.suppressed ? "suppressed" : (outcome.saleId ?? "unknown")} ` +
         `client=${clientId ?? "house"} total=${total.toFixed(2)} ` +
-        `reason=${JSON.stringify(reason)} ${teacherLogTag(gate.teacher)}`,
+        compTags +
+        (outcome.formulaNoteId !== null ? ` note=${outcome.formulaNoteId}` : ""),
     );
     await insertCompReceipt({
       saleId: outcome.suppressed ? null : outcome.saleId,
       clientId: clientId ?? null,
       totalCents: Math.round(total * 100),
       items: compItems,
-      reason,
+      reason: reasonLine,
       target: target(),
       suppressed: outcome.suppressed,
       teacherId: gate.teacher === null ? null : String(gate.teacher.id),
       teacherName: gate.teacher?.name ?? null,
+      kind: compReason?.kind ?? "",
+      detail: compReason?.detail ? compReason.detail : null,
+      forStaffId:
+        compReason?.forStaffId === undefined
+          ? null
+          : String(compReason.forStaffId),
+      forStaffName: compReason?.forStaffName ?? null,
+      formulaNoteId: outcome.formulaNoteId,
     });
   };
 
@@ -589,16 +763,24 @@ export async function POST(request: Request) {
           console.log(
             `[comp] ${target()} sale=none outcome=${isAmbiguous(err) ? "ambiguous" : "refused"} ` +
               `client=${clientId ?? "house"} total=${total.toFixed(2)} ` +
-              `reason=${JSON.stringify(compReason ?? "")} error=${JSON.stringify(errMessage(err))} ` +
-              teacherLogTag(gate.teacher),
+              compTags +
+              ` error=${JSON.stringify(errMessage(err))}`,
           );
         }
         throw err;
       }
       if (m === "comp") {
+        /* T45: the outcome is decided (the call resolved), so the Formula
+         * Note goes out now, for a real sale only, and its id rides on the
+         * receipt. Neither can throw; see fileFormulaNote. */
+        const formulaNoteId =
+          outcome.suppressed !== null
+            ? null
+            : await fileFormulaNote(outcome.saleId);
         await recordComp({
           saleId: outcome.saleId,
           suppressed: outcome.suppressed !== null,
+          formulaNoteId,
         });
       }
       if (outcome.suppressed) {
