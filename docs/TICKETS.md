@@ -3415,6 +3415,84 @@ mode with one. Not verified live (no credentials here): the revenue
 category name on the studio's rental options, and the visits
 endpoint's `Order` parameter.
 
+### Review (separate reviewer), T41
+
+Read the five commits against 60cc7db, ran the harness (mocked API) at
+1366x1024 in both palettes (`scratchpad/t41-review/`), rendered the
+card with react-dom/server, and drove `clientProfile` with a stubbed
+`mindbody()`. Two real bugs, both in the profile read, both fixed here;
+everything else NOT A BUG.
+
+- **REAL: the route's 502 could never fire.** `/api/client-profile`
+  promises a 502 "when the whole read fails", but `clientProfile` ran
+  the three reads under `allSettled` and never threw, so a dead token
+  or a wrong site came back 200 with every field null and three
+  `errors`, which the card renders as a client with nothing on file
+  ("Not on file" six times). Sequence: dev server with no Mindbody
+  credentials, `GET /api/client-profile?clientId=100000123` answered
+  200 before, 502 with the reason after. Three refusals now throw;
+  one or two still answer 200 with the section null and named.
+- **REAL: the last visit trusted `Order=desc`, which the ticket itself
+  marks unverified.** The window is ten years at 200 rows a page, and a
+  regular has more than 200 visits; had Mindbody ignored the parameter
+  and sent the oldest page, sorting it locally would have reported the
+  newest of the OLDEST 200, a "last visit" years stale, with nothing to
+  say so. Fixed off the page itself: when the first row is older than
+  the last (ascending) AND `TotalResults` exceeds the page, the tail
+  page (`offset = total - 200`) is read and merged before the sort. A
+  page that arrives newest-first costs no extra call. Stubbed: an
+  ascending page of 2017/2018 rows with TotalResults 350 now reads
+  offset 150 and answers Aug 30 2026 (skipping a Missed row); a
+  descending page makes one call.
+
+NOT A BUG, checked:
+
+- Money path: `git diff 60cc7db..HEAD -- src/app/api/checkout
+  src/app/api/price-cart` is empty; `sale.ts` adds only
+  `revenueCategory` to `CatalogItem` (three constructors, null for
+  products and packages). `houseClient` is `houseClientId() !== null`
+  on the authenticated answer only; a PIN-locked server on 3001
+  answered `/api/config` without the key. The Charge body still sends
+  `...(clientId ? { clientId } : {})`; the server substitutes.
+- Routing: `routeServices` trims and lowercases both sides, stamps
+  `categoryIds[0]`, leaves an unmatched or null `RevenueCategory` at
+  null (Passes), runs before the cache is filled so `?refresh=1` and
+  the TTL are as before. `categoryShelf` puts a routed pass on exactly
+  one shelf (harness: Towel and Mat lists the rentals, Passes does
+  not); starred items and the bundle resolver read `allItems`, never
+  `categoryId`, so a starred rental still shows on Favorites. The
+  harness's Towel shelf listing each rental twice is the fixture, whose
+  products already carry a "Mat rental" and "Towel rental" in category
+  1, not a double count.
+- Hidden categories: the rail renders only under `catalog &&
+  !catalogLoading && !catalogError`, and `shownCategories` is a
+  `useMemo` on `catalog`, so the fallback effect runs per catalog load,
+  not per render; a null `activeCat` still takes Favorites first
+  (T27), and Favorites, Packages and Memberships keep their own rules.
+  `passesIdx` of -1 appends the extras. `more` counts `all`, built
+  from the shown list.
+- Selection: `addItem` and `addBundle` no longer call `setSelectedKey`;
+  `removeLine`, `emptyCart` and the Pay tap clear it; the scroll-into-
+  view effect's deps are `[selectedKey]` alone. Harness: 0 selected
+  after seven shelf taps, 1 after a row tap, still that row after
+  another shelf tap. Trash button 64x64, `--stop` outline, aria-label
+  "Remove Liquid IV from the sale", title, SVG 22px.
+- Anonymous: unset gives Pay(off), the totals line naming the
+  variable; set gives Pay on, Cash live, Card "Attach a client", Comp
+  as the hold in the footer (it is not a tile). `chargeable` is
+  computed where T35 left it; the flag only feeds copy.
+- Profile card: renders sanely with every field null (six "Not on
+  file", no passes, no crash), with a full profile, loading and error.
+  `wallDateTime` gives 12:05am and 12:30pm at the day's edges. No PAN
+  anywhere in `PassInfo` or `ClientProfile`. Tokens only, both
+  palettes; 14px on the label only; no em dashes.
+- `/client/clientvisits`: the spec names `request.startDate`,
+  `request.endDate`, `request.order`, `request.limit`; the bare names
+  are the idiom `fetchPasses` verified live on `/client/clientservices`.
+
+Verified: `npm run typecheck`, `npm run build`, the harness in both
+palettes, and the two stubbed sequences above.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are

@@ -83,7 +83,8 @@ const VISIT_WINDOW_DAYS = 10 * 365;
 /** Visits fetched per page. Only the LATEST is rendered, and the count
  *  rides TotalResults, so the page is a search window for "most recent
  *  attended", not the history. `Order=desc` is requested (client.yml:1879)
- *  and the page is sorted again here in case the parameter is ignored. */
+ *  and the page is sorted again here; if it arrives oldest-first and
+ *  truncated, the tail page is read too (see fetchVisitSummary). */
 const VISIT_PAGE = 200;
 
 function str(v: unknown): string | null {
@@ -159,6 +160,28 @@ async function fetchVisitSummary(
       `&Order=desc&limit=${VISIT_PAGE}`,
   );
   const rows: any[] = body?.Visits ?? [];
+  const total = num(body?.PaginationResponse?.TotalResults);
+  /* Review: sorting the page only finds the latest visit if the page
+     HOLDS it. `Order` is unverified live, and a regular has more than
+     one page of visits in ten years; if Mindbody ignored the parameter
+     and sent the oldest page, the newest row here would be years old.
+     Detected off the page itself (its first row older than its last
+     means ascending), and only then, when the window is also truncated,
+     the tail page is read too; a page already newest-first costs
+     nothing extra. */
+  const first = str(rows[0]?.StartDateTime);
+  const lastRow = str(rows[rows.length - 1]?.StartDateTime);
+  const ascending = first !== null && lastRow !== null && first < lastRow;
+  if (ascending && total !== null && total > rows.length) {
+    const tail = await mindbody(
+      `/client/clientvisits?ClientId=${encodeURIComponent(clientId)}` +
+        `&StartDate=${encodeURIComponent(studioWall(start))}` +
+        `&EndDate=${encodeURIComponent(studioWall(now))}` +
+        `&Order=desc&limit=${VISIT_PAGE}` +
+        `&offset=${Math.max(0, total - VISIT_PAGE)}`,
+    );
+    rows.push(...((tail?.Visits ?? []) as any[]));
+  }
   /* Attended or booked and not skipped: a no-show is not a last visit. */
   const attended = rows
     .filter((v) => !v?.Missed && !v?.LateCancelled && str(v?.StartDateTime))
@@ -170,7 +193,6 @@ async function fetchVisitSummary(
       }),
     )
     .sort((a, b) => b.at.localeCompare(a.at));
-  const total = num(body?.PaginationResponse?.TotalResults);
   return {
     count: total ?? rows.length,
     last: attended[0] ?? null,
@@ -192,6 +214,18 @@ export async function clientProfile(
     fetchVisitSummary(clientId, now),
     fetchPasses(clientId, now),
   ]);
+  /* Review: the route promises a 502 when the whole read fails, and
+     allSettled alone could never deliver one; three refusals (a dead
+     token, a wrong site) came back as a 200 profile of nulls, which the
+     card would render as a client with nothing on file. All three down
+     is a failed read, not a partial one. */
+  if (
+    client.status === "rejected" &&
+    visits.status === "rejected" &&
+    passes.status === "rejected"
+  ) {
+    throw new Error(`Could not read the client: ${reason(client.reason)}`);
+  }
   const errors: ClientProfile["errors"] = {};
   const fields: ClientFields =
     client.status === "fulfilled"
