@@ -1834,19 +1834,28 @@ button.pass-opt:disabled {
   margin-right: auto;
 }
 
-/* Ticket left, shelf right; stacks on a narrow screen. T39.2 turns this
- * into the three-column rail / grid / cart layout. */
+/* T39.2: rail, grid, cart, the layout of record (1a). The rail is 154
+ * and the cart 388, the canvas's numbers; the grid takes what is left,
+ * which at 1366 is 756px, four cards of 184 exactly (T39.3). The three
+ * are placed by column, not by DOM order, so the fold below can move
+ * them without touching the markup. */
 .sale-panes {
   display: grid;
-  grid-template-columns: 400px minmax(0, 1fr);
+  grid-template-columns: 154px minmax(0, 1fr) 388px;
   gap: 14px;
   align-items: start;
 }
 
-@media (max-width: 900px) {
-  .sale-panes {
-    grid-template-columns: 1fr;
-  }
+.sale-cats {
+  grid-column: 1;
+}
+
+.sale-right {
+  grid-column: 2;
+}
+
+.sale-left {
+  grid-column: 3;
 }
 
 /* The receipt ticket, translated from the mockup to tokens. */
@@ -2272,30 +2281,36 @@ button.sale-for:disabled {
   font-weight: 600;
 }
 
-/* The right pane: chips, shelf, then the payment seam. */
+/* The middle pane: the shelf (the chips left it for the rail in T39.2). */
 .sale-right {
   display: grid;
   gap: 16px;
 }
 
+/* T39.2: the rail. A 154px column of 64px entries (the canvas draws 62;
+ * the house floor holds) with 6px gaps; under 1040 the media query above
+ * turns the same element back into a wrapping row. */
 .sale-cats {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
 }
 
-/* Category chips at the full 64px: they are primary targets on this
+/* Rail entries at the full 64px: they are primary targets on this
  * screen. Active is filled with the accent pairing (same as the M chip),
- * both halves tokens. */
+ * both halves tokens; "more" is muted, since it is a door, not a shelf. */
 .cat-chip {
+  width: 100%;
   min-height: 64px;
-  padding: 0 20px;
+  padding: 0 14px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
   color: var(--ink);
   font-size: 16px;
   font-weight: 600;
+  line-height: 1.2;
+  text-align: left;
 }
 
 .cat-chip:active {
@@ -2306,6 +2321,10 @@ button.sale-for:disabled {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--accent-ink);
+}
+
+.cat-chip.more {
+  color: var(--muted);
 }
 
 .shelf-grid {
@@ -2408,6 +2427,75 @@ button.sale-for:disabled {
 .shelf-bundle-mark {
   color: var(--muted);
   font-weight: 400;
+}
+
+/* --- The Buy overlay's folds (T39.2, T39.3). After the base rules
+ * above on purpose: same specificity, so the later declaration wins. --- */
+
+/* T39.3: under 1190 the cart narrows to 340 and the card minimum to 166
+ * so three columns hold down to 1080. The arithmetic: three cards of 184
+ * need 572 and a 388 cart leaves that only from 1182 up (1182 - 40 - 28
+ * - 154 - 388 = 572), so the query sits a little above the plan's 1180;
+ * at the 1080 floor the grid is 1080 - 40 - 28 - 154 - 340 = 518, which
+ * is three of 166 with two 10px gaps exactly. */
+@media (max-width: 1190px) {
+  .sale-panes {
+    grid-template-columns: 154px minmax(0, 1fr) 340px;
+  }
+
+  .shelf-grid {
+    grid-template-columns: repeat(auto-fill, minmax(166px, 1fr));
+  }
+}
+
+/* Under 1040 the rail folds back to the horizontal chip row above the
+ * grid (layout plan 2.1): two columns, the rail spanning the grid's, the
+ * cart riding both rows on the right. */
+@media (max-width: 1040px) {
+  .sale-panes {
+    grid-template-columns: minmax(0, 1fr) 340px;
+    /* The cart spans both rows; without this the span's height is shared
+     * out to row one and the chips float above an empty band. */
+    grid-template-rows: auto 1fr;
+  }
+
+  .sale-cats {
+    grid-column: 1;
+    grid-row: 1;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .sale-cats .cat-chip {
+    width: auto;
+    padding: 0 20px;
+  }
+
+  .sale-right {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .sale-left {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}
+
+/* One column on a narrow screen, in DOM order: rail, grid, cart. */
+@media (max-width: 900px) {
+  .sale-panes {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+
+  .sale-cats,
+  .sale-right,
+  .sale-left {
+    grid-column: auto;
+    grid-row: auto;
+  }
 }
 
 /* --- The payment seam (T24): live method cards, the cash keypad, the

@@ -155,6 +155,11 @@ const FAVORITES_LABEL = "Favorites";
 const PACKAGES_LABEL = "Packages";
 const MEMBERSHIPS_LABEL = "Memberships";
 
+/** T39.2: rail entries shown before the rest fold behind "more". Seven
+ *  is the canvas's count and what a 768px-tall column holds at 64px
+ *  entries with 6px gaps. */
+const RAIL_LIMIT = 7;
+
 /** One starred type+id pair, as persisted. Packages star like anything
  *  else on the shelf (T30): they are ordinary cart items. */
 interface FavPair {
@@ -2386,6 +2391,10 @@ export default function SaleScreen(props: {
    *  the catalog lands: Favorites when it has anything to show, else the
    *  first category (see the effect below). */
   const [activeCat, setActiveCat] = useState<string | null>(null);
+  /** T39.2: whether the rail shows every category or stops at RAIL_LIMIT
+   *  with a "more" entry. Sticky for the session: a teacher who opened
+   *  the rest keeps them. */
+  const [railExpanded, setRailExpanded] = useState(false);
 
   /**
    * The per-device stars, loaded from localStorage once the target is
@@ -3157,11 +3166,210 @@ export default function SaleScreen(props: {
         </div>
 
         <div className="sale-panes">
-          {/* LEFT: the whole payment column (PaymentPanel since the
-              second live test): the attach control, the compact method
-              row, the receipt, the charge button and the outcomes. The
-              ticket rides in as a prop; the cart and the pricing loop
-              stay here in SaleScreen. */}
+          {/* RAIL (T39.2): the first column, 154px, Favorites pinned first
+              and filled when active, Packages and Memberships in T30's
+              order after Passes. Past the seventh entry the rest collapse
+              behind a muted "more" that expands the rail in place; the
+              studio's catalog never gets there, so this is the simplest
+              thing that is correct. Under 1040px the CSS folds the same
+              element back into the chip row above the grid. */}
+          {catalog && !catalogLoading && !catalogError ? (
+            <nav className="sale-cats" role="tablist" aria-label="Categories">
+              {(() => {
+                /* T30: the Packages and Memberships entries slot in
+                   right after Passes (the one category with no
+                   category ids), each rendered ONLY when it has
+                   something to sell; an empty extra entry would be a
+                   button that can never show anything. */
+                const extras: string[] = [
+                  ...(catalog.packages.length > 0 ? [PACKAGES_LABEL] : []),
+                  ...(catalog.contracts.length > 0 ? [MEMBERSHIPS_LABEL] : []),
+                ];
+                const labels = catalog.categories.map((c) => c.label);
+                const passesIdx = catalog.categories.findIndex(
+                  (c) => c.categoryIds.length === 0,
+                );
+                labels.splice(
+                  passesIdx >= 0 ? passesIdx + 1 : labels.length,
+                  0,
+                  ...extras,
+                );
+                const all = [FAVORITES_LABEL, ...labels];
+                /* Expanded by the tap, or because the active entry
+                   would otherwise be hidden behind "more". */
+                const expanded =
+                  railExpanded ||
+                  all.length <= RAIL_LIMIT ||
+                  all.indexOf(activeCat ?? "") >= RAIL_LIMIT;
+                const shown = expanded ? all : all.slice(0, RAIL_LIMIT);
+                return (
+                  <>
+                    {shown.map((label) => (
+                      <button
+                        key={label}
+                        role="tab"
+                        aria-selected={activeCat === label}
+                        className={
+                          activeCat === label ? "cat-chip on" : "cat-chip"
+                        }
+                        onClick={() => setActiveCat(label)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    {expanded ? null : (
+                      <button
+                        className="cat-chip more"
+                        onClick={() => setRailExpanded(true)}
+                        aria-label={`Show ${all.length - RAIL_LIMIT} more categories`}
+                      >
+                        more
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
+            </nav>
+          ) : null}
+
+          {/* GRID, the middle column: only the shelf since the second live
+              test; the tender and the receipt are the cart column. */}
+          <div className="sale-right">
+            {catalogLoading ? (
+              <p className="muted">
+                <span className="spinner" aria-label="working" /> Loading the
+                catalog...
+              </p>
+            ) : catalogError ? (
+              <div>
+                <p className="note">Catalog unavailable: {catalogError}</p>
+                <button className="class-change" onClick={loadCatalog}>
+                  Retry
+                </button>
+              </div>
+            ) : catalog ? (
+              <>
+                {onMemberships ? (
+                  /* T30: contracts are NOT cart items -- tapping one
+                     opens the dedicated purchase dialog instead of
+                     ringing anything up. The card shows the recurring
+                     amount, the honest headline of an autopay. */
+                  <div className="shelf-grid">
+                    {catalog.contracts.map((c) => (
+                      <button
+                        key={`contract-${c.id}`}
+                        className="shelf-item shelf-contract"
+                        onClick={() => setContractDialog(c)}
+                        aria-label={`Start the ${c.name} membership`}
+                      >
+                        <span className="shelf-name">{c.name}</span>
+                        <span className="shelf-price">
+                          {c.autopayEnabled &&
+                          c.recurringPaymentTotal !== null &&
+                          c.recurringPaymentTotal > 0
+                            ? `${money(c.recurringPaymentTotal)} ${frequencyPhrase(c)}`
+                            : c.firstPaymentTotal !== null
+                              ? money(c.firstPaymentTotal)
+                              : ""}
+                          <span className="shelf-bundle-mark"> membership</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : shelfEmpty ? (
+                  <p className="muted">
+                    {onFavorites
+                      ? "Star items on any shelf, and configure bundles in src/lib/bundles.ts."
+                      : "Nothing sellable in this category."}
+                  </p>
+                ) : (
+                  <div className="shelf-grid">
+                    {shelfItems.map((item) => {
+                      const starred = favSet.has(itemKey(item.type, item.id));
+                      return (
+                        <div
+                          className="shelf-cell"
+                          key={`${item.type}-${item.id}`}
+                        >
+                          <button
+                            className="shelf-item"
+                            onClick={() => addItem(item)}
+                            aria-label={`Add ${item.name}, ${money(item.price)}`}
+                          >
+                            <span className="shelf-name">{item.name}</span>
+                            <span className="shelf-price">
+                              {money(item.price)}
+                              {item.taxExempt ? (
+                                <span className="shelf-notax"> no tax</span>
+                              ) : null}
+                              {/* A package's shelf price is a local
+                                  component-sum estimate (the API gives a
+                                  package no price of its own); the cart
+                                  total is Mindbody's, as always. */}
+                              {item.type === "Package" ? (
+                                /* "est." because this number is OUR
+                                   component-sum guess, not a Mindbody
+                                   price; the cart total is Mindbody's. */
+                                <span className="shelf-bundle-mark">
+                                  {" "}
+                                  package, est.
+                                </span>
+                              ) : null}
+                            </span>
+                          </button>
+                          {/* Its own tap target beside (not inside) the add
+                              button: nested buttons are invalid HTML and
+                              double-fire. stopPropagation belt-and-braces. */}
+                          <button
+                            className={starred ? "shelf-star on" : "shelf-star"}
+                            aria-pressed={starred}
+                            aria-label={
+                              starred
+                                ? `Unstar ${item.name}`
+                                : `Star ${item.name} as a favorite`
+                            }
+                            title={starred ? "Unstar" : "Star"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFavorite(item);
+                            }}
+                          >
+                            <StarIcon />
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {/* Bundles, after the starred items. One card, one tap,
+                        every line into the cart. */}
+                    {onFavorites
+                      ? resolvedBundles.map((bundle) => (
+                          <button
+                            key={`bundle-${bundle.name}`}
+                            className="shelf-item shelf-bundle"
+                            onClick={() => addBundle(bundle)}
+                            aria-label={`Add the ${bundle.name} bundle, ${money(bundle.total)}, ${bundle.items.length} items`}
+                          >
+                            <span className="shelf-name">{bundle.name}</span>
+                            <span className="shelf-price">
+                              {money(bundle.total)}
+                              <span className="shelf-bundle-mark"> bundle</span>
+                            </span>
+                          </button>
+                        ))
+                      : null}
+                  </div>
+                )}
+              </>
+            ) : null}
+          </div>
+
+          {/* CART, the right column since T39.2 (rail, grid, cart is the
+              layout of record): the whole payment column (PaymentPanel
+              since the second live test): the compact method row, the
+              receipt, the charge button and the outcomes. The ticket
+              rides in as a prop; the cart and the pricing loop stay here
+              in SaleScreen. T39.6 moves the tender into the middle
+              column; until then it lives above the receipt as before. */}
           <PaymentPanel
             cart={cart}
             priced={priced}
@@ -3529,189 +3737,6 @@ export default function SaleScreen(props: {
               </div>
             }
           />
-
-          {/* RIGHT: only the shelf since the second live test; the
-              payment column moved left, above and below the receipt. */}
-          <div className="sale-right">
-            {catalogLoading ? (
-              <p className="muted">
-                <span className="spinner" aria-label="working" /> Loading the
-                catalog...
-              </p>
-            ) : catalogError ? (
-              <div>
-                <p className="note">Catalog unavailable: {catalogError}</p>
-                <button className="class-change" onClick={loadCatalog}>
-                  Retry
-                </button>
-              </div>
-            ) : catalog ? (
-              <>
-                <div className="sale-cats" role="tablist" aria-label="Categories">
-                  {/* Favorites pinned first: the per-device stars plus the
-                      hardcoded bundles, both pure reads over the loaded
-                      catalog. */}
-                  <button
-                    key={FAVORITES_LABEL}
-                    role="tab"
-                    aria-selected={onFavorites}
-                    className={onFavorites ? "cat-chip on" : "cat-chip"}
-                    onClick={() => setActiveCat(FAVORITES_LABEL)}
-                  >
-                    {FAVORITES_LABEL}
-                  </button>
-                  {(() => {
-                    /* T30: the Packages and Memberships chips slot in
-                       right after Passes (the one category with no
-                       category ids), each rendered ONLY when it has
-                       something to sell; an empty extra chip would be a
-                       button that can never show anything. */
-                    const extras: string[] = [
-                      ...(catalog.packages.length > 0
-                        ? [PACKAGES_LABEL]
-                        : []),
-                      ...(catalog.contracts.length > 0
-                        ? [MEMBERSHIPS_LABEL]
-                        : []),
-                    ];
-                    const labels = catalog.categories.map((c) => c.label);
-                    const passesIdx = catalog.categories.findIndex(
-                      (c) => c.categoryIds.length === 0,
-                    );
-                    labels.splice(
-                      passesIdx >= 0 ? passesIdx + 1 : labels.length,
-                      0,
-                      ...extras,
-                    );
-                    return labels.map((label) => (
-                      <button
-                        key={label}
-                        role="tab"
-                        aria-selected={activeCat === label}
-                        className={
-                          activeCat === label ? "cat-chip on" : "cat-chip"
-                        }
-                        onClick={() => setActiveCat(label)}
-                      >
-                        {label}
-                      </button>
-                    ));
-                  })()}
-                </div>
-
-                {onMemberships ? (
-                  /* T30: contracts are NOT cart items -- tapping one
-                     opens the dedicated purchase dialog instead of
-                     ringing anything up. The card shows the recurring
-                     amount, the honest headline of an autopay. */
-                  <div className="shelf-grid">
-                    {catalog.contracts.map((c) => (
-                      <button
-                        key={`contract-${c.id}`}
-                        className="shelf-item shelf-contract"
-                        onClick={() => setContractDialog(c)}
-                        aria-label={`Start the ${c.name} membership`}
-                      >
-                        <span className="shelf-name">{c.name}</span>
-                        <span className="shelf-price">
-                          {c.autopayEnabled &&
-                          c.recurringPaymentTotal !== null &&
-                          c.recurringPaymentTotal > 0
-                            ? `${money(c.recurringPaymentTotal)} ${frequencyPhrase(c)}`
-                            : c.firstPaymentTotal !== null
-                              ? money(c.firstPaymentTotal)
-                              : ""}
-                          <span className="shelf-bundle-mark"> membership</span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ) : shelfEmpty ? (
-                  <p className="muted">
-                    {onFavorites
-                      ? "Star items on any shelf, and configure bundles in src/lib/bundles.ts."
-                      : "Nothing sellable in this category."}
-                  </p>
-                ) : (
-                  <div className="shelf-grid">
-                    {shelfItems.map((item) => {
-                      const starred = favSet.has(itemKey(item.type, item.id));
-                      return (
-                        <div
-                          className="shelf-cell"
-                          key={`${item.type}-${item.id}`}
-                        >
-                          <button
-                            className="shelf-item"
-                            onClick={() => addItem(item)}
-                            aria-label={`Add ${item.name}, ${money(item.price)}`}
-                          >
-                            <span className="shelf-name">{item.name}</span>
-                            <span className="shelf-price">
-                              {money(item.price)}
-                              {item.taxExempt ? (
-                                <span className="shelf-notax"> no tax</span>
-                              ) : null}
-                              {/* A package's shelf price is a local
-                                  component-sum estimate (the API gives a
-                                  package no price of its own); the cart
-                                  total is Mindbody's, as always. */}
-                              {item.type === "Package" ? (
-                                /* "est." because this number is OUR
-                                   component-sum guess, not a Mindbody
-                                   price; the cart total is Mindbody's. */
-                                <span className="shelf-bundle-mark">
-                                  {" "}
-                                  package, est.
-                                </span>
-                              ) : null}
-                            </span>
-                          </button>
-                          {/* Its own tap target beside (not inside) the add
-                              button: nested buttons are invalid HTML and
-                              double-fire. stopPropagation belt-and-braces. */}
-                          <button
-                            className={starred ? "shelf-star on" : "shelf-star"}
-                            aria-pressed={starred}
-                            aria-label={
-                              starred
-                                ? `Unstar ${item.name}`
-                                : `Star ${item.name} as a favorite`
-                            }
-                            title={starred ? "Unstar" : "Star"}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleFavorite(item);
-                            }}
-                          >
-                            <StarIcon />
-                          </button>
-                        </div>
-                      );
-                    })}
-                    {/* Bundles, after the starred items. One card, one tap,
-                        every line into the cart. */}
-                    {onFavorites
-                      ? resolvedBundles.map((bundle) => (
-                          <button
-                            key={`bundle-${bundle.name}`}
-                            className="shelf-item shelf-bundle"
-                            onClick={() => addBundle(bundle)}
-                            aria-label={`Add the ${bundle.name} bundle, ${money(bundle.total)}, ${bundle.items.length} items`}
-                          >
-                            <span className="shelf-name">{bundle.name}</span>
-                            <span className="shelf-price">
-                              {money(bundle.total)}
-                              <span className="shelf-bundle-mark"> bundle</span>
-                            </span>
-                          </button>
-                        ))
-                      : null}
-                  </div>
-                )}
-              </>
-            ) : null}
-          </div>
         </div>
       </div>
 
