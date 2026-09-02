@@ -3052,7 +3052,11 @@ export default function SaleScreen(props: {
        the totals area changes shape (estimate to server rows, a stop
        appearing). A ResizeObserver on the box itself catches every one
        of those without listing them; the cart dependency stays for the
-       row count changing inside an unchanged box. */
+       row count changing inside an unchanged box, and the selection is
+       a dependency too (review): in a bounded ticket the box does not
+       move when a row reveals its controls, the rows under it do, and
+       the observer never fired, so "2 more below" stood while three
+       were hidden. */
     const el = linesRef.current;
     const ro =
       el && typeof ResizeObserver !== "undefined"
@@ -3063,7 +3067,26 @@ export default function SaleScreen(props: {
       window.removeEventListener("resize", measureLines);
       ro?.disconnect();
     };
-  }, [cart, open, measureLines]);
+  }, [cart, selectedKey, open, measureLines]);
+
+  /* Review: the selected row is the one showing its controls, so it has
+     to be in the box. Adding from the shelf selects a line that may be
+     the sixth row, below the fold, and a tap on a visible row can push
+     its own Remove under the edge; either way the reveal was invisible.
+     Only the lines box scrolls, and only as far as it must: never the
+     column or the overlay, so under 900 a card tap cannot yank the shelf
+     away. The scroll event re-measures the cue. */
+  useEffect(() => {
+    const box = linesRef.current;
+    const rowEl = box?.querySelector<HTMLElement>(".t-row.sel");
+    if (!box || !rowEl) return;
+    const top = rowEl.offsetTop;
+    const bottom = top + rowEl.offsetHeight;
+    if (bottom > box.scrollTop + box.clientHeight) {
+      box.scrollTop = bottom - box.clientHeight;
+    }
+    if (top < box.scrollTop) box.scrollTop = top;
+  }, [selectedKey]);
 
   if (!open) return null;
 
@@ -3594,7 +3617,14 @@ export default function SaleScreen(props: {
                         </div>
                       ) : null}
                       {sel ? (
-                        <div className="t-ctl" onClick={(e) => e.stopPropagation()}>
+                        <div
+                          className="t-ctl"
+                          onClick={(e) => e.stopPropagation()}
+                          /* Keys too (review): Enter on the focused plus
+                             bubbled to the row's handler, which deselected
+                             the row instead of counting one more. */
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
                           <button
                             className="t-ctl-btn"
                             disabled={line.quantity <= 1 || charging}

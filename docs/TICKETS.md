@@ -2458,6 +2458,98 @@ budget assumed seven entries; and the dev drawer's pill (z-index 19,
 above the overlay) sits over the bar's amount in a dev build, which is
 absent at the counter.
 
+### Review (separate reviewer), T39.4-5
+
+Traced from the state chain, then run with the implementer's fixture in
+Playwright (both palettes, 1366x1024, 1180x820, 1080x768, 1000x768 and
+800x1100 for the fold) under `scratchpad/t39-2-review/`. The bar's
+figure is `priced.grandTotal` and nothing else: `payWhy` is one chain
+in the render (charging, empty, pricing, priceError, no price,
+suppressed, disagrees, needsClient, null total) and `payAmount` is null
+whenever it is non-null, so the estimate cannot reach the bar. Seen at
+every size: `Pay` greyed with "Nothing rung up yet" on the empty cart,
+`Pay · 10 items` with the spinner and "Pricing with Mindbody..." while
+the mocked price hung, `Pay · 10 items` greyed with "Totals disagree;
+do not charge" on the disagree stop, the figure only once the server
+answered. The effect-after-paint question: `pricing` is set in the
+pricing effect, so a render exists where the cart is new and `priced`
+is old, but every path into it is either a discrete event (a card tap,
+a client switch, Keep items), whose effects React 18 flushes before
+paint, or lands in a state the chain greys anyway (a recheck stands
+under the stop, `onSold` empties the cart). Not a bug; recorded so the
+next hand knows the guarantee rests on the discrete flush. Empty cart
+calls `setClearPrompt` and the confirm calls `confirmClear`, which is
+`emptyCart` exactly; disabled on an empty cart and mid-charge; Escape
+on the confirm kept seven rows and the overlay. With the Clear cart
+confirm, the keypad, the cart-change confirm and the contract dialog
+open, `elementFromPoint` over both Pay and Empty cart is the scrim.
+The fold at 800x1100: scrolled to the end, the bar's bottom is the
+viewport's and its top is 16px under Charge and under the last row.
+Nothing but `.t-lines`, the panes and, pre-T39.6, the ticket and the
+column scroll, at the numbers the build notes give. Nothing in
+PaymentPanel, `/api/*` or `src/lib/sale.ts` has a hunk; T38's estimate,
+audit, stop and Recheck are as they were. Tokens in both palettes, no
+hex outside the two blocks, no em dashes, 14px only on the count and
+the sub-line. Three fixes, all display side, in `SaleScreen.tsx`:
+
+- **The cue went stale on a selection.** In a bounded ticket the lines
+  box does not change size when a row reveals its controls, so the
+  ResizeObserver never fired and the effect's deps did not include the
+  selection: at 1366x1024 with seven lines, selecting the first row
+  pushed a third row under the edge and the head still read "2 more
+  below". `selectedKey` is now a dependency of the measure effect.
+  Cue equals the fresh DOM count at every size afterwards.
+- **Enter on the revealed plus deselected the row.** The controls
+  stopped propagation for click only; a keydown on the focused plus
+  bubbled to the row's Enter/Space handler, which called
+  `preventDefault` (eating the button's own activation) and toggled
+  the selection off, so a keyboard user got a deselected row and no
+  count. `.t-ctl` now stops keydown too. Enter and Space on the plus
+  count 2 and 3 with the row still selected; Enter and Space on the
+  row itself still toggle.
+- **The reveal could be invisible.** Adding from the shelf selects the
+  line it touched, and past five lines that row is under the fold: the
+  count updated, the cue said "1 more below", and the row with its
+  controls was not on screen. A tap on a visible row could also push
+  its own Remove under the edge (the 1180x820 screenshot, pre-T39.6).
+  On a selection change the lines box now scrolls just far enough to
+  show the selected row; only the box, never the column or the
+  overlay, so under 900 a card tap cannot pull the shelf away. Its
+  scroll event re-measures the cue.
+
+**44px rows: stands.** CLAUDE.md's floor is for tap targets; the
+codebase's secondary standing (the sort icon, the undo, the row star,
+the detach x, all 44) is for a tap with an immediate visible answer and
+no consequence, which a selection is, and every control it reveals is
+64. The plan's own T39.4 spec (8/10 padding, a 2px gap, seven lines
+with one selected inside 768) cannot be met at 64, and one number in
+the build notes is wrong the other way: the prototype's seven-line cart
+with one row selected measures 440px of lines (the harness: a 283px box
+scrolling 157; five plain rows at 44, two with the sub-line at 64, the
+74px reveal, the gaps and padding), not the 347 the notes project for
+T39.6, so freeing the column at 768 leaves the box two rows short even
+at 44, and 64 would add 140 more. The exception stands as recorded;
+the 768 done-when needs T39.6 to re-run the arithmetic with 440 as the
+lines figure and take the difference out of the head and totals
+(184px together today) or hand it to T39.8's density pass.
+
+Checked and deliberately left: the dev drawer's pill (fixed, bottom
+right, z 20) covers the cents of the bar's amount in a dev or
+`POS_DEVTOOLS` build, and Next's own dev indicator sits over Empty
+cart; there is no corner of the bar's row a fixed pill would not cover
+something in (108px up lands on Charge's end now and the Total's later),
+so it stays recorded rather than moved, and the ticket's Total carries
+the same figure. Pre-T39.6 at 820 and 768 the lines box is its 104px
+minimum, and a selected row taller than the box counts itself in the
+cue ("7 more below" with the selected row on screen): T38's rule, a row
+counts once its bottom is past the edge, applied to a box two rows
+tall; it goes when T39.6 gives the ticket the column. The selection
+survives a Recheck (the rebuilt lines keep their keys) and a client
+switch that keeps the cart, which is right: it is the same line. A
+`role="button"` row containing buttons is nested interactive content
+under the ARIA rules; the notes record why a `<button>` could not hold
+the controls, and the row carries `aria-label` and `aria-pressed`.
+
 ## T38. The cart: more rows, an estimate while pricing, the audit, and a way out (Pete, 2026-08-31)
 
 Four things from the fifth live test, all on the receipt side of the Buy
