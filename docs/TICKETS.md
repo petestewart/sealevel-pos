@@ -5554,8 +5554,11 @@ the blocks.
   header says "Sign in" and nothing else changes. Two instances would
   not share sessions.
 - **The sale-id lookup is a heuristic:** the newest unseen sale for
-  the client today. Two counters selling to the same client in the same
-  minute could cross; the GUID stays on `cart_id` for exactly that case.
+  the client today, since the review bounded by the checkout's start
+  time and by how many earlier sales for the client are still unnamed.
+  Two counters selling to the same client inside the two-minute skew
+  window could still cross; the GUID stays on `cart_id` for exactly
+  that case.
 - **The Formula Note waits for the lookup** (8s + 8s worst case on a
   comp).
 - `.env.example` is unchanged: nothing new is configured.
@@ -5566,6 +5569,150 @@ the blocks.
   receipt under Pete (the token) and the Mindbody sale under Kim (the
   session). Deliberate for now: the PIN is the friction, the session is
   the attribution.
+
+### Review (separate reviewer), T49
+
+Read as a security reviewer and a money-path reviewer against `next
+start` on the branch at :3059, prod target, `POS_DRY_RUN=false`, a
+local Postgres 16, `POS_DEVTOOLS=true`, `POS_SESSION_SECRET` set, no
+`POS_PIN`, Mindbody mocked at :4559 (`scratchpad/t49-review/mock.js`:
+the build's mock plus mode switches for a 500, a socket reset, a 400
+carrying the permission wording, a lagging or hung sales list, a nested
+`UserGroup` permission shape, a failing revoke, an empty catalog, and a
+`/__inject` that adds a sale from "elsewhere" with a chosen age; every
+call's Authorization header and header NAMES recorded). Node-level in
+`node.js` (`node-{main,dry,guard,restart,saleid,nohouse}.log`), the
+browser in `ui.js` (`ui.log`, shots `{light,dark}-1..6-*.png`).
+
+**REAL, fixed: a sales list one sale behind stamped the previous sale's
+number on the next sale.** `latestSaleId` took "the highest id for the
+client that this process has not handed out". Sequence, same client,
+cash twice: sale A's lookup ran while `/sale/sales` did not yet list A,
+so it answered the GUID and A's number stayed unseen; sale B's lookup
+then ran while the list showed A but not B, and "newest unseen" was A's
+number, answered as B's (`node-main.log`: cart-3 GUID, then cart-4
+answered 425876, which is cart-3's sale). That number goes on a comp
+receipt and into a Formula Note on the client's profile, and the same
+shape reaches a sale from anywhere else for the client today (the web
+app this morning, another counter, a sale from before a restart): after
+a restart every sale today is unseen. Fix in `sale.ts`, two rules on
+top of unseen, the answer staying null (the GUID) whenever they do not
+hold: a candidate's `SaleDateTime` (site-local, sale.yml:2748) must not
+be earlier than the checkout started less a two-minute clock-skew
+allowance (`startedAt` is taken in the route before any write goes out;
+a sale with no time is not a candidate), and the newest candidate is
+this sale's only when the candidates outnumber the earlier checkouts
+for that client still waiting for a number (`unresolvedSales`, per
+client, per process; a failed or hung lookup joins the count; the extra
+candidates are those earlier sales' and are marked seen). Verified
+(`node-saleid.log`): an hour-old sale for the client is never named;
+list one behind: GUID, still behind: GUID again, caught up: the newest
+of three (the two stragglers marked seen, never handed out); a hung
+lookup: GUID in 8.0s, the next house sale takes the newest with the
+hung one accounted for; the `[sale-id]` line now says how many
+candidates and how many earlier sales are unnamed. Residual, recorded:
+a sale for the same client from ANOTHER device inside the skew window
+is indistinguishable (the checkout answer carries nothing that links
+to `Sale.Id`; the spec's `ShoppingCart` has `Id`, `CartItems` and
+totals only), and would be taken if newer; the GUID stays on
+`cart_id` for exactly that case.
+
+**Money path, the fallback, decided: acceptable, with the amber line.**
+A non-comp checkout refused under the teacher's token with a
+permission 4xx runs once more as the service account and moves the
+money. That is the amount and the card the teacher just tapped Charge
+for; the only thing the fallback changes is the staff name Mindbody
+files the sale under, and the answer and the done screen say so. What
+the teacher gets beforehand is the probe: the sign-in modal runs it on
+sign-in and reads "cannot: sell (MakeSales)" before any sale, so the
+surprise is the case of a permission removed mid-shift. Nothing partial
+stands on the first call: `checkoutshoppingcart` is one atomic POST
+with no cart resource behind it (the spec's `initiate...`/`complete...`
+pair is the alternative-payment flow this app does not use), so a
+refused first call leaves nothing to orphan, and the mock proved it
+with the wording CLAUDE.md warns about, a 400 "You do not have
+permission to perform sales": two `checkoutshoppingcart` calls (106
+then 0), ONE real sale, the numeric id, `actorFallback` on the answer.
+A 500 under the teacher's token: one call, no service-account retry,
+502 "MAY have gone through", `ambiguous: true`. A socket reset on a
+check-in: one call, 502 "fetch failed", the session intact. A 500 on
+a check-in: one call, 502 with Mindbody's message.
+
+**Hunted and NOT A BUG**, with the evidence:
+
+- The token: the four `record` calls in `mindbody.ts` and the
+  `[dry-run]`/`[write-guard]`/`[actor]`/`[staff]`/`[sale-id]` lines
+  carry the body, the path or the staff id, never a header;
+  `mindbodyHttpError` carries `Error.Message` and the status; a
+  transport failure is undici's "fetch failed". Kim's token (read from
+  the mock) appears in no answer: `GET /api/teacher`, the probe, the
+  whole of `/api/devlog` (`includes`: false) while her check-in's entry
+  carries `actor: 106`; `grep -c "secret\|tok-"` on the server log: 0.
+  The Map is `globalThis.__posStaff`, read by `staffsession.ts` alone,
+  keyed by 24 random bytes base64url, entries dropped on sign-out, on
+  the TTL sweep (every lookup) and on a 401; nothing serialises it.
+- Dry run and the write guard under an actor (`node-dry.log`,
+  `node-guard.log`): with `POS_DRY_RUN=true`, and separately with
+  `POS_WRITE_CLIENT_IDS=100000777` excluding the client, check-in,
+  book, cash checkout, waiver-agree and client-field signed in as Kim
+  answered `suppressed: "dry-run"` / `"write-guard"` exactly as with
+  nobody signed in, the mock saw ZERO writes in all four runs, and
+  every suppressed dev-log entry carries `actor: null`.
+- The headers: with nobody signed in and with Kim, the mock saw the
+  same four header names (`api-key`, `authorization`, `content-type`,
+  `siteid`); only the Authorization value differs (staff 0 vs 106).
+- The cookie: `s1.<id>.<hmac>; Path=/; Max-Age=43200; HttpOnly;
+  SameSite=Strict; Secure` under `next start`; the signature checked
+  with `safeEqual` before the Map lookup; after a real restart the
+  previous process's cookie answers `{teacher: null}` 200, its check-in
+  runs as the service account, the probe 401 `reason: "teacher"`, no
+  500 anywhere. Sign-out with the revoke answering 500: still 200 with
+  the clearing cookie and the entry gone. Owner (Id 0) and non-teacher:
+  403 each, a `DELETE /usertoken/revoke` under the token just issued.
+  Six wrong sign-ins: 401 x3 then 429 x3 (the burst followed two
+  refused sign-ins that had claimed slots); a comp-PIN verify during
+  the lockout was its own 401, not 429; the device session unaffected.
+- The probe: `/staff/staffpermissions` and the Test cart under
+  `staff=106`, the catalog read under 0, `realCheckout` unmoved; the
+  nested `{UserGroup: {...}}` shape reads the same six with
+  `ipRestricted` from inside it; no house client: `{skipped: "no
+  POS_HOUSE_CLIENT_ID ..."}` with no cart call at all; an empty
+  catalog: `{skipped: "no priced pricing option in the catalog"}`.
+- Waiver-agree with the release refused under Kim: `updateclient`
+  106 (403), 0, then the notes append under 0; `agreed: true`,
+  `receiptNoted: true`, `actorFallback` on the answer.
+- The UI (`ui.log`): the control is 64x104 "Sign in" and 64x77 "Kim",
+  16px; the modal's two inputs 64px at 18px with `username` and
+  `current-password`, buttons 64px, nothing under 16px, no em dash;
+  Escape closes the staff modal and a second Escape finds no dialog
+  (the calendar is a scrimmed modal itself, so the two never stack);
+  the row line and the done-screen line compute to exactly `--warn` in
+  both palettes (`rgb(122, 90, 16)` light, `rgb(224, 178, 100)` dark);
+  a check-in answering `staffSessionEnded` flips the control from
+  "Kim" to "Sign in" with no reload and the row reads "...'s Mindbody
+  sign-in ended (Invalid or expired token). Sign in again."
+- Money path: `git diff 806c16c..HEAD -- src/lib/sale.ts` is the
+  eleven hunks listed and no line of them touches `Items`, `Payments`,
+  `LocationId`, `InStore`, `CalculateTax`, `SendEmail` or `Test`; the
+  single flight is the sale screen's `chargingRef` (unchanged). The
+  three T49 commits carry no em dash and no model identifier outside
+  the trailer; migration 6 is `ADD COLUMN IF NOT EXISTS cart_id text`
+  (nullable), `schema_version` 6 on the fresh database.
+
+**Left, recorded:** in the under-$10 card path, when the credit
+purchase finds the teacher's token dead, the checkout that follows
+still goes out under that dead token once more (`session` was resolved
+at the top of the route) before falling back: one wasted 401 on a money
+path, the outcome unchanged, both answers carrying `staffSessionEnded`.
+`runAsActor` could check the Map before using a session; not changed
+here. The staff cookie is `Secure` under `NODE_ENV=production`, so a
+production build served over `http://<lan-ip>` would drop it, which is
+the device cookie's rule too and the reason the LAN runs `next dev`.
+`isActorRefusal`'s `/permission/i` on any 4xx would also retry a 4xx
+that merely mentions permission for another reason; the retry is of a
+refused (unprocessed) request and fails the same way, so the cost is
+one call and a misleading `[actor] fallback` line, never a second
+write.
 
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 

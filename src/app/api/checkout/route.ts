@@ -540,12 +540,15 @@ export async function POST(request: Request) {
    * ShoppingCart.Id, the GUID every path has always answered as
    * `saleId`; `saleId` becomes the numeric Sale.Id when the lookup finds
    * one and stays the GUID when it does not. Never called for a
-   * suppressed write (there is no sale to find). */
+   * suppressed write (there is no sale to find). `startedAt` is taken
+   * here, before any write below goes out: a sale timed before it is
+   * not this one (review). */
+  const startedAt = new Date();
   const saleIds = async (
     cartId: string | null,
   ): Promise<{ saleId: string | null; cartId: string | null }> => {
     if (cartId === null) return { saleId: null, cartId: null };
-    const numeric = await latestSaleId(saleClientId);
+    const numeric = await latestSaleId(saleClientId, startedAt);
     return { saleId: numeric === null ? cartId : String(numeric), cartId };
   };
 

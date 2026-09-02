@@ -1382,9 +1382,25 @@ export async function purchaseContract(opts: {
  *  today's window is ever a candidate, and the set is small. */
 const seenSaleIds = new Set<number>();
 
+/** Per client, how many REAL checkouts this process made whose sale id
+ *  was never found: the list had not caught up, or the lookup failed or
+ *  hung (T49 review). Each is an id somewhere above the ones seen, and
+ *  a later lookup for the same client must leave room for it: the newest
+ *  unseen id is THIS checkout's only when there are more unseen ids than
+ *  earlier checkouts still waiting for one. Without this, a list one
+ *  sale behind handed the previous sale's number to the next sale. */
+const unresolvedSales = new Map<string, number>();
+
 /** How long the done screen waits for the sale list before settling
  *  for the cart GUID (the Formula Note's own bound, T45 review). */
 const SALE_LOOKUP_WAIT_MS = 8_000;
+
+/** How far before the checkout started a candidate's SaleDateTime may
+ *  fall and still be this sale: clock skew between this server and
+ *  Mindbody's, nothing more. A sale from earlier (the web app this
+ *  morning, another counter, a sale from before a restart) is never a
+ *  candidate, however unseen. */
+const SALE_CLOCK_SKEW_MS = 2 * 60 * 1000;
 
 /**
  * The numeric `Sale.Id` (sale.yml:2734) of the sale a REAL checkout just
@@ -1402,14 +1418,23 @@ const SALE_LOOKUP_WAIT_MS = 8_000;
  * race below; the call itself runs on to its own timeout and its
  * answer is dropped.
  *
- * "Newest we have not seen": the highest Id among the client's sales
- * today that this process has not already handed out. If the highest
- * id has been seen, there is no new sale to name and the answer is
- * null; the done screen then shows the GUID as it did before T49.
- * Nothing about the outcome of the sale depends on this: a failed or
- * empty lookup is one log line and the GUID.
+ * A candidate is a sale for this client with an integer Id this process
+ * has not handed out and a `SaleDateTime` (site-local, 2748) no earlier
+ * than `startedAt` less the clock skew allowance, so nothing from before
+ * this checkout began can be named. The newest candidate is this sale's
+ * only when the candidates outnumber the earlier checkouts for this
+ * client still waiting for an id (unresolvedSales); the rest are those
+ * earlier sales' and are marked seen. Otherwise the answer is null and
+ * this checkout joins the waiting count; the done screen then shows the
+ * GUID as it did before T49. Nothing about the outcome of the sale
+ * depends on this: a failed or empty lookup is one log line and the
+ * GUID.
  */
-export async function latestSaleId(clientId: string): Promise<number | null> {
+export async function latestSaleId(
+  clientId: string,
+  /** When the checkout call went out; nothing sold before it counts. */
+  startedAt: Date,
+): Promise<number | null> {
   const now = new Date();
   const dayStart = `${studioWall(now).slice(0, 10)}T00:00:00`;
   const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
@@ -1433,23 +1458,38 @@ export async function latestSaleId(clientId: string): Promise<number | null> {
       }),
     ]);
     const sales: unknown[] = Array.isArray(body?.Sales) ? body.Sales : [];
-    let best: number | null = null;
+    const floor = studioWall(
+      new Date(startedAt.getTime() - SALE_CLOCK_SKEW_MS),
+    );
+    const candidates: number[] = [];
     for (const raw of sales) {
       const sale = raw as Record<string, unknown>;
       if (String(sale["ClientId"] ?? "") !== clientId) continue;
       const id = sale["Id"];
       if (typeof id !== "number" || !Number.isInteger(id)) continue;
-      if (best === null || id > best) best = id;
+      if (seenSaleIds.has(id)) continue;
+      /* Same naive site-local shape as the query window, so a string
+       * comparison orders them; a sale with no time cannot be placed
+       * and is not a candidate. */
+      const at = sale["SaleDateTime"];
+      if (typeof at !== "string" || at.slice(0, 19) < floor) continue;
+      candidates.push(id);
     }
-    if (best === null || seenSaleIds.has(best)) {
+    const waiting = unresolvedSales.get(clientId) ?? 0;
+    if (candidates.length <= waiting) {
+      unresolvedSales.set(clientId, waiting + 1);
       console.log(
-        `[sale-id] none new for client ${clientId} (${sales.length} sales today)`,
+        `[sale-id] none new for client ${clientId} (${sales.length} sales today, ` +
+          `${candidates.length} candidates, ${waiting} earlier still unnamed)`,
       );
       return null;
     }
-    seenSaleIds.add(best);
+    const best = Math.max(...candidates);
+    for (const id of candidates) seenSaleIds.add(id);
+    unresolvedSales.delete(clientId);
     return best;
   } catch (err) {
+    unresolvedSales.set(clientId, (unresolvedSales.get(clientId) ?? 0) + 1);
     console.log(
       `[sale-id] lookup failed: ${err instanceof Error ? err.message : String(err)}`,
     );
