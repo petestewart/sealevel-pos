@@ -112,19 +112,76 @@ async function classesBetween(
   start: Date,
   end: Date,
 ): Promise<ClassSummary[]> {
+  /* The bounds go out as NAIVE studio wall-clock strings, never as
+   * `toISOString()` (T40). Mindbody reads the digits of a datetime as the
+   * site's local time and ignores any offset or Z, the same convention
+   * its responses use (see parseRosterAnchor). Sent as UTC, the window
+   * was seven hours ahead in PDT: at 3:34am Seattle the request read
+   * 08:34Z to 14:34Z, and Mindbody answered with the 9:00 and 9:30
+   * classes. */
   const body = await mindbody(
-    `/class/classes?StartDateTime=${encodeURIComponent(start.toISOString())}` +
-      `&EndDateTime=${encodeURIComponent(end.toISOString())}`,
+    `/class/classes?StartDateTime=${encodeURIComponent(studioWall(start))}` +
+      `&EndDateTime=${encodeURIComponent(studioWall(end))}`,
   );
-  return (body?.Classes ?? []).map(
-    (c: any): ClassSummary => ({
-      classId: c.Id,
-      name: c.ClassDescription?.Name ?? "Class",
-      teacher: c.Staff?.Name ?? "",
-      startsAt: c.StartDateTime,
-      capacity: c.MaxCapacity ?? null,
-      booked: c.TotalBooked ?? null,
-    }),
+  return (body?.Classes ?? [])
+    .filter((c: any) => c.IsCanceled !== true)
+    .map(
+      (c: any): ClassSummary => ({
+        classId: c.Id,
+        name: c.ClassDescription?.Name ?? "Class",
+        teacher: staffName(c.Staff),
+        startsAt: c.StartDateTime,
+        capacity: c.MaxCapacity ?? null,
+        booked: c.TotalBooked ?? null,
+      }),
+    );
+}
+
+/**
+ * A cancelled class is filtered out above (T40): Mindbody keeps it in
+ * `/class/classes` with `IsCanceled: true`, staff "TBA ." and zero booked,
+ * and its `/class/classvisits` answers with staff "Class Cancelled" (id
+ * -1). The studio's schedule carries cancelled placeholder slots (a
+ * whole morning of them on 2026-09-02), and listing those as classes a
+ * teacher could check people into is wrong twice over. When every class
+ * in the window is cancelled the screen shows its "No classes" line.
+ */
+
+/** The teacher as a person's name. Mindbody's `Staff.Name` is first and
+ *  last joined, and the studio's placeholder teacher is first name "TBA"
+ *  with last name ".", which rendered as "TBA ." on every class. Parts
+ *  with no letter or digit in them are dropped. */
+function staffName(staff: any): string {
+  const raw =
+    typeof staff?.Name === "string" && staff.Name.trim()
+      ? staff.Name
+      : `${staff?.FirstName ?? ""} ${staff?.LastName ?? ""}`;
+  return String(raw)
+    .split(/\s+/)
+    .filter((part) => /[\p{L}\p{N}]/u.test(part))
+    .join(" ");
+}
+
+/** `at` as the studio's wall clock, `YYYY-MM-DDTHH:mm:ss` with no offset:
+ *  the shape Mindbody reads correctly (see classesBetween). */
+function studioWall(at: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: STUDIO_TZ,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(at);
+  const get = (type: string): number =>
+    Number(parts.find((p) => p.type === type)?.value ?? 0);
+  const two = (n: number): string => String(n).padStart(2, "0");
+  return (
+    `${get("year")}-${two(get("month"))}-${two(get("day"))}` +
+    /* hour12: false can render midnight as "24" in some ICU versions. */
+    `T${two(get("hour") % 24)}:${two(get("minute"))}:${two(get("second"))}`
   );
 }
 

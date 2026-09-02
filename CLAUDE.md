@@ -215,6 +215,15 @@ while `git clone` works, so clone the repo rather than fetching files.
   `Metadata`, answer it with a `Test: true` call and compare the server's
   returned total, rather than by reading. Test mode prices a cart without
   moving money, which makes this cheap.
+- **Datetimes are site-local and the offset is ignored, both ways.** Responses
+  carry naive strings ("2026-09-02T09:00:00"), and a request parameter is
+  read the same way: `StartDateTime=...08:34Z` is 8:34 studio time, not
+  UTC. Send wall-clock strings built for `America/Los_Angeles` (roster.ts
+  `studioWall`), never `toISOString()`. Sent as UTC, the class window was
+  seven hours ahead.
+- **Cancelled classes stay in `/class/classes`** with `IsCanceled: true`,
+  staff "TBA ." and zero booked. Filter them; the studio's schedule carries
+  whole mornings of cancelled placeholder slots.
 - **`/class/classvisits` puts the CLASS name in the visit's `Name` field.**
   Reading it showed every roster row as "bikram yoga". Names come from
   explicit client fields, and otherwise from the client index by id.

@@ -3216,6 +3216,31 @@ refetch twice, which costs four reads and changes nothing on Mindbody's
 side. Not verifiable here: whether `/api/catalog?refresh=1` returns a
 changed price in practice, and the audit table against a live disagree.
 
+## T40. Cancelled classes listed, and the class window seven hours ahead (Pete, 2026-09-02)
+
+Pete's live dev log at 10:34Z (3:34am Seattle): the header and the class
+dropdown listed thirteen "Hot 26 & 2 ... TBA ." classes at 9:00 and 9:30.
+Two defects in one screenshot.
+
+- **Cancelled classes were listed as real.** Every one of the thirteen
+  carried `IsCanceled: true` with staff "TBA ." (id 100000086, last name
+  ".") and `TotalBooked: 0`, and `/class/classvisits` for one answered
+  with staff "Class Cancelled" (id -1). `classesBetween` never read the
+  flag. It now drops cancelled classes; when the whole window is
+  cancelled the screen shows its existing "No classes" line.
+- **The window went out as UTC.** `toISOString()` sent `08:34Z` to
+  `14:34Z`, which is 1:34am to 7:34am Seattle, and Mindbody answered with
+  9:00 classes: it reads a datetime's digits as site-local and ignores the
+  offset, the same convention its responses use (the T27 review's
+  `parseRosterAnchor`). Both windows (around-now and the whole day) now
+  send naive studio wall-clock strings via `studioWall`.
+- Teacher names drop parts with no letter or digit, so a placeholder
+  staff record renders as "TBA", not "TBA .".
+
+Not verifiable here (no credentials in the container). Pete: reload at a
+studio hour and confirm the dropdown shows the classes actually around
+now, and that a genuinely cancelled class is absent.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
