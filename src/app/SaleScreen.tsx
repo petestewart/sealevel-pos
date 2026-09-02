@@ -44,7 +44,39 @@ export interface ModeConfig {
    *  screen's trimmed answer; a line with no rate of its own then shows
    *  its tax as pending rather than guessing one. */
   studioTaxRate?: number | null;
+  /** T41: whether POS_HOUSE_CLIENT_ID is set on the server, which is
+   *  what an anonymous (unattached) sale rides: Mindbody prices and
+   *  charges nothing without a client (confirmed live 2026-08-30).
+   *  Absent on the lock screen's trimmed answer and before config loads. */
+  houseClient?: boolean;
 }
+
+/**
+ * T41: the attach modal's footer sentence, in page.tsx, promised "close
+ * to sell anonymously" while the Pay button stayed disabled on Pete's
+ * counter, because anonymous needs the house client and his server had
+ * none. The sentence now depends on the same flag the totals read.
+ * Exported for page.tsx; null config (not loaded yet) makes no promise.
+ */
+export function attachSearchHint(config: ModeConfig | null): string {
+  if (config?.houseClient === true) {
+    return "Search for the client the sale is for, or close to sell anonymously.";
+  }
+  if (config?.houseClient === false) {
+    return (
+      "Search for the client the sale is for. Anonymous sales need " +
+      "POS_HOUSE_CLIENT_ID set on the server."
+    );
+  }
+  return "Search for the client the sale is for.";
+}
+
+/** T41: the one line the totals area shows for an unattached cart when no
+ *  house client is configured. Names the variable, because "attach a
+ *  client" alone hid that anonymous was ever an option. */
+export const NEEDS_HOUSE_CLIENT_LINE =
+  "Anonymous sales need POS_HOUSE_CLIENT_ID set on the server; attach a " +
+  "client instead.";
 
 /**
  * The mode banner, shared verbatim between the roster page and the sale
@@ -1739,9 +1771,7 @@ function PaymentPanel(props: {
                   could not price the cart and there is no total to charge.
                   The local estimate on the ticket is never chargeable. */}
               {cart.length > 0 && !pricing && priced?.needsClient ? (
-                <p className="muted-note">
-                  Attach a client (or set a house client) to charge.
-                </p>
+                <p className="muted-note">{NEEDS_HOUSE_CLIENT_LINE}</p>
               ) : null}
 
               {result?.kind === "suppressed" ? (
@@ -3461,7 +3491,7 @@ export default function SaleScreen(props: {
               : priced.disagrees
                 ? "Totals disagree; do not charge"
                 : priced.needsClient
-                  ? "Attach a client to price with Mindbody"
+                  ? "No house client for an anonymous sale; attach a client"
                   : priced.grandTotal === null
                     ? "No total yet"
                     : null;
@@ -4188,9 +4218,12 @@ export default function SaleScreen(props: {
                         {money(totals.expectedTotal)}
                       </span>
                     </div>
-                    <p className="muted-note">
-                      Estimated. Attach a client to price with Mindbody.
-                    </p>
+                    {/* T41: one honest line. The server answered
+                        needsClient because POS_HOUSE_CLIENT_ID is unset
+                        (with it set, an unattached cart prices and pays
+                        as cash or comp like any other); the config flag
+                        says the same thing before any pricing call. */}
+                    <p className="muted-note">{NEEDS_HOUSE_CLIENT_LINE}</p>
                   </>
                 ) : totals?.suppressed ? (
                   <div className="pass-note t-suppressed">

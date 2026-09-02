@@ -8,7 +8,7 @@ import {
   mindbodyEnv,
   target,
 } from "@/lib/mindbody";
-import { STUDIO_TAX_RATE } from "@/lib/sale";
+import { STUDIO_TAX_RATE, houseClientId } from "@/lib/sale";
 
 export const dynamic = "force-dynamic";
 
@@ -77,5 +77,11 @@ export async function GET(request: Request) {
      * labelled, and never chargeable; Mindbody's rehearsal stays the only
      * number that is. */
     studioTaxRate: STUDIO_TAX_RATE,
+    /* T41: whether an anonymous sale is possible at all. A boolean, never
+     * the id: the browser only needs to know whether to promise "close to
+     * sell anonymously" and whether an unattached cart can reach Pay.
+     * The money path still reads houseClientId() itself in /api/checkout
+     * and /api/price-cart and refuses without it. */
+    houseClient: houseClientId() !== null,
   });
 }
