@@ -2187,7 +2187,7 @@ steps, each its own ticket and review, each leaving the app shippable.
       Escape order, comp never armed while invisible.
 - [x] T39.7 Payment surface: Total / Due / Change, tiles or buttons per
       Pete's call, keypad per Pete's call.
-- [ ] T39.8 Density and degradation pass, both palettes, 768 tall.
+- [x] T39.8 Density and degradation pass, both palettes, 768 tall.
 - [ ] T39.9 What the roster inherits.
 
 Decided by Pete, 2026-09-02: Counter (1a light, 1b dark), and every
@@ -2845,6 +2845,82 @@ Checked and deliberately left as they are:
   above 64px: the amount button and x (64), the chips (64), the keys
   (66), Cancel and Done (64), Comp (64), the bar's controls (64 and
   68), Done on the paid block (64). No em dashes in the cycle's diff.
+
+### T39.8-9: what was built
+
+**T39.8, density and degradation.** Measured with Playwright against the
+cycle-3 fixture (the API mocked, the studio's eight rail entries, the
+prototype's seven-line cart of nine items, Alida with $40 credit), both
+palettes, shots under `scratchpad/t39-4/`. CSS, two small render tweaks
+and the dev pill; PaymentPanel's logic, `/api/*` and `src/lib/sale.ts`
+have no hunk.
+
+1. **The 768 budget.** The layout plan's 2.8 method, applied to the
+   frame and the ticket: the banner 36 to 32 (5px padding on the 16px
+   line), the header's margin under it 16 to 12, the shell's bottom
+   padding 16 to 12, the ticket head 14/16/10 to 10/16/8 (47 to 41),
+   the lines box padding 8 to 6, the totals block 12/16/16 to 10/16/10
+   with the two muted rows at 1.5 line-height instead of 1.9 (24px a
+   row, not 30) and the rule and Total paddings 8 to 6 (140 to 115),
+   the selected row's controls 10 to 6 under the line. Rows stay 44,
+   every control 64, the bar 92. The budget at 1080x768 is now banner
+   32, header 76, 12, panes 543, 12, bar 93; the ticket is head 41,
+   lines 384, totals 115. **At 1180x820 (the studio's iPad) the
+   seven-line cart with one row selected is 432px of lines in a 436px
+   box: nothing scrolls but the grid.** At 1366x1024 the box is 638.
+   **At 1080x768 seven lines fit unselected (362 in 384); with a row
+   selected the lines are 427 to 432 and the box scrolls 43 to 52px,
+   six rows on screen with the selection always among them (the
+   T39.4-5 review's scroll-into-view) and the head cue naming the
+   hidden one.** That is the recorded number: 44px rows and 64px
+   controls want 48px more than 768 has, and both floors stand.
+2. **The rail.** Eight entries at 64 on 6px gaps were 554 in a 543
+   pane at 768 and scrolled Memberships under the edge. Entries are 60
+   tall on 4px gaps (508 for eight, 35 clear at 768) and each entry's
+   `::before` reaches 2px into the gap on either side, so the tap
+   target is the full 64 pitch: `elementFromPoint` at every pixel of a
+   gap returns an entry, never the rail. The first cut used -2px and
+   left one pixel of gap, because a button's positioned children sit
+   inside its border; -3 is the measured value. The canvas draws 62/6.
+3. **The dev pill.** SaleScreen puts `sale-open` on the body while the
+   overlay is open and `.dev-handle` under it moves to the bar's centre
+   (`left: 50%`), where the bar is empty in every mode (Empty cart or
+   Back to items at the left, the primary at the right). The point over
+   the amount's last digit is the Pay button in a dev build. Next's own
+   indicator still sits over Empty cart's first letter; not ours.
+4. **Under 900**, at 800x1100 in both palettes: the stack is banner,
+   header, chip row, grid, cart, bar in DOM order; scrolled to the end
+   the bar's top is 1007 and the ticket's bottom 995, so the last row
+   and the totals are clear of it; in pay mode Comp ends at 631 against
+   the bar's 1007 at the top of the scroll and the ticket's bottom is
+   995 at the end; a Credit + Cash $300 charge completes with the done
+   block and its change line.
+5. **Tile icons dropped**, and the three icon components with them;
+   the tiles are the name and the reason, as 1a draws them. The
+   header's credit pill was already text.
+6. **Contrast.** Light `--disabled-ink` is `#5f5749` (the canvas's
+   darker muted, the shelf price's colour): 4.59 on `--disabled-bg`,
+   from 3.10. Dark stays `#9b9284` on `#2c2b26`, 4.62. Light `--muted`
+   on `--bg` stays the canvas's 4.34 (4.73 on `--surface`, where nearly
+   all of it sits); recorded, not changed.
+7. **The cue** reads `1 more below · 9 items`: the cue, a muted
+   separator, the count at the right edge where it always is.
+8. **Frame by frame at 1366x1024** against 1a and 1b (the PDF's pages 1
+   and 2, rendered; the canvas itself needs a CDN the sandbox has not
+   got): shelf with the seven-line cart and Liquid IV selected, pay
+   mode with Credit + Cash and a Change figure, the keypad at $300.00,
+   the done block. Two drifts fixed: the header's Back had the close X
+   where 1a draws a left arrow (now the bar's Back to items glyph), and
+   the tile icons above. Left, each deliberate: the favourite star on
+   cards (a function the canvas has not got), "no tax" beside pass
+   prices, `$` on cart line amounts, the item count on the bar
+   (decided), the 16px banner.
+9. `npm run typecheck` and `npm run build` clean.
+
+Also recorded: T38's cue counts rows below the visible edge only. With
+a lower row selected the box scrolls to keep it in view, and rows past
+the top edge have neither cue nor fade (seen at 1080x768 with the last
+line selected). Left as T38 has it.
 
 ## T38. The cart: more rows, an estimate while pricing, the audit, and a way out (Pete, 2026-08-31)
 

@@ -390,71 +390,6 @@ function StarIcon() {
   );
 }
 
-/** Stored-card icon, from the mockup's method card. */
-function CardIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="30"
-      height="30"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="2" y="5" width="20" height="14" rx="2" />
-      <path d="M2 10h20" />
-    </svg>
-  );
-}
-
-/** Account-credit icon: a coin with a dollar sign. Deliberately NOT a
- *  rectangle -- the earlier note shape read as a second credit card next
- *  to the stored-card button (Pete, fourth live test). */
-function CreditIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="30"
-      height="30"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="9" />
-      <path
-        strokeWidth="1.8"
-        d="M12 6.6v10.8M14.7 9.6c-.5-.8-1.5-1.3-2.7-1.3-1.6 0-2.8.8-2.8 1.9 0 2.5 5.6 1.2 5.6 3.8 0 1.1-1.2 1.9-2.8 1.9-1.2 0-2.2-.5-2.7-1.3"
-      />
-    </svg>
-  );
-}
-
-/** Cash icon, from the mockup's method card. */
-function CashIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="30"
-      height="30"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="2" y="7" width="20" height="10" rx="2" />
-      <circle cx="12" cy="12" r="2.5" />
-    </svg>
-  );
-}
-
 /** The card on file, as /api/stored-card serves it. */
 export interface StoredCardInfo {
   lastFour: string;
@@ -1485,20 +1420,14 @@ function PaymentPanel(props: {
                 : (cardDetail ?? "")
             : "";
 
-  const sources: { s: TenderSource; label: string; icon: ReactNode }[] = [
+  /* T39.8: plain tiles, as 1a draws them; the icons T33 gave the method
+     cards went with the cards. The name and the reason are the tile. */
+  const sources: { s: TenderSource; label: string }[] = [
     /* Credit leads when there IS credit, and is absent when there is not
        (Pete, fourth live test). */
-    ...(creditVisible
-      ? [
-          {
-            s: "credit" as TenderSource,
-            label: "Credit",
-            icon: <CreditIcon />,
-          },
-        ]
-      : []),
-    { s: "storedcard", label: "Card", icon: <CardIcon /> },
-    { s: "cash", label: "Cash", icon: <CashIcon /> },
+    ...(creditVisible ? [{ s: "credit" as TenderSource, label: "Credit" }] : []),
+    { s: "storedcard", label: "Card" },
+    { s: "cash", label: "Cash" },
   ];
 
   /* The three figures (0.2): Due is settled once the lines cover the
@@ -1657,7 +1586,7 @@ function PaymentPanel(props: {
                   hidden; Credit is absent when there is no balance (T33)
                   and wears it as a badge when there is. */}
               <div className="pay-tiles" aria-label="Payment sources">
-                {sources.map(({ s, label, icon }) => {
+                {sources.map(({ s, label }) => {
                   const reason = addReason(s);
                   /* Layout plan 2.7: tapping Cash when a cash line is
                      already in the payment opens THAT line's keypad
@@ -1696,10 +1625,7 @@ function PaymentPanel(props: {
                             : "Cash")
                       }
                     >
-                      <span className="pay-tile-name">
-                        <span className="mi">{icon}</span>
-                        {label}
-                      </span>
+                      <span className="pay-tile-name">{label}</span>
                       {shown ? (
                         <span className="pay-tile-reason">{shown}</span>
                       ) : null}
@@ -3378,6 +3304,16 @@ export default function SaleScreen(props: {
     if (top < box.scrollTop) box.scrollTop = top;
   }, [selectedKey]);
 
+  /* T39.8: the dev drawer's pill is fixed bottom-right, which is where
+     the bar's amount is. While the overlay is open the body carries a
+     class the pill's CSS reads to move into the bar's empty middle. A
+     class, not a prop: the drawer is the roster's child, not ours. */
+  useEffect(() => {
+    if (!open) return;
+    document.body.classList.add("sale-open");
+    return () => document.body.classList.remove("sale-open");
+  }, [open]);
+
   if (!open) return null;
 
   const onFavorites = activeCat === FAVORITES_LABEL;
@@ -3692,10 +3628,10 @@ export default function SaleScreen(props: {
             disabled={charging}
             aria-label="Back to the roster"
           >
-            <span className="btn-ico">
-              <CloseIcon />
-            </span>
-            Back
+            {/* T39.8: the arrow 1a draws, the same glyph as the bar's
+                Back to items; the X it had read as a close, and Back is
+                a return. */}
+            {"\u2190"} Back
           </button>
         </div>
 
@@ -3972,9 +3908,16 @@ export default function SaleScreen(props: {
                 {/* T38's cue, here since T39.4: the head never moves, so
                     the cue cannot change the box it measures. */}
                 {hiddenBelow > 0 ? (
-                  <span className="t-more" aria-live="polite">
-                    {hiddenBelow} more below
-                  </span>
+                  <>
+                    <span className="t-more" aria-live="polite">
+                      {hiddenBelow} more below
+                    </span>
+                    {/* T39.8: two facts, one separator; "2 more below 9
+                        items" read as one phrase. */}
+                    <span className="t-head-sep" aria-hidden="true">
+                      &middot;
+                    </span>
+                  </>
                 ) : null}
                 <span className="t-head-count">
                   {cartCount} {cartCount === 1 ? "item" : "items"}
