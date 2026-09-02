@@ -10,6 +10,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import { actorFallbackLine } from "./actornote";
+
 import {
   COMP_DETAIL_MAX,
   COMP_DETAIL_MIN,
@@ -549,6 +551,9 @@ type ChargeResult =
        *  screen's "Comped: <reason>" line. Null on a paid sale. Since
        *  T45 it is the kind, the detail and the teacher it was for. */
       compReason: CompReason | null;
+      /** T49: the amber line when the sale ran as the studio account
+       *  after the signed-in teacher's token was refused; else null. */
+      actorNote: string | null;
     }
   | { kind: "suppressed"; mode: string }
   | { kind: "split"; message: string; mindbody: string }
@@ -696,6 +701,10 @@ function PaymentPanel(props: {
   onSold: () => void;
   /** The paid receipt's Done: close the overlay back to the roster. */
   onDone: () => void;
+  /** T49: a charge answered that the signed-in teacher's Mindbody token
+   *  is no longer valid and the staff session has ended; the header
+   *  control goes back to "Sign in". */
+  onStaffSessionEnded: () => void;
   /**
    * A charge finished in a state that may have moved money, so everything
    * this screen shows about the client (credit above all, and the roster
@@ -734,6 +743,7 @@ function PaymentPanel(props: {
     notice,
     onSold,
     onDone,
+    onStaffSessionEnded,
     onClientDataStale,
     onBusyChange,
     onModalChange,
@@ -1440,6 +1450,8 @@ function PaymentPanel(props: {
       if (typeof body?.creditBalance === "number") {
         setFreshBalance(body.creditBalance);
       }
+      /* T49: whatever the outcome, a dead staff token is reported up. */
+      if (body?.staffSessionEnded === true) onStaffSessionEnded();
       if (body === null && (res.ok || res.status >= 500)) {
         /* A 200 whose body could not be read, or a 500-class answer with
          * no readable verdict (a gateway 502/504 serves HTML): the route
@@ -1487,6 +1499,9 @@ function PaymentPanel(props: {
           changeCents: changeAtTap,
           comped,
           compReason: comp?.reason ?? null,
+          actorNote: body?.actorFallback
+            ? actorFallbackLine(body.actorFallback)
+            : null,
           summary: `Paid ${money(body?.total ?? total)} by ${methodName}${
             client ? ` for ${client.name}` : ""
           }.`,
@@ -2176,6 +2191,11 @@ function PaymentPanel(props: {
               <p className="pay-done-line">{result.summary}</p>
               {result.detail ? (
                 <p className="pay-done-detail">{result.detail}</p>
+              ) : null}
+              {result.actorNote ? (
+                /* T49: the sale stands; who Mindbody recorded it under
+                   is the one thing that differs, and it is said. */
+                <p className="pay-done-detail actor-note">{result.actorNote}</p>
               ) : null}
               {/* Done means the sale is finished, so it goes back to the
                   roster (Pete, fourth live test): the counter's resting
@@ -3124,7 +3144,13 @@ interface ContractRehearsal {
 }
 
 type ContractOutcome =
-  | { kind: "paid"; summary: string; detail: string | null }
+  | {
+      kind: "paid";
+      summary: string;
+      detail: string | null;
+      /** T49: see ChargeResult.actorNote. */
+      actorNote: string | null;
+    }
   | { kind: "suppressed"; mode: string }
   | { kind: "ambiguous"; message: string }
   | { kind: "error"; message: string };
@@ -3142,6 +3168,8 @@ function ContractDialog(props: {
   onBusyChange: (busy: boolean) => void;
   /** Best-effort cache invalidation after a real purchase. */
   onPurchased: (clientId: string) => void;
+  /** T49: see PaymentPanel's onStaffSessionEnded. */
+  onStaffSessionEnded: () => void;
   /** True while the attach search modal is stacked above; Escape then
    *  belongs to that layer, not this dialog. */
   modalAbove: boolean;
@@ -3154,6 +3182,7 @@ function ContractDialog(props: {
     onRequestAttach,
     onBusyChange,
     onPurchased,
+    onStaffSessionEnded,
     modalAbove,
   } = props;
 
@@ -3288,6 +3317,7 @@ function ContractDialog(props: {
       } catch {
         /* fall through to the status handling below */
       }
+      if (body?.staffSessionEnded === true) onStaffSessionEnded();
       if (body === null && (res.ok || res.status >= 500)) {
         /* Same reading as /api/checkout's caller: an unreadable answer
          * to a money write may have processed. Never "not charged". */
@@ -3311,6 +3341,9 @@ function ContractDialog(props: {
             commitmentText(contract, paidTotal).replace(/^Charge/, "Charged"),
           detail: body?.clientContractId
             ? `Contract ${body.clientContractId} on their account.`
+            : null,
+          actorNote: body?.actorFallback
+            ? actorFallbackLine(body.actorFallback)
             : null,
         });
       } else if (res.ok && body?.suppressed) {
@@ -3487,6 +3520,9 @@ function ContractDialog(props: {
             {outcome.detail ? (
               <p className="pay-done-detail">{outcome.detail}</p>
             ) : null}
+            {outcome.actorNote ? (
+              <p className="pay-done-detail actor-note">{outcome.actorNote}</p>
+            ) : null}
             <button className="class-change" onClick={onClose}>
               Done
             </button>
@@ -3571,6 +3607,9 @@ export default function SaleScreen(props: {
    *  matched to the staff list by name in the panel; null with no
    *  active class. */
   classTeacher?: string | null;
+  /** T49: a money write answered that the signed-in teacher's token is
+   *  no longer valid; page.tsx clears the header control. */
+  onStaffSessionEnded?: () => void;
 }) {
   const {
     open,
@@ -3583,6 +3622,7 @@ export default function SaleScreen(props: {
     onContractPurchased,
     onSaleCompleted,
     classTeacher = null,
+    onStaffSessionEnded,
   } = props;
 
   const [catalog, setCatalog] = useState<CatalogState | null>(null);
@@ -4943,6 +4983,7 @@ export default function SaleScreen(props: {
             notice={payNotice}
             onSold={() => setCart([])}
             onDone={close}
+            onStaffSessionEnded={() => onStaffSessionEnded?.()}
             onBusyChange={setCharging}
             onModalChange={setPayModalOpen}
             cartResetNonce={cartResetNonce}
@@ -5369,6 +5410,7 @@ export default function SaleScreen(props: {
             setProfileNonce((n) => n + 1);
             onContractPurchased?.(cid);
           }}
+          onStaffSessionEnded={() => onStaffSessionEnded?.()}
           modalAbove={modalAbove}
         />
       ) : null}

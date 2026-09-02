@@ -20,6 +20,8 @@ import SaleScreen, {
   type SaleClient,
 } from "./SaleScreen";
 import { ClientProfileCard } from "./ClientProfileCard";
+import StaffModal, { firstName, type Teacher } from "./StaffModal";
+import { actorFallbackLine } from "./actornote";
 import { useSettings } from "./settings";
 import type { ClientProfile } from "@/lib/clientprofile";
 
@@ -848,6 +850,45 @@ function FrontDesk() {
   const [config, setConfig] = useState<ModeConfig | null>(null);
   /** Rows whose check-in call failed after going green optimistically. */
   const [failed, setFailed] = useState<Record<string, string>>({});
+  /** T49: the signed-in teacher, from GET /api/teacher; null is the
+   *  ordinary state and asks for nothing. */
+  const [teacher, setTeacher] = useState<Teacher | null>(null);
+  const [staffOpen, setStaffOpen] = useState(false);
+  /** T49: per-row amber notes, "Done as the studio account: ...", for a
+   *  write on that row that fell back from the teacher's token. */
+  const [actorNotes, setActorNotes] = useState<Record<string, string>>({});
+  /** T49: the same note for writes with no row to sit on (a booking, a
+   *  waiver, a cancel); one line under the mode banner, 20 seconds. */
+  const [actorBanner, setActorBanner] = useState<string | null>(null);
+  const actorBannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * T49: what every write's answer is read for. `staffSessionEnded`
+   * means Mindbody no longer honours the teacher's token and the
+   * server ended the session, so the header goes back to "Sign in";
+   * `actorFallback` means the write ran as the studio account and says
+   * why, on the row when there is one and on the banner otherwise. The
+   * line is returned too for a dialog that would rather show it itself.
+   */
+  const noteActor = useCallback(
+    (body: any, clientId?: string): string | null => {
+      if (body?.staffSessionEnded === true) setTeacher(null);
+      const fb = body?.actorFallback;
+      if (!fb || typeof fb.name !== "string" || typeof fb.reason !== "string") {
+        return null;
+      }
+      const line = actorFallbackLine(fb);
+      if (clientId) {
+        setActorNotes((n) => ({ ...n, [clientId]: line }));
+      } else {
+        setActorBanner(line);
+        if (actorBannerTimer.current) clearTimeout(actorBannerTimer.current);
+        actorBannerTimer.current = setTimeout(() => setActorBanner(null), 20_000);
+      }
+      return line;
+    },
+    [],
+  );
   /**
    * The pay-and-check-in dialog over an unpaid row (T25): the row and the
    * class it was tapped under, both captured at open so the writes cannot
@@ -1356,6 +1397,15 @@ function FrontDesk() {
       .catch(() => setConfig(null));
   }, []);
 
+  /* T49: who is signed in, if anyone. A read, not a prompt: nothing
+   * asks at start, the header control just reads the right thing. */
+  useEffect(() => {
+    fetch("/api/teacher")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => setTeacher(body?.teacher ?? null))
+      .catch(() => undefined);
+  }, []);
+
   useEffect(() => {
     /* T46: another day is showing. Its list came from the calendar pick
      * and must not be overwritten by the around-now window; the settings
@@ -1744,6 +1794,7 @@ function FrontDesk() {
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        noteActor(body);
         if (body.suppressed) {
           setCancelMsg(
             body.suppressed === "dry-run"
@@ -1762,7 +1813,7 @@ function FrontDesk() {
         setCancelBusy(false);
       }
     },
-    [cancelBusy, refreshRoster],
+    [cancelBusy, refreshRoster, noteActor],
   );
 
   /**
@@ -2289,6 +2340,10 @@ function FrontDesk() {
         const { [entry.clientId]: _drop, ...rest } = f;
         return rest;
       });
+      setActorNotes((n) => {
+        const { [entry.clientId]: _drop, ...rest } = n;
+        return rest;
+      });
       try {
         const res = await fetch("/api/checkin", {
           method: "POST",
@@ -2301,6 +2356,7 @@ function FrontDesk() {
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        noteActor(body, entry.clientId);
         setEntries((rows) =>
           rows.map((r) =>
             r.clientId === entry.clientId ? { ...r, checkedIn: signedIn } : r,
@@ -2324,7 +2380,7 @@ function FrontDesk() {
         setBusy((b) => b.filter((id) => id !== entry.clientId));
       }
     },
-    [settings.optimisticCheckIn],
+    [settings.optimisticCheckIn, noteActor],
   );
 
   /**
@@ -2831,6 +2887,7 @@ function FrontDesk() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      noteActor(body);
       if (body.suppressed) {
         setInfoMsg(
           body.suppressed === "dry-run"
@@ -3139,6 +3196,7 @@ function FrontDesk() {
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        noteActor(body);
         if (body.suppressed) {
           setBookMsg((m) => ({
             ...m,
@@ -3235,6 +3293,7 @@ function FrontDesk() {
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        noteActor(body);
         if (body.suppressed) {
           setPromoteMsg((m) => ({
             ...m,
@@ -3338,6 +3397,7 @@ function FrontDesk() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      noteActor(body);
       if (body.suppressed) {
         setWaiverMsg(
           body.suppressed === "dry-run"
@@ -3451,6 +3511,7 @@ function FrontDesk() {
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        noteActor(body, entry.clientId);
         if (body.suppressed) {
           setPassMsg(
             body.suppressed === "dry-run"
@@ -3469,7 +3530,7 @@ function FrontDesk() {
         setPassSavingId(null);
       }
     },
-    [passSavingId, refreshRoster],
+    [passSavingId, refreshRoster, noteActor],
   );
 
   /**
@@ -3872,6 +3933,7 @@ function FrontDesk() {
         });
         const aBody = await ar.json();
         if (!ar.ok) throw new Error(aBody?.error ?? `HTTP ${ar.status}`);
+        noteActor(aBody, entry.clientId);
         if (aBody?.suppressed) {
           /* Should be unreachable (the guard let the charge through two
            * calls ago), but if it happens the truth is the same shape:
@@ -3903,6 +3965,7 @@ function FrontDesk() {
         });
         const cBody = await cr.json();
         if (!cr.ok) throw new Error(cBody?.error ?? `HTTP ${cr.status}`);
+        noteActor(cBody, entry.clientId);
       } catch {
         /* Paid and attached; the row is now a normal paid row, and its
          * ordinary check-in tap finishes the job. */
@@ -4049,6 +4112,11 @@ function FrontDesk() {
           component, one wording, so "is this live" reads the same on
           every screen. */}
       <ModeBanner config={config} />
+      {actorBanner ? (
+        <p className="pass-note actor-banner" role="status">
+          {actorBanner}
+        </p>
+      ) : null}
 
       {/* Studio banner: an announcement, never a status. It renders BELOW
           the mode banner and in a deliberately different shape (quiet
@@ -4202,6 +4270,25 @@ function FrontDesk() {
             }}
           >
             Buy
+          </button>
+          {/* T49: who Mindbody records this iPad's writes under. "Sign
+              in" when nobody is, the teacher's first name when someone
+              is; either way a quiet 64px control that opens the staff
+              modal. Nothing requires it and nothing prompts for it. */}
+          <button
+            className="class-change staff-btn"
+            onClick={() => {
+              setPickerFor(null);
+              setSortMenuOpen(false);
+              setStaffOpen(true);
+            }}
+            aria-label={
+              teacher
+                ? `${teacher.name} is signed in to Mindbody. Tap to see or sign out.`
+                : "Sign in to Mindbody"
+            }
+          >
+            {teacher ? firstName(teacher.name) : "Sign in"}
           </button>
           <div className="counters" aria-label="Counts for the selected class">
           {/* A plain stat, not a button: its list IS the roster below,
@@ -4390,7 +4477,7 @@ function FrontDesk() {
              path (T18). */
           const statusMsg = working
             ? "Talking to Mindbody..."
-            : (failed[entry.clientId] ?? null);
+            : (failed[entry.clientId] ?? actorNotes[entry.clientId] ?? null);
           const visits = histories[entry.clientId];
           const history =
             statusMsg === null && visits ? historyLine(visits) : "";
@@ -4437,7 +4524,9 @@ function FrontDesk() {
                       className={
                         failed[entry.clientId] || noWaiver
                           ? "subline stop-text"
-                          : "subline"
+                          : !working && actorNotes[entry.clientId]
+                            ? "subline actor-note"
+                            : "subline"
                       }
                     >
                       {statusMsg}
@@ -6366,6 +6455,14 @@ function FrontDesk() {
         onContractPurchased={refreshClientState}
         onSaleCompleted={refreshClientState}
         classTeacher={activeClass?.teacher || null}
+        onStaffSessionEnded={() => setTeacher(null)}
+      />
+
+      <StaffModal
+        open={staffOpen}
+        teacher={teacher}
+        onClose={() => setStaffOpen(false)}
+        onTeacherChange={setTeacher}
       />
 
       <DevDrawer />

@@ -4198,3 +4198,79 @@ button.sale-for:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+
+/* --- Staff sign-in (T49) ---------------------------------------------
+ * The header control beside Buy, the sign-in modal, the probe list and
+ * the amber "Done as the studio account" note. Tokens only: both palettes
+ * come from the variable swap, nothing new is defined here. */
+
+.staff-btn {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-staff {
+  display: grid;
+  gap: 12px;
+}
+
+.modal-staff .modal-title {
+  margin: 0;
+}
+
+.modal-staff .modal-actions {
+  margin-top: 4px;
+}
+
+/* The fallback note: the row's subline and the done block's detail
+ * line in the warn pair, one step quieter than a failure. The banner
+ * variant is the amber pass-note with a bottom gap under the mode
+ * banner. */
+.subline.actor-note,
+.pay-done-detail.actor-note {
+  color: var(--warn);
+}
+
+.actor-banner {
+  margin: 0 0 12px;
+}
+
+.probe {
+  display: grid;
+  gap: 8px;
+}
+
+.probe-summary {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.probe-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 16px;
+}
+
+.probe-ok {
+  color: var(--ok);
+}
+
+.probe-no {
+  color: var(--stop);
+  font-weight: 600;
+}
+
+.probe-skip {
+  color: var(--muted);
+}
+
+.dev-actor {
+  flex: 0 0 auto;
+  color: var(--warn);
+}

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { DEFAULT_SETTINGS, type Settings, useSettings } from "./settings";
+import { ProbeView, type ProbeResult, type Teacher } from "./StaffModal";
 
 /**
  * A drawer that slides up from the bottom showing the Mindbody traffic this
@@ -23,6 +24,8 @@ interface CallRecord {
   status: number | null;
   ms: number;
   outcome: string;
+  /** T49: the staff id the call ran as, when a signed-in teacher's. */
+  actor: number | null;
   requestBody: string | null;
   responseBody: string | null;
 }
@@ -118,7 +121,8 @@ export default function DevDrawer() {
   const asText = (call: CallRecord): string =>
     [
       `${call.method} ${call.path}`,
-      `${call.outcome} ${call.status ?? ""} ${call.ms}ms  ${call.at}`,
+      `${call.outcome} ${call.status ?? ""} ${call.ms}ms  ${call.at}` +
+        (call.actor !== null ? `  actor=${call.actor}` : ""),
       call.requestBody ? `\n--- request ---\n${call.requestBody}` : "",
       `\n--- response ---\n${call.responseBody ?? "(empty)"}`,
     ]
@@ -206,6 +210,9 @@ export default function DevDrawer() {
                   </span>
                   <span className="dev-method">{call.method}</span>
                   <span className="dev-path">{call.path}</span>
+                  {call.actor !== null ? (
+                    <span className="dev-actor">actor={call.actor}</span>
+                  ) : null}
                   <span className="dev-ms">{call.ms}ms</span>
                 </button>
                 {expanded === call.id ? (
@@ -337,7 +344,77 @@ function SettingsPanel({
           />
         </label>
       ))}
+      <TeacherPanel />
     </div>
+  );
+}
+
+/* T49: the signed-in teacher and the permission probe, so what a
+ * teacher's Mindbody login can do is checkable from the drawer as well
+ * as from the sign-in modal. Reads the same two routes. */
+function TeacherPanel() {
+  const [teacher, setTeacher] = useState<Teacher | null | undefined>(
+    undefined,
+  );
+  const [probe, setProbe] = useState<ProbeResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    fetch("/api/teacher")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (live) setTeacher(body?.teacher ?? null);
+      })
+      .catch(() => {
+        if (live) setTeacher(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/teacher/probe");
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (body?.staffSessionEnded) setTeacher(null);
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        setProbe(null);
+        return;
+      }
+      setProbe(body as ProbeResult);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="dev-label">signed-in teacher</div>
+      {teacher === undefined ? (
+        <p className="muted">Loading.</p>
+      ) : teacher === null ? (
+        <p className="muted">
+          Nobody. Writes run as the studio account; sign in from the header
+          to run them as a teacher.
+        </p>
+      ) : (
+        <>
+          <p className="muted">
+            {teacher.name} (staff {teacher.id}). Writes carry actor=
+            {teacher.id} in the calls tab.
+          </p>
+          <ProbeView probe={probe} busy={busy} error={error} onRun={run} />
+        </>
+      )}
+    </>
   );
 }
 
