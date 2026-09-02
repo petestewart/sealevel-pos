@@ -2179,9 +2179,9 @@ steps, each its own ticket and review, each leaving the app shippable.
       the header's client card.
 - [x] T39.2 The vertical rail, Favorites pinned, `more`, the 1040 fold.
 - [x] T39.3 Grid cards at 64px with the count pill.
-- [ ] T39.4 Cart column: TICKET header, select-to-reveal row controls,
+- [x] T39.4 Cart column: TICKET header, select-to-reveal row controls,
       sub-line only above quantity one. Built on T38.
-- [ ] T39.5 Sticky bottom bar: Empty cart left, Pay / Charge right, below
+- [x] T39.5 Sticky bottom bar: Empty cart left, Pay / Charge right, below
       every scrim.
 - [ ] T39.6 Two modes: PaymentPanel to the middle column, rail collapses,
       Escape order, comp never armed while invisible.
@@ -2344,6 +2344,119 @@ predates this cycle. Auto-expansion for a hidden active entry collapses
 again when a visible entry is tapped, since only the `more` tap is
 sticky; with the fix the studio's rail never folds, so this is a
 catalog-growth case for the day it comes.
+
+### T39.4-5: what was built
+
+The cart column and the bar, per the plan's 0.2 and 1a/1b. Nothing in
+PaymentPanel's logic, `/api/*` or `src/lib/sale.ts` changed; the
+`<PaymentPanel>` element and its props are byte-identical, and the bar's
+amount is display only.
+
+**T39.4, the ticket.** 1a's: radius 16 on `--surface`, a head line with
+TICKET (16px, uppercase, letter-spaced, muted) and the item count (14px
+mono, the recorded exception) under a dashed `--line-soft` rule, and no
+studio heading. Rows are the name (16px/500) and a right-aligned mono
+total on one line, the `2 @ 1.81` sub-line (14px mono muted) only above
+quantity one, padded 8/10 with a 2px gap. **Select to reveal**: the row
+is the tap target (a div with the button role and an aria-label, since a
+`<button>` may not contain the buttons the controls are; Enter and Space
+work too), tapping it selects (accent border, `--bar-bg` fill) and only
+the selected row shows minus / count (20px mono) / plus at 64px and an
+outlined `--stop` Remove pushed right; the controls stop propagation so
+a tap on plus does not deselect. Tapping again or another row changes
+the selection; `addItem` selects the line it touched and `addBundle`
+the last line it rang up; `removeLine` and `emptyCart` clear it; and the
+selection is derived against the cart, so a key that leaves by any path
+(a recheck dropping the line, a sale clearing the cart) cannot point at
+a row that is not there. The always-visible stepper on every line is
+gone, which is what buys the height back. `bumpQuantity`, `removeLine`
+and `MAX_LINE_QUANTITY` are unchanged. Totals: Subtotal and `Tax 10.35%`
+(the rate from `/api/config`'s `studioTaxRate` when the server sent
+one, `Tax` otherwise) in 16px mono muted at 1.9, a hairline, Total at
+17px/700 beside a 26px mono figure; T38's estimate rows keep the muted
+"Estimated" treatment and the "Pricing with Mindbody..." line, and the
+disagree block, audit table, suppressed notice and needsClient branch
+are as they were, inside the totals block.
+
+**The height model.** The overlay is a flex column the viewport bounds:
+`.sale-shell` and `.sale-panes` take `flex: 1; min-height: 0`, each
+pane (`.sale-cats`, `.sale-right`, `.sale-left`) is `min-height: 0;
+overflow-y: auto` so the grid scrolls inside itself rather than the
+overlay scrolling, and the cart column is a flex column whose ticket is
+its `flex: 1` child; inside the ticket the lines box is `flex: 1;
+min-height: 0; overflow: auto`, replacing T38's `min(44vh, 540px)`. The
+fade stays on the wrap; T38's "N more below" cue moved into the head
+line beside the count, because the head never moves, so showing the cue
+cannot change the box it measures (a pill over the fade landed on the
+selected row's Remove when that row was the last visible), and the
+measurement now also runs from a ResizeObserver on the lines box, since
+the box's height moves with a selection or a totals change. Under 900
+the bound is given back (the overlay scrolls as before, the lines take
+T38's cap again, the bar sticks). A long totals block (the stop with its
+audit) scrolls the ticket as a whole with the lines held at two rows.
+
+**One recorded exception.** Rows are 44px, not 64: the codebase's
+secondary standing (the row icons, the old steppers' "occasional
+deliberate taps"), because a row is a selection with an immediate
+visible answer and no consequence, and at 64 a seven-line cart is 460px
+of rows and never fits a 768px screen, which is what the ticket exists
+to do. Every control a row reveals is 64.
+
+**T39.5, the bar.** The overlay's last child: 92px on `--bar-bg` across
+the full width, a hairline above, `--shadow`, contents aligned to the
+shell's 1400 at 20px, `position: sticky; bottom: 0` for the narrow
+fold. Left, `Empty cart`: T38's Clear cart moved off the ticket foot,
+outlined at 64px on `--surface`, the same dialog ("Clear the cart?",
+Keep items / Clear cart) and the same `emptyCart` behind it, disabled
+on an empty cart or mid-charge. Right, the primary: 68px, radius 14,
+accent fill with `--accent-ink`, `Pay` at 20px/700, `· 9 items` at
+16px/600, `· $253.22` at 22px mono; the count from the cart's
+quantities and the amount the SERVER's `grandTotal` only. It takes the
+disabled pair and drops the figure on an empty cart, while pricing (a
+spinner where the amount goes; T38's estimate never reaches the bar),
+with no price yet or a failed price, and when suppressed, disagreeing
+or needing a client; a real button with `aria-disabled` and a `title`
+that says which. Tapping it brings the payment column into view and
+focuses the first source that can take it; the `TODO(T39.6)` marks
+where the mode switch goes. Charge in PaymentPanel is untouched.
+Stacking: the bar is z-index 5 in the overlay's own stacking context
+and every scrim there is 30 (the keypad, the cart-change confirm, the
+Clear cart confirm, the contract dialog), the attach search modal and
+the waiver are 30 at the root above the overlay's 18, so nothing on the
+bar is tappable behind any of them.
+
+**Verified.** `npm run typecheck` and `npm run build` clean. Playwright
+with the API mocked (the reviewer's fixture: packages and contracts
+present, Alida with $40 credit, the cart priced locally at 10.35%) in
+both palettes at 1366x1024, 1180x820, 1080x768 and 1000x768, under
+`scratchpad/t39-2/`: the empty ticket; the prototype's seven-line cart
+(10 Class Pack, Mat, Towel, Liquid IV x2, Parking, Boxed water, Vita
+Coco x2) with Liquid IV selected; the estimate state with the bar
+reading `Pay · 10 items` and a spinner; the Clear cart confirm with
+`elementFromPoint` over Pay returning the scrim; Keep items keeping
+eight rows and Clear cart leaving none; the disagree stop. At every
+size the bar's box is at the viewport's bottom edge, the overlay,
+shell and panes do not scroll, the grid scrolls inside `.sale-right`,
+and a second tap on the selected row deselects it. Compared by eye
+against 1a and 1b: the head, rows, selected row, totals and bar match.
+
+**Left for the next cycles, with the numbers.** The 768px done-when is
+not met in this cycle and cannot be: the tender block (155px) and the
+comp / Charge seam (163px) still share the column until T39.6, and at
+768 tall the pane is 531, so the ticket gets 189 where its head and
+totals alone are 184. It is held at a 260px minimum, so at 768 the
+column scrolls 43px (Charge's lower third below the fold, as the
+overlay already scrolled there before this cycle) and at 820 the ticket
+itself scrolls 25px with two rows showing; at 1024 tall a seven-line
+cart shows five rows with one selected and nothing scrolls but the
+lines. Once T39.6 moves the tender and the seam out, the column is the
+ticket alone and the same geometry gives it 531 at 768: head 44, totals
+140, 347 for lines, which is the seven-line cart with one row selected.
+Also for T39.8: at 1080x768 the eight-entry rail (8 x 64 + 7 x 6 = 554)
+is 23px taller than the bounded pane and scrolls, since the plan's
+budget assumed seven entries; and the dev drawer's pill (z-index 19,
+above the overlay) sits over the bar's amount in a dev build, which is
+absent at the counter.
 
 ## T38. The cart: more rows, an estimate while pricing, the audit, and a way out (Pete, 2026-08-31)
 
