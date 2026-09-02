@@ -2246,7 +2246,7 @@ body.sale-open .dev-handle {
   font-variant-numeric: tabular-nums;
 }
 
-/* The selected row's controls: minus / count / plus at 64px, Remove
+/* The selected row's controls: minus / count / plus at 64px, the trash
  * pushed right, outlined in the stop colour. */
 .t-ctl {
   display: flex;
@@ -2288,16 +2288,22 @@ body.sale-open .dev-handle {
   font-variant-numeric: tabular-nums;
 }
 
+/* T41: a 64px square holding the trash glyph, where the word "Remove"
+ * sat (Pete: "instead of 'Remove' use a trash can icon"). Same stop
+ * outline; the name rides the aria-label and title. */
 .t-ctl-remove {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-left: auto;
+  width: 64px;
   height: 64px;
-  padding: 0 16px;
+  padding: 0;
   border: 1px solid var(--stop);
   border-radius: 10px;
   background: transparent;
   color: var(--stop);
-  font-size: 16px;
-  font-weight: 600;
 }
 
 .t-ctl-remove:active:not(:disabled) {

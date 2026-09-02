@@ -362,6 +362,29 @@ function MinusIcon() {
   );
 }
 
+/** Trash can, the roster's glyph (page.tsx TrashIcon, same path) at the
+ *  stepper's scale: the cart's Remove is an icon since T41. */
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+        d="M4 6.5h16M9.5 6.5V4h5v2.5M6.5 6.5 7.5 20h9l1-13.5"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        d="M10 10.5v6M14 10.5v6"
+      />
+    </svg>
+  );
+}
+
 function PlusIcon() {
   return (
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -3152,18 +3175,20 @@ export default function SaleScreen(props: {
    * T39.4: which cart line is showing its controls. One line at most,
    * selected by a tap on the row, and it is what buys back the column's
    * height: the per-row stepper on every line is gone, so a seven-line
-   * cart fits where four used to. Adding from the shelf selects the line
-   * it touched (the prototype does this, and it reads well: the row you
-   * just changed is the one showing its count); removing a line or
-   * emptying the cart clears it. Derived against the cart below, so a
-   * key that leaves the cart by any path (recheck dropping a line, a
-   * sale clearing it) can never point at a row that is not there.
+   * cart fits where four used to. Nothing is selected until a row is
+   * tapped: T39.4 had a shelf tap select the line it touched (the
+   * prototype did), and Pete's first live pass read that as a row whose
+   * buttons never went away ("there is always a row that has those
+   * buttons visible", T41). A shelf tap now leaves the selection alone;
+   * removing a line or emptying the cart clears it. Derived against the
+   * cart below, so a key that leaves the cart by any path (recheck
+   * dropping a line, a sale clearing it) can never point at a row that
+   * is not there.
    */
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   const addItem = useCallback((item: ShelfItem) => {
     const key = `${item.type}-${item.id}`;
-    setSelectedKey(key);
     setCart((lines) => {
       const have = lines.find((l) => l.key === key);
       if (have) {
@@ -3182,10 +3207,8 @@ export default function SaleScreen(props: {
    *  but a saved sequence of taps: the cart, the pricing loop and the
    *  charge path never know bundles exist. */
   const addBundle = useCallback((bundle: ResolvedBundle) => {
-    /* T39.4: a bundle touches several lines; the last one it rang up is
-       the one left selected, the same as tapping its cards in turn. */
-    const last = bundle.items[bundle.items.length - 1];
-    if (last) setSelectedKey(`${last.item.type}-${last.item.id}`);
+    /* T41: like addItem, a bundle changes no selection; only a row tap
+       reveals a row's controls. */
     setCart((lines) => {
       const next = [...lines];
       for (const { item, quantity } of bundle.items) {
@@ -3286,12 +3309,13 @@ export default function SaleScreen(props: {
   }, [cart, selectedKey, open, measureLines]);
 
   /* Review: the selected row is the one showing its controls, so it has
-     to be in the box. Adding from the shelf selects a line that may be
-     the sixth row, below the fold, and a tap on a visible row can push
-     its own Remove under the edge; either way the reveal was invisible.
-     Only the lines box scrolls, and only as far as it must: never the
-     column or the overlay, so under 900 a card tap cannot yank the shelf
-     away. The scroll event re-measures the cue. */
+     to be in the box. A tap on a visible row can push its own controls
+     under the edge, and the reveal was then invisible (T39.4 also had a
+     shelf tap select a row below the fold; T41 ended that, and the
+     scroll stays for the row tap). Only the lines box scrolls, and only
+     as far as it must: never the column or the overlay, so under 900 a
+     tap cannot yank the shelf away. The scroll event re-measures the
+     cue. */
   useEffect(() => {
     const box = linesRef.current;
     const rowEl = box?.querySelector<HTMLElement>(".t-row.sel");
@@ -4022,13 +4046,18 @@ export default function SaleScreen(props: {
                           >
                             <PlusIcon />
                           </button>
+                          {/* T41 (Pete): a trash can, not the word. Same
+                              64px height as the steppers, square, the
+                              stop outline the word had; the label and
+                              tooltip carry the item's name. */}
                           <button
                             className="t-ctl-remove"
                             disabled={charging}
                             aria-label={`Remove ${line.item.name} from the sale`}
+                            title={`Remove ${line.item.name}`}
                             onClick={() => removeLine(line.key)}
                           >
-                            Remove
+                            <TrashIcon />
                           </button>
                         </div>
                       ) : null}
