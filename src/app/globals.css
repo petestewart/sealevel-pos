@@ -13,19 +13,35 @@
    * written. */
   color-scheme: light dark;
 
-  --bg: #fbfaf8;
-  --surface: #ffffff;
-  --line: #e3ded6;
-  --ink: #1d1b18;
-  --muted: #6d6659;
-  --ok: #0f7b4f;
-  --ok-bg: #e6f4ec;
-  --warn: #8a5a00;
-  --warn-bg: #fdf1dc;
-  --stop: #a32020;
+  /* T39.1: the Counter palette (docs/design/pos-design-implementation.md
+   * 0.2), read off the 1a frame. Warm paper, one teal accent, and the
+   * dark block below is the same set flipped off 1b. --accent-ink is
+   * what sits on the accent fill: the dark accent is a light teal, so
+   * that text cannot be --surface any more (it was, twice, and one of
+   * those was the unreadable check-in chip). --line-soft is the dashed
+   * ticket rule and the key border; --bar-bg the action bar's ground
+   * (T39.5) and a selected cart row (T39.4); --shadow lifts the bar off
+   * the columns; the disabled pair is the primary button with nothing
+   * to do (Pay on an empty cart). */
+  --bg: #f6f3ec;
+  --surface: #fffdf8;
+  --line: #e4ded2;
+  --line-soft: #ded7ca;
+  --ink: #1a1815;
+  --muted: #7a7163;
+  --ok: #0d6b47;
+  --ok-bg: #e7f1ea;
+  --warn: #7a5a10;
+  --warn-bg: #faf1de;
+  --stop: #b0332c;
   --stop-bg: #fbe9e9;
-  --accent: #1d4ed8;
-  --action-bg: #e0d9cc;
+  --accent: #0f5c55;
+  --accent-ink: #ffffff;
+  --action-bg: #f1ede4;
+  --bar-bg: #f2efe7;
+  --shadow: 0 -8px 24px rgba(26, 24, 21, 0.08);
+  --disabled-bg: #d5cfc2;
+  --disabled-ink: #7a7163;
 }
 
 * {
@@ -851,7 +867,7 @@ button.pass-opt:disabled {
   min-height: 26px;
   border-radius: 999px;
   background: var(--accent);
-  color: var(--surface);
+  color: var(--accent-ink);
   font-size: 16px;
   font-weight: 700;
 }
@@ -912,7 +928,7 @@ button.pass-opt:disabled {
 
 .chip.undo {
   background: var(--accent);
-  color: var(--surface);
+  color: var(--accent-ink);
 }
 
 /* The primary action on a row: "check in" on a paid booking, "add" on a
@@ -958,19 +974,27 @@ button.pass-opt:disabled {
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #14130f;
-    --surface: #1e1c18;
-    --line: #37332c;
-    --ink: #f3efe7;
-    --muted: #a49c8c;
-    --ok: #6fd39b;
-    --ok-bg: #12301f;
-    --warn: #e8b45c;
-    --warn-bg: #33260c;
+    /* 1b: paper goes to ink, teal lifts. Stop and the pressed ground
+     * are not drawn on the canvas, so they keep the values they had. */
+    --bg: #131311;
+    --surface: #1c1b18;
+    --line: #2c2b26;
+    --line-soft: #33322b;
+    --ink: #f2efe7;
+    --muted: #9b9284;
+    --ok: #68c79b;
+    --ok-bg: #0f2a20;
+    --warn: #e0b264;
+    --warn-bg: #2e2410;
     --stop: #f08a8a;
     --stop-bg: #341616;
-    --accent: #7ea2ff;
+    --accent: #5fd2a4;
+    --accent-ink: #0b1a14;
     --action-bg: #464036;
+    --bar-bg: #191816;
+    --shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
+    --disabled-bg: #2c2b26;
+    --disabled-ink: #9b9284;
   }
 }
 
@@ -1725,7 +1749,7 @@ button.pass-opt:disabled {
   border: 1px solid transparent;
   border-radius: 12px;
   background: var(--accent);
-  color: var(--surface);
+  color: var(--accent-ink);
   font-size: 18px;
   font-weight: 700;
 }
@@ -1759,44 +1783,63 @@ button.pass-opt:disabled {
   background: var(--bg);
 }
 
+/* T39.1: 1400 wide (the canvas frame is a 1366 iPad edge to edge), 16/20
+ * padding, so three columns fit at the studio's real numbers. The
+ * roster's .shell stays at 1100 (layout plan question 9). */
 .sale-shell {
-  max-width: 1100px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 16px;
+  padding: 16px 20px;
 }
 
+/* The mode banner runs edge to edge inside the overlay, as 1a draws it:
+ * a line across the top, not a card. It is the same ModeBanner as the
+ * roster's, 16px, in every state; only its shape changes here. */
+.sale-shell .banner {
+  margin: -16px -20px 0;
+  padding: 7px 20px;
+  border-radius: 0;
+}
+
+/* The header: one 76px row, Buy, the client card, Back at the far right,
+ * a hairline under it that runs the overlay's width (the negative margin
+ * takes it through the shell padding). */
 .sale-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 0 12px;
+  gap: 14px;
+  min-height: 76px;
+  margin: 0 -20px 16px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
 }
 
 .sale-title {
   margin: 0;
   flex: 0 0 auto;
-  font-size: 24px;
+  font-size: 23px;
   font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
-/* The attach control lives in the header, beside the title (Pete, fourth
+/* The client card lives in the header, beside the title (Pete, fourth
  * live test): identity, not a payment control, and the payment column
  * keeps the room. It takes the slack between the title and Back rather
  * than the full width it had atop the cart. */
 .sale-top .sale-for {
   width: auto;
   min-width: 0;
-  max-width: 460px;
+  max-width: 520px;
   margin: 0;
   margin-right: auto;
 }
 
-/* Ticket left, shelf right; stacks on a narrow screen. */
+/* Ticket left, shelf right; stacks on a narrow screen. T39.2 turns this
+ * into the three-column rail / grid / cart layout. */
 .sale-panes {
   display: grid;
   grid-template-columns: 400px minmax(0, 1fr);
-  gap: 20px;
+  gap: 14px;
   align-items: start;
 }
 
@@ -2124,22 +2167,28 @@ button.pass-opt:disabled {
  * as dashed receipt text and Pete did not recognize it as tappable, which
  * orphaned the attach flow and with it stored card and credit. Solid
  * surface, icon, verb-first label, action affordance. */
+/* T39.1: the card shape 1a draws, 60px on a bordered surface, in both
+ * states. Attached it is SALE FOR over the name, the balance pill and a
+ * 44px detach; unattached it is the same card carrying the plus, the
+ * verb and its hint, still a real button (the hint's 16px holds the
+ * floor; the label line-height is tightened so two lines sit in 60). */
 .sale-for {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  min-height: 64px;
+  min-height: 60px;
   margin: 0 0 4px;
-  padding: 8px 14px;
+  padding: 6px 8px 6px 16px;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--action-bg);
+  border-radius: 12px;
+  background: var(--surface);
   color: var(--ink);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 600;
+  line-height: 1.15;
   text-align: left;
 }
 
@@ -2158,6 +2207,23 @@ button.sale-for:active {
   background: var(--action-bg);
 }
 
+/* SALE FOR over the name. 14px is the recorded metadata exception for
+ * this one label (the canvas draws it at 12); the name is the 17px line. */
+.sale-for-who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.sale-for-label {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 /* Mid-charge the attach control is refused entirely (no client change
  * while money moves); dimmed, same treatment as .row-icon:disabled. */
 button.sale-for:disabled {
@@ -2168,15 +2234,15 @@ button.sale-for:disabled {
 .sale-for.attached {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   border-style: solid;
   color: var(--ink);
 }
 
 .sale-for-name {
   min-width: 0;
-  flex: 1;
   overflow-wrap: anywhere;
+  font-size: 17px;
   font-weight: 600;
 }
 
@@ -2184,15 +2250,19 @@ button.sale-for:disabled {
   color: var(--muted);
 }
 
-/* Account balance chip beside the attached name: owed money keeps the
- * stop pairing the roster's balance column uses; credit stays quiet. */
+/* Account balance pill beside the attached name: credit in the ok pair
+ * (1a's "$40.00 credit"), mono because it is money; owed money keeps
+ * the stop pairing the roster's balance column uses. */
 .bal-chip {
   flex: 0 0 auto;
-  padding: 2px 10px;
+  padding: 5px 11px;
   border-radius: 999px;
-  background: var(--line);
-  color: var(--ink);
+  background: var(--ok-bg);
+  color: var(--ok);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 16px;
+  font-weight: 600;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2235,7 +2305,7 @@ button.sale-for:disabled {
 .cat-chip.on {
   border-color: var(--accent);
   background: var(--accent);
-  color: var(--surface);
+  color: var(--accent-ink);
 }
 
 .shelf-grid {
@@ -2695,7 +2765,7 @@ button.sale-for:disabled {
   border: 1px solid transparent;
   border-radius: 12px;
   background: var(--accent);
-  color: var(--surface);
+  color: var(--accent-ink);
   font-size: 19px;
   font-weight: 700;
 }
@@ -2785,7 +2855,7 @@ button.sale-for:disabled {
  * charge-button pairing, in modal-action size. */
 .modal-confirm.pay-charge {
   background: var(--accent);
-  color: var(--surface);
+  color: var(--accent-ink);
 }
 
 /* T26's quiet fallback line under the pass facts: the last session was

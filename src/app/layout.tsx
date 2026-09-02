@@ -20,8 +20,8 @@ export const viewport: Viewport = {
    * equal to --bg in the matching :root block in globals.css.
    */
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fbfaf8" },
-    { media: "(prefers-color-scheme: dark)", color: "#14130f" },
+    { media: "(prefers-color-scheme: light)", color: "#f6f3ec" },
+    { media: "(prefers-color-scheme: dark)", color: "#131311" },
   ],
 };
 

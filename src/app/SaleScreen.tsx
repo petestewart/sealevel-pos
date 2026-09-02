@@ -3088,12 +3088,20 @@ export default function SaleScreen(props: {
               that spends credit updates it in place. */}
           {client ? (
             <div className="sale-for attached">
-              <span className="sale-for-name">For: {client.name}</span>
+              {/* T39.1: 1a's card. SALE FOR over the name, the balance as
+                  a pill: credit says so in the ok pair, owed money keeps
+                  the stop pair and its sign. */}
+              <span className="sale-for-who">
+                <span className="sale-for-label">Sale for</span>
+                <span className="sale-for-name">{client.name}</span>
+              </span>
               {attachedBalance !== null && attachedBalance !== 0 ? (
                 <span
                   className={attachedBalance < 0 ? "bal-chip neg" : "bal-chip"}
                 >
-                  {money(attachedBalance)}
+                  {attachedBalance < 0
+                    ? money(attachedBalance)
+                    : `${money(attachedBalance)} credit`}
                 </span>
               ) : null}
               <button
@@ -3121,7 +3129,7 @@ export default function SaleScreen(props: {
               onClick={onRequestAttach}
             >
               <PlusIcon />
-              <span>
+              <span className="sale-for-who">
                 Attach a client
                 <span className="sale-for-hint">
                   for stored card or account credit
