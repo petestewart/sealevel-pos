@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireSession } from "@/lib/auth";
+import { requireSession, requireTeacher } from "@/lib/auth";
 
 import { setVisitService } from "@/lib/roster";
 
@@ -16,6 +16,8 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
+  const gate = requireTeacher(request);
+  if (!gate.ok) return gate.denied;
   try {
     const { visitId, clientServiceId, clientId } = await request.json();
     if (typeof visitId !== "number") {

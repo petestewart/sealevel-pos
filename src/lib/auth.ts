@@ -9,7 +9,9 @@ import { NextResponse } from "next/server";
 
 /**
  * Shared-PIN auth (T21). One PIN for the studio, per the service-account
- * decision (P1); per-teacher identity waits on payroll.
+ * decision (P1). The teacher layer (T44) sits on top of it, further down
+ * this file: the device session says the iPad is the studio's, the
+ * teacher session says who is standing at it.
  *
  * POS_PIN unset or empty means auth is DISABLED entirely: every route
  * answers without a session, which is the dev convenience and the behavior
@@ -68,7 +70,7 @@ function sessionKey(): Buffer {
 /** Constant-time string equality for secrets. Hashing both sides first
  *  makes the buffers equal-length, which timingSafeEqual requires, and
  *  keeps the comparison length-independent. */
-function safeEqual(a: string, b: string): boolean {
+export function safeEqual(a: string, b: string): boolean {
   const ha = createHash("sha256").update(a, "utf8").digest();
   const hb = createHash("sha256").update(b, "utf8").digest();
   return timingSafeEqual(ha, hb);
@@ -108,16 +110,7 @@ export function verifyToken(token: string, now = Date.now()): boolean {
 
 /** Reads the session cookie off a request. */
 function tokenFromRequest(request: Request): string | null {
-  const header = request.headers.get("cookie");
-  if (!header) return null;
-  for (const part of header.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq === -1) continue;
-    if (part.slice(0, eq).trim() === COOKIE_NAME) {
-      return part.slice(eq + 1).trim() || null;
-    }
-  }
-  return null;
+  return cookieValue(request, COOKIE_NAME);
 }
 
 /** Whether this request carries a valid session (or auth is disabled). */
@@ -171,44 +164,217 @@ export function sessionClearCookie(): string {
  * Modest and in-memory, per process: after 5 straight failures, 30s of
  * lockout. A shared studio PIN is not defending state secrets; the limit
  * exists so a guessing loop is slow and obvious, not to survive restarts
- * or coordinate across instances. */
+ * or coordinate across instances. Two counters, one per door (T44): a
+ * teacher fumbling their four digits must not lock the device PIN, and
+ * the reverse. */
 
 const MAX_FAILURES = 5;
 const LOCKOUT_MS = 30_000;
 
-const loginState = { failures: 0, lockedUntil: 0 };
-
-/** Milliseconds of lockout remaining, 0 when attempts are allowed. */
-export function lockoutRemainingMs(now = Date.now()): number {
-  return Math.max(0, loginState.lockedUntil - now);
+interface AttemptLimiter {
+  /** Milliseconds of lockout remaining, 0 when attempts are allowed. */
+  remaining(now?: number): number;
+  /**
+   * Claims one attempt slot, SYNCHRONOUSLY, before the handler does any
+   * async work. Returns the lockout remaining (0 = proceed). The claim
+   * counts as a failure up front and a success clears it: checking at
+   * the top and recording only after `await request.json()` let every
+   * concurrently in-flight request pass the check before any of them
+   * counted, so a parallel burst got N guesses per window instead of 5.
+   */
+  claim(now?: number): number;
+  /** A success clears the counter. */
+  success(): void;
 }
 
-/** Record a failed attempt; starts the lockout on the fifth. */
-export function recordLoginFailure(now = Date.now()): void {
-  loginState.failures += 1;
-  if (loginState.failures >= MAX_FAILURES) {
-    loginState.failures = 0;
-    loginState.lockedUntil = now + LOCKOUT_MS;
+function makeLimiter(): AttemptLimiter {
+  const state = { failures: 0, lockedUntil: 0 };
+  const remaining = (now = Date.now()) => Math.max(0, state.lockedUntil - now);
+  return {
+    remaining,
+    claim(now = Date.now()) {
+      const left = remaining(now);
+      if (left > 0) return left;
+      state.failures += 1;
+      if (state.failures >= MAX_FAILURES) {
+        state.failures = 0;
+        state.lockedUntil = now + LOCKOUT_MS;
+      }
+      return 0;
+    },
+    success() {
+      state.failures = 0;
+      state.lockedUntil = 0;
+    },
+  };
+}
+
+const deviceLimiter = makeLimiter();
+const teacherLimiter = makeLimiter();
+
+/** Milliseconds of device-login lockout remaining, 0 when allowed. */
+export function lockoutRemainingMs(now = Date.now()): number {
+  return deviceLimiter.remaining(now);
+}
+
+/** A correct device PIN clears the counter. */
+export function recordLoginSuccess(): void {
+  deviceLimiter.success();
+}
+
+/** Claims one device-login attempt; see AttemptLimiter.claim. */
+export function claimLoginAttempt(now = Date.now()): number {
+  return deviceLimiter.claim(now);
+}
+
+/** The teacher door's counter, same rules, separate state. */
+export function claimTeacherAttempt(now = Date.now()): number {
+  return teacherLimiter.claim(now);
+}
+
+export function recordTeacherSuccess(): void {
+  teacherLimiter.success();
+}
+
+/* --- Teacher session (T44) --------------------------------------------
+ * The second layer: WHO is at the counter, for a shift. The device
+ * session above says the iPad is the studio's; this says which teacher
+ * unlocked it, so a comp receipt and a log line can name them. A
+ * separate cookie, signed with the same derived key (so a PIN or pepper
+ * change revokes both at once), carrying the staff id and name in the
+ * clear: nothing in it is secret, the signature is what makes it
+ * trustworthy. Twelve hours: a shift, not a month. The four digits a
+ * teacher typed never enter the token.
+ *
+ * With auth disabled (no POS_PIN) a teacher session is optional: dev
+ * runs with or without one, and requireTeacher lets writes through
+ * unnamed. With auth required, every write route demands one. */
+
+const TEACHER_COOKIE = "pos_teacher";
+const TEACHER_TTL_MS = 12 * 60 * 60 * 1000;
+const TEACHER_PREFIX = "t1";
+
+export interface TeacherIdentity {
+  id: number;
+  name: string;
+}
+
+/** A fresh teacher token: `t1.<staff id>.<name, base64url>.<issued-at ms>.<hmac>`. */
+export function issueTeacherToken(
+  teacher: TeacherIdentity,
+  now = Date.now(),
+): string {
+  const name = Buffer.from(teacher.name, "utf8").toString("base64url");
+  const payload = `${TEACHER_PREFIX}.${teacher.id}.${name}.${now}`;
+  return `${payload}.${sign(payload)}`;
+}
+
+/** The identity a presented teacher token carries, when validly signed
+ *  and inside its twelve hours; else null. */
+export function verifyTeacherToken(
+  token: string,
+  now = Date.now(),
+): TeacherIdentity | null {
+  const parts = token.split(".");
+  if (parts.length !== 5) return null;
+  const [prefix, idRaw, nameRaw, issuedAtRaw, sig] = parts;
+  if (prefix !== TEACHER_PREFIX || !idRaw || !issuedAtRaw || !sig) return null;
+  if (!/^\d{1,12}$/.test(idRaw) || !/^\d{1,15}$/.test(issuedAtRaw)) return null;
+  if (!/^[A-Za-z0-9_-]*$/.test(nameRaw ?? "")) return null;
+  /* Signature first, constant-time, as for the device token. */
+  const payload = `${TEACHER_PREFIX}.${idRaw}.${nameRaw}.${issuedAtRaw}`;
+  if (!safeEqual(sig, sign(payload))) return null;
+  const issuedAt = Number(issuedAtRaw);
+  if (issuedAt > now + 60_000) return null;
+  if (now - issuedAt >= TEACHER_TTL_MS) return null;
+  const name = Buffer.from(nameRaw ?? "", "base64url").toString("utf8");
+  return { id: Number(idRaw), name };
+}
+
+/** One cookie's value off a request, or null. */
+function cookieValue(request: Request, name: string): string | null {
+  const header = request.headers.get("cookie");
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) {
+      return part.slice(eq + 1).trim() || null;
+    }
+  }
+  return null;
+}
+
+/** The teacher at the counter per this request's cookie, or null. */
+export function teacherFrom(request: Request): TeacherIdentity | null {
+  const token = cookieValue(request, TEACHER_COOKIE);
+  return token === null ? null : verifyTeacherToken(token);
+}
+
+/** Whether the request arrived over https, directly or through Railway's
+ *  proxy. The teacher cookie is Secure exactly then: the LAN dev case is
+ *  plain http and a Secure cookie would never store. */
+function isHttps(request: Request): boolean {
+  const forwarded = request.headers.get("x-forwarded-proto");
+  if (forwarded) return forwarded.split(",")[0]?.trim() === "https";
+  try {
+    return new URL(request.url).protocol === "https:";
+  } catch {
+    return false;
   }
 }
 
-/** A success clears the counter. */
-export function recordLoginSuccess(): void {
-  loginState.failures = 0;
-  loginState.lockedUntil = 0;
+/** Set-Cookie value that names the teacher. */
+export function teacherSetCookie(token: string, request: Request): string {
+  const attrs = [
+    `${TEACHER_COOKIE}=${token}`,
+    "Path=/",
+    `Max-Age=${Math.floor(TEACHER_TTL_MS / 1000)}`,
+    "HttpOnly",
+    "SameSite=Strict",
+  ];
+  if (isHttps(request)) attrs.push("Secure");
+  return attrs.join("; ");
 }
 
+/** Set-Cookie value that clears the teacher. */
+export function teacherClearCookie(request: Request): string {
+  const attrs = [
+    `${TEACHER_COOKIE}=`,
+    "Path=/",
+    "Max-Age=0",
+    "HttpOnly",
+    "SameSite=Strict",
+  ];
+  if (isHttps(request)) attrs.push("Secure");
+  return attrs.join("; ");
+}
+
+export type TeacherGate =
+  | { ok: true; teacher: TeacherIdentity | null }
+  | { ok: false; denied: NextResponse };
+
 /**
- * Claims one attempt slot, SYNCHRONOUSLY, before the handler does any
- * async work. Returns the lockout remaining (0 = proceed). The claim
- * counts as a failure up front and a success clears it: checking at the
- * top and recording only after `await request.json()` let every
- * concurrently in-flight request pass the check before any of them
- * counted, so a parallel burst got N guesses per window instead of 5.
+ * The write routes' second guard, called AFTER requireSession. With auth
+ * required, a write with no teacher session is refused with 401 and
+ * `reason: "teacher"`, which the page reads as "show the prompt, retry
+ * nothing" rather than "lock the device". With auth disabled the write
+ * proceeds, named when a teacher happens to be set and unnamed when
+ * not.
  */
-export function claimLoginAttempt(now = Date.now()): number {
-  const remaining = lockoutRemainingMs(now);
-  if (remaining > 0) return remaining;
-  recordLoginFailure(now);
-  return 0;
+export function requireTeacher(request: Request): TeacherGate {
+  const teacher = teacherFrom(request);
+  if (teacher !== null || !authRequired()) return { ok: true, teacher };
+  return {
+    ok: false,
+    denied: NextResponse.json(
+      { error: "Enter your four digits first.", reason: "teacher" },
+      { status: 401 },
+    ),
+  };
+}
+
+/** `teacher=<id>` or `teacher=none`, for the write routes' log lines. */
+export function teacherLogTag(teacher: TeacherIdentity | null): string {
+  return `teacher=${teacher === null ? "none" : teacher.id}`;
 }

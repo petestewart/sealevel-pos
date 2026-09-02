@@ -221,6 +221,19 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       );
     `,
   },
+  {
+    /* T44: who comped it. Two nullable columns, additive, so the deployed
+     * database at 2 runs only this block. The teacher's Mindbody staff
+     * id and the name as it read at the time (a handle plus a label, not
+     * a staff table); null on a comp made with no teacher session, which
+     * only auth-disabled dev allows. */
+    version: 3,
+    sql: `
+      ALTER TABLE comp_receipts
+        ADD COLUMN IF NOT EXISTS teacher_id text,
+        ADD COLUMN IF NOT EXISTS teacher_name text;
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -329,10 +342,11 @@ export interface CompReceiptItem {
  * The durable record of a comp: the reason the teacher wrote, the total
  * on the studio, our line list, which target it ran against, and whether
  * the write was suppressed (dry run or the write guard) rather than
- * recorded by Mindbody. The route's `[comp]` log line stays exactly as it
- * is (that copy exists even with no database); this row is the record
- * that survives a log rotation. Returns whether the row landed; false is
- * "the log line already has it", never a failure of the comp.
+ * recorded by Mindbody, and since T44 which teacher made it. The route's
+ * `[comp]` log line stays exactly as it is (that copy exists even with
+ * no database); this row is the record that survives a log rotation.
+ * Returns whether the row landed; false is "the log line already has
+ * it", never a failure of the comp.
  */
 export async function insertCompReceipt(receipt: {
   saleId: string | null;
@@ -342,14 +356,17 @@ export async function insertCompReceipt(receipt: {
   reason: string;
   target: string;
   suppressed: boolean;
+  teacherId: string | null;
+  teacherName: string | null;
 }): Promise<boolean> {
   try {
     const p = await ready();
     if (!p) return false;
     await p.query(
       `INSERT INTO comp_receipts
-         (sale_id, client_id, total_cents, items, reason, target, suppressed)
-       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)`,
+         (sale_id, client_id, total_cents, items, reason, target, suppressed,
+          teacher_id, teacher_name)
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)`,
       [
         receipt.saleId,
         receipt.clientId,
@@ -358,6 +375,8 @@ export async function insertCompReceipt(receipt: {
         receipt.reason,
         receipt.target,
         receipt.suppressed,
+        receipt.teacherId,
+        receipt.teacherName,
       ],
     );
     return true;

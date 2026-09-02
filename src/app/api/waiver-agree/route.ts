@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireSession } from "@/lib/auth";
+import { requireSession, requireTeacher } from "@/lib/auth";
 
 import { recordLiabilityRelease, updateClientNotes } from "@/lib/clients";
 import { insertWaiverReceipt } from "@/lib/db";
@@ -44,6 +44,8 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
+  const gate = requireTeacher(request);
+  if (!gate.ok) return gate.denied;
   try {
     const { clientId, notes, textSha256 } = await request.json();
     if (typeof clientId !== "string" || !clientId) {
@@ -103,6 +105,7 @@ export async function POST(request: Request) {
         clientId,
         at,
         textSha256: waiver.sha256,
+        teacher: gate.teacher === null ? "none" : String(gate.teacher.id),
       }),
     );
 

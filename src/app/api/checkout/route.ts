@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireSession } from "@/lib/auth";
+import { requireSession, requireTeacher, teacherLogTag } from "@/lib/auth";
 import { insertCompReceipt, type CompReceiptItem } from "@/lib/db";
 import { isDryRun, mindbodyHttpStatus, target } from "@/lib/mindbody";
 
@@ -143,6 +143,8 @@ function parseSplitLeg(raw: unknown): SplitLeg | string {
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
+  const gate = requireTeacher(request);
+  if (!gate.ok) return gate.denied;
   let payload: any;
   try {
     payload = await request.json();
@@ -551,7 +553,7 @@ export async function POST(request: Request) {
     console.log(
       `[comp] ${target()} sale=${outcome.suppressed ? "suppressed" : (outcome.saleId ?? "unknown")} ` +
         `client=${clientId ?? "house"} total=${total.toFixed(2)} ` +
-        `reason=${JSON.stringify(reason)}`,
+        `reason=${JSON.stringify(reason)} ${teacherLogTag(gate.teacher)}`,
     );
     await insertCompReceipt({
       saleId: outcome.suppressed ? null : outcome.saleId,
@@ -561,6 +563,8 @@ export async function POST(request: Request) {
       reason,
       target: target(),
       suppressed: outcome.suppressed,
+      teacherId: gate.teacher === null ? null : String(gate.teacher.id),
+      teacherName: gate.teacher?.name ?? null,
     });
   };
 
@@ -585,7 +589,8 @@ export async function POST(request: Request) {
           console.log(
             `[comp] ${target()} sale=none outcome=${isAmbiguous(err) ? "ambiguous" : "refused"} ` +
               `client=${clientId ?? "house"} total=${total.toFixed(2)} ` +
-              `reason=${JSON.stringify(compReason ?? "")} error=${JSON.stringify(errMessage(err))}`,
+              `reason=${JSON.stringify(compReason ?? "")} error=${JSON.stringify(errMessage(err))} ` +
+              teacherLogTag(gate.teacher),
           );
         }
         throw err;
