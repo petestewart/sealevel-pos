@@ -69,7 +69,7 @@ should not be more than 20."), now the chunk size in `briefsForIds`.
       list panel)
 - [x] A class with room renders all counters with zero extra calls
 
-## T4. Counter modals (PLAN 1.4) — after T3
+## T4. Counter modals (PLAN 1.4), after T3
 
 - [x] Tapping a counter lists the people behind it
 - [x] Waitlist entries are stubs (`ClassId`/`ClientId` only): names resolve
@@ -4876,6 +4876,34 @@ Held, with the sequence that proved it:
 
 `typecheck` and `build` clean.
 
+## T47. Guest passes: how the member's pass reaches the guest (open, Pete, 2026-09-02)
+
+What the data says (ai-manager's sales and visits tables, twelve months):
+the auto-renew membership adds a $0 "Guest Pass (for auto-debit members
+only)" to the MEMBER's account each month (100 of 106 recent guest-pass
+sales are on member accounts); the visits paid with one are mostly
+non-members, booked in Business Mode; and all 56 guest-pass visits since
+2025-10 had a member attending the same class. The counter moment is
+"Bella brought a friend", never a guest alone.
+
+What only staff can say: which Mindbody screen makes the guest's visit
+pull from the member's pass. Either (1) "pay with another client's
+pricing option" on the sign-in screen, which rides Client Relationships
+(member pays for guest), or (2) selling the guest a $0 Guest Pass at the
+desk and booking against it (the six non-member sales look like this).
+
+Why it decides the build: the API's booking and visit-payment calls take
+a `ClientServiceId` the spec describes as "on the client's account"
+(class.yml:3370), so handing the guest's visit the member's service id
+may be refused. Mechanism 2 is entirely within what the app already does.
+
+Next step once Pete has the answer: a write-guarded probe against two
+dummy production clients (`POS_WRITE_CLIENT_IDS`), trying the member's
+service id on the guest's visit. Accepted: a "guest of NAME" action on
+the member's roster row. Refused: search the guest, sell the $0 pass with
+the member as payer (`PayerClientId` exists on the checkout request),
+book.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
@@ -4914,7 +4942,7 @@ ignored (credit only when it covers the whole total); P4 the $10 minimum
 measured on the after-tax total; PLAN 2.6 (the $49 special / $21 upgrade)
 deferred on B1 and P3.
 
-## T10. Auth — deliberately last
+## T10. Auth, deliberately last
 
 - [ ] Shared PIN (stubbed in `.env.example`) or per-teacher identity per the
       P1 answer, whichever exists first. Nothing above waits on this.
