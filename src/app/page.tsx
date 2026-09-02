@@ -6013,17 +6013,21 @@ function AuthGate() {
           response.status === 401 &&
           url.origin === window.location.origin &&
           url.pathname.startsWith("/api/") &&
-          url.pathname !== "/api/login" &&
-          url.pathname !== "/api/teacher/login"
+          url.pathname !== "/api/login"
         ) {
           const body = await response
             .clone()
             .json()
             .catch(() => null);
           if (body && body.reason === "teacher") {
-            setTeacher(null);
-            setTeacherPrompt(true);
-            void loadTeacher();
+            /* Wrong digits at the prompt itself are the prompt's own
+             * business; a 401 on that path WITHOUT the reason is the
+             * device session gone, and falls through to the lock. */
+            if (url.pathname !== "/api/teacher/login") {
+              setTeacher(null);
+              setTeacherPrompt(true);
+              void loadTeacher();
+            }
           } else {
             setPhase("locked");
           }

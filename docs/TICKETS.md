@@ -4146,7 +4146,7 @@ On top of it a TEACHER session, for a shift:
    prompt back and retries nothing; any other 401 is still the lock.
 5. **Writes carry the teacher.** `requireTeacher` after `requireSession`
    in checkin, book, cancel-visit, visit-payment, waiver-agree,
-   purchase-contract and checkout. `comp_receipts` gains `teacher_id`
+   purchase-contract, checkout and (from the review) client-field. `comp_receipts` gains `teacher_id`
    and `teacher_name` (migration 3, additive); the `[comp]` lines and
    the `waiver-agreed` line carry `teacher=<id|none>`. The Mindbody
    payloads, the single flight and the outcome wording are unchanged;
@@ -4190,6 +4190,126 @@ reason="Teacher" teacher=100`; after logout the check-in is 401 again.
   call log is where a `teacher` field would go.
 - With auth disabled the prompt can be skipped; the four-digit match
   then still works, it is just optional.
+
+### Review (separate reviewer), T44
+
+Read as a security change first. Node-level against the dev server with
+`POS_PIN=2468` and the mock on :4545 (the staff read refusing first, then
+the fixture), then the browser at 1180 and 1080 in both palettes, then a
+second server with `POS_PIN` unset. Scripts `t44-review-node.js`,
+`t44-review-ui.js`, `t44-review-noauth.js`; shots in `t44-review/`.
+
+**Three real bugs, fixed in place.**
+
+1. **`/api/client-field` was a Mindbody write with no teacher gate.**
+   `POST /client/updateclient` (notes, red and yellow alerts) sat behind
+   the device session only: with a device session and no teacher cookie
+   the request reached the mock. Everything the ticket calls "every write
+   route" was gated; this one was not in its list. Fixed: `requireTeacher`
+   after `requireSession`, same 401 `reason: "teacher"`; verified 401 with
+   no teacher, the page's wrapper shows the prompt as for any write.
+2. **A device session gone at the prompt read as "wrong digits" and
+   stuck the counter.** The fetch wrapper excluded `/api/teacher/login`
+   from its 401 handling entirely, so when the device cookie had expired
+   (or `POS_PIN` had been rotated) while the prompt was up, every entry
+   answered `{error: "unauthorized"}` and the prompt said "No teacher has
+   a phone ending in those digits." until someone reloaded. Sequence:
+   unlock, clear `pos_session`, type 1234: prompt still up with that
+   message (`A-device-gone-at-prompt.png` is the after). Fixed: the login
+   route's three 401s carry `reason: "teacher"`, and the wrapper no
+   longer excludes the path: a 401 on it WITH the reason is the prompt's
+   own business (nothing happens), one WITHOUT is the lock. Same
+   sequence now lands on the lock screen.
+3. **A unique match ignored a wrong `staffId`.** `{pin: 1234, staffId:
+   101}` answered 200 as staff 100: the id was only checked when the pin
+   collided. No privilege gained (the pin alone names 100), but the
+   contract "a staff id must be one of THAT pin's matches" was not what
+   the code did. Fixed: when given, the id must be in the match set,
+   unique or not; `{1234, 101}` is 401, `{1234, 100}` and `{7788, 102}`
+   are 200, `{7788, 100}` and `{7788, 105}` (the inactive one) are 401.
+
+**Checked and NOT a bug** (the sequence or reasoning in each):
+
+- Token: all four fields are under the HMAC with the `.` separators
+  (`t1.<id>.<name b64url>.<issuedAt>`); id and issuedAt are digit-only
+  and the name is base64url, so no field can carry a `.` and the
+  five-part split is unambiguous. Tampering the id, the name, issuedAt
+  by 1 ms, the prefix, a sixth part, the signature's case, a `.` in the
+  name, the device token as a teacher token and an empty value all
+  verify to null. The regexes run before the HMAC but branch on public
+  format, not on the secret; the signature check is `safeEqual` and
+  expiry is read from the signed issuedAt after it. The key is the
+  device key, so a `POS_PIN` or `POS_SESSION_SECRET` change invalidates
+  both cookies. `Secure` follows `x-forwarded-proto` (first value: "http,
+  https" is not Secure, "https" is), absent that the URL; over plain
+  http the cookie has no Secure and stores. `HttpOnly; SameSite=Strict;
+  Path=/; Max-Age=43200`.
+- `teacherFrom` reads the cookie without checking the device session,
+  but every caller runs `requireSession` first: a teacher cookie with no
+  device cookie is 401 `unauthorized` on `/api/teacher`, the login and
+  every write.
+- **Replay after logout: possible, accepted.** There is no server-side
+  list, so a cookie value captured before the header's switch tap names
+  that teacher until its twelve hours run out (verified: the pre-logout
+  value still answers `/api/teacher` and a check-in). Capturing it needs
+  the device or a LAN proxy over http, and it names a teacher on OUR
+  receipts and logs; it opens no Mindbody write the device session did
+  not already open. Twelve hours is a shift; acceptable for attribution.
+- Login: `requireSession` first, then the claim before the first await;
+  a parallel burst of 12 wrong pins answered five 401s and seven 429s
+  (`retryAfterSeconds: 30`); a device login, right or wrong, during the
+  teacher lockout was unaffected and vice versa. `^\d{4}$` refuses a
+  leading space, fullwidth digits, a number and five digits (400);
+  `staffId` as a string, null or 1.5 is 400; a non-JSON body 400. Every
+  400 and the 502 burn a claim, which is conservative rather than wrong:
+  the prompt cannot produce a malformed post. The staff read refusing
+  answers 502 with Mindbody's message and no stack, and re-reads on the
+  next call when nothing is cached. No answer carries a phone or
+  `pinDigits`: the choices and the teacher are `{id, name}`.
+- **Enumeration, stated.** Five tries then 30 s: ten guesses a minute
+  behind the device session. Walking all 10,000 pins is about 17 hours;
+  with ~15 teachers the expected first hit is ~625 guesses, about an
+  hour of continuous typing at the counter, and the prize is a
+  colleague's name on a comp receipt. Acceptable for attribution-only;
+  the device PIN, not this layer, is what keeps a stranger off the
+  writes.
+- Staff read: the mock logged `?Filters=ClassInstructor&Limit=100&
+  Offset=0`, and a 400 from Mindbody on that parameter would take the
+  error path (502 / `staffError`), not an unfiltered read; the local
+  `ClassTeacher`/`Active` filter is the fallback for it being ignored,
+  not for it being refused. Paging stops on a short page or
+  `TotalResults`, `MAX_PAGES` caps a runaway, the `seen` set dedups.
+  "+1 206-555-7788" and "425.555.7788" both yield 7788 and both names
+  come back as choices; a two-digit work phone is null and names the
+  teacher on the no-phone line; the non-teacher and the inactive teacher
+  are absent from choices and from `noPhone`. The cache is a module
+  variable keyed by target; the only place a phone is written is the
+  mindbody call log's response body, which `/api/devlog` gates.
+- Gates: the seven routes plus client-field call `requireTeacher` right
+  after `requireSession` and before any Mindbody call; checkout's diff
+  is the gate, two log tags and two receipt columns, and `sale.ts` has
+  no diff. With `POS_PIN` unset the prompt offers "Continue without a
+  name", the header reads "Who is here?", a check-in with no cookies at
+  all is 200, and 1234 still names Pete. Migration 3 is two
+  `ADD COLUMN IF NOT EXISTS`; the runner applies every version above
+  `max(schema_version)` in array order, so a fresh database runs 1, 2,
+  3 and one at 2 runs only 3.
+- Prompt: `required` true has no skip control, Escape is not handled,
+  the shell has no click handler and is `z-index: 40` over everything;
+  two synchronous clicks and a keydown on the fourth digit posted once
+  (`submittingRef`, then the keys disable); a write 401 with the reason
+  brought the prompt back after exactly one `/api/checkin` POST and the
+  mock saw no `updateclientvisit` from it; the first Tab on the
+  collision list lands on "Alex Rivera" and Enter names them. Header at
+  1080: badge 64 px high, 16 px, on the counters' row, no horizontal
+  overflow. Colours in the new CSS are all tokens present in both
+  palettes; nothing under 16 px; no em dashes.
+- Docs: question 3, `.env.example`, the CLAUDE.md gap and PLAN.md agree
+  with the code; item 5 above now lists client-field.
+
+Left as before, plus: the login limiter counts a 502 as a failed guess,
+so a Mindbody outage during a shift change locks the door for 30 s after
+five tries, which is a nuisance rather than a risk.
 
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 

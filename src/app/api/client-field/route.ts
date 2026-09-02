@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireSession } from "@/lib/auth";
+import { requireSession, requireTeacher } from "@/lib/auth";
 
 import {
   EDITABLE_CLIENT_FIELDS,
@@ -28,6 +28,9 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
+  /* A Mindbody write like the rest (T44 review): named or refused. */
+  const gate = requireTeacher(request);
+  if (!gate.ok) return gate.denied;
   try {
     const { clientId, field, value } = await request.json();
     if (typeof clientId !== "string" || !clientId) {

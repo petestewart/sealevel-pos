@@ -77,34 +77,31 @@ export async function POST(request: Request) {
   const matches = teachers.filter(
     (t) => t.pinDigits !== null && safeEqual(t.pinDigits, pin as string),
   );
+  /* Every 401 here carries `reason: "teacher"` (T44 review): the page's
+   * fetch wrapper reads a 401 WITHOUT it on this path as the device
+   * session being gone, which is the lock, not "wrong digits". */
+  const wrong = (error: string) =>
+    NextResponse.json({ error, reason: "teacher" }, { status: 401 });
   if (matches.length === 0) {
     /* Counted by the claim above. */
-    return NextResponse.json(
-      { error: "No teacher has a phone ending in those digits." },
-      { status: 401 },
-    );
+    return wrong("No teacher has a phone ending in those digits.");
   }
 
-  let chosen = matches.length === 1 ? matches[0] : undefined;
-  if (matches.length > 1) {
-    if (staffId === undefined) {
-      /* The digits were right, so this is not a failed guess. */
-      recordTeacherSuccess();
-      return NextResponse.json({
-        ok: false,
-        choices: matches.map((t) => ({ id: t.id, name: t.name })),
-      });
-    }
-    chosen = matches.find((t) => t.id === staffId);
-    if (!chosen) {
-      return NextResponse.json(
-        { error: "That name does not go with those digits." },
-        { status: 401 },
-      );
-    }
+  if (matches.length > 1 && staffId === undefined) {
+    /* The digits were right, so this is not a failed guess. */
+    recordTeacherSuccess();
+    return NextResponse.json({
+      ok: false,
+      choices: matches.map((t) => ({ id: t.id, name: t.name })),
+    });
   }
+  /* A staff id, when given, must be one of THIS pin's matches, even when
+   * there is only one: a unique match used to ignore a wrong id rather
+   * than refuse it (T44 review). */
+  const chosen =
+    staffId === undefined ? matches[0] : matches.find((t) => t.id === staffId);
   if (!chosen) {
-    return NextResponse.json({ error: "no match" }, { status: 401 });
+    return wrong("That name does not go with those digits.");
   }
 
   recordTeacherSuccess();
