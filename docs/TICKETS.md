@@ -3493,6 +3493,215 @@ NOT A BUG, checked:
 Verified: `npm run typecheck`, `npm run build`, the harness in both
 palettes, and the two stubbed sequences above.
 
+## T42. Attach modal redesign, walk-in search rows, client profile (Pete, 2026-09-02)
+
+Pete reviewed the app live and listed changes to the Buy screen's
+"Attach a client" modal, the check-in screen's walk-in search, and asked
+for the profile modal T41 built the data layer for. His words, then the
+design he approved ("go with that filter design"), then what landed.
+
+### Pete's items
+
+Attach modal:
+
+- "when i search for a client to sell to, it looks like there's only one
+  page of responses we should lazy load as the user scrolls"
+- "if the user searches and then clicks X to clear the search bar, the
+  search results should disappear. currently they stay visible"
+- "the list of clients in a class should be in alphabetical order"
+- "the M/i/signed-up pills should all be lined up vertically in the list"
+- "when i type a name in and click search, the modal temporarily shrinks
+  vertically while the request is made. should stay the same size always"
+- "there should be a row of filters. In class should be one of them. when
+  In class is selected, there should be more filters: all, signed-in,
+  not-signed-in ... the class drop down can be more narrow and these can
+  be to the right"
+- "when in class is not selected, the class selector dropdown and its
+  filter buttons should be greyed out"
+- "since we can have duplicate names, we should optionally display email
+  and phone in small text (mindbody does this already). we can do this by
+  getting rid of the M/i/waiver text and placing it there"
+- "tapping on the row at all should select the client. remove the
+  checkmark-person icon"
+- "if i type a name with in class filter selected, the results should be
+  search results that only match students in the class (and all other
+  filters that are on)"
+- "in class with the current class should be the default when i first
+  click on Attach a client and I land on this. I should see a list of all
+  clients for the current class"
+- "don't need all the info here. waiver is irrelevant."
+
+Walk-in search (check-in screen):
+
+- "when i search for a client, the buy icon should not be in the results
+  list"
+- "remove the + icon and make the whole row clickable"
+
+Profile:
+
+- "there should be a profile icon and when i click it, a modal with the
+  same basic info as the mindbody client-info page should show"
+
+### The decided design
+
+- Search box on top as before (Enter or Search; the X clears the query
+  AND the results). Under it a filter row: an `In class` toggle (64px,
+  accent-filled when on), ON by default with the roster's current class;
+  the class dropdown narrowed to about half the row with a three-segment
+  control to its right (`All`, `Signed in`, `Not yet`, icon plus label,
+  64px, one active). With `In class` off, the dropdown and the segments
+  render greyed and disabled together.
+- `In class` on, no query: the class roster, alphabetical by last name
+  then first, cut by the segment (signed in = `checkedIn`; not yet =
+  booked and not checked in). With a query: the same list filtered
+  locally, case-insensitive on the name, no Mindbody call, no
+  three-letter minimum.
+- `In class` off: a query searches everyone through `/api/search`; no
+  query shows only the hint.
+- Rows: name (20px/600 as the modal's rows already were), a small muted
+  email and phone line (14px, the recorded metadata exception) on SEARCH
+  rows only; class rows show only what the class says, a `signed up` /
+  `checked in` chip, in a fixed grid column so the chips line up. No M,
+  no info icon, no waiver, no pass cell. The whole row is the tap target
+  (64px+, `role="button"`, aria-label "Attach NAME"); the person-check
+  icon is gone.
+- Lazy loading: `/api/search` accepts `offset`; the modal loads a page
+  of 20 and fetches the next when the list scrolls near its end, stopping
+  on a short page or at `TotalResults`. One metered call per page, no
+  prefetching beyond the page the scroll asked for.
+- Stable height: the rows region is a fixed height (about five rows,
+  scrolling), so the modal keeps its size while a request is in flight;
+  the previous rows stay, dimmed, under a quiet "Searching..." line.
+- Footer sentence: `attachSearchHint(config)` from SaleScreen.
+- Walk-in search rows get the same treatment: name plus the contact
+  line, a chip only for someone signed up, checked in or on the waitlist
+  for the ACTIVE class, no M/info/waiver, no Buy bag; the whole row is
+  the add, with the T19 waiver gate, the unpaid confirm and the full-
+  class waitlist confirm exactly as the "+" had them; the per-row outcome
+  text stays. The roster list itself is unchanged (T14's columns stand).
+- A 44px profile icon on roster rows (actions cell) and at the right
+  edge of search rows opens a modal that fetches `/api/client-profile`
+  and renders `ClientProfileCard`; Escape and the scrim close it; it
+  stacks above the search modal.
+
+### What was built
+
+- [x] **Paging** (`src/lib/clients.ts`, `src/app/api/search/route.ts`):
+      `search(query, limit, offset)` sends `/client/clients`' own
+      `offset` (client.yml:1392) and answers `total` from
+      `PaginationResponse.TotalResults` (client.yml:6753), null when
+      omitted. Each result carries `phone` (Mobile, else Home, else
+      Work, the order clientprofile.ts reads them). Every page is one
+      metered call.
+- [x] **The scroll-loaded list** (page.tsx `fetchSearchPage`,
+      `loadMoreResults`, `searchPage`): a sentinel at the end of the
+      list (`.attach-more`) under an IntersectionObserver; the next page
+      appends, de-duplicated by id in case a client created between two
+      pages shifts Mindbody's offsets; a short page or the total reached
+      ends it and the sentinel unmounts. One `AbortController` covers
+      the query and the pages: a new query, the X, the close and the
+      toggle coming back on all abort whatever is in flight, so a late
+      answer can never land under the wrong query. Harness: "wan" with
+      45 matches loaded 20, 20 and 5 across three calls as the region
+      scrolled, then nothing more. The walk-in search pages the same
+      way at its own `searchLimit` (12): 12 then 12 more on scroll.
+- [x] **The X clears results with the query** (`clearSearch`), in both
+      search bars. T32's "clearing the box leaves the results up" is
+      reversed here on Pete's instruction.
+- [x] **The filter row** (`attachInClass`, `attachSeg`,
+      `toggleAttachInClass`): the toggle, the narrowed dropdown, the
+      segment. Off greys both (opacity on the group, `disabled` on the
+      controls). Toggling ON drops the search and shows the roster
+      again; toggling OFF with a query of three letters or more already
+      typed searches everyone at once (one call), with fewer letters it
+      says so under the bar rather than making a call that would be
+      refused anyway.
+- [x] **In-class rows**: `byLastThenFirst` sorts; the segment and the
+      typed query filter in memory as the teacher types (Enter does
+      nothing with the toggle on, deliberately, since there is nothing
+      to fetch). Harness: 30 booked, `Signed in` shows the 10 checked
+      in, `Not yet` the 20 others, "wan" typed shows the class's five
+      Wangs with zero search calls. The pass sweep no longer runs for
+      attach-mode results, since the rows have no pass cell to fill.
+- [x] **Stable height**: `.attach-rows` is `height: min(46vh, 420px)`
+      (420 at 1366x1024), the modal measured 679px tall before, during
+      and after a search. The last rows dim (`.attach-rows.searching
+      .roster`) under "Searching Mindbody...".
+- [x] **Rows**: `attachRowItem` is the whole-row tap (`.rrow.rrow-tap`,
+      keyboard Enter/Space too); name, `.contact-line` on search rows
+      (whether or not that person also happens to be on the picked
+      roster), `.cell-chip` as its own grid column (`.modal-search.
+      attach-mode { --roster-cols: minmax(0, 1fr) 118px }`). Chips
+      measured at one x down the list in both modals. Dropped from the
+      attach rows: M, info icon, no-waiver pill, passes, balance (the
+      balance still rides `attachSaleClient` for SaleScreen).
+- [x] **Footer**: `attachSearchHint(config)`, so with no house client
+      the line names `POS_HOUSE_CLIENT_ID` instead of promising an
+      anonymous sale (closes T41's open note).
+- [x] **Walk-in search rows**: five columns (`.modal-search
+      --roster-cols`: name | passes | balance | chip 118px | profile
+      44px). Every match shows now, roster people included: booking
+      mode used to hide them, which read as "nobody found" for the
+      person standing there. `rosterStatus` maps the active class's
+      entries and the loaded waitlist (never fetched for this) to
+      `checked in` / `signed up` / `waitlist`; a row with a standing is
+      not a tap target and carries no add label. The Buy bag, the "+",
+      M, info and the waiver pill are gone from these rows. The tap
+      calls `tapWalkIn` unchanged; the pass chevron's stopPropagation
+      keeps the picker off the row tap; the working row shows its
+      spinner in the chip column and the outcome text stays under the
+      name.
+- [x] **Profile modal** (`openProfile`, `closeProfile`, `profileView`,
+      `profileState`): `PersonIcon` in the roster's actions cell (after
+      the Buy bag, before the Mindbody link) and at the right edge of
+      search rows; fetched at open, generation-guarded against a stale
+      answer; `.modal-scrim.profile-scrim` at z-index 31 so it paints
+      over the search modal's scrim; the card scrolls inside
+      `.profile-scroll`. Escape closes it first: the search and counter
+      modals' Escape handlers stand down while it is open, and
+      SaleScreen's `modalAbove` counts it.
+- [x] **Roster actions column**: 328px (`--roster-cols`), the sum of
+      what the cell actually holds: the "checked in" chip renders at
+      120px, not its 104px min-width, which is the overlap the T39
+      review saw in the 260px column. Measured: cell 328, children
+      120 + 44 x 4 + gaps, no horizontal overflow at 1366.
+- [x] CSS: `.add-btn`, `.marker-line`, `.mini-stop`, `.attach-group` and
+      `.attach-quick-label` retired with the rows that used them; new
+      rules all tokens, both palettes; 14px only on `.contact-line`.
+
+Verified: `npm run typecheck`, `npm run build`, and the Playwright
+harness (`scratchpad/t42.js`, mocked API: a 30-person class with a third
+checked in, 45 search matches paged at the requested limit, a profile
+fixture) at 1366x1024 in both palettes, screenshots under
+`scratchpad/t42/`: `attach-default`, `attach-signed-in`,
+`attach-inclass-query`, `attach-searching`, `attach-everyone-page1`,
+`attach-everyone-page2`, `attach-cleared`, `walkin-search`, `roster`,
+`profile-loading`, `profile`, `profile-over-search`.
+
+### Judgement calls and what is left
+
+- **Search stays submit-triggered.** The brief describes the everyone-
+  search as "existing debounce/abort/minimum"; the debounce went in T16
+  (Enter or Search fires the one call, which is also how Pete described
+  it: "type a name in and click search"). Kept as is; the abort and the
+  minimum are there.
+- **T32's groups are gone.** With the filter row, "in class" and
+  "everyone" are two states of one list rather than two groups of one
+  search; a search row who is on the picked roster still shows the
+  chip, so the fact T32 surfaced is still on screen.
+- **Rows already in the class are not tappable in the walk-in search.**
+  Adding them would be refused by Mindbody anyway; the chip says where
+  they stand, and the roster row is where check-in happens.
+- [ ] Pete: the everyone-search's page size in attach mode is 20 (the
+      walk-in search keeps the drawer's 12). Say if it should be one
+      number.
+- [ ] Not verified live: `/client/clients?searchText=&offset=` paging
+      order is assumed stable between calls, and `TotalResults` present;
+      a missing total falls back to the short-page rule.
+- [ ] The profile icon in the Buy header beside the attached name (T41's
+      suggestion) is not added: SaleScreen is out of this ticket's
+      scope. The roster and search rows cover the counter.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
