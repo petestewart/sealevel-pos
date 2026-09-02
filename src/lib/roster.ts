@@ -134,6 +134,12 @@ async function classesBetween(
         capacity: c.MaxCapacity ?? null,
         booked: c.TotalBooked ?? null,
       }),
+    )
+    /* Mindbody returns the window in no useful order (Pete's live list
+     * read 12:00, 7:00pm, 8:00am, 5:00pm). The naive local strings sort
+     * lexically as time. */
+    .sort((a: ClassSummary, b: ClassSummary) =>
+      a.startsAt < b.startsAt ? -1 : a.startsAt > b.startsAt ? 1 : 0,
     );
 }
 

@@ -3237,6 +3237,10 @@ Two defects in one screenshot.
 - Teacher names drop parts with no letter or digit, so a placeholder
   staff record renders as "TBA", not "TBA .".
 
+- Pete's next screenshot, with the real classes showing, had them in
+  Mindbody's order (12:00, 7:00pm, 8:00am, 5:00pm). `classesBetween` now
+  sorts by `startsAt`.
+
 Not verifiable here (no credentials in the container). Pete: reload at a
 studio hour and confirm the dropdown shows the classes actually around
 now, and that a genuinely cancelled class is absent.
