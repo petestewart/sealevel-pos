@@ -530,6 +530,9 @@ type ChargeResult =
       count: number;
       changeCents: number;
       comped: boolean;
+      /** T43: the reason the teacher gave for a comp, for the done
+       *  screen's "Comped: <reason>" line. Null on a paid sale. */
+      compReason: string | null;
     }
   | { kind: "suppressed"; mode: string }
   | { kind: "split"; message: string; mindbody: string }
@@ -539,6 +542,16 @@ type ChargeResult =
 /** Hold-to-arm duration for the Comp method: long enough that a graze
  *  cannot select it, short enough to not feel broken. */
 const COMP_HOLD_MS = 700;
+
+/** T43: a comp needs a written reason. The presets fill the field and
+ *  can be edited; the bounds mirror /api/checkout's validation exactly,
+ *  so a reason the dialog accepts is one the route accepts. */
+const COMP_REASONS = ["Teacher", "Trade", "Goodwill", "Damaged item"] as const;
+const COMP_REASON_MIN = 3;
+const COMP_REASON_MAX = 200;
+const compReasonValid = (reason: string): boolean =>
+  reason.trim().length >= COMP_REASON_MIN &&
+  reason.trim().length <= COMP_REASON_MAX;
 
 /**
  * THE T24 SEAM, now live, and since the second live test the whole LEFT
@@ -647,8 +660,20 @@ function PaymentPanel(props: {
   const nextLineId = useRef(1);
   /** Comp stays OUT of the list: it is a whole-sale gesture with its own
    *  hold, not a tender. Arming it clears the lines; adding a line
-   *  disarms it. The two can never both be set. */
-  const [comped, setComped] = useState(false);
+   *  disarms it. The two can never both be set.
+   *
+   *  T43 (Pete: "is there a way to force the teacher to write a reason
+   *  for comping?"): an armed comp IS its reason. The state is the
+   *  reason or null, not a boolean beside a string, so no render can
+   *  find comp armed with nothing written; `chargeable` still checks the
+   *  text in the same render, belt and braces. */
+  const [comp, setComp] = useState<{ reason: string } | null>(null);
+  const comped = comp !== null;
+  /** The reason dialog the hold opens (T43): open, and the draft text
+   *  the chips fill and the teacher may edit. Nothing arms until Comp
+   *  in the dialog is tapped with at least COMP_REASON_MIN characters. */
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const [reasonDraft, setReasonDraft] = useState("");
   /** The amount modal: the id of the tender line it is editing, or null.
    *  ONE keypad for every source, over a scrim (T36, Pete: "having it be
    *  a modal is def better than this"), so opening it moves nothing in
@@ -718,15 +743,27 @@ function PaymentPanel(props: {
     onModalChange(false);
   }, [onModalChange]);
 
-  /** Blank the whole tender: every line, the amount modal, and comp. Used by
-   *  each of the reset paths below and by a completed sale. */
+  /** Close the reason dialog with nothing armed and the draft gone, and
+   *  report the close upward exactly as dismissPad does: the dialog owns
+   *  Escape while open, so a reset that closes it must not leave
+   *  SaleScreen believing something still blocks Escape. */
+  const closeReason = useCallback(() => {
+    setReasonOpen(false);
+    setReasonDraft("");
+    onModalChange(false);
+  }, [onModalChange]);
+
+  /** Blank the whole tender: every line, the amount modal, comp and its
+   *  reason dialog. Used by each of the reset paths below and by a
+   *  completed sale. */
   const resetTender = useCallback(() => {
     setLines([]);
-    setComped(false);
+    setComp(null);
     setCompCleared(false);
     setCompHint(false);
     dismissPad();
-  }, [dismissPad]);
+    closeReason();
+  }, [dismissPad, closeReason]);
 
   /* ANY client change -- detach, attach, or the per-row Buy button
    * switching straight from one client to another -- invalidates the
@@ -789,12 +826,15 @@ function PaymentPanel(props: {
   useEffect(() => {
     if (visible) return;
     dismissPad();
+    /* T43: a reason dialog left open by a hold that landed just before
+     * Back to items goes the same way, with its draft. */
+    closeReason();
     setCompHint(false);
     if (comped) {
-      setComped(false);
+      setComp(null);
       setCompCleared(true);
     }
-  }, [visible, comped, dismissPad]);
+  }, [visible, comped, dismissPad, closeReason]);
 
   /* Source availability. An unavailable source renders greyed WITH the
    * reason, never hidden (PLAN 2.2: "account credit ($12) greyed out
@@ -1021,8 +1061,12 @@ function PaymentPanel(props: {
     !pricing &&
     total !== null &&
     !charging &&
-    (comped
-      ? lines.length === 0
+    (comp !== null
+      ? /* T43: a comp charges only with its reason written. The state
+           shape already makes an armed comp carry one; this re-checks
+           the text in the SAME render that enables the button, so no
+           state slip could ever leave a reasonless comp chargeable. */
+        lines.length === 0 && compReasonValid(comp.reason)
       : /* Due EXACTLY zero: the lines cover the server's total to the
            cent, no more and no less (cash surplus is change, not
            coverage). */
@@ -1082,8 +1126,12 @@ function PaymentPanel(props: {
       method: line.source,
       amount: (coverage[i] ?? 0) / 100,
     }));
-    const payment = comped
-      ? { method: "comp" as const }
+    /* T43: a comp carries its reason (the route refuses a comp without
+     * one, and a reason on any other method). The reason never reaches
+     * Mindbody, whose checkout request has no notes field; the route
+     * records it in comp_receipts and the server log. */
+    const payment = comp !== null
+      ? { method: "comp" as const, compReason: comp.reason }
       : legs.length === 2
         ? { split: { legs } }
         : soleLine !== undefined && legs[0] !== undefined
@@ -1115,6 +1163,10 @@ function PaymentPanel(props: {
             price: line.item.price,
             taxExempt: line.item.taxExempt,
             taxRate: line.item.taxRate,
+            /* T43: on a comp only, the item's name rides along for the
+             * comp receipt's record of what was given away. The route
+             * never forwards it; Mindbody's cart takes ids. */
+            ...(comp !== null ? { name: line.item.name } : {}),
           })),
           ...(clientId ? { clientId } : {}),
           ...payment,
@@ -1178,6 +1230,7 @@ function PaymentPanel(props: {
           count: itemCount,
           changeCents: changeAtTap,
           comped,
+          compReason: comp?.reason ?? null,
           summary: `Paid ${money(body?.total ?? total)} by ${methodName}${
             client ? ` for ${client.name}` : ""
           }.`,
@@ -1258,7 +1311,7 @@ function PaymentPanel(props: {
     if (cents <= 0) return;
     const id = nextLineId.current++;
     /* Adding a tender disarms comp: the sale is being paid for. */
-    setComped(false);
+    setComp(null);
     setCompCleared(false);
     setCompHint(false);
     setLines((cur) => [...cur, { id, source, cents }]);
@@ -1400,6 +1453,17 @@ function PaymentPanel(props: {
     return () => window.removeEventListener("keydown", onKey);
   }, [padFor, charging, dismissPad]);
 
+  /* T43: the reason dialog owns Escape the same way, and closes as
+   * Cancel: nothing armed, the draft gone. */
+  useEffect(() => {
+    if (!reasonOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeReason();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [reasonOpen, closeReason]);
+
   /* Comp arms on a HOLD, not a tap: it hands goods over for nothing, so
    * it cannot sit where a fat finger lands. Unselecting is a plain tap
    * (the click handler below); the ref swallows the click the browser
@@ -1412,22 +1476,38 @@ function PaymentPanel(props: {
    * (T39.6-7 review). */
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
-  /** Arm comp; false when refused. */
+  /** The hold completed: open the reason dialog; false when refused.
+   *  T43: the hold no longer arms comp by itself. It opens the dialog,
+   *  and only Comp in the dialog, with a reason written, arms. */
   const armComp = (): boolean => {
     /* T39.6: never armed while invisible. The hold cannot start on a
      * hidden button, but a hold that began just before Back to items
      * could complete after it; the timer's callback lands here and is
      * refused. */
     if (!visibleRef.current) return false;
+    setReasonDraft("");
+    setReasonOpen(true);
+    onModalChange(true);
+    setCompCleared(false);
+    setCompHint(false);
+    return true;
+  };
+  /** Comp in the reason dialog: arm comp WITH the reason. Refused, and
+   *  the dialog left open, unless the trimmed text is long enough; the
+   *  button is disabled on the same test, so this guard is for a
+   *  keyboard Enter on a short draft. */
+  const confirmComp = () => {
+    const reason = reasonDraft.trim();
+    if (!compReasonValid(reason)) return;
     /* Comp is the whole sale given away, so it cannot coexist with a
      * tender: arming it clears the lines. */
     setLines([]);
     dismissPad();
-    setComped(true);
+    setComp({ reason });
     setCompCleared(false);
     setCompHint(false);
     clearStaleResult();
-    return true;
+    closeReason();
   };
   const compHoldStart = () => {
     if (compTimer.current) clearTimeout(compTimer.current);
@@ -1461,7 +1541,9 @@ function PaymentPanel(props: {
      * tapped reads as broken (T39.7: the label is the canvas's "Comp
      * this sale", not "Hold to comp"). */
     if (comped) {
-      setComped(false);
+      /* The reason goes with it: an unselected comp has none, and the
+       * next hold asks again. */
+      setComp(null);
       clearStaleResult();
     } else {
       setCompHint(true);
@@ -1471,9 +1553,11 @@ function PaymentPanel(props: {
   /* ONE shared quiet line under the tender: the first real problem with
    * what is on screen, else what is still owed, else the detail of what
    * is armed. The full reason also sits on each control's title attr. */
-  const tenderNote = comped
-    ? /* The canvas's line (0.2): the sale is on the studio. */
-      "Nothing to pay, on the studio."
+  const tenderNote = comp !== null
+    ? /* The canvas's line (0.2): the sale is on the studio, and since
+         T43 the reason sits beside it so what was written is on the
+         surface before Charge. */
+      `Nothing to pay, on the studio. Comped: ${comp.reason}`
     : compCleared
       ? "Comp was cleared."
       : compHint
@@ -1601,6 +1685,11 @@ function PaymentPanel(props: {
                   </span>
                 ) : null}
               </p>
+              {result.comped && result.compReason ? (
+                /* T43: the reason, under the comped line, so the done
+                   screen says why the sale was on the studio. */
+                <p className="pay-done-reason">Comped: {result.compReason}</p>
+              ) : null}
               <p className="pay-done-line">{result.summary}</p>
               {result.detail ? (
                 <p className="pay-done-detail">{result.detail}</p>
@@ -1975,6 +2064,82 @@ function PaymentPanel(props: {
               </button>
               <button className="modal-confirm go" onClick={applyPad}>
                 Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* T43: the comp reason dialog. The hold on Comp this sale opens
+          it; nothing is armed until Comp here is tapped with a reason of
+          at least COMP_REASON_MIN characters. A chip fills the field
+          with its label and the teacher may edit; Cancel, Escape and the
+          scrim leave comp unarmed and drop the draft. It stacks like the
+          keypad (the same scrim) and owns Escape the same way. The
+          reason never reaches Mindbody; the route keeps it. */}
+      {reasonOpen ? (
+        <div
+          className="modal-scrim"
+          role="presentation"
+          onClick={closeReason}
+        >
+          <div
+            className="modal modal-amount modal-reason"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Comp this sale"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">Comp this sale</p>
+            <div className="pad-row">
+              <span className="pad-label">Total</span>
+              <span className="pad-amt">
+                {total !== null ? money(total) : "--"}
+              </span>
+            </div>
+            <div className="pad-chips reason-chips">
+              {COMP_REASONS.map((label) => (
+                <button
+                  key={label}
+                  className={
+                    reasonDraft === label ? "pad-chip on" : "pad-chip"
+                  }
+                  aria-pressed={reasonDraft === label}
+                  onClick={() => setReasonDraft(label)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <input
+              className="reason-input"
+              type="text"
+              value={reasonDraft}
+              maxLength={COMP_REASON_MAX}
+              autoComplete="off"
+              autoFocus
+              placeholder="Why is this sale on the studio?"
+              aria-label="Reason for the comp"
+              onChange={(e) => setReasonDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") confirmComp();
+              }}
+            />
+            <div className="modal-actions">
+              <button className="modal-cancel" onClick={closeReason}>
+                Cancel
+              </button>
+              <button
+                className="modal-confirm go"
+                disabled={!compReasonValid(reasonDraft.trim())}
+                title={
+                  compReasonValid(reasonDraft.trim())
+                    ? "Comp this sale"
+                    : `Write at least ${COMP_REASON_MIN} characters`
+                }
+                onClick={confirmComp}
+              >
+                Comp
               </button>
             </div>
           </div>

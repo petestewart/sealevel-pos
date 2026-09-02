@@ -3469,6 +3469,56 @@ button.sale-for:disabled {
   font-weight: 600;
 }
 
+/* T43: the comp reason dialog, in the keypad modal's shape (it is a
+ * .modal-amount with the chips and the actions as the keypad draws them).
+ * The four preset chips wrap to a second row rather than shrink under a
+ * 64px target; a chosen chip takes the accent pairing, and the field is
+ * a 64px target at 18px so a hot-room thumb lands on it. The done
+ * screen's reason line sits under the charged line in the same mono. */
+.modal-reason .reason-chips {
+  flex-wrap: wrap;
+}
+
+.modal-reason .reason-chips .pad-chip {
+  flex: 1 1 40%;
+}
+
+.pad-chip.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.reason-input {
+  width: 100%;
+  min-height: 64px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.reason-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+.reason-input::placeholder {
+  color: var(--muted);
+}
+
+.pay-done-reason {
+  margin: 0;
+  max-width: 34em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 19px;
+  font-weight: 500;
+  color: var(--warn);
+}
+
 /* --- Charge outcomes. ----------------------------------------------- */
 
 /* The paid confirmation (T39.7, the canvas's done state): centred in the
