@@ -132,7 +132,9 @@ one.
 
 It is recorded server-side in `src/lib/calllog.ts`, which matters: it shows
 what Mindbody actually received and returned, not what our API routes chose
-to forward. Enabled by `POS_DEVTOOLS=true` or a dev build; `/api/devlog`
+to forward. A call that ran under a signed-in teacher's token (T49) shows
+`actor=<staff id>`; the token itself is never recorded. Enabled by
+`POS_DEVTOOLS=true` or a dev build; `/api/devlog`
 404s otherwise, because the records carry client names and booking details
 and must not be reachable from the counter iPad.
 
@@ -143,7 +145,8 @@ each: search debounce, minimum query length, result limit, how many hours of
 schedule to show either side of now, whether check-in is optimistic, and
 whether an unpaid booking needs a confirming tap. They live in the browser's
 localStorage, apply immediately, and need no restart. Testing a number should
-not cost a commit.
+not cost a commit. Under them, "signed-in teacher" names who is signed in and
+runs the T49 permission probe.
 
 Anything that decides whether a write reaches Mindbody -- dry run, target,
 the write guard -- is deliberately NOT here. Those stay in the server
@@ -237,6 +240,12 @@ while `git clone` works, so clone the repo rather than fetching files.
   `BookClassesAndEventsWithoutPayment` (booking a walk-in), and for Phase 2
   `MakeSales`, `CreateRetailTickets`, `UseStoredCreditCards`,
   `AddProductsOnRetailScreen`. Plus `Desk staff` ticked on the staff profile.
+  Since T49 this applies to EACH TEACHER'S permission group too, not just
+  the service account's: a signed-in teacher's writes run under their own
+  token. A write their group refuses is retried once as the service
+  account and says so in amber ("Done as the studio account: ..."), except
+  a comp, which is refused outright. `GET /api/teacher/probe` reads a
+  signed-in teacher's group and Test-prices a cart under their token.
 
 ## Conventions
 
@@ -273,16 +282,19 @@ while `git clone` works, so clone the repo rather than fetching files.
   authorization but not that a charge reaches Stripe. Re-run
   `mindbody:probe-payments --live` in ai-manager against a client with a
   current card to close this.
-- **Teacher identity is ours, not Mindbody's, and only a comp asks for
-  it.** T48 (superseding T44's shift sign-in): a comp takes the teacher's
-  own PIN in the dialog, every time, in every configuration; the PIN is
-  stored hashed and unique in `teacher_pins`, enrolled through a one-time
-  Mindbody sign-in (`/usertoken/issue` with the teacher's credentials) or
-  the devtools-gated admin route. Routine writes (check-in, booking, pass
-  changes, the waiver) carry no teacher at all, and Mindbody still
-  attributes every sale and check-in to the service account. Unverified
-  live: that a teacher's Mindbody login issues a token through the studio's
-  API key (`/usertoken/issue` has only been called with the API user).
+- **Teacher attribution is unverified live (T49).** A comp still takes
+  the teacher's own PIN in the dialog, every time (T48: stored hashed and
+  unique in `teacher_pins`, enrolled through a one-time Mindbody sign-in
+  or the devtools-gated admin route). On top of that a teacher can sign
+  in with their own Mindbody login (the header's "Sign in"), and from then
+  on every write runs under THEIR token so Mindbody names them; with
+  nobody signed in, writes run as the service account as before. The token lives
+  in server memory only (`src/lib/staffsession.ts`; a restart signs
+  everyone out). Unverified against the studio: that the API key issues
+  tokens for teachers other than the API user, what Mindbody answers for
+  an expired staff token (`isActorTokenDead` reads a 401), and that the
+  sales report actually shows the token's staff member. The probe is
+  `GET /api/teacher/probe` (the sign-in modal and the dev drawer run it).
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It

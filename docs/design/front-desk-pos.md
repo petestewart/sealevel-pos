@@ -1039,12 +1039,22 @@ credentials names the staff id, which must be an active teacher, and the
 token is revoked as soon as it has been read. Someone with no Mindbody
 login gets a PIN set by staff id through the devtools-gated admin route.
 
-The payroll caveat stands: Mindbody's sale and check-in records still name
-the API staff account, not the teacher, so commission or payroll reporting
-inside Mindbody cannot see who was at the counter. Our comp receipts, the
-`[comp]` log line and the Formula Note on the client are the attribution,
-and only for comps. Unverified live: that a teacher's Mindbody login issues
-a token through the studio's API key, which is the enrollment path.
+The payroll caveat stood until T49 (Pete: "Mindbody sign-in might be the
+right move then. today that's what they already do, and this probably
+makes observability better, assuming MB tracks who made sales, etc."). A
+teacher can now sign in with their own Mindbody login from the header,
+and every write from that iPad then runs under THEIR token (the
+`Authorization` header on that call), so Mindbody's own sale and sign-in
+records name them; the token stays in server memory, the browser holds an
+opaque cookie, and nothing requires the sign-in: with nobody signed in
+the POS still acts as `sealevelapiuser`. The comp PIN stays on top as
+friction. Each teacher's permission group now matters; a write their
+group refuses is done once as the service account with an amber line
+saying so (a comp is refused instead), and `GET /api/teacher/probe` reads
+the group and Test-prices a cart under their token. Unverified live, and
+first on the list: that a teacher's login issues a token through the
+studio's API key, and that Mindbody's reports show the token's staff
+member.
 
 **4. Wifi at the counter. Proposed answer: do not build offline.** The design
 already forbids queuing a sale. And a queued check-in is exactly the failure

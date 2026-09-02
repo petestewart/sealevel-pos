@@ -5250,6 +5250,323 @@ admin route can overwrite it; there is no delete). And the review's fix
 means a deploy with `POS_PIN` and no `POS_SESSION_SECRET` now forgets comp
 tokens on restart, which the `.env.example` note and the dialog cover.
 
+## T49. Mindbody sign-in: writes run as the teacher (Pete, 2026-09-02)
+
+Pete, on T48: "Mindbody sign-in might be the right move then. today
+that's what they already do, and this probably makes observability
+better, assuming MB tracks who made sales, etc." Decided: the app acts AS
+the signed-in teacher for every write, so Mindbody attributes check-ins,
+bookings, pass changes, the waiver release and sales to them; T48's comp
+PIN gate stays on top as deliberate friction. Nothing requires a sign-in
+and nothing prompts at start: with nobody signed in every write runs as
+the service account exactly as before.
+
+### The design (decided)
+
+**1. A staff session** (`src/lib/staffsession.ts`). `POST
+/api/teacher/signin {username, password}` calls `signInAsStaff` (T48's
+one call to `/usertoken/issue` with the teacher's own credentials),
+refuses `User.Id` 0 (owner/admin) and any id not in `listTeachers()`,
+revoking the token at once in both cases, and otherwise keeps the
+Mindbody `AccessToken` SERVER-SIDE in memory only: a Map on `globalThis`
+(like the call log, so a dev recompile does not sign everyone out) from
+an opaque random id to `{staffId, name, token, issuedAt}`. Never in the
+database, never in the call log, never in an answer. The browser gets
+`pos_staff=s1.<24 random bytes, base64url>.<hmac>`: HttpOnly,
+SameSite=Strict (the device cookie is Lax; nothing arrives from another
+site carrying a teacher's identity), Secure in production, twelve hours
+from sign-in, not sliding. The HMAC key is random per process, on
+purpose: the sessions are per process, so a key that survived a restart
+would sign cookies for entries that did not. Verification is
+constant-time (`safeEqual`) before the Map lookup. A restart forgets
+every session; the cost is one sign-in from the header. A sign-in over
+an existing session replaces it and revokes the old token (a shift
+change is signing in as the next teacher). `POST /api/teacher/signout`
+drops the entry, revokes (best effort, bounded by `revokeStaffToken`'s
+10s) and clears the cookie. `GET /api/teacher` answers `{teacher: {id,
+name} | null}`. The sign-in route mirrors enroll's discipline: its own
+limiter (`claimSigninAttempt`, five then 30s; every attempt, a 400
+included, claims a slot, as enroll's does), one 401 wording for an
+unknown user and a wrong password, the password in no log, row or
+answer.
+
+**2. Writes run as the teacher.** `mindbody()` takes `actor?: {token,
+staffId, name}`; when present the `Authorization` header is the
+teacher's token on that call only, and the call log entry carries
+`actor: <staffId>` (never the token; suppressed calls carry null). Dry
+run and the write guard run first and apply exactly as before. The
+service account's own 401 retry (forget the token, reissue) is skipped
+for an actor call: a refusal under a teacher's token is the ROUTE's
+decision. Every write route resolves `actorFor(request)` once and runs
+its write through `runAsActor` (`src/lib/actor.ts`): checkin, book,
+cancel-visit, visit-payment, waiver-agree (both the release and the
+notes append, the append under whatever the release landed under),
+client-field, purchase-contract (the real purchase; the Test rehearsal
+stays on the service account) and checkout (every `checkoutCart`,
+`purchaseCredit` and the Formula Note; the rehearsal stays on the
+service account). Reads (roster, search, catalog, the checkout
+rehearsal, the sale-id lookup) stay on the service account.
+
+**3. Permission failures are loud, and the counter keeps working.**
+`isActorRefusal`: a 401 or 403, or Mindbody's "permission" wording, on a
+4xx only (a 5xx or a dead transport says nothing about permissions and
+for a money write must stay ambiguous). On it, `runAsActor` logs
+`[actor] fallback staff=<id> route=<path> reason="<message>"`, retries
+ONCE as the service account, and the answer carries `actorFallback:
+{name, reason}`; the UI renders `actorFallbackLine` in amber: "Done as
+the studio account: Kim Farrell's Mindbody login lacks permission to
+launch the sign-in screen." on the roster row (check-in, pass change,
+the pay dialog's writes), on the done block (a sale, a contract), or as
+a 20-second banner under the mode banner for writes with no row (a
+booking, a promotion, a cancel, the waiver). Safe on a money write: the
+refusal is a 4xx, refused at the gate, nothing charged, the same reading
+`/api/checkout` has always applied. A 401 under the teacher's token is
+`isActorTokenDead`: the staff session ends (`[actor] token refused
+...`), the fallback still runs, the answer adds `staffSessionEnded:
+true` and the header control goes back to "Sign in" with the row line
+"...'s Mindbody sign-in ended (<message>). Sign in again." The comp is
+the exception: `runAsActor(..., {fallback: false})`, so a comp Mindbody
+refuses under the teacher is REFUSED with the message (502, the `[comp]
+... outcome=refused` line), never done as somebody else; the session
+still ends on a dead token.
+
+**4. The probe.** `GET /api/teacher/probe` for the signed-in teacher
+reads `GET /staff/staffpermissions?StaffId=<id>` UNDER THE TEACHER'S
+TOKEN, reading the live top-level shape and the schema's `UserGroup`
+wrapper both, and answers `{teacher, tokenOk, group, ipRestricted,
+allowed: [{name, allowed}] (the six), denied: [...all], sale}`, where
+`sale` is a `Test: true` price of a one-line cart holding the cheapest
+priced pricing option (a service, sellable at every location, so the
+sound test) attached to the house client, under the teacher's token:
+`{ok, total, item}`, `{ok: false, error}`, `{suppressed}` under dry run,
+or `{skipped}` with no house client or an empty catalog. A 401 on
+either read ends the session and answers 401 `reason: "teacher"` with
+`staffSessionEnded`. The signed-in modal shows it as one line ("Kim's
+Mindbody account can check in, book, and sell." or "Pete's Mindbody
+account cannot: check in (LaunchSignInScreen); sell (MakeSales); price
+a sale (You do not have permission to perform sales).") over the six
+with ticks and crosses and the Test-price line, with "Run probe again";
+the dev drawer's Settings tab has the same view under "signed-in
+teacher" with "Run probe", and its calls tab shows `actor=<id>` on
+every call that ran as a teacher.
+
+**5. The header.** Beside Buy, where T44's badge was: a 64px
+`class-change` control reading "Sign in" or the teacher's first name.
+It opens `StaffModal.tsx`: signed out, email and password (18px inputs
+at 64px, `autoComplete="username"` / `"current-password"`), Cancel and
+Sign in (off until both are filled; the password leaves state the
+moment it is sent, a refusal shows the route's message); signed in, the
+name, "Signed in to Mindbody. Check-ins, bookings and sales from this
+iPad are recorded under this login until sign-out or twelve hours.",
+the probe, Close and Sign out. Escape and the scrim close it. Nothing
+prompts at app start; `GET /api/teacher` is read once so the control
+reads the right thing.
+
+**6. The numeric sale id.** `checkoutshoppingcart` answers
+`ShoppingCart.Id`, a GUID, which is not the number on Mindbody's own
+receipts. After a REAL (not suppressed) checkout, `latestSaleId`
+(sale.ts) reads `GET /sale/sales` over today's studio-local window
+(`studioWall`; the endpoint takes `StartSaleDateTime`,
+`EndSaleDateTime`, `Limit`, `Offset`, `SaleId`, `PaymentMethodId` and
+NO client parameter, sale.yml:992, so the client is filtered here on
+`Sale.ClientId`) under the service account, bounded at 8s, and picks the
+highest `Sale.Id` for the client (the house client when unattached)
+that this process has not already handed out. The answer's `saleId` is
+that number, else the GUID as before; `cartId` is always the GUID. The
+done screen reads "Sale 425874."; the comp receipt's `sale_id` holds
+the number when found and the GUID otherwise, `cart_id` (migration 6,
+additive, nullable) the GUID always; the Formula Note reads "Sale
+425874." A failed, hung or ambiguous lookup is one `[sale-id]` line and
+the GUID; nothing about the outcome changes. Cost: one read after each
+real checkout, and on a comp the Formula Note waits for it (worst case
+8s + 8s).
+
+**7. Docs.** This section; CLAUDE.md's known gap and permissions
+bullet; the design doc's question 3, answered a third time.
+
+### `src/lib/sale.ts`, every hunk
+
+`git diff -- src/lib/sale.ts` is eleven hunks and nothing else:
+
+1. `@@ -30,7 +30,8` the import: `type Actor` from mindbody, `studioWall`
+   from roster (for the sale-id window).
+2. `@@ -579,6 +580,10` `priceCart` gains `actor?: Actor | null` (only the
+   probe passes one; the checkout rehearsal never does).
+3. `@@ -626,6 +631,7` the stub pricing call: `...(actor ? { actor } : {})`.
+4. `@@ -649,6 +655,7` the bare retry: the same spread.
+5. `@@ -824,6 +831,9` `checkoutCart` gains `actor?: Actor | null`.
+6. `@@ -850,6 +860,7` its `mindbody()` call: the same spread, after
+   `clientId`; the body object is untouched.
+7. `@@ -912,6 +923,8` `purchaseCredit` gains `actor?`.
+8. `@@ -927,6 +940,7` its call: the spread.
+9. `@@ -1304,6 +1318,8` `purchaseContract` gains `actor?` in its opts.
+10. `@@ -1327,6 +1343,7` its call: the spread.
+11. `@@ -1354,3 +1371,90` `latestSaleId`, appended.
+
+The payload of every money write (`Items, Payments, ClientId, Test,
+LocationId, InStore, CalculateTax, SendEmail`, the mock logs the keys),
+the single flight, the rehearsal order, the suppression and the outcome
+wording are T24/T28/T43's; the checkout route's diff is the `session`
+resolution, each `checkoutCart`/`purchaseCredit` call wrapped in
+`runAsActor`, `saleIds()` after each real checkout, `cartId` and
+`actorFields` on the answers, and `staffSessionEnded` on the final
+catch.
+
+### What was built and checked
+
+Node-level (`t49-node.js`, `scratchpad/t49/node.log`) against `next
+start` on the T49 build at :3049, prod target with `POS_DRY_RUN=false`,
+`POS_WRITE_CLIENT_IDS` including the house client, `POS_DEVTOOLS=true`,
+`POS_SESSION_SECRET` set, no `POS_PIN`, a local Postgres 16, Mindbody
+mocked on :4549 (`t49-mock.js`: `/usertoken/issue` answering a DISTINCT
+token per login, `tok-<staff>-<seq>`; `/staff/staffpermissions` per
+staff in the live top-level shape, Kim 106 all six allowed, Pete 100
+with `LaunchSignInScreen` and `MakeSales` denied; a permission-checked
+`/client/updateclientvisit` and `/sale/checkoutshoppingcart` answering
+403 "You do not have permission ..." under Pete; `/sale/sales` listing
+every real checkout with a numeric `Id`; `/__kill?token=` making a token
+answer 401 from then on; and every call's Authorization header recorded
+so the actor is provable):
+
+- Nobody signed in: `GET /api/teacher` `{teacher: null}`; a check-in
+  reached the mock under the service token (`staff=0`), the dev log
+  entry `actor: null`.
+- Sign-in: a bad shape 400; an unknown user and a wrong password the
+  identical 401 "Mindbody did not accept that sign-in."; Kim 200
+  `{ok, teacher: {106, "Kim Farrell"}}` with `Set-Cookie:
+  pos_staff=s1.<32 chars>.<64 hex>; Path=/; Max-Age=43200; HttpOnly;
+  SameSite=Strict; Secure`; `GET /api/teacher` names her; her token
+  (`tok-106-4`) appears in no answer and nowhere in `/api/devlog`
+  (`includes(kimToken)`: false), while the dev log entry for her
+  check-in carries `actor: 106`. The owner login 403 and the
+  non-teacher login 403, each followed by a `DELETE /usertoken/revoke`
+  under the token just issued.
+- The probe under Kim: `/staff/staffpermissions` and the Test price
+  both under `staff=106` (the catalog read under the service account),
+  group "Teachers", all six true, `sale: {ok: true, total: 1.81, item:
+  "LMNT Electrolytes"}`.
+- Check-in and booking as Kim: `updateclientvisit` and
+  `addclienttoclass` under `staff=106`.
+- Comp as Kim with her PIN (enrolled through T48's route, verified to a
+  token): rehearsal under `staff=0`, the write under `staff=106`,
+  `GET /sale/sales` under `staff=0`, the Formula Note under `staff=106`;
+  the answer `{ok, method: "comp", total: 233, saleId: "425874",
+  cartId: "cart-1-aaaa-bbbb"}`; the note "Comped $233.00 at the
+  counter: Goodwill. Note: spilled tea. By Kim Farrell. Sale 425874.";
+  `comp_receipts` row `425874|cart-1-aaaa-bbbb|106|555001` with
+  `schema_version` 6; the line
+
+      [comp] prod sale=425874 client=100000123 total=233.00 reason="Goodwill: spilled tea" kind=goodwill for=none teacher=106 note=555001
+
+- Cash as Kim: 425875, then the house client: 425876. Never the same id
+  twice.
+- Sign-out: `{ok}` with the clearing cookie, the mock shows her token
+  dead (revoked), `GET /api/teacher` null, the next check-in under
+  `staff=0` again.
+- Pete: the probe reads group "Instructors", `LaunchSignInScreen` and
+  `MakeSales` false, `denied: ["LaunchSignInScreen", "MakeSales"]`,
+  `sale: {ok: false, error: "You do not have permission to perform
+  sales"}`. His check-in: the mock saw `updateclientvisit` under
+  `staff=100` (403) then under `staff=0`; the answer `{ok, suppressed:
+  null, actorFallback: {name: "Pete Stewart", reason: "You do not have
+  permission to launch the sign-in screen."}}`; the server line
+  `[actor] fallback staff=100 route=/api/checkin reason="..."`. His cash
+  sale: rehearsal `staff=0`, write `staff=100` (403), write `staff=0`,
+  sales list; `saleId: "425877"` with the `actorFallback`. His comp with
+  his PIN: rehearsal `staff=0`, write `staff=100` refused, NO third
+  call; 502 "You do not have permission to perform sales", real
+  checkouts unmoved (4 before, 4 after), no note, the `[comp] ...
+  outcome=refused ... teacher=100` line; he stays signed in.
+- His token killed at the mock: the next check-in saw `staff=100`
+  (401), `DELETE /usertoken/revoke`, then `staff=0`; the answer carries
+  `actorFallback` and `staffSessionEnded: true`; `[actor] token refused
+  staff=100 route=/api/checkin; ending the staff session`; `GET
+  /api/teacher` null; the probe with no session 401 `reason:
+  "teacher"`.
+- A cookie with its last signature character changed: `{teacher:
+  null}`; the real cookie again: Kim. Pete signing in over Kim's
+  session: her token dead at the mock, `GET /api/teacher` Pete.
+- Six wrong sign-ins: `[401, 401, 401, 401, 401, 429]`; an enroll
+  during the lockout 200 (its own counter). `grep -c "secret\|tok-"
+  server.log`: 0.
+
+In the browser (`t49.js`, `scratchpad/t49/ui.log`, shots
+`{light,dark}-{1..7}-*.png` at 1180x820): the app starts with no
+prompt and a 64px, 16px "Sign in" control beside Buy
+(`*-1-header-signed-out.png`); the modal has two 64px inputs at 18px
+with `autocomplete` username/current-password, Cancel and Sign in at
+64px, Sign in off until both fields are filled (`*-2-signin-modal.png`);
+a wrong password shows "Mindbody did not accept that sign-in." and
+clears the password field (the post carried it exactly once); Enter on
+the right one lands on "Kim Farrell", "Signed in as Kim Farrell.", the
+summary "Kim's Mindbody account can check in, book, and sell.", the six
+ticks and "Test price of LMNT Electrolytes came to $1.81", one probe
+call (`*-3-signed-in-modal.png`); the control then reads "Kim" with the
+aria label naming her (`*-4-header-signed-in.png`); a check-in answered
+with `actorFallback` goes green with the amber 16px row line "Done as
+the studio account: Kim Farrell's Mindbody login lacks permission to
+launch the sign-in screen." (`*-5-fallback-row.png`); a cash sale's done
+screen reads "Sale 425874." and, on the light run, the same amber line
+under it for a checkout that fell back (`*-6-done-sale-id.png`); Sign
+out puts "Sign in" back; Pete's summary reads "cannot: check in
+(LaunchSignInScreen); sell (MakeSales); price a sale (...)" with three
+crosses (`dark-7-pete-cannot.png`); and a check-in answering
+`staffSessionEnded` flips the control to "Sign in" with the "sign-in
+ended" line on the row. Both palettes from the tokens; no hex outside
+the blocks.
+
+### The probe procedure (Pete, live)
+
+1. On the studio build, tap "Sign in" beside Buy and sign in with your
+   own Mindbody login (the one you use for the web app). The modal runs
+   the probe on its own; read the one line and the six ticks. If the
+   sign-in itself is refused, T48's open question is answered the other
+   way: the API key does not issue tokens for staff other than the API
+   user, and the whole ticket falls back to the service account with no
+   change in behaviour.
+2. Open the dev drawer (Cmd+D), Settings, "signed-in teacher": the
+   same result with "Run probe"; the calls tab shows
+   `/staff/staffpermissions` and the Test `checkoutshoppingcart` with
+   `actor=<your staff id>`.
+3. Check someone in. The calls tab entry carries `actor=`; in the
+   Mindbody web app the visit's sign-in should now name you rather than
+   `sealevelapiuser`. Sell a mat for cash: the sales report's staff
+   column is the question this ticket exists for, and the done screen's
+   "Sale <number>" is the row to look for. If a write shows the amber
+   "Done as the studio account" line, the permission it names is what
+   your group lacks; fix it in the group or leave it, the counter works
+   either way.
+4. What a dead token looks like live is the one thing the mock guessed:
+   `isActorTokenDead` reads a 401. If Mindbody answers an expired staff
+   token with a 403 or with token wording on another status, widen
+   `isActorTokenDead` in `mindbody.ts`, not `isActorRefusal`.
+
+### Left
+
+- **Unverified live:** that the studio's API key issues tokens for
+  teachers other than the API user (T48's open question, now
+  load-bearing); what Mindbody answers for an expired staff token; that
+  Mindbody's sales report and visit records actually show the token's
+  staff member (Pete's "assuming MB tracks who made sales"); the
+  `/sale/sales` window filter and whether `Sale.ClientId` matches the
+  RSSID this app holds.
+- **Sessions are per process.** A deploy signs every teacher out; the
+  header says "Sign in" and nothing else changes. Two instances would
+  not share sessions.
+- **The sale-id lookup is a heuristic:** the newest unseen sale for
+  the client today. Two counters selling to the same client in the same
+  minute could cross; the GUID stays on `cart_id` for exactly that case.
+- **The Formula Note waits for the lookup** (8s + 8s worst case on a
+  comp).
+- `.env.example` is unchanged: nothing new is configured.
+- Every sign-in attempt, a 400 included, claims a limiter slot, as
+  enroll's does.
+- The comp PIN (T48) and the staff session are two separate proofs of
+  the same person; a comp under Kim's session with Pete's PIN files the
+  receipt under Pete (the token) and the Mindbody sale under Kim (the
+  session). Deliberate for now: the PIN is the friction, the session is
+  the attribution.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
