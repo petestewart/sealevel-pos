@@ -197,6 +197,27 @@ function parseCatalog(body: any): CatalogState {
   };
 }
 
+/**
+ * T41: what one category button shows. "Passes" (the entry with no
+ * category ids) is every pricing option the server left unrouted; any
+ * other button is its retail products plus the pricing options
+ * /api/catalog stamped with its id (towel and mat rentals are services
+ * in a service category, never products). One function for the shelf
+ * and the rail, so the rail can hide exactly the buttons whose shelf
+ * would be empty.
+ */
+function categoryShelf(
+  catalog: CatalogState,
+  category: ShelfCategory,
+): ShelfItem[] {
+  if (category.categoryIds.length === 0) {
+    return catalog.passes.filter((p) => p.categoryId === null);
+  }
+  const wanted = (p: ShelfItem) =>
+    p.categoryId !== null && category.categoryIds.includes(p.categoryId);
+  return [...catalog.products.filter(wanted), ...catalog.passes.filter(wanted)];
+}
+
 /** One rung-up line. Keyed by type+id so re-tapping an item bumps its
  *  quantity instead of adding a duplicate line. */
 interface CartEntry {
@@ -2743,19 +2764,43 @@ export default function SaleScreen(props: {
   const favoritesHasContent =
     starredItems.length > 0 || resolvedBundles.length > 0;
 
+  /** T41 (Pete: "when a category has no items it should not even display
+   *  in the UI as a button at all"): the categories with something to
+   *  sell, in config order. Only these reach the rail; Favorites, Packages
+   *  and Memberships have their own rules. Empty while the catalog is
+   *  still loading, and the rail does not render then either, so nothing
+   *  is hidden on a guess. */
+  const shownCategories = useMemo(
+    () =>
+      catalog
+        ? catalog.categories.filter(
+            (c) => categoryShelf(catalog, c).length > 0,
+          )
+        : [],
+    [catalog],
+  );
+
   /** The default chip, decided once per screen life when the catalog
    *  lands: Favorites when it has anything to show, else the first
-   *  category. Later star changes never yank the selection around. */
+   *  category with a shelf. Later star changes never yank the selection
+   *  around. T41: a category that lost its last item on a recheck falls
+   *  back the same way rather than leaving an active button the rail
+   *  no longer shows. */
   useEffect(() => {
     if (!catalog) return;
-    setActiveCat(
-      (cur) =>
-        cur ??
-        (favoritesHasContent
-          ? FAVORITES_LABEL
-          : (catalog.categories[0]?.label ?? null)),
-    );
-  }, [catalog, favoritesHasContent]);
+    const fallback = favoritesHasContent
+      ? FAVORITES_LABEL
+      : (shownCategories[0]?.label ?? null);
+    setActiveCat((cur) => {
+      if (cur === null) return fallback;
+      const stillShown =
+        cur === FAVORITES_LABEL ||
+        (cur === PACKAGES_LABEL && catalog.packages.length > 0) ||
+        (cur === MEMBERSHIPS_LABEL && catalog.contracts.length > 0) ||
+        shownCategories.some((c) => c.label === cur);
+      return stillShown ? cur : fallback;
+    });
+  }, [catalog, favoritesHasContent, shownCategories]);
 
   const [cart, setCart] = useState<CartEntry[]>([]);
   const [priced, setPriced] = useState<PricedResult | null>(null);
@@ -3356,13 +3401,7 @@ export default function SaleScreen(props: {
       ? (catalog?.packages ?? [])
       : onMemberships || catalog === null || category === null
         ? []
-        : category.categoryIds.length === 0
-          ? catalog.passes
-          : catalog.products.filter(
-              (p) =>
-                p.categoryId !== null &&
-                category.categoryIds.includes(p.categoryId),
-            );
+        : categoryShelf(catalog, category);
   const shelfEmpty =
     shelfItems.length === 0 &&
     (!onFavorites || resolvedBundles.length === 0) &&
@@ -3680,8 +3719,10 @@ export default function SaleScreen(props: {
                   ...(catalog.packages.length > 0 ? [PACKAGES_LABEL] : []),
                   ...(catalog.contracts.length > 0 ? [MEMBERSHIPS_LABEL] : []),
                 ];
-                const labels = catalog.categories.map((c) => c.label);
-                const passesIdx = catalog.categories.findIndex(
+                /* T41: only categories with a shelf (shownCategories);
+                   Passes keeps its slot when it has any unrouted option. */
+                const labels = shownCategories.map((c) => c.label);
+                const passesIdx = shownCategories.findIndex(
                   (c) => c.categoryIds.length === 0,
                 );
                 labels.splice(

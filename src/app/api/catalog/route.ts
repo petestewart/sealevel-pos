@@ -66,6 +66,33 @@ async function currentBundles(): Promise<{
   return { bundles: counterBundles, bundleSource: "config" };
 }
 
+/**
+ * T41: a pricing option whose `RevenueCategory` names a counter category
+ * (categories.ts `revenueCategories`) is stamped with that category's id
+ * so the shelf files it there rather than under Passes. Towel and mat
+ * rentals are the case: category -14 is a service category, so filtering
+ * /sale/products on it can never fill the button. Every pass still rides
+ * the same `passes` array with the same shape; only `categoryId` changes
+ * from null, and the screen reads null as "Passes".
+ */
+function routeServices(passes: CatalogItem[]): CatalogItem[] {
+  const byName = new Map<string, number>();
+  for (const c of counterCategories) {
+    const id = c.categoryIds[0];
+    if (id === undefined) continue;
+    for (const name of c.revenueCategories ?? []) {
+      byName.set(name.trim().toLowerCase(), id);
+    }
+  }
+  if (byName.size === 0) return passes;
+  return passes.map((p) => {
+    const routed = p.revenueCategory
+      ? byName.get(p.revenueCategory.trim().toLowerCase())
+      : undefined;
+    return routed === undefined ? p : { ...p, categoryId: routed };
+  });
+}
+
 export async function GET(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
@@ -105,7 +132,7 @@ export async function GET(request: Request) {
     const data: CatalogPayload = {
       categories: counterCategories,
       products,
-      passes,
+      passes: routeServices(passes),
       packages,
       contracts,
     };

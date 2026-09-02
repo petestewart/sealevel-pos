@@ -97,8 +97,15 @@ export interface CatalogItem {
   /** The location's tax rate for this item, when returned (sale.yml:5845
    *  products, 5221 services). */
   taxRate: number | null;
-  /** Revenue category id (products only; sale.yml:5820). */
+  /** Revenue category id: a product's own (sale.yml:5820), or for a
+   *  pricing option the counter category /api/catalog routed it to by
+   *  its `RevenueCategory` name (T41; the Service model carries no
+   *  category id, sale.yml:5197). Null for a pass on the Passes shelf. */
   categoryId: number | null;
+  /** Services only: the pricing option's `RevenueCategory` name
+   *  (sale.yml:5270), the one category-shaped field the Service model
+   *  has. What T41 keys "Towel and Mat" on; null for products/packages. */
+  revenueCategory: string | null;
   /** SecondaryCategoryId (sale.yml:5830); 100000 means tax exempt. */
   secondaryCategoryId: number | null;
   /** True when this line must be asserted untaxed. */
@@ -178,6 +185,7 @@ export async function catalogFor(
         taxExempt: secondary === TAX_EXEMPT_SECONDARY_CATEGORY_ID,
         type: "Product",
         count: null,
+        revenueCategory: null,
       };
     })
     .filter((p: CatalogItem | null): p is CatalogItem => p !== null)
@@ -253,6 +261,7 @@ export async function pricingOptions(): Promise<CatalogItem[]> {
         taxExempt: false,
         type: "Service",
         count: num(s?.Count),
+        revenueCategory: str(s?.RevenueCategory),
       };
     })
     .filter((s: CatalogItem | null): s is CatalogItem => s !== null)
@@ -336,6 +345,7 @@ export async function sellablePackages(): Promise<CatalogItem[]> {
         taxExempt: false,
         type: "Package",
         count: null,
+        revenueCategory: null,
       };
     })
     .filter((p: CatalogItem | null): p is CatalogItem => p !== null)
