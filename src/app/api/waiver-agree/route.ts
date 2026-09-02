@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { actorFields, actorFor, runAsActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 
 import { recordLiabilityRelease, updateClientNotes } from "@/lib/clients";
@@ -40,6 +41,12 @@ export const dynamic = "force-dynamic";
  * with the reason, and the UI surfaces a quiet warning. The structured
  * log line has already been written by then, so the receipt is never
  * wholly lost.
+ *
+ * T49: both writes run as the signed-in teacher when there is one (the
+ * schema says the release records `ReleasedBy` as the calling staff
+ * member, which is the point), with the one loud fallback on the
+ * release; the notes append reuses whichever actor the release landed
+ * under.
  */
 export async function POST(request: Request) {
   const denied = requireSession(request);
@@ -85,13 +92,24 @@ export async function POST(request: Request) {
       );
     }
 
-    const release = await recordLiabilityRelease(clientId);
+    const { session } = actorFor(request);
+    const run = await runAsActor(session, "/api/waiver-agree", (actor) =>
+      recordLiabilityRelease(clientId, actor),
+    );
+    const release = run.result;
     if (release.suppressed) {
       return NextResponse.json({
         agreed: false,
         suppressed: release.suppressed,
+        ...actorFields(run),
       });
     }
+    /* The actor the release actually landed under: the teacher, or the
+     * service account after a fallback (or a dead token). */
+    const noteActor =
+      session && run.actorFallback === null && !run.staffSessionEnded
+        ? { token: session.token, staffId: session.staffId, name: session.name }
+        : null;
 
     /* The release is real. The structured receipt line goes out first:
      * even if the Notes append below fails, the server log holds the
@@ -121,7 +139,7 @@ export async function POST(request: Request) {
     let receiptNoted = false;
     let receiptReason: string | null = null;
     try {
-      const noted = await updateClientNotes(clientId, newNotes);
+      const noted = await updateClientNotes(clientId, newNotes, noteActor);
       if (noted.suppressed) {
         /* Expected in rehearsal under the write guard; reported honestly
          * rather than as a landed note. */
@@ -140,6 +158,7 @@ export async function POST(request: Request) {
       /* The notes as written, so the row's local state can match what a
        * roster reload would show. Only meaningful when receiptNoted. */
       notes: receiptNoted ? newNotes : null,
+      ...actorFields(run),
     });
   } catch (err) {
     return NextResponse.json(

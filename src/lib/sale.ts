@@ -30,7 +30,8 @@
  * screen showed. Mindbody's total is the total; ours is only an assertion.
  */
 
-import { mindbody } from "./mindbody";
+import { mindbody, type Actor } from "./mindbody";
+import { studioWall } from "./roster";
 
 /** The one physical location ("Fremont neighborhood, Seattle"). 98 is the
  *  reserved online store. A constant, not a choice; see CLAUDE.md. */
@@ -579,6 +580,10 @@ function cartItemsPayload(items: readonly CartLine[]): unknown[] {
 export async function priceCart(
   items: readonly CartLine[],
   clientId?: string,
+  /** T49: run the Test call as this teacher. Only the sign-in probe
+   *  passes one (to prove MakeSales under the teacher's own token); the
+   *  checkout rehearsal stays on the service account. */
+  actor?: Actor | null,
 ): Promise<PricedCart> {
   assertCartLines(items, "priceCart");
   const expected = expectedTotal(items);
@@ -626,6 +631,7 @@ export async function priceCart(
         Payments: [{ Type: "Comp", Metadata: { Amount: expected } }],
       },
       ...(clientId ? { clientId } : {}),
+      ...(actor ? { actor } : {}),
     });
   } catch (err) {
     /* Retry bare ONLY when the refusal looks aimed at the stub itself
@@ -649,6 +655,7 @@ export async function priceCart(
       method: "POST",
       body: baseBody,
       ...(clientId ? { clientId } : {}),
+      ...(actor ? { actor } : {}),
     });
   }
 
@@ -824,6 +831,9 @@ export async function checkoutCart(
   items: readonly CartLine[],
   clientId: string | undefined,
   payment: CheckoutPayment | readonly CheckoutPayment[],
+  /** T49: the signed-in teacher the sale is made as, when there is one.
+   *  Only the Authorization header changes; the payload is T24's. */
+  actor?: Actor | null,
 ): Promise<CheckoutOutcome> {
   assertCartLines(items, "checkoutCart");
   const payments: readonly CheckoutPayment[] = Array.isArray(payment)
@@ -850,6 +860,7 @@ export async function checkoutCart(
       SendEmail: false,
     },
     ...(clientId ? { clientId } : {}),
+    ...(actor ? { actor } : {}),
   });
   if (res?.DryRun === true) {
     return { suppressed: "dry-run", saleId: null, grandTotal: null };
@@ -912,6 +923,8 @@ export async function purchaseCredit(
   clientId: string,
   amount: number,
   lastFour: string,
+  /** T49: the signed-in teacher, when there is one. */
+  actor?: Actor | null,
 ): Promise<CreditPurchaseOutcome> {
   if (!clientId) throw new Error("purchaseCredit needs a client id.");
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -927,6 +940,7 @@ export async function purchaseCredit(
       PaymentInfo: paymentPayload({ type: "StoredCard", amount, lastFour }),
     },
     clientId,
+    ...(actor ? { actor } : {}),
   });
   if (res?.DryRun === true) {
     return { suppressed: "dry-run", amountPaid: null, saleId: null };
@@ -1304,6 +1318,8 @@ export async function purchaseContract(opts: {
   clientId: string;
   lastFour: string;
   test: boolean;
+  /** T49: the signed-in teacher, when there is one. */
+  actor?: Actor | null;
 }): Promise<ContractPurchaseOutcome> {
   const { contractId, clientId, lastFour, test } = opts;
   if (!Number.isInteger(contractId)) {
@@ -1327,6 +1343,7 @@ export async function purchaseContract(opts: {
       SendNotifications: true,
     },
     clientId,
+    ...(opts.actor ? { actor: opts.actor } : {}),
   });
   if (res?.DryRun === true) {
     return { suppressed: "dry-run", test, clientContractId: null, totals: null };
@@ -1353,4 +1370,91 @@ export async function purchaseContract(opts: {
     clientContractId: num(res?.ClientContractId),
     totals,
   };
+}
+
+/* =====================================================================
+ * T49: the numeric sale id.
+ * =================================================================== */
+
+/** Sale ids already handed to a done screen this process, so two sales
+ *  in a row for the same client (the house client, typically) cannot be
+ *  answered with the same id. Bounded by the day: nothing older than
+ *  today's window is ever a candidate, and the set is small. */
+const seenSaleIds = new Set<number>();
+
+/** How long the done screen waits for the sale list before settling
+ *  for the cart GUID (the Formula Note's own bound, T45 review). */
+const SALE_LOOKUP_WAIT_MS = 8_000;
+
+/**
+ * The numeric `Sale.Id` (sale.yml:2734) of the sale a REAL checkout just
+ * completed, or null when it cannot be found unambiguously.
+ *
+ * `checkoutshoppingcart` answers with `ShoppingCart.Id`, a cart GUID,
+ * which is not the number Mindbody's own receipts and sales reports show.
+ * `GET /sale/sales` (sale.yml:992) lists sales by date range: it takes
+ * `StartSaleDateTime`/`EndSaleDateTime`, `Limit`, `Offset`, `SaleId` and
+ * `PaymentMethodId`, and NO client parameter, so the client is filtered
+ * here on `Sale.ClientId` (2763). The window is today, studio-local
+ * (studioWall: Mindbody reads the parameter as wall-clock time and
+ * ignores any offset). Under the service account: a read, like every
+ * other read here. Bounded at SALE_LOOKUP_WAIT_MS by the caller-side
+ * race below; the call itself runs on to its own timeout and its
+ * answer is dropped.
+ *
+ * "Newest we have not seen": the highest Id among the client's sales
+ * today that this process has not already handed out. If the highest
+ * id has been seen, there is no new sale to name and the answer is
+ * null; the done screen then shows the GUID as it did before T49.
+ * Nothing about the outcome of the sale depends on this: a failed or
+ * empty lookup is one log line and the GUID.
+ */
+export async function latestSaleId(clientId: string): Promise<number | null> {
+  const now = new Date();
+  const dayStart = `${studioWall(now).slice(0, 10)}T00:00:00`;
+  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const dayEnd = `${studioWall(tomorrow).slice(0, 10)}T00:00:00`;
+  const query =
+    `request.startSaleDateTime=${encodeURIComponent(dayStart)}` +
+    `&request.endSaleDateTime=${encodeURIComponent(dayEnd)}` +
+    `&request.limit=200`;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const body = await Promise.race([
+      mindbody(`/sale/sales?${query}`),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(`no answer in ${SALE_LOOKUP_WAIT_MS / 1000}s`),
+            ),
+          SALE_LOOKUP_WAIT_MS,
+        );
+      }),
+    ]);
+    const sales: unknown[] = Array.isArray(body?.Sales) ? body.Sales : [];
+    let best: number | null = null;
+    for (const raw of sales) {
+      const sale = raw as Record<string, unknown>;
+      if (String(sale["ClientId"] ?? "") !== clientId) continue;
+      const id = sale["Id"];
+      if (typeof id !== "number" || !Number.isInteger(id)) continue;
+      if (best === null || id > best) best = id;
+    }
+    if (best === null || seenSaleIds.has(best)) {
+      console.log(
+        `[sale-id] none new for client ${clientId} (${sales.length} sales today)`,
+      );
+      return null;
+    }
+    seenSaleIds.add(best);
+    return best;
+  } catch (err) {
+    console.log(
+      `[sale-id] lookup failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }

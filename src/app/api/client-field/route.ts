@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { actorFields, actorFor, runAsActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 
 import {
@@ -55,12 +56,13 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    const result = await updateClientField(
-      clientId,
-      field as EditableClientField,
-      value,
+    /* T49: as the signed-in teacher when there is one, with the one
+     * loud fallback. */
+    const { session } = actorFor(request);
+    const run = await runAsActor(session, "/api/client-field", (actor) =>
+      updateClientField(clientId, field as EditableClientField, value, actor),
     );
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json({ ok: true, ...run.result, ...actorFields(run) });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },

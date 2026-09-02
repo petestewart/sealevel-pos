@@ -1,4 +1,4 @@
-import { mindbody } from "./mindbody";
+import { mindbody, type Actor } from "./mindbody";
 
 /**
  * Classes and their rosters, shaped for one screen.
@@ -570,6 +570,8 @@ export async function bookClientIntoClass(opts: {
   /** Purchase-instance id of the pass that pays, when explicitly chosen.
    *  Omitted otherwise, and the payload is unchanged from before. */
   clientServiceId?: number;
+  /** T49: the signed-in teacher to book as, when there is one. */
+  actor?: Actor | null;
 }): Promise<BookingResult> {
   const body: Record<string, unknown> = {
     ClientId: opts.clientId,
@@ -587,6 +589,7 @@ export async function bookClientIntoClass(opts: {
     method: "POST",
     body,
     clientId: opts.clientId,
+    ...(opts.actor ? { actor: opts.actor } : {}),
   });
   if (res?.DryRun) return { visitId: null, suppressed: "dry-run" };
   if (res?.WriteSuppressed) return { visitId: null, suppressed: "write-guard" };
@@ -616,11 +619,14 @@ export async function bookClientIntoClass(opts: {
 export async function removeClientFromClass(
   clientId: string,
   classId: number,
+  /** T49: the signed-in teacher to cancel as, when there is one. */
+  actor?: Actor | null,
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
   const res = await mindbody("/class/removeclientfromclass", {
     method: "POST",
     body: { ClientId: clientId, ClassId: classId, SendEmail: false },
     clientId,
+    ...(actor ? { actor } : {}),
   });
   if (res?.DryRun) return { suppressed: "dry-run" };
   if (res?.WriteSuppressed) return { suppressed: "write-guard" };
@@ -744,11 +750,14 @@ export async function setVisitService(
   /** Who the visit belongs to, for POS_WRITE_CLIENT_IDS only; never
    *  merged into the payload. */
   clientId?: string,
+  /** T49: the signed-in teacher to make the change as, when there is one. */
+  actor?: Actor | null,
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
   const res = await mindbody("/client/updateclientvisit", {
     method: "POST",
     body: { VisitId: visitId, ClientServiceId: clientServiceId },
     clientId,
+    ...(actor ? { actor } : {}),
   });
   if (res?.DryRun) return { suppressed: "dry-run" };
   if (res?.WriteSuppressed) return { suppressed: "write-guard" };
@@ -764,6 +773,9 @@ export async function setSignedIn(
    * guard would suppress every check-in whenever it is armed.
    */
   clientId?: string,
+  /** T49: the signed-in teacher to sign the client in as, when there is
+   *  one, so Mindbody's sign-in record names them. */
+  actor?: Actor | null,
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
   const res = await mindbody<{ DryRun?: boolean; WriteSuppressed?: boolean }>(
     "/client/updateclientvisit",
@@ -771,6 +783,7 @@ export async function setSignedIn(
       method: "POST",
       body: { VisitId: visitId, SignedIn: signedIn },
       clientId,
+      ...(actor ? { actor } : {}),
     },
   );
   if (res?.DryRun) return { suppressed: "dry-run" };

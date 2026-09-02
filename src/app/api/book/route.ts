@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { actorFields, actorFor, runAsActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 
 import { bookClientIntoClass } from "@/lib/roster";
@@ -20,7 +21,8 @@ export const dynamic = "force-dynamic";
  *
  * The write goes through the mindbody() client, so dry run and the
  * POS_WRITE_CLIENT_IDS guard both apply; a suppressed booking is reported
- * as such rather than pretending a visit exists.
+ * as such rather than pretending a visit exists. T49: as the signed-in
+ * teacher when there is one, with the one loud fallback.
  */
 export async function POST(request: Request) {
   const denied = requireSession(request);
@@ -40,16 +42,20 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    const result = await bookClientIntoClass({
-      clientId,
-      classId,
-      waitlist: waitlist === true,
-      waitlistEntryId:
-        typeof waitlistEntryId === "number" ? waitlistEntryId : undefined,
-      clientServiceId:
-        typeof clientServiceId === "number" ? clientServiceId : undefined,
-    });
-    return NextResponse.json({ ok: true, ...result });
+    const { session } = actorFor(request);
+    const run = await runAsActor(session, "/api/book", (actor) =>
+      bookClientIntoClass({
+        clientId,
+        classId,
+        waitlist: waitlist === true,
+        waitlistEntryId:
+          typeof waitlistEntryId === "number" ? waitlistEntryId : undefined,
+        clientServiceId:
+          typeof clientServiceId === "number" ? clientServiceId : undefined,
+        actor,
+      }),
+    );
+    return NextResponse.json({ ok: true, ...run.result, ...actorFields(run) });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },

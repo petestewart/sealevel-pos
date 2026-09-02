@@ -221,11 +221,29 @@ export function forgetToken(): void {
   cachedTokens.delete(mindbodyEnv().siteId);
 }
 
+/**
+ * Who a call runs as (T49). When present, the Authorization header is
+ * this teacher's token instead of the service account's, on that call
+ * only, so Mindbody attributes the write to them. `staffId` goes in the
+ * call log as `actor`; the token goes nowhere but the header.
+ */
+export interface Actor {
+  token: string;
+  staffId: number;
+  name: string;
+}
+
 export interface MindbodyCallOptions {
   method?: "GET" | "POST";
   body?: unknown;
   /** Skip the staff token. Only for endpoints that genuinely do not need it. */
   anonymous?: boolean;
+  /** Run as this signed-in teacher (T49). Dry run and the write guard
+   *  apply exactly as without one; only the header changes. A refusal
+   *  under an actor's token is NOT retried here as the service account:
+   *  that decision (once, loudly, or never for a comp) belongs to the
+   *  route, see src/lib/actor.ts. */
+  actor?: Actor;
   /**
    * The client this write is about, for the POS_WRITE_CLIENT_IDS guard,
    * when the Mindbody payload itself does not name one.
@@ -315,6 +333,40 @@ export function mindbodyHttpStatus(err: unknown): number | null {
   return typeof status === "number" ? status : null;
 }
 
+/**
+ * Whether a failed call was Mindbody refusing the CALLER rather than the
+ * request (T49): a 401 or 403 answer, or Mindbody's "You do not have
+ * permission" wording (CLAUDE.md: that wording is what a missing cart
+ * permission gets too, and it has come back on 400-class statuses). A
+ * 4xx only: a 5xx or a dead transport says nothing about permissions,
+ * and for a money write must stay ambiguous. This is what decides
+ * whether a write under a teacher's token is retried once as the
+ * service account.
+ */
+export function isActorRefusal(err: unknown): boolean {
+  const status = mindbodyHttpStatus(err);
+  if (status === null || status >= 500) return false;
+  if (status === 401 || status === 403) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /permission/i.test(message);
+}
+
+/**
+ * Whether a refusal under a teacher's token reads as the TOKEN being
+ * dead rather than the teacher lacking a permission: a 401. The service
+ * account's own handling above takes a 401 the same way (forget the
+ * token, reissue), and Mindbody's permission refusals come back as 403
+ * with the "You do not have permission" wording, so a 401 on a token
+ * that issued fine is the token no longer being honoured (revoked,
+ * expired, the password changed). The route ends the staff session on
+ * it. What the live API says for an expired staff token is on the T49
+ * probe list; if it turns out to be a 403 with token wording, widen
+ * this, not isActorRefusal.
+ */
+export function isActorTokenDead(err: unknown): boolean {
+  return mindbodyHttpStatus(err) === 401;
+}
+
 /** Build the teacher-facing error for a non-ok Mindbody answer, tagging it
  *  with the HTTP status for mindbodyHttpStatus(). The thrown message
  *  reaches teacher-facing surfaces, so it carries Mindbody's human-readable
@@ -348,6 +400,7 @@ export async function mindbody<T = any>(
         status: null,
         ms: 0,
         outcome: "dry-run",
+        actor: null,
         requestBody: opts.body ?? null,
         responseBody: "suppressed: POS_DRY_RUN is on",
       });
@@ -366,6 +419,7 @@ export async function mindbody<T = any>(
         status: null,
         ms: 0,
         outcome: "write-guard",
+        actor: null,
         requestBody: opts.body ?? null,
         responseBody:
           `suppressed: client ${client ?? "(none named)"} is not in ` +
@@ -380,7 +434,12 @@ export async function mindbody<T = any>(
     SiteId: env.siteId,
     "content-type": "application/json",
   };
-  if (!opts.anonymous) headers["Authorization"] = await staffToken(env);
+  /* T49: a signed-in teacher's token, or the service account's. The
+   * actor's token is never cached here and never refreshed here; it is
+   * whatever the staff session holds, and a rejection of it is the
+   * route's business. */
+  if (opts.actor) headers["Authorization"] = opts.actor.token;
+  else if (!opts.anonymous) headers["Authorization"] = await staffToken(env);
 
   const started = Date.now();
   const res = await fetch(`${env.baseUrl}${path}`, {
@@ -396,6 +455,7 @@ export async function mindbody<T = any>(
     status: res.status,
     ms: Date.now() - started,
     outcome: "sent",
+    actor: opts.actor?.staffId ?? null,
     requestBody: opts.body ?? null,
     responseBody: text,
   });
@@ -419,7 +479,7 @@ export async function mindbody<T = any>(
      * timeout/abort propagates and the money routes flag the outcome
      * ambiguous exactly as they would for a first attempt.
      */
-    if (res.status === 401 && !opts.anonymous) {
+    if (res.status === 401 && !opts.anonymous && !opts.actor) {
       forgetToken();
       const retryHeaders = { ...headers, Authorization: await staffToken(env) };
       const retryStarted = Date.now();
@@ -439,6 +499,7 @@ export async function mindbody<T = any>(
         status: retry.status,
         ms: Date.now() - retryStarted,
         outcome: "sent",
+        actor: null,
         requestBody: opts.body ?? null,
         responseBody: retryText,
       });

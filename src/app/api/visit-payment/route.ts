@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { actorFields, actorFor, runAsActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 
 import { setVisitService } from "@/lib/roster";
@@ -11,7 +12,8 @@ export const dynamic = "force-dynamic";
  * paying". Same endpoint family as check-in (`/client/updateclientvisit`),
  * same guard plumbing, and like check-in it moves no money -- it reassigns
  * a session from one already-purchased pricing option to another, and
- * doing it again with the old id reverses it.
+ * doing it again with the old id reverses it. T49: as the signed-in
+ * teacher when there is one, with the one loud fallback.
  */
 export async function POST(request: Request) {
   const denied = requireSession(request);
@@ -30,12 +32,20 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    const result = await setVisitService(
-      visitId,
-      clientServiceId,
-      typeof clientId === "string" ? clientId : undefined,
+    const { session } = actorFor(request);
+    const run = await runAsActor(session, "/api/visit-payment", (actor) =>
+      setVisitService(
+        visitId,
+        clientServiceId,
+        typeof clientId === "string" ? clientId : undefined,
+        actor,
+      ),
     );
-    return NextResponse.json({ ok: true, suppressed: result.suppressed });
+    return NextResponse.json({
+      ok: true,
+      suppressed: run.result.suppressed,
+      ...actorFields(run),
+    });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },

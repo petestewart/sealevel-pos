@@ -214,6 +214,7 @@ function makeLimiter(): AttemptLimiter {
 const deviceLimiter = makeLimiter();
 const verifyLimiter = makeLimiter();
 const enrollLimiter = makeLimiter();
+const signinLimiter = makeLimiter();
 
 /** Milliseconds of device-login lockout remaining, 0 when allowed. */
 export function lockoutRemainingMs(now = Date.now()): number {
@@ -249,6 +250,18 @@ export function claimEnrollAttempt(now = Date.now()): number {
 
 export function recordEnrollSuccess(): void {
   enrollLimiter.success();
+}
+
+/** The staff sign-in's counter (/api/teacher/signin, T49): like
+ *  enrollment, every attempt is a Mindbody sign-in against a teacher's
+ *  real password, so it gets its own five-then-30s and shares nothing
+ *  with the doors or the comp gate. */
+export function claimSigninAttempt(now = Date.now()): number {
+  return signinLimiter.claim(now);
+}
+
+export function recordSigninSuccess(): void {
+  signinLimiter.success();
 }
 
 /* --- The comp token (T48) ---------------------------------------------
@@ -352,8 +365,9 @@ export function spendCompToken(token: string, now = Date.now()): boolean {
   return true;
 }
 
-/** One cookie's value off a request, or null. */
-function cookieValue(request: Request, name: string): string | null {
+/** One cookie's value off a request, or null. Exported for the staff
+ *  session (src/lib/staffsession.ts), which keeps its own cookie. */
+export function cookieValue(request: Request, name: string): string | null {
   const header = request.headers.get("cookie");
   if (!header) return null;
   for (const part of header.split(";")) {

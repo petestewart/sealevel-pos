@@ -276,6 +276,19 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       );
     `,
   },
+  {
+    /* T49: the cart GUID beside the sale id. `sale_id` has always held
+     * ShoppingCart.Id, a GUID; from T49 it holds the numeric Sale.Id
+     * when the lookup after a real checkout finds one (the number on
+     * Mindbody's own receipts), else the GUID as before, and `cart_id`
+     * keeps the GUID either way. Additive and nullable: rows from before
+     * carry their GUID in sale_id and null here. */
+    version: 6,
+    sql: `
+      ALTER TABLE comp_receipts
+        ADD COLUMN IF NOT EXISTS cart_id text;
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -392,7 +405,10 @@ export interface CompReceiptItem {
  * it", never a failure of the comp.
  */
 export async function insertCompReceipt(receipt: {
+  /** The numeric Sale.Id when found (T49), else the cart GUID. */
   saleId: string | null;
+  /** T49: the cart GUID, always, when the sale went out. */
+  cartId: string | null;
   clientId: string | null;
   totalCents: number;
   items: readonly CompReceiptItem[];
@@ -416,9 +432,9 @@ export async function insertCompReceipt(receipt: {
       `INSERT INTO comp_receipts
          (sale_id, client_id, total_cents, items, reason, target, suppressed,
           teacher_id, teacher_name, kind, detail, for_staff_id,
-          for_staff_name, formula_note_id)
+          for_staff_name, formula_note_id, cart_id)
        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12,
-               $13, $14)`,
+               $13, $14, $15)`,
       [
         receipt.saleId,
         receipt.clientId,
@@ -434,6 +450,7 @@ export async function insertCompReceipt(receipt: {
         receipt.forStaffId,
         receipt.forStaffName,
         receipt.formulaNoteId,
+        receipt.cartId,
       ],
     );
     return true;

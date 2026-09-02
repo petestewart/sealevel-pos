@@ -22,6 +22,10 @@ export interface CallRecord {
   ms: number;
   /** "sent", "dry-run", or "write-guard". */
   outcome: string;
+  /** T49: the staff id whose token the call went out under, when a
+   *  signed-in teacher's rather than the service account's; null for
+   *  the service account and for suppressed calls. Never the token. */
+  actor: number | null;
   requestBody: string | null;
   responseBody: string | null;
 }

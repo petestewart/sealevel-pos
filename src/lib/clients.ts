@@ -1,4 +1,4 @@
-import { mindbody } from "./mindbody";
+import { mindbody, type Actor } from "./mindbody";
 
 /**
  * Client search, straight through to Mindbody's own `searchText`.
@@ -67,6 +67,8 @@ export async function updateClientField(
   clientId: string,
   field: EditableClientField,
   value: string,
+  /** T49: the signed-in teacher to save as, when there is one. */
+  actor?: Actor | null,
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
   const res = await mindbody("/client/updateclient", {
     method: "POST",
@@ -75,6 +77,7 @@ export async function updateClientField(
       CrossRegionalUpdate: false,
     },
     clientId,
+    ...(actor ? { actor } : {}),
   });
   if (res?.DryRun) return { suppressed: "dry-run" };
   if (res?.WriteSuppressed) return { suppressed: "write-guard" };
@@ -87,8 +90,9 @@ export async function updateClientField(
 export async function updateClientNotes(
   clientId: string,
   notes: string,
+  actor?: Actor | null,
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
-  return updateClientField(clientId, "Notes", notes);
+  return updateClientField(clientId, "Notes", notes, actor);
 }
 
 /**
@@ -119,6 +123,10 @@ export async function updateClientNotes(
  */
 export async function recordLiabilityRelease(
   clientId: string,
+  /** T49: the signed-in teacher to release as, when there is one; the
+   *  schema says `ReleasedBy` records the calling staff member, which
+   *  is exactly what a teacher's token changes. */
+  actor?: Actor | null,
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
   const res = await mindbody("/client/updateclient", {
     method: "POST",
@@ -127,6 +135,7 @@ export async function recordLiabilityRelease(
       CrossRegionalUpdate: false,
     },
     clientId,
+    ...(actor ? { actor } : {}),
   });
   if (res?.DryRun) return { suppressed: "dry-run" };
   if (res?.WriteSuppressed) return { suppressed: "write-guard" };

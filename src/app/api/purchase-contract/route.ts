@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { actorFields, actorFor, runAsActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 import { isDryRun, mindbodyHttpStatus } from "@/lib/mindbody";
 
@@ -58,6 +59,12 @@ export const dynamic = "force-dynamic";
  * - `ambiguous: true` on an error  transport death or a 5xx answer: the
  *                                  purchase MAY exist; the UI must say
  *                                  so and must not invite a retry.
+ *
+ * T49: the REAL purchase runs as the signed-in teacher when there is
+ * one, with the one loud fallback (a 4xx refusal of the teacher is a
+ * refusal at the gate, nothing charged, so the service-account retry is
+ * safe); the Test rehearsal stays on the service account like every
+ * other read-shaped call.
  */
 
 /** Same reading as /api/checkout: only a definite 4xx refusal may be
@@ -230,19 +237,29 @@ export async function POST(request: Request) {
    * refusal renders Mindbody's reason, a 5xx or dead transport is
    * honest ambiguity. */
   try {
-    const outcome = await purchaseContract({
-      contractId: contractId as number,
-      clientId,
-      lastFour: card.lastFour,
-      test: false,
-    });
+    const { session } = actorFor(request);
+    const run = await runAsActor(session, "/api/purchase-contract", (actor) =>
+      purchaseContract({
+        contractId: contractId as number,
+        clientId,
+        lastFour: card.lastFour,
+        test: false,
+        actor,
+      }),
+    );
+    const outcome = run.result;
     if (outcome.suppressed) {
-      return NextResponse.json({ ok: false, suppressed: outcome.suppressed });
+      return NextResponse.json({
+        ok: false,
+        suppressed: outcome.suppressed,
+        ...actorFields(run),
+      });
     }
     return NextResponse.json({
       ok: true,
       clientContractId: outcome.clientContractId,
       total: outcome.totals?.total ?? rehearsed.totals?.total ?? null,
+      ...actorFields(run),
     });
   } catch (err) {
     const ambiguous = isAmbiguous(err);

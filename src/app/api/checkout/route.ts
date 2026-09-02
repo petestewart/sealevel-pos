@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 
 import {
+  actorFields,
+  actorFor,
+  endedStaffSession,
+  runAsActor,
+} from "@/lib/actor";
+import {
   requireSession,
   spendCompToken,
   teacherLogTag,
@@ -29,6 +35,7 @@ import {
   checkoutCart,
   clientPaymentProfile,
   houseClientId,
+  latestSaleId,
   parseCartLines,
   purchaseCredit,
   rehearseCheckout,
@@ -111,6 +118,19 @@ export const dynamic = "force-dynamic";
  *                                    reset) so the write MAY have gone
  *                                    through: the UI must say so and must
  *                                    not invite a retry.
+ *
+ * T49, two additions and nothing else:
+ * - Every money write runs AS THE SIGNED-IN TEACHER when there is one
+ *   (runAsActor), so Mindbody's sale names them. A 4xx refusal of the
+ *   teacher's token retries once as the service account and the answer
+ *   carries `actorFallback`; a comp NEVER falls back (a refused comp is
+ *   refused, with the message). The rehearsal stays on the service
+ *   account. The payload, the single flight, the rehearsal order, the
+ *   suppression and the outcome wording are T24/T28/T43's exactly.
+ * - After a REAL checkout, the numeric Sale.Id is looked up (latestSaleId,
+ *   bounded at 8s) and answered as `saleId`, with the cart GUID as
+ *   `cartId`; a failed or ambiguous lookup answers the GUID as `saleId`,
+ *   as before. The comp receipt and the Formula Note carry the same id.
  */
 
 /** Is the outcome of a money write UNKNOWN after this error? Two shapes
@@ -189,6 +209,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
   const items = parsed.items;
+  /* T49: the staff session this browser holds, if any. Resolved once;
+   * every write below runs through runAsActor with it. */
+  const { session } = actorFor(request);
 
   /* T28: an optional `split` -- exactly two payment legs, in the
    * teacher's order, charged in ONE checkoutshoppingcart call so there
@@ -513,6 +536,19 @@ export async function POST(request: Request) {
   }
   const total = priced.grandTotal;
 
+  /* T49: the ids a real sale is answered with. `cartId` is
+   * ShoppingCart.Id, the GUID every path has always answered as
+   * `saleId`; `saleId` becomes the numeric Sale.Id when the lookup finds
+   * one and stays the GUID when it does not. Never called for a
+   * suppressed write (there is no sale to find). */
+  const saleIds = async (
+    cartId: string | null,
+  ): Promise<{ saleId: string | null; cartId: string | null }> => {
+    if (cartId === null) return { saleId: null, cartId: null };
+    const numeric = await latestSaleId(saleClientId);
+    return { saleId: numeric === null ? cartId : String(numeric), cartId };
+  };
+
   /* A PRESENT tendered amount below the total is a short tender, zero
    * included ("" was never sent; an explicit 0 is an entry). Display-only
    * or not, the server refuses to record a cash sale the drawer cannot
@@ -655,22 +691,34 @@ export async function POST(request: Request) {
       /* ONE checkoutshoppingcart call carrying both Payments entries in
        * the teacher's order: no partial seam exists, so a refusal
        * refuses the WHOLE sale and nothing partial can stand. */
-      const outcome = await checkoutCart(items, clientId, [
-        toPayment(legA),
-        toPayment(legB),
-      ]);
+      const run = await runAsActor(session, "/api/checkout", (actor) =>
+        checkoutCart(
+          items,
+          clientId,
+          [toPayment(legA), toPayment(legB)],
+          actor,
+        ),
+      );
+      const outcome = run.result;
       if (outcome.suppressed) {
-        return NextResponse.json({ ok: false, suppressed: outcome.suppressed });
+        return NextResponse.json({
+          ok: false,
+          suppressed: outcome.suppressed,
+          ...actorFields(run),
+        });
       }
+      const ids = await saleIds(outcome.saleId);
       return NextResponse.json({
         ok: true,
         method: "split",
         total,
-        saleId: outcome.saleId,
+        saleId: ids.saleId,
+        cartId: ids.cartId,
         legs: [
           { method: legA.method, amount: legA.amount },
           { method: legB.method, amount: legB.amount },
         ],
+        ...actorFields(run),
       });
     } catch (err) {
       /* Same posture as the single-method catch below: only a definite
@@ -743,12 +791,19 @@ export async function POST(request: Request) {
      * (the log line says so). Nothing about the answer changes. */
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const res = await Promise.race([
-        mindbody("/client/addclientformulanote", {
-          method: "POST",
-          body: { ClientId: clientId, Note: note },
-          clientId,
-        }),
+      /* T49: filed as the signed-in teacher too, with the ordinary
+       * fallback (the note is a record, not the comp; a permission gap
+       * here is one warn line, and the note still lands). */
+      const res = (
+        await Promise.race([
+          runAsActor(session, "/api/checkout formula-note", (actor) =>
+            mindbody("/client/addclientformulanote", {
+              method: "POST",
+              body: { ClientId: clientId, Note: note },
+              clientId,
+              ...(actor ? { actor } : {}),
+            }),
+          ),
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () =>
@@ -760,7 +815,8 @@ export async function POST(request: Request) {
             FORMULA_NOTE_WAIT_MS,
           );
         }),
-      ]);
+        ])
+      ).result;
       if (res?.DryRun || res?.WriteSuppressed) {
         console.log(
           `[comp] formula-note suppressed: ${res?.DryRun ? "dry-run" : "write-guard"}`,
@@ -786,6 +842,7 @@ export async function POST(request: Request) {
 
   const recordComp = async (outcome: {
     saleId: string | null;
+    cartId: string | null;
     suppressed: boolean;
     formulaNoteId: number | null;
   }) => {
@@ -797,6 +854,7 @@ export async function POST(request: Request) {
     );
     await insertCompReceipt({
       saleId: outcome.suppressed ? null : outcome.saleId,
+      cartId: outcome.suppressed ? null : outcome.cartId,
       clientId: clientId ?? null,
       totalCents: Math.round(total * 100),
       items: compItems,
@@ -819,14 +877,23 @@ export async function POST(request: Request) {
   const m = method as Method;
   try {
     if (m === "comp" || m === "cash") {
-      let outcome;
+      let run;
       try {
-        outcome = await checkoutCart(
-          items,
-          saleClientId,
-          m === "cash"
-            ? { type: "Cash", amount: total }
-            : { type: "Comp", amount: total },
+        /* T49: a comp never falls back to the service account; cash
+         * takes the ordinary one loud fallback. */
+        run = await runAsActor(
+          session,
+          "/api/checkout",
+          (actor) =>
+            checkoutCart(
+              items,
+              saleClientId,
+              m === "cash"
+                ? { type: "Cash", amount: total }
+                : { type: "Comp", amount: total },
+              actor,
+            ),
+          { fallback: m !== "comp" },
         );
       } catch (err) {
         /* A refused or unanswered comp records no receipt (there is no
@@ -843,28 +910,38 @@ export async function POST(request: Request) {
         }
         throw err;
       }
+      const outcome = run.result;
+      const ids =
+        outcome.suppressed !== null
+          ? { saleId: null, cartId: null }
+          : await saleIds(outcome.saleId);
       if (m === "comp") {
         /* T45: the outcome is decided (the call resolved), so the Formula
          * Note goes out now, for a real sale only, and its id rides on the
          * receipt. Neither can throw; see fileFormulaNote. */
         const formulaNoteId =
-          outcome.suppressed !== null
-            ? null
-            : await fileFormulaNote(outcome.saleId);
+          outcome.suppressed !== null ? null : await fileFormulaNote(ids.saleId);
         await recordComp({
-          saleId: outcome.saleId,
+          saleId: ids.saleId,
+          cartId: ids.cartId,
           suppressed: outcome.suppressed !== null,
           formulaNoteId,
         });
       }
       if (outcome.suppressed) {
-        return NextResponse.json({ ok: false, suppressed: outcome.suppressed });
+        return NextResponse.json({
+          ok: false,
+          suppressed: outcome.suppressed,
+          ...actorFields(run),
+        });
       }
       return NextResponse.json({
         ok: true,
         method: m,
         total,
-        saleId: outcome.saleId,
+        saleId: ids.saleId,
+        cartId: ids.cartId,
+        ...actorFields(run),
       });
     }
 
@@ -902,18 +979,30 @@ export async function POST(request: Request) {
           { status: 409 },
         );
       }
-      const outcome = await checkoutCart(items, clientId, {
-        type: "DebitAccount",
-        amount: total,
-      });
+      const run = await runAsActor(session, "/api/checkout", (actor) =>
+        checkoutCart(
+          items,
+          clientId,
+          { type: "DebitAccount", amount: total },
+          actor,
+        ),
+      );
+      const outcome = run.result;
       if (outcome.suppressed) {
-        return NextResponse.json({ ok: false, suppressed: outcome.suppressed });
+        return NextResponse.json({
+          ok: false,
+          suppressed: outcome.suppressed,
+          ...actorFields(run),
+        });
       }
+      const ids = await saleIds(outcome.saleId);
       return NextResponse.json({
         ok: true,
         method: m,
         total,
-        saleId: outcome.saleId,
+        saleId: ids.saleId,
+        cartId: ids.cartId,
+        ...actorFields(run),
       });
     }
 
@@ -963,19 +1052,30 @@ export async function POST(request: Request) {
     if (total >= CARD_MINIMUM_USD) {
       /* Card path one: the total itself satisfies the floor. ONE call,
        * StoredCard, never routed through account credit. */
-      const outcome = await checkoutCart(items, clientId, {
-        type: "StoredCard",
-        amount: total,
-        lastFour: card.lastFour,
-      });
+      const run = await runAsActor(session, "/api/checkout", (actor) =>
+        checkoutCart(
+          items,
+          clientId,
+          { type: "StoredCard", amount: total, lastFour: card.lastFour },
+          actor,
+        ),
+      );
+      const outcome = run.result;
       if (outcome.suppressed) {
-        return NextResponse.json({ ok: false, suppressed: outcome.suppressed });
+        return NextResponse.json({
+          ok: false,
+          suppressed: outcome.suppressed,
+          ...actorFields(run),
+        });
       }
+      const ids = await saleIds(outcome.saleId);
       return NextResponse.json({
         ok: true,
         method: m,
         total,
-        saleId: outcome.saleId,
+        saleId: ids.saleId,
+        cartId: ids.cartId,
+        ...actorFields(run),
       });
     }
 
@@ -984,12 +1084,12 @@ export async function POST(request: Request) {
      * DebitAccount. Two calls with a real seam between them; each failure
      * mode below reports EXACTLY what state the client is in. */
     let credit;
+    let creditRun;
     try {
-      credit = await purchaseCredit(
-        clientId as string,
-        CARD_MINIMUM_USD,
-        card.lastFour,
+      creditRun = await runAsActor(session, "/api/checkout", (actor) =>
+        purchaseCredit(clientId as string, CARD_MINIMUM_USD, card.lastFour, actor),
       );
+      credit = creditRun.result;
     } catch (err) {
       const ambiguous = isAmbiguous(err);
       return NextResponse.json(
@@ -1008,14 +1108,23 @@ export async function POST(request: Request) {
       );
     }
     if (credit.suppressed) {
-      return NextResponse.json({ ok: false, suppressed: credit.suppressed });
+      return NextResponse.json({
+        ok: false,
+        suppressed: credit.suppressed,
+        ...actorFields(creditRun),
+      });
     }
 
     try {
-      const outcome = await checkoutCart(items, clientId, {
-        type: "DebitAccount",
-        amount: total,
-      });
+      const run = await runAsActor(session, "/api/checkout", (actor) =>
+        checkoutCart(
+          items,
+          clientId,
+          { type: "DebitAccount", amount: total },
+          actor,
+        ),
+      );
+      const outcome = run.result;
       if (outcome.suppressed) {
         /* The credit purchase went out and the checkout did not: the same
          * seam as a step-2 failure, reported the same way. Should be
@@ -1025,12 +1134,20 @@ export async function POST(request: Request) {
           "the checkout was suppressed by the write guard after the credit purchase went through",
         );
       }
+      const ids = await saleIds(outcome.saleId);
+      /* Either write may have fallen back; one note covers both. */
+      const fallback = creditRun.actorFallback ?? run.actorFallback;
       return NextResponse.json({
         ok: true,
         method: m,
         total,
-        saleId: outcome.saleId,
+        saleId: ids.saleId,
+        cartId: ids.cartId,
         creditPurchased: CARD_MINIMUM_USD,
+        ...actorFields({
+          actorFallback: fallback,
+          staffSessionEnded: creditRun.staffSessionEnded || run.staffSessionEnded,
+        }),
       });
     } catch (err) {
       /* THE seam. The card was charged $10 of credit; the sale did not
@@ -1065,6 +1182,9 @@ export async function POST(request: Request) {
           : errMessage(err),
         stage: "checkout",
         ambiguous,
+        /* T49: a comp refused because the teacher's token is dead ends
+         * the staff session; the dialog says so beside the refusal. */
+        ...(endedStaffSession(err) ? { staffSessionEnded: true } : {}),
       },
       { status: 502 },
     );
