@@ -59,18 +59,30 @@ function nameOf(row: Record<string, unknown>): string {
  *  explicit false excludes. */
 function isTeacher(row: Record<string, unknown>): boolean {
   if (row["ClassTeacher"] === false) return false;
+  return isStaff(row);
+}
+
+/** Whether a staff row is a real person the counter can act as: active,
+ *  with an id, and not one of the schedule's placeholder accounts. The
+ *  owner and desk staff pass this and fail `isTeacher`; they sign in and
+ *  sell like anyone, they just do not teach (T49 live: Pete's own login
+ *  was refused as "not an active teacher"). */
+function isStaff(row: Record<string, unknown>): boolean {
   if (row["Active"] === false) return false;
   if (typeof row["Id"] !== "number") return false;
   return !isPlaceholderTeacher(row["Id"], nameOf(row));
 }
 
-async function fetchTeachers(): Promise<Teacher[]> {
+async function fetchStaffRows(
+  teachersOnly: boolean,
+): Promise<Teacher[]> {
   const out: Teacher[] = [];
   const seen = new Set<number>();
+  const keep = teachersOnly ? isTeacher : isStaff;
   for (let page = 0; page < MAX_PAGES; page++) {
     const body = await mindbody(
-      `/staff/staff?Filters=ClassInstructor&Limit=${PAGE_LIMIT}` +
-        `&Offset=${page * PAGE_LIMIT}`,
+      `/staff/staff?${teachersOnly ? "Filters=ClassInstructor&" : ""}` +
+        `Limit=${PAGE_LIMIT}&Offset=${page * PAGE_LIMIT}`,
     );
     const rows: unknown[] = Array.isArray(body?.StaffMembers)
       ? body.StaffMembers
@@ -78,7 +90,7 @@ async function fetchTeachers(): Promise<Teacher[]> {
     for (const raw of rows) {
       if (!raw || typeof raw !== "object") continue;
       const row = raw as Record<string, unknown>;
-      if (!isTeacher(row)) continue;
+      if (!keep(row)) continue;
       const id = row["Id"] as number;
       if (seen.has(id)) continue;
       seen.add(id);
@@ -100,7 +112,7 @@ export async function listTeachers(): Promise<Teacher[]> {
     return cache.teachers;
   }
   try {
-    const teachers = await fetchTeachers();
+    const teachers = await fetchStaffRows(true);
     cache = { key, at: Date.now(), teachers };
     return teachers;
   } catch (err) {
@@ -109,6 +121,32 @@ export async function listTeachers(): Promise<Teacher[]> {
         `[staff] read failed (${err instanceof Error ? err.message : String(err)}); serving the cached list`,
       );
       return cache.teachers;
+    }
+    throw err;
+  }
+}
+
+let staffCache: { key: string; at: number; staff: Teacher[] } | null = null;
+
+/** Every active, non-placeholder staff member, teachers and desk staff
+ *  and the owner alike: who may SIGN IN and act (T49) or enrol a comp
+ *  PIN (T48). `listTeachers` stays the narrower list a comp can be FOR.
+ *  Same cache shape and stale-serving rule as the teachers. */
+export async function listStaff(): Promise<Teacher[]> {
+  const key = target();
+  if (staffCache && staffCache.key === key && Date.now() - staffCache.at < CACHE_TTL_MS) {
+    return staffCache.staff;
+  }
+  try {
+    const staff = await fetchStaffRows(false);
+    staffCache = { key, at: Date.now(), staff };
+    return staff;
+  } catch (err) {
+    if (staffCache && staffCache.key === key) {
+      console.warn(
+        `[staff] read failed (${err instanceof Error ? err.message : String(err)}); serving the cached staff list`,
+      );
+      return staffCache.staff;
     }
     throw err;
   }

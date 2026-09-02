@@ -6,7 +6,7 @@ import {
   requireSession,
 } from "@/lib/auth";
 import { revokeStaffToken, signInAsStaff } from "@/lib/mindbody";
-import { listTeachers } from "@/lib/staff";
+import { listStaff } from "@/lib/staff";
 import { isPinShape, PIN_MAX, PIN_MIN, setTeacherPin } from "@/lib/teacherpins";
 
 export const dynamic = "force-dynamic";
@@ -110,7 +110,7 @@ export async function POST(request: Request) {
   }
   let teachers;
   try {
-    teachers = await listTeachers();
+    teachers = await listStaff();
   } catch (err) {
     return NextResponse.json(
       {
@@ -122,7 +122,7 @@ export async function POST(request: Request) {
   const staff = teachers.find((t) => t.id === user.id);
   if (!staff) {
     return NextResponse.json(
-      { error: "That Mindbody login is not an active teacher here." },
+      { error: "That Mindbody login is not an active staff member here." },
       { status: 403 },
     );
   }

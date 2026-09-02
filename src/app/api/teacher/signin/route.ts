@@ -6,7 +6,7 @@ import {
   requireSession,
 } from "@/lib/auth";
 import { revokeStaffToken, signInAsStaff } from "@/lib/mindbody";
-import { listTeachers } from "@/lib/staff";
+import { listStaff } from "@/lib/staff";
 import {
   createStaffSession,
   endStaffSession,
@@ -103,7 +103,7 @@ export async function POST(request: Request) {
   }
   let teachers;
   try {
-    teachers = await listTeachers();
+    teachers = await listStaff();
   } catch (err) {
     void revokeStaffToken(signIn.token);
     return NextResponse.json(
@@ -117,7 +117,7 @@ export async function POST(request: Request) {
   if (!staff) {
     void revokeStaffToken(signIn.token);
     return NextResponse.json(
-      { error: "That Mindbody login is not an active teacher here." },
+      { error: "That Mindbody login is not an active staff member here." },
       { status: 403 },
     );
   }

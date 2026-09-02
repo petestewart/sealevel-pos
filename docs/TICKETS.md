@@ -5570,6 +5570,19 @@ the blocks.
   session). Deliberate for now: the PIN is the friction, the session is
   the attribution.
 
+### Live pass (2026-09-02)
+
+Pete signed in with his own login and Mindbody ISSUED THE TOKEN: the API
+key issues staff tokens for logins other than the API user, which was
+T49's load-bearing unknown. The app then refused him: "not an active
+teacher here", because sign-in and enrolment matched the login against
+`listTeachers()`, the class-instructor list, and the owner's staff record
+is not flagged as a class teacher. Owners and desk staff sell and check
+people in, so both now match against a new `listStaff()` (every active,
+non-placeholder staff member); `listTeachers()` remains the list a comp
+can be FOR. Still unverified live: the probe's permission read and the
+sales report's attribution.
+
 ### Review (separate reviewer), T49
 
 Read as a security reviewer and a money-path reviewer against `next
