@@ -4761,11 +4761,120 @@ today's budget is unchanged. `typecheck` and `build` clean.
   lands on the around-now window (the class is not in it) and quietly
   corrects the param. Carrying `?day=` in the URL is a small follow-up
   if a reload mid-audit turns out to matter.
-- `classRoster` still spends an around-now `/class/classes` call for
+- ~~`classRoster` still spends an around-now `/class/classes` call for
   the class summary on every roster load; on a past-day class that
-  lookup can never hit. Pre-existing, one call per roster load, and
-  the summary the UI shows comes from `classes` anyway. Worth folding
-  into the route if the budget ever pinches.
+  lookup can never hit.~~ Closed by the review below: `summary=0`.
+
+### Review (separate reviewer), T46
+
+Hunted in the order set: writes on the wrong day, the roster route's
+wasted call, date arithmetic, cache and budget, UI, and the money and
+check-in paths. Mocked Mindbody with delays, a failing day, an empty
+day and a long class name (`scratchpad/t46-review-mock.js`,
+`t46-review.js`; logs and screenshots under `scratchpad/t46-review/`).
+Two real defects and one misleading state fixed; the rest held.
+
+- **REAL: `Today` while the app-start fetch was still on the wire left
+  the screen on "No classes in the next few hours" for good.**
+  `pickViewDate(null)` bumped `viewGen` unconditionally, so the
+  around-now answer already in flight was dropped as superseded, and
+  since `viewDate` was null already the effect did not re-run to fetch
+  again. A teacher who opens the calendar in the first second and taps
+  Today (plausible: the calendar is the new thing on the screen) got a
+  header with no class until a settings change. Sequence R1 (a 2.5s
+  around-now delay, Today tapped at once): before, `none: "No classes
+  in the next few hours"`, `classes:now` 2 and nothing rendered; after,
+  the 12:00 class and its roster land. Fix: Today with today already
+  showing is a no-op (a `viewDateRef` readable at call time), so the
+  fetch on the wire keeps its generation.
+- **REAL: a failed day fetch captioned today's roster with the other
+  day.** `viewDate` was set before the load, and on failure only
+  `viewError` was written, so the header line read "Viewing Thu Aug
+  27", the day control showed Thu Aug 27 in the accent, the banner said
+  "Editing a past class", and the class button and every row were
+  today's 9:00 (R5 before, `when: "Wed Sep 2 · 9:00 AM"` under
+  `viewing: ["Viewing Thu Aug 27"]`). The rows were the right class for
+  their own writes, so no write went to the wrong day, but a teacher
+  reading the header would have believed otherwise. Now the failure
+  clears the class (header keeps the calendar button and the error
+  note, the line reads "Could not load Thu Aug 27."), the day is not
+  cached, and the next pick fetches again (R5 after: `classes:day` 2,
+  the retry renders Thu Aug 27 · 12:00 PM).
+- **The same banner showed while a day was loading** (R6 before:
+  "Loading Thu Aug 27..." with "Editing a past class" over today's
+  rows). The banner now reads the CLASS's date, like `futureClass`
+  already did: `pastClass` is `startsAt` date part `< todayKey`. That
+  also covers the overnight case, where a day picked as tomorrow
+  becomes today at midnight and would have been captioned past.
+- **The wasted call, closed.** `GET /api/roster?classId=` spent an
+  around-now `/class/classes` per roster load to fill name, teacher,
+  capacity and booked; for a class on another day it could never hit
+  (`curl` on a past id: `"name":"Class","startsAt":"","capacity":null`)
+  and the page never read those fields from it, since the header takes
+  them from the day's list. The page now sends `&summary=0` whenever
+  another day is showing and `classRoster(id, {summary: false})` skips
+  the lookup. Switching class within a viewed day went from
+  `classes:now 1, classvisits 1, clients 1` to `classvisits 1, clients
+  1` (R8). Today's path is untouched: its list call still refreshes
+  `booked` after a booking. Known trade: on a viewed day `booked` is
+  the cached list's until Today, so `classFull` can lag by the
+  teacher's own bookings there; Mindbody refuses an overbooking anyway
+  and the "signed up" counter is `entries.length`, which is live.
+- **The class button's cap replaced by slack-filling.** `max-width:
+  min(340px, 28vw)` truncated "Bikram Yoga - Pete Stewart" on TODAY at
+  1080 with 100px of row to spare (the T46 screenshot shows "Bikram
+  Yoga - Pete..."). `.class-pick` is now `flex: 1 1 0` with a 240px
+  floor: a zero basis never asks the wrapping row for room, so the
+  counters stay on the line, and the title grows into what the other
+  controls leave (440px on today at 1080, 330px on a viewed day; at
+  820 portrait the counters wrap as they did). A long name still
+  ellipsizes ("New Student 2 Week Unlimited..." at 1080) and the
+  dropdown carries the full line unclipped at 520px. No horizontal
+  overflow at 820, 1080 or 1180.
+
+Held, with the sequence that proved it:
+
+- Writes go to the class on screen. Past day, check-in: `VisitId
+  2026082720` (the Aug 27 12:00 class's row). Past day, walk-in book:
+  `addclienttoclass {ClassId: 202608270}`. Past day picked, Today
+  tapped before it landed, then a check-in (R2): the day's answer was
+  dropped by `viewGen`, the roster stayed today's and the write was
+  today's visit. Day A then B before A landed (R3): B rendered, A
+  cached quietly. A check-in whose answer came back 2.5s after Today
+  was tapped (R4): the write went to the past visit, `refreshRoster`'s
+  `activeIdRef` guard dropped its roster, and the screen stayed on
+  today with no banner and no line.
+- Future day: every chip `chip future`, disabled, titled; a forced
+  click reaches no API (T46's own run); a disabled button is not in
+  the tab order, and `tapCheckIn` refuses before the waiver gate on
+  `activeStartsAtRef` regardless. Booking, waitlist and cancel stay
+  open by design.
+- Dates are studio-local end to end. With the browser clock at 06:30Z
+  Sep 3 in `America/Chicago` (1:30am Nashville, 11:30pm Seattle) the
+  calendar rings the 2nd (R9b). The past/future split compares the
+  naive `startsAt` date part to the Intl en-CA studio date. The
+  weekday and month names come from a Date built from y/m/d parts, so
+  the browser's zone cannot shift them. `classesForDay` at the noon
+  anchor: Nov 1 2026 asks `01:00 -> Nov 2 00:00`, Mar 8 2026 `Mar 7
+  23:00 -> Mar 9 00:00`, month ends `Aug 31 00:00 -> Sep 1 00:00`:
+  the DST-day edges are the documented hour (T27 round three) and
+  cannot touch a 6am-9pm schedule. NOT A BUG.
+- Cache and budget: a day picked twice costs nothing the second time;
+  the attach picker on a past-day class lists that day (R8, zero
+  calls); a failed day is not cached (above); the settings-driven
+  around-now effect returns early while another day shows and the
+  return to Today costs one list call plus the class's roster (R7:
+  `classes:now` 1 net of dev-mode double effects).
+- UI: the calendar is the only layer open when it can be opened (the
+  button sits in the header, under every modal), so Escape closes it
+  alone; 64px cells and nav at 1080 (T46's run); tokens only, both
+  palettes (`--warn`/`--warn-bg`, `--accent`/`--accent-ink`, `--line`,
+  `--muted` all defined in the dark block); no em dashes; 16px floor;
+  an empty day renders the header with the calendar button (R7).
+- `git diff 5aeaf59..HEAD -- src/app/api/checkin src/app/api/checkout
+  src/lib/sale.ts src/app/SaleScreen.tsx` is empty.
+
+`typecheck` and `build` clean.
 
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 

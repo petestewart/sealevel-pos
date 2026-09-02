@@ -96,15 +96,18 @@ button {
  * wrapper is the anchor .pass-dd positions against. */
 .class-pick {
   position: relative;
-  /* Capped (T46): with the day control carrying a date beside it, the
-   * row would otherwise push the counters onto a second line at 1080
-   * wide (a wrapping flex row packs by content width, so a shrinkable
-   * item still wraps). The class title ellipsizes past the cap; the
-   * date and time line above it never does, and the dropdown carries
-   * the full line. */
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: min(340px, 28vw);
+  /* Takes the row's slack (T46 review): a wrapping flex row packs by
+   * content width, so with the day control carrying a date beside it a
+   * content-sized title pushed the counters onto a second line at 1080
+   * wide. A zero flex basis means the title never asks for room of its
+   * own; it grows into whatever the other controls leave (about 300px
+   * on a viewed day at 1080, 400px on today), and below the floor the
+   * counters wrap instead. The title ellipsizes past that; the dropdown
+   * carries the full line. A fixed cap truncated "Bikram Yoga - Pete
+   * Stewart" on today at 1080 with 100px of row to spare. */
+  flex: 1 1 0;
+  min-width: min(240px, 100%);
+  max-width: 100%;
   display: flex;
 }
 

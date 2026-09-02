@@ -1267,6 +1267,11 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
    * the settings-driven around-now refetch runs.
    */
   const [viewDate, setViewDate] = useState<string | null>(null);
+  /** viewDate readable at call time (pickViewDate, refreshRoster): a
+   *  return to today must be a no-op when today is already showing, and
+   *  a roster load must know whether its class sits outside the
+   *  around-now window. Assigned wherever viewDate is set. */
+  const viewDateRef = useRef<string | null>(null);
   /** Whether the picked day's classes are still on the wire. The old
    *  list stays on screen until the answer lands (a blank header would
    *  take the calendar button with it). */
@@ -1448,8 +1453,15 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
       setCalOpen(false);
       setClassPickerOpen(false);
       const wanted = key === studioToday() ? null : key;
+      /* Today while today is already showing (with, at app start, its
+       * around-now fetch still on the wire): nothing to do. Bumping
+       * viewGen here orphaned that fetch, whose answer was then dropped
+       * with no refetch to follow, and the screen sat on "No classes in
+       * the next few hours" until a settings change. */
+      if (wanted === null && viewDateRef.current === null) return;
       const gen = ++viewGen.current;
       setViewError(null);
+      viewDateRef.current = wanted;
       setViewDate(wanted);
       if (wanted === null) {
         setViewLoading(false);
@@ -1475,6 +1487,16 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
           if (viewGen.current !== gen) return;
           setViewLoading(false);
           setViewError(e instanceof Error ? e.message : String(e));
+          /* The day did not load. The previous class must not stay on
+           * screen under this day's header line: that was today's
+           * roster captioned "Viewing Thu Aug 27". Clear it; the header
+           * keeps the calendar button (retry, or Today), and the day is
+           * not cached, so the next pick fetches again. */
+          setClasses([]);
+          setEntries([]);
+          setWaiverError(null);
+          setActiveId(null);
+          syncClassParam(null);
         });
     },
     [loadDayClasses, syncClassParam],
@@ -1499,8 +1521,14 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
    */
   const refreshRoster = useCallback(async (classId: number) => {
     try {
-      const d = await fetch(`/api/roster?classId=${classId}`).then((r) =>
-        r.json(),
+      /* T46: with another day showing, the class is outside the
+       * around-now window, so the route's summary lookup (an around-now
+       * `/class/classes` call) could never hit it; the header already
+       * reads name, teacher and capacity from the day's list. summary=0
+       * skips that call: one fewer metered call per roster load. */
+      const summary = viewDateRef.current !== null ? "&summary=0" : "";
+      const d = await fetch(`/api/roster?classId=${classId}${summary}`).then(
+        (r) => r.json(),
       );
       /* Same staleness rule as loadWaitlist: a roster that comes back after
        * the teacher has switched classes must not overwrite the new class's
@@ -3032,6 +3060,13 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
   /** Today's studio date, once per render, for the calendar and the
    *  past/future banner. */
   const todayKey = studioToday();
+  /** The selected class sits on a day BEFORE the studio's current one.
+   *  Read from the class, like futureClass, never from viewDate: while a
+   *  picked day is still loading the roster on screen is the old
+   *  class's, and captioning today's roster "Editing a past class" is
+   *  the wrong banner over the right rows. */
+  const pastClass =
+    activeClass !== null && activeClass.startsAt.slice(0, 10) < todayKey;
   /** Full means TotalBooked has reached MaxCapacity. Unknown counts are
    *  treated as room: Mindbody is the arbiter and will refuse a booking a
    *  stale count would have allowed. */
@@ -4064,7 +4099,9 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
         <header className="class-header">
           <p className="muted class-none">
             {viewDate && !viewLoading
-              ? `No classes on ${dayKeyLabel(viewDate)}.`
+              ? viewError
+                ? `Could not load ${dayKeyLabel(viewDate)}.`
+                : `No classes on ${dayKeyLabel(viewDate)}.`
               : "No classes in the next few hours."}
           </p>
           {calendarButton}
@@ -4363,7 +4400,7 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
       {/* T46: the day banner. Warn pair, 16px, above the list: a past
           day's edits are real and attributed (T44), a future day's
           check-in is closed. The mode banner at the top is untouched. */}
-      {viewDate && activeClass ? (
+      {activeClass && (pastClass || futureClass) ? (
         <p className="day-banner" role="status">
           {futureClass
             ? "A future class. Booking only; check-in opens on the day."

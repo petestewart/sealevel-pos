@@ -14,6 +14,10 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/roster                  -> classes around now
  * GET /api/roster?classId=1        -> that class plus its roster
+ * GET /api/roster?classId=1&summary=0 -> the roster only: the caller has
+ *                                     the class summary already (T46, a
+ *                                     class on another day, which the
+ *                                     around-now lookup could never hit)
  * GET /api/roster?day=1&anchor=ISO -> every class on the studio-local day
  *                                     containing `anchor` (default now).
  *                                     One metered call; the attach
@@ -29,7 +33,11 @@ export async function GET(request: Request) {
   const hoursForward = Number(params.get("hoursForward") ?? 4);
   try {
     if (classId) {
-      return NextResponse.json(await classRoster(Number(classId)));
+      return NextResponse.json(
+        await classRoster(Number(classId), {
+          summary: params.get("summary") !== "0",
+        }),
+      );
     }
     if (params.get("day") === "1") {
       /* The anchor is usually a class's startsAt, which Mindbody serves

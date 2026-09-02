@@ -445,9 +445,20 @@ async function briefsForIds(ids: string[]): Promise<Map<string, ClientBrief>> {
   return out;
 }
 
-export async function classRoster(classId: number): Promise<ClassRoster> {
+/**
+ * `summary: false` skips the around-now `/class/classes` lookup that
+ * fills name, teacher, startsAt, capacity and booked (they come back as
+ * their defaults). T46: a class on another day is never in that window,
+ * so for it the call was a metered miss on every roster load; the page
+ * holds that day's list already and merges the roster's counts only
+ * when present.
+ */
+export async function classRoster(
+  classId: number,
+  opts: { summary?: boolean } = {},
+): Promise<ClassRoster> {
   const [classes, rawEntries] = await Promise.all([
-    classesAroundNow(),
+    opts.summary === false ? Promise.resolve([]) : classesAroundNow(),
     rosterFor(classId),
   ]);
 
