@@ -387,9 +387,15 @@ by the token), the header shape, the badge idiom, tabular figures. Nothing
 else travels. Layout plan question 9 (widen the roster shell too) is
 answered by Pete or left at 1100.
 
-## 3. Pete's calls
+## 3. Pete's calls: decided (2026-09-02)
 
-Five, one reply covers them. Steps 1 through 6 proceed meanwhile.
+Pete: "1a and 1b is the look, dark and light mode. Use all your
+recommendations." So: **Counter**, both palettes; the **T36 modal** keypad;
+**teal accent app-wide**; the **system font stack**; chips **set** the
+entry. Taken from the other directions as recommended: `Pay · 9 items ·
+$277.02` on the bar, the dashed border and the word "bundle" on bundle
+cards, Due the most prominent of the three figures. The five questions
+are kept below as the record of why.
 
 ### 3.1 Direction: Counter, Slate or Chalk?
 

@@ -2190,9 +2190,16 @@ steps, each its own ticket and review, each leaving the app shippable.
 - [ ] T39.8 Density and degradation pass, both palettes, 768 tall.
 - [ ] T39.9 What the roster inherits.
 
-Blocked on Pete (plan section 3), steps 1 through 6 proceed meanwhile:
-direction A or B (recommend A); keypad modal (T36) or frame 4's panel
-(recommend modal, panel as a follow-up); teal accent app-wide or Buy-only.
+Decided by Pete, 2026-09-02: Counter (1a light, 1b dark), and every
+recommendation in the plan's section 3: the T36 modal keypad, teal
+accent app-wide, the system font stack, chips set the entry; plus the
+bar's item count, the dashed bundle card and Due as the loudest figure.
+The canvas source is `docs/design/mockups/BuyScreen.dc.html`; the plan's
+section 0.2 is its spec as our tokens and sizes.
+
+Build runs as four serial cycles, each with its own separate reviewer:
+T39.1-3 (shelf mode), T39.4-5 (cart and bar), T39.6-7 (modes and the
+payment surface), T39.8-9 (density, degradation, roster).
 
 What must not change: the money (T35's request shapes, clamps, single
 flight, `chargeable` in the same render); the mode banner's presence in
