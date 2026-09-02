@@ -1,7 +1,8 @@
 # Implementing the POS design (Buy Screen canvas)
 
-Status: implementation plan, revised against the canvas source. Awaiting
-Pete's calls in section 3. Owner: Pete. Date: 2026-09-02.
+Status: implemented on feature/phase-2, 2026-09-02 (TICKETS T39, four
+cycles; section 6 lists where the build deviates from 0.2 and why).
+Owner: Pete. Date: 2026-09-02.
 
 Design of record: `docs/design/mockups/BuyScreen.dc.html` (four
 directions; 1a is an interactive prototype), with `support.js` beside it
@@ -476,3 +477,62 @@ and 1b, the Escape order, and for T39.6 and T39.7 the full T35 request
 mapping in the dev drawer (one line: `method` alone; two lines:
 `split.legs` with no `cashTendered`; cash over-tender: `cashTendered` on a
 single line).
+
+## 6. As built
+
+Implemented on `feature/phase-2` over four cycles (TICKETS T39.1-3,
+T39.4-5, T39.6-7, T39.8-9, each with its build notes and a separate
+review). The deviations from 0.2, each with its reason:
+
+- **64px controls where the canvas draws 60 or 62**: Back, the tender
+  amount and its x, the keypad's chips, Cancel and Done, Comp, Remove,
+  the row's minus and plus. The house floor.
+- **The rail at 60 on 4px gaps, not 62 on 6** (T39.8): the studio's
+  eight entries at 64 on 6 were 554px in the 543px pane at 1080x768 and
+  scrolled Memberships under the edge. Each entry's hit area reaches 2px
+  into the gap on either side, so the tap target is the full 64 pitch.
+- **The banner at 16px, 32px tall**, not 13px and 30: a mode line is
+  read, not glanced. It keeps the canvas's shape, a full-width line.
+- **44px cart rows** (T39.4): a row is a selection with an immediate
+  visible answer and no consequence, the codebase's secondary standing
+  (the row icons, the detach x); every control it reveals is 64. At 64
+  a seven-line cart is 460px of rows and never fits 768.
+- **Three grid columns at 1366, not four** (T39.3): 756px holds three
+  cards of 184 with 10px gaps, and 1a itself draws three; 0.2's "four
+  of 184 exactly" was wrong. The cart narrows to 340 under 1190, not
+  1180, since three of 184 with a 388 cart hold only from 1182 up.
+- **The ticket tightened for the 768 budget** (T39.8): the head padded
+  10/16/8, the totals rows at 16px/1.5 rather than 15px/1.9, the totals
+  block 10/16/10, the lines box padding 6, the selected row's controls
+  6 under the line; the header's margin 12 and the shell's bottom
+  padding 12. Where that lands: at 1180x820 the seven-line cart with
+  one row selected fits with nothing scrolling but the grid; at
+  1080x768 seven lines fit unselected and a selection scrolls the lines
+  box 43 to 52px with the cue, six rows in view.
+- **Type**: 14px only where 0.2 records it (SALE FOR, the ticket count,
+  sub-lines, tile reasons and badge, figure labels, the cash sub-line,
+  the done block's detail); the hint and the quiet line at 16.
+- **The bar's primary carries the item count** (`Pay · 9 items ·
+  $253.22`), from Slate; **bundle cards are dashed and say "bundle"**,
+  from Slate; **Due is the loudest figure** (an ink border), from
+  Chalk. All decided (section 3).
+- **Cards keep the favourite star** top-right (a function the canvas
+  does not draw) and the "no tax" / "package, est." note beside the
+  price.
+- **The tiles carry no icons** (T39.8), as drawn; T33's went with the
+  method cards. **Back in the header is an arrow**, as drawn, the same
+  glyph as the bar's Back to items.
+- **The prototype's behaviours** resolved per 0.3: chips set the entry,
+  Back to items keeps the tender, Empty cart confirms, the bar reads
+  `Due $X` while unpaid, the done block keeps `Done` rather than `New
+  sale`, and the keypad's change, short and partner lines are T36's.
+- **The system font stack**, not Instrument Sans and IBM Plex Mono
+  (3.4).
+- **Light `--disabled-ink` is `#5f5749`**, not the canvas's `#7a7163`:
+  4.59 on the disabled ground where the canvas's pair was 3.10. Dark is
+  4.62 as drawn.
+- **The dev pill** (dev builds only) sits in the bar's empty centre
+  while the overlay is open.
+- **The roster inherits** the accent, the header shape, the badge rule
+  and tabular figures, and stays at 1100 (T39.9; layout plan question 9
+  answered: no).

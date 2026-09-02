@@ -2,6 +2,8 @@
 
 Status: design proposal, revised after Pete's review. Owner: Pete.
 Date: 2026-08-31.
+Superseded for the build by `pos-design-implementation.md` (2026-09-02),
+the newer document, whose section 6 records what was built.
 Mockups: `docs/design/mockups/html/buy-screen-layout.html`.
 
 Pete sent two screenshots of a commercial restaurant POS and asked for the

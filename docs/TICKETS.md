@@ -2188,7 +2188,7 @@ steps, each its own ticket and review, each leaving the app shippable.
 - [x] T39.7 Payment surface: Total / Due / Change, tiles or buttons per
       Pete's call, keypad per Pete's call.
 - [x] T39.8 Density and degradation pass, both palettes, 768 tall.
-- [ ] T39.9 What the roster inherits.
+- [x] T39.9 What the roster inherits.
 
 Decided by Pete, 2026-09-02: Counter (1a light, 1b dark), and every
 recommendation in the plan's section 3: the T36 modal keypad, teal
@@ -2921,6 +2921,28 @@ Also recorded: T38's cue counts rows below the visible edge only. With
 a lower row selected the box scrolls to keep it in view, and rows past
 the top edge have neither cue nor fade (seen at 1080x768 with the last
 line selected). Left as T38 has it.
+
+**T39.9, what the roster inherits.** The accent already travels through
+the token. The header shape: the Buy header is a 76px row (title, the
+client card taking the slack, Back outlined at the right edge) and the
+roster's is a 71px row (the class as its own dropdown, Buy, the three
+counters at the right edge), both on 64px controls at radius 12 on
+`--surface`, both under the mode banner; they read as siblings in both
+palettes (`roster-*-header.png`, `roster-*-buy-header.png`) and nothing
+was moved. The badge idiom: `.bal-chip` is one rule (the ok pair, mono,
+tabular, the stop pair when owed), the Buy header's credit pill; the
+roster's balance column stays a plain tabular figure per T14 (a pill on
+every row would zigzag the column edge), and the M chip is a membership
+marker in the accent pair, not money. Tabular figures where money
+appears: `.cell-bal`, `.bal-chip`, `.amt`, the bar's amount, the three
+figures, all `tabular-nums`. Not inherited: the bar, the
+select-to-reveal rows (T14 stands), the two modes, the 1400 shell. The
+roster stays at 1100, which is the answer to layout plan question 9.
+Documents: the implementation plan is marked implemented with a section
+6 of deviations, the layout plan's Status points at it as the newer
+document, and PLAN.md and CLAUDE.md describe neither the Buy screen's
+layout nor the Charge button's position, so there was no sentence to
+correct.
 
 ## T38. The cart: more rows, an estimate while pricing, the audit, and a way out (Pete, 2026-08-31)
 
