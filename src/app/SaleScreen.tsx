@@ -674,6 +674,10 @@ function PaymentPanel(props: {
    *  in the dialog is tapped with at least COMP_REASON_MIN characters. */
   const [reasonOpen, setReasonOpen] = useState(false);
   const [reasonDraft, setReasonDraft] = useState("");
+  /** Whether the pointer went down on the reason dialog's scrim, so the
+   *  scrim closes on a real tap on it and not on the click a touch
+   *  pointer fires when the hold that opened the dialog lifts. */
+  const reasonScrimDown = useRef(false);
   /** The amount modal: the id of the tender line it is editing, or null.
    *  ONE keypad for every source, over a scrim (T36, Pete: "having it be
    *  a modal is def better than this"), so opening it moves nothing in
@@ -1061,6 +1065,11 @@ function PaymentPanel(props: {
     !pricing &&
     total !== null &&
     !charging &&
+    /* T43 review: never while the reason dialog is open. The scrim covers
+       the Charge button, but a keyboard Tab leaves the dialog and lands on
+       it, and Enter there charged the tender the teacher was in the middle
+       of replacing with a comp. */
+    !reasonOpen &&
     (comp !== null
       ? /* T43: a comp charges only with its reason written. The state
            shape already makes an armed comp carry one; this re-checks
@@ -1476,6 +1485,12 @@ function PaymentPanel(props: {
    * (T39.6-7 review). */
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+  /** `charging` the same way, for the same timer (T43 review): a second
+   *  finger can tap Charge while the first is still holding Comp, and
+   *  the hold then landed with money moving, opening the dialog over the
+   *  in-flight charge; Comp there cleared the lines mid-flight. */
+  const chargingRef = useRef(charging);
+  chargingRef.current = charging;
   /** The hold completed: open the reason dialog; false when refused.
    *  T43: the hold no longer arms comp by itself. It opens the dialog,
    *  and only Comp in the dialog, with a reason written, arms. */
@@ -1484,7 +1499,7 @@ function PaymentPanel(props: {
      * hidden button, but a hold that began just before Back to items
      * could complete after it; the timer's callback lands here and is
      * refused. */
-    if (!visibleRef.current) return false;
+    if (!visibleRef.current || chargingRef.current) return false;
     setReasonDraft("");
     setReasonOpen(true);
     onModalChange(true);
@@ -1498,7 +1513,7 @@ function PaymentPanel(props: {
    *  keyboard Enter on a short draft. */
   const confirmComp = () => {
     const reason = reasonDraft.trim();
-    if (!compReasonValid(reason)) return;
+    if (!compReasonValid(reason) || charging) return;
     /* Comp is the whole sale given away, so it cannot coexist with a
      * tender: arming it clears the lines. */
     setLines([]);
@@ -2081,7 +2096,22 @@ function PaymentPanel(props: {
         <div
           className="modal-scrim"
           role="presentation"
-          onClick={closeReason}
+          /* T43 review: the scrim closes only on a click whose pointer
+             went DOWN on it. The dialog opens while the hold's finger is
+             still on Comp, and on a touch pointer the click the browser
+             fires when that finger lifts is hit-tested at the lift, which
+             is now this scrim; taken as a click it closed the dialog the
+             moment it opened. (A mouse never showed it: the pointer's
+             leave aborted the hold and the click went to the common
+             ancestor.) */
+          onPointerDown={(e) => {
+            reasonScrimDown.current = e.target === e.currentTarget;
+          }}
+          onClick={() => {
+            const down = reasonScrimDown.current;
+            reasonScrimDown.current = false;
+            if (down) closeReason();
+          }}
         >
           <div
             className="modal modal-amount modal-reason"

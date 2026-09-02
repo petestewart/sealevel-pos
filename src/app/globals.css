@@ -3267,6 +3267,9 @@ button.sale-for:disabled {
   margin: 0;
   font-size: 16px;
   color: var(--muted);
+  /* T43 review: the comp reason rides here, and a long one with no
+   * space in it ran under the Comp button and off the surface. */
+  overflow-wrap: anywhere;
 }
 
 /* T39.7: the 768 budget. At 1080x768 the pane is 531 tall and the surface
@@ -3513,6 +3516,7 @@ button.sale-for:disabled {
 .pay-done-reason {
   margin: 0;
   max-width: 34em;
+  overflow-wrap: anywhere;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 19px;
   font-weight: 500;

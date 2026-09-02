@@ -3963,6 +3963,129 @@ done screen.
   "In class" scope is on by default, so an everyone search needs the
   toggle off); `t43.js` carries its own. The lib is unchanged.
 
+### Review (separate reviewer), T43
+
+Three real bugs, all in the UI; the route and the storage came through
+clean. Fixed in place, `scratchpad/t43-review.js` (CDP touch, long
+reasons, the keyboard and two-finger paths) beside the implementer's
+harness, shots under `scratchpad/t43-review/`.
+
+REAL, fixed:
+
+- **On a touch pointer the dialog closed the moment the hold's finger
+  lifted.** The dialog opens at 700ms with the finger still on Comp, so
+  the scrim is what is under the finger when it lifts, and the click the
+  browser fires for a touch is hit-tested at the lift: Chromium (CDP
+  `Input.dispatchTouchEvent`, touchStart, 900ms, touchEnd) fired
+  `pointerdown`, `pointerup`, `pointerleave` on Comp and then a click on
+  `.modal-scrim`, whose handler was `closeReason`. Observed: `dialog: 0`
+  after every touch hold; on the iPad the feature could not have been
+  used. A mouse never showed it because the pointer's leave aborted the
+  hold and the click went to the common ancestor of the down and the
+  up. Now the scrim closes only for a click whose pointer went DOWN on
+  it (`reasonScrimDown`, set on the scrim's own pointerdown, consumed
+  on click). Post-fix: the touch hold opens and the dialog stays; a
+  touch tap on the scrim still closes it; after Cancel one touch tap on
+  Comp shows the hint (the swallow flag is not stuck: `pointerleave`
+  had already cleared it); a chip and Comp by touch arm it and one tap
+  unselects.
+- **A long reason ran off the surface.** 200 characters with no space
+  in them (`W` x 200): the quiet line's scrollWidth was 3164 in a 606
+  box, `.pay-surface` 3182 in 922, the text under the Comp button and
+  past the pane (`light-long-armed.png`, pre-fix in the harness log);
+  the done screen's `.pay-done-reason` 2288 in 646. `overflow-wrap:
+  anywhere` on both, as the rest of the file does for free text; both
+  now measure at their box and wrap (the quiet line to 157px tall at
+  the worst case, the done line to 133).
+- **Charging with the dialog open was reachable two ways**, and the
+  ticket's "an armed comp without a reason is unrepresentable" held but
+  "the dialog owns the screen" did not. (a) Tab: focus lands in the
+  field, three Tabs reach the bar's Charge under the scrim, Enter with a
+  cash line covering the total sent the request and the done screen
+  rendered while the dialog was still up (observed: `requests: 1`,
+  `done: "Sale complete"`). (b) Two fingers: one holding Comp, the other
+  tapping Charge at 200ms; the timer landed at 700ms with money moving,
+  the dialog opened over "Charging...", and Comp in it cleared the lines
+  and armed comp mid-flight (observed: `compPressed: "true"`, `lines:
+  []` beside the disabled Charging bar). Now `chargeable` is false while
+  `reasonOpen` (the bar reads `Charge $X` disabled under the scrim, and
+  Enter on it sends nothing: `requests: 0`), `armComp` refuses through a
+  `chargingRef` like `visibleRef` (the two-finger timer opens nothing),
+  and `confirmComp` refuses while charging as a belt. The money moved in
+  (a) was the tendered cash for the rehearsed total from an explicit
+  Enter on Charge, so no wrong charge, but a charge from behind a modal
+  is not a state the seam should have.
+
+NOT A BUG, checked:
+
+- **The Mindbody payload.** The mock at `MINDBODY_API_BASE_URL` logged
+  the keys of every call: the rehearsal `Items, ClientId, Test,
+  LocationId, InStore, CalculateTax, Payments` and the write `Items,
+  Payments, ClientId, Test, LocationId, InStore, CalculateTax,
+  SendEmail`, `Payments: [{Type: "Comp", Metadata: {Amount}}]`, the
+  cash control identical but for `Cash`. `parseCartLines` builds each
+  line from named fields, so `name` cannot ride into `cartItemsPayload`;
+  `compReason` is read from the payload and never passed on. `git diff`
+  of the route: the split branch, the credit and card branches, the
+  outer catch and every response body are untouched; the comp/cash
+  branch gained an inner try that logs and rethrows, and `recordComp`
+  between the resolved call and the response.
+- **Validation order and cost.** Nine 400s (no reason, two characters,
+  201, `null`, a number, spaces only, `compReason` beside cash, credit
+  and a split) and the mock's line count did not move: zero metered
+  calls. 200 exactly passes; 150 spaces + `abc` + 150 spaces passes as
+  `abc` (trimmed, then measured). The reason is stored as sent after
+  trimming, HTML and quotes included; the done screen renders it as a
+  React text node (`innerHTML` shows `Comped: WWW...`, no markup).
+- **The log line.** Paid: `[comp] prod sale=777001 client=100000123
+  total=31.00 reason="abc"`; house client: `client=house`; refused
+  (mock 400 on the write): `sale=none outcome=refused ...
+  error="Refused by the mock"`; ambiguous (a mock that answers the
+  rehearsal and destroys the socket on the write): `sale=none
+  outcome=ambiguous ... error="fetch failed"`, with the route's answer
+  still "The charge did not answer. It MAY have gone through" and
+  `ambiguous: true`. The rehearsal-suppressed path answers before the
+  comp branch and writes no `[comp]` line, as the ticket says; nothing
+  was given away, so there is nothing to receipt.
+- **`recordComp` cannot turn a paid sale into a refusal.** It runs
+  inside the outer try, so a throw from it would be answered as a
+  checkout error after the sale completed; but `insertCompReceipt`
+  catches everything from `ready()` on, `console.log` does not throw,
+  and the string it builds is `total.toFixed` and `JSON.stringify` of a
+  string. Not reachable; noted because the invariant matters more than
+  the line. It does await the insert before answering, so a configured
+  but dead database costs the first comp its 5s connection timeout and
+  then the 30s cooldown, exactly as the waiver receipt does.
+- **Storage.** The runner applies `MIGRATIONS` in array order and skips
+  `version <= current`: a fresh database records 1 then 2, the deployed
+  one at 1 runs only 2. `insertCompReceipt` mirrors the waiver insert
+  (try around `ready()` and the query, `logDbError` once per kind,
+  false on failure). The row is the reason, our line list (`{type, id,
+  name, quantity, price}` per line, documented in `db.ts`), cents,
+  the two ids, target and the flag; no client name, no catalog copy.
+  `serial` where the T29 tables use `bigserial` is a nit, not a bug.
+- **State.** Every former `setComped(false)` is a `setComp(null)`
+  (`addLine`, the unselect tap, `resetTender`, the `visible` effect);
+  `confirmComp` is the one `setComp({reason})` and it clears the lines
+  and the keypad first. The hold under an open keypad lands on the
+  scrim (keypad closes, nothing opens). The hold landing after Back to
+  items: refused, no dialog, one Escape then closes the overlay. Back
+  to items by keyboard with the dialog open (focus + Enter): the dialog
+  closes with the mode, nothing arms, one Escape closes the overlay,
+  the reopened pay mode is clean. The overlay's Back with the dialog
+  open unmounts the panel and the unmount effect reports the close;
+  reopened, one Escape closes it again. Escape with the dialog open
+  peels the dialog only (`payModalOpen` keeps the overlay handler out
+  of the same press). `maxLength` holds 200 for typing, `fill` and
+  `insertText` of 201.
+- **Focus** lands in the field on open and on the body after Cancel
+  or Comp, which is what the keypad does too; the target that had it
+  is behind a scrim that is now gone. Left as it is.
+- **Conventions.** Every colour in the three commits is a token
+  present in both palettes; every dialog target measured 64px in both;
+  no em dash in the diffs; the done, suppressed, split, ambiguous and
+  error branches diff clean against T42 apart from the reason line.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
