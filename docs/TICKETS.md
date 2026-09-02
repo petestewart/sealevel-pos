@@ -4463,6 +4463,169 @@ under it, and "Comped: Goodwill" with no second line.
 - `comp_receipts.kind` is text rather than an enum type, so the closed
   list lives in `comp.ts` and the route, not in Postgres.
 
+### Review (separate reviewer), T45
+
+Read as a money change first: the second Mindbody write after a real
+comp, then the trust boundary, then the dialog. Node-level against the
+real route under three server postures (`POS_DRY_RUN=false` with the
+write guard allowing the fixture's ids; `POS_DRY_RUN=true`; the guard
+allowing only the house client), a mock on :4545 with hang, socket-kill
+and no-id modes on the note endpoint and a counter of every call it
+received; then the browser at 1366x1024 in both palettes, 1180x820 for
+the studio-sized list, and CDP touch. Scripts `t45-review-node.js`,
+`t45-review-ui.js`, `t45-review-many.js`, `t45-review-2f.js`,
+`t45-review-hang.js`, mock `t45-review-mock.js`; shots and logs under
+`scratchpad/t45-review/`.
+
+**Two real findings, fixed in place.**
+
+1. **A hung Formula Note held the done screen for 20 seconds after the
+   money had moved.** The route awaits the note and the only bound was
+   the transport's 20s `AbortSignal.timeout` in `mindbody()`. Observed
+   with the mock never answering the note: `/api/checkout` answered in
+   20024ms, `[comp] formula-note failed: The operation was aborted due
+   to timeout`. The ticket's Left noted it; a teacher with a queue
+   should not stare at "Charging..." for twenty seconds over a
+   side-record. Now the note is raced against `FORMULA_NOTE_WAIT_MS`
+   (8s): observed 8622ms with the body untouched (`{ok: true, method:
+   "comp", total: 230, saleId: "777001"}`) and `[comp] formula-note
+   failed: no answer in 8s; the note may still file`; the underlying
+   call runs on to its own timeout and still lands in the call log, and
+   the next comp filed normally (`note=555008`). The timer is cleared
+   in a `finally`; `Promise.race` subscribes to both, so the late
+   rejection is handled. Nothing about any answer changed.
+2. **At the studio's staff size the preselected teacher was out of
+   view.** Fifteen teachers with the roster's "Pete" matching Pete
+   Stewart, alphabetically last: the list is 328px at 820 and 410px at
+   1024 (about five rows), the selected row sat 744px and 662px below
+   the fold, and Comp was enabled for a name nobody on the screen could
+   see (`onVisible: false` at both sizes). Now an effect scrolls
+   `.reason-teacher.on` into view (`block: "nearest"`, so a row already
+   visible is left alone) when the list lands or the selection changes:
+   `scrollTop` equals the maximum at both sizes and the row is inside
+   the box (`many-1180x820.png`); the dialog fits at 820 (5 to 815).
+
+**Checked and NOT a bug** (the sequence or reasoning in each):
+
+- **The note goes through the guard.** `mindbody("/client/
+  addclientformulanote", {method: "POST", body: {ClientId, Note},
+  clientId})`: the body names the client, so `bodyClientId` finds it
+  for `POS_WRITE_CLIENT_IDS`, and `isWrite` (POST, not `/usertoken/`)
+  puts dry run in front of both. Under `POS_DRY_RUN=true` the
+  rehearsal is suppressed first: `{ok: false, suppressed: "dry-run"}`,
+  the mock saw no checkout and no note, no `[comp]` line, for a named
+  client and for the house. Under the guard allowing only 100000777:
+  the named client's comp is `suppressed: "write-guard"` with
+  `[write-guard] suppressed POST /sale/checkoutshoppingcart for client
+  100000123; POS_WRITE_CLIENT_IDS allows only 100000777` and no note;
+  the house client's comp is real and logs `formula-note skipped: house
+  client`. So the note's own suppression branch (`res.DryRun ||
+  res.WriteSuppressed`) is unreachable today, as T43 said of the
+  suppressed receipt row, and right to keep for the same reason.
+- **Only after a REAL comp.** Refused (mock 400 on the write): 502
+  `Refused by the mock`, `ambiguous: false`, the mock saw two checkouts
+  and no note, `[comp] prod sale=none outcome=refused ... kind=trade
+  for=none teacher=100 error="Refused by the mock"`. Ambiguous (socket
+  destroyed on the real write): 502 "It MAY have gone through",
+  `ambiguous: true`, no note, `outcome=ambiguous ... error="fetch
+  failed"`. The comp branch reaches `fileFormulaNote` only after
+  `checkoutCart` resolved, and only when `outcome.suppressed` is null.
+- **Never for the house client.** `clientId` omitted, sent as
+  `100000777`, and sent as ` 100000777 ` (trimmed before the compare):
+  each a real comp, no note, `[comp] formula-note skipped: house
+  client`, `client=house` or `client=100000777` on the receipt line.
+- **A failed note never changes the answer.** Note refused (400), an
+  answer with no `Id`, the socket destroyed mid-request, and the hang:
+  each `200 {ok: true, method: "comp", total: 233, saleId: "777001"}`,
+  the log `[comp] formula-note failed: Note refused by the mock` / `no
+  note id in the answer {...}` / `fetch failed` / the 8s line, and the
+  receipt line without `note=`. The catch is inside `fileFormulaNote`
+  and `recordComp` cannot throw (T43 review).
+- **The note text.** A detail with newlines, `\r\n`, quotes,
+  backslashes and `{"json":1}` arrived JSON-encoded in the body
+  (`"Note":"Comped $233.00 at the counter: Goodwill. Note: line
+  one\nline two\r\n\"quoted\" \\ back {\"json\":1}. By Pete Stewart.
+  Sale 777001."`); 200 quote characters likewise. It is one string
+  field in a JSON body, never a path or a query; Mindbody stores free
+  text. The teacher's name is from the signed cookie, the staff name is
+  resolved by id, the sale id is Mindbody's. `forStaffName: "Nobody
+  Real"` and `forStaffName: 42` both filed `Teacher (Kim Farrell)`.
+- **Validation before any Mindbody call.** 32 requests answered 400
+  with the mock's call count unmoved across the whole batch (the staff
+  cache warm from the login): the implementer's list plus `null`, an
+  array, `"OTHER"`, `detail: null`, `other` with no `detail` key, 100
+  spaces + 201, `forStaffId: null` on teacher and on goodwill, a
+  negative id, `1e400` (Infinity), `damaged` with an id, and `comp`
+  with no `compReason`. Trim then measure: 3 spaces + 200 y + 3 spaces
+  passed as 200 and 100 spaces + 201 x is 400. The teacher-id check is
+  the cached staff read: cold, one metered GET `/staff/staff`, a read
+  and never money; with nothing cached and Mindbody refusing, the same
+  `listTeachers` answered the login 502 `Could not read the staff list
+  from Mindbody: Staff read refused by the mock` and nothing followed.
+- **The rendered line and the done screen.** `Teacher: Kim Farrell,
+  covering for Pete`, `Teacher: Kim Farrell`, `Goodwill`, `Other:
+  spilled tea on the mat`, `Trade: for a class`, `Damaged item`; the
+  done screen `Comped: Teacher (Kim Farrell)` at 19px with `covering
+  for Pete` under it at 17px in `--muted`, and `Comped: Goodwill` with
+  no second line. The log line carries `kind=<kind> for=<id|none>
+  teacher=<id> note=<id>` as the ticket shows.
+- **Migration 4** is five `ADD COLUMN IF NOT EXISTS`; the runner skips
+  `version <= current` in array order, so a database at 3 runs only 4
+  and a fresh one 1 to 4. The insert has fourteen placeholders and
+  fourteen values in the same order.
+- **`GET /api/staff`.** 401 `unauthorized` with no device session; 401
+  `reason: "teacher"` with the device session alone; after the login
+  `[{id, name}]` x 5 and the union of keys across rows is exactly `id,
+  name`; three opens after the login cost zero mock calls; with
+  Mindbody refusing and the cache warm still 200 (the stale list, as
+  the login serves it); cold and refused, 502 `{error}` with the
+  message only. With auth disabled `requireTeacher` lets it through,
+  the posture of every write it feeds; `/api/teacher` stays
+  device-only because it is what says whether a teacher exists.
+  Dev-mode note, not a bug: `next dev` compiles a route on demand with
+  a fresh module instance, so in the dry-run run the first
+  `/api/checkout` after the login re-issued a token and re-read staff;
+  in the main run, where checkout had been compiled before the login,
+  the 400s and the staff opens cost nothing, which is what the
+  production build does throughout.
+- **The dialog.** Namesake (Pete Stewart and Pete Jones, roster
+  "Pete"): nobody preselected, Comp disabled "Choose the teacher".
+  "KIM FARRELL" preselects Kim Farrell; "kim" preselects Kim Farrell
+  (Jordan Kim is a last name); "  Sam  " Sam Lee; "Nobody", "" and
+  null nobody. Kim picked then Goodwill: the list is gone and Comp is
+  on; Teacher again preselects Pete, which is only possible because the
+  switch cleared `forStaffId` (the preset applies to an empty
+  selection). `staffCalls: 1` across Goodwill/Teacher switches, Back to
+  items, the return and a new hold. Tab order: chips, every row, the
+  note field, Cancel, Comp; Shift+Tab from the field lands on the last
+  row and Space selects it. With the dialog open, the bar's button
+  focused by script and Enter sent nothing (`requests: 0`, the bar
+  `Due $253.22` disabled). Two fingers (a cash line, a mouse hold on
+  Comp, a scripted Charge at 200ms, the hold landing over
+  "Charging..."): `dialog: 0`, Comp disabled, one request with `method:
+  "cash"` and no `compReason`, "Sale complete". CDP touch: the hold's
+  lift leaves the dialog up, a touch on the Teacher chip and a row
+  selects Kim Farrell, a touch tap on the scrim closes. Back to items
+  with goodwill armed: "Comp was cleared."; the next hold has no chip
+  on, no list and an empty field. `compValid` in `chargeable` re-checks
+  the armed reason in the same render as before.
+- **Conventions.** Every colour in the new CSS resolves to a token in
+  both palettes (chip and chosen row `--accent`/`--accent-ink`: light
+  rgb(15,92,85) on white, dark rgb(95,210,164) on rgb(11,26,20); rows
+  on `--bg` with `--line`; the detail line `--muted`); nothing in the
+  dialog under 16px; no target under 64px; no em dash in the three
+  commits or this one. The mock logged the checkout keys as
+  `Items,ClientId,Test,LocationId,InStore,CalculateTax,Payments` for
+  every rehearsal and `Items,Payments,ClientId,Test,LocationId,InStore,
+  CalculateTax,SendEmail` for every write, twenty of each, exactly
+  T43's; `git diff 8da2d6c..HEAD -- src/lib/sale.ts` is empty, and the
+  route's diff since T44 adds the compReason 400s, the staff 502 and
+  the note without removing or rewording any existing response.
+  `typecheck` and `build` clean.
+
+Left as the ticket says, plus: a note that files after the 8s bound
+has no id on the receipt; the dev call log has it.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are

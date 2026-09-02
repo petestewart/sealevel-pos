@@ -666,6 +666,7 @@ export async function POST(request: Request) {
    * It runs AFTER the outcome is decided and can never change it: the
    * sale already happened, so a failure here is one log line and a null
    * on the receipt, and it never throws. */
+  const FORMULA_NOTE_WAIT_MS = 8_000;
   const fileFormulaNote = async (
     saleId: string | null,
   ): Promise<number | null> => {
@@ -683,12 +684,32 @@ export async function POST(request: Request) {
     ]
       .filter(Boolean)
       .join(" ");
+    /* T45 review: the note is awaited, so a Mindbody that hangs on it
+     * would hold the done screen for the transport's full 20s after the
+     * money has already moved. Wait FORMULA_NOTE_WAIT_MS and no longer;
+     * the call itself runs on to its own timeout and still lands in the
+     * call log, and if it files late the receipt simply has no note id
+     * (the log line says so). Nothing about the answer changes. */
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const res = await mindbody("/client/addclientformulanote", {
-        method: "POST",
-        body: { ClientId: clientId, Note: note },
-        clientId,
-      });
+      const res = await Promise.race([
+        mindbody("/client/addclientformulanote", {
+          method: "POST",
+          body: { ClientId: clientId, Note: note },
+          clientId,
+        }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `no answer in ${FORMULA_NOTE_WAIT_MS / 1000}s; the note may still file`,
+                ),
+              ),
+            FORMULA_NOTE_WAIT_MS,
+          );
+        }),
+      ]);
       if (res?.DryRun || res?.WriteSuppressed) {
         console.log(
           `[comp] formula-note suppressed: ${res?.DryRun ? "dry-run" : "write-guard"}`,
@@ -707,6 +728,8 @@ export async function POST(request: Request) {
     } catch (err) {
       console.log(`[comp] formula-note failed: ${errMessage(err)}`);
       return null;
+    } finally {
+      clearTimeout(timer);
     }
   };
 

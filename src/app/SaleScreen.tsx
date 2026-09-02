@@ -747,6 +747,19 @@ function PaymentPanel(props: {
   }>({ status: "idle", list: [] });
   const staffRef = useRef(staff);
   staffRef.current = staff;
+  /** T45 review: the list holds every teacher (fifteen at the studio) in
+   *  a box that shows about five, and the preselected class teacher can
+   *  sit anywhere in it alphabetically; at the studio's size the default
+   *  landed below the fold, with Comp enabled for a name nobody could
+   *  see. Bring the chosen row into view when the list lands or the
+   *  selection changes; `nearest` leaves a row already in view alone. */
+  const teacherListRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!reasonOpen || reasonDraft.kind !== "teacher") return;
+    teacherListRef.current
+      ?.querySelector<HTMLElement>(".reason-teacher.on")
+      ?.scrollIntoView({ block: "nearest" });
+  }, [reasonOpen, reasonDraft.kind, reasonDraft.forStaffId, staff.status]);
   /** Select a teacher in the draft, keeping the kind. */
   const pickTeacher = (t: StaffChoice | null) =>
     setReasonDraft((d) => ({
@@ -2309,7 +2322,11 @@ function PaymentPanel(props: {
                  the current class's teacher preselected. A list that
                  could not load says so and leaves Comp disabled; a name
                  is never typed or guessed. */
-              <div className="reason-teachers" aria-label="Which teacher">
+              <div
+                className="reason-teachers"
+                aria-label="Which teacher"
+                ref={teacherListRef}
+              >
                 {staff.status === "loading" ? (
                   <p className="reason-note">Loading teachers...</p>
                 ) : null}
