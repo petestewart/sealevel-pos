@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
-import { isDryRun, mindbodyHttpStatus } from "@/lib/mindbody";
+import { insertCompReceipt, type CompReceiptItem } from "@/lib/db";
+import { isDryRun, mindbodyHttpStatus, target } from "@/lib/mindbody";
 
 import {
   CARD_MINIMUM_USD,
@@ -23,7 +24,14 @@ export const dynamic = "force-dynamic";
  *
  * Body: { items: CartLine[], clientId?: string,
  *         method: "storedcard"|"credit"|"cash"|"comp",
- *         cashTendered?: number }
+ *         cashTendered?: number,
+ *         compReason?: string }  -- T43: required with method "comp"
+ *         (3 to 200 characters after trimming), refused beside any other
+ *         method or a split. It never reaches Mindbody, whose checkout
+ *         request has no notes field; it is recorded in comp_receipts
+ *         when a database is configured and ALWAYS as one `[comp]` server
+ *         log line. Each item may carry a `name` on a comp, for that
+ *         record only; it is never forwarded.
  *   or, since T28, `split` instead of `method`:
  *       { items, clientId, split: { legs: [{method, amount}, {method,
  *         amount}] } } -- exactly two legs, methods from the whitelist
@@ -87,6 +95,11 @@ function errMessage(err: unknown): string {
 }
 
 type Method = "storedcard" | "credit" | "cash" | "comp";
+
+/* T43: the bounds a comp reason must fit, mirrored in SaleScreen's
+ * dialog so what the dialog accepts is what this route accepts. */
+const COMP_REASON_MIN = 3;
+const COMP_REASON_MAX = 200;
 
 /* T28: the methods a split leg may use. Comp is deliberately excluded --
  * a comp is the whole sale given away, armed by its own hold gesture in
@@ -218,6 +231,56 @@ export async function POST(request: Request) {
    * reason the disabled Charge button gave. During guarded testing
    * POS_WRITE_CLIENT_IDS must include this id or the write guard
    * suppresses every anonymous sale; see the T24 ticket notes. */
+  /* T43: a comp needs its reason, and nothing else may carry one. The
+   * check is before the house-client substitution and the rehearsal so
+   * a reasonless comp costs no metered call. */
+  const compReasonRaw: unknown = payload?.compReason;
+  if (method !== "comp" && compReasonRaw !== undefined) {
+    return NextResponse.json(
+      { error: "compReason applies only to method comp" },
+      { status: 400 },
+    );
+  }
+  let compReason: string | null = null;
+  if (method === "comp") {
+    const trimmed =
+      typeof compReasonRaw === "string" ? compReasonRaw.trim() : "";
+    if (
+      typeof compReasonRaw !== "string" ||
+      trimmed.length < COMP_REASON_MIN ||
+      trimmed.length > COMP_REASON_MAX
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            `a comp needs a compReason of ${COMP_REASON_MIN} to ` +
+            `${COMP_REASON_MAX} characters`,
+        },
+        { status: 400 },
+      );
+    }
+    compReason = trimmed;
+  }
+  /* The comp receipt's line list: OUR record of what was given away
+   * (type, id, name, quantity, price), read off the validated items with
+   * the names the browser sent alongside them. Never forwarded: the
+   * Mindbody payload is built from `items` alone, exactly as before. */
+  const compItems: CompReceiptItem[] = items.map((line, i) => {
+    const rawName: unknown = Array.isArray(payload?.items)
+      ? payload.items[i]?.name
+      : undefined;
+    return {
+      type: line.type,
+      id: String(line.metadataId),
+      name:
+        typeof rawName === "string" && rawName.trim()
+          ? rawName.trim().slice(0, 120)
+          : null,
+      quantity: line.quantity,
+      price: line.price,
+    };
+  });
+
   const saleClientId = clientId ?? houseClientId() ?? undefined;
   if (!saleClientId) {
     return NextResponse.json(
@@ -472,16 +535,67 @@ export async function POST(request: Request) {
     }
   }
 
+  /* T43: the comp record. ALWAYS one server log line, so a comp is on
+   * record even with no database (the T29 charter: DATABASE_URL unset
+   * runs on fallbacks); the table row on top of it when there is one.
+   * Written only once the Mindbody call has resolved, with the sale id
+   * it returned, or `suppressed` for a write the guard or dry run ate.
+   * Nothing here touches the payload, the single flight or the outcome
+   * wording: the record is a side effect of an answer, never a step
+   * before one. */
+  const recordComp = async (outcome: {
+    saleId: string | null;
+    suppressed: boolean;
+  }) => {
+    const reason = compReason ?? "";
+    console.log(
+      `[comp] ${target()} sale=${outcome.suppressed ? "suppressed" : (outcome.saleId ?? "unknown")} ` +
+        `client=${clientId ?? "house"} total=${total.toFixed(2)} ` +
+        `reason=${JSON.stringify(reason)}`,
+    );
+    await insertCompReceipt({
+      saleId: outcome.suppressed ? null : outcome.saleId,
+      clientId: clientId ?? null,
+      totalCents: Math.round(total * 100),
+      items: compItems,
+      reason,
+      target: target(),
+      suppressed: outcome.suppressed,
+    });
+  };
+
   const m = method as Method;
   try {
     if (m === "comp" || m === "cash") {
-      const outcome = await checkoutCart(
-        items,
-        saleClientId,
-        m === "cash"
-          ? { type: "Cash", amount: total }
-          : { type: "Comp", amount: total },
-      );
+      let outcome;
+      try {
+        outcome = await checkoutCart(
+          items,
+          saleClientId,
+          m === "cash"
+            ? { type: "Cash", amount: total }
+            : { type: "Comp", amount: total },
+        );
+      } catch (err) {
+        /* A refused or unanswered comp records no receipt (there is no
+         * sale to receipt), but the attempt and its outcome go in the
+         * log; the error itself is answered by the catch below exactly
+         * as it always was. */
+        if (m === "comp") {
+          console.log(
+            `[comp] ${target()} sale=none outcome=${isAmbiguous(err) ? "ambiguous" : "refused"} ` +
+              `client=${clientId ?? "house"} total=${total.toFixed(2)} ` +
+              `reason=${JSON.stringify(compReason ?? "")} error=${JSON.stringify(errMessage(err))}`,
+          );
+        }
+        throw err;
+      }
+      if (m === "comp") {
+        await recordComp({
+          saleId: outcome.saleId,
+          suppressed: outcome.suppressed !== null,
+        });
+      }
       if (outcome.suppressed) {
         return NextResponse.json({ ok: false, suppressed: outcome.suppressed });
       }

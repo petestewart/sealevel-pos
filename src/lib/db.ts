@@ -198,6 +198,29 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       );
     `,
   },
+  {
+    /* T43: comp receipts. Version 1 has already run on the deployed
+     * database and is skipped there, so the table is its own block. The
+     * charter holds: the reason is ours (Mindbody's checkout request has
+     * no notes field), the sale id is a handle, and `items` is OUR line
+     * list of what was given away (type, id, name, quantity, price as
+     * charged), a record of the comp rather than a copy of the catalog.
+     * No client name: Mindbody has that under the id. */
+    version: 2,
+    sql: `
+      CREATE TABLE IF NOT EXISTS comp_receipts (
+        id           serial PRIMARY KEY,
+        recorded_at  timestamptz NOT NULL DEFAULT now(),
+        sale_id      text,
+        client_id    text,
+        total_cents  integer NOT NULL,
+        items        jsonb NOT NULL,
+        reason       text NOT NULL,
+        target       text NOT NULL,
+        suppressed   boolean NOT NULL
+      );
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -287,6 +310,59 @@ export async function insertWaiverReceipt(
     return true;
   } catch (err) {
     logDbError("waiver-receipt-insert", err);
+    return false;
+  }
+}
+
+/* --- Comp receipts (T43) --------------------------------------------- */
+
+/** One comp receipt's line: what was given away, in our own words. */
+export interface CompReceiptItem {
+  type: string;
+  id: string;
+  name: string | null;
+  quantity: number;
+  price: number;
+}
+
+/**
+ * The durable record of a comp: the reason the teacher wrote, the total
+ * on the studio, our line list, which target it ran against, and whether
+ * the write was suppressed (dry run or the write guard) rather than
+ * recorded by Mindbody. The route's `[comp]` log line stays exactly as it
+ * is (that copy exists even with no database); this row is the record
+ * that survives a log rotation. Returns whether the row landed; false is
+ * "the log line already has it", never a failure of the comp.
+ */
+export async function insertCompReceipt(receipt: {
+  saleId: string | null;
+  clientId: string | null;
+  totalCents: number;
+  items: readonly CompReceiptItem[];
+  reason: string;
+  target: string;
+  suppressed: boolean;
+}): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `INSERT INTO comp_receipts
+         (sale_id, client_id, total_cents, items, reason, target, suppressed)
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)`,
+      [
+        receipt.saleId,
+        receipt.clientId,
+        receipt.totalCents,
+        JSON.stringify(receipt.items),
+        receipt.reason,
+        receipt.target,
+        receipt.suppressed,
+      ],
+    );
+    return true;
+  } catch (err) {
+    logDbError("comp-receipt-insert", err);
     return false;
   }
 }
