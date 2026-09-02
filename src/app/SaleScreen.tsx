@@ -38,6 +38,11 @@ export interface ModeConfig {
   configError: string | null;
   writeClientIds: string[];
   banner: string | null;
+  /** T38: the server's STUDIO_TAX_RATE, mirrored for the while-pricing
+   *  estimate only. Null before the config loads and on the lock
+   *  screen's trimmed answer; a line with no rate of its own then shows
+   *  its tax as pending rather than guessing one. */
+  studioTaxRate?: number | null;
 }
 
 /**
@@ -169,6 +174,19 @@ function itemKey(type: string, id: string | number): string {
   return `${type}-${id}`;
 }
 
+/** /api/catalog's payload into shelf state. Shared by the first load and
+ *  T38's Recheck, so the two cannot drift. */
+function parseCatalog(body: any): CatalogState {
+  return {
+    categories: body?.categories ?? [],
+    bundles: body?.bundles ?? [],
+    products: body?.products ?? [],
+    passes: body?.passes ?? [],
+    packages: body?.packages ?? [],
+    contracts: body?.contracts ?? [],
+  };
+}
+
 /** One rung-up line. Keyed by type+id so re-tapping an item bumps its
  *  quantity instead of adding a duplicate line. */
 interface CartEntry {
@@ -198,6 +216,29 @@ interface PricedResult {
    *  line and the server total stands as the only number. */
   packagePricing?: boolean;
   usedPaymentStub: boolean;
+  /** T38: present only when `disagrees` is true; one entry per cart
+   *  line, both sides' pricing. Diagnostic, never charged. */
+  lineAudit?: LineAudit[];
+}
+
+/** Mirrors src/lib/sale.ts LineAudit. Built server-side only for a
+ *  disagreeing cart (Pete, fifth live test: $130.20 ours against
+ *  Mindbody's $258.85, and the stop could not say which line). A null
+ *  Mindbody side means no line of theirs matched ours by id, which is
+ *  the loudest finding here: the item we sent is not the item priced. */
+interface LineAudit {
+  name: string | null;
+  type: "Product" | "Service" | "Package";
+  metadataId: string;
+  quantity: number;
+  ourPrice: number;
+  /** 0 for an exempt line; null when the catalog carried no rate and the
+   *  server taxed it at the studio fallback. */
+  ourTaxRate: number | null;
+  ourExtended: number;
+  theirPrice: number | null;
+  theirTaxRate: number | null;
+  theirQuantity: number | null;
 }
 
 /** The client a sale is for, when attached. A subset of the search
@@ -220,6 +261,69 @@ const PRICE_DEBOUNCE_MS = 400;
 
 function money(n: number): string {
   return n.toLocaleString([], { style: "currency", currency: "USD" });
+}
+
+/** A tax rate as the audit table prints it: "10.35%", "no tax". */
+function pct(rate: number | null): string {
+  if (rate === null) return "no rate";
+  if (rate === 0) return "no tax";
+  return `${(rate * 100).toLocaleString([], { maximumFractionDigits: 2 })}%`;
+}
+
+/** Mirrors src/lib/sale.ts roundToCents (not imported: that module pulls
+ *  the server-side Mindbody client, which has no place in the browser
+ *  bundle). Same epsilon, same half-up, so the estimate lands on the
+ *  same cent expectedTotal would. */
+function roundToCents(amount: number): number {
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * T38: what the browser can say about a cart BEFORE Mindbody answers
+ * (Pete: "loading items to the cart should optimistically be added.
+ * currently it's a bit slow due to the network request being awaited").
+ * The cart already carries each line's shelf price, exemption and own
+ * tax rate; the one thing it may lack is a rate for a line the catalog
+ * returned none for, and for that the server's fallback rides in on
+ * /api/config. With no fallback in hand the estimate stops at the
+ * subtotal and says tax is pending: a rate invented here would be a
+ * number with no source, and the design doc's rule is that no such
+ * number reaches the screen.
+ *
+ * Same arithmetic as expectedTotal (per-line rate, one round at the end)
+ * so the estimate and the assertion the server makes agree to the cent
+ * when the catalog is current. This is an ESTIMATE: it renders muted and
+ * labelled, the totals swap to Mindbody's the moment they land, and
+ * nothing in the payment seam can read it. `chargeable` requires a
+ * fresh server price and did not change.
+ */
+function estimateCart(
+  cart: readonly CartEntry[],
+  fallbackRate: number | null,
+): { subTotal: number; taxTotal: number | null; grandTotal: number | null } {
+  let subTotal = 0;
+  let total = 0;
+  let taxKnown = true;
+  for (const line of cart) {
+    const extended = line.item.price * line.quantity;
+    subTotal += extended;
+    const rate = line.item.taxExempt
+      ? 0
+      : (line.item.taxRate ?? fallbackRate);
+    if (rate === null) {
+      taxKnown = false;
+      continue;
+    }
+    total += extended * (1 + rate);
+  }
+  subTotal = roundToCents(subTotal);
+  if (!taxKnown) return { subTotal, taxTotal: null, grandTotal: null };
+  const grandTotal = roundToCents(total);
+  return {
+    subTotal,
+    taxTotal: roundToCents(grandTotal - subTotal),
+    grandTotal,
+  };
 }
 
 function CloseIcon() {
@@ -738,7 +842,14 @@ function PaymentPanel(props: {
     /* Two lines is the maximum because /api/checkout accepts one method
      * or exactly two legs. Greyed WITH that reason, never hidden. */
     if (lines.length >= 2) return "Two parts is the maximum";
-    if (total === null) return "No total to pay yet";
+    /* T38: while the ticket shows the browser's estimate the sources
+     * stay greyed with the reason. A tender line pre-fills from the due,
+     * and the due is null until Mindbody's number lands; a line taken
+     * against an estimate would be exactly the stale amount the cart-edit
+     * reset exists to prevent. */
+    if (total === null) {
+      return pricing ? "Pricing with Mindbody..." : "No total to pay yet";
+    }
     if (dueCents !== null && dueCents <= 0) return "Nothing left to pay";
     if (source === "credit") return creditReason;
     if (source === "storedcard") {
@@ -2537,6 +2648,103 @@ export default function SaleScreen(props: {
     return () => window.removeEventListener("keydown", onKey);
   }, [cartPrompt, keepCart]);
 
+  /**
+   * T38: the always-available way out. Pete, after the $130.20 / $258.85
+   * stop: "there needs to be a way out for the teacher if this ever
+   * happened ... either way we need a clear button for the cart". The
+   * button sits on the receipt whenever it holds anything, not only
+   * inside the disagree block, and it CONFIRMS first: it destroys the
+   * cart, so a stray tap in a queue must not. Non-null holds the item
+   * count for the dialog's wording. Scrim and Escape cancel; only the
+   * confirm button empties, and it does exactly what emptyCart does.
+   */
+  const [clearPrompt, setClearPrompt] = useState<number | null>(null);
+  const cancelClear = useCallback(() => setClearPrompt(null), []);
+  const confirmClear = useCallback(() => {
+    setClearPrompt(null);
+    emptyCart();
+  }, [emptyCart]);
+
+  useEffect(() => {
+    if (clearPrompt === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") cancelClear();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [clearPrompt, cancelClear]);
+
+  /**
+   * T38: the second way out, for the disagree stop specifically. The
+   * likeliest cause of "our math says X, Mindbody says Y" is a shelf
+   * priced from the ten-minute catalog cache after the studio changed a
+   * price, so Recheck refetches the catalog past that cache
+   * (`/api/catalog?refresh=1`), rebuilds every cart line from the fresh
+   * item with the same id and quantity, and hands the result to the
+   * ORDINARY pricing loop (setCart, the 400ms debounce, the POST): there
+   * is no second pricing path, so every rail on the first one still
+   * stands. The report says exactly what moved, per line, and names any
+   * line whose id the catalog no longer has (dropped: there is nothing
+   * to sell it as). It is keyed to the cart array it produced, so any
+   * later edit retires it without a clearing call anywhere.
+   */
+  const [rechecking, setRechecking] = useState(false);
+  const [recheckReport, setRecheckReport] = useState<{
+    forCart: CartEntry[];
+    changes: { name: string; from: number; to: number }[];
+    dropped: string[];
+    error: string | null;
+  } | null>(null);
+  const recheckPrices = useCallback(async () => {
+    if (rechecking) return;
+    setRechecking(true);
+    try {
+      const r = await fetch("/api/catalog?refresh=1");
+      const body = await r.json();
+      if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+      const fresh = parseCatalog(body);
+      const byKey = new Map<string, ShelfItem>();
+      for (const item of [...fresh.products, ...fresh.passes, ...fresh.packages]) {
+        byKey.set(itemKey(item.type, item.id), item);
+      }
+      const changes: { name: string; from: number; to: number }[] = [];
+      const dropped: string[] = [];
+      const rebuilt: CartEntry[] = [];
+      for (const line of cartRef.current) {
+        const item = byKey.get(line.key);
+        if (!item) {
+          dropped.push(line.item.name);
+          continue;
+        }
+        if (item.price !== line.item.price) {
+          changes.push({
+            name: item.name,
+            from: line.item.price,
+            to: item.price,
+          });
+        }
+        rebuilt.push({ ...line, item });
+      }
+      /* The shelf shows the fresh prices too: a teacher who re-adds the
+       * dropped item must not get the stale card back. */
+      setCatalog(fresh);
+      /* Always a NEW array, even when nothing changed: the teacher asked
+       * for a recheck, and only a fresh POST can say whether the stop
+       * stands. */
+      setCart(rebuilt);
+      setRecheckReport({ forCart: rebuilt, changes, dropped, error: null });
+    } catch (e) {
+      setRecheckReport({
+        forCart: cartRef.current,
+        changes: [],
+        dropped: [],
+        error: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setRechecking(false);
+    }
+  }, [rechecking]);
+
   /** Fetch the shelf once per screen life; the route caches server-side
    *  for 10 minutes anyway. A failure renders with a retry button. */
   const loadCatalog = useCallback(() => {
@@ -2546,14 +2754,7 @@ export default function SaleScreen(props: {
       .then(async (r) => {
         const body = await r.json();
         if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
-        setCatalog({
-          categories: body?.categories ?? [],
-          bundles: body?.bundles ?? [],
-          products: body?.products ?? [],
-          passes: body?.passes ?? [],
-          packages: body?.packages ?? [],
-          contracts: body?.contracts ?? [],
-        });
+        setCatalog(parseCatalog(body));
         /* The default chip is picked by the effect above, which also
            knows whether Favorites has anything to show. */
       })
@@ -2680,6 +2881,7 @@ export default function SaleScreen(props: {
         !modalAbove &&
         !payModalOpen &&
         !cartPrompt &&
+        clearPrompt === null &&
         !contractDialog &&
         !pricing &&
         !charging
@@ -2694,6 +2896,7 @@ export default function SaleScreen(props: {
     modalAbove,
     payModalOpen,
     cartPrompt,
+    clearPrompt,
     contractDialog,
     pricing,
     charging,
@@ -2763,6 +2966,37 @@ export default function SaleScreen(props: {
     setCart((lines) => lines.filter((l) => l.key !== key));
   }, []);
 
+  /**
+   * T38: how many receipt rows are clipped below the scroll box. Pete:
+   * "the cart only shows a max of 4 rows, then i can't see what else is
+   * put in there" -- the lines had scrolled internally since the second
+   * live test, but nothing said so. Measured off the DOM (a row counts
+   * once its bottom is past the visible edge) on every cart change,
+   * scroll and resize; it drives the fade at the clipped edge and the
+   * "N more below" line. Display only.
+   */
+  const linesRef = useRef<HTMLDivElement | null>(null);
+  const [hiddenBelow, setHiddenBelow] = useState(0);
+  const measureLines = useCallback(() => {
+    const el = linesRef.current;
+    if (!el) {
+      setHiddenBelow(0);
+      return;
+    }
+    const visibleBottom = el.scrollTop + el.clientHeight;
+    let n = 0;
+    for (const child of Array.from(el.children)) {
+      const row = child as HTMLElement;
+      if (row.offsetTop + row.offsetHeight > visibleBottom + 6) n += 1;
+    }
+    setHiddenBelow(n);
+  }, []);
+  useEffect(() => {
+    measureLines();
+    window.addEventListener("resize", measureLines);
+    return () => window.removeEventListener("resize", measureLines);
+  }, [cart, open, measureLines]);
+
   if (!open) return null;
 
   const onFavorites = activeCat === FAVORITES_LABEL;
@@ -2798,6 +3032,18 @@ export default function SaleScreen(props: {
    *  server's numbers. Never a locally computed total dressed as one. */
   const totals = priced;
   const showSpinner = pricing;
+  /** T38: the browser's estimate for the pricing wait. Computed only
+   *  while the spinner would otherwise be the whole totals area. */
+  const estimate = showSpinner
+    ? estimateCart(cart, config?.studioTaxRate ?? null)
+    : null;
+  /** The recheck report, if it is about THIS cart (any later edit makes a
+   *  new array and retires it). */
+  const report =
+    recheckReport !== null && recheckReport.forCart === cart
+      ? recheckReport
+      : null;
+  const cartCount = cart.reduce((n, l) => n + l.quantity, 0);
 
   /** The balance shown beside the attached name: the profile lookup's
    *  number when it is this client's (it is refetched after every charge,
@@ -2915,13 +3161,30 @@ export default function SaleScreen(props: {
             <hr className="t-rule" />
 
             {cart.length === 0 ? (
-              <p className="t-empty">Nothing rung up yet.</p>
+              <>
+                <p className="t-empty">Nothing rung up yet.</p>
+                {/* T38: a recheck that dropped every line lands here,
+                    and the teacher must still be told what went. */}
+                {report && report.dropped.length > 0 ? (
+                  <p className="muted-note t-recheck">
+                    {report.dropped
+                      .map((name) => `${name} is no longer in the catalog and was removed`)
+                      .join(". ")}
+                    .
+                  </p>
+                ) : null}
+              </>
             ) : (
               <>
                 {/* The lines scroll internally past a few items, so the
                     totals and the charge button below never leave an
-                    iPad-landscape screen. */}
-                <div className="t-lines">
+                    iPad-landscape screen. T38 made the clipping visible:
+                    a fade over the last row and a count under it while
+                    rows are hidden below. */}
+                <div
+                  className={hiddenBelow > 0 ? "t-lines-wrap more" : "t-lines-wrap"}
+                >
+                <div className="t-lines" ref={linesRef} onScroll={measureLines}>
                 {cart.map((line) => (
                   <div className="t-item" key={line.key}>
                     <div className="t-line">
@@ -2969,16 +3232,94 @@ export default function SaleScreen(props: {
                   </div>
                 ))}
                 </div>
+                </div>
+
+                {/* T38: the foot row under the lines. Left, the count
+                    of rows the scroll box is hiding (or the item count
+                    when nothing is); right, Clear cart, which confirms
+                    before it destroys anything. Always present while the
+                    cart holds something, so the way out never depends on
+                    which state the totals area is in. */}
+                <div className="t-foot">
+                  <span className="t-foot-hint" aria-live="polite">
+                    {hiddenBelow > 0
+                      ? `${hiddenBelow} more below`
+                      : `${cartCount} ${cartCount === 1 ? "item" : "items"}`}
+                  </span>
+                  <button
+                    className="t-clear"
+                    disabled={charging}
+                    onClick={() => setClearPrompt(cartCount)}
+                  >
+                    Clear cart
+                  </button>
+                </div>
 
                 <hr className="t-rule" />
 
+                {/* T38: what a recheck found, kept while this cart is the
+                    one it rebuilt. Rendered above whatever the totals
+                    area then says, since the two are read together: the
+                    changes, and whether the stop still stands. */}
+                {report ? (
+                  <p
+                    className={
+                      report.error ? "muted-note t-recheck bad" : "muted-note t-recheck"
+                    }
+                  >
+                    {report.error
+                      ? `Recheck failed: ${report.error}`
+                      : report.changes.length === 0 && report.dropped.length === 0
+                        ? "Rechecked against the current catalog: no price changed."
+                        : [
+                            ...report.changes.map(
+                              (c) => `${c.name}: ${money(c.from)} is now ${money(c.to)}`,
+                            ),
+                            ...report.dropped.map(
+                              (name) => `${name} is no longer in the catalog and was removed`,
+                            ),
+                          ].join(". ") + "."}
+                  </p>
+                ) : null}
+
                 {/* The totals area. The server's numbers or an honest
                     absence; local math never renders as a total. */}
-                {showSpinner ? (
-                  <p className="t-pricing">
-                    <span className="spinner" aria-label="working" /> Pricing
-                    with Mindbody...
-                  </p>
+                {estimate ? (
+                  <>
+                    {/* T38: the browser's estimate while Mindbody prices
+                        the cart, muted and labelled, in the same rows the
+                        server's numbers will replace. The payment seam
+                        cannot read it: `total` there is null until the
+                        server answers, the sources grey with the reason,
+                        and Charge stays disabled. */}
+                    <div className="t-est" aria-busy="true">
+                      <div className="t-line t-muted">
+                        <span>Subtotal</span>
+                        <span className="amt">{money(estimate.subTotal)}</span>
+                      </div>
+                      <div className="t-line t-muted">
+                        <span>Tax</span>
+                        <span className="amt">
+                          {estimate.taxTotal !== null
+                            ? money(estimate.taxTotal)
+                            : "pending"}
+                        </span>
+                      </div>
+                      <hr className="t-rule" />
+                      <div className="t-line t-total t-muted">
+                        <span>Estimated</span>
+                        <span className="amt">
+                          {estimate.grandTotal !== null
+                            ? money(estimate.grandTotal)
+                            : money(estimate.subTotal) + " + tax"}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="t-pricing">
+                      <span className="spinner" aria-label="working" /> Pricing
+                      with Mindbody...
+                    </p>
+                  </>
                 ) : priceError ? (
                   <div className="sale-stop">
                     Pricing failed: {priceError}
@@ -3015,6 +3356,105 @@ export default function SaleScreen(props: {
                           ? money(totals.grandTotal)
                           : "nothing"}
                         . Do not charge; this is a bug to report.
+                        {/* T38: the per-line audit, so the stop names
+                            WHICH line. A line with no Mindbody side is
+                            the loudest finding: the item we sent is not
+                            the item it priced. Diagnostic only. */}
+                        {totals.lineAudit && totals.lineAudit.length > 0 ? (
+                          <div className="audit-wrap">
+                            <table className="audit">
+                              <thead>
+                                <tr>
+                                  <th>Line</th>
+                                  <th>Ours</th>
+                                  <th>Mindbody</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {totals.lineAudit.map((a, i) => {
+                                  const ours = cart.find(
+                                    (l) => l.key === itemKey(a.type, a.metadataId),
+                                  );
+                                  const unmatched =
+                                    a.theirPrice === null &&
+                                    a.theirTaxRate === null &&
+                                    a.theirQuantity === null;
+                                  const priceOff =
+                                    a.theirPrice !== null && a.theirPrice !== a.ourPrice;
+                                  const rateOff =
+                                    a.theirTaxRate !== null &&
+                                    a.theirTaxRate !== (a.ourTaxRate ?? a.theirTaxRate);
+                                  const qtyOff =
+                                    a.theirQuantity !== null && a.theirQuantity !== a.quantity;
+                                  return (
+                                    <tr key={`${a.type}-${a.metadataId}-${i}`}>
+                                      <td>
+                                        {ours?.item.name ?? a.name ?? `${a.type} ${a.metadataId}`}
+                                        {a.name !== null && ours && a.name !== ours.item.name ? (
+                                          <span className="audit-sub">
+                                            Mindbody calls it {a.name}
+                                          </span>
+                                        ) : null}
+                                      </td>
+                                      <td>
+                                        {money(a.ourPrice)} x{a.quantity}
+                                        <span className="audit-sub">
+                                          {a.ourTaxRate === null
+                                            ? "studio fallback rate"
+                                            : pct(a.ourTaxRate)}
+                                          {" = "}
+                                          {money(a.ourExtended)}
+                                        </span>
+                                      </td>
+                                      <td className={unmatched ? "audit-bad" : undefined}>
+                                        {unmatched ? (
+                                          "no line matched: Mindbody priced something else"
+                                        ) : (
+                                          <>
+                                            <span className={priceOff ? "audit-bad" : undefined}>
+                                              {a.theirPrice !== null ? money(a.theirPrice) : "no price"}
+                                            </span>{" "}
+                                            <span className={qtyOff ? "audit-bad" : undefined}>
+                                              x{a.theirQuantity ?? "?"}
+                                            </span>
+                                            <span
+                                              className={
+                                                rateOff ? "audit-sub audit-bad" : "audit-sub"
+                                              }
+                                            >
+                                              {pct(a.theirTaxRate)}
+                                            </span>
+                                          </>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : null}
+                        {/* T38: the way out of the stop. Recheck refetches
+                            the catalog past its cache and reprices through
+                            the ordinary loop; Clear cart is on the foot
+                            row above. Neither touches the stop itself:
+                            Charge is disabled while `disagrees` is true,
+                            and only a fresh server price that agrees
+                            lifts it. */}
+                        <button
+                          className="audit-recheck"
+                          disabled={rechecking || charging}
+                          onClick={() => void recheckPrices()}
+                        >
+                          {rechecking ? (
+                            <>
+                              <span className="spinner" aria-label="working" />{" "}
+                              Rechecking...
+                            </>
+                          ) : (
+                            "Recheck prices"
+                          )}
+                        </button>
                       </div>
                     ) : null}
                     {totals.subTotal !== null ? (
@@ -3295,6 +3735,38 @@ export default function SaleScreen(props: {
               </button>
               <button className="modal-confirm go" onClick={emptyCart}>
                 Empty cart
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* T38: Clear cart's confirmation. Same idiom as the dialog above,
+          with the stop pairing on the confirm because this one IS
+          destructive and was asked for deliberately. Scrim and Escape
+          cancel; nothing but the confirm button empties. */}
+      {clearPrompt !== null ? (
+        <div className="modal-scrim" role="presentation" onClick={cancelClear}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Clear the cart?"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">Clear the cart?</p>
+            <p className="modal-note">
+              {clearPrompt === 1
+                ? "This removes the one item rung up."
+                : `This removes all ${clearPrompt} items rung up.`}
+              {client ? ` ${client.name} stays attached.` : ""}
+            </p>
+            <div className="modal-actions">
+              <button className="modal-cancel" onClick={cancelClear}>
+                Keep items
+              </button>
+              <button className="modal-confirm" onClick={confirmClear}>
+                Clear cart
               </button>
             </div>
           </div>

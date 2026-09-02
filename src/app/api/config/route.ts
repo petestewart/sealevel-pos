@@ -8,6 +8,7 @@ import {
   mindbodyEnv,
   target,
 } from "@/lib/mindbody";
+import { STUDIO_TAX_RATE } from "@/lib/sale";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,7 @@ export async function GET(request: Request) {
       configError: null,
       writeClientIds: [],
       banner: await bannerText(),
+      studioTaxRate: null,
     });
   }
   let siteId: string | null = null;
@@ -68,5 +70,12 @@ export async function GET(request: Request) {
      * mode and is normal for local work; the dev drawer's settings tab
      * shows this as one quiet line. Nothing teacher-facing changes. */
     storage: storageMode(),
+    /* T38: the studio's fallback tax rate, MIRRORED from the server
+     * constant so the sale screen's while-pricing estimate can tax a
+     * line the catalog carried no rate for the same way expectedTotal
+     * does. A read, never a rule: the estimate it feeds is muted,
+     * labelled, and never chargeable; Mindbody's rehearsal stays the only
+     * number that is. */
+    studioTaxRate: STUDIO_TAX_RATE,
   });
 }

@@ -2156,6 +2156,135 @@ What must not change: the money (T35's request shapes, clamps, single
 flight, `chargeable` in the same render); the mode banner's presence in
 every state; comp arms only in payment mode; T38 lands first.
 
+## T38. The cart: more rows, an estimate while pricing, the audit, and a way out (Pete, 2026-08-31)
+
+Four things from the fifth live test, all on the receipt side of the Buy
+overlay. Pete:
+
+1. "the cart only shows a max of 4 rows, then i can't see what else is
+   put in there."
+2. "I think loading items to the cart should optimistically be added.
+   currently it's a bit slow due to the network request being awaited."
+3. After the $130.20 (ours) against $258.85 (Mindbody) stop, whose cause
+   was never found: "there needs to be a way out for the teacher if this
+   ever happened. A reset, or a way to match the cart to mindbody and
+   inform the teacher of the change. either way we need a clear button
+   for the cart."
+4. Commit 891190b had already taught `/api/price-cart` to return a
+   per-line `lineAudit` when the totals disagree, so the stop could say
+   WHICH line; nothing on the screen rendered it.
+
+### What was built
+
+All in `src/app/SaleScreen.tsx` and `globals.css`, plus one read added
+to `/api/config`. `/api/price-cart`, `/api/checkout` and `src/lib` are
+untouched. Typecheck and build clean; no live run in this container.
+
+**A. More rows, and the scroll is announced.** The `.t-lines` cap was
+`min(34vh, 320px)`, which at ~86px a row is the four Pete saw, and
+nothing said the box scrolled. Now `min(44vh, 540px)` over rows trimmed
+to ~74px (the stepper row's paddings, not the 44px steppers): about six
+rows on a 1024px-tall iPad, five on an 820px one, with the ticket and
+Charge still fitting the taller screen for any cart length (the overlay
+scrolls on the shorter one, as it did before; the row cap was already
+past that screen's budget). The clipping is now visible two ways: a
+fade in the ticket's own surface over the clipped edge (`.t-lines-wrap
+.more::after`, a gradient to `var(--surface)`, so it is the dark
+surface in the dark palette), and a foot row under the lines reading
+"N more below" while rows are hidden, or "N items" when none are. The
+count is measured off the DOM on every cart change, scroll and resize.
+The cap was not removed: with it gone a long cart pushes Charge off the
+screen, which is the second live test's bug coming back.
+
+**B. An estimate while Mindbody prices.** The 400ms debounce and the
+`/api/price-cart` round trip used to show only the spinner. Now the same
+Subtotal / Tax / Total rows render from what the browser already holds
+(each cart line's shelf price, exemption and own tax rate), muted, with
+the total row labelled "Estimated" and the spinner line "Pricing with
+Mindbody..." under it; the server's rows replace them when they land.
+The one number the browser can lack is a rate for a line the catalog
+returned none for, and for that `/api/config` now carries
+`studioTaxRate`, mirrored from `STUDIO_TAX_RATE` in `src/lib/sale.ts`
+(a read; the constant did not move). With no fallback in hand (config
+not loaded yet) the estimate stops at the subtotal and shows tax as
+"pending"; no rate is invented in the component. The arithmetic is
+`expectedTotal`'s (per-line rate, one round at the end, the same
+`roundToCents`), so the estimate and the server's assertion agree to
+the cent when the catalog is current. The debounce, the generation
+guard and the abort-on-change behaviour are exactly as they were; the
+`needsClient` estimate branch is untouched.
+
+*Tender taps mid-estimate, the decision:* the sources stay GREYED while
+the estimate is up, with the reason "Pricing with Mindbody...". A tender
+line pre-fills from `dueCents`, which is null until the server answers
+(`total` in PaymentPanel already required `!pricing`), so `addLine` was
+a no-op mid-pricing anyway; the change is only that the reason names
+the wait instead of "No total to pay yet". The alternative (add the
+line and recompute when the price lands) was rejected because a line
+carrying an estimated figure exists for however long Mindbody takes,
+and if the server's total came back different the line would be the
+stale amount the cart-edit reset exists to prevent. Greyed cannot leave
+a stale amount; recompute could.
+
+**C. The audit table.** Inside the disagree stop, after the "Do not
+charge" sentence, `totals.lineAudit` renders as a three-column table:
+the line (our shelf name; Mindbody's name under it when it differs),
+Ours (price x quantity, then the rate or "studio fallback rate", and
+the extended figure), Mindbody (price, quantity, rate). Any figure that
+differs from ours takes the stop colour, and a line with no Mindbody
+side at all reads "no line matched: Mindbody priced something else",
+which is the loudest finding the audit can make. 16px, tokens only,
+scrolls sideways in its own box. `PricedResult` and a `LineAudit`
+mirror were added to SaleScreen for it.
+
+**D. The way out.** Two controls.
+
+- **Clear cart** sits on the foot row under the lines whenever the cart
+  holds anything, in every totals state, not only inside the stop. It
+  confirms in the cart-prompt dialog's idiom ("Clear the cart?", the
+  item count, "<name> stays attached", Keep items / Clear cart with the
+  stop pairing on the confirm). Scrim and Escape keep the items; only
+  the confirm button empties, and it calls `emptyCart` exactly (cart,
+  priced, priceError, cartResetNonce, so the tender resets too).
+  Disabled mid-charge like every other cart-changing control.
+- **Recheck prices**, in the stop only. `GET /api/catalog?refresh=1`
+  (past the ten-minute shelf cache), then every cart line is rebuilt
+  from the fresh item with the same type and id, keeping its quantity,
+  and `setCart` hands the result to the ORDINARY pricing loop: the
+  debounce, the POST, the generation guard. There is no second pricing
+  path. The fresh catalog also replaces the shelf, so re-adding a line
+  cannot bring the stale card back. A report renders above the totals
+  area, keyed to the cart array the recheck produced (any later edit
+  retires it without a clearing call): per line "<name>: $X is now $Y";
+  a line whose id the catalog no longer has is dropped and named ("<name>
+  is no longer in the catalog and was removed", shown on the empty
+  ticket too when it was the last line); nothing changed reads
+  "Rechecked against the current catalog: no price changed."; a failed
+  fetch reads "Recheck failed: ..." and leaves the cart as it was. If
+  the fresh price still disagrees the stop stands, table and all.
+
+### What must not change
+
+- **Neither control weakens the stop.** Charge is disabled while
+  `disagrees` is true (`total` is null in PaymentPanel for a
+  disagreeing, suppressed or in-flight price, and `chargeable` requires
+  it), and only a fresh server price that agrees lifts it. Recheck can
+  only ever produce a new cart for the same loop to price; Clear can
+  only empty.
+- **The estimate is never chargeable and never a total.** It renders
+  only while `pricing` is true, in muted rows labelled "Estimated", and
+  the payment seam cannot read it: `chargeable` still requires
+  `!pricing && priced && !suppressed && !disagrees`, the sources grey
+  with the reason, and the due reads "--" until Mindbody answers. The
+  browser's numbers are never sent anywhere but as the assertion inputs
+  they always were.
+- `studioTaxRate` on `/api/config` is a mirror of the server constant
+  for display. Nothing prices from it; `expectedTotal` on the server
+  still reads `STUDIO_TAX_RATE` directly.
+- The debounce, the single flight, suppression-is-not-success, and the
+  server's authority over every number are exactly as T35 and T36 left
+  them.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
