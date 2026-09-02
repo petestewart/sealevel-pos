@@ -48,6 +48,17 @@ export interface CompReason {
   forStaffName?: string;
 }
 
+/** T48: a teacher's comp PIN is 4 to 6 digits. Here rather than in
+ *  teacherpins.ts because the dialog's keypad and the routes' checks
+ *  must agree, and this module is the one both can import. */
+export const PIN_MIN = 4;
+export const PIN_MAX = 6;
+const PIN_SHAPE = /^\d{4,6}$/;
+
+export function isPinShape(value: unknown): value is string {
+  return typeof value === "string" && PIN_SHAPE.test(value);
+}
+
 export function isCompKind(value: unknown): value is CompKind {
   return (
     typeof value === "string" && (COMP_KINDS as readonly string[]).includes(value)

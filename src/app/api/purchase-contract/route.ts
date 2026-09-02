@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireSession, requireTeacher } from "@/lib/auth";
+import { requireSession } from "@/lib/auth";
 import { isDryRun, mindbodyHttpStatus } from "@/lib/mindbody";
 
 import {
@@ -77,8 +77,6 @@ function errMessage(err: unknown): string {
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
-  const gate = requireTeacher(request);
-  if (!gate.ok) return gate.denied;
   let payload: any;
   try {
     payload = await request.json();

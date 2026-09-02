@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 
-import { requireSession, requireTeacher, teacherLogTag } from "@/lib/auth";
+import {
+  requireSession,
+  spendCompToken,
+  teacherLogTag,
+  verifyCompToken,
+  type TeacherIdentity,
+} from "@/lib/auth";
 import {
   COMP_DETAIL_MAX,
   COMP_DETAIL_MIN,
@@ -39,7 +45,17 @@ export const dynamic = "force-dynamic";
  * Body: { items: CartLine[], clientId?: string,
  *         method: "storedcard"|"credit"|"cash"|"comp",
  *         cashTendered?: number,
+ *         teacherToken?: string,
  *         compReason?: { kind, detail, forStaffId?, forStaffName? } }
+ *         -- T48: `teacherToken` is REQUIRED with method "comp" and
+ *         refused beside any other method. It is the one-shot value
+ *         /api/teacher/verify signed for the teacher whose PIN matched,
+ *         ten minutes old at most; without a valid one the comp is 401
+ *         `reason: "teacher"` before anything else is read, in every
+ *         configuration (POS_PIN set or not), and the dialog goes back
+ *         to its PIN step. The teacher on the receipt, the `[comp]` line
+ *         and the Formula Note is the one the token names, never a name
+ *         from the browser.
  *         -- T43: required with method "comp", refused beside any other
  *         method or a split. Since T45 it is data rather than a string:
  *         `kind` from comp.ts's COMP_KINDS, `detail` trimmed and at most
@@ -161,8 +177,6 @@ function parseSplitLeg(raw: unknown): SplitLeg | string {
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
-  const gate = requireTeacher(request);
-  if (!gate.ok) return gate.denied;
   let payload: any;
   try {
     payload = await request.json();
@@ -224,6 +238,32 @@ export async function POST(request: Request) {
       { error: "method must be storedcard, credit, cash or comp" },
       { status: 400 },
     );
+  }
+  /* T48: who is comping. Checked FIRST, before the client, the reason
+   * (whose teacher branch reads the staff list) and the rehearsal: a
+   * comp with nobody's PIN behind it costs no Mindbody call at all and
+   * is refused the same way with the device lock on or off. Pete's live
+   * test had a real $2 comp go through with teacher=none; this is the
+   * line that makes that impossible. */
+  const teacherTokenRaw: unknown = payload?.teacherToken;
+  if (method !== "comp" && teacherTokenRaw !== undefined) {
+    return NextResponse.json(
+      { error: "teacherToken applies only to method comp" },
+      { status: 400 },
+    );
+  }
+  let teacher: TeacherIdentity | null = null;
+  if (method === "comp") {
+    teacher =
+      typeof teacherTokenRaw === "string"
+        ? verifyCompToken(teacherTokenRaw)
+        : null;
+    if (teacher === null) {
+      return NextResponse.json(
+        { error: "Enter your PIN to comp this sale.", reason: "teacher" },
+        { status: 401 },
+      );
+    }
   }
   const clientId =
     typeof payload?.clientId === "string" && payload.clientId.trim()
@@ -333,8 +373,8 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
-      /* The staff list is the cached read the four-digit prompt uses;
-       * cold, it is one metered staff read, never a money call. A read
+      /* The staff list is the cached read /api/staff serves; cold, it
+       * is one metered staff read, never a money call. A read
        * that fails with nothing cached is answered as such: the comp is
        * refused rather than filed for a name nobody could check. */
       let teachers;
@@ -423,6 +463,17 @@ export async function POST(request: Request) {
           "not apply",
       },
       { status: 400 },
+    );
+  }
+
+  /* T48: the comp token is SPENT here, after every check above and
+   * before the rehearsal, which is the first Mindbody call: a second
+   * charge on the same token, however it got here, goes back to the PIN
+   * step and costs no call. */
+  if (method === "comp" && !spendCompToken(teacherTokenRaw as string)) {
+    return NextResponse.json(
+      { error: "Enter your PIN to comp this sale.", reason: "teacher" },
+      { status: 401 },
     );
   }
 
@@ -653,7 +704,7 @@ export async function POST(request: Request) {
   const compTags =
     `reason=${JSON.stringify(reasonLine)} ` +
     `kind=${compReason?.kind ?? "none"} for=${compReason?.forStaffId ?? "none"} ` +
-    teacherLogTag(gate.teacher);
+    teacherLogTag(teacher);
 
   /* T45: the Formula Note. Mindbody's checkout carries no notes field,
    * but a client has Formula Notes: dated, staff-only entries on the
@@ -679,7 +730,7 @@ export async function POST(request: Request) {
     const note = [
       `Comped $${total.toFixed(2)} at the counter: ${compHeadline(compReason)}.`,
       compReason.detail ? `Note: ${compReason.detail}.` : null,
-      gate.teacher ? `By ${gate.teacher.name}.` : null,
+      teacher ? `By ${teacher.name}.` : null,
       saleId ? `Sale ${saleId}.` : null,
     ]
       .filter(Boolean)
@@ -752,8 +803,8 @@ export async function POST(request: Request) {
       reason: reasonLine,
       target: target(),
       suppressed: outcome.suppressed,
-      teacherId: gate.teacher === null ? null : String(gate.teacher.id),
-      teacherName: gate.teacher?.name ?? null,
+      teacherId: teacher === null ? null : String(teacher.id),
+      teacherName: teacher?.name ?? null,
       kind: compReason?.kind ?? "",
       detail: compReason?.detail ? compReason.detail : null,
       forStaffId:

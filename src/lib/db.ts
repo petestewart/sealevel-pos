@@ -8,7 +8,7 @@ import type { BundleLine, CounterBundle } from "./bundles";
  *
  *   THE DATABASE HOLDS WHAT MINDBODY HAS NO HOME FOR, AND NEVER A COPY OF
  *   WHAT IT DOES. Waiver receipts, bundle config, banner text, promo
- *   entitlements: yes. Clients, classes, passes, prices, visits: never, at
+ *   entitlements, teacher PINs: yes. Clients, classes, passes, prices, visits: never, at
  *   any point, for any reason including speed. The client index was already
  *   deleted once for exactly this reason (see CLAUDE.md); a table makes
  *   rebuilding it tempting in a way in-memory caching did not. A schema
@@ -252,6 +252,30 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         ADD COLUMN IF NOT EXISTS formula_note_id integer;
     `,
   },
+  {
+    /* T48: teacher PINs, ours. Pete: "if we are going to do PINs we
+     * likely need to store them in our own db." A PIN is something
+     * Mindbody has no home for, so the charter holds; `staff_id` is a
+     * handle and `name` the label as it read when the PIN was set, like
+     * comp_receipts.teacher_name, never a staff table. `pin_hash` is
+     * scrypt of the PIN with a per-row salt (src/lib/teacherpins.ts);
+     * `pin_lookup` a keyed HMAC of the PIN, UNIQUE, so a check is one
+     * indexed read and no two teachers can hold the same PIN (which the
+     * last-four-of-a-phone scheme could not promise). `set_via` says how
+     * it got there: a Mindbody sign-in in the comp dialog, or the admin
+     * route. The PIN itself is stored nowhere. */
+    version: 5,
+    sql: `
+      CREATE TABLE IF NOT EXISTS teacher_pins (
+        staff_id    text PRIMARY KEY,
+        name        text NOT NULL,
+        pin_hash    text NOT NULL,
+        pin_lookup  text NOT NULL UNIQUE,
+        set_at      timestamptz NOT NULL DEFAULT now(),
+        set_via     text NOT NULL
+      );
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -360,7 +384,8 @@ export interface CompReceiptItem {
  * The durable record of a comp: the reason the teacher wrote, the total
  * on the studio, our line list, which target it ran against, and whether
  * the write was suppressed (dry run or the write guard) rather than
- * recorded by Mindbody, and since T44 which teacher made it. The route's
+ * recorded by Mindbody, and which teacher made it (T44; since T48 the
+ * teacher whose PIN the comp dialog took). The route's
  * `[comp]` log line stays exactly as it is (that copy exists even with
  * no database); this row is the record that survives a log rotation.
  * Returns whether the row landed; false is "the log line already has
@@ -415,6 +440,104 @@ export async function insertCompReceipt(receipt: {
   } catch (err) {
     logDbError("comp-receipt-insert", err);
     return false;
+  }
+}
+
+/* --- Teacher PINs (T48) ---------------------------------------------- */
+
+/** One enrolled PIN's row, minus the secrets. */
+export interface TeacherPinRow {
+  staffId: string;
+  name: string;
+  setAt: string;
+  setVia: string;
+}
+
+/** The row whose lookup value matches, with its hash for the caller to
+ *  verify, or null when there is none OR no database: the caller falls
+ *  back (the dev env list) or refuses, and cannot tell which from here.
+ *  `available` says whether the store answered at all. */
+export async function findTeacherPin(
+  lookup: string,
+): Promise<
+  | { available: false }
+  | { available: true; row: null }
+  | { available: true; row: { staffId: string; name: string; pinHash: string } }
+> {
+  try {
+    const p = await ready();
+    if (!p) return { available: false };
+    const res = await p.query(
+      `SELECT staff_id, name, pin_hash FROM teacher_pins WHERE pin_lookup = $1`,
+      [lookup],
+    );
+    const r = res.rows[0];
+    if (!r) return { available: true, row: null };
+    return {
+      available: true,
+      row: { staffId: String(r.staff_id), name: r.name, pinHash: r.pin_hash },
+    };
+  } catch (err) {
+    logDbError("teacher-pin-read", err);
+    return { available: false };
+  }
+}
+
+export type TeacherPinWrite =
+  | { ok: true }
+  | { ok: false; reason: "taken" | "unavailable" };
+
+/** Set or replace one teacher's PIN. A lookup value another teacher
+ *  already holds is refused as `taken` (the UNIQUE constraint, read back
+ *  by name), so the same PIN can never name two people. */
+export async function upsertTeacherPin(row: {
+  staffId: string;
+  name: string;
+  pinHash: string;
+  pinLookup: string;
+  setVia: string;
+}): Promise<TeacherPinWrite> {
+  try {
+    const p = await ready();
+    if (!p) return { ok: false, reason: "unavailable" };
+    await p.query(
+      `INSERT INTO teacher_pins (staff_id, name, pin_hash, pin_lookup, set_via)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (staff_id) DO UPDATE
+         SET name = excluded.name, pin_hash = excluded.pin_hash,
+             pin_lookup = excluded.pin_lookup, set_via = excluded.set_via,
+             set_at = now()`,
+      [row.staffId, row.name, row.pinHash, row.pinLookup, row.setVia],
+    );
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("teacher_pins_pin_lookup_key")) {
+      /* Not an outage: no cooldown, no once-per-kind log. */
+      return { ok: false, reason: "taken" };
+    }
+    logDbError("teacher-pin-write", err);
+    return { ok: false, reason: "unavailable" };
+  }
+}
+
+/** Who has a PIN, for the admin route. Null means unavailable. */
+export async function listTeacherPins(): Promise<TeacherPinRow[] | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT staff_id, name, set_at, set_via FROM teacher_pins ORDER BY name`,
+    );
+    return res.rows.map((r) => ({
+      staffId: String(r.staff_id),
+      name: r.name as string,
+      setAt: (r.set_at as Date).toISOString(),
+      setVia: r.set_via as string,
+    }));
+  } catch (err) {
+    logDbError("teacher-pin-read", err);
+    return null;
   }
 }
 

@@ -1,6 +1,7 @@
 import {
   createHash,
   createHmac,
+  randomBytes,
   scryptSync,
   timingSafeEqual,
 } from "node:crypto";
@@ -9,9 +10,9 @@ import { NextResponse } from "next/server";
 
 /**
  * Shared-PIN auth (T21). One PIN for the studio, per the service-account
- * decision (P1). The teacher layer (T44) sits on top of it, further down
- * this file: the device session says the iPad is the studio's, the
- * teacher session says who is standing at it.
+ * decision (P1). The comp token (T48) sits further down this file: the
+ * device session says the iPad is the studio's, the comp token says which
+ * teacher just typed their PIN to give a sale away.
  *
  * POS_PIN unset or empty means auth is DISABLED entirely: every route
  * answers without a session, which is the dev convenience and the behavior
@@ -164,9 +165,10 @@ export function sessionClearCookie(): string {
  * Modest and in-memory, per process: after 5 straight failures, 30s of
  * lockout. A shared studio PIN is not defending state secrets; the limit
  * exists so a guessing loop is slow and obvious, not to survive restarts
- * or coordinate across instances. Two counters, one per door (T44): a
- * teacher fumbling their four digits must not lock the device PIN, and
- * the reverse. */
+ * or coordinate across instances. One counter per door (T44, T48): the
+ * device PIN, the comp PIN check and PIN enrollment each have their own,
+ * so a teacher fumbling digits in the comp dialog cannot lock the device
+ * door, and the reverse. */
 
 const MAX_FAILURES = 5;
 const LOCKOUT_MS = 30_000;
@@ -210,7 +212,8 @@ function makeLimiter(): AttemptLimiter {
 }
 
 const deviceLimiter = makeLimiter();
-const teacherLimiter = makeLimiter();
+const verifyLimiter = makeLimiter();
+const enrollLimiter = makeLimiter();
 
 /** Milliseconds of device-login lockout remaining, 0 when allowed. */
 export function lockoutRemainingMs(now = Date.now()): number {
@@ -227,68 +230,122 @@ export function claimLoginAttempt(now = Date.now()): number {
   return deviceLimiter.claim(now);
 }
 
-/** The teacher door's counter, same rules, separate state. */
-export function claimTeacherAttempt(now = Date.now()): number {
-  return teacherLimiter.claim(now);
+/** The comp PIN check's counter (/api/teacher/verify), same rules,
+ *  separate state. */
+export function claimVerifyAttempt(now = Date.now()): number {
+  return verifyLimiter.claim(now);
 }
 
-export function recordTeacherSuccess(): void {
-  teacherLimiter.success();
+export function recordVerifySuccess(): void {
+  verifyLimiter.success();
 }
 
-/* --- Teacher session (T44) --------------------------------------------
- * The second layer: WHO is at the counter, for a shift. The device
- * session above says the iPad is the studio's; this says which teacher
- * unlocked it, so a comp receipt and a log line can name them. A
- * separate cookie, signed with the same derived key (so a PIN or pepper
- * change revokes both at once), carrying the staff id and name in the
- * clear: nothing in it is secret, the signature is what makes it
- * trustworthy. Twelve hours: a shift, not a month. The four digits a
- * teacher typed never enter the token.
+/** PIN enrollment's counter (/api/teacher/enroll): a Mindbody sign-in is
+ *  tried per attempt, so a guessing loop here is a guessing loop against
+ *  a teacher's Mindbody password and gets the same five-then-30s. */
+export function claimEnrollAttempt(now = Date.now()): number {
+  return enrollLimiter.claim(now);
+}
+
+export function recordEnrollSuccess(): void {
+  enrollLimiter.success();
+}
+
+/* --- The comp token (T48) ---------------------------------------------
+ * T44 named the teacher for a whole shift, from a cookie set at the start
+ * of it, and Pete's live test found the gap: with no POS_PIN the prompt
+ * could be skipped, and a real comp went to Mindbody with teacher=none.
+ * T48 turns it around. Nothing routine asks who is at the counter; a COMP
+ * asks, every time, in the dialog itself, and the answer is this token:
+ * a one-shot value the verify route signs for the teacher whose PIN
+ * matched, which the browser hands straight back on the charge. Ten
+ * minutes, enough to finish the dialog and tap Comp, not enough to keep
+ * around. /api/checkout refuses a comp without a valid one in every
+ * configuration; there is no auth-disabled bypass here, because that
+ * bypass is exactly what let the $2 comp through.
  *
- * With auth disabled (no POS_PIN) a teacher session is optional: dev
- * runs with or without one, and requireTeacher lets writes through
- * unnamed. With auth required, every write route demands one. */
+ * `c1.<staff id>.<name, base64url>.<issued-at ms>.<hmac>`, the T44 token
+ * shape with a new prefix. Nothing in it is secret; the signature is what
+ * makes it trustworthy, and the PIN a teacher typed never enters it. */
 
-const TEACHER_COOKIE = "pos_teacher";
-const TEACHER_TTL_MS = 12 * 60 * 60 * 1000;
-const TEACHER_PREFIX = "t1";
+const COMP_TOKEN_TTL_MS = 10 * 60 * 1000;
+const COMP_TOKEN_PREFIX = "c1";
 
 export interface TeacherIdentity {
   id: number;
   name: string;
 }
 
-/** A fresh teacher token: `t1.<staff id>.<name, base64url>.<issued-at ms>.<hmac>`. */
-export function issueTeacherToken(
+/** The comp token's signing key. With a device PIN or a pepper configured
+ *  it is the session key, so a rotation revokes outstanding comp tokens
+ *  along with the sessions. With NEITHER set (local dev, auth disabled)
+ *  the session key is scrypt of an empty string and a public salt, which
+ *  anyone can derive; a token forged with it would be a comp with no PIN
+ *  typed, the T48 bug back again. So that case gets a random per-process
+ *  key instead: a restart mid-dialog costs one more PIN entry, which the
+ *  dialog handles, and nobody outside the process can sign. */
+let processKey: Buffer | null = null;
+function compTokenKey(): Buffer {
+  const pepper = (process.env.POS_SESSION_SECRET ?? "").trim();
+  if (configuredPin().length > 0 || pepper.length > 0) return sessionKey();
+  if (processKey === null) processKey = randomBytes(32);
+  return processKey;
+}
+
+function signComp(payload: string): string {
+  return createHmac("sha256", compTokenKey()).update(payload).digest("hex");
+}
+
+/** A fresh comp token for a teacher whose PIN just matched. */
+export function issueCompToken(
   teacher: TeacherIdentity,
   now = Date.now(),
 ): string {
   const name = Buffer.from(teacher.name, "utf8").toString("base64url");
-  const payload = `${TEACHER_PREFIX}.${teacher.id}.${name}.${now}`;
-  return `${payload}.${sign(payload)}`;
+  const payload = `${COMP_TOKEN_PREFIX}.${teacher.id}.${name}.${now}`;
+  return `${payload}.${signComp(payload)}`;
 }
 
-/** The identity a presented teacher token carries, when validly signed
- *  and inside its twelve hours; else null. */
-export function verifyTeacherToken(
+/** The teacher a presented comp token names, when validly signed and
+ *  inside its ten minutes; else null. */
+export function verifyCompToken(
   token: string,
   now = Date.now(),
 ): TeacherIdentity | null {
   const parts = token.split(".");
   if (parts.length !== 5) return null;
   const [prefix, idRaw, nameRaw, issuedAtRaw, sig] = parts;
-  if (prefix !== TEACHER_PREFIX || !idRaw || !issuedAtRaw || !sig) return null;
+  if (prefix !== COMP_TOKEN_PREFIX || !idRaw || !issuedAtRaw || !sig) {
+    return null;
+  }
   if (!/^\d{1,12}$/.test(idRaw) || !/^\d{1,15}$/.test(issuedAtRaw)) return null;
   if (!/^[A-Za-z0-9_-]*$/.test(nameRaw ?? "")) return null;
   /* Signature first, constant-time, as for the device token. */
-  const payload = `${TEACHER_PREFIX}.${idRaw}.${nameRaw}.${issuedAtRaw}`;
-  if (!safeEqual(sig, sign(payload))) return null;
+  const payload = `${COMP_TOKEN_PREFIX}.${idRaw}.${nameRaw}.${issuedAtRaw}`;
+  if (!safeEqual(sig, signComp(payload))) return null;
   const issuedAt = Number(issuedAtRaw);
   if (issuedAt > now + 60_000) return null;
-  if (now - issuedAt >= TEACHER_TTL_MS) return null;
+  if (now - issuedAt >= COMP_TOKEN_TTL_MS) return null;
   const name = Buffer.from(nameRaw ?? "", "base64url").toString("utf8");
   return { id: Number(idRaw), name };
+}
+
+/* One-shot: a token spent on a comp cannot be spent again, whatever
+ * happened to the comp. In memory, per process, pruned by the TTL, which
+ * is all a ten-minute token needs; a restart forgets the set and also
+ * (with no PIN or pepper) the key, and with a key the ten minutes still
+ * bound it. Spent AFTER every validation and BEFORE the rehearsal, so a
+ * 400 costs no PIN and a refused or ambiguous charge does: the dialog
+ * asks again, which is the right price for trying twice. */
+const spentCompTokens = new Map<string, number>();
+
+export function spendCompToken(token: string, now = Date.now()): boolean {
+  for (const [t, at] of spentCompTokens) {
+    if (now - at >= COMP_TOKEN_TTL_MS) spentCompTokens.delete(t);
+  }
+  if (spentCompTokens.has(token)) return false;
+  spentCompTokens.set(token, now);
+  return true;
 }
 
 /** One cookie's value off a request, or null. */
@@ -305,76 +362,7 @@ function cookieValue(request: Request, name: string): string | null {
   return null;
 }
 
-/** The teacher at the counter per this request's cookie, or null. */
-export function teacherFrom(request: Request): TeacherIdentity | null {
-  const token = cookieValue(request, TEACHER_COOKIE);
-  return token === null ? null : verifyTeacherToken(token);
-}
-
-/** Whether the request arrived over https, directly or through Railway's
- *  proxy. The teacher cookie is Secure exactly then: the LAN dev case is
- *  plain http and a Secure cookie would never store. */
-function isHttps(request: Request): boolean {
-  const forwarded = request.headers.get("x-forwarded-proto");
-  if (forwarded) return forwarded.split(",")[0]?.trim() === "https";
-  try {
-    return new URL(request.url).protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-/** Set-Cookie value that names the teacher. */
-export function teacherSetCookie(token: string, request: Request): string {
-  const attrs = [
-    `${TEACHER_COOKIE}=${token}`,
-    "Path=/",
-    `Max-Age=${Math.floor(TEACHER_TTL_MS / 1000)}`,
-    "HttpOnly",
-    "SameSite=Strict",
-  ];
-  if (isHttps(request)) attrs.push("Secure");
-  return attrs.join("; ");
-}
-
-/** Set-Cookie value that clears the teacher. */
-export function teacherClearCookie(request: Request): string {
-  const attrs = [
-    `${TEACHER_COOKIE}=`,
-    "Path=/",
-    "Max-Age=0",
-    "HttpOnly",
-    "SameSite=Strict",
-  ];
-  if (isHttps(request)) attrs.push("Secure");
-  return attrs.join("; ");
-}
-
-export type TeacherGate =
-  | { ok: true; teacher: TeacherIdentity | null }
-  | { ok: false; denied: NextResponse };
-
-/**
- * The write routes' second guard, called AFTER requireSession. With auth
- * required, a write with no teacher session is refused with 401 and
- * `reason: "teacher"`, which the page reads as "show the prompt, retry
- * nothing" rather than "lock the device". With auth disabled the write
- * proceeds, named when a teacher happens to be set and unnamed when
- * not.
- */
-export function requireTeacher(request: Request): TeacherGate {
-  const teacher = teacherFrom(request);
-  if (teacher !== null || !authRequired()) return { ok: true, teacher };
-  return {
-    ok: false,
-    denied: NextResponse.json(
-      { error: "Enter your four digits first.", reason: "teacher" },
-      { status: 401 },
-    ),
-  };
-}
-
-/** `teacher=<id>` or `teacher=none`, for the write routes' log lines. */
+/** `teacher=<id>` or `teacher=none`, for the comp log line. */
 export function teacherLogTag(teacher: TeacherIdentity | null): string {
   return `teacher=${teacher === null ? "none" : teacher.id}`;
 }

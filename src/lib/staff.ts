@@ -1,32 +1,25 @@
 import { mindbody, target } from "./mindbody";
 
 /**
- * Teachers, for the counter's "who is here" prompt (T44). Read from
- * `GET /staff/staff` (docs/mindbody-openapi/staff.yml), which returns the
- * phone fields only with a staff token whose group may view staff; the
- * API account needs that permission, unverified live as of the ticket.
- *
- * A teacher identifies with the last four digits of a phone on file
- * (mobile first, then home, then work; digits only, everything else
- * stripped). Those four digits are the whole secret, so this module is
- * the only place they exist server-side and nothing here returns a phone
- * number: `pinDigits` is the four digits, compared in auth code and
- * never sent to a browser.
+ * Teachers: the active class instructors, for the comp dialog's "for"
+ * list (T45) and for checking that a Mindbody login enrolling a PIN
+ * (T48) belongs to one. Read from `GET /staff/staff`
+ * (docs/mindbody-openapi/staff.yml). Names and ids only: T44 read phone
+ * numbers here for a last-four PIN and T48 removed that (Pete: "we dont
+ * have phone #s for everyone"), so nothing in this module touches a
+ * phone field and no answer built from it can carry one.
  *
  * Cached ten minutes per target, in memory only (the T29 charter: a
  * staff row is Mindbody's, and a table of it would be a copy). A failed
- * read serves the stale cache when there is one, so a Mindbody blip
- * during a shift change does not lock the counter; with no cache at all
- * the error propagates and the login route answers 502.
+ * read serves the stale cache when there is one, so a Mindbody blip does
+ * not take the comp dialog down; with no cache at all the error
+ * propagates and the caller answers 502.
  */
 
 export interface Teacher {
   id: number;
   /** "First Last", falling back to DisplayName, then "Staff <id>". */
   name: string;
-  /** The last four digits of the first phone on file, or null when no
-   *  phone has four digits. */
-  pinDigits: string | null;
 }
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -37,17 +30,15 @@ const MAX_PAGES = 10;
 
 let cache: { key: string; at: number; teachers: Teacher[] } | null = null;
 
-function digitsOf(value: unknown): string {
-  return typeof value === "string" ? value.replace(/\D/g, "") : "";
-}
+/** T48: the studio's staff list carries placeholder rows that are not
+ *  people ("TBA .", "TBA TBA", "TBA Teacher", "No Class No Class", "No
+ *  Class Today", "FrontDesk Account" on the live list), and a comp "for"
+ *  one of them names nobody. A row is a placeholder when its id is not
+ *  positive or its name carries one of these words. */
+const PLACEHOLDER_NAME = /\b(tba|no class|front ?desk|account|teacher|staff)\b/i;
 
-/** The last four digits of the first usable phone, else null. */
-function lastFour(row: Record<string, unknown>): string | null {
-  for (const field of ["MobilePhone", "HomePhone", "WorkPhone"]) {
-    const digits = digitsOf(row[field]);
-    if (digits.length >= 4) return digits.slice(-4);
-  }
-  return null;
+export function isPlaceholderTeacher(id: number, name: string): boolean {
+  return id <= 0 || PLACEHOLDER_NAME.test(name);
 }
 
 function nameOf(row: Record<string, unknown>): string {
@@ -69,7 +60,8 @@ function nameOf(row: Record<string, unknown>): string {
 function isTeacher(row: Record<string, unknown>): boolean {
   if (row["ClassTeacher"] === false) return false;
   if (row["Active"] === false) return false;
-  return typeof row["Id"] === "number";
+  if (typeof row["Id"] !== "number") return false;
+  return !isPlaceholderTeacher(row["Id"], nameOf(row));
 }
 
 async function fetchTeachers(): Promise<Teacher[]> {
@@ -90,7 +82,7 @@ async function fetchTeachers(): Promise<Teacher[]> {
       const id = row["Id"] as number;
       if (seen.has(id)) continue;
       seen.add(id);
-      out.push({ id, name: nameOf(row), pinDigits: lastFour(row) });
+      out.push({ id, name: nameOf(row) });
     }
     const total = Number(body?.PaginationResponse?.TotalResults ?? NaN);
     if (rows.length < PAGE_LIMIT) break;

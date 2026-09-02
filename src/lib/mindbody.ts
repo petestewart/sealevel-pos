@@ -143,6 +143,77 @@ export async function staffToken(env = mindbodyEnv()): Promise<string> {
   return token;
 }
 
+/**
+ * A staff sign-in with SOMEONE ELSE'S credentials (T48): a teacher
+ * enrolling a comp PIN proves who they are by signing in to Mindbody once,
+ * and this is that one call. Deliberately not staffToken(): the token is
+ * never cached (it is revoked below as soon as the id has been read), the
+ * body is never logged and the call is never recorded in the dev call log,
+ * because the request carries a teacher's password and the answer carries
+ * a token that could act as them. Answers the user Mindbody named, or the
+ * HTTP status it refused with; throws only on transport failure.
+ */
+export async function signInAsStaff(
+  username: string,
+  password: string,
+): Promise<
+  | {
+      ok: true;
+      token: string;
+      user: { id: number; firstName: string; lastName: string; type: string };
+    }
+  | { ok: false; status: number }
+> {
+  const env = mindbodyEnv();
+  const res = await fetch(`${env.baseUrl}/usertoken/issue`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "Api-Key": env.apiKey,
+      SiteId: env.siteId,
+    },
+    body: JSON.stringify({ Username: username, Password: password }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const body = await res.json().catch(() => ({}));
+  const token = body?.AccessToken;
+  if (!res.ok || typeof token !== "string") {
+    return { ok: false, status: res.status };
+  }
+  const user = body?.User ?? {};
+  return {
+    ok: true,
+    token,
+    user: {
+      id: typeof user.Id === "number" ? user.Id : Number(user.Id ?? NaN),
+      firstName: typeof user.FirstName === "string" ? user.FirstName : "",
+      lastName: typeof user.LastName === "string" ? user.LastName : "",
+      type: typeof user.Type === "string" ? user.Type : "",
+    },
+  };
+}
+
+/** Revokes a token signInAsStaff issued (`DELETE /usertoken/revoke`,
+ *  user-token.yml). Best effort: the enrollment is already decided by the
+ *  time this runs, and a token nobody holds expires on its own. Not
+ *  recorded in the call log, for the same reason as the issue. */
+export async function revokeStaffToken(token: string): Promise<void> {
+  const env = mindbodyEnv();
+  try {
+    await fetch(`${env.baseUrl}/usertoken/revoke`, {
+      method: "DELETE",
+      headers: {
+        "Api-Key": env.apiKey,
+        SiteId: env.siteId,
+        Authorization: token,
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    /* Expires on its own. */
+  }
+}
+
 /** Drop the current site's cached token; call when Mindbody rejects it
  *  as invalid. Other sites' tokens are untouched: a prod 401 says
  *  nothing about the sandbox's token. */

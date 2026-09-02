@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireSession, requireTeacher } from "@/lib/auth";
+import { requireSession } from "@/lib/auth";
 
 import {
   EDITABLE_CLIENT_FIELDS,
@@ -28,9 +28,8 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
-  /* A Mindbody write like the rest (T44 review): named or refused. */
-  const gate = requireTeacher(request);
-  if (!gate.ok) return gate.denied;
+  /* A Mindbody write like the rest: behind the device session (T44
+   * review put a teacher gate here too; T48 removed that layer). */
   try {
     const { clientId, field, value } = await request.json();
     if (typeof clientId !== "string" || !clientId) {
