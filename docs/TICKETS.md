@@ -4626,6 +4626,147 @@ the studio-sized list, and CDP touch. Scripts `t45-review-node.js`,
 Left as the ticket says, plus: a note that files after the 8s bound
 has no id on the receipt; the dev call log has it.
 
+## T46. The check-in screen on any day (Pete, 2026-09-02)
+
+Pete: "there's no reason we can't allow for the checkin screen to
+support days other than the current one. We should have a calendar icon
+next to the drop down with a date selector. we can support past dates as
+well, but probably no edits would be allowed for those, or we could gate
+them behind a teacher PIN."
+
+### The design (decided)
+
+Past days are allowed, attributed and bannered; no second PIN. T44
+already puts the teacher on every write, so a past-day edit is exactly
+as accountable as a live one, and a second gate would be a slower way
+of saying the same thing. Future days are booking only.
+
+1. **A calendar control** beside the class dropdown: a 64px outlined
+   button (`.cal-btn`, the `.class-change` shell) with a calendar glyph,
+   and the chosen date as text on any day but today. It opens a modal
+   month grid in the app's own idiom, never the OS picker: month title
+   with 64px previous/next, a weekday header, 64px day cells (44px
+   floor on a narrow screen), today ringed with the accent, the chosen
+   day filled with it, `Today` and `Cancel` at the foot. Escape and the
+   scrim close it; it stacks like the other modals.
+2. **Picking a day** fetches that studio-local day's classes through the
+   existing `GET /api/roster?day=1&anchor=` (T27 round three), one
+   metered call, and puts them in the class dropdown, selecting the
+   class nearest to this time of day (at 6:15pm, "last Monday" most
+   likely means last Monday's evening class). `Today` returns to the
+   around-now window exactly as the app starts. State is
+   `viewDate: string | null`, a studio-local `YYYY-MM-DD`, null for
+   around now; the dropdown, the header and the roster read the same
+   `classes` array in both modes.
+3. **The header says so.** A quiet `Viewing Thu Aug 27` line under the
+   header row, and a 16px banner row above the roster in the warn pair:
+   `Editing a past class. Every change is recorded with your name.` for
+   a past day, `A future class. Booking only; check-in opens on the
+   day.` for a future one. The mode banner at the top is untouched.
+4. **Past days: allowed.** Check-in, undo, cancel and walk-in booking
+   work as they do today; every write already carries the teacher
+   (T44), and the outcome log lines gain nothing new.
+5. **Future days: booking yes, check-in no.** On a class whose date is
+   after the studio's current day the chip renders as `chip future`
+   (muted pair, disabled, `title="Check-in opens on the day"`) and
+   `tapCheckIn` refuses before the waiver gate, so no path reaches the
+   API. Walk-in booking, waitlist moves and cancellations stay enabled.
+   A class earlier or later TODAY is not future and behaves as before.
+6. **Fetching only for today.** There is no roster polling loop to
+   pause (a roster loads on class select and after each write's
+   `refreshRoster`, never on a timer); what is gated is the
+   settings-driven around-now classes fetch, which stands down while
+   another day is showing and runs again on the return to today.
+7. **Buy stays anchored on now.** The attach picker keeps using
+   `activeId`, so a past-day class can be the "current class" a client
+   is attached from; nothing about pricing or the sale changes.
+
+### What was built
+
+- [x] **One per-day cache for both readers.** The attach picker's
+      single-slot `{key, list}` cache became `dayClassesCache`, a Map
+      keyed by studio date, plus `dayClassesInFlight`, a Map of the
+      flights themselves, both behind `loadDayClasses(key)`: a cached
+      day resolves at once, a day already on the wire hands back that
+      promise, and only a new day fires the call. The attach modal's
+      open and the calendar's pick both go through it, so a day the
+      teacher viewed costs the attach dropdown nothing and vice versa.
+      The anchor is the day's studio-local NOON as a naive string
+      (`parseRosterAnchor` reads it in STUDIO_TZ), as far from both
+      midnights and any DST edge as an anchor can sit. Class lists
+      only, for the page's life; no rosters, passes or clients.
+- [x] `pickViewDate(key | null)`: bumps `viewGen` (a late answer for a
+      superseded pick is dropped, and so is an around-now answer that
+      a pick overtook), sets `viewDate`, loads the day, selects
+      `nearestClassId`, syncs `?classId=`. A day with no classes clears
+      the roster so the previous class's rows cannot linger under the
+      new banner; the header row still renders, with the calendar
+      button in it, or there would be no way back but a reload. The
+      same is now true of an empty around-now window at 3am.
+- [x] Date helpers are pure `YYYY-MM-DD` arithmetic (`studioToday` via
+      Intl en-CA in STUDIO_TZ, `keyToDate`, `dateKey`, `dayKeyLabel`,
+      `isFutureDay` as a string compare on the naive startsAt's date
+      part, `studioMinutesNow` for the nearest-class pick). No instant
+      is ever built from a wall-clock string, the T27 round three
+      lesson.
+- [x] The header row: `.class-pick` is capped at `min(340px, 28vw)` so
+      the date text on the day control cannot push the counters onto
+      a second line at 1080 wide (a wrapping flex row packs by content
+      width, so a merely shrinkable item still wraps); the class title
+      ellipsizes past the cap, the dropdown carries the full line.
+- [x] CSS: `.cal-btn`, `.cal-btn.viewing` (accent outline),
+      `.class-viewing`, `.class-none`, `.day-banner`, `.modal.modal-cal`
+      (520px so seven 64px cells and their gaps fit), `.cal-head`,
+      `.cal-nav`, `.cal-grid` (`repeat(7, minmax(44px, 64px))`),
+      `.cal-wd`, `.cal-day` with `.today` and `.sel`, `.chip.future`.
+      Tokens only, both palettes; 16px floor; 64px targets.
+
+### Verified (mocked Mindbody, real dev server, both palettes, 1180x820 and 1080x768)
+
+`scratchpad/t46-mock.js` answers `/class/classes` BY THE REQUESTED
+WINDOW (five slots on every day, one cancelled, ids derived from the
+date) with a mutable per-class roster; `t46.js` drives the page.
+Screenshots under `scratchpad/t46/`: the calendar open (64px cells, 68px
+pitch, both nav buttons 64px, today ringed and selected), a past day
+with its banner and the `Viewing Thu Aug 27` line, a check-in on it
+(the row goes green through the real `/api/checkin`, the mock logs the
+`updateclientvisit`), a future day with every chip `chip future`,
+disabled, titled, and a forced click on one reaching no API; Today
+restored with no banner and no line. Escape closes the calendar.
+
+Mindbody calls by the mock's count:
+
+- pick a day: `/class/classes` whole-day window 1, around-now window 1
+  (that one is `classRoster`'s own summary lookup inside
+  `?classId=`, pre-existing on every roster load), `classvisits` 1,
+  `clients` 1;
+- pick it again: nothing;
+- switch class within it: the roster only (`classvisits` 1, `clients`
+  1, plus the same pre-existing around-now summary call);
+- back to Today: the around-now list 1, exactly the app-start fetch,
+  plus that class's roster.
+
+So the new cost is one whole-day call per day for the page's life, and
+today's budget is unchanged. `typecheck` and `build` clean.
+
+### Open
+
+- **A past-day `updateclientvisit` is unverified live.** The Mindbody
+  web app allows signing someone into a past class, and the vendored
+  spec (`docs/mindbody-openapi/client.yml`, `/client/updateclientvisit`)
+  documents no date restriction, but nobody has watched the API accept
+  one. If it refuses, the row's existing failed state and the reason
+  line are the honest answer, and the fix is a banner-level note.
+- The `?classId=` in the URL names a class on the viewed day; a reload
+  lands on the around-now window (the class is not in it) and quietly
+  corrects the param. Carrying `?day=` in the URL is a small follow-up
+  if a reload mid-audit turns out to matter.
+- `classRoster` still spends an around-now `/class/classes` call for
+  the class summary on every roster load; on a past-day class that
+  lookup can never hit. Pre-existing, one call per roster load, and
+  the summary the UI shows comes from `classes` anyway. Worth folding
+  into the route if the budget ever pinches.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
