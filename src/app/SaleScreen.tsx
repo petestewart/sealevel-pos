@@ -18,6 +18,9 @@ import {
   compHeadline,
   compReasonLine,
   compValid,
+  isPinShape,
+  PIN_MAX,
+  PIN_MIN,
   type CompKind,
   type CompReason,
 } from "@/lib/comp";
@@ -581,6 +584,38 @@ interface StaffChoice {
   name: string;
 }
 
+/** T48: an armed comp carries its reason AND who is comping: the
+ *  teacher /api/teacher/verify named for the PIN typed in the dialog,
+ *  and the one-shot token it signed, which the charge hands to
+ *  /api/checkout. The state shape is the rule: there is no way to hold
+ *  an armed comp with nobody behind it. */
+interface ArmedComp {
+  reason: CompReason;
+  teacher: StaffChoice;
+  token: string;
+}
+
+/** The comp dialog's steps (T48): the reason (T43/T45), then the PIN,
+ *  then "Comping as <name>" with the Comp button; `enroll` is the side
+ *  form reached from the PIN step to set or change a PIN through a
+ *  Mindbody sign-in. */
+type CompStep = "reason" | "pin" | "ready" | "enroll";
+
+const EMPTY_ENROLL = { username: "", password: "", pin: "" };
+
+/** The reason a complete draft describes. The caller has checked
+ *  compValid; a null kind here is a programming error, not a state. */
+function draftToReason(d: CompDraft): CompReason | null {
+  if (d.kind === null) return null;
+  return {
+    kind: d.kind,
+    detail: d.detail.trim(),
+    ...(d.kind === "teacher" && d.forStaffId !== null
+      ? { forStaffId: d.forStaffId, forStaffName: d.forStaffName ?? undefined }
+      : {}),
+  };
+}
+
 /** The teacher of the roster's current class, matched to the staff list
  *  by name: the exact full name first, then a first name that names
  *  exactly one teacher. The roster's class summary carries a display
@@ -729,13 +764,49 @@ function PaymentPanel(props: {
    *  reason or null, not a boolean beside a string, so no render can
    *  find comp armed with nothing written; `chargeable` still checks the
    *  text in the same render, belt and braces. */
-  const [comp, setComp] = useState<{ reason: CompReason } | null>(null);
+  const [comp, setComp] = useState<ArmedComp | null>(null);
   const comped = comp !== null;
   /** The reason dialog the hold opens (T43): open, and the draft the
    *  chips, the teacher picker and the note field build. Nothing arms
-   *  until Comp in the dialog is tapped with the draft complete. */
+   *  until Comp in the dialog is tapped with the draft complete and,
+   *  since T48, a PIN verified. */
   const [reasonOpen, setReasonOpen] = useState(false);
   const [reasonDraft, setReasonDraft] = useState<CompDraft>(EMPTY_COMP_DRAFT);
+  const [reasonStep, setReasonStep] = useState<CompStep>("reason");
+  /** T48: the PIN step. The digits typed (never sent anywhere but
+   *  /api/teacher/verify, never kept once answered), the line under the
+   *  dots, the lockout, and once a PIN matched, who it named and the
+   *  token to charge with. */
+  const [pinEntry, setPinEntry] = useState("");
+  const pinEntryRef = useRef("");
+  const [pinMsg, setPinMsg] = useState<string | null>(null);
+  const [pinShake, setPinShake] = useState(0);
+  const [pinBusy, setPinBusy] = useState(false);
+  const pinBusyRef = useRef(false);
+  const [pinLockedUntil, setPinLockedUntil] = useState<number | null>(null);
+  const [pinNow, setPinNow] = useState(() => Date.now());
+  const [verified, setVerified] = useState<{
+    teacher: StaffChoice;
+    token: string;
+  } | null>(null);
+  /** T48: the enrollment form's fields and outcome. The password lives
+   *  in this state only until the post answers. */
+  const [enroll, setEnroll] = useState(EMPTY_ENROLL);
+  const [enrollMsg, setEnrollMsg] = useState<{
+    text: string;
+    ok: boolean;
+  } | null>(null);
+  const [enrollBusy, setEnrollBusy] = useState(false);
+  useEffect(() => {
+    if (pinLockedUntil === null) return;
+    const t = setInterval(() => setPinNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [pinLockedUntil]);
+  const pinLockedFor =
+    pinLockedUntil !== null
+      ? Math.max(0, Math.ceil((pinLockedUntil - pinNow) / 1000))
+      : 0;
+  const pinKeysOff = pinBusy || pinLockedFor > 0;
   /** T45: the teacher picker's list, from /api/staff, read once the
    *  first time the Teacher kind is chosen and kept for this panel's
    *  life (it unmounts with the overlay). An error is shown in the
@@ -896,11 +967,25 @@ function PaymentPanel(props: {
    *  report the close upward exactly as dismissPad does: the dialog owns
    *  Escape while open, so a reset that closes it must not leave
    *  SaleScreen believing something still blocks Escape. */
+  /** Everything the dialog's later steps hold, back to nothing: the
+   *  digits, the verified teacher and token, the enrollment fields
+   *  (password included). Run on open and on close, so no state from
+   *  one comp can reach the next. */
+  const resetCompSteps = useCallback(() => {
+    setReasonStep("reason");
+    pinEntryRef.current = "";
+    setPinEntry("");
+    setPinMsg(null);
+    setVerified(null);
+    setEnroll(EMPTY_ENROLL);
+    setEnrollMsg(null);
+  }, []);
   const closeReason = useCallback(() => {
     setReasonOpen(false);
     setReasonDraft(EMPTY_COMP_DRAFT);
+    resetCompSteps();
     onModalChange(false);
-  }, [onModalChange]);
+  }, [onModalChange, resetCompSteps]);
 
   /** Blank the whole tender: every line, the amount modal, comp and its
    *  reason dialog. Used by each of the reset paths below and by a
@@ -1219,8 +1304,12 @@ function PaymentPanel(props: {
       ? /* T43: a comp charges only with its reason written. The state
            shape already makes an armed comp carry one; this re-checks
            the text in the SAME render that enables the button, so no
-           state slip could ever leave a reasonless comp chargeable. */
+           state slip could ever leave a reasonless comp chargeable.
+           T48: and only with a teacher and their token behind it, checked
+           the same way for the same reason. */
         lines.length === 0 &&
+        comp.teacher.id > 0 &&
+        comp.token.length > 0 &&
         compValid({
           kind: comp.reason.kind,
           detail: comp.reason.detail,
@@ -1291,8 +1380,14 @@ function PaymentPanel(props: {
      * records it in comp_receipts and the server log. */
     const payment = comp !== null
       ? /* T45: the reason as data. The route re-resolves the teacher's
-           name from the staff id and ignores the name sent here. */
-        { method: "comp" as const, compReason: comp.reason }
+           name from the staff id and ignores the name sent here. T48:
+           the token names who is comping; the route refuses a comp
+           without a valid one before any Mindbody call. */
+        {
+          method: "comp" as const,
+          compReason: comp.reason,
+          teacherToken: comp.token,
+        }
       : legs.length === 2
         ? { split: { legs } }
         : soleLine !== undefined && legs[0] !== undefined
@@ -1436,6 +1531,28 @@ function PaymentPanel(props: {
           message: String(body?.error ?? "The charge did not answer."),
         });
         onClientDataStale();
+      } else if (
+        res.status === 401 &&
+        body?.reason === "teacher" &&
+        comp !== null
+      ) {
+        /* T48: the comp token was refused (ten minutes ran out between
+         * the PIN and the tap, or a restart rotated the key). Nothing
+         * was charged and nothing is retried: comp disarms, and the
+         * dialog comes back at the PIN step with the reason kept, so the
+         * fix is the PIN again rather than the whole dialog. */
+        setComp(null);
+        setReasonDraft({
+          kind: comp.reason.kind,
+          detail: comp.reason.detail,
+          forStaffId: comp.reason.forStaffId ?? null,
+          forStaffName: comp.reason.forStaffName ?? null,
+        });
+        resetCompSteps();
+        setReasonStep("pin");
+        setPinMsg("Your PIN check ran out. Enter it again.");
+        setReasonOpen(true);
+        onModalChange(true);
       } else {
         setResult({
           kind: "error",
@@ -1653,41 +1770,218 @@ function PaymentPanel(props: {
      * refused. */
     if (!visibleRef.current || chargingRef.current) return false;
     setReasonDraft(EMPTY_COMP_DRAFT);
+    resetCompSteps();
     setReasonOpen(true);
     onModalChange(true);
     setCompCleared(false);
     setCompHint(false);
     return true;
   };
-  /** Comp in the reason dialog: arm comp WITH the reason. Refused, and
-   *  the dialog left open, unless the draft is complete (a kind, the
-   *  teacher for a teacher comp, the note for `other`); the button is
-   *  disabled on the same test, so this guard is for a keyboard Enter
-   *  on an incomplete draft. */
-  const confirmComp = () => {
+  /** Next on the reason step (T48): on to the PIN. Refused, and the
+   *  dialog left on the reason, unless the draft is complete (a kind,
+   *  the teacher for a teacher comp, the note for `other`); the button
+   *  is disabled on the same test, so this guard is for a keyboard
+   *  Enter on an incomplete draft. */
+  const toPinStep = () => {
     if (!compValid(reasonDraft) || charging || reasonDraft.kind === null) {
       return;
     }
-    const reason: CompReason = {
-      kind: reasonDraft.kind,
-      detail: reasonDraft.detail.trim(),
-      ...(reasonDraft.kind === "teacher" && reasonDraft.forStaffId !== null
-        ? {
-            forStaffId: reasonDraft.forStaffId,
-            forStaffName: reasonDraft.forStaffName ?? undefined,
-          }
-        : {}),
-    };
+    pinEntryRef.current = "";
+    setPinEntry("");
+    setPinMsg(null);
+    setVerified(null);
+    setReasonStep("pin");
+  };
+  /** Back from the PIN step keeps the reason; the digits go. */
+  const backToReason = () => {
+    if (pinBusy) return;
+    pinEntryRef.current = "";
+    setPinEntry("");
+    setPinMsg(null);
+    setReasonStep("reason");
+  };
+  /** A key on the PIN step's pad, or the keyboard standing in for it. */
+  const pinTap = (key: string) => {
+    if (pinBusyRef.current || pinLockedFor > 0) return;
+    setPinMsg(null);
+    const cur = pinEntryRef.current;
+    const next =
+      key === "back"
+        ? cur.slice(0, -1)
+        : cur.length >= PIN_MAX
+          ? cur
+          : cur + key;
+    pinEntryRef.current = next;
+    setPinEntry(next);
+  };
+  /** Done on the PIN step: one post to /api/teacher/verify. A match
+   *  moves to "Comping as <name>" with the token in hand; a miss clears
+   *  the digits and says so; the lockout counts down under the dots. */
+  const submitPin = async () => {
+    const digits = pinEntryRef.current;
+    if (pinBusyRef.current || pinLockedFor > 0 || !isPinShape(digits)) return;
+    pinBusyRef.current = true;
+    setPinBusy(true);
+    setPinMsg(null);
+    try {
+      const res = await fetch("/api/teacher/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pin: digits }),
+      });
+      const body = await res.json().catch(() => ({}));
+      pinEntryRef.current = "";
+      setPinEntry("");
+      if (
+        res.ok &&
+        body?.ok === true &&
+        typeof body?.teacher?.id === "number" &&
+        typeof body?.token === "string" &&
+        body.token.length > 0
+      ) {
+        setVerified({
+          teacher: { id: body.teacher.id, name: String(body.teacher.name ?? "") },
+          token: body.token,
+        });
+        setReasonStep("ready");
+        return;
+      }
+      if (res.status === 429) {
+        const secs = Number(body?.retryAfterSeconds ?? 30);
+        setPinLockedUntil(
+          Date.now() + (Number.isFinite(secs) ? secs : 30) * 1000,
+        );
+        setPinNow(Date.now());
+      } else if (res.status === 401) {
+        setPinMsg("That PIN does not match any teacher.");
+        setPinShake((g) => g + 1);
+      } else {
+        setPinMsg(
+          typeof body?.error === "string"
+            ? body.error
+            : "Could not check that PIN. Try again.",
+        );
+      }
+    } catch {
+      pinEntryRef.current = "";
+      setPinEntry("");
+      setPinMsg("Could not reach the server. Try again.");
+    } finally {
+      pinBusyRef.current = false;
+      setPinBusy(false);
+    }
+  };
+  /** "Set up or change your PIN": the enrollment form. */
+  const toEnrollStep = () => {
+    if (pinBusy) return;
+    setEnroll(EMPTY_ENROLL);
+    setEnrollMsg(null);
+    setReasonStep("enroll");
+  };
+  const backToPin = () => {
+    if (enrollBusy) return;
+    setEnroll(EMPTY_ENROLL);
+    setEnrollMsg(null);
+    setReasonStep("pin");
+  };
+  const enrollValid =
+    enroll.username.trim().length >= 3 &&
+    enroll.password.length > 0 &&
+    isPinShape(enroll.pin);
+  /** Save PIN: one post to /api/teacher/enroll with the Mindbody login
+   *  and the chosen PIN. Success returns to the PIN step with the name
+   *  Mindbody gave; the password is dropped either way. */
+  const submitEnroll = async () => {
+    if (enrollBusy || !enrollValid) return;
+    setEnrollBusy(true);
+    setEnrollMsg(null);
+    const sent = enroll;
+    try {
+      const res = await fetch("/api/teacher/enroll", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          username: sent.username.trim(),
+          password: sent.password,
+          pin: sent.pin,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && body?.ok === true && body?.teacher) {
+        setEnroll(EMPTY_ENROLL);
+        setEnrollMsg(null);
+        pinEntryRef.current = "";
+        setPinEntry("");
+        setPinMsg(`PIN set for ${String(body.teacher.name ?? "you")}. Enter it to comp.`);
+        setReasonStep("pin");
+        return;
+      }
+      /* A taken PIN (409) was a good sign-in: keep the password so the
+       * fix is another PIN. Any other refusal drops it. */
+      if (res.status !== 409) setEnroll((e) => ({ ...e, password: "" }));
+      if (res.status === 429) {
+        const secs = Number(body?.retryAfterSeconds ?? 30);
+        setEnrollMsg({
+          text: `Too many attempts. Try again in ${Number.isFinite(secs) ? secs : 30}s.`,
+          ok: false,
+        });
+      } else {
+        setEnrollMsg({
+          text:
+            typeof body?.error === "string"
+              ? body.error
+              : "Could not set that PIN. Try again.",
+          ok: false,
+        });
+      }
+    } catch {
+      setEnroll((e) => ({ ...e, password: "" }));
+      setEnrollMsg({ text: "Could not reach the server. Try again.", ok: false });
+    } finally {
+      setEnrollBusy(false);
+    }
+  };
+  /** Comp on the ready step: arm comp WITH the reason and the verified
+   *  teacher. The button exists only on that step, so this guard is for
+   *  a stray keyboard Enter. */
+  const confirmComp = () => {
+    const reason = draftToReason(reasonDraft);
+    if (
+      reason === null ||
+      !compValid(reasonDraft) ||
+      charging ||
+      verified === null
+    ) {
+      return;
+    }
     /* Comp is the whole sale given away, so it cannot coexist with a
      * tender: arming it clears the lines. */
     setLines([]);
     dismissPad();
-    setComp({ reason });
+    setComp({ reason, teacher: verified.teacher, token: verified.token });
     setCompCleared(false);
     setCompHint(false);
     clearStaleResult();
     closeReason();
   };
+  /* T48: the keyboard stands in for the PIN pad on the PIN step only.
+   * The enroll step has real inputs and the reason step its note field,
+   * so neither is listened to here. */
+  const reasonStepRef = useRef(reasonStep);
+  reasonStepRef.current = reasonStep;
+  useEffect(() => {
+    if (!reasonOpen || reasonStep !== "pin") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (/^[0-9]$/.test(e.key)) pinTap(e.key);
+      else if (e.key === "Backspace") pinTap("back");
+      else if (e.key === "Enter") void submitPin();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    /* pinTap and submitPin read refs, so the closure is never stale. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reasonOpen, reasonStep, pinLockedFor > 0]);
   const compHoldStart = () => {
     if (compTimer.current) clearTimeout(compTimer.current);
     compTimer.current = setTimeout(() => {
@@ -1736,7 +2030,7 @@ function PaymentPanel(props: {
     ? /* The canvas's line (0.2): the sale is on the studio, and since
          T43 the reason sits beside it so what was written is on the
          surface before Charge. */
-      `Nothing to pay, on the studio. Comped: ${compReasonLine(comp.reason)}`
+      `Nothing to pay, on the studio. Comped: ${compReasonLine(comp.reason)}. By ${comp.teacher.name}.`
     : compCleared
       ? "Comp was cleared."
       : compHint
@@ -2260,12 +2554,13 @@ function PaymentPanel(props: {
       ) : null}
 
       {/* T43: the comp reason dialog. The hold on Comp this sale opens
-          it; nothing is armed until Comp here is tapped with a reason of
-          at least COMP_REASON_MIN characters. A chip fills the field
-          with its label and the teacher may edit; Cancel, Escape and the
-          scrim leave comp unarmed and drop the draft. It stacks like the
-          keypad (the same scrim) and owns Escape the same way. The
-          reason never reaches Mindbody; the route keeps it. */}
+          it; nothing is armed until Comp here is tapped with a reason
+          complete (T45) and a PIN verified (T48: reason, then PIN, then
+          "Comping as <name>" with the Comp button). Cancel, Escape and
+          the scrim leave comp unarmed and drop the draft and the digits.
+          It stacks like the keypad (the same scrim) and owns Escape the
+          same way. The reason never reaches Mindbody; the route keeps
+          it. */}
       {reasonOpen ? (
         <div
           className="modal-scrim"
@@ -2291,10 +2586,18 @@ function PaymentPanel(props: {
             className="modal modal-amount modal-reason"
             role="dialog"
             aria-modal="true"
-            aria-label="Comp this sale"
+            aria-label={
+              reasonStep === "pin"
+                ? "Who is comping this?"
+                : reasonStep === "enroll"
+                  ? "Set up your PIN"
+                  : "Comp this sale"
+            }
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="modal-title">Comp this sale</p>
+            {reasonStep === "reason" ? (
+              <>
+                <p className="modal-title">Comp this sale</p>
             <div className="pad-row">
               <span className="pad-label">Total</span>
               <span className="pad-amt">
@@ -2369,7 +2672,7 @@ function PaymentPanel(props: {
                 setReasonDraft((d) => ({ ...d, detail: e.target.value }))
               }
               onKeyDown={(e) => {
-                if (e.key === "Enter") confirmComp();
+                if (e.key === "Enter") toPinStep();
               }}
             />
             <div className="modal-actions">
@@ -2381,18 +2684,236 @@ function PaymentPanel(props: {
                 disabled={!compValid(reasonDraft)}
                 title={
                   compValid(reasonDraft)
-                    ? "Comp this sale"
+                    ? "Next: your PIN"
                     : reasonDraft.kind === null
                       ? "Choose a reason"
                       : reasonDraft.kind === "teacher"
                         ? "Choose the teacher"
                         : `Write at least ${COMP_DETAIL_MIN} characters`
                 }
-                onClick={confirmComp}
+                onClick={toPinStep}
               >
-                Comp
+                Next
               </button>
             </div>
+              </>
+            ) : null}
+
+            {/* T48: the PIN step. Every comp asks, whatever POS_PIN says
+                (Pete: "comp just let me right through without entering
+                a PIN ... that's exactly what we don't want"). Six slots
+                for a 4 to 6 digit PIN, the amount pad's keys, Done once
+                four are in; a miss clears the digits and says so, the
+                lockout counts down in the same line. */}
+            {reasonStep === "pin" ? (
+              <>
+                <p className="modal-title">Who is comping this?</p>
+                <p className="reason-sub">Enter your PIN.</p>
+                <div
+                  key={`dots-${pinShake}`}
+                  className={
+                    pinMsg !== null && pinLockedFor === 0 && pinEntry === ""
+                      ? "lock-dots pin-dots shake"
+                      : "lock-dots pin-dots"
+                  }
+                  aria-label={`${pinEntry.length} digits entered`}
+                >
+                  {Array.from({ length: PIN_MAX }).map((_, i) => (
+                    <span
+                      key={i}
+                      className={i < pinEntry.length ? "lock-dot" : "lock-dot empty"}
+                    />
+                  ))}
+                </div>
+                {pinLockedFor > 0 ? (
+                  <p className="lock-msg">
+                    Too many attempts. Try again in {pinLockedFor}s.
+                  </p>
+                ) : pinMsg ? (
+                  <p className="lock-msg">{pinMsg}</p>
+                ) : (
+                  <p className="lock-msg lock-msg-empty" aria-hidden="true">
+                    &nbsp;
+                  </p>
+                )}
+                <div className="pad-keys">
+                  {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((k) => (
+                    <button
+                      key={k}
+                      className="pad-key"
+                      disabled={pinKeysOff}
+                      onClick={() => pinTap(k)}
+                    >
+                      {k}
+                    </button>
+                  ))}
+                  <button
+                    className="pad-key"
+                    aria-label="Delete last digit"
+                    disabled={pinKeysOff}
+                    onClick={() => pinTap("back")}
+                  >
+                    &#9003;
+                  </button>
+                  <button
+                    className="pad-key"
+                    disabled={pinKeysOff}
+                    onClick={() => pinTap("0")}
+                  >
+                    0
+                  </button>
+                  <span aria-hidden="true" />
+                </div>
+                <button
+                  className="reason-link"
+                  disabled={pinBusy}
+                  onClick={toEnrollStep}
+                >
+                  Set up or change your PIN
+                </button>
+                <div className="modal-actions">
+                  <button
+                    className="modal-cancel"
+                    disabled={pinBusy}
+                    onClick={backToReason}
+                  >
+                    Back
+                  </button>
+                  <button
+                    className="modal-confirm go"
+                    disabled={pinKeysOff || pinEntry.length < PIN_MIN}
+                    title={
+                      pinEntry.length < PIN_MIN
+                        ? `Enter ${PIN_MIN} to ${PIN_MAX} digits`
+                        : "Check this PIN"
+                    }
+                    onClick={() => void submitPin()}
+                  >
+                    {pinBusy ? "Checking..." : "Done"}
+                  </button>
+                </div>
+              </>
+            ) : null}
+
+            {/* T48: the PIN matched. Who is comping is on the surface
+                before the button that arms it, and only Comp here arms. */}
+            {reasonStep === "ready" && verified !== null ? (
+              <>
+                <p className="modal-title">Comp this sale</p>
+            <div className="pad-row">
+              <span className="pad-label">Total</span>
+              <span className="pad-amt">
+                {total !== null ? money(total) : "--"}
+              </span>
+            </div>
+                <p className="reason-who">Comping as {verified.teacher.name}</p>
+                {(() => {
+                  const r = draftToReason(reasonDraft);
+                  return r ? (
+                    <p className="reason-note">{compReasonLine(r)}</p>
+                  ) : null;
+                })()}
+                <div className="modal-actions">
+                  <button className="modal-cancel" onClick={closeReason}>
+                    Cancel
+                  </button>
+                  <button
+                    className="modal-confirm go"
+                    disabled={charging}
+                    title="Comp this sale"
+                    onClick={confirmComp}
+                  >
+                    Comp
+                  </button>
+                </div>
+              </>
+            ) : null}
+
+            {/* T48: enrollment. A Mindbody sign-in proves who is choosing
+                the PIN (Pete: "is it possible to use a mindbody sign in
+                for identification of the teacher?"); the password goes
+                to /api/teacher/enroll once and is kept nowhere. */}
+            {reasonStep === "enroll" ? (
+              <>
+                <p className="modal-title">Set up your PIN</p>
+                <p className="reason-sub">
+                  Sign in to Mindbody once so we know it is you, then choose
+                  a PIN of {PIN_MIN} to {PIN_MAX} digits. Your password is
+                  checked with Mindbody and not kept.
+                </p>
+                <input
+                  className="reason-input"
+                  type="email"
+                  autoComplete="username"
+                  autoFocus
+                  placeholder="Mindbody username (email)"
+                  aria-label="Mindbody username"
+                  value={enroll.username}
+                  disabled={enrollBusy}
+                  onChange={(e) =>
+                    setEnroll((v) => ({ ...v, username: e.target.value }))
+                  }
+                />
+                <input
+                  className="reason-input"
+                  type="password"
+                  autoComplete="current-password"
+                  placeholder="Mindbody password"
+                  aria-label="Mindbody password"
+                  value={enroll.password}
+                  disabled={enrollBusy}
+                  onChange={(e) =>
+                    setEnroll((v) => ({ ...v, password: e.target.value }))
+                  }
+                />
+                <input
+                  className="reason-input"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  maxLength={PIN_MAX}
+                  placeholder={`New PIN (${PIN_MIN} to ${PIN_MAX} digits)`}
+                  aria-label="New PIN"
+                  value={enroll.pin}
+                  disabled={enrollBusy}
+                  onChange={(e) =>
+                    setEnroll((v) => ({
+                      ...v,
+                      pin: e.target.value.replace(/\D/g, "").slice(0, PIN_MAX),
+                    }))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void submitEnroll();
+                  }}
+                />
+                {enrollMsg ? (
+                  <p className={enrollMsg.ok ? "reason-note" : "lock-msg"}>
+                    {enrollMsg.text}
+                  </p>
+                ) : null}
+                <div className="modal-actions">
+                  <button
+                    className="modal-cancel"
+                    disabled={enrollBusy}
+                    onClick={backToPin}
+                  >
+                    Back
+                  </button>
+                  <button
+                    className="modal-confirm go"
+                    disabled={!enrollValid || enrollBusy}
+                    title={
+                      enrollValid
+                        ? "Check the sign-in and save the PIN"
+                        : "Fill in the sign-in and a PIN"
+                    }
+                    onClick={() => void submitEnroll()}
+                  >
+                    {enrollBusy ? "Checking..." : "Save PIN"}
+                  </button>
+                </div>
+              </>
+            ) : null}
           </div>
         </div>
       ) : null}

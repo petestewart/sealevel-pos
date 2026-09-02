@@ -13,10 +13,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import DevDrawer from "./DevDrawer";
 import LockScreen from "./LockScreen";
-import TeacherPrompt, {
-  type TeacherIdentity,
-  type TeacherInfo,
-} from "./TeacherPrompt";
 import SaleScreen, {
   ModeBanner,
   attachSearchHint,
@@ -842,19 +838,7 @@ function money(n: number): string {
   });
 }
 
-/** The header shows a first name: "Pete" beside Buy, not "Pete Stewart". */
-function firstName(name: string): string {
-  return name.trim().split(/\s+/)[0] || name;
-}
-
-/** What the auth gate hands the desk about the teacher layer (T44): who
- *  is named, and the tap that switches. */
-interface TeacherProps {
-  teacher: TeacherIdentity | null;
-  onSwitchTeacher: () => void;
-}
-
-function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
+function FrontDesk() {
   const [classes, setClasses] = useState<ClassSummary[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [entries, setEntries] = useState<RosterEntry[]>([]);
@@ -4219,22 +4203,6 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
           >
             Buy
           </button>
-          {/* Who is at the counter (T44): the teacher's first name as a
-              quiet 64px control beside Buy. Tapping it clears the teacher
-              cookie and brings the prompt back, which is how a shift
-              change is done. With auth disabled and nobody named it
-              reads "Who is here?" and opens the same prompt. */}
-          <button
-            className="class-change teacher-badge"
-            onClick={onSwitchTeacher}
-            aria-label={
-              teacher
-                ? `${teacher.name} is at the counter. Tap to switch.`
-                : "Enter who is at the counter"
-            }
-          >
-            {teacher ? firstName(teacher.name) : "Who is here?"}
-          </button>
           <div className="counters" aria-label="Counts for the selected class">
           {/* A plain stat, not a button: its list IS the roster below,
               and a modal copying the screen behind it earned nothing
@@ -4398,7 +4366,7 @@ function FrontDesk({ teacher, onSwitchTeacher }: TeacherProps) {
       ) : null}
 
       {/* T46: the day banner. Warn pair, 16px, above the list: a past
-          day's edits are real and attributed (T44), a future day's
+          day's edits are real (T46), a future day's
           check-in is closed. The mode banner at the top is untouched. */}
       {activeClass && (pastClass || futureClass) ? (
         <p className="day-banner" role="status">
@@ -6418,14 +6386,6 @@ function AuthGate() {
   const [phase, setPhase] = useState<"checking" | "locked" | "open">(
     "checking",
   );
-  /* The teacher layer (T44). `teacher` is who the cookie names, `info`
-   * is what the prompt needs to ask well, `prompt` is whether it is up.
-   * The prompt sits over the desk rather than replacing it, so the
-   * roster prefetch runs while the teacher types. */
-  const [teacher, setTeacher] = useState<TeacherIdentity | null>(null);
-  const [teacherInfo, setTeacherInfo] = useState<TeacherInfo | null>(null);
-  const [teacherPrompt, setTeacherPrompt] = useState(false);
-
   useEffect(() => {
     let cancelled = false;
     fetch("/api/session")
@@ -6445,46 +6405,14 @@ function AuthGate() {
     };
   }, []);
 
-  /** Asks /api/teacher who is named and what the prompt should say. No
-   *  teacher means the prompt goes up. A failed probe fails OPEN the
-   *  same way the session probe does: the server still refuses unnamed
-   *  writes, and that refusal reopens the prompt below. */
-  const loadTeacher = useCallback(async () => {
-    try {
-      const res = await fetch("/api/teacher");
-      if (!res.ok) return;
-      const d = await res.json();
-      const named =
-        d.teacher && typeof d.teacher.id === "number"
-          ? { id: d.teacher.id, name: String(d.teacher.name ?? "") }
-          : null;
-      setTeacher(named);
-      setTeacherInfo({
-        required: d.required === true,
-        pinsAvailable:
-          typeof d.pinsAvailable === "number" ? d.pinsAvailable : null,
-        noPhone: Array.isArray(d.noPhone) ? d.noPhone.map(String) : [],
-        staffError: typeof d.staffError === "string" ? d.staffError : null,
-      });
-      setTeacherPrompt(named === null);
-    } catch {
-      /* Fail open; see above. */
-    }
-  }, []);
-
-  useEffect(() => {
-    if (phase !== "open") return;
-    void loadTeacher();
-  }, [phase, loadTeacher]);
-
   /* The one shared chokepoint for "a data fetch answered 401": wrap
    * window.fetch while the app is open. Every call site (FrontDesk, the
    * dev drawer's polling) goes through it, so none of them needs its own
    * 401 handling and a future fetch cannot forget it. The wrapper only
    * OBSERVES same-origin /api responses; it never alters them. A 401
-   * carrying `reason: "teacher"` is the teacher session gone (twelve
-   * hours, or a cleared cookie), not the device's: that brings the
-   * prompt back and retries nothing. Any other 401 is the lock. */
+   * carrying `reason: "teacher"` is the comp gate (T48: a wrong PIN, or
+   * a comp token that ran out), which the comp dialog handles itself;
+   * it is not the device session gone. Any other 401 is the lock. */
   useEffect(() => {
     if (phase !== "open") return;
     const original = window.fetch;
@@ -6504,16 +6432,7 @@ function AuthGate() {
             .clone()
             .json()
             .catch(() => null);
-          if (body && body.reason === "teacher") {
-            /* Wrong digits at the prompt itself are the prompt's own
-             * business; a 401 on that path WITHOUT the reason is the
-             * device session gone, and falls through to the lock. */
-            if (url.pathname !== "/api/teacher/login") {
-              setTeacher(null);
-              setTeacherPrompt(true);
-              void loadTeacher();
-            }
-          } else {
+          if (!body || body.reason !== "teacher") {
             setPhase("locked");
           }
         }
@@ -6525,37 +6444,11 @@ function AuthGate() {
     return () => {
       window.fetch = original;
     };
-  }, [phase, loadTeacher]);
-
-  /** The header's switch tap: clear the cookie, then ask again. */
-  const switchTeacher = useCallback(async () => {
-    try {
-      await fetch("/api/teacher/logout", { method: "POST" });
-    } catch {
-      /* The cookie may still stand; the prompt's success overwrites it. */
-    }
-    setTeacher(null);
-    setTeacherPrompt(true);
-    void loadTeacher();
-  }, [loadTeacher]);
+  }, [phase]);
 
   if (phase === "checking") return null;
   if (phase === "locked") return <LockScreen />;
-  return (
-    <>
-      {teacherPrompt ? (
-        <TeacherPrompt
-          info={teacherInfo}
-          onNamed={(t) => {
-            setTeacher(t);
-            setTeacherPrompt(false);
-          }}
-          onSkip={() => setTeacherPrompt(false)}
-        />
-      ) : null}
-      <FrontDesk teacher={teacher} onSwitchTeacher={() => void switchTeacher()} />
-    </>
-  );
+  return <FrontDesk />;
 }
 
 /**
