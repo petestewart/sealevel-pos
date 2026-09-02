@@ -415,8 +415,9 @@ const COMP_HOLD_MS = 700;
  * quietly double-charge.
  *
  * T35 replaced the method row, the cash-tender modal and split mode with
- * ONE model: tender lines against an amount due, entered on one inline
- * keypad. What it did NOT touch is the money: the request shapes, the
+ * ONE model: tender lines against an amount due; T36 put the amount
+ * editor back in a modal, in the old cash modal's idiom, generalized to
+ * every source. What that left alone is the money: the request shapes, the
  * single flight, the availability rules, the honest outcomes and the
  * server's authority over every number are all exactly as they were.
  */
@@ -447,10 +448,9 @@ function PaymentPanel(props: {
    *  cannot close the overlay while money is moving. */
   onBusyChange: (busy: boolean) => void;
   /** Mirrors an open payment surface up to SaleScreen so the Escape that
-   *  closes it cannot also close the overlay. Since T35 that surface is
-   *  the INLINE keypad rather than the cash modal it replaced: it is not
-   *  a modal, but it owns Escape while it is open, and the prop still
-   *  reports it for exactly that reason. */
+   *  closes it cannot also close the overlay. Since T36 that surface is
+   *  the amount modal: one keypad over a scrim, for whichever tender
+   *  line was tapped. */
   onModalChange: (open: boolean) => void;
   /** Bumped by SaleScreen when "Empty cart" is confirmed on a client
    *  change (third live test): the cart is gone, so every tender line and
@@ -490,12 +490,14 @@ function PaymentPanel(props: {
    *  hold, not a tender. Arming it clears the lines; adding a line
    *  disarms it. The two can never both be set. */
   const [comped, setComped] = useState(false);
-  /** The one inline keypad: the id of the line it is editing, or null.
-   *  No OS keyboard anywhere in the payment seam, and no cash-only
-   *  modal -- every source is entered here. */
-  const [keypadFor, setKeypadFor] = useState<number | null>(null);
-  /** Digits typed since the keypad opened, accumulating into CENTS
-   *  (2-0-0-0 reads $20.00), exactly as the cash tender field did. */
+  /** The amount modal: the id of the tender line it is editing, or null.
+   *  ONE keypad for every source, over a scrim (T36, Pete: "having it be
+   *  a modal is def better than this"), so opening it moves nothing in
+   *  the payment column. No OS keyboard anywhere in the payment seam. */
+  const [padFor, setPadFor] = useState<number | null>(null);
+  /** Digits typed since the modal opened, accumulating into CENTS
+   *  (2-0-0-0 reads $20.00), exactly as the cash tender field did. Empty
+   *  means nothing was typed, and Done then leaves the line as it was. */
   const [entry, setEntry] = useState("");
   const [charging, setCharging] = useState(false);
   const [result, setResult] = useState<ChargeResult | null>(null);
@@ -539,22 +541,24 @@ function PaymentPanel(props: {
 
   const clientId = client?.id ?? null;
 
-  /** Put the keypad away without touching the lines, and tell SaleScreen
-   *  the payment surface is closed -- otherwise a keypad dismissed by a
-   *  reset rather than by its own Done would leave Escape blocked. */
-  const dismissKeypad = useCallback(() => {
-    setKeypadFor(null);
+  /** Close the amount modal without touching the lines, and tell
+   *  SaleScreen the payment surface is closed -- otherwise a modal
+   *  dismissed by a reset rather than by its own Cancel would leave
+   *  Escape blocked. This IS Cancel: the amount the line had when the
+   *  modal opened stands. */
+  const dismissPad = useCallback(() => {
+    setPadFor(null);
     setEntry("");
     onModalChange(false);
   }, [onModalChange]);
 
-  /** Blank the whole tender: every line, the keypad, and comp. Used by
+  /** Blank the whole tender: every line, the amount modal, and comp. Used by
    *  each of the reset paths below and by a completed sale. */
   const resetTender = useCallback(() => {
     setLines([]);
     setComped(false);
-    dismissKeypad();
-  }, [dismissKeypad]);
+    dismissPad();
+  }, [dismissPad]);
 
   /* ANY client change -- detach, attach, or the per-row Buy button
    * switching straight from one client to another -- invalidates the
@@ -581,8 +585,8 @@ function PaymentPanel(props: {
     if (cart.length === 0) return;
     setResult((r) => (r?.kind === "paid" ? null : r));
     setLines([]);
-    dismissKeypad();
-  }, [cart, dismissKeypad]);
+    dismissPad();
+  }, [cart, dismissPad]);
 
   /* "Empty cart" on the client-change dialog: the cart SaleScreen just
    * cleared was what the tender was for, so nothing stays armed, comp
@@ -598,8 +602,8 @@ function PaymentPanel(props: {
     };
   }, []);
 
-  /* PaymentPanel unmounts when the overlay closes; a keypad that was
-   * somehow open must not leave SaleScreen believing something still
+  /* PaymentPanel unmounts when the overlay closes; an amount modal that
+   * was somehow open must not leave SaleScreen believing something still
    * blocks Escape on the next open. */
   useEffect(() => {
     return () => onModalChange(false);
@@ -662,19 +666,19 @@ function PaymentPanel(props: {
     );
   }, [creditVisible]);
 
-  /* A keypad whose LINE has gone must not stay open in name only. Every
-   * deliberate path (removeLine, closeKeypad, the resets) dismisses it,
-   * but the credit-visibility filter above removes a line WITHOUT going
-   * through them: after it fires, this panel renders no keypad while
-   * SaleScreen still believes one owns Escape, so the next Escape press
-   * is eaten instead of closing the overlay. Reachable: a keypad left
-   * open on a credit line while a charge comes back ambiguous, whose
-   * balance refetch then drops the credit to zero. */
+  /* An amount modal whose LINE has gone must not stay open in name only.
+   * Every deliberate path (removeLine, Cancel, Done, the resets)
+   * dismisses it, but the credit-visibility filter above removes a line
+   * WITHOUT going through them: after it fires, this panel renders no
+   * modal while SaleScreen still believes one owns Escape, so the next
+   * Escape press is eaten instead of closing the overlay. Reachable: a
+   * modal left open on a credit line while a charge comes back
+   * ambiguous, whose balance refetch then drops the credit to zero. */
   useEffect(() => {
-    if (keypadFor === null) return;
-    if (lines.some((l) => l.id === keypadFor)) return;
-    dismissKeypad();
-  }, [keypadFor, lines, dismissKeypad]);
+    if (padFor === null) return;
+    if (lines.some((l) => l.id === padFor)) return;
+    dismissPad();
+  }, [padFor, lines, dismissPad]);
 
   /* ---------------------- T35: the tender math ---------------------- */
 
@@ -708,11 +712,11 @@ function PaymentPanel(props: {
    * The most a line may be TYPED to. Cash is uncapped (null) -- it is the
    * only source that may exceed what it owes. Card caps at the total;
    * credit caps at the total and the account balance both. A clamped
-   * source can never be entered above its cap: the keypad clamps every
-   * keystroke, so the state never holds an over-cap figure at all.
+   * source can never be entered above its cap: the modal clamps every
+   * keystroke AND every chip, so no entry above the cap is ever held.
    *
    * With a second line present that line is recomputed as the remainder
-   * (see keypadTap), so the cap here is the whole total less one cent --
+   * (see applyPad), so the cap here is the whole total less one cent --
    * the cent that keeps the other line from falling to zero. Removing it
    * with its x is how a split becomes a whole-sale payment.
    */
@@ -1024,16 +1028,6 @@ function PaymentPanel(props: {
   const clearStaleResult = () =>
     setResult((r) => (r && r.kind !== "paid" ? r : null));
 
-  const closeKeypad = useCallback(() => {
-    /* A line left at zero is not a tender: dismissing the keypad without
-     * an amount removes the line it was opened for, rather than leaving a
-     * $0.00 row the Charge button has to refuse. */
-    if (keypadFor !== null) {
-      setLines((ls) => ls.filter((l) => l.id !== keypadFor || l.cents > 0));
-    }
-    dismissKeypad();
-  }, [keypadFor, dismissKeypad]);
-
   /** Tapping a source ADDS a line for the whole remaining due, clamped by
    *  that source's rule: one tap, no typing, for the ordinary whole-sale
    *  case. */
@@ -1049,72 +1043,139 @@ function PaymentPanel(props: {
     /* Adding a tender disarms comp: the sale is being paid for. */
     setComped(false);
     setLines((cur) => [...cur, { id, source, cents }]);
-    closeKeypad();
+    dismissPad();
     clearStaleResult();
   };
 
   const removeLine = (id: number) => {
     setLines((cur) => cur.filter((l) => l.id !== id));
-    if (keypadFor === id) dismissKeypad();
+    if (padFor === id) dismissPad();
     clearStaleResult();
   };
 
-  /** Tapping a line's amount opens the one keypad for THAT line. Entry
+  /** Tapping a line's amount opens the amount modal for THAT line. Entry
    *  starts empty, register-style: the first digit replaces the figure
-   *  rather than appending to it. */
-  const openKeypad = (id: number) => {
-    setKeypadFor(id);
+   *  rather than appending to it, and an empty entry on Done means the
+   *  line keeps the amount it already had. */
+  const openPad = (id: number) => {
+    setPadFor(id);
     setEntry("");
     onModalChange(true);
     clearStaleResult();
   };
 
-  const keypadIndex = lines.findIndex((l) => l.id === keypadFor);
-  const keypadLine = keypadIndex >= 0 ? lines[keypadIndex] : undefined;
-  const keypadCap =
-    keypadLine === undefined ? null : capFor(keypadLine.source);
+  const padIndex = lines.findIndex((l) => l.id === padFor);
+  const padLine = padIndex >= 0 ? lines[padIndex] : undefined;
+  const padCap = padLine === undefined ? null : capFor(padLine.source);
 
-  /** One keypad key. Digits accumulate into CENTS, and a clamped source
-   *  is clamped on every keystroke, so the state can never hold an
-   *  amount above the cap even mid-entry. */
-  const keypadTap = (key: string) => {
-    if (keypadLine === undefined) return;
-    const digits =
-      key === "clear" ? "" : (entry + key).replace(/^0+(?=\d)/, "");
+  /** Hold a typed or chipped figure to its source's cap. Cash returns
+   *  null from capFor and is therefore never clamped: it is the one
+   *  source that may be given more than it owes. */
+  const clampFor = (source: TenderSource, cents: number) => {
+    const cap = capFor(source);
+    return cap === null ? cents : Math.min(cents, cap);
+  };
+
+  /** What THIS line has to cover for the due to reach zero, given the
+   *  other line as it currently stands. It is the modal's "Amount due"
+   *  row, the Exact chip's figure, and what a cash surplus is measured
+   *  against. */
+  const padDueCents =
+    padIndex < 0 || dueCents === null
+      ? null
+      : dueCents + (coverage[padIndex] ?? 0);
+
+  /** The amount the modal would apply: what has been typed, or the
+   *  line's existing amount when nothing has been. */
+  const draftCents =
+    padLine === undefined
+      ? 0
+      : entry === ""
+        ? padLine.cents
+        : parseInt(entry, 10);
+
+  /* The OTHER line of a two-line tender, and what Done would recompute it
+   * to. Editing one line moves the other, so the modal says so rather
+   * than calling a part-payment "short". */
+  const padPartner =
+    lines.length === 2 && padIndex >= 0 ? lines[1 - padIndex] : undefined;
+  const padRest =
+    totalCents === null ? null : Math.max(0, totalCents - draftCents);
+  const padPartnerCents =
+    padPartner === undefined || padRest === null || padRest <= 0
+      ? null
+      : padPartner.source === "credit"
+        ? Math.min(padRest, balanceCents ?? 0)
+        : padRest;
+  /** Over the due (cash only, since every other source is clamped) is the
+   *  teacher's change; under it, on a single-line tender, is short. */
+  const padSurplus = padDueCents === null ? null : draftCents - padDueCents;
+
+  /** One key. Digits accumulate into CENTS, and a clamped source is
+   *  clamped on every keystroke, so the entry can never hold an amount
+   *  above the cap even mid-typing. */
+  const padTap = (key: string) => {
+    if (padLine === undefined) return;
+    if (key === "back") {
+      setEntry((cur) => cur.slice(0, -1));
+      return;
+    }
+    const digits = (entry + key).replace(/^0+(?=\d)/, "");
     if (digits.length > 7) return;
     const typed = digits === "" ? 0 : parseInt(digits, 10);
     if (!Number.isFinite(typed)) return;
-    const clamped = keypadCap === null ? typed : Math.min(typed, keypadCap);
+    const clamped = clampFor(padLine.source, typed);
     setEntry(clamped === typed ? digits : String(clamped));
-    const id = keypadLine.id;
-    /* Editing one line of a two-line tender RECOMPUTES the other as the
-     * remainder (clamped by its own rule), so the lines can only ever sum
-     * to the server's total. The one exception is a cash line entered
-     * above the whole total: there is no remainder left to give the other
-     * line, so it keeps what it has and the surplus is change. */
-    const rest = totalCents === null ? null : Math.max(0, totalCents - clamped);
-    setLines((cur) =>
-      cur.map((l) => {
-        if (l.id === id) return { ...l, cents: clamped };
-        if (cur.length !== 2 || rest === null || rest <= 0) return l;
-        const cents =
-          l.source === "credit" ? Math.min(rest, balanceCents ?? 0) : rest;
-        return { ...l, cents };
-      }),
-    );
-    clearStaleResult();
   };
 
-  /* Escape closes the keypad (never mid-charge). SaleScreen skips its own
-   * overlay-close for the same press via onModalChange. */
+  /** A chip SETS the amount, as the old cash modal's chips did. Cash
+   *  only, per Pete: the other sources can never exceed their due, so a
+   *  $20 chip on a $14 card line would only ever be a clamp. */
+  const padChip = (cents: number) => {
+    if (padLine === undefined) return;
+    setEntry(String(Math.max(0, clampFor(padLine.source, cents))));
+  };
+
+  /** Done: apply what was typed to the line, and close. Nothing typed
+   *  leaves the line exactly as it was -- it does NOT remove it, since
+   *  Cancel covers that intent and an editing modal that deletes the row
+   *  it was opened on is a trap. */
+  const applyPad = () => {
+    const line = padLine;
+    if (line !== undefined && entry !== "") {
+      const cents = clampFor(line.source, parseInt(entry, 10));
+      /* Editing one line of a two-line tender RECOMPUTES the other as the
+       * remainder (clamped by its own rule), so the lines can only ever
+       * sum to the server's total. The one exception is a cash line above
+       * the whole total: there is no remainder left to give the other
+       * line, so it keeps what it has and the surplus is change. */
+      const rest =
+        totalCents === null ? null : Math.max(0, totalCents - cents);
+      setLines((cur) =>
+        cur.map((l) => {
+          if (l.id === line.id) return { ...l, cents };
+          if (cur.length !== 2 || rest === null || rest <= 0) return l;
+          const other =
+            l.source === "credit" ? Math.min(rest, balanceCents ?? 0) : rest;
+          return { ...l, cents: other };
+        }),
+      );
+      clearStaleResult();
+    }
+    dismissPad();
+  };
+
+  /* Escape closes the amount modal, and closes it as CANCEL (never
+   * mid-charge). SaleScreen skips its own overlay-close for the same
+   * press via onModalChange. */
   useEffect(() => {
-    if (keypadFor === null) return;
+    if (padFor === null) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !charging) closeKeypad();
+      if (e.key === "Escape" && !charging) dismissPad();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [keypadFor, charging, closeKeypad]);
+  }, [padFor, charging, dismissPad]);
 
   /* Comp arms on a HOLD, not a tap: it hands goods over for nothing, so
    * it cannot sit where a fat finger lands. Unselecting is a plain tap
@@ -1126,7 +1187,7 @@ function PaymentPanel(props: {
     /* Comp is the whole sale given away, so it cannot coexist with a
      * tender: arming it clears the lines. */
     setLines([]);
-    dismissKeypad();
+    dismissPad();
     setComped(true);
     clearStaleResult();
   };
@@ -1169,26 +1230,21 @@ function PaymentPanel(props: {
     ? "Comp: nothing is charged."
     : firstLineProblem !== null
       ? firstLineProblem
-      : keypadLine !== undefined && keypadCap !== null
-        ? `${sourceLabel(keypadLine.source)} tops out at ${money(keypadCap / 100)}.`
-        : keypadLine !== undefined
-          ? "Cash may be more than the total; the change shows above."
-          : dueCents !== null && dueCents > 0 && lines.length >= 2
-            ? /* Both slots are taken, so the fix is an amount, not
-                 another source. */
-              `${money(dueCents / 100)} is still unpaid. Adjust an amount, or remove a part.`
-            : dueCents !== null && dueCents > 0 && lines.length > 0
-              ? `Add a source for the remaining ${money(dueCents / 100)}.`
-              : lines.length === 0
-                ? cardReason !== null
-                  ? `Card: ${cardReason}`
-                  : /* Only for a credit source that is actually on
-                       screen: a reason for an absent control explains
-                       nothing. */
-                    creditVisible && creditReason !== null
-                    ? `Credit: ${creditReason}`
-                    : (cardDetail ?? "")
-                : "";
+      : dueCents !== null && dueCents > 0 && lines.length >= 2
+        ? /* Both slots are taken, so the fix is an amount, not another
+             source. */
+          `${money(dueCents / 100)} is still unpaid. Adjust an amount, or remove a part.`
+        : dueCents !== null && dueCents > 0 && lines.length > 0
+          ? `Add a source for the remaining ${money(dueCents / 100)}.`
+          : lines.length === 0
+            ? cardReason !== null
+              ? `Card: ${cardReason}`
+              : /* Only for a credit source that is actually on screen: a
+                   reason for an absent control explains nothing. */
+                creditVisible && creditReason !== null
+                ? `Credit: ${creditReason}`
+                : (cardDetail ?? "")
+            : "";
 
   const sources: { s: TenderSource; label: string; icon: ReactNode }[] = [
     /* Credit leads when there IS credit, and is absent when there is not
@@ -1279,12 +1335,10 @@ function PaymentPanel(props: {
                 </span>
                 <button
                   className={
-                    keypadFor === line.id ? "tender-amt on" : "tender-amt"
+                    padFor === line.id ? "tender-amt on" : "tender-amt"
                   }
                   disabled={charging}
-                  onClick={() =>
-                    keypadFor === line.id ? closeKeypad() : openKeypad(line.id)
-                  }
+                  onClick={() => openPad(line.id)}
                   aria-label={`${sourceLabel(line.source)} amount ${money(line.cents / 100)}, tap to change`}
                   title="Tap to change this amount"
                 >
@@ -1301,56 +1355,6 @@ function PaymentPanel(props: {
                 </button>
               </div>
             ))}
-          </div>
-        ) : null}
-
-        {/* The ONE keypad, inline and shared by every source: no OS
-            keyboard anywhere in the payment seam, and no cash-only
-            modal. Digits accumulate into cents, exactly as the tender
-            field always did. */}
-        {keypadLine !== undefined ? (
-          <div className="keypad" role="group" aria-label="Amount keypad">
-            <div className="keypad-head">
-              <span>{sourceLabel(keypadLine.source)}</span>
-              <span className="keypad-entry">
-                {money(keypadLine.cents / 100)}
-              </span>
-            </div>
-            <div className="keypad-keys">
-              {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((k) => (
-                <button
-                  key={k}
-                  className="keypad-key"
-                  disabled={charging}
-                  onClick={() => keypadTap(k)}
-                >
-                  {k}
-                </button>
-              ))}
-              <button
-                className="keypad-key"
-                disabled={charging}
-                onClick={() => keypadTap("clear")}
-                aria-label="Clear the amount"
-              >
-                C
-              </button>
-              <button
-                className="keypad-key"
-                disabled={charging}
-                onClick={() => keypadTap("0")}
-              >
-                0
-              </button>
-              <button
-                className="keypad-key done"
-                disabled={charging}
-                onClick={closeKeypad}
-                aria-label="Done entering this amount"
-              >
-                Done
-              </button>
-            </div>
           </div>
         ) : null}
 
@@ -1472,6 +1476,128 @@ function PaymentPanel(props: {
         </div>
       ) : null}
       </div>
+
+      {/* T36: the amount modal. T35 put this keypad INLINE in the payment
+          column, where it pushed the receipt down the screen; Pete, on
+          the live build: "the keypad looks awful and pushes the receipt
+          card down. the old keypad design was good ... having it be a
+          modal is def better than this." So the old cash modal's shape
+          is back -- two head rows, chips, a 3x4 keypad, Cancel and Done
+          -- generalized to every source, and nothing in the column moves
+          when it opens.
+
+          It edits ONE line. Cancel (and Escape, and the scrim) leave the
+          line exactly as it was; Done applies what was typed, and typing
+          nothing leaves the amount alone rather than removing the row.
+          The clamps are unchanged: card and credit cannot be typed or
+          chipped above their cap, and cash is the only source that may
+          exceed what it owes. */}
+      {padLine !== undefined ? (
+        <div
+          className="modal-scrim"
+          role="presentation"
+          onClick={dismissPad}
+        >
+          <div
+            className="modal modal-amount"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${sourceLabel(padLine.source)} amount`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="modal-title">{sourceLabel(padLine.source)}</p>
+            <div className="pad-row">
+              <span className="pad-label">Amount due</span>
+              <span className="pad-amt">
+                {padDueCents !== null ? money(padDueCents / 100) : "--"}
+              </span>
+            </div>
+            <div className="pad-row">
+              <span className="pad-label">Entered</span>
+              <span className="pad-amt">{money(draftCents / 100)}</span>
+            </div>
+
+            {/* Chips are CASH ONLY, per Pete ("for cash, it was helpful
+                to have $5, $10, $20 buttons (but not for other forms)"):
+                card and credit are clamped to the due, so a note chip on
+                them could only ever land on the same figure Exact does.
+                A chip SETS the amount, as the old modal's did. */}
+            {padLine.source === "cash" ? (
+              <div className="pad-chips">
+                <button
+                  className="pad-chip"
+                  disabled={padDueCents === null}
+                  onClick={() =>
+                    padDueCents !== null && padChip(padDueCents)
+                  }
+                >
+                  Exact
+                </button>
+                {[5, 10, 20].map((usd) => (
+                  <button
+                    key={usd}
+                    className="pad-chip"
+                    onClick={() => padChip(usd * 100)}
+                  >
+                    ${usd}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="pad-keys">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0"].map(
+                (k) => (
+                  <button key={k} className="pad-key" onClick={() => padTap(k)}>
+                    {k}
+                  </button>
+                ),
+              )}
+              <button
+                className="pad-key"
+                aria-label="Delete last digit"
+                onClick={() => padTap("back")}
+              >
+                &#9003;
+              </button>
+            </div>
+
+            {/* The change math, and only where it is true. On a two-line
+                tender the OTHER line absorbs the difference, so the
+                modal says what that line becomes rather than calling a
+                deliberate part-payment "short". */}
+            {padPartnerCents !== null && padPartner !== undefined ? (
+              <p className="pad-change muted-note">
+                The {sourceLabel(padPartner.source).toLowerCase()} part
+                becomes {money(padPartnerCents / 100)}.
+              </p>
+            ) : padSurplus !== null && padSurplus > 0 ? (
+              <p className="pad-change">
+                Change due {money(padSurplus / 100)}
+              </p>
+            ) : padSurplus !== null && padSurplus < 0 ? (
+              <p className="pad-change short">
+                Short {money(-padSurplus / 100)}
+              </p>
+            ) : (
+              <p className="pad-change muted-note">
+                {padCap !== null
+                  ? `${sourceLabel(padLine.source)} tops out at ${money(padCap / 100)}.`
+                  : "Cash may be more than the due; the change shows here."}
+              </p>
+            )}
+
+            <div className="modal-actions">
+              <button className="modal-cancel" onClick={dismissPad}>
+                Cancel
+              </button>
+              <button className="modal-confirm go" onClick={applyPad}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2305,9 +2431,8 @@ export default function SaleScreen(props: {
    *  Escape must not close the overlay out from under the outcome. */
   const [charging, setCharging] = useState(false);
 
-  /** True while the payment panel's amount keypad is up (T35; it was the
-   *  cash-tender modal before): the Escape that closes it must not also
-   *  close the overlay. */
+  /** True while the payment panel's amount modal is up: the Escape that
+   *  closes it must not also close the overlay. */
   const [payModalOpen, setPayModalOpen] = useState(false);
 
   /** T30: the contract whose purchase dialog is open, or null. The

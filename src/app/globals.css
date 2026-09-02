@@ -2361,44 +2361,76 @@ button.sale-for:disabled {
   line-height: 1;
 }
 
-/* --- The one inline keypad, shared by every source. ------------------
- * No OS keyboard anywhere in the payment seam (an iPad soft keyboard
- * over a counter screen was the worst of the three divergences T35
- * removed), and no cash-only modal. 3x4 grid on the 64px floor. */
+/* --- The amount modal, shared by every source. ------------------------
+ * T35 had this keypad INLINE in the payment column, where it pushed the
+ * receipt down the screen; Pete asked for the old cash modal back ("the
+ * old keypad design was good ... having it be a modal is def better"),
+ * so these are that modal's rules, renamed off "cash" because they now
+ * serve card and credit too. Keys and chips keep the 64px floor. */
 
-.keypad {
+.modal-amount {
   display: grid;
-  gap: 8px;
-  max-width: 300px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
+  gap: 10px;
 }
 
-.keypad-head {
+.modal-amount .modal-title {
+  margin-bottom: 0;
+}
+
+.modal-amount .modal-actions {
+  margin-top: 6px;
+}
+
+.pad-row {
   display: flex;
-  align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
-  font-size: 16px;
+  align-items: baseline;
+  font-size: 18px;
+}
+
+.pad-label {
   color: var(--muted);
 }
 
-.keypad-entry {
-  font-size: 20px;
+.pad-amt {
+  font-size: 22px;
   font-weight: 700;
-  color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
 
-.keypad-keys {
+.pad-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pad-chip {
+  min-height: 64px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.pad-chip:active:not(:disabled) {
+  background: var(--action-bg);
+}
+
+.pad-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pad-keys {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
 
-.keypad-key {
+.pad-key {
   min-height: 64px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -2409,18 +2441,24 @@ button.sale-for:disabled {
   font-variant-numeric: tabular-nums;
 }
 
-.keypad-key:active:not(:disabled) {
+.pad-key:active {
   background: var(--action-bg);
 }
 
-.keypad-key:disabled {
-  opacity: 0.5;
-  cursor: default;
+.pad-change {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
 }
 
-.keypad-key.done {
-  border: 2px solid var(--accent);
-  color: var(--accent);
+.pad-change.short {
+  color: var(--stop);
+}
+
+.pad-change.muted-note {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
 }
 
 /* ONE shared quiet line under the tender: the first real problem, what is

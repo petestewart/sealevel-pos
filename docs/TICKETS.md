@@ -2066,6 +2066,62 @@ greying the card only when it would be the whole sale is the recorded
 T28 reversal and matches the route, at the cost of one extra tap when a
 credit-covered client wants card plus cash: add the cash line first.
 
+## T36. The amount keypad goes back in a modal (Pete, 2026-08-31)
+
+Pete, on the live T35 build: "the keypad looks awful and pushes the
+receipt card down. the old keypad design was good. for cash, it was
+helpful to have $5, $10, $20 buttons (but not for other forms). and
+having it be a modal is def better than this."
+
+T35 had put the one shared keypad INLINE in the payment column, a 3x4
+grid with C / 0 / Done, and every time it opened it shoved the receipt
+down the screen. The old cash modal's shape was right; what T35 got
+right was that ONE editor serves every source. T36 keeps the second
+and restores the first.
+
+### What was built
+
+- The keypad is a modal again (`.modal-amount` over `.modal-scrim`),
+  opened by tapping a tender line's amount. Opening it moves nothing in
+  the payment column.
+- The old modal's idiom, generalized: two head rows ("Amount due" for
+  THIS line, "Entered"), chips, a 3x4 pad of 1-9 / 00 / 0 / backspace,
+  Cancel and Done. Everything on the 64px floor.
+- Chips are cash only, per Pete: Exact, $5, $10, $20. A chip SETS the
+  amount, as the old modal's did. Card and credit are clamped to their
+  cap, so a chip on them could only ever land where Exact does.
+- "Amount due" is what this line has to cover given the other line as it
+  stands (`dueCents + coverage[padIndex]`), so it is also what Exact
+  fills and what a cash surplus is measured against.
+- The change line: a cash entry over the due reads "Change due $X"; a
+  single-line entry under it reads "Short $X"; on a two-line tender the
+  modal instead says what the OTHER part becomes on Done, because a
+  deliberate part-payment is not short. Otherwise the cap note.
+- Done applies what was typed and closes; with NOTHING typed it leaves
+  the line exactly as it was. It does NOT remove the line: the inline
+  keypad's "dismiss without an amount removes the row" rule was a trap
+  once the editor became a modal with its own Cancel. Cancel, Escape
+  and the scrim all leave the line untouched.
+- The partner-line recompute, previously per keystroke, now happens once
+  on Done. Entry is clamped per keystroke and per chip exactly as before,
+  so no over-cap figure is ever held.
+- `onModalChange` still reports the surface, and T35's guard effect
+  (a modal whose line has gone is dismissed) is carried over unchanged.
+- Incidental: T35's inline `.keypad` rule collided by name with the PIN
+  lock screen's `.keypad` (globals.css ~1692). The rename to `.pad-*`
+  removes the collision.
+
+### What must not change
+
+The money is untouched: request shapes, single flight, availability
+rules, per-line reasons in the same render as `chargeable`, the server's
+authority over every number. This ticket is the editor's chrome only.
+
+Built by an implementation agent that completed on disk but never
+reported; the work was verified (typecheck, build, diff read) and landed
+by the orchestrator. Adversarial review is owed and follows with the
+next batch.
+
 ## The Phase 2 sandbox run (Pete): one ordered checklist
 
 The run left T21-T26 code-complete, each adversarially reviewed. These are
