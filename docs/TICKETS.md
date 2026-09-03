@@ -5777,3 +5777,187 @@ deferred on B1 and P3.
 
 - [ ] Shared PIN (stubbed in `.env.example`) or per-teacher identity per the
       P1 answer, whichever exists first. Nothing above waits on this.
+
+## T51. Walk-in sales are deliberate, and the Buy screen's small fixes (Pete, 2026-09-03)
+
+Pete, from the first live sales, verbatim:
+
+1. "there should be some friction when making a walkin sale. if there is
+   no client attached and the user clicks pay, a popup should appear
+   warning them there is no user and asking them to confirm this is a
+   walkin sale."
+2. "additionally, there should be a walk-in button next to the attach a
+   client button. when pressed, the display that normally shows a client
+   name should say 'Walk-in sale'. the usual X can be there to cancel
+   that and have the option to attach a client again."
+3. "'Comp this sale' should be in the dimmer color like 'Card: Attach a
+   client' since this is not an encouraged or common option"
+4. "'Card', 'Cash' and 'Account' should have icons next to them"
+5. "on the buy page, 'empty cart' should be just to the left of 'Pay'
+   instead of all the way left on the screen"
+
+### The design (decided)
+
+1. **Walk-in is a state, not the absence of a client.** The sale
+   carries `walkIn: boolean`, false by default, cleared when a client is
+   attached, when the cart is emptied and when a sale completes. Next to
+   Attach a client sits a second button, Walk-in (64px, the secondary
+   outline). Pressing it puts "Walk-in sale" where the client's name
+   goes, in the attached card's shape with the same X; the X clears the
+   flag and the slot goes back to the two buttons. Attaching from the
+   walk-in state clears it.
+2. **Friction on Pay.** Pay with nobody attached AND no walk-in declared
+   opens a house confirm: "No client attached", "This will be recorded
+   as a walk-in sale under the studio's walk-in account. Attach a client
+   if you know who this is.", with Attach a client (the header button's
+   modal) and Continue as walk-in (declares the walk-in and enters pay
+   mode). Scrim, X and Escape stay in shelf mode with nothing declared.
+   With the flag already set, Pay goes straight through. Nothing on the
+   server changes: an anonymous cart still rides `POS_HOUSE_CLIENT_ID`
+   (T41), the "no house client" reason stays on Pay, and with
+   `houseClient` false the Walk-in button is disabled with that reason
+   as its title.
+3. **Comp this sale rests dim**: the treatment the off tender wears
+   (muted text, a faded hairline), fully operable; the hold, the hint
+   and the armed state are exactly T43/T48's.
+4. **Tender icons**: inline 20px SVGs in `currentColor`, `aria-hidden`,
+   before Card, Cash and Credit (the account tile; Pete's "Account"). A
+   card with its stripe, a banknote, a person in a circle. They inherit
+   the tile's colour, so they dim with it. Labels unchanged.
+5. **Empty cart sits just left of Pay** with the bar's 12px gap; Back to
+   items keeps the left edge in pay mode. Behaviour untouched.
+
+### Build notes
+
+**SaleScreen.tsx.** `walkIn` and `walkInPrompt` state beside `saleMode`;
+an effect clears `walkIn` whenever `client` becomes non-null, which
+covers every attach path (the header button, the dialog's Attach, the
+roster's per-row Buy for) without a callback; `emptyCart` (both the
+client-change dialog's Empty cart and Clear cart's confirm) and `onSold`
+clear it too. The Pay button's mode switch is lifted into `enterPay`
+(a `useCallback` placed above the `!open` return, since a hook below it
+threw React's hooks-order error on the first run) so the dialog's
+Continue can enter pay mode the same way. `payNeedsWalkInConfirm` is
+`client === null && !walkIn` in the same render as `payWhy`; a disabled
+Pay never reaches the dialog. The client slot is three branches:
+attached (unchanged), walk-in (`.sale-for.attached.sale-for-walkin` with
+"Sale for" over "Walk-in sale" and the X labelled "Cancel the walk-in
+sale", locked mid-charge like detach), and the `.sale-for-row` holding
+Attach a client and `.sale-walkin`. The dialog is `.modal.modal-walkin`
+with the `modal-x`, its own Escape listener, and a line in the overlay's
+Escape handler so one press peels the dialog only. The three icons are
+`CardIcon`, `CashIcon`, `AccountIcon` next to `PlusIcon`, rendered
+inside `.pay-tile-name` (already an inline-flex with an 8px gap) from
+the `sources` list. The shelf's Empty cart carries `sale-bar-clear`.
+`page.tsx` is untouched.
+
+**globals.css**, one `/* T51 */` block at the end, no new tokens:
+`.sale-for-row` takes the header's slack at a 660 cap; `.sale-walkin` is
+the bar's Empty cart shape (64px, `--line` outline on `--surface`,
+0.4 opacity off); the walk-in name in `--muted`; `.modal-walkin`
+positioned for the X and 540 wide so both buttons hold one line;
+`.comp-hold` re-declared with `--muted` text and the off tile's
+`color-mix` hairline (`.comp-hold.on` wins on specificity, so the warn
+pair is untouched); `.sale-bar-clear { margin-left: auto }` with the
+following `.sale-bar-pay` giving up its own auto margin, otherwise the
+two split the slack and Empty cart landed mid-bar.
+
+**Observed** (`scratchpad/t51.js`, mocked `/api` in the page against
+`next start` on the worktree's build, shots under `scratchpad/t51/`,
+both palettes at 1180x820): the slot reads Attach a client (317x60) and
+Walk-in (110x64, 16px, title "Sell to a walk-in with no client
+attached"); Empty cart at 682..822 and Pay at 834..1160, gap 12, the
+bar's left 660px empty. Pay with nobody attached opens the dialog
+(title, body, two 64px/17px buttons on one line in a 540 modal, a 44px
+X; `elementFromPoint` over Pay is the scrim); Escape, the scrim and the
+X each leave shelf mode with the Walk-in button still showing; Attach a
+client from the dialog opens the attach modal and closing that declares
+nothing; Continue as walk-in enters pay mode with "Walk-in sale" in
+`--muted` and the X labelled "Cancel the walk-in sale"; Back to items
+and Pay again go straight to pay mode. The comp hold in pay mode still
+opens the reason dialog, with the control's computed colour equal to
+`--muted` (rgb 122,113,99 light, 155,146,132 dark), the faded hairline,
+weight 500, 64px, `aria-pressed` false. The X clears the flag and the
+Walk-in button declares it from the shelf; the roster's Buy for Alida
+Abbott from the walk-in state attaches her (the X reads "Detach Alida
+Abbott from this sale") and a detach plus Keep items shows the two
+buttons; Clear cart shows them; a walk-in cash sale completes ("Sale
+complete", the body `{method: "cash", clientId: null, items: 2}`) and
+the reopened overlay shows the buttons. With Alida's $40 credit the
+tiles read Credit, Card, Cash each with a 20px `aria-hidden` icon, the
+off Card's at opacity 0.5 with its name. The bar at 1080x768,
+1366x1024 and 800x1100 (light): Empty cart 12px left of Pay, no
+overlap, the bar's bottom at the viewport's (189px of slack at 800x1100
+is the narrow fold's own, recorded in T39.8). With `houseClient` false:
+Walk-in disabled with "No house client for an anonymous sale; attach a
+client", Pay off with the same title, a forced tap opening nothing.
+`npm run typecheck` and `npm run build` clean.
+
+**Left, with the reason.**
+
+- The X on "Walk-in sale" works in pay mode too (the header is the same
+  in both modes); clearing it there leaves the sale in pay mode, and
+  Charge stays available, since the friction is on ENTERING pay mode
+  and the teacher has already answered it once. Worth a second look if
+  Pete wants the dialog again on Charge.
+- The flag survives an accidental Back and reopen, exactly as the cart
+  and the attached client do (SaleScreen stays mounted); it goes with
+  the cart, not with the overlay.
+- The walk-in state offers no Attach button of its own, per Pete's
+  words (the X first, then Attach); the roster's per-row Buy for and
+  the attach effect cover an attach from that state.
+- Nothing is sent to the server about the walk-in declaration; the
+  checkout body is byte for byte T41's anonymous shape.
+
+### Review
+
+Adversarial pass against 72ebb9f, in `scratchpad/t51-review.js` (the
+implementer's fixture plus the review's cases) and `t51-review-pill.js`,
+both palettes, against `next start` on the worktree's build.
+
+**Held, as claimed.** Enter on a focused Pay reaches the friction dialog
+like a tap (there is no other route into pay mode: `enterPay` is the
+only `setSaleMode("pay")`, and PaymentPanel has none). The walk-in X is
+disabled mid-charge and a forced click on it during a 1.5s checkout
+changed nothing; the sale completed with `clientId: null`. A client
+attached from the walk-in state and detached again gets the dialog on
+Pay (the effect clears the flag on attach, and nothing sets it back). No
+hook sits below the `!open` return. `.comp-hold.on` (specificity 0,2,0)
+beats the new resting rule; the resting `--muted` on `--surface` is
+4.73:1 light and 5.61:1 dark, and the hold still opens the reason
+dialog. The icons are `aria-hidden`, 20px, inside `.pay-tile-name`'s
+inline-flex, and the off Card's icon dims with its name. Every colour in
+the diff is a token; no hex, no em dashes; the row fits at 800 (title,
+Attach 317, Walk-in 110, Back, no wrap). Checkout body untouched.
+
+**Found and fixed: the dev pill over Empty cart.** T39.8 centred the
+drawer's pill in the bar ("off the amount at the right and Empty cart at
+the left"). With Empty cart beside Pay, at 1080x768 (an iPad landscape
+width) a four-figure total widens Pay enough that the pill's 503..577
+sat under Empty cart's 555..696, and since the pill is z-index 20 over
+the bar's 5, `elementFromPoint` on Empty cart's left edge returned the
+pill: a tap there opened the drawer. Devtools-only, which is how live
+tests run. `body.sale-open .dev-handle` is now `left: 232px` (Back to
+items' right edge plus the bar's gap), a run both modes leave empty at
+every width; measured clear of Empty cart, Back to items and Charge at
+1080, 1180 and 1366 in shelf and pay mode. At the 800 fold the bar
+scrolls with the overlay and the fixed pill only meets it at the bottom
+of the scroll, the fold's own compromise (T39.8).
+
+**Recorded, not changed.**
+
+- Friction is on ENTERING pay mode, so two paths reach an anonymous
+  Charge without the dialog: the X on "Walk-in sale" in pay mode (the
+  build notes have it), and a client detached IN pay mode with Keep
+  items (Alida attached, Pay, detach, Keep items: the header shows the
+  two buttons and Charge $3.00 arms on Cash). Pete's words put the
+  popup on "clicks pay", the detach has its own dialog, and gating
+  `chargeable` on the flag would put a UI declaration on the money path
+  (T41). Back to items and Pay ask as expected.
+- The Walk-in button is live on the done screen and on an empty cart,
+  as Attach a client always was; a declaration made there survives Back
+  and reopen with the cart. It is never silent: the header reads
+  "Walk-in sale" from the moment it is set.
+- `.comp-hold:disabled` (mid-charge) has no rule of its own and now
+  looks like the resting state; before T51 it looked like the ink one.
+  Pre-existing, and Charge's own "Charging..." carries the state.
