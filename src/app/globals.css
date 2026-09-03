@@ -3758,6 +3758,47 @@ button.sale-for:disabled {
   color: var(--muted);
 }
 
+/* T68 (Pete: "same 'growing modal' problem several of the others have
+ * had. fix it so it's stationary size"): the reason step is one fixed
+ * box, 680 tall or 88dvh on a short screen, whatever chip is chosen.
+ * Title, total, chips and actions keep their own heights; the body
+ * row between them takes the rest. With the teacher list showing, the
+ * list scrolls inside that row and the note keeps its 64px line;
+ * without it, the note (a textarea, top-aligned, no newline) fills the
+ * row instead. The PIN and enrollment steps keep their own shapes. */
+.modal-reason.reason-sized {
+  height: min(680px, 88dvh);
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+}
+
+.reason-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.reason-body .reason-teachers {
+  flex: 1 1 auto;
+  max-height: none;
+}
+
+.reason-body .reason-note-field {
+  flex: 0 0 auto;
+}
+
+.reason-body .reason-note-field.fill {
+  flex: 1 1 auto;
+}
+
+textarea.reason-note-field {
+  padding: 18px 16px;
+  resize: none;
+  line-height: 1.3;
+  font-family: inherit;
+  overflow: hidden;
+}
+
 .pay-done-reason {
   margin: 0;
   max-width: 34em;

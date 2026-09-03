@@ -2716,7 +2716,11 @@ function PaymentPanel(props: {
           }}
         >
           <div
-            className="modal modal-amount modal-reason"
+            className={
+              reasonStep === "reason"
+                ? "modal modal-amount modal-reason reason-sized"
+                : "modal modal-amount modal-reason"
+            }
             role="dialog"
             aria-modal="true"
             aria-label={
@@ -2753,6 +2757,13 @@ function PaymentPanel(props: {
                 </button>
               ))}
             </div>
+            {/* T68: the body between the chips and the actions is the one
+                row that flexes, so the dialog is the same size whether or
+                not the teacher list is showing: with it, the list fills
+                and the note is its 64px line; without it, the note takes
+                the whole body (Pete: "make the note text area longer to
+                make up the difference"). */}
+            <div className="reason-body">
             {reasonDraft.kind === "teacher" ? (
               /* The teacher picker: the active teachers from /api/staff,
                  the current class's teacher preselected. A list that
@@ -2788,13 +2799,17 @@ function PaymentPanel(props: {
                 })}
               </div>
             ) : null}
-            <input
-              className="reason-input"
-              type="text"
+            <textarea
+              className={
+                reasonDraft.kind === "teacher"
+                  ? "reason-input reason-note-field"
+                  : "reason-input reason-note-field fill"
+              }
               value={reasonDraft.detail}
               maxLength={COMP_DETAIL_MAX}
               autoComplete="off"
               autoFocus
+              rows={1}
               placeholder={
                 reasonDraft.kind !== null && compNeedsDetail(reasonDraft.kind)
                   ? reasonDraft.kind === "trade"
@@ -2807,9 +2822,16 @@ function PaymentPanel(props: {
                 setReasonDraft((d) => ({ ...d, detail: e.target.value }))
               }
               onKeyDown={(e) => {
-                if (e.key === "Enter") toPinStep();
+                /* Enter still means Next (T43); a note is one line of
+                 * reason, not prose, so the taller field never takes a
+                 * newline. */
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  toPinStep();
+                }
               }}
             />
+            </div>
             <div className="modal-actions">
               <button className="modal-cancel" onClick={closeReason}>
                 Cancel

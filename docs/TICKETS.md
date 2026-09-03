@@ -8663,3 +8663,26 @@ last one."
   and 2 characters and enable it at "massage swap"; Damaged item
   enables Next with no note; Cancel closes and the quiet line carries
   no hint. `npm run typecheck` and `npm run build` green.
+
+## T68: the comp dialog is one fixed size
+
+**DONE** (2026-09-04). Pete, on the reason step growing when Teacher
+shows its list: "same 'growing modal' problem several of the others
+have had. fix it so it's stationary size. you can just make the note
+text area longer to make up the difference."
+
+- The reason step (`.modal-reason.reason-sized`) is 420 by
+  `min(680px, 88dvh)` whatever chip is chosen. Title, total, chips
+  and actions keep their heights; the new `.reason-body` row between
+  them takes the rest. With Teacher chosen the staff list fills it
+  and scrolls inside, the note keeping its 64px line; with any other
+  chip the note fills the body instead.
+- The note is a `textarea` now (`.reason-note-field`, top-aligned,
+  no resize handle); Enter still means Next and never a newline. Its
+  class, placeholder, maxLength and validation are unchanged.
+- The PIN and enrollment steps keep their own shapes (their content is
+  a keypad, not a list).
+- Measured with `scratchpad/t67.js`: the box is 420x680 with nothing
+  chosen, with Teacher (note 64px, four staff rows on screen) and with
+  Trade, Damaged item and Other (note 345px), in both palettes.
+  `npm run typecheck` and `npm run build` green.
