@@ -149,6 +149,27 @@ export async function updateClientNotes(
 }
 
 /**
+ * T62: the client's current `Notes`, for a server-side append. The
+ * waiver receipt takes the row's notes from the browser; the record that
+ * falls back from a Formula Note (src/lib/formulanote.ts) has no row in
+ * hand and reads them itself, one `/client/clients?clientIds=` call,
+ * because `updateclient` writes the field whole and an append must start
+ * from what is there. Empty string when the client has none; throws when
+ * the read fails or the client is not found, so the caller never writes
+ * over notes it did not see.
+ */
+export async function readClientNotes(clientId: string): Promise<string> {
+  const body = await mindbody(
+    `/client/clients?clientIds=${encodeURIComponent(clientId)}&limit=1`,
+  );
+  const row = (body?.Clients ?? []).find(
+    (c: { Id?: unknown }) => String(c?.Id ?? "") === clientId,
+  );
+  if (!row) throw new Error(`client ${clientId} not found`);
+  return typeof row.Notes === "string" ? row.Notes : "";
+}
+
+/**
  * Record a liability release: `POST /client/updateclient` with
  * `LiabilityRelease: true` (T18, Pete's recorded reversal of the T6 "no
  * tap path marks a waiver signed" rule -- Mindbody's own POS shows the

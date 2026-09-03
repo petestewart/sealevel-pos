@@ -78,6 +78,9 @@ interface GuestAnswer {
   verifyDetail?: string | null;
   suppressed?: boolean;
   steps?: { guest: StepOutcome; member: StepOutcome; notes: StepOutcome };
+  /** T62: where each record landed; "notes" is the signed Notes entry a
+   *  site without Formula Notes gets. */
+  noteVia?: { guest: "formula" | "notes" | null; member: "formula" | "notes" | null };
   actorFallback?: { name: string; reason: string };
   staffSessionEnded?: boolean;
   reason?: string;
@@ -491,7 +494,16 @@ export default function GuestModal({
         "checked in.",
         member.checkedIn ? "already checked in." : "not checked in: no visit to sign in.",
       );
-      say("Formula Notes", steps.notes, "filed on both.", "");
+      /* T62: site 471 has no Formula Notes, so the record is usually a
+       * signed entry in each profile's Notes; the label says which. */
+      const viaNotes =
+        answer.noteVia?.guest === "notes" || answer.noteVia?.member === "notes";
+      say(
+        viaNotes ? "Notes" : "Formula Notes",
+        steps.notes,
+        viaNotes ? "a signed entry added to both profiles." : "filed on both.",
+        "",
+      );
       if (answer.verified === false) {
         /* T62: the visit is written and signed in, but neither read-back
          * could say whose pass paid; the teacher looks at the row. */

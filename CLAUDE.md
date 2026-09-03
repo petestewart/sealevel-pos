@@ -211,7 +211,11 @@ while `git clone` works, so clone the repo rather than fetching files.
   an internal record per sale: the checkout request carries no notes
   field, so a comp's reason is filed there afterwards (T45), through
   `mindbody()` with the client id in the options so dry run and the
-  write guard apply.
+  write guard apply. **Site 471 has Formula Notes disabled** (Pete's
+  live probe, 2026-09-04: "This site does not have formula notes
+  enabled"), so the record falls back to a T58-signed entry appended
+  to the client's `Notes` (T62, `src/lib/formulanote.ts`); the Formula
+  Note is still tried first, once per server start.
 - **Categories live in `site.yml`, not `sale.yml`.** `GET /site/categories`
   exists; grepping only the Sale tag missed it once. `/site/liabilitywaiver`
   (the waiver's actual text) and `/site/paymenttypes` are next to it.
