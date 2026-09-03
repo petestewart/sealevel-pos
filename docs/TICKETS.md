@@ -7810,3 +7810,67 @@ Deliberately not done:
 - SaleScreen, the roster rows, the search and every modal but the
   StaffModal's aria wiring are untouched (the StaffModal itself needed
   no change: the icon's label was already its wiring).
+
+### Review
+
+Adversarial pass against the production build with a mocked Mindbody
+(scratchpad `t61/review-mock.js`, the T61 mock with the class name, the
+teacher and a delay on whole-day windows as env; `review.js`,
+`review-fine.js`, `review-loadline.js`; shots `review-*.png`,
+`fix-*.png`). Measured at 1180x820, 1024x768, 820x1180 and 810x1080,
+light and dark, today and on a future day, with the 63-character stress
+title and again with the schedule's real longest, "Hot 26 & 2 (90 min)
+- Beth Gongaware" (36 characters; the studio's next week has nothing
+longer). One defect, fixed minimally:
+
+- **Nothing said a day was loading.** The header's line carried
+  "Loading Fri Sep 4..." until T61 removed it with the Viewing text,
+  and the T46 review banner does not cover the gap: it reads the
+  CLASS's date, and during the load the class is still today's, so the
+  banner is null. With the day window held for 2.5s the screen showed
+  the day control already in accent and labelled "Viewing Fri Sep 4"
+  over "Thu Sep 3 · 6:20 AM" and today's live rows, with nothing that
+  moved or said loading, for the whole wait. Now the control's label
+  and tooltip read "Loading Fri Sep 4. Change day" while `viewLoading`,
+  and a quiet 16px muted `role="status"` line, "Loading Fri Sep 4...",
+  sits in the roster's banner slot (`.day-loading`, the day banner's
+  geometry, so the list does not move again when the banner takes its
+  place: roster top 349 during the load and 349 after). It is gone once
+  the day lands, on the error path and on Today. Pete's header stays as
+  he asked: no Viewing line, no date beside the glyph.
+
+Checked and not defects:
+
+- **Three lines at 1024** happen only for the stress name: the real
+  longest title is one line at 1180 and 820 (432px) and two at 1024
+  (385px, the button 80px). The group already takes every pixel of the
+  row's slack, so a larger share for the title at 1024 would have to
+  come out of the counters or Buy, for a name 27 characters longer than
+  any on the schedule. The 404px floor stands.
+- **The roster's scroll box (T55)** under the taller header: the first
+  row is fully inside the viewport and the box at every width, on both
+  days, with the stress name (1024 future: header 108, first row 377 to
+  460 of 768, box 375px, four and a half rows).
+- **The class menu (T34)** hangs 6px under the button's bottom edge and
+  left-aligned with it at 80px and 108px tall, on screen at every
+  width; Escape closes it.
+- **The picked-day signal** is the accent border and the accent glyph
+  together (`.cal-btn.viewing` sets both): contrast against the button
+  7.7:1 light, 9.2:1 dark, against the page 7.1 and 10.0. Visible in
+  the crops with no text.
+- **`:focus-visible` on the account icon**: keyboard focus draws the
+  browser's ring (`auto 1px`) on the round button; no rule of ours
+  suppresses it. The StaffModal opens from the icon titled "Pete
+  Stewart" and closes on Escape.
+- **The 911px breakpoint**, 905 to 915 one pixel at a time in both
+  palettes, today and future: 905 to 911 wrap the counters alone,
+  right-aligned to the row's edge; 912 to 915 one line; no overflow at
+  any of them. Portrait 820x1180 and 810x1080 wrap the counters alone
+  to line two; the header's scrollWidth never exceeds its clientWidth
+  and the document never scrolls sideways.
+- Nothing in the header under 16px, the class button 64px or taller,
+  the icon 44 by 44 with "Signed in as Pete Stewart. Account", tokens
+  only and none new, no em dashes, no model identifiers outside the
+  commit trailers, CLAUDE.md's T50 note matches the screen, `npm run
+  typecheck` and `npm run build` clean, `git ls-files node_modules`
+  empty.

@@ -4531,7 +4531,7 @@ function FrontDesk({
      lives in the label and tooltip, and the roster's banner says what
      that day allows. */
   const calendarLabel = viewDate
-    ? `Viewing ${dayKeyLabel(viewDate)}. Change day`
+    ? `${viewLoading ? "Loading" : "Viewing"} ${dayKeyLabel(viewDate)}. Change day`
     : "Change day";
   const calendarButton = (
     <button
@@ -4938,6 +4938,19 @@ function FrontDesk({
             ) : null}
           </span>
         </div>
+      ) : null}
+
+      {/* T61 review: while a picked day is on the wire the previous
+          class and its rows stay on screen (T46 review R5/R6) and the
+          day control is already outlined for the new day, so this quiet
+          line is the one thing saying the tap took. It carries the
+          "Loading Fri Sep 4..." wording the header's Viewing line had
+          until T61, in the roster's banner slot rather than the header
+          Pete cleared. */}
+      {viewDate && viewLoading ? (
+        <p className="muted day-loading" role="status">
+          Loading {dayKeyLabel(viewDate)}...
+        </p>
       ) : null}
 
       {/* T46: the day banner. Warn pair, 16px, above the list: a past

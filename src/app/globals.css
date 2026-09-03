@@ -203,6 +203,15 @@ button {
   color: var(--warn);
 }
 
+/* T61 review: the "Loading Fri Sep 4..." line while a picked day loads,
+ * the day banner's geometry in the muted colour, so the list does not
+ * jump when the banner takes its place. */
+.day-loading {
+  margin: 12px 0 0;
+  padding: 10px 16px;
+  font-size: 16px;
+}
+
 /* The calendar modal: a month grid. Seven 64px columns plus the gaps is
  * 472px, which the modal's 24px padding wraps at 520; on a screen too
  * narrow for that the cells shrink to the 44px icon floor. */
