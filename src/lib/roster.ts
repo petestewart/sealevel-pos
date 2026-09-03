@@ -563,6 +563,11 @@ export async function classRoster(
  */
 export interface BookingResult {
   visitId: number | null;
+  /** `Visit.SignedIn` on the booking answer (class.yml, AddClientToClassVisit):
+   *  T19 saw an after-start booking come back already signed in, and the
+   *  guest flow (T59c) reads this to skip a sign-in Mindbody already
+   *  made. null when the answer did not say, or the write was suppressed. */
+  signedIn: boolean | null;
   suppressed: "dry-run" | "write-guard" | null;
 }
 
@@ -595,10 +600,17 @@ export async function bookClientIntoClass(opts: {
     clientId: opts.clientId,
     ...(opts.actor ? { actor: opts.actor } : {}),
   });
-  if (res?.DryRun) return { visitId: null, suppressed: "dry-run" };
-  if (res?.WriteSuppressed) return { visitId: null, suppressed: "write-guard" };
+  if (res?.DryRun) return { visitId: null, signedIn: null, suppressed: "dry-run" };
+  if (res?.WriteSuppressed) {
+    return { visitId: null, signedIn: null, suppressed: "write-guard" };
+  }
   const id = res?.Visit?.Id;
-  return { visitId: typeof id === "number" ? id : null, suppressed: null };
+  const signedIn = res?.Visit?.SignedIn;
+  return {
+    visitId: typeof id === "number" ? id : null,
+    signedIn: typeof signedIn === "boolean" ? signedIn : null,
+    suppressed: null,
+  };
 }
 
 /**
