@@ -7896,7 +7896,10 @@ whole. The app reads the sale first (`/sale/sales` / transactions) and
 returns it ONLY when it holds exactly one item, that item is the Guest
 Pass, the total is $0.00, and it carries no card, stored-card, account
 or gift-card payment. Otherwise, or if Mindbody refuses, the pass is
-retired by expiry through `/client/updateclientservice` (ExpirationDate
-yesterday, rehearsed with `Test: true` first); that call cannot move
-money. The member's own visit is never touched. The outcome names which
-path retired the pass.
+NOT retired: the outcome says so in amber ("<member>'s guest pass is
+still on their account: <reason>. Return it in Mindbody.") and the
+guest's check-in stands. Pete, 2026-09-04: one path only, the return;
+no expiry fallback ("i don't really want to support 2 different
+paths"). Test on his account first; expiry through
+`/client/updateclientservice` stays a recorded option if the return
+proves unusable. The member's own visit is never touched.
