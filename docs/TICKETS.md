@@ -6907,3 +6907,73 @@ live duplicate wording (both land in the dev drawer on first use);
 prefill from a search that was not two plain words. `mindbody()` was
 not changed: its handling of a write that names no client was already
 explicit.
+
+### Review
+
+Adversarial pass against a mocked Mindbody (the worktree's production
+build on 3059, mock on 4559), the API driven from inside the signed-in
+page and the form driven by Playwright.
+
+Confirmed and fixed: focus. The tap that opened the form left focus on
+the "New client" button underneath, so the first keystroke went
+nowhere; the first name input now takes focus on open, filled or not.
+
+Checked and holding:
+
+- Safety. `mindbody()` reads the client id from the body (ClientId,
+  ClientIds, UniqueClientId) or the options; a create has neither, so
+  under POS_WRITE_CLIENT_IDS every create is suppressed as "(none
+  named)", and dry run suppresses it before that. Both seen live: the
+  mock never received the call, the answer carried `suppressed` with
+  `clientId: null` and `client: null`, the form showed amber and added
+  no row. The fallback ran the create as the service account only
+  after the teacher's token drew a 403, and the row carried the amber
+  "Done as the studio account" line. A 401 under the teacher's token
+  ended the staff session, refused the write (one call to Mindbody,
+  no row) and brought the gate back with the message. Nothing new is
+  written to localStorage or the database.
+- Validation. Names are trimmed and inner runs of spaces collapsed;
+  unicode passes through; an email keeps its case with the spaces
+  trimmed; seven digits of phone pass and six do not, as do letters;
+  "+44 (20) 7946.0958" passes; a number where a string belongs, a
+  string or 1 where a boolean belongs, a 61-character name, a
+  101-character email, a bare `null` or `[]` body and a non-JSON body
+  all answer 400 with a plain sentence and reach Mindbody not at all.
+  Extra properties in the body (Active, LiabilityRelease, an address)
+  never reach the payload, which is exactly the six fields.
+- Mindbody's answers. The spec states the duplicate rule (same first,
+  last and email since May 2020) and not its wording; the match is on
+  "duplicate" / "already exists" / "already has" / "already in use".
+  A 400 saying "Email address is invalid." came back as 502 with that
+  sentence and no `duplicate` flag; a 200 without a Client and a 500
+  both came back as 502, never as a row. The live wording will land in
+  the dev drawer; widen the regex then if it is needed.
+- The row. Parsed by the same `resultOf` as a search hit, so it is a
+  SearchResult to the letter: string id, waiverSigned false, alerts and
+  notes null, no passes. Tapping it opened the waiver gate; searching
+  the same name again showed one row, not two (a search replaces the
+  list, so on live Mindbody the row survives exactly as long as
+  `searchText` finds the new record; a lagging index would drop it and
+  a fresh search brings it back). Prefill fires for "Jane Doe" and not
+  for "zzzq", "x@y.zz", "Jane Doe 3" or "Ann Marie Lee".
+- Layering. The form's scrim sits at 31 over the search modal's 30;
+  Escape and a scrim tap close the form alone and the search stays;
+  the next Escape closes the search. While the create is in flight
+  every input, both buttons and the X are disabled, the button reads
+  "Creating" with the spinner, and Escape and the scrim do nothing.
+  Three taps on Create and an Enter sent one request. Nothing in the
+  dialog renders under 16px; inputs, consent rows and buttons are
+  64px; the X is the 44px icon idiom. No hex outside the palette, no
+  em dashes, no model identifiers in the diff. Untouched: SaleScreen,
+  sale.ts, checkout, membership, notes and alert rendering, the attach
+  modal.
+
+Noted, not changed: `[dry-run] suppressed POST /client/addclient ...`
+prints the request body to the server log, as `mindbody()` does for
+every write; for this write the body is a name, email and phone. That
+is the existing dry-run mechanism, and the same line already carries
+an email when a profile field is edited, so it is a question about the
+dry-run line as a whole rather than this ticket. The route answers a
+suppressed create with `ok: true, suppressed: "dry-run" | "write-guard"`,
+the check-in route's shape; the form reads `suppressed` before it
+reads anything else, so no suppression is ever shown as created.
