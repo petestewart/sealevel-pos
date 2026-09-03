@@ -6351,3 +6351,28 @@ all defined in both blocks); no em dashes. `.staff-btn` stays as dead
 CSS, as the build notes say. Not done: the live check of what
 Mindbody actually answers for an expired staff token is still open
 (the mock answers 401 with "Invalid or expired token").
+
+## T54. Pass names in full: the payment column stops ellipsizing (Pete, 2026-09-03)
+
+Pete, with a roster where "New Student 2 Week Unlimi...", "Monthly
+Committed Membe..." and "2026 Annual Unlimited Spe..." sat beside a name
+column that was mostly air: "what can we do to get rid of all the
+ellipsis in the payment column?"
+
+Two changes in `globals.css`, no markup:
+
+- The name/payment split flips. `--roster-cols` was `2fr / 1.8fr` in the
+  name's favour; pass names run longer than any client name, so it is now
+  `minmax(220px, 1.3fr) / 2.5fr`. The 220px floor fits the studio's
+  longest names at 20px/600 before the payment column starts giving way,
+  and the balance (7em) and actions (328px) columns are untouched.
+- `.pay-name` wraps to a second line before it truncates
+  (`-webkit-line-clamp: 2`), so a name the wider column still cannot
+  hold reads in full at the cost of one extra line on that row. The
+  ellipsis remains only past two lines.
+
+Verified on the T52 mock with 41-character pass names at 1400 and 1024
+wide: full names on two lines beside the chevron, no client name
+truncated, rows 20px taller only where a name wrapped. The made-up
+41-character name still clamps at 1024; the studio's real longest
+("New Student 2 Week Unlimited") fits there.

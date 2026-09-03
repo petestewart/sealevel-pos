@@ -512,7 +512,13 @@ button {
    * 104px min-width: the T39 review found the widest chip overlapping
    * the undo control in a 260px column sized to the minimum. Every slot
    * is always occupied (a spacer stands in for a missing control). */
-  --roster-cols: minmax(0, 2fr) 74px minmax(0, 1.8fr) 7em 328px;
+  /* Name vs payment split (Pete, 2026-09-03, "get rid of all the
+   * ellipsis in the payment column"): pass names ("New Student 2 Week
+   * Unlimited", "Monthly Committed Membership") run longer than any
+   * client name, so the payment column takes the larger share. The
+   * name column floors at 220px, which fits the studio's longest names
+   * at 20px/600 before the payment column starts giving way. */
+  --roster-cols: minmax(220px, 1.3fr) 74px minmax(0, 2.5fr) 7em 328px;
 }
 
 .roster-head,
@@ -737,9 +743,14 @@ button {
 .pay-name {
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 16px;
+  /* Wraps to a second line before it truncates (Pete, 2026-09-03): a
+   * pass name cut to "Monthly Committed Membe..." tells the teacher
+   * less than a row 20px taller does. Two lines, then the ellipsis. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 
 /* The facts sub-line under the pass name: "3 remaining, exp 3/2/27".
@@ -4472,7 +4483,7 @@ button.sale-for:disabled {
 }
 
 :root {
-  --roster-cols: minmax(0, 2fr) 88px minmax(0, 1.8fr) 7em 328px;
+  --roster-cols: minmax(220px, 1.3fr) 88px minmax(0, 2.5fr) 7em 328px;
 }
 
 .m-chip-btn {
