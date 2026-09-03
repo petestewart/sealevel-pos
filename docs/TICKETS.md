@@ -5908,3 +5908,56 @@ client", Pay off with the same title, a forced tap opening nothing.
   the attach effect cover an attach from that state.
 - Nothing is sent to the server about the walk-in declaration; the
   checkout body is byte for byte T41's anonymous shape.
+
+### Review
+
+Adversarial pass against 72ebb9f, in `scratchpad/t51-review.js` (the
+implementer's fixture plus the review's cases) and `t51-review-pill.js`,
+both palettes, against `next start` on the worktree's build.
+
+**Held, as claimed.** Enter on a focused Pay reaches the friction dialog
+like a tap (there is no other route into pay mode: `enterPay` is the
+only `setSaleMode("pay")`, and PaymentPanel has none). The walk-in X is
+disabled mid-charge and a forced click on it during a 1.5s checkout
+changed nothing; the sale completed with `clientId: null`. A client
+attached from the walk-in state and detached again gets the dialog on
+Pay (the effect clears the flag on attach, and nothing sets it back). No
+hook sits below the `!open` return. `.comp-hold.on` (specificity 0,2,0)
+beats the new resting rule; the resting `--muted` on `--surface` is
+4.73:1 light and 5.61:1 dark, and the hold still opens the reason
+dialog. The icons are `aria-hidden`, 20px, inside `.pay-tile-name`'s
+inline-flex, and the off Card's icon dims with its name. Every colour in
+the diff is a token; no hex, no em dashes; the row fits at 800 (title,
+Attach 317, Walk-in 110, Back, no wrap). Checkout body untouched.
+
+**Found and fixed: the dev pill over Empty cart.** T39.8 centred the
+drawer's pill in the bar ("off the amount at the right and Empty cart at
+the left"). With Empty cart beside Pay, at 1080x768 (an iPad landscape
+width) a four-figure total widens Pay enough that the pill's 503..577
+sat under Empty cart's 555..696, and since the pill is z-index 20 over
+the bar's 5, `elementFromPoint` on Empty cart's left edge returned the
+pill: a tap there opened the drawer. Devtools-only, which is how live
+tests run. `body.sale-open .dev-handle` is now `left: 232px` (Back to
+items' right edge plus the bar's gap), a run both modes leave empty at
+every width; measured clear of Empty cart, Back to items and Charge at
+1080, 1180 and 1366 in shelf and pay mode. At the 800 fold the bar
+scrolls with the overlay and the fixed pill only meets it at the bottom
+of the scroll, the fold's own compromise (T39.8).
+
+**Recorded, not changed.**
+
+- Friction is on ENTERING pay mode, so two paths reach an anonymous
+  Charge without the dialog: the X on "Walk-in sale" in pay mode (the
+  build notes have it), and a client detached IN pay mode with Keep
+  items (Alida attached, Pay, detach, Keep items: the header shows the
+  two buttons and Charge $3.00 arms on Cash). Pete's words put the
+  popup on "clicks pay", the detach has its own dialog, and gating
+  `chargeable` on the flag would put a UI declaration on the money path
+  (T41). Back to items and Pay ask as expected.
+- The Walk-in button is live on the done screen and on an empty cart,
+  as Attach a client always was; a declaration made there survives Back
+  and reopen with the cart. It is never silent: the header reads
+  "Walk-in sale" from the moment it is set.
+- `.comp-hold:disabled` (mid-charge) has no rule of its own and now
+  looks like the resting state; before T51 it looked like the ink one.
+  Pre-existing, and Charge's own "Charging..." carries the state.

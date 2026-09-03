@@ -1242,13 +1242,16 @@ button.pass-opt:disabled {
 }
 
 /* T39.8: with the Buy overlay open (SaleScreen puts `sale-open` on the
- * body) the pill moves to the bar's empty middle, off the amount at the
- * right and Empty cart at the left. Next's own dev indicator, bottom
- * left, is not ours to move. */
+ * body) the pill moves off the amount at the right into the bar's empty
+ * run. T51 review: it was centred while Empty cart sat at the left; with
+ * Empty cart beside Pay (T51) the centre is under Empty cart's left edge
+ * at 1080 once the total has four figures, and the pill (z 20) took the
+ * tap. Now a fixed offset just right of Back to items (20 + 184 + the
+ * bar's 12 gap), which both modes leave empty at every width. Next's own
+ * dev indicator, bottom left, is not ours to move. */
 body.sale-open .dev-handle {
   right: auto;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 232px;
 }
 
 .dev-badge {
