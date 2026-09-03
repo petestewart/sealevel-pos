@@ -45,6 +45,10 @@ export interface RosterEntry {
   /** Whether the client has a membership (`MembershipIcon` nonzero on the
    *  client record). null when the lookup failed. */
   member: boolean | null;
+  /** T62: whose guest this visit is, from the guest_visits table (the
+   *  roster route fills it; Mindbody's visit says "Guest Pass" and no
+   *  more). Null with no marker, no database, or a dead one. */
+  guestOf: { name: string } | null;
   paid: boolean;
   checkedIn: boolean;
   /**
@@ -336,6 +340,8 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
       /** Filled by classRoster's batched client lookup. */
       balance: null,
       member: null,
+      /** Filled by the roster route from guest_visits (T62). */
+      guestOf: null,
       /**
        * Mindbody does not expose a single "is this paid" flag on a visit.
        * A visit booked against a pricing option is paid; one with no

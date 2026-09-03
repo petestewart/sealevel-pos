@@ -70,6 +70,10 @@ interface RosterEntry {
   balance: number | null;
   /** MembershipIcon nonzero on the client record; null when unknown. */
   member: boolean | null;
+  /** T62: whose guest this visit is, from the server's guest_visits
+   *  table; null with no marker or no database (then the page's own
+   *  memory, guestBy, covers the class view). */
+  guestOf: { name: string } | null;
   paid: boolean;
   checkedIn: boolean;
   /** true = waiver on file, false = blocked, null = unknown (fails open). */
@@ -5113,15 +5117,17 @@ function FrontDesk({
                   {/* Two lines: the pass name, and under it the remaining/
                       expiry facts that used to be their own grid columns
                       (T15). No pass, no sub-line. */}
-                  {/* T59c: a guest checked in on someone's pass this
-                      session reads "Guest Pass (Pete)", the member's
-                      name on the facts line; Mindbody's visit carries
-                      the pass name alone, so this is the page's own
-                      memory and lasts the class view. */}
+                  {/* T59c: a guest checked in on someone's pass reads
+                      "Guest Pass (Pete)", the member's name on the
+                      facts line; Mindbody's visit carries the pass name
+                      alone. T62: the name comes from the server's
+                      guest_visits marker first (it survives a reload),
+                      and the page's own memory of this class view is
+                      the fallback when there is no database. */}
                   {(() => {
                     const host =
                       entry.pricingOption && isGuestPass(entry.pricingOption)
-                        ? (guestBy[entry.clientId] ?? null)
+                        ? (entry.guestOf?.name ?? guestBy[entry.clientId] ?? null)
                         : null;
                     return (
                   <span className="pay-stack">

@@ -9,6 +9,7 @@ import {
 } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 import { fetchPasses } from "@/lib/clientcontext";
+import { insertGuestVisit } from "@/lib/db";
 import { fileFormulaNote } from "@/lib/formulanote";
 import {
   ignoredPassMessage,
@@ -286,6 +287,25 @@ export async function POST(request: Request) {
     );
   };
 
+  /* T62: the durable "Guest of" marker, written the moment the
+   * read-back confirms the visit is on the member's pass (before the
+   * sign-in, which is a separate write that can fail on its own): the
+   * fact recorded is whose pass paid, and the roster shows it after a
+   * reload. Best effort by the charter: no database, or a dead one, is
+   * one log line and the page's memory for this class view. */
+  const marker = async (visit: number) => {
+    const ok = await insertGuestVisit({
+      visitId: visit,
+      classId,
+      guestClientId,
+      memberClientId,
+      memberName: memberName ?? "a member",
+      guestName: guestName ?? "a guest",
+      staffId: session ? String(session.staffId) : null,
+    });
+    if (!ok) console.log(`[guest] marker not stored (no database): visit=${visit}`);
+  };
+
   /* Step 2: the guest. */
   try {
     if (guestVisitId !== null) {
@@ -311,6 +331,7 @@ export async function POST(request: Request) {
         if (verification.verdict === "ignored") {
           return ignoredResponse(verification, guestVisitId, false);
         }
+        if (verification.verdict === "landed") await marker(guestVisitId);
         const signed = await runAsActor(session, "/api/guest checkin", (actor) =>
           setSignedIn(guestVisitId, true, guestClientId, actor),
         );
@@ -356,6 +377,7 @@ export async function POST(request: Request) {
         if (verification.verdict === "ignored") {
           return ignoredResponse(verification, newVisitId, true);
         }
+        if (verification.verdict === "landed") await marker(newVisitId);
         if (booked.result.signedIn === true) {
           /* T19: an after-start booking can come back already signed
            * in; a second SignedIn write would be idempotent, but a call
@@ -437,6 +459,12 @@ export async function POST(request: Request) {
     guest: null,
     member: null,
   };
+  /* T62: where each record landed ("formula", or "notes" on a site
+   * without Formula Notes, which 471 is); the sheet's label reads it. */
+  const noteVia: {
+    guest: "formula" | "notes" | null;
+    member: "formula" | "notes" | null;
+  } = { guest: null, member: null };
   if (steps.guest === "done") {
     const when = [className ?? "class", noteDate(classStartsAt)]
       .filter(Boolean)
@@ -459,6 +487,8 @@ export async function POST(request: Request) {
     ]);
     notes.guest = g.id;
     notes.member = m.id;
+    noteVia.guest = g.via;
+    noteVia.member = m.via;
     /* One line for the sheet: each note's failure named, and the same
      * message once when both failed the same way. */
     const errors = [
@@ -489,6 +519,7 @@ export async function POST(request: Request) {
     suppressed,
     steps,
     notes,
+    noteVia,
     pass,
     guestVisitId: visitId,
     ...verifiedFields(verification),
