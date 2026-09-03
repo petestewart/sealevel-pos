@@ -20,6 +20,7 @@ import {
   compReasonLine,
   isCompKind,
   type CompReason,
+  compNeedsDetail,
 } from "@/lib/comp";
 import { insertCompReceipt, type CompReceiptItem } from "@/lib/db";
 import { fileFormulaNote } from "@/lib/formulanote";
@@ -362,7 +363,7 @@ export async function POST(request: Request) {
         {
           error:
             "a comp needs a compReason with a kind of teacher, trade, " +
-            "goodwill, damaged or other",
+            "damaged or other",
         },
         { status: 400 },
       );
@@ -384,11 +385,11 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    if (kind === "other" && detail.length < COMP_DETAIL_MIN) {
+    if (compNeedsDetail(kind) && detail.length < COMP_DETAIL_MIN) {
       return NextResponse.json(
         {
           error:
-            `a comp of kind other needs a detail of ${COMP_DETAIL_MIN} to ` +
+            `a comp of kind ${kind} needs a detail of ${COMP_DETAIL_MIN} to ` +
             `${COMP_DETAIL_MAX} characters`,
         },
         { status: 400 },

@@ -18,6 +18,7 @@ import {
   COMP_KIND_LABELS,
   COMP_KINDS,
   compHeadline,
+  compNeedsDetail,
   compReasonLine,
   compValid,
   isPinShape,
@@ -669,9 +670,6 @@ type ChargeResult =
   | { kind: "ambiguous"; message: string }
   | { kind: "error"; message: string };
 
-/** Hold-to-arm duration for the Comp method: long enough that a graze
- *  cannot select it, short enough to not feel broken. */
-const COMP_HOLD_MS = 700;
 
 /** T43: a comp needs a reason; T45: the reason is a KIND from comp.ts's
  *  closed list, an optional note, and for a teacher comp the teacher it
@@ -1032,13 +1030,9 @@ function PaymentPanel(props: {
    *  invisible), and the surface says so ONCE on return, in the quiet
    *  line, until the next tender gesture. */
   const [compCleared, setCompCleared] = useState(false);
-  /** A bare tap on Comp (which arms on a hold, not a tap) shows how in
-   *  the quiet line rather than doing nothing. */
-  const [compHint, setCompHint] = useState(false);
   /** The double-fire lock. State alone re-renders too late for a fast
    *  double tap; the ref is checked synchronously in the handler. */
   const inFlight = useRef(false);
-  const compTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* While a pricing call (or its debounce) is pending, `priced` still
    * holds the PREVIOUS cart's totals. Treat that as no total at all: the
@@ -1130,7 +1124,6 @@ function PaymentPanel(props: {
     setLines([]);
     setComp(null);
     setCompCleared(false);
-    setCompHint(false);
     dismissPad();
     closeReason();
   }, [dismissPad, closeReason]);
@@ -1171,12 +1164,6 @@ function PaymentPanel(props: {
     resetTender();
   }, [cartResetNonce, resetTender]);
 
-  useEffect(() => {
-    return () => {
-      if (compTimer.current) clearTimeout(compTimer.current);
-    };
-  }, []);
-
   /* PaymentPanel unmounts when the overlay closes; an amount modal that
    * was somehow open must not leave SaleScreen believing something still
    * blocks Escape on the next open. */
@@ -1199,7 +1186,6 @@ function PaymentPanel(props: {
     /* T43: a reason dialog left open by a hold that landed just before
      * Back to items goes the same way, with its draft. */
     closeReason();
-    setCompHint(false);
     if (comped) {
       setComp(null);
       setCompCleared(true);
@@ -1750,7 +1736,6 @@ function PaymentPanel(props: {
     /* Adding a tender disarms comp: the sale is being paid for. */
     setComp(null);
     setCompCleared(false);
-    setCompHint(false);
     setLines((cur) => [...cur, { id, source, cents }]);
     dismissPad();
     clearStaleResult();
@@ -1760,7 +1745,6 @@ function PaymentPanel(props: {
     setLines((cur) => cur.filter((l) => l.id !== id));
     if (padFor === id) dismissPad();
     setCompCleared(false);
-    setCompHint(false);
     clearStaleResult();
   };
 
@@ -1773,7 +1757,6 @@ function PaymentPanel(props: {
     setEntry("");
     onModalChange(true);
     setCompCleared(false);
-    setCompHint(false);
     clearStaleResult();
   };
 
@@ -1901,40 +1884,19 @@ function PaymentPanel(props: {
     return () => window.removeEventListener("keydown", onKey);
   }, [reasonOpen, closeReason]);
 
-  /* Comp arms on a HOLD, not a tap: it hands goods over for nothing, so
-   * it cannot sit where a fat finger lands. Unselecting is a plain tap
-   * (the click handler below); the ref swallows the click the browser
-   * fires at the END of a completed hold so arming and disarming cannot
-   * happen in the same gesture. */
-  const compHeld = useRef(false);
-  /* `visible` as of the latest render, for the hold timer: its callback
-   * is the closure of the render the hold STARTED in, whose `visible`
-   * was true by definition, so the prop itself can never refuse it
-   * (T39.6-7 review). */
-  const visibleRef = useRef(visible);
-  visibleRef.current = visible;
-  /** `charging` the same way, for the same timer (T43 review): a second
-   *  finger can tap Charge while the first is still holding Comp, and
-   *  the hold then landed with money moving, opening the dialog over the
-   *  in-flight charge; Comp there cleared the lines mid-flight. */
-  const chargingRef = useRef(charging);
-  chargingRef.current = charging;
-  /** The hold completed: open the reason dialog; false when refused.
-   *  T43: the hold no longer arms comp by itself. It opens the dialog,
-   *  and only Comp in the dialog, with a reason written, arms. */
-  const armComp = (): boolean => {
-    /* T39.6: never armed while invisible. The hold cannot start on a
-     * hidden button, but a hold that began just before Back to items
-     * could complete after it; the timer's callback lands here and is
-     * refused. */
-    if (!visibleRef.current || chargingRef.current) return false;
+  /* T67 (Pete: "get rid of the feature that forces holding down 'Comp
+   * this sale'. the popup is enough friction"): a plain tap opens the
+   * reason dialog. Nothing is armed by the tap itself; only Comp in the
+   * dialog, with a reason complete and a PIN verified, arms. The 700ms
+   * hold that used to gate this (T39.6, T43) is gone with its timer,
+   * its click-swallowing ref and the "hold to arm" hint. */
+  const openComp = () => {
+    if (!visible || charging) return;
     setReasonDraft(EMPTY_COMP_DRAFT);
     resetCompSteps();
     setReasonOpen(true);
     onModalChange(true);
     setCompCleared(false);
-    setCompHint(false);
-    return true;
   };
   /** Next on the reason step (T48): on to the PIN. Refused, and the
    *  dialog left on the reason, unless the draft is complete (a kind,
@@ -2119,7 +2081,6 @@ function PaymentPanel(props: {
     dismissPad();
     setComp({ reason, teacher: verified.teacher, token: verified.token });
     setCompCleared(false);
-    setCompHint(false);
     clearStaleResult();
     closeReason();
   };
@@ -2141,44 +2102,15 @@ function PaymentPanel(props: {
     /* pinTap and submitPin read refs, so the closure is never stale. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reasonOpen, reasonStep, pinLockedFor > 0]);
-  const compHoldStart = () => {
-    if (compTimer.current) clearTimeout(compTimer.current);
-    compTimer.current = setTimeout(() => {
-      compTimer.current = null;
-      /* The swallow flag only for a hold that ARMED: a refused hold
-       * produces no click to swallow, and the flag would eat the next
-       * tap on Comp instead. */
-      if (armComp()) compHeld.current = true;
-    }, COMP_HOLD_MS);
-  };
-  const compHoldEnd = () => {
-    if (compTimer.current) {
-      clearTimeout(compTimer.current);
-      compTimer.current = null;
-    }
-  };
-  /* A pointer that leaves or is cancelled will never produce the click,
-   * so the swallow flag must not survive it and eat the NEXT tap. */
-  const compHoldAbort = () => {
-    compHoldEnd();
-    compHeld.current = false;
-  };
+  /** Tap on Comp this sale: an armed comp is unselected (the reason
+   *  goes with it; the next tap asks again), an unarmed one opens the
+   *  dialog. */
   const compClick = () => {
-    if (compHeld.current) {
-      compHeld.current = false;
-      return;
-    }
-    /* A bare tap never ARMS comp; it only disarms an armed one. On an
-     * unarmed one it says how, since a button that does nothing when
-     * tapped reads as broken (T39.7: the label is the canvas's "Comp
-     * this sale", not "Hold to comp"). */
     if (comped) {
-      /* The reason goes with it: an unselected comp has none, and the
-       * next hold asks again. */
       setComp(null);
       clearStaleResult();
     } else {
-      setCompHint(true);
+      openComp();
     }
   };
 
@@ -2192,8 +2124,6 @@ function PaymentPanel(props: {
       `Nothing to pay, on the studio. Comped: ${compReasonLine(comp.reason)}. By ${comp.teacher.name}.`
     : compCleared
       ? "Comp was cleared."
-      : compHint
-        ? "Hold Comp this sale for a moment to arm it."
     : firstLineProblem !== null
       ? firstLineProblem
       : dueCents !== null && dueCents > 0 && lines.length >= 2
@@ -2611,22 +2541,18 @@ function PaymentPanel(props: {
 
               {/* The foot (0.2), pushed to the bottom under a hairline: the
                   quiet line at the left, Comp at the right. Comp is
-                  deliberately out of the tender list and armed by holding,
-                  so nobody comps a sale by grazing a control; and it lives
-                  only here, in pay mode (layout plan 2.9). */}
+                  deliberately out of the tender list, and a tap only
+                  opens the reason and PIN dialog (T67), so nobody comps
+                  a sale by grazing a control; it lives only here, in pay
+                  mode (layout plan 2.9). */}
               <div className="pay-foot">
                 <p className="pay-quiet">{tenderNote || " "}</p>
                 <button
                   className={comped ? "comp-hold on" : "comp-hold"}
                   disabled={charging}
-                  onPointerDown={compHoldStart}
-                  onPointerUp={compHoldEnd}
-                  onPointerLeave={compHoldAbort}
-                  onPointerCancel={compHoldAbort}
                   onClick={compClick}
-                  onContextMenu={(e) => e.preventDefault()}
                   aria-pressed={comped}
-                  title={comped ? "Tap to unselect" : "Hold to comp this sale"}
+                  title={comped ? "Tap to unselect" : "Comp this sale"}
                 >
                   {comped ? "Comped. Tap to unselect." : "Comp this sale"}
                 </button>
@@ -2760,8 +2686,8 @@ function PaymentPanel(props: {
         </div>
       ) : null}
 
-      {/* T43: the comp reason dialog. The hold on Comp this sale opens
-          it; nothing is armed until Comp here is tapped with a reason
+      {/* T43: the comp reason dialog. A tap on Comp this sale opens
+          it (T67); nothing is armed until Comp here is tapped with a reason
           complete (T45) and a PIN verified (T48: reason, then PIN, then
           "Comping as <name>" with the Comp button). Cancel, Escape and
           the scrim leave comp unarmed and drop the draft and the digits.
@@ -2870,8 +2796,10 @@ function PaymentPanel(props: {
               autoComplete="off"
               autoFocus
               placeholder={
-                reasonDraft.kind === "other"
-                  ? "What happened?"
+                reasonDraft.kind !== null && compNeedsDetail(reasonDraft.kind)
+                  ? reasonDraft.kind === "trade"
+                    ? "What was traded?"
+                    : "What happened?"
                   : "Add a note (optional)"
               }
               aria-label="Note for the comp"

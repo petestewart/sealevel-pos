@@ -13,29 +13,33 @@
  * server imports: this module runs in both places.
  */
 
-export const COMP_KINDS = [
-  "teacher",
-  "trade",
-  "goodwill",
-  "damaged",
-  "other",
-] as const;
+/** T67 (Pete, 2026-09-04): four kinds, Other last. "Goodwill" was
+ *  dropped from the surface ("not really something we should
+ *  surface"); a row already filed with it keeps its string, since the
+ *  receipt column is text. */
+export const COMP_KINDS = ["teacher", "trade", "damaged", "other"] as const;
 
 export type CompKind = (typeof COMP_KINDS)[number];
 
 export const COMP_KIND_LABELS: Record<CompKind, string> = {
   teacher: "Teacher",
   trade: "Trade",
-  goodwill: "Goodwill",
   damaged: "Damaged item",
   other: "Other",
 };
 
-/** The free text's bounds. Required only for `other`, where the kind
- *  says nothing by itself; optional for the rest. The maximum is the
- *  T43 bound, mirrored in the dialog's maxLength. */
+/** The free text's bounds. Required for `trade` and `other` (T67,
+ *  Pete: "Trade and Other require notes"), where the kind says nothing
+ *  about who or what; optional for the rest. The maximum is the T43
+ *  bound, mirrored in the dialog's maxLength. */
 export const COMP_DETAIL_MIN = 3;
 export const COMP_DETAIL_MAX = 200;
+
+/** Whether a kind needs the note written. The dialog's placeholder, its
+ *  Next button and the route's check all read this one rule. */
+export function compNeedsDetail(kind: CompKind): boolean {
+  return kind === "trade" || kind === "other";
+}
 
 export interface CompReason {
   kind: CompKind;
@@ -76,7 +80,9 @@ export function compValid(reason: {
   if (reason.kind === null) return false;
   const detail = reason.detail.trim();
   if (detail.length > COMP_DETAIL_MAX) return false;
-  if (reason.kind === "other" && detail.length < COMP_DETAIL_MIN) return false;
+  if (compNeedsDetail(reason.kind) && detail.length < COMP_DETAIL_MIN) {
+    return false;
+  }
   if (reason.kind === "teacher") {
     return (
       typeof reason.forStaffId === "number" &&
@@ -87,7 +93,7 @@ export function compValid(reason: {
   return true;
 }
 
-/** The short form: `Teacher (Kim Farrell)`, `Goodwill`, `Other`. The
+/** The short form: `Teacher (Kim Farrell)`, `Trade`, `Other`. The
  *  detail is not in it; the done screen shows that on its own line. */
 export function compHeadline(reason: CompReason): string {
   const label = COMP_KIND_LABELS[reason.kind];
@@ -98,8 +104,8 @@ export function compHeadline(reason: CompReason): string {
 
 /** The one-line form kept in comp_receipts.reason, so a T43 row ("Teacher,
  *  covering for Pete") and a T45 row read alike: `Teacher: Kim Farrell`,
- *  `Teacher: Kim Farrell, covering for Pete`, `Goodwill: spilled tea`,
- *  `Goodwill`. */
+ *  `Teacher: Kim Farrell, covering for Pete`, `Trade: massage swap`,
+ *  `Damaged item`. */
 export function compReasonLine(reason: CompReason): string {
   const parts: string[] = [];
   if (reason.kind === "teacher" && reason.forStaffName) {

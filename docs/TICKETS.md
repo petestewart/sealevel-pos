@@ -8634,3 +8634,32 @@ screen up? should be big like the buy screen."
   sheet's "class is full" state; nothing else read the capacity here.
 - Done directly (no agent): two files, no logic. `npm run typecheck`
   and `npm run build` green.
+
+## T67: Comp opens on a tap; Trade and Other need a note; Goodwill gone
+
+**DONE** (2026-09-04). Pete: "get rid of the feature that forces
+holding down 'Comp this sale'. the popup is enough friction. however
+the note should not always be optional in every case that it is right
+now. Trade and Other require notes. And Goodwill is not really
+something we should surface. Make it 4 buttons with Other being the
+last one."
+
+- `Comp this sale` opens the reason dialog on a plain tap. The 700ms
+  hold (T39.6), its timer, the click-swallowing ref and the "Hold Comp
+  this sale for a moment to arm it" hint are gone. Nothing else about
+  arming changed: only Comp inside the dialog, with a reason complete
+  and a PIN verified (T45, T48), arms the sale; a tap on an armed comp
+  still unselects it. `visible` and `charging` are read at the tap.
+- `COMP_KINDS` is `teacher, trade, damaged, other`, in that order on
+  the chips. `compNeedsDetail(kind)` is the one rule for `trade` and
+  `other` (3 to 200 characters), read by the dialog's placeholder
+  ("What was traded?" / "What happened?"), its Next button and
+  `/api/checkout`'s check, which now names the kind in its 400. A
+  `goodwill` reason from the browser is refused by `isCompKind`; rows
+  already filed with it keep their text in `comp_receipts.reason`.
+- Verified with `scratchpad/t67.js` (the T48 fixture, both palettes
+  at 1366x1024): a 30ms click opens the dialog; chips read Teacher,
+  Trade, Damaged item, Other; Trade and Other keep Next disabled at 0
+  and 2 characters and enable it at "massage swap"; Damaged item
+  enables Next with no note; Cancel closes and the quiet line carries
+  no hint. `npm run typecheck` and `npm run build` green.
