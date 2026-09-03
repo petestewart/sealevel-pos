@@ -63,6 +63,9 @@ interface GuestAnswer {
   error?: string;
   step?: string;
   refused?: boolean;
+  /** On a failed guest step: true when the step's first write went
+   *  through (the visit is on the pass) and a later one did not. */
+  landed?: boolean;
   suppressed?: boolean;
   steps?: { guest: StepOutcome; member: StepOutcome; notes: StepOutcome };
   actorFallback?: { name: string; reason: string };
@@ -300,23 +303,36 @@ export default function GuestModal({
         error: `Mindbody did not answer (HTTP ${res.status}).`,
       };
       const steps = answer.steps;
-      const landed = res.ok && steps?.guest === "done";
+      const landed = (res.ok && steps?.guest === "done") || answer.landed === true;
       onAnswer(answer, pick, landed);
       if (!res.ok) {
         /* A refusal (409) or a failed guest step (502): nothing else was
          * written; the words are Mindbody's. A 401 has already sent the
-         * page back to the sign-in gate. */
+         * page back to the sign-in gate. T59c review: a guest step that
+         * failed AFTER its first write (`landed`) is a visit on the pass
+         * with no sign-in, and the sheet says exactly that, with the
+         * member's own check-in still to do. */
         if (answer.reason === "staff") return;
-        setOutcome({
-          lines: [
-            {
-              text: answer.refused
-                ? `Mindbody refused the guest pass on ${pick.person.name}'s visit: ${(answer.error ?? "no reason given").replace(/\.$/, "")}. Nothing was written.`
-                : (answer.error ?? `HTTP ${res.status}`),
-              tone: "stop",
-            },
-          ],
-        });
+        const reason = (answer.error ?? "no reason given").replace(/\.$/, "");
+        const lines: { text: string; tone: "ok" | "warn" | "stop" }[] = answer.refused
+          ? [
+              {
+                text: `Mindbody refused the guest pass on ${pick.person.name}'s visit: ${reason}. Nothing was written.`,
+                tone: "stop",
+              },
+            ]
+          : answer.landed
+            ? [
+                {
+                  text: `${pick.person.name} is on ${firstName(member.name)}'s guest pass but NOT signed in: ${reason}. Check them in from their row.`,
+                  tone: "stop",
+                },
+                ...(member.checkedIn
+                  ? []
+                  : [{ text: `${member.name}: not checked in.`, tone: "warn" as const }]),
+              ]
+            : [{ text: answer.error ?? `HTTP ${res.status}`, tone: "stop" }];
+        setOutcome({ lines });
         return;
       }
       if (!steps) {

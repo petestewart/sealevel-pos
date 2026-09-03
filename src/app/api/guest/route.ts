@@ -302,13 +302,18 @@ export async function POST(request: Request) {
   /* A refused or failed guest step ends the flow: signing the member in
    * and noting a guest visit that did not happen would be two writes
    * about nothing. The answer says so; the member's own check-in is one
-   * tap on their row. */
+   * tap on their row. T59c review: `landed` rides along, because a
+   * failure AFTER the first write is a visit already on the pass (the
+   * booking or the pass change went through, the sign-in did not), and
+   * the sheet must say so rather than read as nothing having happened. */
   if (typeof steps.guest === "object") {
     return NextResponse.json(
       {
         ok: false,
         error: steps.guest.error,
         step: "guest",
+        landed,
+        guestVisitId: visitId,
         suppressed: false,
         steps,
         notes: { guest: null, member: null },
