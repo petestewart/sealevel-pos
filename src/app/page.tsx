@@ -4728,23 +4728,18 @@ function FrontDesk({
               (Pete, 2026-08-29). Checked-in and waitlist keep their
               panels; the waitlist's is the only home its entries have. */}
           <div className="counter counter-stat">
-            <span className="counter-num">
-              {entries.length}
-              {activeClass.capacity !== null ? (
-                <span className="counter-cap"> of {activeClass.capacity}</span>
-              ) : null}
-            </span>
             <span className="counter-label">signed up</span>
+            <span className="counter-num">{entries.length}</span>
           </div>
           <button
             className="counter"
             onClick={() => setCounterModal("checkedIn")}
             aria-haspopup="dialog"
           >
+            <span className="counter-label">checked in</span>
             <span className="counter-num">
               {entries.filter((e) => e.checkedIn).length}
             </span>
-            <span className="counter-label">checked in</span>
           </button>
           <button
             className="counter"
@@ -4760,6 +4755,7 @@ function FrontDesk({
             }}
             aria-haspopup="dialog"
           >
+            <span className="counter-label">waitlist</span>
             <span className="counter-num">
               {waitlist !== null
                 ? waitlist.length
@@ -4769,7 +4765,6 @@ function FrontDesk({
                     : "..."
                   : 0}
             </span>
-            <span className="counter-label">waitlist</span>
           </button>
           </div>
           {/* Opens the Buy overlay (T23; "Buy" since the second live

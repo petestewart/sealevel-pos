@@ -71,7 +71,11 @@ button {
 }
 
 .shell {
-  max-width: 1100px;
+  /* T66 (Pete, 2026-09-04: "why is the buy screen nice and big, using
+   * the whole screen but the sign in screen is only taking a portion"):
+   * 1400 like .sale-shell, so the roster fills the iPad the way Buy
+   * does. It was 1100 from the first layout plan. */
+  max-width: 1400px;
   margin: 0 auto;
   padding: 16px;
   /* T55 (Pete, 2026-09-03: "it should only be the rows of students that
@@ -374,22 +378,28 @@ button {
   background: var(--action-bg);
 }
 
-.counter-num {
-  display: block;
-  font-size: 22px;
-  font-weight: 700;
-}
-
-.counter-cap {
-  font-size: 16px;
-  font-weight: 400;
-  color: var(--muted);
-}
-
+/* T66: the same idea as the Buy screen's Total/Due/Change figures (a
+ * small uppercase label over a mono tabular number), at the size the
+ * counters already had. The "of 30" capacity suffix is gone (Pete:
+ * "'of 30' is not needed"); a full class still shows through the
+ * waitlist count and the row's booking-only state. */
 .counter-label {
   display: block;
-  font-size: 16px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
+}
+
+.counter-num {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Roster order: ONE quiet 44px icon at the right end of the column-header
@@ -2142,7 +2152,7 @@ body.sale-open .dev-handle {
 
 /* T39.1: 1400 wide (the canvas frame is a 1366 iPad edge to edge), 16/20
  * padding, so three columns fit at the studio's real numbers. The
- * roster's .shell stays at 1100 (layout plan question 9). */
+ * roster's .shell matches it at 1400 since T66. */
 .sale-shell {
   width: 100%;
   max-width: 1400px;
@@ -4807,7 +4817,7 @@ button.sale-for:disabled {
 }
 
 /* T50 review: the mode banner over the gate's opaque scrim, in the
- * shell's own slot (16px inset, 1100 max) so it sits exactly where the
+ * shell's own slot (16px inset, 1400 max) so it sits exactly where the
  * roster's does. */
 .staff-gate-banner {
   position: fixed;
@@ -4815,7 +4825,7 @@ button.sale-for:disabled {
   left: 16px;
   right: 16px;
   z-index: 31;
-  max-width: 1100px;
+  max-width: 1400px;
   margin: 0 auto;
 }
 

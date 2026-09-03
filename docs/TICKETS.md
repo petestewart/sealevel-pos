@@ -8206,3 +8206,31 @@ Not defects, checked:
   model identifiers outside the commit trailers; no new hex in CSS.
   SaleScreen.tsx, sale.ts, the header and the membership modal are not
   in the diff. `npm run typecheck` and `npm run build` green.
+
+## T66: roster header at Buy's width, counters styled like the figures
+
+**DONE** (2026-09-04, from Pete's screenshots of the roster beside the
+Buy screen).
+
+Pete: "'of 30' is not needed. make signed up/checked in/waitlist
+different fonts. in fact, use the same fonts/idea as the total/due/change
+cards on the buy screen (but keep the size they are already in the
+signin screen). and majorly, why is the buy screen nice and big, using
+the whole screen but the sign in screen is only taking a portion of the
+screen up? should be big like the buy screen."
+
+- `.shell` is 1400 wide like `.sale-shell` (it was 1100 from the first
+  layout plan); the staff gate's banner slot follows it. Measured at
+  1366: the header runs 16..1350, the class group 16..827, the counters
+  card 839..1206, no horizontal scroll at 1366, 1180 or 1024.
+- The counters take the Buy figures' idea: a 14px uppercase, letter
+  spaced, muted label (the recorded 14px metadata exception, the same
+  size as `.pay-fig-label`) OVER a mono, tabular 22px number. The
+  number keeps the size it had; only the face and the order changed.
+  Label and number are stacked in that order in the markup too, so a
+  screen reader reads them the way the eye does.
+- The "of <capacity>" suffix is gone, with its `.counter-cap` rule. A
+  full class still shows through the waitlist count and the booking
+  sheet's "class is full" state; nothing else read the capacity here.
+- Done directly (no agent): two files, no logic. `npm run typecheck`
+  and `npm run build` green.
