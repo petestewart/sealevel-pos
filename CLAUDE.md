@@ -291,8 +291,9 @@ while `git clone` works, so clone the repo rather than fetching files.
   unique in `teacher_pins`, enrolled through a one-time Mindbody sign-in
   or the devtools-gated admin route). On top of that every teacher signs
   in with their own Mindbody login (T50: required, the full-screen gate
-  after the device lock; the header shows their name and an account
-  icon for sign-out), and every write runs under THEIR token so Mindbody
+  after the device lock; since T61 the header shows only the account
+  icon, and the modal behind it names them and holds sign-out), and
+  every write runs under THEIR token so Mindbody
   names them; with nobody signed in, writes are refused (401
   `reason: "staff"`) and the gate comes back. The token lives
   in server memory only (`src/lib/staffsession.ts`; a restart signs

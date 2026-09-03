@@ -1439,8 +1439,10 @@ function FrontDesk({
    * `YYYY-MM-DD`, or null for the around-now window the app starts in.
    * The class dropdown, the header and the roster all read the same
    * `classes` array in both modes; this only says which window filled
-   * it, which decides the header's "Viewing" line, the roster banner,
-   * whether check-in is open (future days: booking only) and whether
+   * it, which decides the day control's outline and label (T61: the
+   * date text beside it and the "Viewing" line under the row are gone),
+   * the roster banner, whether check-in is open (future days: booking
+   * only) and whether
    * the settings-driven around-now refetch runs.
    */
   const [viewDate, setViewDate] = useState<string | null>(null);
@@ -1665,8 +1667,9 @@ function FrontDesk({
           setViewLoading(false);
           setViewError(e instanceof Error ? e.message : String(e));
           /* The day did not load. The previous class must not stay on
-           * screen under this day's header line: that was today's
-           * roster captioned "Viewing Thu Aug 27". Clear it; the header
+           * screen under this day's outlined day control: that was
+           * today's roster captioned "Viewing Thu Aug 27" (the caption
+           * went with T61; the outline remains). Clear it; the header
            * keeps the calendar button (retry, or Today), and the day is
            * not cached, so the next pick fetches again. */
           setClasses([]);
@@ -4507,8 +4510,8 @@ function FrontDesk({
   };
 
   /* T46: the calendar control beside the class dropdown. A 64px outlined
-     button in the header's own idiom, the glyph alone on today and the
-     chosen date as text on any other day. Rendered from a const so the
+     button in the header's own idiom, the glyph alone on every day
+     (T61; the date was text beside it from T46). Rendered from a const so the
      header without a class (a picked day with nothing on it) can still
      carry it: the button that got a teacher onto another day must never
      vanish with that day's empty schedule. */
@@ -4522,16 +4525,21 @@ function FrontDesk({
     rosterRef.current?.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
   };
 
+  /* T61 (Pete: "there is no reason for Fri Sep 4 to be shown next to
+     the calendar icon"): the glyph alone on every day. The accent
+     outline is the signal that another day is showing; the date itself
+     lives in the label and tooltip, and the roster's banner says what
+     that day allows. */
+  const calendarLabel = viewDate
+    ? `${viewLoading ? "Loading" : "Viewing"} ${dayKeyLabel(viewDate)}. Change day`
+    : "Change day";
   const calendarButton = (
     <button
       className={viewDate ? "class-change cal-btn viewing" : "class-change cal-btn"}
       aria-haspopup="dialog"
       aria-expanded={calOpen}
-      aria-label={
-        viewDate
-          ? `Pick a day. Viewing ${dayKeyLabel(viewDate)}.`
-          : "Pick a day"
-      }
+      aria-label={calendarLabel}
+      title={calendarLabel}
       onClick={() => {
         setClassPickerOpen(false);
         setSortMenuOpen(false);
@@ -4543,20 +4551,8 @@ function FrontDesk({
       }}
     >
       <CalendarIcon />
-      {viewDate ? <span className="cal-btn-date">{dayKeyLabel(viewDate)}</span> : null}
     </button>
   );
-
-  /* The header's quiet line and the roster's banner for a day other than
-     today. Both read viewDate; the banner's wording turns on whether the
-     day is behind or ahead, because what a tap can do differs. */
-  const viewingLine = viewDate ? (
-    <span className="class-viewing" role="status">
-      {viewLoading ? "Loading " : "Viewing "}
-      {dayKeyLabel(viewDate)}
-      {viewLoading ? "..." : ""}
-    </span>
-  ) : null;
 
   return (
     <main className="shell">
@@ -4611,7 +4607,6 @@ function FrontDesk({
               : "No classes in the next few hours."}
           </p>
           {calendarButton}
-          {viewingLine}
         </header>
       ) : null}
 
@@ -4786,32 +4781,25 @@ function FrontDesk({
           >
             Buy
           </button>
-          {/* T50: who Mindbody records this iPad's writes under. Pete:
-              "there should just be the current user's name displayed at
-              the top. next to that there can be a profile icon that
-              allows the user to sign out. this would also be where a
-              user signs in, no big 'sign in' button". The name is plain
-              text; the round icon (44px icon idiom) opens the account
-              modal, which is where sign-out lives. Somebody is always
-              signed in here: the gate sits in front of this screen
-              otherwise. */}
-          <div className="staff-id">
-            <span className="staff-name" title={teacher.name}>
-              {teacher.name}
-            </span>
-            <button
-              className="staff-account"
-              onClick={() => {
-                setPickerFor(null);
-                setSortMenuOpen(false);
-                setStaffOpen(true);
-              }}
-              aria-label={`Signed in as ${teacher.name}. Account`}
-            >
-              <PersonIcon />
-            </button>
-          </div>
-          {viewingLine}
+          {/* T50: who Mindbody records this iPad's writes under. The
+              round icon (44px icon idiom) opens the account modal, which
+              names the teacher and is where sign-out lives. T50 put the
+              name as text beside it; T61 (Pete: "let's get rid of 'Pete
+              Stewart' in the header. clicking on the person icon is good
+              enough") leaves the icon alone, with the name in its label.
+              Somebody is always signed in here: the gate sits in front
+              of this screen otherwise. */}
+          <button
+            className="staff-account"
+            onClick={() => {
+              setPickerFor(null);
+              setSortMenuOpen(false);
+              setStaffOpen(true);
+            }}
+            aria-label={`Signed in as ${teacher.name}. Account`}
+          >
+            <PersonIcon />
+          </button>
         </header>
       ) : null}
 
@@ -4950,6 +4938,19 @@ function FrontDesk({
             ) : null}
           </span>
         </div>
+      ) : null}
+
+      {/* T61 review: while a picked day is on the wire the previous
+          class and its rows stay on screen (T46 review R5/R6) and the
+          day control is already outlined for the new day, so this quiet
+          line is the one thing saying the tap took. It carries the
+          "Loading Fri Sep 4..." wording the header's Viewing line had
+          until T61, in the roster's banner slot rather than the header
+          Pete cleared. */}
+      {viewDate && viewLoading ? (
+        <p className="muted day-loading" role="status">
+          Loading {dayKeyLabel(viewDate)}...
+        </p>
       ) : null}
 
       {/* T46: the day banner. Warn pair, 16px, above the list: a past
