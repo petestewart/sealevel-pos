@@ -6836,10 +6836,11 @@ is not the sort control scrolls the list to the top
 list's T55 `onScroll`, which closes the pass picker, is unchanged). The
 row is a real target: `role="button"`, `tabIndex={0}`,
 `aria-label="Scroll to the top of the list"`, Enter and Space doing what
-a tap does. The sort control, its scrim and its menu live in
-`.head-actions`, and the handler checks the event target for that
-ancestor rather than relying on `stopPropagation`, so closing the menu
-through the scrim leaves the list where it was too.
+a tap does. The sort control, its scrim and its menu keep their own
+taps: the handler checks the event target for a control (`button`,
+`.pass-scrim`, `.sort-dd`; the review narrowed it from the whole
+`.head-actions` column) rather than relying on `stopPropagation`, so
+closing the menu through the scrim leaves the list where it was too.
 
 No visual change. The cursor stays default, and the only CSS is
 `user-select: none` on the shell's head row so a double tap does not
@@ -6859,10 +6860,12 @@ in DOM order, so at 820 wide the 319px counters would have held line
 one and the name and icon would have dangled alone on line two. The row
 stops fitting on one line under 1019px (the group's 404px floor, the
 counters, Buy at 76, the capped name and icon at 152, four 12px gaps and
-32px of padding; a 1024 landscape has 5px to spare, which the before
-measurement confirms at class-group 409 vs its 404 floor). Under 1018px
-the counters take `order: 1`, so they wrap alone and right-aligned by
-their auto margin, exactly the split portrait had before.
+32px of padding, 1019 on paper; measured, the row first holds one line
+at 1020 and 1019 wrapped before T60 too, so a 1024 landscape has 4px to
+spare, which the before measurement confirms at class-group 409 vs its
+404 floor). Through 1019px the counters take `order: 1`, so they wrap
+alone and right-aligned by their auto margin, exactly the split
+portrait had before.
 
 ### Build notes
 
@@ -6872,7 +6875,7 @@ their auto margin, exactly the split portrait had before.
   Buy and `.staff-id` in the class header. Nothing inside either block
   changed.
 - `src/app/globals.css`: `.shell > .roster-head { user-select: none }`,
-  and `@media (max-width: 1018px) { .counters { order: 1 } }` with the
+  and `@media (max-width: 1019px) { .counters { order: 1 } }` with the
   derivation of the number in the comment.
 - Verified: `npm run typecheck` and `npm run build` clean. Playwright
   against a 30-row mock (scratchpad `t60/`, mock on 4560, the
@@ -6897,3 +6900,64 @@ their auto margin, exactly the split portrait had before.
 - Not done, deliberately: no focus styling of our own; no change to
   the search modal's head; no `stopPropagation` on the sort button,
   since the target check covers the scrim and menu as well.
+
+### Review
+
+Adversarial pass against the T59 parent build (d165881) and this
+branch, both served from production builds against the 30-row mock,
+measured at 820x1180, 810x1080, 1080x810, 1017 through 1023, 1024x768,
+1100, 1101, 1180x820 and 1366x1024. Three defects, each fixed in the
+smallest way:
+
+- **1019px wrapped differently from before.** The class header's boxes
+  matched the parent at every width except 1019, where the T60 build
+  put the counters on line one and the name and icon alone on a third
+  row at the left edge (header 147px, `.staff-id` at x 16, y 158). The
+  parent wraps at 1019 as well (the paper sum is exact and subpixel
+  widths tip it) and first fits at 1020, so the order rule now runs
+  through 1019. After the fix every width in the matrix matches the
+  parent box for box: header height, group sizes, line split, the
+  counters' right edge in portrait, the head labels and the list's top.
+  No iPad width sits at 1019; the fix is for the claim, not a device.
+- **A dead zone in the head.** The tap handler ignored everything under
+  `.head-actions`, which is the 328px actions column, not the 44px sort
+  control: about a third of the row, above the check-in chips, did
+  nothing. It now ignores only a control (`button`, `.pass-scrim`,
+  `.sort-dd`). Verified: a tap on the column left of the icon scrolls to
+  0 and opens no menu; the icon opens the menu with the list unmoved;
+  the scrim and a menu option never scroll through the head.
+- **Reduced motion.** `behavior: "smooth"` animated under
+  `prefers-reduced-motion: reduce` in Chromium (900 to 892 at 50ms).
+  WebKit suppresses it on its own, so the counter iPad was already
+  right; the scroll now asks `matchMedia` and jumps when motion is
+  reduced (0 at 0ms with the setting on).
+
+Checked and not defects:
+
+- With the pass picker, the sort menu or the class picker open, a tap
+  where the head is lands on their fixed scrim (or the class dropdown
+  itself) and never reaches the head: the picker or menu closes and
+  the list stays put. The search modal's scrim (z-index 30) covers the
+  head the same way. Keyboard Enter on the focused head with the picker
+  open scrolls and the T55 `onScroll` closes the picker; during a pass
+  save (`passSavingId` set) it would scroll under the open picker, the
+  same as a finger scroll during a save, which T55 accepted.
+- Tab from the head lands on the sort button; Space there opens the
+  menu without scrolling; Escape closes it. A double tap selects
+  nothing. After a mouse click or a touch tap the head holds focus and
+  `:focus-visible` does not match, so no ring on the iPad.
+- `role="button"` on a row that contains a button is nested interactive
+  content, which ARIA discourages. Left as the brief specified it:
+  keyboard reach was verified and VoiceOver is not a counter use case.
+- Picking a sort that reorders the rows lands the list at 0 instantly,
+  with no remount and no smooth glide. The parent build does the same;
+  it is the browser's handling of reordered children, not the head tap.
+- At 820 and 810 wide the head's "Payment" label draws over "Balance":
+  the `minmax(0, 2.5fr)` column collapses to 0px there and the text
+  overflows. Identical boxes on the parent build; T55's template in
+  portrait, not T60. Left alone.
+- The account icon 44x44, Buy 76x64, `.staff-id` and the counters at or
+  above 64px, the name cap 100px through 1100 and 180px above, tokens
+  only, no hex, no em dashes, `npm run typecheck` and `npm run build`
+  clean, `git ls-files node_modules` empty.
+
