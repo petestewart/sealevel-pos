@@ -22,12 +22,8 @@ import {
   type CompReason,
 } from "@/lib/comp";
 import { insertCompReceipt, type CompReceiptItem } from "@/lib/db";
-import {
-  isDryRun,
-  mindbody,
-  mindbodyHttpStatus,
-  target,
-} from "@/lib/mindbody";
+import { fileFormulaNote } from "@/lib/formulanote";
+import { isDryRun, mindbodyHttpStatus, target } from "@/lib/mindbody";
 import { listTeachers } from "@/lib/staff";
 
 import {
@@ -791,13 +787,15 @@ export async function POST(request: Request) {
    * where a record of the comp belongs for the studio's own eyes. Filed
    * only after a REAL comp (not suppressed, not refused, not ambiguous)
    * for a NAMED client: the house client is a catch-all and a note on it
-   * names nobody. It goes through mindbody() with the client id in the
-   * options, so dry run and the write guard apply to it as to any write.
-   * It runs AFTER the outcome is decided and can never change it: the
-   * sale already happened, so a failure here is one log line and a null
-   * on the receipt, and it never throws. */
-  const FORMULA_NOTE_WAIT_MS = 8_000;
-  const fileFormulaNote = async (
+   * names nobody. The write itself (through mindbody() with the client
+   * id in the options, as the signed-in teacher with the ordinary
+   * fallback, bounded to FORMULA_NOTE_WAIT_MS, never throwing) lives in
+   * src/lib/formulanote.ts since T59c, shared with the guest route;
+   * only the comp's wording and its preconditions are here. It runs
+   * AFTER the outcome is decided and can never change it: the sale
+   * already happened, so a failure here is one log line and a null on
+   * the receipt. */
+  const fileCompNote = async (
     saleId: string | null,
   ): Promise<number | null> => {
     if (compReason === null) return null;
@@ -814,61 +812,17 @@ export async function POST(request: Request) {
     ]
       .filter(Boolean)
       .join(" ");
-    /* T45 review: the note is awaited, so a Mindbody that hangs on it
-     * would hold the done screen for the transport's full 20s after the
-     * money has already moved. Wait FORMULA_NOTE_WAIT_MS and no longer;
-     * the call itself runs on to its own timeout and still lands in the
-     * call log, and if it files late the receipt simply has no note id
-     * (the log line says so). Nothing about the answer changes. */
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      /* T49: filed as the signed-in teacher too, with the ordinary
-       * fallback (the note is a record, not the comp; a permission gap
-       * here is one warn line, and the note still lands). */
-      const res = (
-        await Promise.race([
-          runAsActor(session, "/api/checkout formula-note", (actor) =>
-            mindbody("/client/addclientformulanote", {
-              method: "POST",
-              body: { ClientId: clientId, Note: note },
-              clientId,
-              ...(actor ? { actor } : {}),
-            }),
-          ),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(
-                new Error(
-                  `no answer in ${FORMULA_NOTE_WAIT_MS / 1000}s; the note may still file`,
-                ),
-              ),
-            FORMULA_NOTE_WAIT_MS,
-          );
-        }),
-        ])
-      ).result;
-      if (res?.DryRun || res?.WriteSuppressed) {
-        console.log(
-          `[comp] formula-note suppressed: ${res?.DryRun ? "dry-run" : "write-guard"}`,
-        );
-        return null;
-      }
-      const id = res?.Id;
-      if (typeof id !== "number" || !Number.isInteger(id)) {
-        console.log(
-          `[comp] formula-note failed: no note id in the answer ${JSON.stringify(res).slice(0, 200)}`,
-        );
-        return null;
-      }
-      console.log(`[comp] formula-note filed: id=${id} client=${clientId}`);
-      return id;
-    } catch (err) {
-      console.log(`[comp] formula-note failed: ${errMessage(err)}`);
-      return null;
-    } finally {
-      clearTimeout(timer);
-    }
+    /* T49: filed as the signed-in teacher too, with the ordinary
+     * fallback (the note is a record, not the comp; a permission gap
+     * here is one warn line, and the note still lands). */
+    const filed = await fileFormulaNote({
+      session,
+      clientId,
+      note,
+      route: "/api/checkout formula-note",
+      logTag: "[comp]",
+    });
+    return filed.id;
   };
 
   const recordComp = async (outcome: {
@@ -950,9 +904,9 @@ export async function POST(request: Request) {
       if (m === "comp") {
         /* T45: the outcome is decided (the call resolved), so the Formula
          * Note goes out now, for a real sale only, and its id rides on the
-         * receipt. Neither can throw; see fileFormulaNote. */
+         * receipt. Neither can throw; see fileCompNote. */
         const formulaNoteId =
-          outcome.suppressed !== null ? null : await fileFormulaNote(ids.saleId);
+          outcome.suppressed !== null ? null : await fileCompNote(ids.saleId);
         await recordComp({
           saleId: ids.saleId,
           cartId: ids.cartId,
