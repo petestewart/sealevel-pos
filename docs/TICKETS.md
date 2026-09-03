@@ -6404,3 +6404,28 @@ Verified on a 30-row mock at 1180x820 and 1024x768: page scroll height
 zero, list scrolls 2200px, banner and head at the same y after
 scrolling, a picker opened on a row in the bottom third sits fully
 inside the viewport with its options visible and closes on scroll.
+
+## T57. The pass chevron survives a pass being used up (Pete, 2026-09-03)
+
+**Reported:** Pete changed a checked-in student's payment to a guest pass
+by mistake, and the row then offered no way back: the chevron that opens
+"Change how the client is paying" was gone, so the monthly membership
+could not be picked again.
+
+**Cause:** the chevron rendered only when the cached pass list held two
+or more passes on a paid row. That list is `/client/clientservices` with
+`ShowActiveOnly=true`, which drops a pass at zero remaining, so the moment
+the guest pass paid for the visit it left the list. The list then held
+the membership alone, one short of two, and the control disappeared,
+though the membership was exactly the thing to change TO.
+
+**Fix:** the chevron shows when the list holds at least one pass other
+than the one paying now (`p.id !== entry.clientServiceId`), matching the
+picker's own "others" filter. The pass paying now still renders at the
+top of the picker from the row's own visit data, so it needs no place in
+the list. Unpaid rows are unchanged: any pass with an id counts.
+
+**Reversal is Mindbody's own:** `updateclientvisit` with the old
+`ClientServiceId` moves the visit back to the membership and the guest
+pass session returns, the same "Change how the client is paying" the
+Mindbody web app does. No money moves either way.

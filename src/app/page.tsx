@@ -4817,9 +4817,14 @@ function FrontDesk({
                     ) : null}
                   </span>
                   {/* The payment-change chevron renders only when there is
-                      something to change TO: a paid row needs a second
-                      current pass, an unpaid row needs at least one, and a
-                      row with no visit id has nothing to reassign at all.
+                      something to change TO: at least one pass OTHER than
+                      the one paying now, and a row with no visit id has
+                      nothing to reassign at all. T57: counted against the
+                      current pass's id, not the list length. The list is
+                      ShowActiveOnly, so a pass the change just used up (a
+                      guest pass at 0 remaining) drops out of it; counting
+                      the length then hid the chevron on the one row whose
+                      change most needs undoing.
                       The pass count comes from the background sweep (which
                       shares the dropdown's cache); until it answers for
                       this client no control renders -- it appears when
@@ -4830,7 +4835,9 @@ function FrontDesk({
                     const showControl =
                       entry.visitId !== null &&
                       known !== null &&
-                      known.length >= (entry.pricingOption ? 2 : 1);
+                      known.some(
+                        (p) => p.id !== null && p.id !== entry.clientServiceId,
+                      );
                     return showControl ? (
                       <button
                         className="row-icon pass-toggle"
