@@ -468,6 +468,95 @@ function PlusIcon() {
   );
 }
 
+/* T51 (Pete: "'Card', 'Cash' and 'Account' should have icons next to
+ * them"): three 20px glyphs in currentColor, so they take the tile's
+ * colour and dim with it when the tile is off. A card with its stripe,
+ * a banknote, a person in a circle for the account. */
+function CardIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <rect
+        x="2.5"
+        y="5.5"
+        width="19"
+        height="13"
+        rx="2.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path stroke="currentColor" strokeWidth="2.6" d="M2.5 10h19" />
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        d="M6.5 14.5h4"
+      />
+    </svg>
+  );
+}
+
+function CashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <rect
+        x="2.5"
+        y="6.5"
+        width="19"
+        height="11"
+        rx="2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <circle
+        cx="12"
+        cy="12"
+        r="2.6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        d="M6 12h.01M18 12h.01"
+      />
+    </svg>
+  );
+}
+
+function AccountIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <circle
+        cx="12"
+        cy="12"
+        r="9.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <circle
+        cx="12"
+        cy="10"
+        r="3.2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        fill="none"
+        d="M6.2 18.4c1.3-2.3 3.3-3.4 5.8-3.4s4.5 1.1 5.8 3.4"
+      />
+    </svg>
+  );
+}
+
 /** The favorite star. Outline at rest; the `.shelf-star.on` CSS fills it
  *  with the warn/gold token. */
 function StarIcon() {
@@ -2068,14 +2157,18 @@ function PaymentPanel(props: {
                 : (cardDetail ?? "")
             : "";
 
-  /* T39.8: plain tiles, as 1a draws them; the icons T33 gave the method
-     cards went with the cards. The name and the reason are the tile. */
-  const sources: { s: TenderSource; label: string }[] = [
+  /* T39.8 dropped T33's tile icons for 1a's plain tiles; T51 brings a
+     glyph back beside each name at Pete's ask ("'Card', 'Cash' and
+     'Account' should have icons next to them"). The label text is as it
+     was; the icon rides in the name span and inherits its colour. */
+  const sources: { s: TenderSource; label: string; icon: ReactNode }[] = [
     /* Credit leads when there IS credit, and is absent when there is not
        (Pete, fourth live test). */
-    ...(creditVisible ? [{ s: "credit" as TenderSource, label: "Credit" }] : []),
-    { s: "storedcard", label: "Card" },
-    { s: "cash", label: "Cash" },
+    ...(creditVisible
+      ? [{ s: "credit" as TenderSource, label: "Credit", icon: <AccountIcon /> }]
+      : []),
+    { s: "storedcard", label: "Card", icon: <CardIcon /> },
+    { s: "cash", label: "Cash", icon: <CashIcon /> },
   ];
 
   /* The three figures (0.2): Due is settled once the lines cover the
@@ -2254,7 +2347,7 @@ function PaymentPanel(props: {
                   hidden; Credit is absent when there is no balance (T33)
                   and wears it as a badge when there is. */}
               <div className="pay-tiles" aria-label="Payment sources">
-                {sources.map(({ s, label }) => {
+                {sources.map(({ s, label, icon }) => {
                   const reason = addReason(s);
                   /* Layout plan 2.7: tapping Cash when a cash line is
                      already in the payment opens THAT line's keypad
@@ -2293,7 +2386,10 @@ function PaymentPanel(props: {
                             : "Cash")
                       }
                     >
-                      <span className="pay-tile-name">{label}</span>
+                      <span className="pay-tile-name">
+                        {icon}
+                        {label}
+                      </span>
                       {shown ? (
                         <span className="pay-tile-reason">{shown}</span>
                       ) : null}
@@ -3859,6 +3955,29 @@ export default function SaleScreen(props: {
   }, [onClose]);
   const leavePay = useCallback(() => setSaleMode("shelf"), []);
 
+  /**
+   * T51: an anonymous sale is a CHOICE, not the absence of one. Pete,
+   * from the first live sales: "there should be some friction when
+   * making a walkin sale. if there is no client attached and the user
+   * clicks pay, a popup should appear warning them there is no user and
+   * asking them to confirm this is a walkin sale." So the sale carries an
+   * explicit walk-in flag: set by the header's Walk-in button or by the
+   * dialog's "Continue as walk-in", cleared when a client is attached
+   * (the effect below), when the cart is emptied and when a sale
+   * completes. Nothing on the server reads it: an anonymous cart still
+   * rides POS_HOUSE_CLIENT_ID exactly as T41 left it, and the flag only
+   * decides whether Pay asks first.
+   */
+  const [walkIn, setWalkIn] = useState(false);
+  /** T51: the friction dialog, up when Pay was tapped with nobody
+   *  attached and no walk-in declared. Scrim, X and Escape stay in shelf
+   *  mode with nothing changed. */
+  const [walkInPrompt, setWalkInPrompt] = useState(false);
+  useEffect(() => {
+    if (client !== null) setWalkIn(false);
+  }, [client]);
+  const cancelWalkInPrompt = useCallback(() => setWalkInPrompt(false), []);
+
   /** T30: the contract whose purchase dialog is open, or null. The
    *  dialog is its own modal layer; its Escape/scrim handling lives in
    *  ContractDialog, and the overlay's Escape below skips while it is
@@ -3948,6 +4067,8 @@ export default function SaleScreen(props: {
     setPriceError(null);
     setCartResetNonce((n) => n + 1);
     setCartPrompt(null);
+    /* T51: a walk-in was declared for THIS cart; the next one asks again. */
+    setWalkIn(false);
   }, []);
 
   /** Escape peels the cart dialog first (keeping the items: Escape is a
@@ -3987,6 +4108,17 @@ export default function SaleScreen(props: {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [clearPrompt, cancelClear]);
+
+  /** T51: Escape peels the walk-in dialog like the other confirms, and
+   *  a dismissal declares nothing: the sale stays in shelf mode. */
+  useEffect(() => {
+    if (!walkInPrompt) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") cancelWalkInPrompt();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [walkInPrompt, cancelWalkInPrompt]);
 
   /**
    * T38: the second way out, for the disagree stop specifically. The
@@ -4202,6 +4334,7 @@ export default function SaleScreen(props: {
         payModalOpen ||
         cartPrompt ||
         clearPrompt !== null ||
+        walkInPrompt ||
         contractDialog
       ) {
         return;
@@ -4221,6 +4354,7 @@ export default function SaleScreen(props: {
     payModalOpen,
     cartPrompt,
     clearPrompt,
+    walkInPrompt,
     contractDialog,
     pricing,
     charging,
@@ -4326,6 +4460,20 @@ export default function SaleScreen(props: {
    * "N more below" line. Display only.
    */
   const linesRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * T51 lifted this out of the Pay button so the walk-in dialog can
+   * enter pay mode too; a hook, so it sits above the `!open` return.
+   * Into pay mode: the rail and grid give way to the payment surface,
+   * the cart stays put, and the selection goes (the pay-mode ticket has
+   * no controls). The lines box may be scrolled to the row the last tap
+   * selected; with no selection to show, start the ticket from its first
+   * row, and T38's cue counts the rest.
+   */
+  const enterPay = useCallback(() => {
+    setSelectedKey(null);
+    setSaleMode("pay");
+    linesRef.current?.scrollTo({ top: 0 });
+  }, []);
   const [hiddenBelow, setHiddenBelow] = useState(0);
   const measureLines = useCallback(() => {
     const el = linesRef.current;
@@ -4498,6 +4646,17 @@ export default function SaleScreen(props: {
                     : null;
   const payAmount =
     payWhy === null && priced !== null ? priced.grandTotal : null;
+  /** T51: whether Pay asks first. Nobody attached and no walk-in
+   *  declared is the one case; with the flag set (the header's Walk-in
+   *  button, or the dialog's own Continue) Pay goes straight through. */
+  const payNeedsWalkInConfirm = client === null && !walkIn;
+  /** T51: the Walk-in button carries the same reason Pay would, since
+   *  declaring a walk-in with no house client to ride declares nothing
+   *  Pay can use. The server's gate is unchanged (T41). */
+  const walkInWhy =
+    config?.houseClient === false
+      ? "No house client for an anonymous sale; attach a client"
+      : null;
   /** T39.3: quantity per shelf card, from the cart's own keys; the count
    *  pill reads it and nothing is fetched. */
   const inCart = new Map(cart.map((l) => [l.key, l.quantity]));
@@ -4690,25 +4849,65 @@ export default function SaleScreen(props: {
                 <CloseIcon />
               </button>
             </div>
-          ) : (
-            /* A real button, not receipt text: the old dashed monospace
-               line was not recognizable as tappable in live testing,
-               which orphaned the whole attach flow (and with it stored
-               card and credit). Solid surface, icon, verb-first label. */
-            <button
-              className="sale-for"
-              /* Mid-charge, no client change; see the detach button. */
-              disabled={charging}
-              onClick={onRequestAttach}
-            >
-              <PlusIcon />
+          ) : walkIn ? (
+            /* T51: the declared walk-in wears the attached card's shape
+               (Pete: "the display that normally shows a client name
+               should say 'Walk-in sale'. the usual X can be there to
+               cancel that and have the option to attach a client
+               again"). The X clears the flag and the slot goes back to
+               the two buttons. */
+            <div className="sale-for attached sale-for-walkin">
               <span className="sale-for-who">
-                Attach a client
-                <span className="sale-for-hint">
-                  for stored card or account credit
-                </span>
+                <span className="sale-for-label">Sale for</span>
+                <span className="sale-for-name">Walk-in sale</span>
               </span>
-            </button>
+              <button
+                className="row-icon sale-for-clear"
+                aria-label="Cancel the walk-in sale"
+                title="Cancel walk-in"
+                /* Same lock as detach: no client change mid-charge. */
+                disabled={charging}
+                onClick={() => setWalkIn(false)}
+              >
+                <CloseIcon />
+              </button>
+            </div>
+          ) : (
+            /* T51: two buttons in the slot, Attach a client and Walk-in
+               (Pete: "there should be a walk-in button next to the attach
+               a client button"). The row takes the header's slack as the
+               single card did. */
+            <div className="sale-for-row">
+              {/* A real button, not receipt text: the old dashed monospace
+                  line was not recognizable as tappable in live testing,
+                  which orphaned the whole attach flow (and with it stored
+                  card and credit). Solid surface, icon, verb-first label. */}
+              <button
+                className="sale-for"
+                /* Mid-charge, no client change; see the detach button. */
+                disabled={charging}
+                onClick={onRequestAttach}
+              >
+                <PlusIcon />
+                <span className="sale-for-who">
+                  Attach a client
+                  <span className="sale-for-hint">
+                    for stored card or account credit
+                  </span>
+                </span>
+              </button>
+              <button
+                className="sale-walkin"
+                /* With no house client on the server a walk-in cannot
+                   price or pay (T41), so the button is off with that
+                   reason, the same words Pay would give. */
+                disabled={charging || walkInWhy !== null}
+                title={walkInWhy ?? "Sell to a walk-in with no client attached"}
+                onClick={() => setWalkIn(true)}
+              >
+                Walk-in
+              </button>
+            </div>
           )}
 
           {/* The deliberate Back works mid-pricing (the cart and its
@@ -4981,7 +5180,11 @@ export default function SaleScreen(props: {
             visible={inPay}
             barSlot={barSlot}
             notice={payNotice}
-            onSold={() => setCart([])}
+            onSold={() => {
+              setCart([]);
+              /* T51: the walk-in declaration was for the sale just made. */
+              setWalkIn(false);
+            }}
             onDone={close}
             onStaffSessionEnded={() => onStaffSessionEnded?.()}
             onBusyChange={setCharging}
@@ -5318,8 +5521,10 @@ export default function SaleScreen(props: {
 
       {/* T39.5: the action bar, the overlay's last child so it sits at
           the bottom of the viewport under the columns (sticky, for the
-          narrow fold where the overlay scrolls). Empty cart left, behind
-          T38's confirm exactly; the primary right. It stacks BELOW every
+          narrow fold where the overlay scrolls). Empty cart just left of
+          the primary since T51 (Back to items keeps the left edge in pay
+          mode), behind T38's confirm exactly; the primary right. It
+          stacks BELOW every
           modal scrim (the scrims are z-index 30 in the overlay's own
           stacking context, the bar 5), so nothing on it is tappable
           behind a dialog. */}
@@ -5337,8 +5542,12 @@ export default function SaleScreen(props: {
               {"\u2190"} Back to items
             </button>
           ) : (
+            /* T51: `sale-bar-clear` moves it to sit just left of Pay
+               (Pete: "'empty cart' should be just to the left of 'Pay'
+               instead of all the way left on the screen"); Back to items
+               in pay mode keeps the left edge. Behaviour untouched. */
             <button
-              className="sale-bar-empty"
+              className="sale-bar-empty sale-bar-clear"
               disabled={cart.length === 0 || charging}
               onClick={() => setClearPrompt(cartCount)}
             >
@@ -5357,15 +5566,13 @@ export default function SaleScreen(props: {
               title={payWhy ?? `Pay ${money(payAmount ?? 0)}`}
               onClick={() => {
                 if (payWhy !== null) return;
-                /* Into pay mode: the rail and grid give way to the
-                   payment surface, the cart stays put, and the selection
-                   goes (the pay-mode ticket has no controls). */
-                setSelectedKey(null);
-                setSaleMode("pay");
-                /* The lines box may be scrolled to the row the last tap
-                   selected; with no selection to show, start the ticket
-                   from its first row, and T38's cue counts the rest. */
-                linesRef.current?.scrollTo({ top: 0 });
+                /* T51: the friction. Nobody attached and no walk-in
+                   declared opens the dialog instead of pay mode. */
+                if (payNeedsWalkInConfirm) {
+                  setWalkInPrompt(true);
+                  return;
+                }
+                enterPay();
               }}
             >
               <span>Pay</span>
@@ -5438,6 +5645,62 @@ export default function SaleScreen(props: {
               </button>
               <button className="modal-confirm go" onClick={emptyCart}>
                 Empty cart
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* T51: the friction on Pay with nobody attached and no walk-in
+          declared. The house confirm shape with the modal-x, since a
+          dismissal here is an ordinary "not that": scrim, X and Escape
+          leave the sale in shelf mode with nothing declared. Attach a
+          client opens the same attach modal the header button does;
+          Continue declares the walk-in and enters pay mode. */}
+      {walkInPrompt ? (
+        <div
+          className="modal-scrim"
+          role="presentation"
+          onClick={cancelWalkInPrompt}
+        >
+          <div
+            className="modal modal-walkin"
+            role="dialog"
+            aria-modal="true"
+            aria-label="No client attached"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="row-icon modal-x"
+              aria-label="Close"
+              onClick={cancelWalkInPrompt}
+            >
+              <CloseIcon />
+            </button>
+            <p className="modal-title">No client attached</p>
+            <p className="modal-note">
+              This will be recorded as a walk-in sale under the studio&apos;s
+              walk-in account. Attach a client if you know who this is.
+            </p>
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                onClick={() => {
+                  setWalkInPrompt(false);
+                  onRequestAttach();
+                }}
+              >
+                Attach a client
+              </button>
+              <button
+                className="modal-confirm go"
+                onClick={() => {
+                  setWalkInPrompt(false);
+                  setWalkIn(true);
+                  enterPay();
+                }}
+              >
+                Continue as walk-in
               </button>
             </div>
           </div>
