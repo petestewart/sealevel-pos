@@ -8,9 +8,11 @@ import { actorFallbackLine } from "./actornote";
  * T59c: a member's guest pass checks a guest in. Opened from the
  * member's roster row (the Guest action beside the pass chevron, or the
  * Guest Pass line in their pass picker), it picks the guest and confirms
- * ONE write sequence on the server (`POST /api/guest`, mechanism A: the
- * guest's visit is booked or paid with the member's Guest Pass id, the
- * member is signed in, a Formula Note goes on both).
+ * ONE write sequence on the server (`POST /api/guest`). T63: the way
+ * the front desk does it: the guest is sold their own $0 Guest Pass and
+ * booked on it, the member's Guest Pass is retired by returning its
+ * sale (or, when that is refused, left on their account and said so in
+ * amber), the member is signed in, a record goes on both profiles.
  *
  * The T52 modal idiom: the X, the scrim, Escape, one Cancel/Confirm pair
  * at 64px. The search is the attach modal's: a box and a magnifying
@@ -77,7 +79,25 @@ interface GuestAnswer {
   verified?: boolean | null;
   verifyDetail?: string | null;
   suppressed?: boolean;
-  steps?: { guest: StepOutcome; member: StepOutcome; notes: StepOutcome };
+  /** T63: the sale of the guest's $0 pass and the return of the
+   *  member's are steps of their own. */
+  steps?: {
+    sale?: StepOutcome;
+    guest: StepOutcome;
+    return?: StepOutcome;
+    member: StepOutcome;
+    notes: StepOutcome;
+  };
+  /** T63: a refused sale (409) or one that did not answer (502,
+   *  `ambiguous`), before anything else was written. */
+  ambiguous?: boolean;
+  sale?: { cartId: string | null; product: string; guestPassId: number | null };
+  memberPass?: {
+    reason: string | null;
+    returnSaleId: number | null;
+    returnedAmount: number | null;
+    remaining: number | null;
+  };
   /** T62: where each record landed; "notes" is the signed Notes entry a
    *  site without Formula Notes gets. */
   noteVia?: { guest: "formula" | "notes" | null; member: "formula" | "notes" | null };
@@ -435,6 +455,10 @@ export default function GuestModal({
           setOutcome({
             lines: [
               { text: answer.error ?? "Mindbody did not use the guest pass.", tone: "stop" },
+              {
+                text: `The $0 Guest Pass sold to ${pick.person.name} is still on their account, and ${firstName(member.name)}'s guest pass was not returned.`,
+                tone: "warn" as const,
+              },
               ...(preexisting
                 ? [
                     {
@@ -458,24 +482,38 @@ export default function GuestModal({
           });
           return;
         }
-        const lines: { text: string; tone: "ok" | "warn" | "stop" }[] = answer.refused
-          ? [
-              {
-                text: `Mindbody refused the guest pass on ${pick.person.name}'s visit: ${reason}. Nothing was written.`,
-                tone: "stop",
-              },
-            ]
-          : answer.landed
-            ? [
-                {
-                  text: `${pick.person.name} is on ${firstName(member.name)}'s guest pass but NOT signed in: ${reason}. Check them in from their row.`,
-                  tone: "stop",
-                },
-                ...(member.checkedIn
-                  ? []
-                  : [{ text: `${member.name}: not checked in.`, tone: "warn" as const }]),
-              ]
-            : [{ text: answer.error ?? `HTTP ${res.status}`, tone: "stop" }];
+        /* T63: the sale's own refusals and its ambiguity carry the
+         * server's full sentence (it names the guest, the amount or the
+         * "may have gone through"), and nothing after it was written. */
+        const lines: { text: string; tone: "ok" | "warn" | "stop" }[] =
+          answer.step === "sale" || answer.step === "catalog" || answer.step === "pass"
+            ? [{ text: answer.error ?? `HTTP ${res.status}`, tone: "stop" }]
+            : answer.refused
+              ? [
+                  {
+                    text: `Mindbody refused ${pick.person.name}'s new Guest Pass on their visit: ${reason}. The $0 pass is on their account; nothing else was written.`,
+                    tone: "stop",
+                  },
+                  {
+                    text: `${firstName(member.name)}'s guest pass was not returned.`,
+                    tone: "warn",
+                  },
+                ]
+              : answer.landed
+                ? [
+                    {
+                      text: `${pick.person.name} is booked on their $0 Guest Pass but NOT signed in: ${reason}. Check them in from their row.`,
+                      tone: "stop",
+                    },
+                    {
+                      text: `${firstName(member.name)}'s guest pass was not returned. Return it in Mindbody.`,
+                      tone: "warn",
+                    },
+                    ...(member.checkedIn
+                      ? []
+                      : [{ text: `${member.name}: not checked in.`, tone: "warn" as const }]),
+                  ]
+                : [{ text: answer.error ?? `HTTP ${res.status}`, tone: "stop" }];
         setOutcome({ lines, removable: null });
         return;
       }
@@ -498,12 +536,69 @@ export default function GuestModal({
           if (skipped) lines.push({ text: `${label}: ${skipped}`, tone: "ok" });
         } else lines.push({ text: `${label}: failed. ${s.error}`, tone: "stop" });
       };
+      /* T63: five steps in the order they ran. The sale first: the
+       * guest's own $0 pass is what everything after it rests on. */
+      say(
+        `${pick.person.name}'s $0 Guest Pass`,
+        steps.sale ?? "skipped",
+        "sold.",
+        "",
+      );
       say(
         pick.person.name,
         steps.guest,
-        `checked in on ${firstName(member.name)}'s guest pass.`,
+        "checked in on their new Guest Pass.",
         "",
       );
+      /* The member's pass: returned, or left on their account with the
+       * reason in amber (Pete's rule: never a refund, so a sale that
+       * fails the check is left alone and named). The count is what
+       * Mindbody lists now, never an inference from the return. */
+      const remainingText =
+        answer.memberPass?.remaining === null || answer.memberPass?.remaining === undefined
+          ? ""
+          : ` ${answer.memberPass.remaining} left.`;
+      const ret = steps.return ?? "skipped";
+      const memberFirst = firstName(member.name);
+      if (ret === "done") {
+        const amount = answer.memberPass?.returnedAmount ?? 0;
+        lines.push({
+          text: `${memberFirst}'s guest pass returned.${remainingText}`,
+          tone: "ok",
+        });
+        if (amount !== 0) {
+          lines.push({
+            text: `Mindbody reports a returned amount of $${amount.toFixed(2)} on that sale. Check it in Mindbody.`,
+            tone: "stop",
+          });
+        } else if (answer.memberPass?.remaining !== null && (answer.memberPass?.remaining ?? 0) > 0) {
+          lines.push({
+            text: `Mindbody still lists ${memberFirst}'s guest pass with ${answer.memberPass?.remaining} left. Check it in Mindbody.`,
+            tone: "warn",
+          });
+        } else if (answer.memberPass?.remaining === null || answer.memberPass?.remaining === undefined) {
+          /* T63 review: the count is a fresh read or nothing; a read
+           * that failed is said, not shown as 0. */
+          lines.push({
+            text: `${memberFirst}'s passes could not be re-read after the return. Check the pass in Mindbody.`,
+            tone: "warn",
+          });
+        }
+      } else if (ret === "suppressed") {
+        lines.push({
+          text: `${memberFirst}'s guest pass: return not written. ${suppressionReason ?? "The write was suppressed."}`,
+          tone: "warn",
+        });
+      } else {
+        const why =
+          typeof ret === "object"
+            ? ret.error
+            : (answer.memberPass?.reason ?? "the return did not run");
+        lines.push({
+          text: `${member.name}'s guest pass is still on their account: ${why.replace(/\.$/, "")}. Return it in Mindbody.`,
+          tone: "warn",
+        });
+      }
       say(
         member.name,
         steps.member,
@@ -534,7 +629,11 @@ export default function GuestModal({
         lines.push({ text: actorFallbackLine(answer.actorFallback), tone: "warn" });
       }
       const clean =
+        steps.sale === "done" &&
         steps.guest === "done" &&
+        steps.return === "done" &&
+        (answer.memberPass?.returnedAmount ?? 0) === 0 &&
+        answer.memberPass?.remaining === 0 &&
         (steps.member === "done" || steps.member === "skipped") &&
         steps.notes === "done" &&
         answer.verified !== false &&
@@ -631,8 +730,9 @@ export default function GuestModal({
             {outcome === null ? (
               <p className="guest-sentence">
                 Check in <strong>{selected.person.name}</strong> as{" "}
-                {member.name}&apos;s guest. {firstName(member.name)}&apos;s
-                Guest Pass will be used.
+                {member.name}&apos;s guest. {selected.person.name} gets a $0
+                Guest Pass and {firstName(member.name)}&apos;s guest pass is
+                returned.
               </p>
             ) : (
               <ul className="guest-outcome" aria-live="polite">

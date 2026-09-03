@@ -53,6 +53,12 @@ export interface PassInfo {
   count: number | null;
   /** ISO date the pass expires, if it does. */
   expires: string | null;
+  /** T63: `ClientService.PaymentDate`, "the date on which the client paid
+   *  for this pricing option" (client.yml), site-local like every
+   *  Mindbody datetime. What finds the SALE a pass came from (the sale's
+   *  SaleDateTime falls on this day) and, for a pass just sold, which
+   *  instance is the new one. null when Mindbody omits it. */
+  paymentDate: string | null;
 }
 
 export interface VisitInfo {
@@ -153,6 +159,7 @@ function passInfo(s: any): PassInfo {
     remaining: sessionless(s?.Name) ? null : num(s?.Remaining),
     count: sessionless(s?.Name) ? null : num(s?.Count),
     expires: str(s?.ExpirationDate),
+    paymentDate: str(s?.PaymentDate),
   };
 }
 

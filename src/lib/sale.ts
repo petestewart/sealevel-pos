@@ -274,6 +274,50 @@ export async function pricingOptions(): Promise<CatalogItem[]> {
 }
 
 /**
+ * T63: the studio's "Guest Pass (for auto-debit members only)" pricing
+ * option, the $0 one-session pass the front desk sells a GUEST before
+ * booking them (Pete's screens, 2026-09-04). The same GET /sale/services
+ * read as pricingOptions (sale.yml:1097, locationId 1 for studio
+ * pricing, SellAtLocationIds honoured the same permissive way), but its
+ * own function: pricingOptions drops every $0 option on purpose (a $0
+ * shelf price is unsellable config, not a free pass), and the Guest
+ * Pass is exactly that, so it never reaches the Buy screen and nothing
+ * there changes. Found by name (isGuestPass), never by a hardcoded id:
+ * site 471's is ProductId 462, and the sandbox's is whatever it is.
+ * Null when the catalog holds none. Uncached: a guest check-in is a
+ * handful of times a day, and the price it returns is only the local
+ * estimate for the rehearsal, which prices the cart live.
+ */
+export async function guestPassOption(
+  isGuestPassName: (name: string) => boolean,
+): Promise<{
+  productId: number;
+  name: string;
+  price: number;
+  taxRate: number | null;
+} | null> {
+  const body = await mindbody(
+    `/sale/services?request.locationId=${STUDIO_LOCATION_ID}` +
+      `&request.limit=200`,
+  );
+  for (const s of (body?.Services ?? []) as any[]) {
+    const name = str(s?.Name);
+    const productId = num(s?.ProductId);
+    if (name === null || productId === null || !isGuestPassName(name)) continue;
+    const sellAt: unknown = s?.SellAtLocationIds;
+    if (
+      Array.isArray(sellAt) &&
+      sellAt.length > 0 &&
+      !sellAt.includes(STUDIO_LOCATION_ID)
+    ) {
+      continue;
+    }
+    return { productId, name, price: num(s?.Price) ?? 0, taxRate: num(s?.TaxRate) };
+  }
+  return null;
+}
+
+/**
  * T30: packages, via GET /sale/packages (sale.yml:506). "A package is
  * typically used to combine multiple services and/or products into a
  * single offering" (sale.yml:511). Packages ARE cart items -- the
