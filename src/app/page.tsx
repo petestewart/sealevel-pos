@@ -23,6 +23,11 @@ import SaleScreen, {
 import { ClientProfileCard, wallDate } from "./ClientProfileCard";
 import StaffModal, { type Teacher } from "./StaffModal";
 import NewClientModal from "./NewClientModal";
+import GuestModal, {
+  type ClassStanding,
+  type GuestPick,
+} from "./GuestModal";
+import { isGuestPass, usableGuestPass } from "@/lib/guestpass";
 import { actorFallbackLine } from "./actornote";
 import { useSettings } from "./settings";
 import type { ClientProfile } from "@/lib/clientprofile";
@@ -192,7 +197,10 @@ function contactLine(c: { email: string | null; phone: string | null }): string 
 type WaiverSubject =
   | { source: "roster"; entry: RosterEntry }
   | { source: "walkin"; client: SearchResult }
-  | { source: "promote"; row: WaitlistRow };
+  | { source: "promote"; row: WaitlistRow }
+  /* T59c: a guest picked in the guest modal; agreement resumes the
+   * modal at its confirm sheet with the same person selected. */
+  | { source: "guest"; client: SearchResult; standing: ClassStanding | null };
 
 /** Mirrors src/lib/roster.ts: waiverSigned and notes ride the same
  *  batched client lookup that fills missing names, fail-open null. */
@@ -441,6 +449,29 @@ function PersonIcon() {
     >
       <circle cx="12" cy="8" r="4" />
       <path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" />
+    </svg>
+  );
+}
+
+/** T59c: a person with a plus, the Guest action on a member's row:
+ *  their guest pass checks someone else in. currentColor like the other
+ *  row icons. */
+function PersonPlusIcon() {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="10" cy="8" r="4" />
+      <path d="M2 21c0-4 3.6-7 8-7 1.4 0 2.7.3 3.8.9" />
+      <path d="M19 14v6M16 17h6" />
     </svg>
   );
 }
@@ -908,9 +939,27 @@ function FrontDesk({
   const [found, setFound] = useState<SearchResult[]>([]);
   /** T59b: the new-client form, open over the walk-in search's empty
    *  state with the names the search box held when it looked like one. */
+  /**
+   * T59c: the guest flow. `guestFlow` is the member and the guest pass
+   * the modal was opened for (captured at open, like the cancel dialog's
+   * class, so the eventual write names what the teacher saw);
+   * `guestPick` is the chosen guest once past the waiver gate; `guestBy`
+   * names the member on a guest's roster row after a real check-in
+   * (Mindbody's visit carries the pass name, not whose pass it was),
+   * per class view, so a class switch clears it.
+   */
+  const [guestFlow, setGuestFlow] = useState<{
+    member: RosterEntry;
+    pass: PassInfo & { id: number };
+  } | null>(null);
+  const [guestPick, setGuestPick] = useState<GuestPick | null>(null);
+  const [guestBy, setGuestBy] = useState<Record<string, string>>({});
   const [newClient, setNewClient] = useState<{
     first: string;
     last: string;
+    /** T59c: who asked for the form. "search" hands the new person to
+     *  the walk-in results; "guest" selects them as the guest. */
+    for: "search" | "guest";
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<ModeConfig | null>(null);
@@ -1697,6 +1746,11 @@ function FrontDesk({
      * opened for, and that is what the write posts. */
     setCancelling(null);
     setCancelMsg(null);
+    /* T59c: the guest modal names a member's row on THIS class, and the
+     * "guest of" captions belong to this class's rows. */
+    setGuestFlow(null);
+    setGuestPick(null);
+    setGuestBy({});
     setCounterModal(null);
     setWaitlist(null);
     setWaitlistError(null);
@@ -3622,7 +3676,7 @@ function FrontDesk({
             name: subject.entry.name,
             notes: subject.entry.notes,
           }
-        : subject.source === "walkin"
+        : subject.source === "walkin" || subject.source === "guest"
           ? {
               id: subject.client.id,
               name: subject.client.name,
@@ -3710,6 +3764,13 @@ function FrontDesk({
         tapCheckIn({ ...subject.entry, waiverSigned: true, notes: newNotes });
       } else if (subject.source === "walkin") {
         tapWalkIn({ ...subject.client, waiverSigned: true, notes: newNotes });
+      } else if (subject.source === "guest") {
+        /* T59c: back to the guest modal, at its confirm sheet, with the
+         * agreement on the person. Nothing has been written yet. */
+        setGuestPick({
+          person: { ...subject.client, waiverSigned: true, notes: newNotes },
+          standing: subject.standing,
+        });
       } else {
         tapPromote({ ...subject.row, waiverSigned: true, notes: newNotes });
       }
@@ -3735,7 +3796,7 @@ function FrontDesk({
       ? ""
       : waiverPrompt.source === "roster"
         ? waiverPrompt.entry.name
-        : waiverPrompt.source === "walkin"
+        : waiverPrompt.source === "walkin" || waiverPrompt.source === "guest"
           ? waiverPrompt.client.name
           : waiverPrompt.row.name;
 
@@ -3784,6 +3845,82 @@ function FrontDesk({
       }
     },
     [passSavingId, refreshRoster, noteActor],
+  );
+
+  /**
+   * T59c: the guest flow's page-side handlers. Opening captures the
+   * member's row and the guest pass as the picker showed them; the pick
+   * runs the waiver gate FIRST, exactly as the walk-in add does (T19):
+   * a guest with no released waiver meets the T18 dialog over the
+   * modal, and only a recorded agreement selects them. The answer
+   * handler notes a fallback or an ended sign-in like every write, and
+   * refreshes the rows a REAL write changed: the member's pass cache is
+   * dropped so the chevron and the Guest action recompute against
+   * Mindbody's list (the pass at zero leaves it, T57), and the guest's
+   * too so their row's own picker still offers their passes for a
+   * reversal.
+   */
+  const openGuestFlow = useCallback(
+    (member: RosterEntry, pass: PassInfo & { id: number }) => {
+      setPickerFor(null);
+      setPassMsg(null);
+      setGuestPick(null);
+      setGuestFlow({ member, pass });
+    },
+    [],
+  );
+
+  const closeGuestFlow = useCallback(() => {
+    setGuestFlow(null);
+    setGuestPick(null);
+  }, []);
+
+  const pickGuest = useCallback((pick: GuestPick) => {
+    if (pick.person.waiverSigned === false) {
+      setWaiverPrompt({
+        source: "guest",
+        client: pick.person,
+        standing: pick.standing,
+      });
+      return;
+    }
+    setGuestPick(pick);
+  }, []);
+
+  const onGuestAnswer = useCallback(
+    (
+      answer: {
+        steps?: { guest: unknown; member: unknown };
+        staffSessionEnded?: boolean;
+        reason?: string;
+      },
+      pick: GuestPick,
+      landed: boolean,
+    ) => {
+      const flow = guestFlow;
+      noteActor(answer);
+      if (answer.reason === "staff") {
+        /* The sign-in ended under the write: the gate is coming back
+         * and the modal has nothing left to say. */
+        setTeacher(null);
+        closeGuestFlow();
+        return;
+      }
+      if (flow === null) return;
+      if (landed) {
+        setGuestBy((g) => ({ ...g, [pick.person.id]: flow.member.name }));
+      }
+      const memberDone = answer.steps?.member === "done";
+      if (landed || memberDone) {
+        refreshClientState(flow.member.clientId);
+        passSweepCache.current.delete(pick.person.id);
+        setPassLists((l) => {
+          const { [pick.person.id]: _drop, ...rest } = l;
+          return rest;
+        });
+      }
+    },
+    [guestFlow, noteActor, closeGuestFlow, refreshClientState],
   );
 
   /**
@@ -3883,6 +4020,33 @@ function FrontDesk({
           {others.map((p) => {
             const saving = passSavingId === p.id;
             const short = shortPassName(p.name);
+            /* T59c: a Guest Pass with a session left never pays for the
+             * member's OWN visit from here (T57's accident: a tap on it
+             * burned the pass on the member). It opens the guest modal
+             * instead, and the line says so. */
+            const guest = usableGuestPass([p]);
+            if (guest) {
+              return (
+                <button
+                  key={`opt-${p.id}`}
+                  className="pass-opt pass-opt-guest"
+                  disabled={passSavingId !== null}
+                  onClick={() => openGuestFlow(entry, guest)}
+                >
+                  <span className="pass-check">
+                    <PersonPlusIcon />
+                  </span>
+                  <span className="pass-opt-text">
+                    <span className="pass-opt-name">{short}</span>
+                    <span className="pass-opt-full">
+                      Checks in a guest, not {entry.name.split(" ")[0]}
+                    </span>
+                  </span>
+                  <span className="pass-col">{passLeftCol(p)}</span>
+                  <span className="pass-col">{passExpCol(p)}</span>
+                </button>
+              );
+            }
             return (
               <button
                 key={`opt-${p.id}`}
@@ -4855,6 +5019,13 @@ function FrontDesk({
             "unpaid"
           );
 
+          /* T59c review: the Guest action's presence changes the payment
+           * cell's shape (see .cell-pay.has-guest), so it is decided
+           * once, here, for the cell's class and the button both. */
+          const guestPass = futureClass
+            ? null
+            : usableGuestPass(passLists[entry.clientId]?.data ?? null);
+
           return (
             <li key={entry.clientId}>
               {/* The row body is NOT a check-in target (T16 reversal:
@@ -4934,10 +5105,21 @@ function FrontDesk({
                   </span>
                 </div>
 
-                <div className="cell-pay">
+                <div className={guestPass ? "cell-pay has-guest" : "cell-pay"}>
                   {/* Two lines: the pass name, and under it the remaining/
                       expiry facts that used to be their own grid columns
                       (T15). No pass, no sub-line. */}
+                  {/* T59c: a guest checked in on someone's pass this
+                      session reads "Guest Pass (Pete)", the member's
+                      name on the facts line; Mindbody's visit carries
+                      the pass name alone, so this is the page's own
+                      memory and lasts the class view. */}
+                  {(() => {
+                    const host =
+                      entry.pricingOption && isGuestPass(entry.pricingOption)
+                        ? (guestBy[entry.clientId] ?? null)
+                        : null;
+                    return (
                   <span className="pay-stack">
                     <span
                       className={
@@ -4945,11 +5127,15 @@ function FrontDesk({
                       }
                       title={entry.pricingOption ?? undefined}
                     >
-                      {entry.pricingOption
-                        ? shortPassName(entry.pricingOption)
-                        : "No pass"}
+                      {host
+                        ? `Guest Pass (${host.split(" ")[0]})`
+                        : entry.pricingOption
+                          ? shortPassName(entry.pricingOption)
+                          : "No pass"}
                     </span>
-                    {entry.pricingOption ? (
+                    {host ? (
+                      <span className="pass-facts">Guest of {host}</span>
+                    ) : entry.pricingOption ? (
                       <PassFactsLine
                         remaining={entry.passRemaining}
                         count={entry.passCount}
@@ -4964,6 +5150,36 @@ function FrontDesk({
                       <span className="pass-last-used">Last session used.</span>
                     ) : null}
                   </span>
+                    );
+                  })()}
+                  {/* T59c: the Guest action, beside the chevron, only
+                      while the cached pass list (the sweep's, the same
+                      source as the chevron) holds a guest pass with a
+                      session left. Not on a future day: the flow signs
+                      two people in, and check-in is closed there (T46).
+                      T59c review: the two icons share one right-pinned
+                      group that stacks when both are present, so the
+                      pass name keeps the width it had with the chevron
+                      alone (T54: no ellipsis). */}
+                  <span className="pay-icons">
+                  {(() => {
+                    const guest = guestPass;
+                    return guest ? (
+                      <button
+                        className="row-icon guest-btn"
+                        disabled={passSavingId !== null}
+                        aria-haspopup="dialog"
+                        aria-label={`Check in a guest on ${entry.name}'s guest pass`}
+                        title="Guest"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openGuestFlow(entry, guest);
+                        }}
+                      >
+                        <PersonPlusIcon />
+                      </button>
+                    ) : null;
+                  })()}
                   {/* The payment-change chevron renders only when there is
                       something to change TO: at least one pass OTHER than
                       the one paying now, and a row with no visit id has
@@ -5015,6 +5231,7 @@ function FrontDesk({
                       </button>
                     ) : null;
                   })()}
+                  </span>
                   {pickerFor === entry.clientId
                     ? renderPassDropdown(entry)
                     : null}
@@ -5163,13 +5380,76 @@ function FrontDesk({
           success the new person becomes a search result row and the
           walk-in path (waiver gate included) carries on from there;
           nothing about them is kept here. */}
+      {/* T59c: the guest modal, over the roster and under the waiver
+          dialog and the sign-up form (both render later and stack
+          above it). Everything it needs is captured at open. */}
+      {guestFlow && activeClass ? (
+        <GuestModal
+          member={{
+            clientId: guestFlow.member.clientId,
+            name: guestFlow.member.name,
+            visitId: guestFlow.member.visitId,
+            checkedIn:
+              entries.find((e) => e.clientId === guestFlow.member.clientId)
+                ?.checkedIn ?? guestFlow.member.checkedIn,
+          }}
+          pass={guestFlow.pass}
+          classId={activeClass.classId}
+          className={activeClass.name}
+          classStartsAt={activeClass.startsAt}
+          roster={entries
+            .filter((e) => e.clientId !== guestFlow.member.clientId)
+            .map((e) => ({
+              person: rosterAsResult(e),
+              standing: {
+                visitId: e.visitId,
+                checkedIn: e.checkedIn,
+                paid: e.paid,
+                pricingOption: e.pricingOption,
+              },
+            }))}
+          minQueryLength={settings.minQueryLength}
+          searchLimit={settings.searchLimit}
+          selected={guestPick}
+          onPick={pickGuest}
+          onUnpick={() => setGuestPick(null)}
+          onNewClient={(first, last) =>
+            setNewClient({ first, last, for: "guest" })
+          }
+          layerAbove={waiverPrompt !== null || newClient !== null}
+          suppressionReason={
+            config?.dryRun
+              ? "Dry run is on: nothing is sent to Mindbody."
+              : config && config.writeClientIds.length > 0
+                ? "The write guard is on: only the listed test clients are written."
+                : null
+          }
+          onClose={closeGuestFlow}
+          onAnswer={onGuestAnswer}
+        />
+      ) : null}
       {newClient ? (
         <NewClientModal
           initialFirst={newClient.first}
           initialLast={newClient.last}
           onClose={() => setNewClient(null)}
           onCreated={(client, note) => {
+            const target = newClient.for;
             setNewClient(null);
+            if (target === "guest") {
+              /* T59c: the new person is the guest. They have no release
+               * yet, so pickGuest opens the waiver dialog first. */
+              if (note) {
+                setActorBanner(note);
+                if (actorBannerTimer.current) clearTimeout(actorBannerTimer.current);
+                actorBannerTimer.current = setTimeout(
+                  () => setActorBanner(null),
+                  20_000,
+                );
+              }
+              pickGuest({ person: client, standing: null });
+              return;
+            }
             setFound((rows) => [
               client,
               ...rows.filter((r) => r.id !== client.id),
@@ -5572,8 +5852,12 @@ function FrontDesk({
                         words.every((w) => !/[\d@]/.test(w));
                       setNewClient(
                         looksLikeName
-                          ? { first: words[0] ?? "", last: words[1] ?? "" }
-                          : { first: "", last: "" },
+                          ? {
+                              first: words[0] ?? "",
+                              last: words[1] ?? "",
+                              for: "search",
+                            }
+                          : { first: "", last: "", for: "search" },
                       );
                     }}
                   >
@@ -6478,6 +6762,8 @@ function FrontDesk({
                       "Record agreement and add"
                     ) : waiverPrompt.source === "promote" ? (
                       "Record agreement and promote"
+                    ) : waiverPrompt.source === "guest" ? (
+                      "Record agreement and continue"
                     ) : (
                       "Record agreement and check in"
                     )}
@@ -6491,7 +6777,9 @@ function FrontDesk({
                     ? "No liability waiver on file. They cannot be added to the class until they have read and agreed to it."
                     : waiverPrompt.source === "promote"
                       ? "No liability waiver on file. They cannot be promoted into the class until they have read and agreed to it."
-                      : "No liability waiver on file. They cannot be checked in until they have read and agreed to it."}
+                      : waiverPrompt.source === "guest"
+                        ? "No liability waiver on file. They cannot be checked in as a guest until they have read and agreed to it."
+                        : "No liability waiver on file. They cannot be checked in until they have read and agreed to it."}
                 </p>
                 {waiverFetchError ? (
                   /* The fetch failed: the old close-only shape, with the
@@ -6505,7 +6793,9 @@ function FrontDesk({
                       ? "add will go through normally."
                       : waiverPrompt.source === "promote"
                         ? "promotion will go through normally."
-                        : "row will check in normally."}
+                        : waiverPrompt.source === "guest"
+                          ? "guest check-in will go through normally."
+                          : "row will check in normally."}
                   </p>
                 ) : (
                   <p className="muted">

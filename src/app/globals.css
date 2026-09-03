@@ -4917,3 +4917,187 @@ button.sale-for:disabled {
 .new-client-actions {
   margin: 0 0 8px;
 }
+
+/* T59c -------------------------------------------------------------------
+ * The guest flow (Pete, 2026-09-03). Tokens only, both palettes; no new
+ * tokens were needed. */
+
+/* The guest modal: the search modal's shape at a narrower width, its
+ * rows name | standing chip like attach mode's. */
+.modal-guest {
+  --roster-cols: minmax(0, 1fr) 118px;
+  width: min(720px, 100%);
+}
+
+/* A group label between the rows ("In class", the search's results):
+ * a quiet line in the list, not a row. */
+.guest-rows .guest-group {
+  padding: 8px 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.guest-rows .guest-empty {
+  padding: 8px 16px;
+  font-size: 16px;
+}
+
+/* The amber line under a candidate who is allowed but worth a glance
+ * (a member themselves, already checked in, already paid): the warn
+ * ink, information rather than a gate. */
+.subline.guest-caution {
+  color: var(--warn);
+}
+
+/* The Guest action beside the pass chevron: the row-icon idiom, in the
+ * accent so it reads as an action and not as another muted marker. */
+.guest-btn {
+  color: var(--accent);
+}
+
+/* The Guest Pass line in the picker opens the guest modal rather than
+ * paying for the member's own visit; the person-plus in the check slot
+ * and the accent say so. */
+.pass-opt.pass-opt-guest .pass-check {
+  color: var(--accent);
+}
+
+/* The confirm sheet's sentence and the outcome list. The sentence is
+ * the ink, not the stop colour: nothing here is destructive. */
+.guest-sentence {
+  margin: 0 0 16px;
+  font-size: 18px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.guest-outcome {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.guest-line {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.guest-line.ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.guest-line.warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.guest-line.stop {
+  background: var(--stop-bg);
+  color: var(--stop);
+}
+
+/* T59c review: the Guest action beside the chevron took 48px from the
+ * pass name, and "Monthly Committed Membership" ellipsized at 1180
+ * (142px left; the two-line wrap needs 158). The roster's two pass
+ * icons now sit in one right-pinned group, .pay-icons, which stacks
+ * vertically when the Guest action is present (.has-guest, decided
+ * with the button in page.tsx): the name keeps the width it has with
+ * the chevron alone, the row grows to the two icons' 88px instead, and
+ * the name may take a third line before T54's ellipsis, which at
+ * 1024's 116px is what "Membership" needs. */
+.cell-pay .pay-icons {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cell-pay .pay-icons .pass-toggle {
+  margin-left: 0;
+}
+
+/* No icons, no group: an empty span would still cost the name the
+ * cell's 4px gap, which at 1024 is the difference between "Monthly
+ * Committed" on one line (158px) and an ellipsis. */
+.cell-pay .pay-icons:empty {
+  display: none;
+}
+
+.cell-pay.has-guest .pay-icons {
+  flex-direction: column;
+  gap: 0;
+}
+
+.cell-pay.has-guest .pay-name {
+  -webkit-line-clamp: 3;
+}
+
+/* Portrait (T60 review, folded in here): at 820 and 810 wide the
+ * roster's fixed columns (220 + 88 + 7em + 328, plus four 12px gaps and
+ * the row's padding) outran the row, the payment column collapsed to
+ * 0 and the head's "Payment" drew over "Balance". Under 860 the name
+ * column gives up its floor, the payment column gets a real one, the
+ * balance column is sized for a three-figure amount, and the gaps, the
+ * row padding and the chip padding each give back a few pixels so the
+ * actions cell (the chip and four 44px icons) still fits. Pass names
+ * keep T54's two-line wrap, never an ellipsis. */
+@media (max-width: 860px) {
+  :root {
+    --roster-cols: minmax(136px, 1fr) 88px minmax(120px, 2.5fr) 4.5em 316px;
+  }
+
+  .roster-head,
+  .rrow {
+    gap: 8px;
+  }
+
+  .roster-head {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .rrow {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .cell-actions .chip {
+    padding: 6px 8px;
+  }
+
+  /* With 136px the name column would ellipsize "Whitney Campbell";
+   * a name a teacher cannot read is worse than a taller row, so the
+   * roster's names wrap here (the search rows' rule, T17). The pass
+   * name gets a third line for the same reason, T54's ellipsis only
+   * past that. */
+  .roster .name-text {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .pay-name {
+    -webkit-line-clamp: 3;
+  }
+
+  /* T59c review: at the 120px payment floor the stacked icons would
+   * leave the name 72px, less than "Membership"; the group wraps under
+   * the name instead, on the member's row alone. */
+  .cell-pay.has-guest {
+    flex-wrap: wrap;
+  }
+
+  .cell-pay.has-guest .pay-stack {
+    flex: 1 1 100%;
+  }
+
+  .cell-pay.has-guest .pay-icons {
+    flex-direction: row;
+  }
+}
