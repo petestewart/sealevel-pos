@@ -4656,7 +4656,10 @@ button.sale-for:disabled {
   color: var(--muted);
 }
 
-.member-label:first-of-type {
+/* The first label sits under the name line (.modal-entity), whose own
+ * bottom margin is the gap. :first-of-type could not select it: the
+ * title and the name are paragraphs too, so the label is never first. */
+.modal-entity + .member-label {
   margin-top: 0;
 }
 

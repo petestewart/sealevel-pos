@@ -6487,3 +6487,41 @@ modal was both a filter gap and a missing endpoint.
   and `AutopayStatus` is what the parser reads), and whether Mindbody's
   M can rest on a contract whose AutopayStatus is Inactive. The dev
   drawer records the call, so the first live tap answers both.
+
+### Review
+
+Reviewed `57ca533..work/t56` against the diff, the vendored spec and an
+extended mock (a member with a used-up pass with no `ExpirationDate`,
+used-up passes expiring studio-today and studio-yesterday, a sessionless
+kind at zero, a not-yet-active pack, a current pass with no expiry; a
+contracts answer delayed 2.5s for the two-client race). Run at 19:47
+PDT, when UTC was already the next day, so the midnight boundary was
+live: the pass expiring studio-today shows, yesterday's does not, and a
+UTC comparison would have dropped today's.
+
+Not defects, confirmed: the picker's `fetchPasses` query and result are
+unchanged (same URL with `ShowActiveOnly=true`, same spill scoping, same
+`Current !== false` filter, same `sessionless` handling, `usedUp` never
+on its rows). The modal state is keyed by client id, so a late answer
+for one client lands in that client's cache and never overwrites the
+modal open on another; the reopen then shows it without a second read.
+The modal survives a roster refresh, closes on X, scrim and Escape, has
+no text under 16px, and the X is the 44px icon idiom. The route is
+behind `requireSession`, reads only, 400 without a client id and 502 on
+either read failing, with the same error idiom as `/api/passes`. The
+client id is checked for presence, not for being a positive integer,
+which is `/api/passes`'s convention too; left as is. Both palettes use
+tokens only, no hex, no em dashes, no model identifiers.
+
+Changed: `.member-label:first-of-type` never matched (the modal's title
+and name lines are paragraphs before it), so the rule that was meant to
+remove the first label's top margin was dead; it is now
+`.modal-entity + .member-label`. Nothing else.
+
+Observed, not changed: an ended contract (`AutopayStatus: Inactive`,
+`EndDate` past) is listed under Contracts with its status and dates,
+while an expired pass is dropped. That is deliberate per the build
+notes (whether the M can rest on an Inactive contract is unverified
+live), but it means the "Nothing here explains it" line will not appear
+for a client whose only contract has ended; revisit once a live tap has
+answered the question.
