@@ -4242,10 +4242,13 @@ function FrontDesk({
      carry it: the button that got a teacher onto another day must never
      vanish with that day's empty schedule. */
   /* T60: the roster list, for the header tap that scrolls it to the top.
-     Smooth so the teacher sees the list travel rather than jump. */
+     Smooth so the teacher sees the list travel rather than jump, unless
+     the device asks for reduced motion (T60 review: WebKit drops the
+     animation on its own for that setting, Chromium does not). */
   const rosterRef = useRef<HTMLUListElement>(null);
   const scrollRosterToTop = () => {
-    rosterRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    rosterRef.current?.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
   };
 
   const calendarButton = (
@@ -4602,13 +4605,15 @@ function FrontDesk({
              should scroll the student list to the very top". Since T55
              the list is the scroll container and this row stays put
              above it, so it is the natural "back to the top" target for
-             a teacher thirty rows down. The sort control and its menu
-             live in .head-actions and keep their own taps. */
+             a teacher thirty rows down. The sort control, its scrim and
+             its menu keep their own taps (T60 review: only those, not
+             the whole actions column, which is 328px of head above the
+             check-in chips and scrolls like the rest). */
           role="button"
           tabIndex={0}
           aria-label="Scroll to the top of the list"
           onClick={(e) => {
-            if ((e.target as HTMLElement).closest(".head-actions")) return;
+            if ((e.target as HTMLElement).closest("button, .pass-scrim, .sort-dd")) return;
             scrollRosterToTop();
           }}
           onKeyDown={(e) => {
