@@ -93,6 +93,11 @@ button {
   /* Room under the last row so it clears the dev pill, and so the
    * bottom border is not the viewport's edge. */
   padding-bottom: 24px;
+  /* T57 review: the list is a grid, and stretching it to the viewport
+   * (flex: 1 1 auto) spread five rows over the whole height with a
+   * gap after each. Rows stay their own height, top-aligned. */
+  grid-auto-rows: max-content;
+  align-content: start;
 }
 
 /* --- Class header ---------------------------------------------------
