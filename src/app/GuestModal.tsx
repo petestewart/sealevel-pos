@@ -426,9 +426,25 @@ export default function GuestModal({
            * unchanged has nothing to give back, so only Close. */
           const removable =
             answer.bookedHere === true || (answer.ownPass ?? null) !== null;
+          /* T62 review: a visit this flow did NOT make (the guest was
+           * booked before, on their own pass) is still offered removal,
+           * since that is how the session comes back, but the sheet
+           * says the booking predates the tap: Remove takes it away
+           * too, and the teacher decides with that known. */
+          const preexisting = removable && answer.bookedHere !== true;
           setOutcome({
             lines: [
               { text: answer.error ?? "Mindbody did not use the guest pass.", tone: "stop" },
+              ...(preexisting
+                ? [
+                    {
+                      text:
+                        `${pick.person.name} was booked in this class before this. ` +
+                        `Remove takes that booking away too; Close keeps it as it is.`,
+                      tone: "warn" as const,
+                    },
+                  ]
+                : []),
               ...(removable
                 ? []
                 : [
