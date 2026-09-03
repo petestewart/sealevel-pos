@@ -19,7 +19,7 @@ import SaleScreen, {
   type ModeConfig,
   type SaleClient,
 } from "./SaleScreen";
-import { ClientProfileCard } from "./ClientProfileCard";
+import { ClientProfileCard, wallDate } from "./ClientProfileCard";
 import StaffModal, { firstName, type Teacher } from "./StaffModal";
 import { actorFallbackLine } from "./actornote";
 import { useSettings } from "./settings";
@@ -295,10 +295,12 @@ type PayOutcome =
  */
 type RosterSort = "signin" | "last" | "first";
 
+/* T52 (Pete): "the sort options should be in order: sign-in order,
+ * first name, last name". */
 const ROSTER_SORTS: { value: RosterSort; label: string }[] = [
   { value: "signin", label: "Sign-in order" },
-  { value: "last", label: "Last name" },
   { value: "first", label: "First name" },
+  { value: "last", label: "Last name" },
 ];
 
 const ROSTER_SORT_KEY = "pos.rosterSort";
@@ -318,6 +320,27 @@ function CloseIcon() {
         strokeLinecap="round"
         d="M6 6l12 12M18 6L6 18"
       />
+    </svg>
+  );
+}
+
+/** Magnifying glass: the submit control on both search bars (T52, Pete:
+ *  "the 'search' button can be replaced with a magnifying glass icon").
+ *  currentColor, so it takes the button's ink in both palettes. */
+function SearchIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="26"
+      height="26"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="M15.5 15.5L21 21" />
     </svg>
   );
 }
@@ -984,6 +1007,13 @@ function FrontDesk() {
    *  Mindbody about everyone. On by default with the roster's current
    *  class, which is what Pete asked to land on. */
   const [attachInClass, setAttachInClass] = useState(true);
+  /** T52: the attach modal turned "In class" off by itself because the
+   *  submitted query matched nobody in the class (Pete: "the 'in class'
+   *  filter should turn off and the non-filtered results should
+   *  display"; behind the autoWidenSearch setting). Drives the one line
+   *  over the rows that says so; cleared by the toggle, the X, a new
+   *  submit and the close. */
+  const [autoWidened, setAutoWidened] = useState(false);
   const [attachSeg, setAttachSeg] = useState<AttachSegment>("all");
   /** The client profile modal (T42): who it is about, and the read. The
    *  fetch fires on OPEN, not on the icon's render, since the profile is
@@ -1001,6 +1031,16 @@ function FrontDesk() {
   const profileGen = useRef(0);
   /** Tunables live in the dev drawer's settings tab, so the ones that have
    *  already been wrong once can be adjusted without a commit. */
+  /** T52: the Membership modal behind a roster row's M chip (Pete:
+   *  "clicking on an 'M' icon should show more info about their
+   *  membership"). It reads the row's pass list, the one /api/passes
+   *  answer the payment chevron and the background sweep already share
+   *  (`passLists`), so opening it costs nothing when the sweep has been
+   *  past and one metered call otherwise. No new Mindbody endpoint. */
+  const [memberView, setMemberView] = useState<{
+    clientId: string;
+    name: string;
+  } | null>(null);
   const { settings } = useSettings();
   /** Whether the search-results modal is open. */
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1921,6 +1961,7 @@ function FrontDesk() {
       setSearchTitle(q);
       setSearchOpen(true);
       setSearchError(null);
+      setAutoWidened(false);
       setSearchPage({ offset: 0, total: null, done: true });
       /* A new search is a new set of people: any pass chosen for the old
        * results must not silently apply to a same-id row in the new ones. */
@@ -1932,14 +1973,38 @@ function FrontDesk() {
   );
 
   const submitSearch = useCallback(() => {
+    const q = query.trim();
     /* With the attach modal's in-class filter on, the query filters the
      * roster in memory as it is typed (T42), so Enter has nothing to ask
-     * Mindbody for. */
+     * Mindbody for... unless it matched nobody. T52 (Pete): "if there
+     * are none in that class, and the 'in class' filter is on, the 'in
+     * class' filter should turn off and the non-filtered results should
+     * display." Counted against the WHOLE picked roster, not the
+     * segment: someone hidden by "Signed in" is still in class, and
+     * widening to everyone would answer the wrong question. A roster
+     * still loading cannot say nobody matched, so it is left alone. The
+     * toggle visibly flips (setAttachInClass), and the line over the
+     * rows says why. */
     if (attachMode && attachInClass) {
       setSearchMsg(null);
+      const roster = attachClassId === activeId ? entries : attachRoster.entries;
+      if (!settings.autoWidenSearch || !q || roster === null) return;
+      const lq = q.toLowerCase();
+      if (roster.some((en) => en.name.toLowerCase().includes(lq))) return;
+      if (q.length < settings.minQueryLength) {
+        setSearchMsg(
+          `Nobody in class matched. Type at least ${settings.minQueryLength} letters to search everyone.`,
+        );
+        return;
+      }
+      setAttachInClass(false);
+      setAttachClassMenuOpen(false);
+      startSearch(q);
+      /* After startSearch, which resets it: the same render batch, so
+       * the flag lands true. */
+      setAutoWidened(true);
       return;
     }
-    const q = query.trim();
     if (q.length < settings.minQueryLength) {
       setSearchMsg(
         `Type at least ${settings.minQueryLength} letters, then search.`,
@@ -1947,7 +2012,18 @@ function FrontDesk() {
       return;
     }
     startSearch(q);
-  }, [attachInClass, attachMode, query, settings.minQueryLength, startSearch]);
+  }, [
+    activeId,
+    attachClassId,
+    attachInClass,
+    attachMode,
+    attachRoster.entries,
+    entries,
+    query,
+    settings.autoWidenSearch,
+    settings.minQueryLength,
+    startSearch,
+  ]);
 
   /** The next page, when the list's sentinel scrolls into view (T42).
    *  One metered call, and only when the last page said there is more;
@@ -1991,6 +2067,7 @@ function FrontDesk() {
   const clearSearch = useCallback(() => {
     setQuery("");
     setSearchMsg(null);
+    setAutoWidened(false);
     stopSearch();
   }, [stopSearch]);
 
@@ -2001,6 +2078,7 @@ function FrontDesk() {
     setSearchOpen(false);
     setQuery("");
     stopSearch();
+    setAutoWidened(false);
     setAttachMode(false);
     setAttachClassMenuOpen(false);
   }, [stopSearch]);
@@ -2025,6 +2103,7 @@ function FrontDesk() {
     setAttachRoster({ entries: null, loading: false, error: null });
     /* T42: land on the current class's whole roster every time. */
     setAttachInClass(true);
+    setAutoWidened(false);
     setAttachSeg("all");
     /* The day window anchors on the SELECTED class's date (not the
      * browser clock): the quick-pick is about the day that class sits
@@ -2114,6 +2193,10 @@ function FrontDesk() {
    */
   const toggleAttachInClass = useCallback(() => {
     setAttachClassMenuOpen(false);
+    /* A deliberate tap on the toggle, either way, ends the auto-widened
+     * state (T52): the line over the rows explains a flip the teacher
+     * did not make, not one they did. */
+    setAutoWidened(false);
     const next = !attachInClass;
     setAttachInClass(next);
     if (next) {
@@ -2176,6 +2259,17 @@ function FrontDesk() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [profileView, closeProfile]);
+
+  /** Escape closes the Membership modal (T52). It opens from a roster
+   *  row only, so no other layer's handler needs to stand down for it. */
+  useEffect(() => {
+    if (!memberView) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMemberView(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [memberView]);
 
   /** The attach-mode row action: select the client for the sale and
    *  close. Writes nothing, books nothing, gates nothing -- buying a
@@ -2944,27 +3038,25 @@ function FrontDesk() {
    * call per client per session. A failed fetch is not cached, so closing
    * and reopening the dropdown is the retry path.
    */
-  const openPicker = useCallback(
-    (entry: RosterEntry) => {
-      setPassMsg(null);
-      setPickerFor(entry.clientId);
-      const have = passLists[entry.clientId];
+  const ensurePassList = useCallback(
+    (clientId: string) => {
+      const have = passLists[clientId];
       if (have?.data || have?.loading) return;
       setPassLists((l) => ({
         ...l,
-        [entry.clientId]: { data: null, error: null, loading: true },
+        [clientId]: { data: null, error: null, loading: true },
       }));
-      fetch(`/api/passes?clientId=${encodeURIComponent(entry.clientId)}`)
+      fetch(`/api/passes?clientId=${encodeURIComponent(clientId)}`)
         .then(async (r) => {
           const body = await r.json();
           if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
           const passes = (body?.passes ?? []) as PassInfo[];
           /* Claim the sweep's ledger too, so a later sweep does not spend
            * a second call on a client this fetch already answered. */
-          passSweepCache.current.set(entry.clientId, passes);
+          passSweepCache.current.set(clientId, passes);
           setPassLists((l) => ({
             ...l,
-            [entry.clientId]: {
+            [clientId]: {
               data: passes,
               error: null,
               loading: false,
@@ -2974,7 +3066,7 @@ function FrontDesk() {
         .catch((err) => {
           setPassLists((l) => ({
             ...l,
-            [entry.clientId]: {
+            [clientId]: {
               data: null,
               error: err instanceof Error ? err.message : String(err),
               loading: false,
@@ -2983,6 +3075,28 @@ function FrontDesk() {
         });
     },
     [passLists],
+  );
+
+  const openPicker = useCallback(
+    (entry: RosterEntry) => {
+      setPassMsg(null);
+      setPickerFor(entry.clientId);
+      ensurePassList(entry.clientId);
+    },
+    [ensurePassList],
+  );
+
+  /** The M chip's tap (T52): the Membership modal, fed from the same
+   *  pass cache the chevron reads (ensurePassList is the shared fetch,
+   *  split out of openPicker for this). */
+  const openMember = useCallback(
+    (entry: RosterEntry) => {
+      setPickerFor(null);
+      setSortMenuOpen(false);
+      setMemberView({ clientId: entry.clientId, name: entry.name });
+      ensurePassList(entry.clientId);
+    },
+    [ensurePassList],
   );
 
   /**
@@ -4057,6 +4171,24 @@ function FrontDesk() {
               </span>
             ) : null}
           </span>
+          {/* T52 (Pete: "the search results should have the profile
+              icon/button so a user can verify more info if needed"):
+              the roster's profile icon, on every attach row, class or
+              search. Opens the profile only; the stopPropagation keeps
+              it off the row's attach tap. */}
+          <div className="cell-actions">
+            <button
+              className="row-icon"
+              onClick={(e) => {
+                e.stopPropagation();
+                openProfile(client.id, client.name);
+              }}
+              aria-label={`Profile for ${client.name}`}
+              title="Client profile"
+            >
+              <PersonIcon />
+            </button>
+          </div>
         </div>
       </li>
     );
@@ -4181,6 +4313,10 @@ function FrontDesk() {
               carries the "N booked" line the modal had; the collapsed
               line does not, because the header's counters already say it
               for the class in front of you. */}
+          {/* T52 (Pete): "the calendar icon should be butted up against
+              the class selector". One group, the dropdown and the day
+              control sharing an edge, like an input with an addon. */}
+          <div className="class-group">
           <div className="class-pick">
             <button
               className="class-change class-pick-btn"
@@ -4254,6 +4390,7 @@ function FrontDesk() {
             ) : null}
           </div>
           {calendarButton}
+          </div>
           {/* Opens the Buy overlay (T23; "Buy" since the second live
               test -- the counter conversation is the student's, "I want
               to buy a mat"). Quiet like "Change class": selling is
@@ -4379,8 +4516,13 @@ function FrontDesk() {
             </button>
           ) : null}
         </div>
-        <button className="search-go" onClick={submitSearch}>
-          Search
+        <button
+          className="search-go"
+          onClick={submitSearch}
+          aria-label="Search"
+          title="Search"
+        >
+          <SearchIcon />
         </button>
       </div>
       {searchMsg ? <p className="search-quiet">{searchMsg}</p> : null}
@@ -4544,10 +4686,23 @@ function FrontDesk() {
                     separate alert and notes icons folded into it. */}
                 <div className="cell-icons">
                   <span className="icon-slot">
+                    {/* T52: the M is a button now (Pete: "clicking on an
+                        'M' icon should show more info about their
+                        membership"), the 44px icon idiom with the chip
+                        as its face, opening the Membership modal. */}
                     {entry.member ? (
-                      <span className="m-chip" title="Member" aria-label="Member">
-                        M
-                      </span>
+                      <button
+                        className="m-chip-btn"
+                        title="Membership"
+                        aria-label={`Membership for ${entry.name}`}
+                        aria-haspopup="dialog"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openMember(entry);
+                        }}
+                      >
+                        <span className="m-chip">M</span>
+                      </button>
                     ) : null}
                   </span>
                   <span className="icon-slot">
@@ -4861,8 +5016,13 @@ function FrontDesk() {
                     </button>
                   ) : null}
                 </div>
-                <button className="search-go" onClick={submitSearch}>
-                  Search
+                <button
+                  className="search-go"
+                  onClick={submitSearch}
+                  aria-label="Search"
+                  title="Search"
+                >
+                  <SearchIcon />
                 </button>
               </div>
             ) : null}
@@ -5097,6 +5257,11 @@ function FrontDesk() {
                         }
                         aria-busy={searching || searchMore}
                       >
+                        {autoWidened && !attachInClass ? (
+                          <p className="attach-line attach-widened" role="status">
+                            Nobody in class matched. Showing everyone.
+                          </p>
+                        ) : null}
                         {searching ? (
                           <p className="attach-line">
                             <span className="spinner" aria-label="working" />{" "}
@@ -5557,6 +5722,81 @@ function FrontDesk() {
         </div>
       ) : null}
 
+      {/* The Membership modal (T52): what the roster's M chip opens.
+          What the app already knows about the client's memberships and
+          passes, from the pass sweep's cache: name, what is left (or
+          Unlimited, for the sessionless kinds), expiry. Read-only; the
+          X, the scrim and Escape close it. */}
+      {memberView
+        ? (() => {
+            const list = passLists[memberView.clientId];
+            const passes = list?.data ?? null;
+            return (
+              <div
+                className="modal-scrim"
+                onClick={() => setMemberView(null)}
+                role="presentation"
+              >
+                <div
+                  className="modal modal-list modal-member"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={`Membership for ${memberView.name}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    className="row-icon modal-x"
+                    aria-label="Close"
+                    onClick={() => setMemberView(null)}
+                  >
+                    <CloseIcon />
+                  </button>
+                  <p className="modal-title">Membership</p>
+                  <p className="modal-entity">{memberView.name}</p>
+                  {passes === null ? (
+                    list?.error ? (
+                      <p className="note">
+                        Could not read the passes: {list.error}
+                      </p>
+                    ) : (
+                      <p className="muted">
+                        <span className="spinner" aria-label="working" />{" "}
+                        Reading the passes from Mindbody...
+                      </p>
+                    )
+                  ) : passes.length === 0 ? (
+                    <p className="muted">
+                      No current memberships or passes on file.
+                    </p>
+                  ) : (
+                    <ul className="profile-passes member-passes">
+                      {passes.map((p, i) => (
+                        <li key={p.id ?? `${p.name}-${i}`} className="profile-pass">
+                          <span className="profile-pass-name">{p.name}</span>
+                          <span className="profile-pass-meta">
+                            {/* fakeUnlimited applies everywhere a pass
+                                renders: a membership's 99999 is not a
+                                count. */}
+                            {p.remaining === null ||
+                            fakeUnlimited(p.count, p.remaining)
+                              ? "Unlimited"
+                              : p.count !== null
+                                ? `${p.remaining} of ${p.count} left`
+                                : `${p.remaining} left`}
+                            {p.expires
+                              ? ` · expires ${wallDate(p.expires)}`
+                              : " · no expiry"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            );
+          })()
+        : null}
+
       {/* The lists behind the counters. Signed up and checked in render
           from roster state already in memory, so opening them costs no
           call. The waitlist modal is the ONE place the queue appears as
@@ -5581,6 +5821,13 @@ function FrontDesk() {
             }
             onClick={(e) => e.stopPropagation()}
           >
+            <button
+              className="row-icon modal-x"
+              aria-label="Close"
+              onClick={() => setCounterModal(null)}
+            >
+              <CloseIcon />
+            </button>
             <p className="modal-title">
               {counterModal === "checkedIn"
                 ? `Checked in (${entries.filter((e) => e.checkedIn).length} of ${entries.length})`
@@ -5664,14 +5911,6 @@ function FrontDesk() {
               </>
             ) : null}
 
-            <div className="modal-actions">
-              <button
-                className="modal-cancel"
-                onClick={() => setCounterModal(null)}
-              >
-                Close
-              </button>
-            </div>
           </div>
         </div>
       ) : null}
@@ -5699,6 +5938,17 @@ function FrontDesk() {
             aria-label={`Alerts and notes for ${infoView.name}`}
             onClick={(e) => e.stopPropagation()}
           >
+            {/* T52 (Pete: "the info view should not have a big Close
+                button, just an X like other modals"). Rests while a
+                save is on the wire, like the scrim and Cancel. */}
+            <button
+              className="row-icon modal-x"
+              aria-label="Close"
+              disabled={infoSaving}
+              onClick={closeInfoView}
+            >
+              <CloseIcon />
+            </button>
             <p className="modal-title">{infoView.name}</p>
             {(
               [
@@ -5765,37 +6015,33 @@ function FrontDesk() {
             {infoMsg ? (
               <p className="pass-note modal-note-gap">{infoMsg}</p>
             ) : null}
-            <div className="modal-actions">
-              {infoEditing !== null ? (
-                <>
-                  <button
-                    className="modal-cancel"
-                    disabled={infoSaving}
-                    onClick={() => {
-                      setInfoEditing(null);
-                      setInfoMsg(null);
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="modal-confirm go"
-                    disabled={infoSaving}
-                    onClick={() => void saveInfoField()}
-                  >
-                    {infoSaving ? (
-                      <span className="spinner" aria-label="working" />
-                    ) : (
-                      "Save"
-                    )}
-                  </button>
-                </>
-              ) : (
-                <button className="modal-cancel" onClick={closeInfoView}>
-                  Close
+            {/* Cancel and Save are a decision pair and stay; the lone
+                Close they alternated with is the X now (T52). */}
+            {infoEditing !== null ? (
+              <div className="modal-actions">
+                <button
+                  className="modal-cancel"
+                  disabled={infoSaving}
+                  onClick={() => {
+                    setInfoEditing(null);
+                    setInfoMsg(null);
+                  }}
+                >
+                  Cancel
                 </button>
-              )}
-            </div>
+                <button
+                  className="modal-confirm go"
+                  disabled={infoSaving}
+                  onClick={() => void saveInfoField()}
+                >
+                  {infoSaving ? (
+                    <span className="spinner" aria-label="working" />
+                  ) : (
+                    "Save"
+                  )}
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -5828,6 +6074,16 @@ function FrontDesk() {
             aria-label="Liability waiver needed"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* T52: the X closes with no action, in both shapes; it rests
+                while an agreement is being recorded, as the scrim does. */}
+            <button
+              className="row-icon modal-x"
+              aria-label="Close"
+              disabled={waiverSaving}
+              onClick={closeWaiverDialog}
+            >
+              <CloseIcon />
+            </button>
             {/* Titled the way Mindbody's own dialog is: the document name
                 on top, the person as the line beneath it. */}
             <p className="modal-title">Liability Waiver</p>
@@ -5921,11 +6177,11 @@ function FrontDesk() {
                     agreement here requires the full text to be read first.
                   </p>
                 )}
-                <div className="modal-actions">
-                  <button className="modal-cancel" onClick={closeWaiverDialog}>
-                    Close
-                  </button>
-                  {!waiverFetchError ? (
+                {/* The big Close left with T52; the X above is the way
+                    out, and with the text unavailable there is no
+                    second action to pair a button with. */}
+                {!waiverFetchError ? (
+                  <div className="modal-actions">
                     <button
                       className="modal-confirm go"
                       disabled={waiverLoading}
@@ -5937,8 +6193,8 @@ function FrontDesk() {
                         "Read the waiver"
                       )}
                     </button>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
               </>
             )}
           </div>
@@ -5964,6 +6220,13 @@ function FrontDesk() {
             aria-label="Pick a day"
             onClick={(e) => e.stopPropagation()}
           >
+            <button
+              className="row-icon modal-x"
+              aria-label="Close"
+              onClick={() => setCalOpen(false)}
+            >
+              <CloseIcon />
+            </button>
             <div className="cal-head">
               <button
                 className="cal-nav"
@@ -6062,6 +6325,13 @@ function FrontDesk() {
             aria-label="Confirm check out"
             onClick={(e) => e.stopPropagation()}
           >
+            <button
+              className="row-icon modal-x"
+              aria-label="Close"
+              onClick={() => setCheckingOut(null)}
+            >
+              <CloseIcon />
+            </button>
             <p className="modal-title">Check out {checkingOut.name}?</p>
             <p className="muted">
               This marks them as not having attended. Only do it if the
@@ -6107,6 +6377,17 @@ function FrontDesk() {
             aria-label="Confirm removal from class"
             onClick={(e) => e.stopPropagation()}
           >
+            <button
+              className="row-icon modal-x"
+              aria-label="Close"
+              disabled={cancelBusy}
+              onClick={() => {
+                setCancelling(null);
+                setCancelMsg(null);
+              }}
+            >
+              <CloseIcon />
+            </button>
             <p className="modal-title">
               Remove {cancelling.entry.name} from this class?
             </p>
@@ -6164,6 +6445,18 @@ function FrontDesk() {
             }
             onClick={(e) => e.stopPropagation()}
           >
+            {/* T52: the X only while no stage is on the wire; the
+                Close / Not now / Cancel button below is a decision
+                control and keeps its wording. */}
+            {payStage === null ? (
+              <button
+                className="row-icon modal-x"
+                aria-label="Close"
+                onClick={closePayDialog}
+              >
+                <CloseIcon />
+              </button>
+            ) : null}
             <p className="modal-title">
               {payDialog.flavor === "renewal"
                 ? "Last session used. Sell the next pack?"
@@ -6399,6 +6692,13 @@ function FrontDesk() {
             aria-label="Confirm waiting list"
             onClick={(e) => e.stopPropagation()}
           >
+            <button
+              className="row-icon modal-x"
+              aria-label="Close"
+              onClick={() => setWaitlistPrompt(null)}
+            >
+              <CloseIcon />
+            </button>
             <p className="modal-title">
               This class is full
               {activeClass &&

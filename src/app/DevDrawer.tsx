@@ -267,6 +267,11 @@ const FLAGS: { key: keyof Settings; label: string; hint: string }[] = [
     label: "Unpaid opens Pay and check in",
     hint: "gate a booking with no pass behind the pay dialog (off = check in free directly)",
   },
+  {
+    key: "autoWidenSearch",
+    label: "Widen a search that finds nobody in class",
+    hint: "in the attach modal, a query matching nobody in the class turns In class off and searches everyone (T52)",
+  },
 ];
 
 function SettingsPanel({

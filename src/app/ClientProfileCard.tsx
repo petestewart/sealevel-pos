@@ -117,11 +117,26 @@ export function ClientProfileCard({
         ) : null}
       </div>
 
-      {profile.redAlert ? (
-        <p className="ctx-alert profile-alert">{profile.redAlert}</p>
-      ) : null}
-      {profile.yellowAlert ? (
-        <p className="modal-warn">{profile.yellowAlert}</p>
+      {/* T52 (Pete: "the profile view should also have any notes/alerts
+          in its display if there are any"): one block under the name,
+          the red alert in the stop pair, the yellow in the warn pair,
+          the notes plain, each only when Mindbody has text for it and
+          the block itself only when any does. The fields ride the same
+          /client/clients read the roster uses (RedAlert, YellowAlert,
+          Notes); nothing extra is fetched. */}
+      {profile.redAlert || profile.yellowAlert || profile.notes ? (
+        <div className="profile-notes">
+          <p className="profile-label">Alerts and notes</p>
+          {profile.redAlert ? (
+            <p className="ctx-alert profile-alert">{profile.redAlert}</p>
+          ) : null}
+          {profile.yellowAlert ? (
+            <p className="modal-warn">{profile.yellowAlert}</p>
+          ) : null}
+          {profile.notes ? (
+            <p className="modal-note">{profile.notes}</p>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="profile-grid">
@@ -211,13 +226,6 @@ export function ClientProfileCard({
           ))}
         </ul>
       )}
-
-      {profile.notes ? (
-        <>
-          <p className="profile-label profile-section">Notes</p>
-          <p className="modal-note">{profile.notes}</p>
-        </>
-      ) : null}
     </div>
   );
 }
