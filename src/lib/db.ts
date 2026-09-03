@@ -489,6 +489,25 @@ export async function insertCompReceipt(receipt: {
 /* --- Guest visits (T62) ---------------------------------------------- */
 
 /**
+ * T62 review: a database that is black-holed (the host drops packets
+ * rather than refusing) costs the FIRST call after each 30s cooldown the
+ * full 5s connect timeout, measured at 5022ms on a roster read. The
+ * roster is the counter's hot path and the marker is a caption, so a
+ * marker read or write waits at most `ms` for the database and then
+ * takes its fallback; the attempt itself runs on, so a connection that
+ * fails still sets the cooldown and a slow one still lands its row.
+ */
+export function boundedDb<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+
+export const DB_MARKER_WAIT_MS = 750;
+
+/**
  * The durable "Guest of" marker. Upserted on the visit id: a visit is
  * one guest's, and a repeat write (a retry that landed twice) keeps the
  * latest names. Returns whether the row landed; false is "no database,

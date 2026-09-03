@@ -9,7 +9,7 @@ import {
 } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 import { fetchPasses } from "@/lib/clientcontext";
-import { insertGuestVisit } from "@/lib/db";
+import { boundedDb, DB_MARKER_WAIT_MS, insertGuestVisit } from "@/lib/db";
 import { fileFormulaNote } from "@/lib/formulanote";
 import {
   ignoredPassMessage,
@@ -292,18 +292,28 @@ export async function POST(request: Request) {
    * sign-in, which is a separate write that can fail on its own): the
    * fact recorded is whose pass paid, and the roster shows it after a
    * reload. Best effort by the charter: no database, or a dead one, is
-   * one log line and the page's memory for this class view. */
+   * one log line and the page's memory for this class view. T62 review:
+   * a slow one is not waited for either (DB_MARKER_WAIT_MS); the insert
+   * runs on and the log says which it was. */
   const marker = async (visit: number) => {
-    const ok = await insertGuestVisit({
-      visitId: visit,
-      classId,
-      guestClientId,
-      memberClientId,
-      memberName: memberName ?? "a member",
-      guestName: guestName ?? "a guest",
-      staffId: session ? String(session.staffId) : null,
-    });
-    if (!ok) console.log(`[guest] marker not stored (no database): visit=${visit}`);
+    const ok = await boundedDb<boolean | "slow">(
+      insertGuestVisit({
+        visitId: visit,
+        classId,
+        guestClientId,
+        memberClientId,
+        memberName: memberName ?? "a member",
+        guestName: guestName ?? "a guest",
+        staffId: session ? String(session.staffId) : null,
+      }),
+      DB_MARKER_WAIT_MS,
+      "slow",
+    );
+    if (ok === "slow") {
+      console.log(`[guest] marker not confirmed in ${DB_MARKER_WAIT_MS}ms: visit=${visit}`);
+    } else if (!ok) {
+      console.log(`[guest] marker not stored (no database): visit=${visit}`);
+    }
   };
 
   /* Step 2: the guest. */

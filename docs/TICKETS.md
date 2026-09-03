@@ -7879,3 +7879,88 @@ transient Formula Note failure re-probing "not enabled" within a
 process (it is a fresh-process question by design); the walk-in
 search's own pass picker, which can still name a guest pass on a
 booking for the member (T59c left it too).
+
+### Review
+
+Adversarial pass over `9a47aea..work/t62` with the mock extended
+(scratchpad/t62/rv-mock.js: the guest's own pass renamed "Guest Pass",
+the member's count moving while the visit lands elsewhere, a
+pre-existing PAID booking for the guest, notes with CRLF and trailing
+blank lines; rv-review.js, modes api/notes/db/deaddb/deaddb2/ui/ui2)
+against a Postgres 16 cluster on 5462, a refused port, and a
+black-holed host.
+
+Confirmed and fixed (two commits, `T62 review: ...`):
+
+- **A pre-existing booking was offered for removal without saying
+  so.** A guest already in the class on their OWN pass (reachable from
+  the modal through search, with the amber "the guest pass will
+  replace it" line on the confirm sheet) whose pass change Mindbody
+  ignored got the ignored sheet with "Remove from class" and no word
+  that the booking predated the tap; `bookedHere: false` was on the
+  answer and unused. The sheet now adds an amber line: "<guest> was
+  booked in this class before this. Remove takes that booking away
+  too; Close keeps it as it is." Removal stays offered (it is how the
+  guest's session comes back), Close keeps the booking. Light and dark
+  screenshots rv-preexisting-*.png.
+- **A black-holed database slowed the roster 5s once per cooldown.**
+  With DATABASE_URL pointing at a host that drops packets, the roster
+  read after each 30s cooldown lapsed took 5022ms (the pool's connect
+  timeout); the implementer's dead-database numbers were measured on a
+  REFUSED port, which fails in a millisecond and hides this. The marker
+  read and write now wait at most 750ms (`boundedDb`, `DB_MARKER_WAIT_MS`
+  in db.ts) and take their fallback; the attempt runs on, so the
+  cooldown still sets and a merely slow insert still lands. Measured
+  after: 774ms once, then 16ms. The guest route logs "marker not
+  confirmed in 750ms" for that case, distinct from "not stored".
+
+Not defects, checked:
+
+- The judge decides by purchase-instance id, never by name: a guest
+  whose own pass is called "Guest Pass" is refused when Mindbody used
+  it (409 naming "Guest Pass") and confirmed when the sent id landed
+  (`verified: true`, the visit's Service.Id the member's 7001).
+- Count moved but the visit is on another pass: ignored, nothing else
+  written. Removal then gives the guest's session back while the
+  member's count stays wherever Mindbody left it; the sheet's sentence
+  cannot know which, and the log line carries both.
+- Count unmoved with the visit on the pass: ignored (the brief's
+  "or"). A read-after-write lag at Mindbody would trip this as a false
+  refusal; the remedy (removal) is safe either way and the alternative
+  is the silent "done" the probe caught. Watch for it live.
+- Both reads failing after the write: 200 with `verified: false`, and
+  the sign-in, the member's sign-in and the two notes still go out
+  (the ticket's design; the amber line says the pass is unconfirmed).
+  No marker is written for an unverified flow.
+- The 409 body is `error, step, refused, ignored, guestVisitId,
+  bookedHere, ownPass` (plus the actor fallback fields): a pass name
+  and ids, nothing else. No write follows the ignored verdict (one
+  write on the mock's call list in every ignored case).
+- Removal is the cancel-visit route by client and class; one tap in
+  flight, two synchronous taps sent one `removeclientfromclass`.
+- Formula Notes: the regex matches "This site does not have formula
+  notes enabled", "Formula notes are not enabled for this site",
+  "Formula Note is not enabled", and not "You do not have permission
+  to add formula notes" or "Client not found". A 500 on the Formula
+  Note does not fall back and does not trip the memo; a "not enabled"
+  answer later in the same process does. The append keeps existing
+  entries and signatures as they were (CRLF inside them included),
+  strips only trailing whitespace before the blank-line separator,
+  signs with the session's name and the studio date. The read and the
+  write are two calls, the same window the waiver receipt has.
+  Checkout's answer shape: `ok, method, total, saleId, cartId,
+  receiptRequested, emailReceipt, noteVia` (T62's build log).
+- The table holds ids, two names as labels and a staff id; migration 7
+  is `CREATE TABLE IF NOT EXISTS`, versioned with the others (1..7).
+  The roster query is one parameterised `= ANY($1::bigint[])` over the
+  visit ids on screen; a marker whose guest is not the visit's client
+  captions nobody. The upsert on the visit id updates the names and
+  the client ids and keeps `class_id`; a visit id is one Mindbody
+  visit, so it cannot re-point a marker to another guest's visit.
+- The modal box is 720x640 in all five states at 1180x820 and
+  820x1180, and 720x504 (84dvh) at 1024x600, the bottom button 64px at
+  25px from the edge and inside the box in every state; the rows
+  scroll (`overflow-y: auto`); nothing under 16px; no em dashes; no
+  model identifiers outside the commit trailers; no new hex in CSS.
+  SaleScreen.tsx, sale.ts, the header and the membership modal are not
+  in the diff. `npm run typecheck` and `npm run build` green.
