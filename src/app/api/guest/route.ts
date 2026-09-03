@@ -9,10 +9,21 @@ import {
 } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 import { fetchPasses } from "@/lib/clientcontext";
+import { boundedDb, DB_MARKER_WAIT_MS, insertGuestVisit } from "@/lib/db";
 import { fileFormulaNote } from "@/lib/formulanote";
-import { isGuestPass } from "@/lib/guestpass";
+import {
+  ignoredPassMessage,
+  isGuestPass,
+  judgeGuestPass,
+  type GuestPassVerdict,
+} from "@/lib/guestpass";
 import { mindbodyHttpStatus } from "@/lib/mindbody";
-import { bookClientIntoClass, setSignedIn, setVisitService } from "@/lib/roster";
+import {
+  bookClientIntoClass,
+  setSignedIn,
+  setVisitService,
+  visitPayment,
+} from "@/lib/roster";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +59,19 @@ export const dynamic = "force-dynamic";
  *      refused: true, error}` with Mindbody's exact words and nothing
  *      else written, so Pete's probe reports the truth and mechanism B
  *      stays a small change here rather than a redesign.
+ *   2b. T62: the pass, READ BACK. Pete's live probe (2026-09-04) found
+ *      Mindbody accepting the member's pass id and paying the guest's
+ *      visit with the guest's own pass, silently; the app said "done".
+ *      So between the first write and the sign-in, the visit's pass
+ *      (the booking answer's ServiceId, else a `/class/classvisits`
+ *      re-read) and the member's pass count (re-read) are compared with
+ *      what was sent (judgeGuestPass). An ignored id answers 409
+ *      `{step: "guest", refused: true, ignored: true, error}` naming the
+ *      pass Mindbody used, with the guest NOT signed in and nothing else
+ *      written: the sheet offers "Remove from class", which gives the
+ *      guest's own session back. The mechanism that replaces A is still
+ *      open (Pete is finding out how the front desk does it); this
+ *      makes the step honest without changing the calls it makes.
  *   3. The member: signed in when the browser says they are not yet
  *      (`memberVisitId`); skipped otherwise. A failure here is a
  *      partial, reported as such: the guest landed, the member did not.
@@ -228,6 +252,70 @@ export async function POST(request: Request) {
    * suppressed): a refusal after that is a partial, not a clean 409. */
   let landed = false;
 
+  /* T62: what the read-back after the guest's first write found. Null
+   * until there was a write to read back. "unverified" (both reads
+   * failed) is reported on the sheet in amber, never dressed as
+   * confirmed. */
+  let verification: PassVerification | null = null;
+  const ignoredResponse = (v: PassVerification, visit: number, bookedHere: boolean) => {
+    const error = ignoredPassMessage({
+      guestName: guestName ?? "the guest",
+      memberName: memberName ?? "the member",
+      ownPass: v.ownPass,
+    });
+    console.warn(
+      `[guest] ignored member=${memberClientId} guest=${guestClientId} ` +
+        `service=${clientServiceId} class=${classId} visit=${visit} ` +
+        `paidWith=${v.visitServiceId ?? "none"} remaining=${v.remaining}: ${JSON.stringify(error)}`,
+    );
+    return NextResponse.json(
+      {
+        error,
+        step: "guest",
+        refused: true,
+        ignored: true,
+        guestVisitId: visit,
+        /* Whether this flow created the visit: the sheet offers removal
+         * for a visit it made or one now on the guest's own pass, and
+         * only Close for a booking that was there before and is
+         * unchanged (nothing to give back). */
+        bookedHere,
+        ownPass: v.ownPass,
+        ...fallbackFields(fallbacks),
+      },
+      { status: 409 },
+    );
+  };
+
+  /* T62: the durable "Guest of" marker, written the moment the
+   * read-back confirms the visit is on the member's pass (before the
+   * sign-in, which is a separate write that can fail on its own): the
+   * fact recorded is whose pass paid, and the roster shows it after a
+   * reload. Best effort by the charter: no database, or a dead one, is
+   * one log line and the page's memory for this class view. T62 review:
+   * a slow one is not waited for either (DB_MARKER_WAIT_MS); the insert
+   * runs on and the log says which it was. */
+  const marker = async (visit: number) => {
+    const ok = await boundedDb<boolean | "slow">(
+      insertGuestVisit({
+        visitId: visit,
+        classId,
+        guestClientId,
+        memberClientId,
+        memberName: memberName ?? "a member",
+        guestName: guestName ?? "a guest",
+        staffId: session ? String(session.staffId) : null,
+      }),
+      DB_MARKER_WAIT_MS,
+      "slow",
+    );
+    if (ok === "slow") {
+      console.log(`[guest] marker not confirmed in ${DB_MARKER_WAIT_MS}ms: visit=${visit}`);
+    } else if (!ok) {
+      console.log(`[guest] marker not stored (no database): visit=${visit}`);
+    }
+  };
+
   /* Step 2: the guest. */
   try {
     if (guestVisitId !== null) {
@@ -239,6 +327,21 @@ export async function POST(request: Request) {
       if (paid.result.suppressed) {
         steps.guest = "suppressed";
       } else {
+        /* T62: read back before the sign-in. updateclientvisit answers
+         * with no pass on the visit, so this is the class's visit list
+         * plus the member's pass count. */
+        verification = await verifyPass({
+          classId,
+          visitId: guestVisitId,
+          sent: clientServiceId,
+          memberClientId,
+          remainingBefore: pass.remaining ?? 0,
+          fromAnswer: null,
+        });
+        if (verification.verdict === "ignored") {
+          return ignoredResponse(verification, guestVisitId, false);
+        }
+        if (verification.verdict === "landed") await marker(guestVisitId);
         const signed = await runAsActor(session, "/api/guest checkin", (actor) =>
           setSignedIn(guestVisitId, true, guestClientId, actor),
         );
@@ -265,6 +368,26 @@ export async function POST(request: Request) {
       } else {
         const newVisitId = booked.result.visitId;
         visitId = newVisitId;
+        /* T62: the booking answer carries the pass Mindbody applied
+         * (ServiceId); when it does, that is one read fewer. */
+        verification = await verifyPass({
+          classId,
+          visitId: newVisitId,
+          sent: clientServiceId,
+          memberClientId,
+          remainingBefore: pass.remaining ?? 0,
+          fromAnswer:
+            booked.result.serviceId === null
+              ? null
+              : {
+                  clientServiceId: booked.result.serviceId,
+                  pricingOption: booked.result.serviceName,
+                },
+        });
+        if (verification.verdict === "ignored") {
+          return ignoredResponse(verification, newVisitId, true);
+        }
+        if (verification.verdict === "landed") await marker(newVisitId);
         if (booked.result.signedIn === true) {
           /* T19: an after-start booking can come back already signed
            * in; a second SignedIn write would be idempotent, but a call
@@ -318,6 +441,7 @@ export async function POST(request: Request) {
         steps,
         notes: { guest: null, member: null },
         pass,
+        ...verifiedFields(verification),
         ...fallbackFields(fallbacks),
       },
       { status: 502 },
@@ -345,6 +469,12 @@ export async function POST(request: Request) {
     guest: null,
     member: null,
   };
+  /* T62: where each record landed ("formula", or "notes" on a site
+   * without Formula Notes, which 471 is); the sheet's label reads it. */
+  const noteVia: {
+    guest: "formula" | "notes" | null;
+    member: "formula" | "notes" | null;
+  } = { guest: null, member: null };
   if (steps.guest === "done") {
     const when = [className ?? "class", noteDate(classStartsAt)]
       .filter(Boolean)
@@ -367,6 +497,8 @@ export async function POST(request: Request) {
     ]);
     notes.guest = g.id;
     notes.member = m.id;
+    noteVia.guest = g.via;
+    noteVia.member = m.via;
     /* One line for the sheet: each note's failure named, and the same
      * message once when both failed the same way. */
     const errors = [
@@ -397,10 +529,88 @@ export async function POST(request: Request) {
     suppressed,
     steps,
     notes,
+    noteVia,
     pass,
     guestVisitId: visitId,
+    ...verifiedFields(verification),
     ...fallbackFields(fallbacks),
   });
+}
+
+/** T62: whether the read-back confirmed the pass. `verified` is false
+ *  only when both reads failed (the sheet says so in amber); a
+ *  suppressed step has nothing to verify and is null. */
+function verifiedFields(v: PassVerification | null): Record<string, unknown> {
+  if (v === null) return { verified: null, verifyDetail: null };
+  return { verified: v.verdict === "landed", verifyDetail: v.detail };
+}
+
+interface PassVerification {
+  verdict: GuestPassVerdict;
+  /** The pass on the visit as read back; null when the visit carries
+   *  none or could not be read. */
+  visitServiceId: number | null;
+  /** The name of the pass Mindbody used instead, for the sheet: null
+   *  when the visit was read and carries none; undefined when it could
+   *  not be read at all. */
+  ownPass: string | null | undefined;
+  /** "1->0", "1->1", "1->gone", "?" for the log line. */
+  remaining: string;
+  /** Why it is unverified, when it is. */
+  detail: string | null;
+}
+
+/**
+ * T62: the read-back. Two reads, in parallel: the visit's pass (skipped
+ * when the booking answer already named it) and the member's pass list
+ * (ShowActiveOnly, so a spent one-session pass is simply gone, T57).
+ * Each failure is caught here and judged as "not known"; judgeGuestPass
+ * decides from what IS known. Reads stay on the service account.
+ */
+async function verifyPass(opts: {
+  classId: number;
+  visitId: number;
+  sent: number;
+  memberClientId: string;
+  remainingBefore: number;
+  fromAnswer: { clientServiceId: number | null; pricingOption: string | null } | null;
+}): Promise<PassVerification> {
+  const failures: string[] = [];
+  const [visit, remaining] = await Promise.all([
+    opts.fromAnswer !== null
+      ? Promise.resolve(opts.fromAnswer)
+      : visitPayment(opts.classId, opts.visitId).then(
+          (v) => {
+            if (v === null) failures.push("the visit was not on the class list");
+            return v;
+          },
+          (err: unknown) => {
+            failures.push(`visit read failed: ${errMessage(err)}`);
+            return null;
+          },
+        ),
+    fetchPasses(opts.memberClientId).then(
+      (passes) => {
+        const found = passes.find((p) => p.id === opts.sent) ?? null;
+        return { before: opts.remainingBefore, after: found ? found.remaining : null };
+      },
+      (err: unknown) => {
+        failures.push(`pass read failed: ${errMessage(err)}`);
+        return null;
+      },
+    ),
+  ]);
+  const verdict = judgeGuestPass({ sent: opts.sent, visit, remaining });
+  return {
+    verdict,
+    visitServiceId: visit?.clientServiceId ?? null,
+    ownPass: visit === null ? undefined : (visit.pricingOption ?? null),
+    remaining:
+      remaining === null
+        ? "?"
+        : `${remaining.before}->${remaining.after === null ? "gone" : remaining.after}`,
+    detail: verdict === "unverified" ? failures.join("; ") : null,
+  };
 }
 
 function stepTag(s: StepOutcome): string {

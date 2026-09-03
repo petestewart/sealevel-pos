@@ -1,15 +1,54 @@
 import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
+import {
+  boundedDb,
+  DB_MARKER_WAIT_MS,
+  guestMarkersForVisits,
+  type GuestVisitMarker,
+} from "@/lib/db";
 
 import {
   classesAroundNow,
   classesForDay,
   classRoster,
   parseRosterAnchor,
+  type ClassRoster,
 } from "@/lib/roster";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * T62: the "Guest of" captions, one guest_visits query per roster load
+ * keyed by the visit ids Mindbody just returned. A marker captions a
+ * row only when its guest matches the visit's client, so a stale row
+ * can never name someone else's visit. No database, or a dead one,
+ * yields no markers and no error (the charter): the page's own memory
+ * still covers the class view. T62 review: nor a slow one; the read
+ * waits DB_MARKER_WAIT_MS at most (a black-holed host cost the roster
+ * 5s once per cooldown otherwise). Kept in the route, not roster.ts, so
+ * the Mindbody reads know nothing of the database.
+ */
+async function withGuestMarkers(roster: ClassRoster): Promise<ClassRoster> {
+  const ids = roster.entries
+    .map((e) => e.visitId)
+    .filter((id): id is number => id !== null);
+  const markers = await boundedDb(
+    guestMarkersForVisits(ids),
+    DB_MARKER_WAIT_MS,
+    new Map<number, GuestVisitMarker>(),
+  );
+  if (markers.size === 0) return roster;
+  return {
+    ...roster,
+    entries: roster.entries.map((e) => {
+      const m = e.visitId === null ? undefined : markers.get(e.visitId);
+      return m && m.guestClientId === e.clientId
+        ? { ...e, guestOf: { name: m.memberName } }
+        : e;
+    }),
+  };
+}
 
 /**
  * GET /api/roster                  -> classes around now
@@ -34,9 +73,11 @@ export async function GET(request: Request) {
   try {
     if (classId) {
       return NextResponse.json(
-        await classRoster(Number(classId), {
-          summary: params.get("summary") !== "0",
-        }),
+        await withGuestMarkers(
+          await classRoster(Number(classId), {
+            summary: params.get("summary") !== "0",
+          }),
+        ),
       );
     }
     if (params.get("day") === "1") {

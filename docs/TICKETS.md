@@ -6820,6 +6820,9 @@ Mindbody refuses the member's pass id on the guest's visit.
 Probe accounts: the member is Pete's own client 100028410 (guest pass
 added 2026-09-03); the guest is Alison, client 100041277.
 
+Probe result 2026-09-04: Mindbody ignored the member's pass id and used
+the guest's own pass; see T62.
+
 ## T58. Notes and alerts are signed by the teacher who wrote them (Pete, 2026-09-03)
 
 Pete: "whatever teacher is signed in has their name auto appended to any
@@ -7934,3 +7937,272 @@ build with "Hot 26" and "Hot 26 & 2 (90 min) - Sally Zapata": the
 group is 56..649 at 1180 and 16..533 at 1024 for both names; at 820 it
 is the full row (16..660) with the counters wrapped under it as before.
 The title still wraps rather than ellipsizing (T61).
+
+## T62. The guest flow after the live probe (Pete, 2026-09-04)
+
+Pete ran the T59a probe in production (member 100028410, guest Alison
+100041277, under the write guard). His findings, from the screenshots:
+
+1. Mindbody ACCEPTED `/class/addclienttoclass` with the member's Guest
+   Pass id on the guest, then paid the visit with the GUEST's own pass
+   ("Teacher Sealevel"). The member's Guest Pass still showed 1 left.
+   Mechanism A fails silently, and the app reported success.
+2. `/client/addclientformulanote` answered "This site does not have
+   formula notes enabled". So the T45 comp notes had been failing
+   quietly too (never fatal, one log line).
+3. The guest modal changed size as results appeared while typing.
+4. After a refresh the guest's row showed her own pass with no sign she
+   was anyone's guest; the "Guest of" marker was page memory only.
+
+So mechanism A is out: Mindbody takes the pass id and does something
+else without a word. The mechanism that replaces it is still open (Pete
+is finding out how the front desk records a guest in Mindbody's web
+app), and this ticket builds everything that does not depend on that
+answer. The calls the guest step makes are unchanged; the step is made
+honest.
+
+### The design (decided)
+
+A. **Honesty on the guest step.** The write's answer is not the record;
+   the visit and the pass are. After the guest step's first write
+   (the booking, or the pass change on an existing visit) and BEFORE
+   the sign-in, the route reads both back: the pass on the visit (the
+   booking answer's `Visit.ServiceId`, which class.yml documents as
+   "the ID of the client's pricing option applied to the class visit",
+   the same purchase-instance id a class visit's `Service.Id` carries;
+   else one `/class/classvisits` read) and the member's pass list
+   (`fetchPasses`, ShowActiveOnly, so a spent one-session pass is
+   simply gone). A pure function (`judgeGuestPass` in
+   `src/lib/guestpass.ts`) decides: a visit on a different pass or on
+   none is ignored; a member's count that did not move is ignored on
+   its own too (a visit Mindbody says is on the pass while the pass
+   still shows the session is a Mindbody in two minds, and the safe
+   answer writes nothing more); both reads failing is "unverified",
+   said in amber, never dressed as confirmed. An ignored id answers
+   the refusal's 409 shape plus `ignored: true`, `bookedHere`,
+   `ownPass` and the visit id, with the guest NOT signed in, no member
+   sign-in, no notes, no marker, one `[guest] ignored ...` log line;
+   the sheet shows Mindbody's substitution in the refused style
+   ("Mindbody booked Alison Reed on their own pass (Teacher Sealevel)
+   instead of Pete Stewart's guest pass. Remove them from the class to
+   give that session back.") with a 64px "Remove from class" that
+   calls the existing cancel-visit route for the guest, single flight,
+   suppression said in amber with the modal staying open, and closes
+   on success. A booking that was there before and is unchanged (an
+   unpaid guest whose pass change was ignored) has nothing to give
+   back, so it gets the line and Close only.
+B. **Records without Formula Notes.** `fileFormulaNote` still tries
+   the Formula Note first; on a message matching "formula notes not
+   enabled" / "does not have formula notes" it remembers for the
+   process lifetime (`formulaNotesEnabled: boolean | null`) and
+   appends the same sentence to the client's `Notes` as its own entry,
+   signed with the session's name and the studio date in T58's format
+   (`signEntries`, so the name is sanitised the one way the parser
+   reads back), a blank line after what is there, through the surgical
+   `updateclient` write after ONE read of the field (`readClientNotes`,
+   new in clients.ts: `updateclient` writes the field whole). Any other
+   failure of the Formula Note does not fall back. Both callers take
+   it: the guest route's answer gains `noteVia: {guest, member}` and
+   the sheet's label reads "Notes: a signed entry added to both
+   profiles." when that is where it went; checkout's answer gains
+   `noteVia` and nothing else changes (`noteId` was never on the
+   answer; the receipt's `formula_note_id` is null when the fallback
+   ran). CLAUDE.md's Formula Notes line records that site 471 has them
+   disabled.
+C. **A durable guest marker.** Migration 7, `guest_visits` (visit id,
+   class id, guest and member client ids, the two names as they read,
+   the staff id, created_at). The charter holds: a fact Mindbody has
+   no home for, and never the pass, the price or the visit. Written by
+   the guest route the moment the read-back confirms the visit is on
+   the member's pass (before the sign-in, which can fail on its own:
+   the fact recorded is whose pass paid), upserted on the visit id.
+   Read by the roster route in one query keyed by the visit ids it
+   returns, captioning a row only when the marker's guest is the
+   visit's client. `RosterEntry.guestOf: {name} | null` on both sides;
+   the row renders the marker's name first and T59c's page memory
+   (`guestBy`) as the fallback, so no database means what it meant.
+D. **The modal keeps one size.** `min(640px, 84dvh)` tall (vh first
+   for a browser without dvh), a flex column: the title and the search
+   box at the top, the rows scrolling inside (`flex: 1 1 auto`,
+   `min-height: 0`, `overflow-y: auto`, `align-content: start` so the
+   grid does not stretch its rows apart to fill the box), New client
+   pinned at the bottom; the confirm sheet and the outcome fill the
+   same box with their actions pinned the same way.
+
+### Build notes
+
+Built: `src/lib/roster.ts` (`BookingResult.serviceId`/`serviceName`
+from the booking answer, additive; `visitPayment(classId, visitId)`,
+one classvisits read), `src/lib/guestpass.ts` (`judgeGuestPass`,
+`ignoredPassMessage`, pure), `src/app/api/guest/route.ts` (the
+read-back between the first write and the sign-in, `verifyPass`, the
+ignored 409, `verified`/`verifyDetail` on every answer, `noteVia`, the
+marker), `src/app/GuestModal.tsx` (the ignored outcome with Remove from
+class, the unverified amber line, the Notes label, `onRemoved`),
+`src/app/page.tsx` (`guestOf` on RosterEntry, the caption's source
+order, the refresh on an ignored answer and after a removal),
+`src/lib/formulanote.ts` (the fallback and the module state),
+`src/lib/clients.ts` (`readClientNotes`), `src/app/api/checkout/route.ts`
+(`noteVia`), `src/lib/db.ts` (migration 7, `insertGuestVisit`,
+`guestMarkersForVisits`), `src/app/api/roster/route.ts`
+(`withGuestMarkers`), the CSS at the end of `globals.css` (no new
+tokens), CLAUDE.md.
+
+Decisions worth knowing:
+
+- The read-back costs one metered read per guest check-in when the
+  booking answer carries ServiceId (the member's pass list, which the
+  page drops and re-reads anyway) and two when it does not. Reads stay
+  on the service account.
+- The member's count tripping the verdict on its own is the brief's
+  "or", kept: the contradiction (visit on the pass, count unmoved) is
+  refused rather than reported as done, because removal is safe either
+  way and a wrong "done" is the thing the probe caught.
+- The marker is written before the guest's sign-in, so a guest whose
+  visit landed on the pass but whose sign-in Mindbody refused (the
+  T59c review's partial) still reads "Guest of" after a reload, which
+  is true.
+- The guest route files its two notes in parallel (T59c), so on a site
+  without Formula Notes the FIRST guest flow of a process makes two
+  failed Formula Note calls, not one; every later flow and comp makes
+  none. Left as is: serialising the two notes would cost the happy
+  path latency on every site to save one call once.
+- Under dry run or the write guard the Formula Note is suppressed
+  before Mindbody can say whether the site has them, and the fallback
+  is not attempted (the same guard would stop it): one amber line, not
+  two suppressed calls.
+- The "Remove from class" remedy is the cancel-visit route as it is
+  (`removeclientfromclass` by client and class); an unpaid guest whose
+  pass change was ignored is left as they were, with Close only.
+
+Verified: `npm run typecheck` and `npm run build` green; the pure
+judge over eleven cases (scratchpad/t62/judge.mjs, Node's type
+stripping); Playwright against a mocked Mindbody on 3063/4563
+(scratchpad/t62: the T59c review mock plus `ignorePass` own/none,
+`bookReturnsService`, `noteDisabled`, removeclientfromclass, the
+checkout endpoints, and a Postgres 16 cluster on 5462). Ignored id,
+booked: 409 `ignored`, the sentence naming "Teacher Sealevel", writes
+addclienttoclass alone, reads classvisits plus the pass list (no
+classvisits read when the answer carried ServiceId), no sign-in, no
+notes; the guest's own pass down one, the member's untouched. Ignored
+with no pass: "with no pass". Already booked (Ben), ignored: 409 with
+`bookedHere: false`, the sheet's Close only. Honest happy path:
+verified true, the same six writes as T59c, the pass gone from the
+active list. Both reads failing: 200 with `verified: false` and the
+amber line, the modal staying open; one read failing: the other
+decides. A real refusal is still the plain 409. The sheet: the
+refused-style line, Close and a 64px "Remove from class" in the stop
+pair, two synchronous taps sent one removeclientfromclass, the guest's
+pass back to 3, the modal closed, her row gone. Formula Notes not
+enabled: the first guest flow made two failed Formula Note calls then
+read and wrote both clients' Notes with the exact sentence and
+`[by Pete Stewart, 9/3/26]` under the existing signed note (a blank
+line between); the second flow made none; the comp (PIN enrolled in
+the database, since env PINs are refused on a prod target) answered
+`{ok, method, total, saleId, cartId, receiptRequested, emailReceipt,
+noteVia: "notes"}` with the receipt's formula_note_id null, and the
+second comp appended under the first with no Formula Note call.
+Database: `guest_visits` at schema version 7, the row
+`901|202609030|100041277|100028410|Pete Stewart|Alison Reed|100`,
+"Guest of Pete Stewart" after a reload; the marker pointed at Ben
+captioned nobody; an ignored flow wrote no row. Dead database
+(port 5999): the guest route 200 in 40ms, the roster in 8-18ms, one
+`[db] migrate failed` line and `[guest] marker not stored`. The
+modal box 720x640 in all five states (empty, typing, results, confirm
+sheet, outcome) at 1180x820 and 820x1180, the bottom button 64px at
+the same 25px from the edge in each, nothing under 16px, no em dash.
+Screenshots in scratchpad/t62, light and dark.
+
+Not done, on purpose: the mechanism that replaces A (open with Pete;
+`route.ts` is still the one file to change); a delete for
+`guest_visits` (a cancelled visit never matches again, and the charter
+has no DELETE verb); serialising the two guest notes (above); a
+transient Formula Note failure re-probing "not enabled" within a
+process (it is a fresh-process question by design); the walk-in
+search's own pass picker, which can still name a guest pass on a
+booking for the member (T59c left it too).
+
+### Review
+
+Adversarial pass over `9a47aea..work/t62` with the mock extended
+(scratchpad/t62/rv-mock.js: the guest's own pass renamed "Guest Pass",
+the member's count moving while the visit lands elsewhere, a
+pre-existing PAID booking for the guest, notes with CRLF and trailing
+blank lines; rv-review.js, modes api/notes/db/deaddb/deaddb2/ui/ui2)
+against a Postgres 16 cluster on 5462, a refused port, and a
+black-holed host.
+
+Confirmed and fixed (two commits, `T62 review: ...`):
+
+- **A pre-existing booking was offered for removal without saying
+  so.** A guest already in the class on their OWN pass (reachable from
+  the modal through search, with the amber "the guest pass will
+  replace it" line on the confirm sheet) whose pass change Mindbody
+  ignored got the ignored sheet with "Remove from class" and no word
+  that the booking predated the tap; `bookedHere: false` was on the
+  answer and unused. The sheet now adds an amber line: "<guest> was
+  booked in this class before this. Remove takes that booking away
+  too; Close keeps it as it is." Removal stays offered (it is how the
+  guest's session comes back), Close keeps the booking. Light and dark
+  screenshots rv-preexisting-*.png.
+- **A black-holed database slowed the roster 5s once per cooldown.**
+  With DATABASE_URL pointing at a host that drops packets, the roster
+  read after each 30s cooldown lapsed took 5022ms (the pool's connect
+  timeout); the implementer's dead-database numbers were measured on a
+  REFUSED port, which fails in a millisecond and hides this. The marker
+  read and write now wait at most 750ms (`boundedDb`, `DB_MARKER_WAIT_MS`
+  in db.ts) and take their fallback; the attempt runs on, so the
+  cooldown still sets and a merely slow insert still lands. Measured
+  after: 774ms once, then 16ms. The guest route logs "marker not
+  confirmed in 750ms" for that case, distinct from "not stored".
+
+Not defects, checked:
+
+- The judge decides by purchase-instance id, never by name: a guest
+  whose own pass is called "Guest Pass" is refused when Mindbody used
+  it (409 naming "Guest Pass") and confirmed when the sent id landed
+  (`verified: true`, the visit's Service.Id the member's 7001).
+- Count moved but the visit is on another pass: ignored, nothing else
+  written. Removal then gives the guest's session back while the
+  member's count stays wherever Mindbody left it; the sheet's sentence
+  cannot know which, and the log line carries both.
+- Count unmoved with the visit on the pass: ignored (the brief's
+  "or"). A read-after-write lag at Mindbody would trip this as a false
+  refusal; the remedy (removal) is safe either way and the alternative
+  is the silent "done" the probe caught. Watch for it live.
+- Both reads failing after the write: 200 with `verified: false`, and
+  the sign-in, the member's sign-in and the two notes still go out
+  (the ticket's design; the amber line says the pass is unconfirmed).
+  No marker is written for an unverified flow.
+- The 409 body is `error, step, refused, ignored, guestVisitId,
+  bookedHere, ownPass` (plus the actor fallback fields): a pass name
+  and ids, nothing else. No write follows the ignored verdict (one
+  write on the mock's call list in every ignored case).
+- Removal is the cancel-visit route by client and class; one tap in
+  flight, two synchronous taps sent one `removeclientfromclass`.
+- Formula Notes: the regex matches "This site does not have formula
+  notes enabled", "Formula notes are not enabled for this site",
+  "Formula Note is not enabled", and not "You do not have permission
+  to add formula notes" or "Client not found". A 500 on the Formula
+  Note does not fall back and does not trip the memo; a "not enabled"
+  answer later in the same process does. The append keeps existing
+  entries and signatures as they were (CRLF inside them included),
+  strips only trailing whitespace before the blank-line separator,
+  signs with the session's name and the studio date. The read and the
+  write are two calls, the same window the waiver receipt has.
+  Checkout's answer shape: `ok, method, total, saleId, cartId,
+  receiptRequested, emailReceipt, noteVia` (T62's build log).
+- The table holds ids, two names as labels and a staff id; migration 7
+  is `CREATE TABLE IF NOT EXISTS`, versioned with the others (1..7).
+  The roster query is one parameterised `= ANY($1::bigint[])` over the
+  visit ids on screen; a marker whose guest is not the visit's client
+  captions nobody. The upsert on the visit id updates the names and
+  the client ids and keeps `class_id`; a visit id is one Mindbody
+  visit, so it cannot re-point a marker to another guest's visit.
+- The modal box is 720x640 in all five states at 1180x820 and
+  820x1180, and 720x504 (84dvh) at 1024x600, the bottom button 64px at
+  25px from the edge and inside the box in every state; the rows
+  scroll (`overflow-y: auto`); nothing under 16px; no em dashes; no
+  model identifiers outside the commit trailers; no new hex in CSS.
+  SaleScreen.tsx, sale.ts, the header and the membership modal are not
+  in the diff. `npm run typecheck` and `npm run build` green.

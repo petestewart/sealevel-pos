@@ -289,6 +289,32 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         ADD COLUMN IF NOT EXISTS cart_id text;
     `,
   },
+  {
+    /* T62: whose guest a visit was. Mindbody's visit carries the pass's
+     * name ("Guest Pass") and nothing about whose pass it was, so after
+     * a reload the guest's row read as anyone's; the page's memory of it
+     * (T59c's `guestBy`) went with the class view. The charter holds:
+     * this is a fact Mindbody has no home for, and the row is ids plus
+     * the two names the roster needs to render "Guest of Pete Stewart"
+     * (labels as they read at the time, like comp_receipts.teacher_name),
+     * never the pass, the price, the class or the visit itself. Written
+     * only after the guest's visit REALLY landed on the member's pass
+     * (not suppressed, not ignored); read per roster load by visit id.
+     * No DELETE: a visit that is cancelled simply never matches again. */
+    version: 7,
+    sql: `
+      CREATE TABLE IF NOT EXISTS guest_visits (
+        visit_id          bigint PRIMARY KEY,
+        class_id          bigint NOT NULL,
+        guest_client_id   text NOT NULL,
+        member_client_id  text NOT NULL,
+        member_name       text NOT NULL,
+        guest_name        text NOT NULL,
+        staff_id          text,
+        created_at        timestamptz DEFAULT now()
+      );
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -457,6 +483,114 @@ export async function insertCompReceipt(receipt: {
   } catch (err) {
     logDbError("comp-receipt-insert", err);
     return false;
+  }
+}
+
+/* --- Guest visits (T62) ---------------------------------------------- */
+
+/**
+ * T62 review: a database that is black-holed (the host drops packets
+ * rather than refusing) costs the FIRST call after each 30s cooldown the
+ * full 5s connect timeout, measured at 5022ms on a roster read. The
+ * roster is the counter's hot path and the marker is a caption, so a
+ * marker read or write waits at most `ms` for the database and then
+ * takes its fallback; the attempt itself runs on, so a connection that
+ * fails still sets the cooldown and a slow one still lands its row.
+ */
+export function boundedDb<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+
+export const DB_MARKER_WAIT_MS = 750;
+
+/**
+ * The durable "Guest of" marker. Upserted on the visit id: a visit is
+ * one guest's, and a repeat write (a retry that landed twice) keeps the
+ * latest names. Returns whether the row landed; false is "no database,
+ * the page's memory carries it for this class view", never a failure of
+ * the check-in.
+ */
+export async function insertGuestVisit(row: {
+  visitId: number;
+  classId: number;
+  guestClientId: string;
+  memberClientId: string;
+  memberName: string;
+  guestName: string;
+  staffId: string | null;
+}): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `INSERT INTO guest_visits
+         (visit_id, class_id, guest_client_id, member_client_id,
+          member_name, guest_name, staff_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (visit_id) DO UPDATE
+         SET guest_client_id = excluded.guest_client_id,
+             member_client_id = excluded.member_client_id,
+             member_name = excluded.member_name,
+             guest_name = excluded.guest_name,
+             staff_id = excluded.staff_id`,
+      [
+        row.visitId,
+        row.classId,
+        row.guestClientId,
+        row.memberClientId,
+        row.memberName,
+        row.guestName,
+        row.staffId,
+      ],
+    );
+    return true;
+  } catch (err) {
+    logDbError("guest-visit-insert", err);
+    return false;
+  }
+}
+
+/** One marker as the roster needs it: the guest it belongs to (checked
+ *  against the visit's client, so a stale row can never caption someone
+ *  else's visit) and the member's name to render. */
+export interface GuestVisitMarker {
+  guestClientId: string;
+  memberName: string;
+}
+
+/**
+ * The markers for one roster load, keyed by visit id: ONE query for all
+ * the visits the roster returns. An empty map for an empty list, no
+ * database, or a failed read; the caller renders no captions and the
+ * page's own memory (T59c) still covers the class view.
+ */
+export async function guestMarkersForVisits(
+  visitIds: readonly number[],
+): Promise<Map<number, GuestVisitMarker>> {
+  const out = new Map<number, GuestVisitMarker>();
+  if (visitIds.length === 0) return out;
+  try {
+    const p = await ready();
+    if (!p) return out;
+    const res = await p.query(
+      `SELECT visit_id, guest_client_id, member_name
+       FROM guest_visits WHERE visit_id = ANY($1::bigint[])`,
+      [visitIds],
+    );
+    for (const r of res.rows) {
+      out.set(Number(r.visit_id), {
+        guestClientId: String(r.guest_client_id),
+        memberName: String(r.member_name),
+      });
+    }
+    return out;
+  } catch (err) {
+    logDbError("guest-visit-read", err);
+    return out;
   }
 }
 

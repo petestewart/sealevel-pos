@@ -797,12 +797,13 @@ export async function POST(request: Request) {
    * the receipt. */
   const fileCompNote = async (
     saleId: string | null,
-  ): Promise<number | null> => {
-    if (compReason === null) return null;
+  ): Promise<{ id: number | null; via: "formula" | "notes" | null }> => {
+    const none = { id: null, via: null };
+    if (compReason === null) return none;
     const house = houseClientId();
     if (clientId === undefined || (house !== null && clientId === house)) {
       console.log(`[comp] formula-note skipped: house client`);
-      return null;
+      return none;
     }
     const note = [
       `Comped $${total.toFixed(2)} at the counter: ${compHeadline(compReason)}.`,
@@ -814,7 +815,9 @@ export async function POST(request: Request) {
       .join(" ");
     /* T49: filed as the signed-in teacher too, with the ordinary
      * fallback (the note is a record, not the comp; a permission gap
-     * here is one warn line, and the note still lands). */
+     * here is one warn line, and the note still lands). T62: on a site
+     * without Formula Notes (471) the same sentence lands as a signed
+     * Notes entry, `via: "notes"`, and the receipt's note id is null. */
     const filed = await fileFormulaNote({
       session,
       clientId,
@@ -822,7 +825,7 @@ export async function POST(request: Request) {
       route: "/api/checkout formula-note",
       logTag: "[comp]",
     });
-    return filed.id;
+    return { id: filed.id, via: filed.via };
   };
 
   const recordComp = async (outcome: {
@@ -901,17 +904,25 @@ export async function POST(request: Request) {
         outcome.suppressed !== null
           ? { saleId: null, cartId: null }
           : await saleIds(outcome.saleId);
+      /* T62: where the comp's record landed, additive on the answer:
+       * "formula", "notes" (the fallback on a site without Formula
+       * Notes), or null (not a comp, the house client, suppressed, or
+       * the record failed). Nothing else about the answer changes. */
+      let noteVia: "formula" | "notes" | null = null;
       if (m === "comp") {
         /* T45: the outcome is decided (the call resolved), so the Formula
          * Note goes out now, for a real sale only, and its id rides on the
          * receipt. Neither can throw; see fileCompNote. */
-        const formulaNoteId =
-          outcome.suppressed !== null ? null : await fileCompNote(ids.saleId);
+        const filed =
+          outcome.suppressed !== null
+            ? { id: null, via: null }
+            : await fileCompNote(ids.saleId);
+        noteVia = filed.via;
         await recordComp({
           saleId: ids.saleId,
           cartId: ids.cartId,
           suppressed: outcome.suppressed !== null,
-          formulaNoteId,
+          formulaNoteId: filed.id,
         });
       }
       if (outcome.suppressed) {
@@ -929,6 +940,7 @@ export async function POST(request: Request) {
         cartId: ids.cartId,
         receiptRequested: sendEmail,
         emailReceipt: null,
+        noteVia,
         ...actorFields(run),
       });
     }
