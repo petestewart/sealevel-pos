@@ -21,8 +21,25 @@ import { useCallback, useEffect, useState } from "react";
  * no scrim tap, no Escape, and the scrim is opaque so nothing shows
  * through. The signed-in face never renders under `required`; the gate
  * unmounts the moment a sign-in lands. Otherwise the modal opens from
- * the header's account icon, in its signed-in state.
+ * the header's account icon, in its signed-in state, and closes by its
+ * X, the scrim or Escape (T50 review: no big Close button).
  */
+
+/** The X that closes the signed-in account modal (T50 review, Pete's
+ *  rule for every modal this pass: X and scrim tap, no big Close). The
+ *  same glyph as the search and profile modals' X. */
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        d="M6 6l12 12M18 6L6 18"
+      />
+    </svg>
+  );
+}
 
 export interface Teacher {
   id: number;
@@ -226,6 +243,13 @@ export default function StaffModal({
       >
         {teacher ? (
           <>
+            <button
+              className="row-icon modal-x"
+              aria-label="Close"
+              onClick={onClose}
+            >
+              <CloseIcon />
+            </button>
             <p className="modal-title">{teacher.name}</p>
             <p className="reason-sub">
               Signed in to Mindbody. Check-ins, bookings and sales from this
@@ -240,9 +264,6 @@ export default function StaffModal({
               onRun={() => void runProbe()}
             />
             <div className="modal-actions">
-              <button className="modal-cancel" onClick={onClose}>
-                Close
-              </button>
               <button
                 className="modal-confirm"
                 disabled={busy}
