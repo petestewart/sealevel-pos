@@ -302,13 +302,21 @@ button {
 .class-when {
   font-size: 16px;
   color: var(--muted);
+  /* The date line stays one line (T61); only the title wraps. */
+  white-space: nowrap;
 }
 
+/* T61 (Pete: "the selected class should not have elipsis, it needs to
+ * fully display"): the title wraps onto a second line when the group is
+ * narrower than the name, and the button grows past 64px to hold it.
+ * It ellipsized from T46 to T60 because the row had no room to spare;
+ * T61 gives it the width the day control's date and the teacher's name
+ * used to take, and past that it wraps rather than clips. A single word
+ * longer than the line (nothing on the schedule is) breaks rather than
+ * overflows the button. */
 .class-title {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: 20px;
   font-weight: 600;
 }
@@ -4589,10 +4597,14 @@ button.sale-for:disabled {
  * and the dropdown wrapper takes the group's. */
 .class-group {
   flex: 1 1 0;
-  /* The T46 review's 240px title floor PLUS the day control at its dated
-   * width (T52 review): the floor on the group alone let the day control
-   * take it, and at 820 wide on a viewed day the title had 91px and
-   * wrapped to four lines. */
+  /* A floor for the title beside the day control (T52 review: the floor
+   * on the group alone let the day control take it, and at 820 wide on a
+   * viewed day the title had 91px and wrapped to four lines). The day
+   * control is the bare 64px glyph on every day since T61, so the 404px
+   * floor now leaves the title 340px, enough that the longest name on the
+   * schedule with its teacher wraps to two or three lines, never more;
+   * the number is kept, not recomputed, so the T60 wrap breakpoint below
+   * still adds up from it. */
   min-width: min(404px, 100%);
   max-width: 100%;
   display: flex;
