@@ -6816,3 +6816,84 @@ the feature itself: Pete creates two test clients (one with an active
 auto-renew membership so a Guest Pass lands on it), and the first guest
 check-in under the write guard is T59a. B stays the fallback if
 Mindbody refuses the member's pass id on the guest's visit.
+
+## T60. Two check-in screen fixes (Pete, 2026-09-03)
+
+Pete, verbatim:
+
+1. "tapping on the Name/Payment/Balance header area should scroll the
+   student list to the very top"
+2. "the position of signed up/checked in/waitlist and Buy/TeacherName/
+   personicon should be swapped with each other"
+
+### 1. The head row scrolls the list to the top
+
+Since T55 only `<ul class="roster">` scrolls and the Name / Payment /
+Balance row stays put above it, which makes that row the natural "back
+to the top" for a teacher thirty rows down. A tap anywhere on it that
+is not the sort control scrolls the list to the top
+(`scrollTo({top: 0, behavior: "smooth"})` on a ref to the list; the
+list's T55 `onScroll`, which closes the pass picker, is unchanged). The
+row is a real target: `role="button"`, `tabIndex={0}`,
+`aria-label="Scroll to the top of the list"`, Enter and Space doing what
+a tap does. The sort control, its scrim and its menu live in
+`.head-actions`, and the handler checks the event target for that
+ancestor rather than relying on `stopPropagation`, so closing the menu
+through the scrim leaves the list where it was too.
+
+No visual change. The cursor stays default, and the only CSS is
+`user-select: none` on the shell's head row so a double tap does not
+select "Name". The search modal's own `.roster-head` has no handler and
+is untouched.
+
+### 2. Counters before Buy, name and icon
+
+The class header row now reads, left to right: class picker and day
+control, the counters card, then Buy, the teacher's name and the account
+icon at the far right. A pure move of the two JSX blocks; every size,
+gap, the 64px heights and the 100px name cap under 1100 (T50) are as
+they were.
+
+The one thing a plain swap would have changed is portrait. Flex wraps
+in DOM order, so at 820 wide the 319px counters would have held line
+one and the name and icon would have dangled alone on line two. The row
+stops fitting on one line under 1019px (the group's 404px floor, the
+counters, Buy at 76, the capped name and icon at 152, four 12px gaps and
+32px of padding; a 1024 landscape has 5px to spare, which the before
+measurement confirms at class-group 409 vs its 404 floor). Under 1018px
+the counters take `order: 1`, so they wrap alone and right-aligned by
+their auto margin, exactly the split portrait had before.
+
+### Build notes
+
+- `src/app/page.tsx`: `rosterRef` and `scrollRosterToTop` beside the
+  calendar button; `ref` on the shell's roster `<ul>`; the head row's
+  role, label, click and key handlers; the counters block moved above
+  Buy and `.staff-id` in the class header. Nothing inside either block
+  changed.
+- `src/app/globals.css`: `.shell > .roster-head { user-select: none }`,
+  and `@media (max-width: 1018px) { .counters { order: 1 } }` with the
+  derivation of the number in the comment.
+- Verified: `npm run typecheck` and `npm run build` clean. Playwright
+  against a 30-row mock (scratchpad `t60/`, mock on 4560, the
+  worktree's production build on 3060, signing in through the T50
+  gate) at 1024x768 light, 1180x820 dark and 820x1180 light: head tap
+  returns `scrollTop` to 0 from 900 and opens no menu; Enter on the
+  focused head does the same; the sort tap opens `.sort-dd` with
+  `scrollTop` still 700, and closing it through the scrim leaves it at
+  700; DOM order is class-group, counters, class-change, staff-id; at
+  1024 one line with `.staff-id` flush to the row edge, at 820 the
+  counters alone on line two, right-aligned. Before and after
+  screenshots at 820 and 1024 match box for box (`.class-group` 409 at
+  1024 and 536 at 820, counters at x 485 / y 150 at 820, both times).
+- A touch tap (Playwright `hasTouch`, 1024x768, both palettes) scrolls
+  the list to 0, gives the row focus, and leaves no ring: the
+  stylesheet draws none of its own, the browser's is `:focus-visible`,
+  and that does not match after a touch. Keyboard focus shows the
+  browser's ring, which is right for a keyboard.
+- Seen in passing, not touched: at 820 wide the head's "Payment" and
+  "Balance" labels overlap. The before screenshot has it too; it is
+  the T55 column template in portrait, not T60.
+- Not done, deliberately: no focus styling of our own; no change to
+  the search modal's head; no `stopPropagation` on the sort button,
+  since the target check covers the scrim and menu as well.
