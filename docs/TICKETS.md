@@ -7878,7 +7878,7 @@ Checked and not defects:
   typecheck` and `npm run build` clean, `git ls-files node_modules`
   empty.
 
-## T63. Guest passes, the way the front desk does it (PLANNED; Pete, 2026-09-04)
+## T63. Guest passes, the way the front desk does it (Pete, 2026-09-04)
 
 Pete showed the Mindbody screens: sell the guest a $0 "Guest Pass (for
 auto-debit members only)" from the member's POS page ("Pay for another
@@ -7887,25 +7887,320 @@ sale with a reason ("Guest pass redeemed for Alison Stewart 9/3/2026"),
 "Return without a Refund". Mechanism A (the member's pass id on the
 guest's visit) was ignored by Mindbody (T62).
 
-Build, after T62 lands: (1) checkout for the GUEST of the Guest Pass
-service with the Comp stub at $0 (no PayerClientId: that needs a stored
-"Pays for" relationship); (2) book the guest with the new service id and
-sign them in; (3) retire the MEMBER's Guest Pass; (4) records per T62.
+**Pete's rule on the return (hard requirement): the return must never
+refund anything.** `/sale/returnsale` takes a SaleId, not a line, so a
+sale that bundles the Guest Pass with the monthly autopay would be
+returned whole. The app reads the sale first (`/sale/sales`) and returns
+it ONLY when it holds exactly one item, that item is the Guest Pass, the
+total is $0.00, and it carries no card, stored-card, account or
+gift-card payment. Otherwise, or if Mindbody refuses, the pass is NOT
+retired: the outcome says so in amber ("<member>'s guest pass is still
+on their account: <reason>. Return it in Mindbody.") and the guest's
+check-in stands. Pete, 2026-09-04: one path only, the return; no expiry
+fallback ("i don't really want to support 2 different paths"). Expiry
+through `/client/updateclientservice` stays a recorded option if the
+return proves unusable. The member's own visit is never touched.
 
-**Pete's rule on step 3 (hard requirement): the return must never refund
-anything.** `/sale/returnsale` takes a SaleId, not a line, so a sale
-that bundles the Guest Pass with the monthly autopay would be returned
-whole. The app reads the sale first (`/sale/sales` / transactions) and
-returns it ONLY when it holds exactly one item, that item is the Guest
-Pass, the total is $0.00, and it carries no card, stored-card, account
-or gift-card payment. Otherwise, or if Mindbody refuses, the pass is
-NOT retired: the outcome says so in amber ("<member>'s guest pass is
-still on their account: <reason>. Return it in Mindbody.") and the
-guest's check-in stands. Pete, 2026-09-04: one path only, the return;
-no expiry fallback ("i don't really want to support 2 different
-paths"). Test on his account first; expiry through
-`/client/updateclientservice` stays a recorded option if the return
-proves unusable. The member's own visit is never touched.
+Two live findings folded in (Pete, the same day): on a FUTURE day view
+the picker's Guest Pass line put the member's OWN visit on their guest
+pass (T57's accident by another door), and after a guest flow the
+member's row lost its pass chevron until a page refresh.
+
+### The design (decided)
+
+1. **Sell the GUEST the $0 Guest Pass.** The option is found by name in
+   the services catalog (`guestPassOption` in `src/lib/sale.ts`, its own
+   read of `/sale/services`: `pricingOptions` drops every $0 option on
+   purpose, so the Guest Pass never reaches the Buy screen and nothing
+   there changes; never a hardcoded id). One `CartLine`, T45's
+   rehearsal (`Test: true`, the Comp stub, service account), and the
+   real `/sale/checkoutshoppingcart` ONLY when the rehearsed total is
+   exactly 0.00, paid `[{Type: "Comp", Metadata: {Amount: 0}}]`,
+   `LocationId: 1, InStore: true, SendEmail: false`, no PayerClientId.
+   `checkoutCart` and `rehearseCheckout` are reused, not copied. The
+   sale runs under the teacher with the comp's posture (a refused
+   teacher token is refused, never redone as the service account).
+   Money-shaped even at $0: a 4xx is a clean refusal ("Mindbody refused
+   the $0 Guest Pass sale for <guest>: <reason>. Nothing was written."),
+   a 5xx or a dead transport is ambiguous ("The Guest Pass sale for
+   <guest> did not answer. It MAY have gone through: check <guest>'s
+   purchases in Mindbody before trying again. Nothing else was
+   written.") and is never retried. A rehearsal that prices it at
+   anything but $0.00 refuses with the amount before any real call.
+2. **The new pass id.** The checkout answer carries no ClientService
+   (sale.yml, CheckoutShoppingCartResponse), so the guest's passes are
+   read before the sale and again after: the guest pass not on the
+   list before is the new one; with the before-read failed, the newest
+   `PaymentDate` (new on PassInfo, additive) decides
+   (`pickNewGuestPass`, pure). A sale that landed but no pass found is
+   a 502 that says so and books nobody.
+3. **Book the guest with that id** (or move an already-booked guest's
+   visit onto it) and sign them in, exactly as T62 left the step,
+   read-back included: the visit's ServiceId must equal the new pass
+   id, the pass's count must have moved, else 409 ignored with "Remove
+   from class". The sheet adds that the $0 pass is still on the guest's
+   account and the member's was not returned.
+4. **Retire the member's pass by return, and only by return.**
+   `GET /sale/sales` filters by date, sale id and payment method and
+   NOT by client (sale.yml:990; `latestSaleId` learned the same), so the
+   window is the day of the pass's `PaymentDate` (site-local strings,
+   never `toISOString`), or the last 45 days when the pass carries
+   none, and the client is matched on `Sale.ClientId`. The newest sale
+   whose `PurchasedItems` carry the pass's ProductId and are not
+   `Returned` is judged (`judgeGuestPassSale`, pure): exactly one item,
+   `IsService` true, `TotalAmount` exactly 0.00 (an unknown total is
+   refused, not read as zero), and every payment a $0 comp (`Comp`,
+   "Comp/Guest"; a card brand, StoredCard, Account, Gift Card, Cash,
+   Check, ACH or an unnamed method refuses, at any amount, and any
+   non-zero amount refuses whatever the type; no payment at all
+   passes). Then `POST /sale/returnsale {SaleId, ReturnReason: "Guest
+   pass redeemed for <guest> <M/D/YY>"}` under the teacher, with the
+   ordinary one-shot fallback said in amber; the member's id rides in
+   the options for the write guard. The answer's `Amount` is reported;
+   anything but 0 is a loud log line and a red line on the sheet
+   (unreachable past the judge, said anyway). The member's passes are
+   re-read after and the Guest Pass count reported: 0 when it has left
+   the active list, and a pass still listed after a "done" return is an
+   amber line. A refused, failed or unreadable return, or a sale that
+   fails the judge, is the amber line with the reason; the guest's
+   check-in stands. Nothing here ever calls `updateclientservice`.
+5. **Member sign-in** when their row was not in (unchanged from T59c),
+   after the return, whatever the return said.
+6. **Records** as T62 left them: the Formula Note with the signed Notes
+   fallback on both profiles, the `guest_visits` marker before the
+   guest's sign-in. The guest's sentence stays ("Guest of Pete Stewart,
+   guest pass, Hot 26 Fusion 9/3/26."); the member's is "Guest pass
+   redeemed for Alison Reed, Hot 26 Fusion 9/3/26."
+7. **Order**: sell, book, sign in the guest, return, sign in the member,
+   records; a failure stops the sequence and the answer says what
+   landed, `steps: {sale, guest, return, member, notes}` each "done" |
+   "suppressed" | "skipped" | {error}, plus `sale: {cartId, product,
+   guestPassId}` and `memberPass: {reason, returnSaleId,
+   returnedAmount, remaining}`. Dry run and the write guard are reported
+   per step: a suppressed rehearsal makes the sale, the guest step and
+   (with "the guest's Guest Pass was not sold, so there was nothing to
+   redeem") the return suppressed or skipped, and the member's own
+   sign-in still goes out, judged by its own client as T59c did.
+8. **The modal.** The confirm sheet: "Check in <guest> as <member>'s
+   guest. <guest> gets a $0 Guest Pass and <member>'s guest pass is
+   returned." The outcome, in order: "<guest>'s $0 Guest Pass: sold.",
+   "<guest>: checked in on their new Guest Pass.", "<member>'s guest
+   pass returned. 0 left." or the amber "<member>'s guest pass is still
+   on their account: <reason>. Return it in Mindbody.", "<member>:
+   checked in.", the notes line. Clean (the modal closes) means every
+   step done, the returned amount 0, the member's count 0, no fallback,
+   the pass verified. The roster's guest row reads the pass by
+   Mindbody's own name ("Guest Pass", shortened like every row) with
+   "Guest of <member>" from the marker on the facts line; the page's
+   "(Pete)" suffix is gone, since the pass is the guest's own now.
+9. **The two live fixes.**
+   - The picker: EVERY guest pass line (by name, usable or not) is the
+     guest line, so none can fall through to the ordinary
+     visit-payment line. On a future day it is disabled with "Guest
+     passes are used on the day of class" (64px, the disabled ink; the
+     flow signs two people in and check-in is closed there, T46); a
+     pass with no session left or an unknown count is disabled with
+     "No session left on it". Behind it, `changePass` refuses any
+     guest pass by name on any day ("A guest pass checks in a guest,
+     not Pete. Nothing was changed.") with no call, and the walk-in
+     search's own picker no longer offers a guest pass for the member's
+     booking nor shows one as the default. Booking a guest AHEAD (the
+     $0 pass and the booking, no sign-ins) is a recorded option, not
+     built: it would be a third posture for a money-shaped route in a
+     ticket that already changes the mechanism.
+   - The chevron: `refetchPassList` (page.tsx) re-reads one client's
+     passes NOW when a flow invalidates them, keeping the stale list on
+     screen until the answer lands, claiming the sweep's ledger so the
+     two never double-spend a call, and on a failure releasing the
+     claim so the next sweep or picker open retries. Before, the cache
+     was dropped and the refetch left to the background sweep, which
+     runs only when the roster changes and keeps a failed fetch as a
+     null claim for the session, so one failed read after the flow
+     left the row with no list and nothing to retry it.
+     `refreshClientState` (the guest flow, the Buy screen's
+     `onSaleCompleted` and `onContractPurchased`) goes through it.
+     Note T57's rule still holds: a member whose only other pass was
+     the returned Guest Pass has nothing to change TO, and correctly
+     shows no chevron after a completed flow.
+
+### Build notes
+
+Built: `src/lib/guestsale.ts` (new: `guestPassLine`,
+`rehearseGuestPass`, `sellGuestPass` over T45's `rehearseCheckout` and
+`checkoutCart`; `findGuestPassSale`; `returnSale`), `src/lib/guestpass.ts`
+(`pickNewGuestPass`, `judgeGuestPassSale`, pure; `ignoredPassMessage`
+reworded for the guest's own pass), `src/lib/sale.ts` (`guestPassOption`,
+additive; `git diff` touches nothing the Buy screen calls),
+`src/lib/clientcontext.ts` (`PassInfo.paymentDate`, additive),
+`src/app/api/guest/route.ts` (the sequence), `src/app/GuestModal.tsx`
+(the sentence, the outcome lines, the answer shape), `src/app/page.tsx`
+(the caption; the picker's guest line on every guest pass, disabled on
+a future day or with no session; the `changePass` refusal; the walk-in
+picker's exclusion; `refetchPassList`), `globals.css` (the blocked line's
+ink, existing tokens, both palettes), CLAUDE.md (the `/sale/sales` and
+`/sale/returnsale` notes). Three commits, `T63: ...`.
+
+Decisions worth knowing:
+
+- The sale runs under the teacher with `fallback: false`, the comp's
+  posture (CLAUDE.md: a comp is refused outright, never redone as the
+  studio account). The return keeps the ordinary one-shot fallback,
+  said in amber: it moves no money and the judge has already seen $0.
+- `judgeGuestPassSale` reads `PurchasedItem.TotalAmount` as the item's
+  total (the Sale model carries no total of its own) and refuses an
+  unknown total or an item not marked `IsService`, rather than reading
+  absence as zero. A payment passes only as a $0 comp: the type must
+  say comp (or guest) and must not name a card, credit, debit, account,
+  gift, cash, check, ACH or bank; an unnamed method refuses too.
+- With the sale suppressed (dry run, or the guest not in the write
+  guard) there is no pass id to book with, so the guest step is
+  suppressed with it, the return is skipped with "the guest's Guest
+  Pass was not sold, so there was nothing to redeem", and the member's
+  own sign-in still goes out, judged by its own client (T59c's posture:
+  the guard judges each write). The return's write goes through the
+  guard on the MEMBER's id (the payload names a sale).
+- The member's passes are read twice per flow (before, to confirm the
+  pass; after the return, for the count) and the guest's twice or three
+  times (before the sale, after it, and T62's read-back); the catalog
+  read is uncached. Seven or eight metered reads per guest check-in, a
+  few times a day; none of it is a price the screen shows.
+- The ignored verdict (T62) is kept whole even though the guest's own
+  pass id should never be ignored: it costs nothing while it never
+  fires, and a wrong "done" is the thing T62 exists to catch. In that
+  state the guest holds a $0 Guest Pass with a session on it, so the
+  Guest action can appear on THEIR row; true, and said on the sheet.
+- Bug 1's live cause is most likely a Guest Pass listed without a
+  `Remaining` count: `usableGuestPass` treats that as unusable, and the
+  picker then fell through to the ordinary line (the harness reproduces
+  it, U8). The base build with a counted pass opened the modal on the
+  future day as designed. Booking-only mode for a future day was not
+  built (above).
+
+Verified: `npm run typecheck` and `npm run build` green. The pure
+judge over 23 sale shapes and 7 pass lists (scratchpad/t63/judge63.mjs,
+Node's type stripping). Playwright against a mocked Mindbody on
+3064/4564 (scratchpad/t63: the T62 review mock plus the services
+catalog, a checkout that sells the pass onto the account and records
+the sale, `/sale/sales` by window, `/sale/returnsale`, PaymentDate on
+every service, knobs for each failure; `t63.js` modes api, dryrun,
+guard, guard2, guard3, ui, ui2; logs beside them). Happy path, in
+order: `clientservices` for both, `/sale/services`, checkout `Test:
+true` for 100041277 with one Service item (Metadata.Id 1500) and
+`[{Type: "Comp", Metadata: {Amount: 0}}]`, keys `Items, ClientId, Test,
+LocationId, InStore, CalculateTax, Payments`; checkout `Test: false`
+with `SendEmail: false`, no PayerClientId, `LocationId: 1, InStore:
+true`; `clientservices` for the guest; `addclienttoclass` with
+`ClientServiceId: 8101` (the new pass); `updateclientvisit {SignedIn}`;
+`/sale/sales?startSaleDateTime=2026-09-03T00:00:00&endSaleDateTime=
+2026-09-04T00:00:00` (the pass's PaymentDate day); `returnsale {SaleId:
+660001, ReturnReason: "Guest pass redeemed for Alison Reed 9/3/26"}`;
+`clientservices` for the member; the member's sign-in; the two notes
+with the sentences above. Answer `steps` all done, `memberPass
+{returnSaleId: 990001, returnedAmount: 0, remaining: 0}`, `verified:
+true`; the mock's 7001 at 0 and Returned, the guest's 8101 at 0, the
+visit on 8101 and signed in; the modal closed. Bundled sale, a $0
+Visa, Cash, Account: no `returnsale` call, the amber reason, the guest
+checked in, the member's pass at 1; no payment at all: returned;
+missing: "no sale ... found"; `returnsale` refused (400) and 500: the
+amber line with Mindbody's words, the guest stands; the teacher's
+token refused on the return: one fallback, `actorFallback` on the
+answer. Rehearsal at $5.52: 409 "priced the Guest Pass at $5.52 ...
+not $0.00. Nothing was sold or written.", one Test call and nothing
+else, no pass on the guest. Checkout 500 and a destroyed socket: 502
+`ambiguous: true` with the "MAY have gone through ... check Alison
+Reed's purchases" wording, no booking, no return, no retry (one real
+checkout on the mock's list). Checkout 400: 409 refused, nothing after.
+Already booked unpaid: `updateclientvisit {ClientServiceId: 8101}` then
+`{SignedIn}`, no `addclienttoclass`. No Guest Pass in the catalog: 409
+`step: "catalog"`, no write. Ignored pass id (the mock's `ignorePass`):
+409 with the new sentence, one write, the guest's $0 pass at 1, the
+member's untouched, the sheet with Close and Remove from class. The
+member as their own guest 400; an unknown, a membership or a countless
+pass id 409 before any write. Dry run: sale, guest and member
+suppressed, return skipped with its reason, three reads and nothing
+else on the mock. Guard with the guest alone: sale and booking real,
+return, member sign-in and the member's note suppressed; the member
+alone: sale and guest suppressed, the member's sign-in written; both
+(Pete's setup): every step done. In the browser: the sentence, one
+`Test: false` checkout for two synchronous Confirm taps, the modal
+closed, Alison's row "Guest Pass" with "Guest of Pete Stewart" checked
+in, Pete checked in with the person-plus gone and (holding a 10 Class
+Pack besides the membership) the chevron present at +200ms and +1500ms
+with no reload, three `clientservices` reads for him across the flow
+and the page (no double fetch). The bundled, return-refused, priced,
+ambiguous and ignored sheets in light and dark, nothing under 16px, the
+buttons 64px; Pete's chevron present after each. A future day: the
+picker's Guest Pass line `blocked`, disabled, 107px, "Guest passes are
+used on the day of class" in the disabled ink, a forced tap opening
+nothing and writing nothing; today's line opens the modal with no
+write; a Guest Pass with no Remaining: the guest line disabled with "No
+session left on it", never the ordinary line; the walk-in search
+picker for Pete lists the membership and the pack, not the Guest Pass.
+Screenshots in scratchpad/t63: confirm-light/dark, after-light,
+bundled-light/dark, priced-light, ambiguous-light,
+return-refused-light, ignored-light, future-picker-light/dark.
+
+Not done, on purpose: booking a guest AHEAD on a future day (the
+picker line is disabled with the reason instead; recorded above);
+expiry through `updateclientservice` (Pete: one path); a numeric sale
+id for the guest's $0 sale on the sheet (the cart GUID is logged;
+`latestSaleId` would be another metered read for a caption); caching
+the catalog read; the attach modal's New client entry (T59b and T59c
+left it); a DELETE for `guest_visits` (T62). The Buy screen and
+SaleScreen.tsx are not in the diff.
+
+### What to check live (Pete, write-guarded)
+
+`POS_DRY_RUN=false`, `POS_WRITE_CLIENT_IDS=100028410,100041277`,
+`MINDBODY_TARGET=prod`, signed in as yourself. Your account 100028410
+holds a Guest Pass (7001-style id, whatever Mindbody gave it) that came
+from a $0 comp sale of its own; Alison is 100041277.
+
+1. Open today's class you are booked into. Your row shows the
+   person-plus; the picker's Guest Pass line reads "Checks in a guest,
+   not Pete". Switch to tomorrow: the line is greyed with "Guest passes
+   are used on the day of class" and a tap does nothing (the dev
+   drawer shows no write). Back to today.
+2. Tap the person-plus, search "Alison", pick her. The sheet: "Check in
+   Alison Reed as Pete Stewart's guest. Alison Reed gets a $0 Guest
+   Pass and Pete's guest pass is returned." Confirm.
+3. In the dev drawer, in order: `GET /sale/services`; `POST
+   /sale/checkoutshoppingcart` with `Test: true`, `ClientId:
+   "100041277"`, one Service item whose Metadata.Id is the Guest Pass's
+   ProductId (462 on 471), `Payments: [{Type: "Comp", Metadata: {Amount:
+   0}}]`, and its answer's `GrandTotal: 0`; the same with `Test: false`
+   and `SendEmail: false`, `actor=<your staff id>`; `GET
+   /client/clientservices` for Alison; `POST /class/addclienttoclass`
+   with `ClientId: "100041277"` and `ClientServiceId` = HER new pass's
+   Id; `POST /client/updateclientvisit {SignedIn: true}` for her visit;
+   `GET /sale/sales` for the day of your pass's PaymentDate; `POST
+   /sale/returnsale {SaleId, ReturnReason: "Guest pass redeemed for
+   Alison Reed 9/4/26"}`; `GET /client/clientservices` for you; your
+   own sign-in if your row was not in; then the two Notes writes (471
+   has no Formula Notes: the failed `addclientformulanote` pair comes
+   first on the process's first flow).
+4. The sheet closes on a clean run. Alison's row: "Guest Pass", "Guest
+   of Pete Stewart", checked in; yours checked in, the person-plus gone,
+   the chevron present if you hold another pass besides the membership
+   (with only the membership left there is nothing to change to, T57).
+5. In Mindbody's web app: Alison's visit paid by her own Guest Pass;
+   her profile with a $0 Guest Pass sale paid Comp; your Guest Pass
+   sale RETURNED with the reason, nothing refunded, your pass gone from
+   the active list; the Notes entries on both, signed and dated.
+6. If your pass's sale is NOT a lone $0 comp sale (it came with the
+   autopay, say), the sheet stays open with "Pete Stewart's guest pass
+   is still on their account: sale N bundles it with ..., and a return
+   would take back the whole sale. Return it in Mindbody." and
+   NOTHING was returned: Alison is still checked in on her pass. That
+   is the rule working, and the next question is whether Mindbody
+   can be made to sell the monthly Guest Pass on its own sale.
+7. Reverse for another run: cancel Alison's visit from her row (her
+   $0 pass returns to 1), and in Mindbody return her $0 Guest Pass
+   sale and put a Guest Pass back on your account by a $0 comp sale
+   (which is the shape the app returns).
+8. Then the already-booked path: book Alison into the class unpaid
+   (the walk-in search), run the flow: `updateclientvisit
+   {ClientServiceId}` then `{SignedIn}`, no `addclienttoclass`.
 
 ## T64. The sign-in gate says one line, and a login lasts two hours (Pete, 2026-09-04)
 

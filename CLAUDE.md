@@ -216,6 +216,21 @@ while `git clone` works, so clone the repo rather than fetching files.
   enabled"), so the record falls back to a T58-signed entry appended
   to the client's `Notes` (T62, `src/lib/formulanote.ts`); the Formula
   Note is still tried first, once per server start.
+- **`/sale/sales` filters by date, sale id and payment method, never by
+  client.** The client is matched on `Sale.ClientId` after the read
+  (`latestSaleId`, T63's `findGuestPassSale`). And **`/sale/returnsale`
+  returns a WHOLE sale by SaleId**, only a comp-paid one per the spec,
+  with no per-line return: a sale bundling a $0 Guest Pass with the
+  monthly autopay cannot have the pass alone returned. T63 reads the
+  sale first and returns it only when it is one $0 comp item (Pete's
+  rule: never a refund); otherwise the pass stays and the screen says
+  so. `PurchasedItem.Id` is the pricing option's ProductId for a
+  service, and there is no ClientServiceId on a sale line.
+- **The checkout answer carries no ClientService.** After selling a
+  pass, the purchase instance (the id `updateclientvisit` and
+  `addclienttoclass` take) comes from re-reading `/client/clientservices`
+  and matching by ProductId (T25) or by what was not there before and the
+  newest `PaymentDate` (T63).
 - **Categories live in `site.yml`, not `sale.yml`.** `GET /site/categories`
   exists; grepping only the Sale tag missed it once. `/site/liabilitywaiver`
   (the waiver's actual text) and `/site/paymenttypes` are next to it.
