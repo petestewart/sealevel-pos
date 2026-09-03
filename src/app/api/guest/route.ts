@@ -362,10 +362,17 @@ export async function POST(request: Request) {
     ]);
     notes.guest = g.id;
     notes.member = m.id;
-    const errors = [g.error, m.error].filter((e): e is string => e !== null);
+    /* One line for the sheet: each note's failure named, and the same
+     * message once when both failed the same way. */
+    const errors = [
+      g.error === null ? null : `guest: ${g.error}`,
+      m.error === null ? null : `member: ${m.error}`,
+    ].filter((e): e is string => e !== null);
+    const errorLine =
+      g.error !== null && g.error === m.error ? `both: ${g.error}` : errors.join("; ");
     steps.notes =
       errors.length > 0
-        ? { error: errors.join("; ") }
+        ? { error: errorLine }
         : g.suppressed || m.suppressed
           ? "suppressed"
           : "done";
