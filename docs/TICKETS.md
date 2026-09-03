@@ -7874,3 +7874,29 @@ Checked and not defects:
   commit trailers, CLAUDE.md's T50 note matches the screen, `npm run
   typecheck` and `npm run build` clean, `git ls-files node_modules`
   empty.
+
+## T63. Guest passes, the way the front desk does it (PLANNED; Pete, 2026-09-04)
+
+Pete showed the Mindbody screens: sell the guest a $0 "Guest Pass (for
+auto-debit members only)" from the member's POS page ("Pay for another
+client"), paid "Comp/Guest", then Return the member's own $0 Guest Pass
+sale with a reason ("Guest pass redeemed for Alison Stewart 9/3/2026"),
+"Return without a Refund". Mechanism A (the member's pass id on the
+guest's visit) was ignored by Mindbody (T62).
+
+Build, after T62 lands: (1) checkout for the GUEST of the Guest Pass
+service with the Comp stub at $0 (no PayerClientId: that needs a stored
+"Pays for" relationship); (2) book the guest with the new service id and
+sign them in; (3) retire the MEMBER's Guest Pass; (4) records per T62.
+
+**Pete's rule on step 3 (hard requirement): the return must never refund
+anything.** `/sale/returnsale` takes a SaleId, not a line, so a sale
+that bundles the Guest Pass with the monthly autopay would be returned
+whole. The app reads the sale first (`/sale/sales` / transactions) and
+returns it ONLY when it holds exactly one item, that item is the Guest
+Pass, the total is $0.00, and it carries no card, stored-card, account
+or gift-card payment. Otherwise, or if Mindbody refuses, the pass is
+retired by expiry through `/client/updateclientservice` (ExpirationDate
+yesterday, rehearsed with `Test: true` first); that call cannot move
+money. The member's own visit is never touched. The outcome names which
+path retired the pass.
