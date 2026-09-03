@@ -253,7 +253,7 @@ export default function StaffModal({
             <p className="modal-title">{teacher.name}</p>
             <p className="reason-sub">
               Signed in to Mindbody. Check-ins, bookings and sales from this
-              iPad are recorded under this login until sign-out or twelve
+              iPad are recorded under this login until sign-out or two
               hours.
             </p>
             {msg ? <p className="reason-note">{msg}</p> : null}
@@ -276,12 +276,7 @@ export default function StaffModal({
         ) : (
           <>
             <p className="modal-title">Sign in to Mindbody</p>
-            <p className="reason-sub">
-              Sign in with your own Mindbody login. Check-ins, bookings and
-              sales from this iPad are recorded under it until you sign out
-              or twelve hours pass. Your password is checked with Mindbody
-              and not kept.
-            </p>
+            <p className="reason-sub">Sign in with your Mindbody login.</p>
             <input
               className="reason-input"
               type="email"

@@ -7446,7 +7446,7 @@ function AuthGate() {
   }, []);
 
   /* T50: who is signed in, asked once the device is open. Sessions live
-   * in server memory (a restart forgets them) and run out at twelve
+   * in server memory (a restart forgets them) and run out at two
    * hours, so the answer can be null at any start; that is the gate,
    * not an error. A failed read is treated the same: the gate can be
    * signed through, a blank screen cannot. */
@@ -7490,7 +7490,7 @@ function AuthGate() {
    * a comp token that ran out), which the comp dialog handles itself;
    * it is not the device session gone. One carrying `reason: "staff"`
    * is a write refused for want of a Mindbody sign-in (T50: the server
-   * restarted or the twelve hours ran out): the teacher is dropped and
+   * restarted or the two hours ran out): the teacher is dropped and
    * the sign-in gate comes back, with the device still open. Any other
    * 401 is the lock. */
   useEffect(() => {

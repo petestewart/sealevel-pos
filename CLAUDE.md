@@ -296,8 +296,9 @@ while `git clone` works, so clone the repo rather than fetching files.
   every write runs under THEIR token so Mindbody
   names them; with nobody signed in, writes are refused (401
   `reason: "staff"`) and the gate comes back. The token lives
-  in server memory only (`src/lib/staffsession.ts`; a restart signs
-  everyone out, and the gate reappears). Verified live 2026-09-02: the API key issues tokens for
+  in server memory only (`src/lib/staffsession.ts`; two hours from
+  sign-in since T64; a restart signs everyone out, and the gate
+  reappears). Verified live 2026-09-02: the API key issues tokens for
   other staff logins, and a staff token reads its own permission group
   and Test-prices a cart. A token Mindbody refuses as dead mid-write
   ends the session and REFUSES that write (401 `reason: "staff"`, T50

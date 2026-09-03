@@ -7903,3 +7903,17 @@ no expiry fallback ("i don't really want to support 2 different
 paths"). Test on his account first; expiry through
 `/client/updateclientservice` stays a recorded option if the return
 proves unusable. The member's own visit is never touched.
+
+## T64. The sign-in gate says one line, and a login lasts two hours (Pete, 2026-09-04)
+
+Pete, on the T50 gate: "way too many words. Sign in with your Mindbody
+login is all that needs to display", and "we should only retain
+sign-ins for 2 hours for now -- eventually we may make this timed to
+class schedule more deterministically but 2 hours is good enough".
+
+Done: the gate's paragraph is "Sign in with your Mindbody login." and
+nothing else; the signed-in state's line says "two hours". `STAFF_TTL_MS`
+in `src/lib/staffsession.ts` is two hours from sign-in, still not
+sliding: the sweep, the cookie's Max-Age and the gate's 401 all read
+the one constant. CLAUDE.md's T50 note carries the number. A
+schedule-timed expiry is the recorded next step, not built.

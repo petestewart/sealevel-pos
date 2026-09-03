@@ -24,15 +24,14 @@ export type { Actor };
  *   an answer to the browser. A restart forgets every session, and the
  *   cost of that is one sign-in, which the header control offers.
  * - The browser holds `pos_staff`, an opaque random id signed with a
- *   per-process key: HttpOnly, SameSite=Strict, Secure on https, twelve
+ *   per-process key: HttpOnly, SameSite=Strict, Secure on https, two
  *   hours. The id names a Map entry and nothing else; knowing it without
  *   the process's key is worthless, and knowing it WITH the key names an
  *   entry that may already be gone. The device session (T21) is a
  *   separate cookie and a separate question: the device says the iPad is
  *   the studio's, this says which teacher is at it.
- * - Twelve hours from sign-in, not sliding: a shift is not twelve hours,
- *   and a token left signed in overnight should not still be acting the
- *   next morning. Expiry drops the entry and revokes the token, best
+ * - Two hours from sign-in (T64), not sliding: a login left on the iPad
+ *   should not still be acting for the next teacher's class. Expiry drops the entry and revokes the token, best
  *   effort, like sign-out.
  *
  * The Map lives on globalThis like the call log (ddcface): a dev
@@ -50,7 +49,11 @@ export interface StaffSession {
 }
 
 const COOKIE_NAME = "pos_staff";
-const STAFF_TTL_MS = 12 * 60 * 60 * 1000;
+/* T64 (Pete, 2026-09-04): two hours, down from twelve. Long enough for
+ * a class and its counter time, short enough that a login left on the
+ * iPad does not act for the next teacher. A schedule-timed expiry may
+ * replace the fixed number later. */
+const STAFF_TTL_MS = 2 * 60 * 60 * 1000;
 const COOKIE_PREFIX = "s1";
 
 interface StaffState {
@@ -70,7 +73,7 @@ function sign(id: string): string {
   return createHmac("sha256", state.key).update(id).digest("hex");
 }
 
-/** Drops every session past its twelve hours, revoking each token in
+/** Drops every session past its two hours, revoking each token in
  *  the background. Called on every lookup; the Map holds at most a
  *  studio's worth of teachers, so the sweep is nothing. */
 function sweep(now: number): void {
@@ -104,7 +107,7 @@ export function createStaffSession(
 
 /** The session a request's `pos_staff` cookie names, when the cookie is
  *  validly signed (constant-time) and the entry is still here and inside
- *  its twelve hours; else null. Null is the normal, working state of a
+ *  its two hours; else null. Null is the normal, working state of a
  *  counter with nobody signed in: every write then runs as the service
  *  account exactly as before T49. */
 export function staffSessionFrom(
