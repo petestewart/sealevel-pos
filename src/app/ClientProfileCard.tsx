@@ -1,6 +1,7 @@
 "use client";
 
 import type { ClientProfile } from "@/lib/clientprofile";
+import NoteText from "./NoteText";
 
 /**
  * T41: the client profile as a card (Pete: "a modal with the same basic
@@ -152,15 +153,11 @@ export function ClientProfileCard({
       {profile.redAlert || profile.yellowAlert || profile.notes ? (
         <div className="profile-notes">
           <p className="profile-label">Alerts and notes</p>
-          {profile.redAlert ? (
-            <p className="ctx-alert profile-alert">{profile.redAlert}</p>
-          ) : null}
-          {profile.yellowAlert ? (
-            <p className="modal-warn">{profile.yellowAlert}</p>
-          ) : null}
-          {profile.notes ? (
-            <p className="modal-note">{profile.notes}</p>
-          ) : null}
+          {/* T58: entry by entry, the signature under each signed one,
+              the same idiom as the info view. */}
+          <NoteText text={profile.redAlert} className="ctx-alert profile-alert" />
+          <NoteText text={profile.yellowAlert} className="modal-warn" />
+          <NoteText text={profile.notes} className="modal-note" />
         </div>
       ) : null}
 

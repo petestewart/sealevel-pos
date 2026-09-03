@@ -13,6 +13,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import DevDrawer from "./DevDrawer";
 import LockScreen from "./LockScreen";
+import NoteText from "./NoteText";
 import SaleScreen, {
   ModeBanner,
   attachSearchHint,
@@ -24,6 +25,7 @@ import StaffModal, { type Teacher } from "./StaffModal";
 import { actorFallbackLine } from "./actornote";
 import { useSettings } from "./settings";
 import type { ClientProfile } from "@/lib/clientprofile";
+import { stripSignatures } from "@/lib/notesig";
 
 /**
  * The counter screen. One class selector, one roster, one search box.
@@ -2979,18 +2981,34 @@ function FrontDesk({
    * view drops back to reading, showing the saved text. Suppression
    * renders inside the view as the amber notice, never as success;
    * failure shows Mindbody's reason and keeps the draft for another try.
+   *
+   * T58: the draft goes up as the teacher saw it, tags stripped, with
+   * the raw text the edit started from as `previous`; the SERVER signs
+   * whatever is new or changed with the session's name and answers
+   * with the raw text it wrote, and that is what the local state takes.
    */
   const saveInfoField = useCallback(async () => {
     if (!infoView || !infoEditing || infoSaving) return;
     const { clientId } = infoView;
     const field = infoEditing;
+    const previous =
+      field === "Notes"
+        ? infoView.notes
+        : field === "RedAlert"
+          ? infoView.redAlert
+          : infoView.yellowAlert;
     setInfoSaving(true);
     setInfoMsg(null);
     try {
       const res = await fetch("/api/client-field", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ clientId, field, value: infoDraft }),
+        body: JSON.stringify({
+          clientId,
+          field,
+          value: infoDraft,
+          previous: previous ?? "",
+        }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
@@ -3005,8 +3023,11 @@ function FrontDesk({
       }
       /* The batched brief lookup and the search mapping both trim and
        * null-convert these fields the same way, so the local update
-       * matches what a reload would show. */
-      const trimmed = infoDraft.trim() || null;
+       * matches what a reload would show. The text is the server's
+       * signed one (T58), never the unsigned draft. */
+      const written =
+        typeof body.value === "string" ? body.value : infoDraft;
+      const trimmed = written.trim() || null;
       const patch =
         field === "Notes"
           ? { notes: trimmed }
@@ -5516,13 +5537,15 @@ function FrontDesk({
                                 a teacher must see BEFORE the add tap. The
                                 alert text itself rides under the name
                                 instead, red for red. */}
+                            {/* T58: the tag stays out of the summary
+                                line; the signature lives in the views. */}
                             {client.redAlert ? (
                               <span className="subline stop-text">
-                                Alert: {client.redAlert}
+                                Alert: {stripSignatures(client.redAlert)}
                               </span>
                             ) : client.yellowAlert ? (
                               <span className="subline">
-                                Note: {client.yellowAlert}
+                                Note: {stripSignatures(client.yellowAlert)}
                               </span>
                             ) : null}
                             {subline ? (
@@ -6048,7 +6071,9 @@ function FrontDesk({
                       aria-label={`Edit ${s.label.toLowerCase()} for ${infoView.name}`}
                       title={`Edit ${s.label.toLowerCase()}`}
                       onClick={() => {
-                        setInfoDraft(s.text ?? "");
+                        /* T58: the editor shows plain text; the tags
+                           come back on the server's side. */
+                        setInfoDraft(stripSignatures(s.text));
                         setInfoMsg(null);
                         setInfoEditing(s.field);
                       }}
@@ -6061,17 +6086,23 @@ function FrontDesk({
                   /* Editing: the textarea seeded with the current text.
                      Whitespace and line breaks survive the round trip:
                      the textarea holds them natively and the reading
-                     views render pre-wrap. */
-                  <textarea
-                    className="notes-edit"
-                    value={infoDraft}
-                    onChange={(e) => setInfoDraft(e.target.value)}
-                    disabled={infoSaving}
-                    aria-label={`Edit ${s.label.toLowerCase()}`}
-                    autoFocus
-                  />
+                     views render pre-wrap. T58: under it, who the save
+                     will be signed as, so the signature is no surprise. */
+                  <>
+                    <textarea
+                      className="notes-edit"
+                      value={infoDraft}
+                      onChange={(e) => setInfoDraft(e.target.value)}
+                      disabled={infoSaving}
+                      aria-label={`Edit ${s.label.toLowerCase()}`}
+                      autoFocus
+                    />
+                    <p className="note-signed-as">Saved as {teacher.name}</p>
+                  </>
                 ) : s.text ? (
-                  <p className={s.textClass}>{s.text}</p>
+                  /* T58: entry by entry, each signed one with its name
+                     and date under it. */
+                  <NoteText text={s.text} className={s.textClass} />
                 ) : (
                   <p className="info-none">None.</p>
                 )}
