@@ -27,6 +27,68 @@ export function isGuestPass(name: string): boolean {
  *  treated as unknown rather than unlimited, because a guest pass is
  *  one session and a Mindbody that omitted the count is not evidence
  *  of a session to spend. */
+/**
+ * T62: whether the guest's visit really landed on the member's pass.
+ * Pete's live probe (2026-09-04): Mindbody ACCEPTED `addclienttoclass`
+ * with the member's Guest Pass id on the guest, paid the visit with the
+ * guest's OWN pass, left the member's pass at 1 left, and said nothing;
+ * the app reported success. So the write's answer is not the record,
+ * the visit and the pass are, and both are read back:
+ *
+ *   - `visit` is what Mindbody says paid the visit (the booking answer's
+ *     ServiceId, or a `/class/classvisits` re-read); null when neither
+ *     could be read. A visit on a different pass, or on none, is the
+ *     probe's case exactly.
+ *   - `remaining` is the member's pass before and after; `after` null
+ *     means the pass has left the ShowActiveOnly list (T57), which a
+ *     spent one-session pass does. A count that did not move is the
+ *     other half of the probe's evidence, and trips the judgement on
+ *     its own: a visit Mindbody says is on the pass while the pass still
+ *     shows the session is a Mindbody in two minds, and the safe answer
+ *     is the one that writes nothing more.
+ *
+ * "unverified" is both reads failing: nothing is known either way, and
+ * the caller says so rather than guessing. Pure, so it can be tested
+ * without Mindbody.
+ */
+export type GuestPassVerdict = "landed" | "ignored" | "unverified";
+
+export function judgeGuestPass(opts: {
+  sent: number;
+  visit: { clientServiceId: number | null } | null;
+  remaining: { before: number; after: number | null } | null;
+}): GuestPassVerdict {
+  const { sent, visit, remaining } = opts;
+  if (visit === null && remaining === null) return "unverified";
+  if (visit !== null && visit.clientServiceId !== sent) return "ignored";
+  if (remaining !== null && remaining.after !== null && remaining.after >= remaining.before) {
+    return "ignored";
+  }
+  return "landed";
+}
+
+/** The sentence the sheet shows for an ignored pass id: what Mindbody
+ *  did instead, and the one remedy that gives the session back. */
+export function ignoredPassMessage(opts: {
+  guestName: string;
+  memberName: string;
+  /** The pass Mindbody used instead; null when the visit carries none;
+   *  undefined when the visit could not be read and only the member's
+   *  unmoved count says the pass was not spent. */
+  ownPass: string | null | undefined;
+}): string {
+  const instead =
+    opts.ownPass === undefined
+      ? `${opts.guestName} without spending`
+      : opts.ownPass === null
+        ? `${opts.guestName} with no pass instead of`
+        : `${opts.guestName} on their own pass (${opts.ownPass}) instead of`;
+  return (
+    `Mindbody booked ${instead} ${opts.memberName}'s guest pass. ` +
+    `Remove them from the class to give that session back.`
+  );
+}
+
 export function usableGuestPass<P extends GuestPassLike>(
   passes: readonly P[] | null | undefined,
 ): (P & { id: number }) | null {

@@ -66,6 +66,16 @@ interface GuestAnswer {
   /** On a failed guest step: true when the step's first write went
    *  through (the visit is on the pass) and a later one did not. */
   landed?: boolean;
+  /** T62: Mindbody took the pass id and used another pass (or none);
+   *  the guest has a visit but not on the member's pass, and nothing
+   *  else was written. `bookedHere` says this flow made that visit. */
+  ignored?: boolean;
+  bookedHere?: boolean;
+  ownPass?: string | null;
+  guestVisitId?: number | null;
+  /** T62: false when neither read-back could confirm the pass. */
+  verified?: boolean | null;
+  verifyDetail?: string | null;
   suppressed?: boolean;
   steps?: { guest: StepOutcome; member: StepOutcome; notes: StepOutcome };
   actorFallback?: { name: string; reason: string };
@@ -104,6 +114,10 @@ interface Props {
    *  ended staff session and refresh the rows that changed. `landed` is
    *  true when the guest's visit REALLY landed on the pass. */
   onAnswer: (answer: GuestAnswer, pick: GuestPick, landed: boolean) => void;
+  /** T62: the sheet's "Remove from class" went through (or was
+   *  suppressed, `suppressed` says which); the page refreshes the rows
+   *  and the guest's own pass cache either way. */
+  onRemoved: (pick: GuestPick, suppressed: string | null) => void;
 }
 
 function CloseIcon() {
@@ -189,6 +203,7 @@ export default function GuestModal({
   suppressionReason,
   onClose,
   onAnswer,
+  onRemoved,
 }: Props) {
   const [query, setQuery] = useState("");
   const [searched, setSearched] = useState("");
@@ -204,7 +219,93 @@ export default function GuestModal({
    *  which closes the modal. */
   const [outcome, setOutcome] = useState<{
     lines: { text: string; tone: "ok" | "warn" | "stop" }[];
+    /** T62: the sheet offers "Remove from class" when Mindbody ignored
+     *  the pass id and the guest's visit is one this flow made, or one
+     *  now on their own pass. Null otherwise. */
+    removable: { pick: GuestPick } | null;
   } | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  /* T62: the one remedy for an ignored pass id, through the existing
+   * cancel-visit route (removeclientfromclass). Single flight, the same
+   * ref as the confirm; suppression is said in amber and the modal stays
+   * open, since a removal that was not written has not given anything
+   * back. */
+  const removeFromClass = async () => {
+    if (inFlight.current || outcome?.removable === null || !outcome) return;
+    const pick = outcome.removable.pick;
+    inFlight.current = true;
+    setRemoving(true);
+    try {
+      const res = await fetch("/api/cancel-visit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId: pick.person.id, classId }),
+      });
+      const body = (await res.json().catch(() => null)) as {
+        error?: string;
+        reason?: string;
+        suppressed?: string | null;
+      } | null;
+      if (!res.ok) {
+        if (body?.reason === "staff") {
+          onAnswer({ reason: "staff" }, pick, false);
+          return;
+        }
+        setOutcome((o) =>
+          o === null
+            ? o
+            : {
+                ...o,
+                lines: [
+                  ...o.lines,
+                  {
+                    text: `Not removed: ${body?.error ?? `HTTP ${res.status}`}`,
+                    tone: "stop",
+                  },
+                ],
+              },
+        );
+        return;
+      }
+      if (body?.suppressed) {
+        onRemoved(pick, body.suppressed);
+        setOutcome((o) =>
+          o === null
+            ? o
+            : {
+                ...o,
+                lines: [
+                  ...o.lines,
+                  {
+                    text: `Removal not written. ${suppressionReason ?? "The write was suppressed."}`,
+                    tone: "warn",
+                  },
+                ],
+                removable: null,
+              },
+        );
+        return;
+      }
+      onRemoved(pick, null);
+      onClose();
+    } catch (e) {
+      setOutcome((o) =>
+        o === null
+          ? o
+          : {
+              ...o,
+              lines: [
+                ...o.lines,
+                { text: e instanceof Error ? e.message : String(e), tone: "stop" },
+              ],
+            },
+      );
+    } finally {
+      inFlight.current = false;
+      setRemoving(false);
+    }
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -314,6 +415,30 @@ export default function GuestModal({
          * member's own check-in still to do. */
         if (answer.reason === "staff") return;
         const reason = (answer.error ?? "no reason given").replace(/\.$/, "");
+        if (answer.ignored) {
+          /* T62: Mindbody took the id and used another pass. The words
+           * are the server's (they name the pass it used); the remedy
+           * is the button, for a visit this flow made or one now on the
+           * guest's own pass. A booking that was there before and is
+           * unchanged has nothing to give back, so only Close. */
+          const removable =
+            answer.bookedHere === true || (answer.ownPass ?? null) !== null;
+          setOutcome({
+            lines: [
+              { text: answer.error ?? "Mindbody did not use the guest pass.", tone: "stop" },
+              ...(removable
+                ? []
+                : [
+                    {
+                      text: `${pick.person.name}'s booking is as it was. Nothing else was written.`,
+                      tone: "warn" as const,
+                    },
+                  ]),
+            ],
+            removable: removable ? { pick } : null,
+          });
+          return;
+        }
         const lines: { text: string; tone: "ok" | "warn" | "stop" }[] = answer.refused
           ? [
               {
@@ -332,12 +457,13 @@ export default function GuestModal({
                   : [{ text: `${member.name}: not checked in.`, tone: "warn" as const }]),
               ]
             : [{ text: answer.error ?? `HTTP ${res.status}`, tone: "stop" }];
-        setOutcome({ lines });
+        setOutcome({ lines, removable: null });
         return;
       }
       if (!steps) {
         setOutcome({
           lines: [{ text: "Mindbody answered without saying what happened.", tone: "stop" }],
+          removable: null,
         });
         return;
       }
@@ -366,6 +492,16 @@ export default function GuestModal({
         member.checkedIn ? "already checked in." : "not checked in: no visit to sign in.",
       );
       say("Formula Notes", steps.notes, "filed on both.", "");
+      if (answer.verified === false) {
+        /* T62: the visit is written and signed in, but neither read-back
+         * could say whose pass paid; the teacher looks at the row. */
+        lines.push({
+          text:
+            `Could not confirm that ${firstName(member.name)}'s guest pass paid: ` +
+            `${answer.verifyDetail ?? "the read-back failed"}. Check ${pick.person.name}'s row.`,
+          tone: "warn",
+        });
+      }
       if (answer.actorFallback) {
         lines.push({ text: actorFallbackLine(answer.actorFallback), tone: "warn" });
       }
@@ -373,15 +509,17 @@ export default function GuestModal({
         steps.guest === "done" &&
         (steps.member === "done" || steps.member === "skipped") &&
         steps.notes === "done" &&
+        answer.verified !== false &&
         !answer.actorFallback;
       if (clean) {
         onClose();
         return;
       }
-      setOutcome({ lines });
+      setOutcome({ lines, removable: null });
     } catch (e) {
       setOutcome({
         lines: [{ text: e instanceof Error ? e.message : String(e), tone: "stop" }],
+        removable: null,
       });
     } finally {
       inFlight.current = false;
@@ -500,6 +638,25 @@ export default function GuestModal({
                       </>
                     ) : (
                       "Confirm"
+                    )}
+                  </button>
+                </>
+              ) : outcome.removable ? (
+                <>
+                  <button className="modal-cancel" disabled={removing} onClick={onClose}>
+                    Close
+                  </button>
+                  <button
+                    className="modal-confirm guest-remove"
+                    disabled={removing}
+                    onClick={() => void removeFromClass()}
+                  >
+                    {removing ? (
+                      <>
+                        <span className="spinner" aria-label="working" /> Removing
+                      </>
+                    ) : (
+                      "Remove from class"
                     )}
                   </button>
                 </>

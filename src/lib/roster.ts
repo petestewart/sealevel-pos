@@ -568,7 +568,44 @@ export interface BookingResult {
    *  guest flow (T59c) reads this to skip a sign-in Mindbody already
    *  made. null when the answer did not say, or the write was suppressed. */
   signedIn: boolean | null;
+  /** T62: the pass Mindbody actually applied, `Visit.ServiceId` and
+   *  `Visit.ServiceName` on the booking answer (class.yml,
+   *  AddClientToClassVisit: "the ID of the client's pricing option
+   *  applied to the class visit", the same purchase-instance id a class
+   *  visit's `Service.Id` carries). Pete's live probe (2026-09-04) saw
+   *  Mindbody accept a ClientServiceId and pay the visit with a
+   *  different pass without a word, so a caller that sent one must read
+   *  this back rather than assume. null when the answer omits it, or the
+   *  write was suppressed. */
+  serviceId: number | null;
+  serviceName: string | null;
   suppressed: "dry-run" | "write-guard" | null;
+}
+
+/**
+ * T62: one visit's payment as `/class/classvisits` reports it, for a
+ * caller that needs to know whose pass Mindbody put a visit on when the
+ * booking answer did not say. One metered read (the whole class's
+ * visits, the same call the roster makes); null when the visit is not
+ * on that class's list. `clientServiceId` null with a non-null answer
+ * means the visit carries no pass at all.
+ */
+export async function visitPayment(
+  classId: number,
+  visitId: number,
+): Promise<{
+  clientId: string;
+  clientServiceId: number | null;
+  pricingOption: string | null;
+} | null> {
+  const entries = await rosterFor(classId);
+  const entry = entries.find((e) => e.visitId === visitId);
+  if (!entry) return null;
+  return {
+    clientId: entry.clientId,
+    clientServiceId: entry.clientServiceId,
+    pricingOption: entry.pricingOption,
+  };
 }
 
 export async function bookClientIntoClass(opts: {
@@ -600,15 +637,18 @@ export async function bookClientIntoClass(opts: {
     clientId: opts.clientId,
     ...(opts.actor ? { actor: opts.actor } : {}),
   });
-  if (res?.DryRun) return { visitId: null, signedIn: null, suppressed: "dry-run" };
-  if (res?.WriteSuppressed) {
-    return { visitId: null, signedIn: null, suppressed: "write-guard" };
-  }
+  const none = { visitId: null, signedIn: null, serviceId: null, serviceName: null };
+  if (res?.DryRun) return { ...none, suppressed: "dry-run" };
+  if (res?.WriteSuppressed) return { ...none, suppressed: "write-guard" };
   const id = res?.Visit?.Id;
   const signedIn = res?.Visit?.SignedIn;
+  const serviceId = res?.Visit?.ServiceId;
+  const serviceName = res?.Visit?.ServiceName;
   return {
     visitId: typeof id === "number" ? id : null,
     signedIn: typeof signedIn === "boolean" ? signedIn : null,
+    serviceId: typeof serviceId === "number" && Number.isInteger(serviceId) ? serviceId : null,
+    serviceName: typeof serviceName === "string" && serviceName ? serviceName : null,
     suppressed: null,
   };
 }

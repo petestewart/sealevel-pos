@@ -3893,6 +3893,7 @@ function FrontDesk({
         steps?: { guest: unknown; member: unknown };
         staffSessionEnded?: boolean;
         reason?: string;
+        ignored?: boolean;
       },
       pick: GuestPick,
       landed: boolean,
@@ -3911,7 +3912,10 @@ function FrontDesk({
         setGuestBy((g) => ({ ...g, [pick.person.id]: flow.member.name }));
       }
       const memberDone = answer.steps?.member === "done";
-      if (landed || memberDone) {
+      /* T62: an ignored pass id still made (or changed) the guest's
+       * visit, on their own pass: their row and their pass list are
+       * stale, and the member's pass is whatever Mindbody says now. */
+      if (landed || memberDone || answer.ignored === true) {
         refreshClientState(flow.member.clientId);
         passSweepCache.current.delete(pick.person.id);
         setPassLists((l) => {
@@ -5426,6 +5430,13 @@ function FrontDesk({
           }
           onClose={closeGuestFlow}
           onAnswer={onGuestAnswer}
+          onRemoved={(pick) => {
+            /* T62: the guest's visit is gone (or the removal was
+             * suppressed and their row stands): either way the roster is
+             * the answer, and their own pass, spent by the ignored write
+             * and given back by the removal, is re-read on demand. */
+            refreshClientState(pick.person.id);
+          }}
         />
       ) : null}
       {newClient ? (
