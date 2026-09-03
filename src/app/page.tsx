@@ -2433,16 +2433,59 @@ function FrontDesk({
    * until the class was switched and switched back. The purchase already
    * stands whatever happens here.
    */
+  /**
+   * T63 (Pete, live): re-read one client's pass list NOW, keeping what
+   * is shown until the answer lands. Dropping the cache and leaving the
+   * refetch to the background sweep lost the member's chevron after a
+   * guest flow until a page refresh: the sweep only runs when the roster
+   * changes, claims the client before fetching, and keeps a failed
+   * fetch as a null claim for the session, so one failed read after
+   * the flow left the row with no list and nothing to retry it. This
+   * claims the sweep's ledger (so the two never spend a second call on
+   * the same client), marks the list loading with its stale data still
+   * in place (the chevron and the Guest action keep rendering from what
+   * was known, and recompute when the fresh list lands), and on a
+   * failure RELEASES the claim so the next sweep or picker open tries
+   * again.
+   */
+  const refetchPassList = useCallback((clientId: string) => {
+    passSweepCache.current.set(clientId, null);
+    setPassLists((l) => ({
+      ...l,
+      [clientId]: { data: l[clientId]?.data ?? null, error: null, loading: true },
+    }));
+    fetch(`/api/passes?clientId=${encodeURIComponent(clientId)}`)
+      .then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+        const passes = (body?.passes ?? []) as PassInfo[];
+        passSweepCache.current.set(clientId, passes);
+        setPassLists((l) => ({
+          ...l,
+          [clientId]: { data: passes, error: null, loading: false },
+        }));
+      })
+      .catch((err) => {
+        passSweepCache.current.delete(clientId);
+        setPassLists((l) => ({
+          ...l,
+          [clientId]: {
+            data: l[clientId]?.data ?? null,
+            error: err instanceof Error ? err.message : String(err),
+            loading: false,
+          },
+        }));
+      });
+  }, []);
+
   const refreshClientState = useCallback(
     (cid: string) => {
-      passSweepCache.current.delete(cid);
-      setPassLists((l) => {
-        const { [cid]: _drop, ...rest } = l;
-        return rest;
-      });
+      /* T63: the list is re-read right away, not merely dropped (see
+       * refetchPassList); the roster refresh rides alongside. */
+      refetchPassList(cid);
       if (activeId !== null) void refreshRoster(activeId);
     },
-    [activeId, refreshRoster],
+    [activeId, refreshRoster, refetchPassList],
   );
 
   /** Escape closes the search-results modal, unless a layer is stacked
@@ -3818,6 +3861,21 @@ function FrontDesk({
   const changePass = useCallback(
     async (entry: RosterEntry, clientServiceId: number) => {
       if (entry.visitId === null || passSavingId !== null) return;
+      /* T63 (Pete, live, a future day): the member's OWN visit is never
+       * put on a guest pass from here, on any day, however the line was
+       * rendered. The picker routes a guest pass to the guest modal
+       * (T59c), and this is the invariant behind it: a pass list whose
+       * guest pass came back without a Remaining count rendered as an
+       * ordinary line and one tap burned it on the member (T57's
+       * accident by another door). Judged by name, the one mark a guest
+       * pass carries. */
+      const target = passLists[entry.clientId]?.data?.find((p) => p.id === clientServiceId);
+      if (target && isGuestPass(target.name)) {
+        setPassMsg(
+          `A guest pass checks in a guest, not ${entry.name.split(" ")[0]}. Nothing was changed.`,
+        );
+        return;
+      }
       setPassSavingId(clientServiceId);
       setPassMsg(null);
       try {
@@ -3851,7 +3909,7 @@ function FrontDesk({
         setPassSavingId(null);
       }
     },
-    [passSavingId, refreshRoster, noteActor],
+    [passSavingId, refreshRoster, noteActor, passLists],
   );
 
   /**
@@ -3897,7 +3955,7 @@ function FrontDesk({
   const onGuestAnswer = useCallback(
     (
       answer: {
-        steps?: { guest: unknown; member: unknown };
+        steps?: { sale?: unknown; guest: unknown; member: unknown };
         staffSessionEnded?: boolean;
         reason?: string;
         ignored?: boolean;
@@ -3922,16 +3980,16 @@ function FrontDesk({
       /* T62: an ignored pass id still made (or changed) the guest's
        * visit, on their own pass: their row and their pass list are
        * stale, and the member's pass is whatever Mindbody says now. */
-      if (landed || memberDone || answer.ignored === true) {
+      /* T63: any answer past the sale may have changed both accounts
+       * (the guest's new $0 pass, the member's returned one), so both
+       * lists are re-read, not just dropped (refetchPassList). */
+      const saleDone = answer.steps?.sale === "done";
+      if (landed || memberDone || saleDone || answer.ignored === true) {
         refreshClientState(flow.member.clientId);
-        passSweepCache.current.delete(pick.person.id);
-        setPassLists((l) => {
-          const { [pick.person.id]: _drop, ...rest } = l;
-          return rest;
-        });
+        refetchPassList(pick.person.id);
       }
     },
-    [guestFlow, noteActor, closeGuestFlow, refreshClientState],
+    [guestFlow, noteActor, closeGuestFlow, refreshClientState, refetchPassList],
   );
 
   /**
@@ -4031,18 +4089,35 @@ function FrontDesk({
           {others.map((p) => {
             const saving = passSavingId === p.id;
             const short = shortPassName(p.name);
-            /* T59c: a Guest Pass with a session left never pays for the
-             * member's OWN visit from here (T57's accident: a tap on it
-             * burned the pass on the member). It opens the guest modal
-             * instead, and the line says so. */
-            const guest = usableGuestPass([p]);
-            if (guest) {
+            /* T59c: a Guest Pass never pays for the member's OWN visit
+             * from here (T57's accident: a tap on it burned the pass on
+             * the member). It opens the guest modal instead, and the
+             * line says so. T63 (Pete, live, a future day): EVERY guest
+             * pass takes this branch by name, usable or not, so none can
+             * fall through to the ordinary line; a pass with no session
+             * left, or an unknown count, is the line disabled with the
+             * reason, and on a future day the line is disabled with
+             * "used on the day of class", because the flow signs two
+             * people in and check-in is closed there (T46). Booking a
+             * guest ahead is a recorded option, not built. */
+            if (isGuestPass(p.name)) {
+              const guest = usableGuestPass([p]);
+              const blocked = futureClass
+                ? "Guest passes are used on the day of class"
+                : guest === null
+                  ? "No session left on it"
+                  : null;
               return (
                 <button
                   key={`opt-${p.id}`}
-                  className="pass-opt pass-opt-guest"
-                  disabled={passSavingId !== null}
-                  onClick={() => openGuestFlow(entry, guest)}
+                  className={
+                    blocked ? "pass-opt pass-opt-guest blocked" : "pass-opt pass-opt-guest"
+                  }
+                  disabled={passSavingId !== null || blocked !== null}
+                  aria-disabled={blocked !== null}
+                  onClick={() => {
+                    if (guest && blocked === null) openGuestFlow(entry, guest);
+                  }}
                 >
                   <span className="pass-check">
                     <PersonPlusIcon />
@@ -4050,7 +4125,7 @@ function FrontDesk({
                   <span className="pass-opt-text">
                     <span className="pass-opt-name">{short}</span>
                     <span className="pass-opt-full">
-                      Checks in a guest, not {entry.name.split(" ")[0]}
+                      {blocked ?? `Checks in a guest, not ${entry.name.split(" ")[0]}`}
                     </span>
                   </span>
                   <span className="pass-col">{passLeftCol(p)}</span>
@@ -5119,12 +5194,14 @@ function FrontDesk({
                       expiry facts that used to be their own grid columns
                       (T15). No pass, no sub-line. */}
                   {/* T59c: a guest checked in on someone's pass reads
-                      "Guest Pass (Pete)", the member's name on the
-                      facts line; Mindbody's visit carries the pass name
-                      alone. T62: the name comes from the server's
+                      the pass name with "Guest of <member>" on the facts
+                      line. T62: the name comes from the server's
                       guest_visits marker first (it survives a reload),
                       and the page's own memory of this class view is
-                      the fallback when there is no database. */}
+                      the fallback when there is no database. T63: the
+                      pass is the guest's OWN $0 Guest Pass now, so the
+                      name is Mindbody's, shortened like every other
+                      row's, and only the facts line says whose guest. */}
                   {(() => {
                     const host =
                       entry.pricingOption && isGuestPass(entry.pricingOption)
@@ -5138,11 +5215,9 @@ function FrontDesk({
                       }
                       title={entry.pricingOption ?? undefined}
                     >
-                      {host
-                        ? `Guest Pass (${host.split(" ")[0]})`
-                        : entry.pricingOption
-                          ? shortPassName(entry.pricingOption)
-                          : "No pass"}
+                      {entry.pricingOption
+                        ? shortPassName(entry.pricingOption)
+                        : "No pass"}
                     </span>
                     {host ? (
                       <span className="pass-facts">Guest of {host}</span>
@@ -5941,15 +6016,22 @@ function FrontDesk({
                      * id are choosable; a pass Mindbody returned without
                      * one cannot be named on a booking call. */
                     const passList = passLists[client.id]?.data ?? null;
+                    /* T63: a guest pass is never choosable for the
+                     * MEMBER's own booking here either (T59c and T62 left
+                     * this picker as the one door still open to T57's
+                     * accident), and never the shown default. The guest
+                     * flow is the member's roster row. */
                     const choosable = (passList ?? []).filter(
-                      (p): p is PassInfo & { id: number } => p.id !== null,
+                      (p): p is PassInfo & { id: number } =>
+                        p.id !== null && !isGuestPass(p.name),
                     );
                     const chosenId = walkinPassChoice[client.id];
                     const chosen =
                       chosenId !== undefined
                         ? (choosable.find((p) => p.id === chosenId) ?? null)
                         : null;
-                    const shownPass = chosen ?? passList?.[0] ?? null;
+                    const shownPass =
+                      chosen ?? passList?.find((p) => !isGuestPass(p.name)) ?? null;
                     const pickerOpen = walkinPicker?.id === client.id;
                     const rowClass = [
                       "rrow",

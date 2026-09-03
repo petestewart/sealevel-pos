@@ -5004,6 +5004,15 @@ button.sale-for:disabled {
   color: var(--accent);
 }
 
+/* T63: the same line when it cannot open the modal (a future day, or a
+ * pass with no session left): the disabled ink on the icon and the name,
+ * the reason in the muted second line, still 64px so the row keeps its
+ * shape and a tap lands on nothing. */
+.pass-opt.pass-opt-guest.blocked .pass-check,
+.pass-opt.pass-opt-guest.blocked .pass-opt-name {
+  color: var(--disabled-ink);
+}
+
 /* The confirm sheet's sentence and the outcome list. The sentence is
  * the ink, not the stop colour: nothing here is destructive. */
 .guest-sentence {
