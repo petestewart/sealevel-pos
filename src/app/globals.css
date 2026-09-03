@@ -4524,3 +4524,79 @@ button.sale-for:disabled {
 .profile-notes .modal-note {
   margin-bottom: 4px;
 }
+
+/* T50 --- Sign-in is required; the header names the teacher -------------
+ * Pete: "there should just be the current user's name displayed at the
+ * top. next to that there can be a profile icon that allows the user to
+ * sign out." The name is plain text beside a round 44px icon button (the
+ * icon idiom) that opens the account modal, in the slot the T49 "Sign
+ * in" button had, so the row still fits iPad landscape. The gate is the
+ * staff modal's scrim made opaque: nothing of the roster shows through
+ * because nothing of the roster is rendered. Tokens only. */
+
+.staff-id {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 64px;
+}
+
+.staff-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* T50 review: under 1100 (a 1024 iPad landscape) the 180px name starved
+ * the class picker of its ~312px and wrapped the counters onto a second
+ * row; 100px keeps the row to one line with any name (a 151px slot fit
+ * measured, 232 did not). The full name is the tooltip and the icon's
+ * aria-label. */
+@media (max-width: 1100px) {
+  .staff-name {
+    max-width: 100px;
+  }
+}
+
+.staff-account {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.staff-account:active {
+  background: var(--action-bg);
+}
+
+.modal-scrim.staff-gate {
+  background: var(--bg);
+}
+
+/* T50 review: the mode banner over the gate's opaque scrim, in the
+ * shell's own slot (16px inset, 1100 max) so it sits exactly where the
+ * roster's does. */
+.staff-gate-banner {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 31;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.staff-gate-banner .banner {
+  margin: 0;
+}

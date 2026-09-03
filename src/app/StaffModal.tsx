@@ -3,18 +3,25 @@
 import { useCallback, useEffect, useState } from "react";
 
 /**
- * The staff sign-in (T49). Opens from the header control that reads
- * "Sign in" or the signed-in teacher's first name. Nothing in the app
- * requires it: with nobody signed in every write runs as the studio's
- * service account exactly as before, and nothing prompts at start. When
- * a teacher IS signed in, every write runs under their own Mindbody
- * token, so Mindbody's records name them.
+ * The staff sign-in (T49), required since T50. Pete: "seems like it's
+ * optional to login. that shouldn't be the case." Every write runs
+ * under the signed-in teacher's own Mindbody token, so Mindbody's
+ * records name them, and the server refuses a write with nobody signed
+ * in (`reason: "staff"`), so the app does not show the roster until
+ * someone is.
  *
  * Two faces. Signed out: email and password (autoComplete username /
  * current-password, so a saved login fills), Sign in. Signed in: the
  * name, the probe summary (what their Mindbody login can actually do,
  * from /api/teacher/probe) and Sign out. The password is sent once and
  * cleared from state on every answer; it is never kept.
+ *
+ * `required` is the gate (T50): the same form rendered full-screen in
+ * place of the roster, with no way past it but signing in. No Cancel,
+ * no scrim tap, no Escape, and the scrim is opaque so nothing shows
+ * through. The signed-in face never renders under `required`; the gate
+ * unmounts the moment a sign-in lands. Otherwise the modal opens from
+ * the header's account icon, in its signed-in state.
  */
 
 export interface Teacher {
@@ -78,12 +85,20 @@ export default function StaffModal({
   teacher,
   onClose,
   onTeacherChange,
+  required = false,
+  notice = null,
 }: {
   open: boolean;
   teacher: Teacher | null;
   onClose: () => void;
   /** The session changed: signed in as someone, or signed out (null). */
   onTeacherChange: (teacher: Teacher | null) => void;
+  /** T50: the full-screen gate. Not dismissable. */
+  required?: boolean;
+  /** T50 review: why the gate is back, when a write was refused for a
+   *  sign-in that ended (the server's own line, so it says what was and
+   *  was not sent). Shown where a wrong password would be. */
+  notice?: string | null;
 }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -117,10 +132,10 @@ export default function StaffModal({
     }
   }, [onTeacherChange]);
 
-  /* Each opening starts clean. */
+  /* Each opening starts clean, or with the notice the gate was given. */
   useEffect(() => {
-    if (open) setMsg(null);
-  }, [open]);
+    if (open) setMsg(notice ?? null);
+  }, [open, notice]);
 
   /* The probe runs whenever the modal is open on a signed-in teacher:
    * on opening, and again the moment a sign-in lands (the teacher prop
@@ -134,14 +149,15 @@ export default function StaffModal({
     }
   }, [open, teacher, runProbe]);
 
+  /* Escape closes the modal; the gate has nothing to close to. */
   useEffect(() => {
-    if (!open) return;
+    if (!open || required) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, required, onClose]);
 
   const valid = username.trim().length >= 3 && password.length > 0;
 
@@ -197,10 +213,10 @@ export default function StaffModal({
 
   return (
     <div
-      className="modal-scrim"
+      className={required ? "modal-scrim staff-gate" : "modal-scrim"}
       role="presentation"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (!required && e.target === e.currentTarget) onClose();
       }}
     >
       <div
@@ -240,10 +256,10 @@ export default function StaffModal({
           <>
             <p className="modal-title">Sign in to Mindbody</p>
             <p className="reason-sub">
-              Optional. Signed in, your check-ins, bookings and sales are
-              recorded under your own Mindbody login; signed out, they are
-              recorded under the studio account, as before. Your password is
-              checked with Mindbody and not kept.
+              Sign in with your own Mindbody login. Check-ins, bookings and
+              sales from this iPad are recorded under it until you sign out
+              or twelve hours pass. Your password is checked with Mindbody
+              and not kept.
             </p>
             <input
               className="reason-input"
@@ -271,9 +287,15 @@ export default function StaffModal({
             />
             {msg ? <p className="lock-msg">{msg}</p> : null}
             <div className="modal-actions">
-              <button className="modal-cancel" disabled={busy} onClick={onClose}>
-                Cancel
-              </button>
+              {required ? null : (
+                <button
+                  className="modal-cancel"
+                  disabled={busy}
+                  onClick={onClose}
+                >
+                  Cancel
+                </button>
+              )}
               <button
                 className="modal-confirm go"
                 disabled={busy || !valid}

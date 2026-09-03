@@ -20,7 +20,7 @@ import SaleScreen, {
   type SaleClient,
 } from "./SaleScreen";
 import { ClientProfileCard, wallDate } from "./ClientProfileCard";
-import StaffModal, { firstName, type Teacher } from "./StaffModal";
+import StaffModal, { type Teacher } from "./StaffModal";
 import { actorFallbackLine } from "./actornote";
 import { useSettings } from "./settings";
 import type { ClientProfile } from "@/lib/clientprofile";
@@ -863,7 +863,17 @@ function money(n: number): string {
   });
 }
 
-function FrontDesk() {
+function FrontDesk({
+  teacher,
+  onTeacherChange,
+}: {
+  /** T50: the signed-in teacher. Never null here: AuthGate renders the
+   *  sign-in gate instead of this screen until someone is. */
+  teacher: Teacher;
+  /** Signed out, or the session ended (null); or signed in as someone
+   *  else from the account modal. AuthGate owns the state. */
+  onTeacherChange: (teacher: Teacher | null) => void;
+}) {
   const [classes, setClasses] = useState<ClassSummary[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [entries, setEntries] = useState<RosterEntry[]>([]);
@@ -873,9 +883,10 @@ function FrontDesk() {
   const [config, setConfig] = useState<ModeConfig | null>(null);
   /** Rows whose check-in call failed after going green optimistically. */
   const [failed, setFailed] = useState<Record<string, string>>({});
-  /** T49: the signed-in teacher, from GET /api/teacher; null is the
-   *  ordinary state and asks for nothing. */
-  const [teacher, setTeacher] = useState<Teacher | null>(null);
+  /** T49/T50: the writes' answers still report the session ending
+   *  (`staffSessionEnded`); that drops the teacher upstream and the gate
+   *  takes over. The name is kept for the call sites below. */
+  const setTeacher = onTeacherChange;
   const [staffOpen, setStaffOpen] = useState(false);
   /** T49: per-row amber notes, "Done as the studio account: ...", for a
    *  write on that row that fell back from the teacher's token. */
@@ -1435,15 +1446,6 @@ function FrontDesk() {
       .then((r) => r.json())
       .then(setConfig)
       .catch(() => setConfig(null));
-  }, []);
-
-  /* T49: who is signed in, if anyone. A read, not a prompt: nothing
-   * asks at start, the header control just reads the right thing. */
-  useEffect(() => {
-    fetch("/api/teacher")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((body) => setTeacher(body?.teacher ?? null))
-      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -4408,25 +4410,31 @@ function FrontDesk() {
           >
             Buy
           </button>
-          {/* T49: who Mindbody records this iPad's writes under. "Sign
-              in" when nobody is, the teacher's first name when someone
-              is; either way a quiet 64px control that opens the staff
-              modal. Nothing requires it and nothing prompts for it. */}
-          <button
-            className="class-change staff-btn"
-            onClick={() => {
-              setPickerFor(null);
-              setSortMenuOpen(false);
-              setStaffOpen(true);
-            }}
-            aria-label={
-              teacher
-                ? `${teacher.name} is signed in to Mindbody. Tap to see or sign out.`
-                : "Sign in to Mindbody"
-            }
-          >
-            {teacher ? firstName(teacher.name) : "Sign in"}
-          </button>
+          {/* T50: who Mindbody records this iPad's writes under. Pete:
+              "there should just be the current user's name displayed at
+              the top. next to that there can be a profile icon that
+              allows the user to sign out. this would also be where a
+              user signs in, no big 'sign in' button". The name is plain
+              text; the round icon (44px icon idiom) opens the account
+              modal, which is where sign-out lives. Somebody is always
+              signed in here: the gate sits in front of this screen
+              otherwise. */}
+          <div className="staff-id">
+            <span className="staff-name" title={teacher.name}>
+              {teacher.name}
+            </span>
+            <button
+              className="staff-account"
+              onClick={() => {
+                setPickerFor(null);
+                setSortMenuOpen(false);
+                setStaffOpen(true);
+              }}
+              aria-label={`Signed in as ${teacher.name}. Account`}
+            >
+              <PersonIcon />
+            </button>
+          </div>
           <div className="counters" aria-label="Counts for the selected class">
           {/* A plain stat, not a button: its list IS the roster below,
               and a modal copying the screen behind it earned nothing
@@ -6783,6 +6791,21 @@ function AuthGate() {
   const [phase, setPhase] = useState<"checking" | "locked" | "open">(
     "checking",
   );
+  /** T50: the signed-in teacher. `undefined` until /api/teacher has
+   *  answered (nothing renders, as with the device check: a flash of
+   *  the gate at a signed-in counter is as wrong as a flash of the
+   *  roster at a locked one); null renders the gate; a teacher renders
+   *  the desk. */
+  const [teacher, setTeacher] = useState<Teacher | null | undefined>(
+    undefined,
+  );
+  /** T50 review: the server's line for why the gate came back after a
+   *  refused write (its sign-in ended), cleared by the next sign-in. */
+  const [gateNotice, setGateNotice] = useState<string | null>(null);
+  /** T50 review: the mode banner is on every screen, the gate included;
+   *  a teacher signing in must not wonder whether the counter is live.
+   *  Read once here; FrontDesk reads its own copy as before. */
+  const [gateConfig, setGateConfig] = useState<ModeConfig | null>(null);
   useEffect(() => {
     let cancelled = false;
     fetch("/api/session")
@@ -6802,6 +6825,42 @@ function AuthGate() {
     };
   }, []);
 
+  /* T50: who is signed in, asked once the device is open. Sessions live
+   * in server memory (a restart forgets them) and run out at twelve
+   * hours, so the answer can be null at any start; that is the gate,
+   * not an error. A failed read is treated the same: the gate can be
+   * signed through, a blank screen cannot. */
+  useEffect(() => {
+    if (phase !== "open") return;
+    let cancelled = false;
+    setTeacher(undefined);
+    fetch("/api/teacher")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!cancelled) setTeacher(body?.teacher ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setTeacher(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== "open") return;
+    let cancelled = false;
+    fetch("/api/config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!cancelled) setGateConfig(body ?? null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [phase]);
+
   /* The one shared chokepoint for "a data fetch answered 401": wrap
    * window.fetch while the app is open. Every call site (FrontDesk, the
    * dev drawer's polling) goes through it, so none of them needs its own
@@ -6809,7 +6868,11 @@ function AuthGate() {
    * OBSERVES same-origin /api responses; it never alters them. A 401
    * carrying `reason: "teacher"` is the comp gate (T48: a wrong PIN, or
    * a comp token that ran out), which the comp dialog handles itself;
-   * it is not the device session gone. Any other 401 is the lock. */
+   * it is not the device session gone. One carrying `reason: "staff"`
+   * is a write refused for want of a Mindbody sign-in (T50: the server
+   * restarted or the twelve hours ran out): the teacher is dropped and
+   * the sign-in gate comes back, with the device still open. Any other
+   * 401 is the lock. */
   useEffect(() => {
     if (phase !== "open") return;
     const original = window.fetch;
@@ -6829,7 +6892,12 @@ function AuthGate() {
             .clone()
             .json()
             .catch(() => null);
-          if (!body || body.reason !== "teacher") {
+          if (body?.reason === "staff") {
+            setGateNotice(
+              typeof body.error === "string" && body.error ? body.error : null,
+            );
+            setTeacher(null);
+          } else if (!body || body.reason !== "teacher") {
             setPhase("locked");
           }
         }
@@ -6845,7 +6913,31 @@ function AuthGate() {
 
   if (phase === "checking") return null;
   if (phase === "locked") return <LockScreen />;
-  return <FrontDesk />;
+  if (teacher === undefined) return null;
+  /* T50: the sign-in gate. The roster, search and Buy are not rendered
+   * until someone is signed in; the same form as the account modal,
+   * full-screen and not dismissable. */
+  if (teacher === null) {
+    return (
+      <>
+        <div className="staff-gate-banner">
+          <ModeBanner config={gateConfig} />
+        </div>
+        <StaffModal
+          open
+          required
+          teacher={null}
+          notice={gateNotice}
+          onClose={() => undefined}
+          onTeacherChange={(t) => {
+            setGateNotice(null);
+            setTeacher(t);
+          }}
+        />
+      </>
+    );
+  }
+  return <FrontDesk teacher={teacher} onTeacherChange={setTeacher} />;
 }
 
 /**

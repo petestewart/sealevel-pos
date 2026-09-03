@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 
 import {
   actorFields,
-  actorFor,
-  endedStaffSession,
+  requireActor,
   runAsActor,
+  staffSessionEndedResponse,
 } from "@/lib/actor";
 import {
   requireSession,
@@ -197,6 +197,12 @@ function parseSplitLeg(raw: unknown): SplitLeg | string {
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
+  /* T50: no staff session, no write. Before the body is read, so a
+   * signed-out iPad hears only the 401 and never a validation detail
+   * or a Mindbody read made on its behalf. */
+  const staff = requireActor(request);
+  if (staff.denied) return staff.denied;
+  const { session } = staff;
   let payload: any;
   try {
     payload = await request.json();
@@ -209,9 +215,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
   const items = parsed.items;
-  /* T49: the staff session this browser holds, if any. Resolved once;
-   * every write below runs through runAsActor with it. */
-  const { session } = actorFor(request);
 
   /* T28: an optional `split` -- exactly two payment legs, in the
    * teacher's order, charged in ONE checkoutshoppingcart call so there
@@ -1094,6 +1097,10 @@ export async function POST(request: Request) {
       );
       credit = creditRun.result;
     } catch (err) {
+      /* T50 review: a dead teacher token is refused at the gate, so
+       * nothing was charged; the sign-in gate says so. */
+      const gone = staffSessionEndedResponse(err);
+      if (gone) return gone;
       const ambiguous = isAmbiguous(err);
       return NextResponse.json(
         {
@@ -1176,6 +1183,11 @@ export async function POST(request: Request) {
       );
     }
   } catch (err) {
+    /* T50 review: a dead teacher token (a comp's included) is refused
+     * at Mindbody's gate before anything ran, so nothing was charged:
+     * 401 reason "staff", and the sign-in gate says why. */
+    const gone = staffSessionEndedResponse(err);
+    if (gone) return gone;
     const ambiguous = isAmbiguous(err);
     return NextResponse.json(
       {
@@ -1185,9 +1197,6 @@ export async function POST(request: Request) {
           : errMessage(err),
         stage: "checkout",
         ambiguous,
-        /* T49: a comp refused because the teacher's token is dead ends
-         * the staff session; the dialog says so beside the refusal. */
-        ...(endedStaffSession(err) ? { staffSessionEnded: true } : {}),
       },
       { status: 502 },
     );
