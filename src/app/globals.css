@@ -4334,6 +4334,19 @@ button.sale-for:disabled {
   background: var(--bg);
 }
 
+/* T50 review: the signed-in account modal closes by its X (the
+ * search and profile modals' .modal-x). T52 gives every .modal
+ * position: relative and the title its 48px of room beside the X;
+ * these two keep this modal right until that merge and are then
+ * harmless duplicates. */
+.modal-staff {
+  position: relative;
+}
+
+.modal-staff .modal-x ~ .modal-title {
+  padding-right: 48px;
+}
+
 /* T50 review: the mode banner over the gate's opaque scrim, in the
  * shell's own slot (16px inset, 1100 max) so it sits exactly where the
  * roster's does. */

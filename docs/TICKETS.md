@@ -5922,6 +5922,14 @@ password or token in the server log. Found and fixed:
    the class picker of its 312px and wrapped the counters to a second
    row at a 1024 iPad landscape; 1180 fit. Capped `.staff-name` at
    100px under 1100. At 768 the counters wrap as they did before T50.
+6. **The account modal's big "Close" button.** Pete's rule this pass
+   (found by the T52 review) is X-only closing on every modal, plus
+   the scrim tap. The signed-in modal now has the 44px `.modal-x` X
+   top-right (`aria-label="Close"`), Sign out alone in the action row;
+   Escape and the scrim tap still close it. The required gate keeps no
+   X and no dismissal of any kind. `.modal-staff` carries its own
+   `position: relative` and title padding until T52's general rules
+   arrive with the merge.
 
 Checked and fine: focus lands in the username field on the gate;
 Escape, scrim tap and Cancel are gone under `required`; the limiter
