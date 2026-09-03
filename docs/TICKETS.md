@@ -7917,3 +7917,20 @@ in `src/lib/staffsession.ts` is two hours from sign-in, still not
 sliding: the sweep, the cookie's Max-Age and the gate's 401 all read
 the one constant. CLAUDE.md's T50 note carries the number. A
 schedule-timed expiry is the recorded next step, not built.
+
+## T65. The class dropdown keeps one width (Pete, 2026-09-04)
+
+Pete: "the class drop down changes width depending on the amount of
+text. i don't like anything to do that. it should be fixed and it
+should really just extend all the way right with the calendar icon so
+that they stretch close to where the counters are."
+
+Done: inside `.class-group` the picker takes the whole group (`flex: 1
+1 0`) and the button fills the picker (`width: 100%`, chevron pushed to
+the right edge with `justify-content: space-between`), so the dropdown
+and the day control together span from the row's left edge to 12px
+before the counters at every class name. Measured on the production
+build with "Hot 26" and "Hot 26 & 2 (90 min) - Sally Zapata": the
+group is 56..649 at 1180 and 16..533 at 1024 for both names; at 820 it
+is the full row (16..660) with the counters wrapped under it as before.
+The title still wraps rather than ellipsizing (T61).

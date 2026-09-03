@@ -4610,14 +4610,19 @@ button.sale-for:disabled {
   align-items: stretch;
 }
 
-/* Content-sized inside the group, so the day control sits against the
- * dropdown's edge rather than at the far end of the slack. */
+/* T65 (Pete): the dropdown's width never follows its text. The picker
+ * takes the whole group and the button fills the picker, so the
+ * dropdown and the day control together stretch to the counters at
+ * every class name, and the chevron sits at the button's right edge. */
 .class-group .class-pick {
-  flex: 0 1 auto;
+  flex: 1 1 0;
   min-width: 0;
 }
 
 .class-group .class-pick-btn {
+  flex: 1 1 auto;
+  width: 100%;
+  justify-content: space-between;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
