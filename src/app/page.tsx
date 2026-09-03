@@ -21,6 +21,7 @@ import SaleScreen, {
 } from "./SaleScreen";
 import { ClientProfileCard, wallDate } from "./ClientProfileCard";
 import StaffModal, { type Teacher } from "./StaffModal";
+import NewClientModal from "./NewClientModal";
 import { actorFallbackLine } from "./actornote";
 import { useSettings } from "./settings";
 import type { ClientProfile } from "@/lib/clientprofile";
@@ -879,6 +880,12 @@ function FrontDesk({
   const [entries, setEntries] = useState<RosterEntry[]>([]);
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<SearchResult[]>([]);
+  /** T59b: the new-client form, open over the walk-in search's empty
+   *  state with the names the search box held when it looked like one. */
+  const [newClient, setNewClient] = useState<{
+    first: string;
+    last: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<ModeConfig | null>(null);
   /** Rows whose check-in call failed after going green optimistically. */
@@ -2356,7 +2363,8 @@ function FrontDesk({
         !waitlistPrompt &&
         !waiverPrompt &&
         !infoView &&
-        !profileView
+        !profileView &&
+        !newClient
       ) {
         if (walkinPicker) {
           setWalkinPicker(null);
@@ -2379,6 +2387,7 @@ function FrontDesk({
     profileView,
     walkinPicker,
     attachClassMenuOpen,
+    newClient,
     closeSearch,
   ]);
 
@@ -5011,6 +5020,25 @@ function FrontDesk({
           is the only action on a row, with the roster gates intact: the
           waiver blocks, a full class offers the waiting list. The X (and
           Escape, and the scrim) closes with no action. */}
+      {/* T59b: the sign-up form, one layer above the search modal. On
+          success the new person becomes a search result row and the
+          walk-in path (waiver gate included) carries on from there;
+          nothing about them is kept here. */}
+      {newClient ? (
+        <NewClientModal
+          initialFirst={newClient.first}
+          initialLast={newClient.last}
+          onClose={() => setNewClient(null)}
+          onCreated={(client, note) => {
+            setNewClient(null);
+            setFound((rows) => [
+              client,
+              ...rows.filter((r) => r.id !== client.id),
+            ]);
+            if (note) setBookMsg((m) => ({ ...m, [client.id]: note }));
+          }}
+        />
+      ) : null}
       {searchOpen ? (
         <div className="modal-scrim" onClick={closeSearch} role="presentation">
           <div
@@ -5387,9 +5415,33 @@ function FrontDesk({
             !searching &&
             !searchError &&
             shownResults.length === 0 ? (
-              <p className="muted">
-                Nobody found. Check the spelling, or try fewer letters.
-              </p>
+              <>
+                <p className="muted">
+                  Nobody found. Check the spelling, or try fewer letters.
+                </p>
+                {/* T59b: the person standing there may simply not exist
+                    yet. The form prefills from the search when it looked
+                    like a name (two words, no digits or @). Booking mode
+                    only; the attach modal gets this in T59c. */}
+                <div className="modal-actions new-client-actions">
+                  <button
+                    className="modal-confirm go"
+                    onClick={() => {
+                      const words = searchTitle.trim().split(/\s+/);
+                      const looksLikeName =
+                        words.length === 2 &&
+                        words.every((w) => !/[\d@]/.test(w));
+                      setNewClient(
+                        looksLikeName
+                          ? { first: words[0] ?? "", last: words[1] ?? "" }
+                          : { first: "", last: "" },
+                      );
+                    }}
+                  >
+                    New client
+                  </button>
+                </div>
+              </>
             ) : null}
             {/* The booking flow's results list. Attach mode renders its
                 own rows above through attachRowItem. Since T42 the whole

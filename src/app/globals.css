@@ -4778,3 +4778,61 @@ button.sale-for:disabled {
 .staff-gate-banner .banner {
   margin: 0;
 }
+
+/* --- T59b: the new-client form ---------------------------------------
+ * Opened over the walk-in search's empty state, so its scrim sits one
+ * above the search modal's like the profile card does. Four inputs at
+ * the reason-input size (64px, 18px), first and last side by side,
+ * email and phone full width; the consent pair reuses T53's rows. The
+ * amber and stop notices are the modal-warn and note idioms. Tokens
+ * only, both palettes from the variable swap. */
+.modal-scrim.over-search {
+  z-index: 31;
+}
+
+.modal-new-client {
+  width: min(560px, 100%);
+}
+
+.modal-new-client .nc-sub {
+  margin: 0 0 16px;
+}
+
+.nc-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+
+.nc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.nc-field.wide {
+  grid-column: 1 / -1;
+}
+
+.nc-field .reason-input {
+  font-weight: 400;
+}
+
+.modal-new-client .modal-warn {
+  font-weight: 400;
+}
+
+.modal-new-client .nc-error {
+  margin: 0 0 12px;
+}
+
+/* The "New client" button under "Nobody found": a single full-width
+ * 64px action, quiet until it is the only thing to do. */
+.new-client-actions {
+  margin: 0 0 8px;
+}
