@@ -42,6 +42,15 @@ export interface ProfileVisit {
   signedIn: boolean;
 }
 
+export interface ClientConsent {
+  accountEmails: boolean;
+  scheduleEmails: boolean;
+  promotionalEmails: boolean;
+  accountTexts: boolean;
+  scheduleTexts: boolean;
+  promotionalTexts: boolean;
+}
+
 export interface ClientProfile {
   clientId: string;
   name: string | null;
@@ -63,6 +72,11 @@ export interface ClientProfile {
   redAlert: string | null;
   yellowAlert: string | null;
   notes: string | null;
+  /** T53: the six consent flags (client.yml:5286-5306), read from the
+   *  same /client/clients row as everything above. A flag Mindbody
+   *  omits reads as false, its documented default. Null when the client
+   *  read failed. */
+  consent: ClientConsent | null;
   /** Visits in the window: the count Mindbody reports, and the latest
    *  attended one. Null when the read failed. */
   visits: { count: number; last: ProfileVisit | null } | null;
@@ -113,6 +127,7 @@ type ClientFields = Pick<
   | "redAlert"
   | "yellowAlert"
   | "notes"
+  | "consent"
 >;
 
 async function fetchClientFields(clientId: string): Promise<ClientFields> {
@@ -145,6 +160,14 @@ async function fetchClientFields(clientId: string): Promise<ClientFields> {
     redAlert: str(c?.RedAlert),
     yellowAlert: str(c?.YellowAlert),
     notes: str(c?.Notes),
+    consent: {
+      accountEmails: c?.SendAccountEmails === true,
+      scheduleEmails: c?.SendScheduleEmails === true,
+      promotionalEmails: c?.SendPromotionalEmails === true,
+      accountTexts: c?.SendAccountTexts === true,
+      scheduleTexts: c?.SendScheduleTexts === true,
+      promotionalTexts: c?.SendPromotionalTexts === true,
+    },
   };
 }
 
@@ -244,6 +267,7 @@ export async function clientProfile(
           redAlert: null,
           yellowAlert: null,
           notes: null,
+          consent: null,
         });
   if (visits.status === "rejected") errors.visits = reason(visits.reason);
   if (passes.status === "rejected") errors.passes = reason(passes.reason);

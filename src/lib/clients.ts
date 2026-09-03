@@ -84,6 +84,59 @@ export async function updateClientField(
   return { suppressed: null };
 }
 
+/**
+ * T53: the email opt-in, written from the counter (Pete: "a teacher can
+ * ask them if they want to opt in to emails and receive an email
+ * receipt"). The three EMAIL consent flags are the only ones Mindbody
+ * lets an API caller set: `SendAccountEmails`, `SendPromotionalEmails`
+ * and `SendScheduleEmails` are "editable" on ClientWithSuspensionInfo
+ * (client.yml:5286-5306), while the three text flags say "cannot be
+ * updated by developers. If included in a request, it is ignored", so
+ * they are not in this type and can never be sent.
+ *
+ * Same surgical envelope as updateClientField: the id, ONLY the flags
+ * the caller decided, `CrossRegionalUpdate: false`, nothing else, since
+ * updateclient overwrites whatever it is given. An empty `flags` is
+ * refused here rather than sent as a no-op write.
+ */
+export interface ConsentFlags {
+  SendAccountEmails?: boolean;
+  SendPromotionalEmails?: boolean;
+  SendScheduleEmails?: boolean;
+}
+
+export const CONSENT_EMAIL_FLAGS = [
+  "SendAccountEmails",
+  "SendPromotionalEmails",
+  "SendScheduleEmails",
+] as const;
+
+export async function updateClientConsent(
+  clientId: string,
+  flags: ConsentFlags,
+  actor?: Actor | null,
+): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
+  const sent: Record<string, boolean> = {};
+  for (const key of CONSENT_EMAIL_FLAGS) {
+    if (typeof flags[key] === "boolean") sent[key] = flags[key];
+  }
+  if (Object.keys(sent).length === 0) {
+    throw new Error("updateClientConsent needs at least one email flag.");
+  }
+  const res = await mindbody("/client/updateclient", {
+    method: "POST",
+    body: {
+      Client: { Id: clientId, ...sent },
+      CrossRegionalUpdate: false,
+    },
+    clientId,
+    ...(actor ? { actor } : {}),
+  });
+  if (res?.DryRun) return { suppressed: "dry-run" };
+  if (res?.WriteSuppressed) return { suppressed: "write-guard" };
+  return { suppressed: null };
+}
+
 /** The notes save, as the one-field write above. Kept named because the
  *  waiver receipt append (/api/waiver-agree) is a NOTES write by design
  *  and should read as one at its call site. */

@@ -6429,3 +6429,276 @@ the list. Unpaid rows are unchanged: any pass with an id counts.
 `ClientServiceId` moves the visit back to the membership and the guest
 pass session returns, the same "Change how the client is paying" the
 Mindbody web app does. No money moves either way.
+
+## T53. Email receipts, and the opt-in asked at the counter (Pete, 2026-09-03)
+
+Pete, after the second live pass: "we should also use the opportunity to
+get clients to opt-in to emails. a teacher can ask them if they want to
+opt in to emails and receive an email receipt." And on where it sits:
+"popup should gate the sale so the teacher sees it and adds their opt in
+or moves on. if the client is already opted in this whole popup should
+skip".
+
+Two things, then: a receipt on the sale, and the opt-in that a receipt
+needs, asked once, at the moment the client is standing there.
+
+### What the spec says (docs/mindbody-openapi)
+
+- `/sale/checkoutshoppingcart` takes `SendEmail` (sale.yml:5688, "sends
+  a purchase receipt email to the client. Note that all appropriate
+  permissions and settings must be enabled for the client to receive an
+  email", default false). `src/lib/sale.ts` sent `false` on every sale
+  until now. The checkout RESPONSE has no field saying whether a receipt
+  went.
+- `/sale/purchaseaccountcredit`, the under-$10 card path's first call,
+  takes `SendEmailReceipt` (4791) and answers `EmailReceipt` (5918,
+  "whether or not an email receipt was sent"). The only confirmation
+  Mindbody gives anywhere on this app's sale paths.
+- `/sale/purchasecontract` takes NEITHER: `PurchaseContractRequest`
+  (6210) has `SendNotifications`, which T30 already sends as true, and
+  `PurchaseContractResponse` (3164) has no `EmailReceipt`. The
+  `SendEmailReceipt`/`EmailReceipt` pair the brief attributed to it
+  belongs to purchaseaccountcredit and purchasegiftcard. The membership
+  dialog is therefore untouched: it already asks Mindbody to notify.
+- The client record carries six consent flags (client.yml:5286-5306).
+  The three EMAIL flags, `SendAccountEmails` ("general account
+  notifications by email", the receipt's category), `SendScheduleEmails`
+  and `SendPromotionalEmails`, are marked "editable" and default false.
+  The three TEXT flags say "cannot be updated by developers. If included
+  in a request, it is ignored." Read on `/client/clients`, written with
+  `POST /client/updateclient`, whose payload overwrites whatever it is
+  given, so the write sends the id and the flags and nothing else (the
+  T18/T42 envelope from `updateClientField`).
+
+### The design (decided)
+
+1. **The gate.** Tapping Pay for a NAMED client whose record has
+   `SendAccountEmails` false opens a modal before pay mode: "Email
+   receipt?", the client's name and the email on file (or "No email on
+   file", with the receipt box disabled and a hint to add one to their
+   profile in Mindbody), two checkboxes, "Send receipts and account
+   emails" and "Send studio news and offers", and two buttons, "Save and
+   continue" and "Not now". "Not now" enters pay mode with nothing
+   written and no receipt. The gate shows at most once per sale per
+   client: answered either way it stays quiet until a different client
+   is attached or the sale ends. It is skipped entirely when the client
+   already has `SendAccountEmails` true, and for walk-in sales, so it and
+   T51's walk-in dialog can never both show.
+2. **The write.** "Save and continue" sends the boxes that DIFFER from
+   the record (each opens pre-set to what Mindbody holds, so a box left
+   alone is not sent and an unticked "news and offers" can never revoke
+   an opt-in made elsewhere; nothing changed is Not now) to
+   `POST /api/client-consent`,
+   one `updateclient` through `mindbody()` with the client id in the
+   options, under the teacher's own token (`requireActor` first, the
+   T50 pattern), dry run and the write guard applying, BEFORE pay mode
+   opens. A refusal shows in the modal with Retry and "Continue
+   without"; a suppressed write says so in amber and continues. A failed
+   opt-in never blocks the charge, and the charge never implies the
+   opt-in succeeded.
+3. **The receipt.** Pay mode's tender area carries an "Email receipt"
+   toggle: on by default when the client has account emails on (already,
+   or just saved for real) and an email on file; otherwise off and
+   disabled with the reason. The Charge tap reads the toggle in the same
+   render as `chargeable` and sends `sendEmail` in the checkout body.
+   The route honours it only for a named, non-comp sale: Mindbody gets
+   `SendEmail: <toggle>` on the checkout and `SendEmailReceipt: <toggle>`
+   on the credit purchase, and answers `receiptRequested` plus
+   `emailReceipt`, true only when Mindbody CONFIRMED one. The done
+   screen says "Receipt emailed to <address>" on a confirmed one and
+   "Receipt requested for <address>" otherwise, because a cart checkout
+   reports nothing and the screen must not claim what it cannot see.
+   Walk-in and comp sales never send.
+4. **The profile.** The client profile card (T41, T42, T52) shows the six
+   flags as two read-only rows under the email, "Emails" and "Texts",
+   in the gate's own words: "receipts and account, schedule, news and
+   offers", or "None".
+5. Nothing in the comp/PIN, single-flight or rehearsal path changes.
+
+Live check for Pete afterwards: a purchase for a test client with a real
+inbox, to see which of the two done-screen lines Mindbody earns and
+whether a cart checkout's `SendEmail` actually delivers.
+
+### Build notes
+
+Server side:
+
+- `src/lib/sale.ts`: `checkoutCart` takes `sendEmail` (default false),
+  `purchaseCredit` takes `sendEmailReceipt` and returns `emailReceipt`
+  (boolean when Mindbody answered one, else null). `PaymentProfile`, the
+  attach-time `/api/stored-card` read, now also carries `email` and
+  `sendAccountEmails`: it is the same `/client/clients` row, so the gate
+  learns the flag for free on attach rather than through a second read.
+- `src/lib/clients.ts`: `updateClientConsent(clientId, flags, actor)`,
+  the email flags only (`CONSENT_EMAIL_FLAGS`), refusing an empty set.
+- `src/app/api/client-consent/route.ts`: the write route in the
+  client-field shape: session, `requireActor` before the body, booleans
+  only, `runAsActor` with the ordinary fallback,
+  `staffSessionEndedResponse` in the catch.
+- `src/app/api/checkout/route.ts`: `sendEmail` parsed once, forced false
+  for the house client and for a comp, passed to all five checkout call
+  sites and the credit purchase; every `ok: true` answer carries
+  `receiptRequested` and `emailReceipt`.
+- `src/lib/clientprofile.ts` and `ClientProfileCard.tsx`: the `consent`
+  block on the profile, and the two rows.
+
+Browser side (`src/app/SaleScreen.tsx`, `globals.css`):
+
+- `CardLookup`, the attach-time read, carries `email`,
+  `sendAccountEmails` and `sendPromotionalEmails` (null until landed or
+  when the read failed). `SaleClient` and page.tsx are untouched: the
+  flags are never on a roster row or a search result, and the lookup
+  lands within the half second it takes to add the first item, so a
+  second field would have been a copy of nothing.
+- The gate: `payNeedsConsent` beside T51's `payNeedsWalkInConfirm` on the
+  Pay tap, exclusive by construction (one needs no client, the other
+  needs one). Pay tapped before the lookup lands opens the dialog in a
+  reading state and an effect settles it when the record arrives:
+  opted in or unreadable is waved straight into pay mode, not opted in
+  reveals the boxes. Scrim, X and Escape dismiss without answering
+  (shelf mode, asks again); "Not now" and "Continue without" answer.
+  `consentAskedFor` holds the client id answered for, cleared on a
+  sale and on Empty cart, so the question is asked once per sale per
+  client. The 401 `reason: "staff"` on the write hands the sign-in
+  gate back through `onStaffSessionEnded` with nothing saved.
+- The write's outcome: a real save updates the lookup in place (the
+  toggle turns on at once; the post-sale refetch re-reads Mindbody); a
+  suppressed save leaves it alone and the toggle says "Opt-in not saved
+  (dry-run)". No email on file disables the account box and its state
+  with it, so the save can only ever carry "news and offers".
+- The toggle: `.receipt-toggle` under the tender hint, the filter-toggle
+  idiom at 64px, name left and the address or reason right, accent
+  while on, the disabled pair otherwise. `sendEmail` is a const of the
+  same render as `chargeable` (`receipt.why === null && wantReceipt &&
+  comp === null`), goes in the checkout body, and the address is
+  captured at the tap for the done line. `wantReceipt` resets to on per
+  client.
+- The done screen: `receiptLine` from the server's `receiptRequested`
+  and `emailReceipt`, "Receipt emailed to x." only on a confirmed true,
+  else "Receipt requested for x."; nothing when none was asked for.
+- New CSS is tokens only (`--accent`, `--accent-ink`, `--line`,
+  `--surface`, `--muted`, `--warn`, `--disabled-bg`, `--disabled-ink`),
+  nothing under 16px, every control 64px.
+
+Deliberately not done:
+
+- The membership dialog sends no receipt flag: the spec has none on
+  purchasecontract (see above), and `SendNotifications: true` already
+  asks Mindbody to write to the client.
+- No text-consent write: the API ignores those flags, so the card shows
+  them and nothing offers to change them.
+- No "add an email" editor: `/api/client-field` whitelists Notes and the
+  two alerts only, and widening it to contact fields is its own
+  decision. The gate says to add one in Mindbody.
+
+Verified: `npm run typecheck` and `npm run build` green. Route level,
+against a Mindbody stand-in on :4553 through the built server on :3053:
+signed out, `/api/client-consent` answers 401 `reason: "staff"` before
+reading the body; signed in as a teacher, the write reaches the
+stand-in under THAT teacher's token with exactly
+`{Client: {Id, SendAccountEmails, SendPromotionalEmails},
+CrossRegionalUpdate: false}` and a text flag in the request is dropped;
+a non-boolean and an empty flag set are 400s; a refusal is a 502 with
+Mindbody's message; `/api/stored-card` and `/api/client-profile` carry
+the flags. Browser, Playwright with the page-mocked API in both
+palettes: the gate for an un-opted client (title, name and address,
+boxes pre-set from the record, 64px rows and buttons); Escape, scrim and
+X dismiss to shelf mode and Pay asks again; Not now enters pay mode with
+no write, the toggle off with "Not opted in to account emails", and the
+checkout body `sendEmail: false`; Save and continue writes only the
+changed flags, enters pay mode with the toggle on "to
+alida@example.com", the body carries `sendEmail: true` and the done
+screen says "Receipt requested for alida@example.com."; a confirmed
+`emailReceipt` says "Receipt emailed to"; an opted-in client skips the
+gate and a toggle tapped off sends false; a walk-in sees no gate, the
+toggle off with "No client to email on a walk-in sale", and no
+clientId; a failed write shows "Could not save the opt-in: <reason>"
+with Try again and Continue without, which proceeds with no receipt; no
+email on file disables the account box with the hint and a save
+carries only the news flag; a suppressed write continues with "Opt-in
+not saved (dry-run)"; Pay tapped during the lookup waits, then reveals
+the boxes or waves an opted-in client through. Screenshots in
+`scratchpad/t53/`.
+
+### Review
+
+Reviewed against the spec, the T51/T50/T48/T39 invariants and the
+implementer's harness, then driven in a browser (`next start` on
+:3053, the page-mocked fixture in `scratchpad/t53/t53.js` extended
+with a second un-opted client and re-run whole, plus
+`scratchpad/t53/t53-review.js`, shot `light-8-review-swap-gate.png`).
+The claims held: `/client/updateclient`'s body is `UpdateClientRequest`
+with `Client: ClientWithSuspensionInfo` (client.yml:7072, "the client
+ID is used to look up the existing client ... any specified values are
+updated"), and the write carries `{Client: {Id, <changed email flags>},
+CrossRegionalUpdate: false}` and nothing else, through `mindbody()`
+with `clientId` in the options; a suppressed write answers
+`suppressed` and the browser leaves the record untouched, so the toggle
+says "Opt-in not saved (dry-run)" and the checkout body says
+`sendEmail: false`. `SendEmailReceipt` and `EmailReceipt` are on
+purchaseaccountcredit (sale.yml:4791, 5918), not purchasecontract; the
+credit path passes the toggle and reads the answer, the other four
+checkout sites pass the toggle and answer `emailReceipt: null`, so the
+done screen says "emailed" only on Mindbody's own true. `sendEmail` is
+a const of the render that computed `chargeable`, it changes nothing
+about the amount, the rehearsal (`Test: true` is a separate call that
+never carried it), the single-flight ref or the outcome branches. The
+gate cannot be Entered past: Pay is a button, so Enter is its onClick
+and runs both gates; Back and re-Pay stays quiet by `consentAskedFor`,
+which resets on a sale and on Empty cart, so the next sale asks again.
+"Save and continue" cannot race the charge: it runs before pay mode
+exists, behind a scrim with every exit disabled, and its outcome is
+bounded by the server's 20s write timeout (mindbody.ts) into either
+pay mode or the inline refusal with Try again / Continue without. A
+401 `reason: "staff"` on the write is caught by page.tsx's fetch
+wrapper AND by `saveConsent`, both of which only drop the teacher;
+nothing is saved and the gate returns. The "reading" state cannot
+hang: the lookup either lands (the effect settles it) or errors (waved
+through, toggle "Could not read their email settings"), and X, scrim
+and Escape stay live while it reads. The profile rows are 16px on
+tokens both palettes, no em dashes, the gate's own words. Found:
+
+1. **The gates could be walked around in pay mode.** The header's
+   detach, attach and walk-in controls stay live in pay mode (they are
+   only locked while charging), and nothing returned the surface to
+   shelf mode when who the sale is for changed. So "Not now" for
+   Alida, detach her, attach Bob: pay mode, Charge live, Bob never
+   asked. Same shape for T51: declare a walk-in, Pay, then X the
+   walk-in card: pay mode with nobody attached and no walk-in declared,
+   exactly the charge T51 put the dialog in front of. Fixed in
+   SaleScreen with one effect: a change of the sale's identity (client
+   id, or the walk-in flag) while ALREADY in pay mode and with items in
+   the cart calls `leavePay`, and the next Pay tap runs whichever gate
+   that person needs. Already-in-pay-mode is the point: the walk-in
+   dialog's Continue sets the flag and enters pay mode in one render
+   (previous mode shelf, no drop), and a sale's own reset clears the
+   flag under the done screen with an emptied cart (no drop, scenario
+   L). Scenarios I, J, K: detach-and-attach lands in shelf mode and Pay
+   opens the gate for Bob with his own flags pre-set; the withdrawn
+   walk-in lands in shelf mode and Pay asks the walk-in question again.
+2. **The house client attached by name got a receipt.** The route
+   forced `sendEmail` false only for the ANONYMOUS form (no clientId).
+   The house client is a real Mindbody client, so search can find it
+   and a teacher can attach it; that sale would have carried
+   `SendEmail: true` to an inbox that is nobody's. Now also false when
+   `clientId === houseClientId()`, the comp formula-note's own test.
+3. **A record correction, not a code change.** The design text says an
+   unticked "news and offers" "can never revoke an opt-in made
+   elsewhere". Not so: the box opens pre-set to the record, and a
+   deliberate untick of a pre-set true box DOES send
+   `SendPromotionalEmails: false` (the implementer's own scenario B
+   shows it). What is true is narrower: a box LEFT ALONE is not sent.
+   Left as built, on purpose: the client is standing at the counter,
+   and a save that silently ignored a box they asked to untick would be
+   the dishonest one. Pete should know the gate can withdraw marketing
+   consent as well as grant it; if he wants it opt-in only, the fix is
+   to send only `true` values, one line in `saveConsent`.
+
+Not changed, recorded: an unreadable record (the stored-card read
+failed) skips the gate rather than asking, because the boxes cannot be
+pre-set and the toggle could not turn on afterwards anyway; the sale
+proceeds with "Could not read their email settings" on the toggle.
+The consent fetch has no browser-side timeout, like every other write
+fetch here; the server's 20s write timeout bounds it. Typecheck and
+build green; the full implementer harness re-run unchanged after the
+fixes (A through H, both palettes).

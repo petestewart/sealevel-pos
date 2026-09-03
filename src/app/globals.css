@@ -4377,6 +4377,136 @@ button.sale-for:disabled {
   width: min(540px, 100%);
 }
 
+/* T53: the opt-in gate, the walk-in dialog's frame. The client line is
+ * the name over the address; each option is a 64px row with a 26px
+ * native box in the accent (color-scheme handles the box's own
+ * chrome); the disabled option fades like a disabled action. */
+.modal.modal-consent {
+  position: relative;
+  width: min(560px, 100%);
+}
+
+.consent-who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.consent-name {
+  font-weight: 600;
+}
+
+.consent-email {
+  font-size: 16px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.consent-none {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.consent-hint {
+  margin: 0 0 12px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.consent-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.consent-opt {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 64px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.consent-opt input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.consent-opt.off {
+  color: var(--disabled-ink);
+  background: var(--disabled-bg);
+  border-color: transparent;
+  cursor: default;
+}
+
+.consent-error {
+  margin: 0 0 16px;
+}
+
+/* T53: the receipt toggle under the tender hint: the filter-toggle
+ * idiom stretched to a row, the name left and the address or the reason
+ * right, accent while on, the disabled pair when it cannot send. */
+.receipt-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  margin-top: 10px;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.receipt-toggle.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.receipt-toggle:disabled {
+  color: var(--disabled-ink);
+  background: var(--disabled-bg);
+  border-color: transparent;
+}
+
+.receipt-toggle-name {
+  flex: 0 0 auto;
+}
+
+.receipt-sub {
+  flex: 1;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 500;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.receipt-toggle.on .receipt-sub {
+  color: var(--accent-ink);
+}
+
+.receipt-toggle:not(.on):not(:disabled) .receipt-sub {
+  color: var(--muted);
+}
+
 /* Comp this sale rests in the dim treatment the off tender wears ("Card:
  * Attach a client"): muted text on a faded hairline, since a comp is
  * neither encouraged nor common (Pete). Resting look ONLY: the hold, the

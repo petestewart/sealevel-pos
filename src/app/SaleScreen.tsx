@@ -594,6 +594,21 @@ interface CardLookup {
    *  or the read failed. */
   balance: number | null;
   error: string | null;
+  /** T53: the email on file and the two email consent flags, from the
+   *  same read (they ride the client row the card does). The flags are
+   *  null until the read lands or when it failed: unknown is not false,
+   *  and the gate treats the two differently. */
+  email: string | null;
+  sendAccountEmails: boolean | null;
+  sendPromotionalEmails: boolean | null;
+}
+
+/** T53: what the pay surface knows about emailing a receipt: the address
+ *  it would go to, and the reason it cannot (null when it can). Computed
+ *  by SaleScreen from the attach-time lookup and the gate's outcome. */
+interface ReceiptState {
+  email: string | null;
+  why: string | null;
 }
 
 /** A source of tender. Comp is deliberately absent: it is a whole-sale
@@ -643,6 +658,11 @@ type ChargeResult =
       /** T49: the amber line when the sale ran as the studio account
        *  after the signed-in teacher's token was refused; else null. */
       actorNote: string | null;
+      /** T53: "Receipt emailed to x" when Mindbody confirmed one,
+       *  "Receipt requested for x" when it was asked for and the
+       *  answer carries no confirmation (a cart checkout never does);
+       *  null when no receipt was requested. */
+      receiptLine: string | null;
     }
   | { kind: "suppressed"; mode: string }
   | { kind: "split"; message: string; mindbody: string }
@@ -820,6 +840,9 @@ function PaymentPanel(props: {
    *  summary names them, for the comp dialog's picker to preselect.
    *  Null when no class is active or the class has no teacher. */
   classTeacher: string | null;
+  /** T53: whether a receipt can be emailed, and where. The toggle
+   *  below the tender reads it; the Charge tap sends the toggle. */
+  receipt: ReceiptState;
 }) {
   const {
     cart,
@@ -838,6 +861,7 @@ function PaymentPanel(props: {
     onModalChange,
     cartResetNonce,
     classTeacher,
+    receipt,
   } = props;
 
   /**
@@ -1050,6 +1074,19 @@ function PaymentPanel(props: {
   const balanceCents = balance === null ? null : Math.round(balance * 100);
 
   const clientId = client?.id ?? null;
+
+  /** T53: the "Email receipt" toggle. On by default whenever a receipt
+   *  CAN go (the reason below is null), so the ordinary opted-in sale
+   *  needs no tap; reset per client, since a choice made for one person
+   *  is not the next one's. What is sent is `sendEmail` below, decided
+   *  in the same render as `chargeable`, never from a ref or an effect. */
+  const [wantReceipt, setWantReceipt] = useState(true);
+  useEffect(() => {
+    setWantReceipt(true);
+  }, [clientId]);
+  /* A comp is nothing to receipt (decided, T53): the toggle greys with
+   * the comp armed and the body says false regardless of it. */
+  const sendEmail = receipt.why === null && wantReceipt && comp === null;
 
   /** Close the amount modal without touching the lines, and tell
    *  SaleScreen the payment surface is closed -- otherwise a modal
@@ -1502,6 +1539,10 @@ function PaymentPanel(props: {
     /* For the done block (T39.7); the cart is gone by the time it renders. */
     const itemCount = cart.reduce((n, l) => n + l.quantity, 0);
     const changeAtTap = changeCents;
+    /* T53: the address the receipt was asked for, captured at the tap
+     * like the count: the lookup may refetch before the done block
+     * renders. */
+    const receiptEmailAtTap = sendEmail ? receipt.email : null;
     inFlight.current = true;
     setCharging(true);
     onBusyChange(true);
@@ -1525,6 +1566,9 @@ function PaymentPanel(props: {
           })),
           ...(clientId ? { clientId } : {}),
           ...payment,
+          /* T53: the toggle, as this render read it. The route ignores
+           * it for the house client and for a comp anyway. */
+          sendEmail,
         }),
       });
       let body: any = null;
@@ -1591,6 +1635,17 @@ function PaymentPanel(props: {
           actorNote: body?.actorFallback
             ? actorFallbackLine(body.actorFallback)
             : null,
+          /* T53: the server's word, not the toggle's: `receiptRequested`
+           * says the request carried it, `emailReceipt` true says
+           * Mindbody confirmed one went. Anything short of that
+           * confirmation is "requested", because the done screen must
+           * never claim a receipt the response did not confirm. */
+          receiptLine:
+            body?.receiptRequested === true && receiptEmailAtTap
+              ? body?.emailReceipt === true
+                ? `Receipt emailed to ${receiptEmailAtTap}.`
+                : `Receipt requested for ${receiptEmailAtTap}.`
+              : null,
           summary: `Paid ${money(body?.total ?? total)} by ${methodName}${
             client ? ` for ${client.name}` : ""
           }.`,
@@ -2290,6 +2345,12 @@ function PaymentPanel(props: {
                    is the one thing that differs, and it is said. */
                 <p className="pay-done-detail actor-note">{result.actorNote}</p>
               ) : null}
+              {result.receiptLine ? (
+                /* T53: emailed only when confirmed, else requested. */
+                <p className="pay-done-detail pay-done-receipt">
+                  {result.receiptLine}
+                </p>
+              ) : null}
               {/* Done means the sale is finished, so it goes back to the
                   roster (Pete, fourth live test): the counter's resting
                   screen is the sign-in view, not an empty cart. The
@@ -2454,6 +2515,36 @@ function PaymentPanel(props: {
                   ? "Tap an amount to change it."
                   : "Choose how they are paying."}
               </p>
+
+              {/* T53: the receipt toggle (Pete: "receive an email
+                  receipt"). The filter-toggle idiom, 64px, accent while
+                  on; off and disabled with its reason when there is
+                  nobody to email, no address, no opt-in, or a comp. */}
+              <button
+                type="button"
+                className={
+                  sendEmail ? "receipt-toggle on" : "receipt-toggle"
+                }
+                aria-pressed={sendEmail}
+                disabled={receipt.why !== null || comp !== null || charging}
+                title={
+                  comp !== null
+                    ? "A comp sends no receipt"
+                    : (receipt.why ?? "Email a receipt for this sale")
+                }
+                onClick={() => setWantReceipt((v) => !v)}
+              >
+                <span className="receipt-toggle-name">Email receipt</span>
+                <span className="receipt-sub">
+                  {comp !== null
+                    ? "Not for a comp"
+                    : receipt.why !== null
+                      ? receipt.why
+                      : sendEmail
+                        ? `to ${receipt.email}`
+                        : "Off"}
+                </span>
+              </button>
 
               {/* Bug-1 branch (b): no client, no house client, so Mindbody
                   could not price the cart and there is no total to charge.
@@ -3978,6 +4069,34 @@ export default function SaleScreen(props: {
   }, [client]);
   const cancelWalkInPrompt = useCallback(() => setWalkInPrompt(false), []);
 
+  /**
+   * T53: the opt-in gate (Pete: "popup should gate the sale so the
+   * teacher sees it and adds their opt in or moves on. if the client is
+   * already opted in this whole popup should skip"). `consentPrompt` is
+   * the dialog; `consentAskedFor` is the client it has been answered
+   * for, so it shows at most once per sale per client: a Not now or a
+   * save keeps it quiet until a different client is attached or the
+   * sale ends. Scrim, X and Escape are a dismissal, not an answer: the
+   * sale stays in shelf mode and Pay asks again.
+   */
+  const [consentPrompt, setConsentPrompt] = useState(false);
+  const [consentAskedFor, setConsentAskedFor] = useState<string | null>(null);
+  const [consentAccount, setConsentAccount] = useState(true);
+  const [consentPromo, setConsentPromo] = useState(false);
+  const [consentBusy, setConsentBusy] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
+  /** The opt-in write went out suppressed (dry run or the write guard):
+   *  the flag is NOT set in Mindbody, and the receipt toggle says why. */
+  const [consentSuppressed, setConsentSuppressed] = useState<{
+    clientId: string;
+    mode: string;
+  } | null>(null);
+  const cancelConsentPrompt = useCallback(() => {
+    setConsentPrompt(false);
+    setConsentError(null);
+  }, []);
+
+
   /** T30: the contract whose purchase dialog is open, or null. The
    *  dialog is its own modal layer; its Escape/scrim handling lives in
    *  ContractDialog, and the overlay's Escape below skips while it is
@@ -4069,6 +4188,8 @@ export default function SaleScreen(props: {
     setCartPrompt(null);
     /* T51: a walk-in was declared for THIS cart; the next one asks again. */
     setWalkIn(false);
+    /* T53: and so was the opt-in question. */
+    setConsentAskedFor(null);
   }, []);
 
   /** Escape peels the cart dialog first (keeping the items: Escape is a
@@ -4241,7 +4362,16 @@ export default function SaleScreen(props: {
     setCardLookup((prev) =>
       prev && prev.clientId === clientId
         ? { ...prev, loading: true, error: null }
-        : { clientId, loading: true, card: null, balance: null, error: null },
+        : {
+            clientId,
+            loading: true,
+            card: null,
+            balance: null,
+            error: null,
+            email: null,
+            sendAccountEmails: null,
+            sendPromotionalEmails: null,
+          },
     );
     fetch(`/api/stored-card?clientId=${encodeURIComponent(clientId)}`)
       .then(async (r) => {
@@ -4254,6 +4384,15 @@ export default function SaleScreen(props: {
             card: body?.card ?? null,
             balance: typeof body?.balance === "number" ? body.balance : null,
             error: null,
+            email: typeof body?.email === "string" ? body.email : null,
+            sendAccountEmails:
+              typeof body?.sendAccountEmails === "boolean"
+                ? body.sendAccountEmails
+                : null,
+            sendPromotionalEmails:
+              typeof body?.sendPromotionalEmails === "boolean"
+                ? body.sendPromotionalEmails
+                : null,
           });
         }
       })
@@ -4265,6 +4404,9 @@ export default function SaleScreen(props: {
             card: null,
             balance: null,
             error: e instanceof Error ? e.message : String(e),
+            email: null,
+            sendAccountEmails: null,
+            sendPromotionalEmails: null,
           });
         }
       });
@@ -4335,6 +4477,7 @@ export default function SaleScreen(props: {
         cartPrompt ||
         clearPrompt !== null ||
         walkInPrompt ||
+        consentPrompt ||
         contractDialog
       ) {
         return;
@@ -4355,6 +4498,7 @@ export default function SaleScreen(props: {
     cartPrompt,
     clearPrompt,
     walkInPrompt,
+    consentPrompt,
     contractDialog,
     pricing,
     charging,
@@ -4474,6 +4618,219 @@ export default function SaleScreen(props: {
     setSaleMode("pay");
     linesRef.current?.scrollTo({ top: 0 });
   }, []);
+
+  /**
+   * T53 review: pay mode is entered for ONE "sale for", and both gates
+   * (T51's walk-in dialog, T53's opt-in) run on the Pay tap for that
+   * one. The header's attach, detach and walk-in controls stay live in
+   * pay mode, so swapping the client there (detach Alida, attach Bob;
+   * or withdraw the walk-in) would carry the surface, and its Charge,
+   * to a client neither gate saw. So a change of who the sale is for
+   * while in pay mode drops back to shelf mode, and the next Pay tap
+   * asks whatever that person needs asking. Only a CHANGE while already
+   * in pay mode (a hook, so above the `!open` return): the walk-in
+   * dialog's Continue sets the flag and enters
+   * pay mode in one render, and a sale's own reset (onSold clears the
+   * walk-in flag under the done screen) comes with an emptied cart.
+   */
+  const saleFor = client !== null ? `client:${client.id}` : walkIn ? "walk-in" : "";
+  const saleForRef = useRef<{ mode: typeof saleMode; who: string } | null>(null);
+  useEffect(() => {
+    const prev = saleForRef.current;
+    saleForRef.current = { mode: saleMode, who: saleFor };
+    if (
+      prev !== null &&
+      prev.mode === "pay" &&
+      saleMode === "pay" &&
+      prev.who !== saleFor &&
+      cart.length > 0
+    ) {
+      leavePay();
+    }
+  }, [saleMode, saleFor, cart.length, leavePay]);
+
+  /* T53: the gate's reading of the record, and what it does about it.
+   * Below enterPay and the lookup because it calls the one and reads
+   * the other. */
+  /** The attach-time lookup for THIS client, once it has landed; null
+   *  while loading or for a previous client. */
+  const clientLookup =
+    client !== null && cardLookup !== null && cardLookup.clientId === client.id
+      ? cardLookup
+      : null;
+  const lookupLanded = clientLookup !== null && !clientLookup.loading;
+  /** What the record says, once read: true, false, or null for a read
+   *  that failed (unknown is skipped, not asked: a teacher must not be
+   *  made to ask a question the answer to which we cannot save). */
+  const accountEmailsOnFile: boolean | null = lookupLanded
+    ? clientLookup.error
+      ? null
+      : clientLookup.sendAccountEmails === true
+    : null;
+  /** T53: whether Pay opens the gate: a named client, not yet asked
+   *  this sale, whose record is still being read or reads as not opted
+   *  in. Never with the walk-in dialog: that one needs no client. */
+  const payNeedsConsent =
+    client !== null &&
+    consentAskedFor !== client.id &&
+    (!lookupLanded || accountEmailsOnFile === false);
+  const openConsentPrompt = useCallback(() => {
+    setConsentError(null);
+    setConsentPrompt(true);
+  }, []);
+  /* The boxes open pre-set to what Mindbody holds (account is the one
+   * being asked for, so it opens ticked), the moment the record lands. */
+  useEffect(() => {
+    if (!consentPrompt || !lookupLanded) return;
+    /* No email on file, no account box: the state matches the disabled,
+     * unticked box it renders as, so a save can never write the flag
+     * for an address that does not exist (harness scenario E). */
+    setConsentAccount(Boolean(clientLookup.email));
+    setConsentPromo(clientLookup.sendPromotionalEmails === true);
+  }, [consentPrompt, lookupLanded, clientLookup]);
+  /* The gate opened before the record landed (Pay tapped within the
+   * lookup's half second): once it does, an opted-in or unreadable
+   * client is waved through without a question. */
+  useEffect(() => {
+    if (!consentPrompt) return;
+    if (client === null) {
+      setConsentPrompt(false);
+      return;
+    }
+    if (!lookupLanded || accountEmailsOnFile === false) return;
+    setConsentAskedFor(client.id);
+    setConsentPrompt(false);
+    enterPay();
+  }, [consentPrompt, client, lookupLanded, accountEmailsOnFile, enterPay]);
+  useEffect(() => {
+    if (!consentPrompt) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !consentBusy) cancelConsentPrompt();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [consentPrompt, consentBusy, cancelConsentPrompt]);
+  /** Not now, and Continue without after a failure: answered, nothing
+   *  written, on to pay mode with no receipt. */
+  const skipConsent = useCallback(() => {
+    if (client !== null) setConsentAskedFor(client.id);
+    setConsentPrompt(false);
+    setConsentError(null);
+    enterPay();
+  }, [client, enterPay]);
+  /**
+   * Save and continue: ONE /api/client-consent write carrying the boxes
+   * that differ from the record (a box left as Mindbody has it is not
+   * sent, so an unticked "news and offers" can never revoke an opt-in
+   * the client made elsewhere), then pay mode. Nothing changed is Not
+   * now. A refusal stays in the dialog with its reason; a suppressed
+   * write is honest about the flag not being set and continues.
+   */
+  const saveConsent = useCallback(async () => {
+    if (client === null || !lookupLanded || consentBusy) return;
+    const flags: {
+      sendAccountEmails?: boolean;
+      sendPromotionalEmails?: boolean;
+    } = {};
+    /* Read the box as rendered: with no email on file it is off. */
+    const accountTicked = consentAccount && Boolean(clientLookup.email);
+    if (accountTicked !== (clientLookup.sendAccountEmails === true)) {
+      flags.sendAccountEmails = accountTicked;
+    }
+    if (consentPromo !== (clientLookup.sendPromotionalEmails === true)) {
+      flags.sendPromotionalEmails = consentPromo;
+    }
+    if (Object.keys(flags).length === 0) {
+      skipConsent();
+      return;
+    }
+    const clientId = client.id;
+    setConsentBusy(true);
+    setConsentError(null);
+    try {
+      const res = await fetch("/api/client-consent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId, ...flags }),
+      });
+      let body: any = null;
+      try {
+        body = await res.json();
+      } catch {
+        /* handled by the status below */
+      }
+      if (body?.staffSessionEnded === true || body?.reason === "staff") {
+        /* T50: the sign-in gate is coming back over this; the opt-in
+         * is simply not saved, and the question stands for next time. */
+        onStaffSessionEnded?.();
+        setConsentPrompt(false);
+        return;
+      }
+      if (!res.ok || body?.ok !== true) {
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      if (body?.suppressed) {
+        setConsentSuppressed({ clientId, mode: String(body.suppressed) });
+      } else {
+        setConsentSuppressed(null);
+        /* The record now says what was saved; the toggle reads it from
+         * here, and the post-sale refetch re-reads it from Mindbody. */
+        setCardLookup((prev) =>
+          prev && prev.clientId === clientId
+            ? {
+                ...prev,
+                sendAccountEmails:
+                  flags.sendAccountEmails ?? prev.sendAccountEmails,
+                sendPromotionalEmails:
+                  flags.sendPromotionalEmails ?? prev.sendPromotionalEmails,
+              }
+            : prev,
+        );
+      }
+      setConsentAskedFor(clientId);
+      setConsentPrompt(false);
+      enterPay();
+    } catch (e) {
+      setConsentError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setConsentBusy(false);
+    }
+  }, [
+    client,
+    lookupLanded,
+    clientLookup,
+    consentBusy,
+    consentAccount,
+    consentPromo,
+    skipConsent,
+    enterPay,
+    onStaffSessionEnded,
+  ]);
+  /** T53: what the pay surface may do about a receipt, from the same
+   *  record the gate read. The reason is the toggle's own words. */
+  const receipt: ReceiptState =
+    client === null
+      ? {
+          email: null,
+          why: walkIn
+            ? "No client to email on a walk-in sale"
+            : "Attach a client to email a receipt",
+        }
+      : !lookupLanded
+        ? { email: null, why: "Reading their email settings" }
+        : clientLookup.error
+          ? { email: clientLookup.email, why: "Could not read their email settings" }
+          : !clientLookup.email
+            ? { email: null, why: "No email on file" }
+            : clientLookup.sendAccountEmails !== true
+              ? {
+                  email: clientLookup.email,
+                  why:
+                    consentSuppressed?.clientId === client.id
+                      ? `Opt-in not saved (${consentSuppressed.mode})`
+                      : "Not opted in to account emails",
+                }
+              : { email: clientLookup.email, why: null };
   const [hiddenBelow, setHiddenBelow] = useState(0);
   const measureLines = useCallback(() => {
     const el = linesRef.current;
@@ -5184,6 +5541,8 @@ export default function SaleScreen(props: {
               setCart([]);
               /* T51: the walk-in declaration was for the sale just made. */
               setWalkIn(false);
+              /* T53: so was the gate's answer; the next sale asks again. */
+              setConsentAskedFor(null);
             }}
             onDone={close}
             onStaffSessionEnded={() => onStaffSessionEnded?.()}
@@ -5192,6 +5551,7 @@ export default function SaleScreen(props: {
             cartResetNonce={cartResetNonce}
             onClientDataStale={onClientDataStale}
             classTeacher={classTeacher}
+            receipt={receipt}
           />
 
           {/* CART, the right column (rail, grid, cart is the layout of
@@ -5572,6 +5932,13 @@ export default function SaleScreen(props: {
                   setWalkInPrompt(true);
                   return;
                 }
+                /* T53: a named client not yet opted in is asked first.
+                   The two dialogs are exclusive by construction: one
+                   needs no client, the other needs one. */
+                if (payNeedsConsent) {
+                  openConsentPrompt();
+                  return;
+                }
                 enterPay();
               }}
             >
@@ -5703,6 +6070,113 @@ export default function SaleScreen(props: {
                 Continue as walk-in
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* T53: the opt-in gate, the walk-in dialog's shape. While the
+          record is still being read it says so and waits; once read, an
+          opted-in client never sees it (the effect above waves them
+          through). Scrim, X and Escape dismiss without answering. */}
+      {consentPrompt && client !== null ? (
+        <div
+          className="modal-scrim"
+          role="presentation"
+          onClick={consentBusy ? undefined : cancelConsentPrompt}
+        >
+          <div
+            className="modal modal-consent"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Email receipt?"
+            aria-busy={consentBusy || !lookupLanded}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="row-icon modal-x"
+              aria-label="Close"
+              disabled={consentBusy}
+              onClick={cancelConsentPrompt}
+            >
+              <CloseIcon />
+            </button>
+            <p className="modal-title">Email receipt?</p>
+            {!lookupLanded ? (
+              <p className="modal-note">
+                <span className="spinner" aria-label="working" /> Reading{" "}
+                {client.name}&apos;s email settings...
+              </p>
+            ) : (
+              <>
+                <p className="modal-note consent-who">
+                  <span className="consent-name">{client.name}</span>
+                  {clientLookup.email ? (
+                    <span className="consent-email">{clientLookup.email}</span>
+                  ) : (
+                    <span className="consent-email consent-none">
+                      No email on file
+                    </span>
+                  )}
+                </p>
+                {!clientLookup.email ? (
+                  <p className="consent-hint">
+                    Add an email to their profile in Mindbody first; the
+                    receipt has nowhere to go without one.
+                  </p>
+                ) : null}
+                <div className="consent-opts">
+                  <label
+                    className={
+                      clientLookup.email ? "consent-opt" : "consent-opt off"
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={consentAccount && Boolean(clientLookup.email)}
+                      disabled={!clientLookup.email || consentBusy}
+                      onChange={(e) => setConsentAccount(e.target.checked)}
+                    />
+                    <span>Send receipts and account emails</span>
+                  </label>
+                  <label className="consent-opt">
+                    <input
+                      type="checkbox"
+                      checked={consentPromo}
+                      disabled={consentBusy}
+                      onChange={(e) => setConsentPromo(e.target.checked)}
+                    />
+                    <span>Send studio news and offers</span>
+                  </label>
+                </div>
+                {consentError ? (
+                  <div className="sale-stop consent-error" role="alert">
+                    Could not save the opt-in: {consentError}
+                  </div>
+                ) : null}
+                <div className="modal-actions">
+                  <button
+                    className="modal-cancel"
+                    disabled={consentBusy}
+                    onClick={skipConsent}
+                  >
+                    {consentError ? "Continue without" : "Not now"}
+                  </button>
+                  <button
+                    className="modal-confirm go"
+                    disabled={consentBusy}
+                    onClick={() => void saveConsent()}
+                  >
+                    {consentBusy ? (
+                      <span className="spinner" aria-label="saving" />
+                    ) : consentError ? (
+                      "Try again"
+                    ) : (
+                      "Save and continue"
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       ) : null}
