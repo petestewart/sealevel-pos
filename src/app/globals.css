@@ -4946,6 +4946,10 @@ button.sale-for:disabled {
   max-height: none;
   overflow-y: auto;
   margin-bottom: 12px;
+  /* The list is a grid (.roster); given a box taller than its rows it
+   * would stretch them apart to fill it, and one result sat 100px
+   * under its label. The rows stack at the top and the space is below. */
+  align-content: start;
 }
 
 .modal-guest .new-client-actions {
