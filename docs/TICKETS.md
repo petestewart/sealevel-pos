@@ -7226,3 +7226,163 @@ Checked and not defects:
   only, no hex, no em dashes, `npm run typecheck` and `npm run build`
   clean, `git ls-files node_modules` empty.
 
+## T59b. New client sign-up at the counter (Pete, 2026-09-03)
+
+Part of T59. Pete's spec for the form: "first name, last name, email,
+phone. Nothing else." No sign-up fields beyond those (his 2026-09-03
+answers), and the email opt-in is the T53 consent question asked in the
+same form, two checkboxes, both off until the person says yes. The guest
+flow (T59c) is not started here.
+
+### The design
+
+- **Entry.** The walk-in search's "Nobody found" state grows a 64px
+  "New client" button. The person standing at the counter may simply not
+  exist yet, and the teacher has already typed their name, so the form
+  prefills first and last from the search when it looked like a name
+  (two words, no digits or @). The attach-a-client modal is untouched;
+  T59c wires it there.
+- **The form.** The T52 modal idiom: X, scrim, Escape, one Cancel/Create
+  pair at 64px, one layer above the search modal like the profile card.
+  Four inputs at the reason-input size (64px, 18px), first and last side
+  by side, email and phone full width; the two consent rows are T53's.
+  Create is single flight and disabled until first and last are filled,
+  and until any of the form's fields Mindbody lists as required is.
+- **What Mindbody requires.** `GET /client/requiredclientfields`
+  (client.yml:2359) is read once at form open: "the list of fields that
+  a new client has to fill out in business mode", the list AddClient
+  validates against under a staff token. A required field the form has
+  (email, phone) gates Create and its label says "(required)"; one it
+  lacks shows as an amber line and the teacher continues, since
+  Mindbody's refusal is the authoritative answer and comes back in
+  words. The live list for site 471 is unknown; the dev drawer records
+  the read whenever the form opens.
+- **The write.** `POST /client/addclient` (client.yml:2491,
+  AddClientRequest ~4709) with exactly FirstName, LastName, Email,
+  MobilePhone, SendAccountEmails and SendPromotionalEmails, the schema's
+  own names. Both flags are sent explicitly, ticked or not. Nothing
+  else: not Active, not LiabilityRelease (the waiver dialog is the only
+  thing that sets that, T18), no address. Under the signed-in teacher's
+  token with the one loud fallback (`runAsActor`), behind the device
+  session and the T50 sign-in in the same order as every write.
+- **The write guard.** A create has no client id, and `mindbody()` finds
+  none in the body either (it reads ClientId, ClientIds and
+  UniqueClientId; AddClientRequest carries none), so under
+  POS_WRITE_CLIENT_IDS every create is suppressed as "(none named)". A
+  dummy cannot be pre-listed for its own creation, so this is the right
+  answer, and the modal says so in amber. Dry run suppresses as usual.
+  Suppression adds no row: a row for a person who does not exist is the
+  lie dry run exists to prevent.
+- **After.** On success the modal closes and the new person is a search
+  result row, parsed by the same code as a search hit, so the walk-in
+  path carries on unchanged: tapping the row runs the waiver gate (they
+  have no release), then the booking. Nothing about them is kept in
+  localStorage or the database: Mindbody owns clients.
+- **Duplicate.** Mindbody refuses the same first, last and email (the
+  spec's May 2020 rule). The route answers 409 in plain words:
+  "Mindbody already has a client with this name and email. Search for
+  them instead." The spec documents the rule and not the wording; the
+  match is on "duplicate" / "already exists" and widens once the call
+  log shows the live message.
+
+### Build notes
+
+Built: `src/lib/clients.ts` (`requiredClientFields`, `createClient`,
+`isDuplicateClientError`, and the search's row parser factored into
+`resultOf` so both paths share it), `src/app/api/client-create/route.ts`
+(GET the required fields; POST the create, with the validation: names
+non-empty up to 60, a plausible email, a phone of digits with the usual
+punctuation and at least seven digits, both flags booleans),
+`src/app/NewClientModal.tsx`, the button and the modal's mount in
+`src/app/page.tsx`, and the form's CSS in `globals.css` (tokens only,
+both palettes; `.modal-scrim.over-search` at the profile card's z-index).
+
+Verified: typecheck and build green; Playwright against a mocked
+Mindbody on 3059/4559 in both palettes: the button under "Nobody found"
+at 64px, prefill from "Jane Doe", Create gated on a required email, the
+addclient body exactly the six fields under the teacher's token, the
+required-fields read once per open, the new row with its contact line,
+the waiver gate on tapping it, the duplicate refusal in plain words
+with the form still open and no row, the amber line for AddressLine1
+and BirthDate, the X and the scrim closing the form and leaving the
+search open, and the two suppressed states (POS_DRY_RUN=true;
+POS_WRITE_CLIENT_IDS set) showing amber with no row while the server
+logged `[write-guard] suppressed POST /client/addclient for client
+(none named)`.
+
+Not done, on purpose: the attach-a-client modal's entry point and the
+guest modal (T59c); any check of the live required-field list or the
+live duplicate wording (both land in the dev drawer on first use);
+prefill from a search that was not two plain words. `mindbody()` was
+not changed: its handling of a write that names no client was already
+explicit.
+
+### Review
+
+Adversarial pass against a mocked Mindbody (the worktree's production
+build on 3059, mock on 4559), the API driven from inside the signed-in
+page and the form driven by Playwright.
+
+Confirmed and fixed: focus. The tap that opened the form left focus on
+the "New client" button underneath, so the first keystroke went
+nowhere; the first name input now takes focus on open, filled or not.
+
+Checked and holding:
+
+- Safety. `mindbody()` reads the client id from the body (ClientId,
+  ClientIds, UniqueClientId) or the options; a create has neither, so
+  under POS_WRITE_CLIENT_IDS every create is suppressed as "(none
+  named)", and dry run suppresses it before that. Both seen live: the
+  mock never received the call, the answer carried `suppressed` with
+  `clientId: null` and `client: null`, the form showed amber and added
+  no row. The fallback ran the create as the service account only
+  after the teacher's token drew a 403, and the row carried the amber
+  "Done as the studio account" line. A 401 under the teacher's token
+  ended the staff session, refused the write (one call to Mindbody,
+  no row) and brought the gate back with the message. Nothing new is
+  written to localStorage or the database.
+- Validation. Names are trimmed and inner runs of spaces collapsed;
+  unicode passes through; an email keeps its case with the spaces
+  trimmed; seven digits of phone pass and six do not, as do letters;
+  "+44 (20) 7946.0958" passes; a number where a string belongs, a
+  string or 1 where a boolean belongs, a 61-character name, a
+  101-character email, a bare `null` or `[]` body and a non-JSON body
+  all answer 400 with a plain sentence and reach Mindbody not at all.
+  Extra properties in the body (Active, LiabilityRelease, an address)
+  never reach the payload, which is exactly the six fields.
+- Mindbody's answers. The spec states the duplicate rule (same first,
+  last and email since May 2020) and not its wording; the match is on
+  "duplicate" / "already exists" / "already has" / "already in use".
+  A 400 saying "Email address is invalid." came back as 502 with that
+  sentence and no `duplicate` flag; a 200 without a Client and a 500
+  both came back as 502, never as a row. The live wording will land in
+  the dev drawer; widen the regex then if it is needed.
+- The row. Parsed by the same `resultOf` as a search hit, so it is a
+  SearchResult to the letter: string id, waiverSigned false, alerts and
+  notes null, no passes. Tapping it opened the waiver gate; searching
+  the same name again showed one row, not two (a search replaces the
+  list, so on live Mindbody the row survives exactly as long as
+  `searchText` finds the new record; a lagging index would drop it and
+  a fresh search brings it back). Prefill fires for "Jane Doe" and not
+  for "zzzq", "x@y.zz", "Jane Doe 3" or "Ann Marie Lee".
+- Layering. The form's scrim sits at 31 over the search modal's 30;
+  Escape and a scrim tap close the form alone and the search stays;
+  the next Escape closes the search. While the create is in flight
+  every input, both buttons and the X are disabled, the button reads
+  "Creating" with the spinner, and Escape and the scrim do nothing.
+  Three taps on Create and an Enter sent one request. Nothing in the
+  dialog renders under 16px; inputs, consent rows and buttons are
+  64px; the X is the 44px icon idiom. No hex outside the palette, no
+  em dashes, no model identifiers in the diff. Untouched: SaleScreen,
+  sale.ts, checkout, membership, notes and alert rendering, the attach
+  modal.
+
+Noted, not changed: `[dry-run] suppressed POST /client/addclient ...`
+prints the request body to the server log, as `mindbody()` does for
+every write; for this write the body is a name, email and phone. That
+is the existing dry-run mechanism, and the same line already carries
+an email when a profile field is edited, so it is a question about the
+dry-run line as a whole rather than this ticket. The route answers a
+suppressed create with `ok: true, suppressed: "dry-run" | "write-guard"`,
+the check-in route's shape; the form reads `suppressed` before it
+reads anything else, so no suppression is ever shown as created.
