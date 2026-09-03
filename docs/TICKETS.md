@@ -5580,8 +5580,16 @@ teacher here", because sign-in and enrolment matched the login against
 is not flagged as a class teacher. Owners and desk staff sell and check
 people in, so both now match against a new `listStaff()` (every active,
 non-placeholder staff member); `listTeachers()` remains the list a comp
-can be FOR. Still unverified live: the probe's permission read and the
-sales report's attribution.
+can be FOR.
+
+Second live pass, same day, after the fix: signed in as Pete Stewart;
+the probe read his group ("Owners accounts") under HIS token with all
+six permissions allowed, and the Test price of the cheapest option came
+to $10.00 under his token. So staff tokens issue, carry the staff
+member's own permissions, and price carts. Still unverified: that
+Mindbody's reports name the token's staff member (check the Sales
+report's "Entered by" filter, and the class sign-in record, after a
+write made while signed in), and what an expired staff token answers.
 
 ### Review (separate reviewer), T49
 

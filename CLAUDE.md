@@ -290,9 +290,10 @@ while `git clone` works, so clone the repo rather than fetching files.
   on every write runs under THEIR token so Mindbody names them; with
   nobody signed in, writes run as the service account as before. The token lives
   in server memory only (`src/lib/staffsession.ts`; a restart signs
-  everyone out). Unverified against the studio: that the API key issues
-  tokens for teachers other than the API user, what Mindbody answers for
-  an expired staff token (`isActorTokenDead` reads a 401), and that the
+  everyone out). Verified live 2026-09-02: the API key issues tokens for
+  other staff logins, and a staff token reads its own permission group
+  and Test-prices a cart. Still unverified: what Mindbody answers for an
+  expired staff token (`isActorTokenDead` reads a 401), and that the
   sales report actually shows the token's staff member. The probe is
   `GET /api/teacher/probe` (the sign-in modal and the dev drawer run it).
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
