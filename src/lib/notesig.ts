@@ -97,6 +97,13 @@ export function signEntries(
   by: string,
   on: string,
 ): string {
+  /* T58 review: the name goes inside the tag, so it must not carry the
+   * one character that ends it or a line break, and it must not be
+   * empty; any of those writes a tag the parser cannot read back, and
+   * the raw brackets would show on every screen. The name is the staff
+   * session's, so this is belt and braces, not a browser input. */
+  const signer =
+    by.replace(/[\]\r\n]+/g, " ").replace(/\s+/g, " ").trim() || "staff";
   const kept = parseEntries(previous);
   const used = new Set<number>();
   const signed = parseEntries(value).map((entry): NoteEntry => {
@@ -106,7 +113,7 @@ export function signEntries(
       const k = kept[i];
       return { text: entry.text, by: k?.by ?? null, on: k?.on ?? null };
     }
-    return { text: entry.text, by, on };
+    return { text: entry.text, by: signer, on };
   });
   return joinEntries(signed);
 }

@@ -6797,3 +6797,49 @@ reads well there too.
   three fields (they are free text, but RedAlert and YellowAlert have
   not been round-tripped with brackets yet), and how the tag looks on
   the client profile in Mindbody's web app.
+
+### Review
+
+Adversarial pass over `567959d..work/t58`, parser first (a script run
+directly against `notesig.ts`: 22 cases), then the route through a real
+signed-in session against the mock (scratchpad/t58/review.js), then the
+implementer's harness in both palettes.
+
+- **Fixed: a signer name the tag cannot carry.** `signEntries` took the
+  session's name verbatim, so a name holding `]` or a line break, or an
+  empty one, wrote a tag the parser could not read back and the raw
+  brackets would have shown on every screen. Now sanitised in that one
+  place (bracket and line breaks become a space, whitespace collapsed,
+  empty falls back to `staff`); a comma survives, and the regex's lazy
+  name reads `[by Ann Lee, Jr., 9/3/26]` back correctly. The "Saved as"
+  line under the editor still shows the session name unsanitised, which
+  is the honest name and only differs from the tag for a name with a
+  bracket in it.
+- Not defects, confirmed: a `[by ...]` mid-line is text; a hand-typed tag
+  in the draft is dropped and the entry signed by the session, never by
+  the typed name; Windows line endings from Mindbody parse and are
+  written back as LF; a whitespace-only edit keeps its signature; an
+  unchanged save writes identical text (the first save after T58 may
+  normalise a single-newline receipt separator to a blank line, which
+  changes no signature); a moved entry keeps its signature; two
+  identical entries pair off in order; a multi-line entry is not split
+  by the tag-closes-entry rule, since only a line that ENDS with a tag
+  closes one; `studioDate` gives 9/2 for 05:30Z on 9/3; the spec puts no
+  length limit on the three fields.
+- Security, confirmed: 401 `reason: "staff"` before the body is parsed
+  (a signed-out post with a non-JSON body gets it and the mock sees no
+  call); the whitelist and the surgical `{Id, <field>}` envelope are
+  unchanged; the name never comes from the body. One accepted risk of
+  the design, recorded rather than fixed: `previous` is the browser's
+  word, so a device behind both the device session and a staff sign-in
+  could send a `previous` that attributes an entry to another name and
+  the server keeps it; closing that means re-reading the field from
+  Mindbody before every save. The dev drawer shows the signed payload as
+  it shows every Mindbody body, behind `POS_DEVTOOLS`.
+- Display, confirmed: the only places the three fields render text are
+  the info view, the profile card and the search rows' summary line;
+  the roster row, the waitlist, the waiver dialog and the sale screen
+  do not render them. Signature lines are 14px `--muted`, regular
+  weight inside the bold alert blocks, in both palettes; no em dashes.
+- Verified: `npm run typecheck`, `npm run build`, the implementer's
+  harness (20 checks) and the review script (12 checks) all pass.
