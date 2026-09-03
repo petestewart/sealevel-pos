@@ -4302,6 +4302,17 @@ button.sale-for:disabled {
   color: var(--ink);
 }
 
+/* T50 review: under 1100 (a 1024 iPad landscape) the 180px name starved
+ * the class picker of its ~312px and wrapped the counters onto a second
+ * row; 100px keeps the row to one line with any name (a 151px slot fit
+ * measured, 232 did not). The full name is the tooltip and the icon's
+ * aria-label. */
+@media (max-width: 1100px) {
+  .staff-name {
+    max-width: 100px;
+  }
+}
+
 .staff-account {
   display: inline-flex;
   align-items: center;
@@ -4321,4 +4332,21 @@ button.sale-for:disabled {
 
 .modal-scrim.staff-gate {
   background: var(--bg);
+}
+
+/* T50 review: the mode banner over the gate's opaque scrim, in the
+ * shell's own slot (16px inset, 1100 max) so it sits exactly where the
+ * roster's does. */
+.staff-gate-banner {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 31;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.staff-gate-banner .banner {
+  margin: 0;
 }

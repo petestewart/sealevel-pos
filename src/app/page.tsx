@@ -6499,6 +6499,13 @@ function AuthGate() {
   const [teacher, setTeacher] = useState<Teacher | null | undefined>(
     undefined,
   );
+  /** T50 review: the server's line for why the gate came back after a
+   *  refused write (its sign-in ended), cleared by the next sign-in. */
+  const [gateNotice, setGateNotice] = useState<string | null>(null);
+  /** T50 review: the mode banner is on every screen, the gate included;
+   *  a teacher signing in must not wonder whether the counter is live.
+   *  Read once here; FrontDesk reads its own copy as before. */
+  const [gateConfig, setGateConfig] = useState<ModeConfig | null>(null);
   useEffect(() => {
     let cancelled = false;
     fetch("/api/session")
@@ -6540,6 +6547,20 @@ function AuthGate() {
     };
   }, [phase]);
 
+  useEffect(() => {
+    if (phase !== "open") return;
+    let cancelled = false;
+    fetch("/api/config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!cancelled) setGateConfig(body ?? null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [phase]);
+
   /* The one shared chokepoint for "a data fetch answered 401": wrap
    * window.fetch while the app is open. Every call site (FrontDesk, the
    * dev drawer's polling) goes through it, so none of them needs its own
@@ -6572,6 +6593,9 @@ function AuthGate() {
             .json()
             .catch(() => null);
           if (body?.reason === "staff") {
+            setGateNotice(
+              typeof body.error === "string" && body.error ? body.error : null,
+            );
             setTeacher(null);
           } else if (!body || body.reason !== "teacher") {
             setPhase("locked");
@@ -6595,13 +6619,22 @@ function AuthGate() {
    * full-screen and not dismissable. */
   if (teacher === null) {
     return (
-      <StaffModal
-        open
-        required
-        teacher={null}
-        onClose={() => undefined}
-        onTeacherChange={setTeacher}
-      />
+      <>
+        <div className="staff-gate-banner">
+          <ModeBanner config={gateConfig} />
+        </div>
+        <StaffModal
+          open
+          required
+          teacher={null}
+          notice={gateNotice}
+          onClose={() => undefined}
+          onTeacherChange={(t) => {
+            setGateNotice(null);
+            setTeacher(t);
+          }}
+        />
+      </>
     );
   }
   return <FrontDesk teacher={teacher} onTeacherChange={setTeacher} />;

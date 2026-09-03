@@ -29,14 +29,18 @@ import {
  * an ambiguous first attempt is never followed by a second.
  *
  * A 401 under the teacher's token reads as the token itself being dead
- * (isActorTokenDead): the staff session ends, the fallback still runs,
- * and the answer adds `staffSessionEnded: true` so the browser drops the
- * teacher and shows the sign-in gate again (T50).
+ * (isActorTokenDead): the staff session ends and the write is REFUSED,
+ * not run as the service account (T50 review: with nobody signed in
+ * any more that would be exactly the signed-out write T50 forbids, and
+ * the browser would have unmounted the desk before its amber note was
+ * read). A 401 is refused at Mindbody's gate before the endpoint ran,
+ * so nothing was written or charged. The thrown error is marked and
+ * staffSessionEndedResponse turns it into the 401 `reason: "staff"`
+ * that brings the sign-in gate back.
  *
  * `fallback: false` is the comp's posture: a comp under a teacher's
  * token that Mindbody refuses is REFUSED, with the message, never
- * quietly done as somebody else. The session still ends on a dead
- * token.
+ * quietly done as somebody else.
  */
 
 export interface ActorFallback {
@@ -51,6 +55,9 @@ export interface ActorOutcome<T> {
   actorFallback: ActorFallback | null;
   /** True when the teacher's token was refused as no longer valid and
    *  the staff session has been ended. */
+  /** Always false since T50 review (a dead token now throws, see
+   *  staffSessionEndedResponse); kept so every route's actorFields call
+   *  is unchanged. */
   staffSessionEnded: boolean;
 }
 
@@ -111,20 +118,22 @@ export async function runAsActor<T>(
   } catch (err) {
     if (!isActorRefusal(err)) throw err;
     const reason = err instanceof Error ? err.message : String(err);
-    let staffSessionEnded = false;
     if (isActorTokenDead(err)) {
-      staffSessionEnded = true;
       console.warn(
         `[actor] token refused staff=${session.staffId} route=${route}; ending the staff session`,
       );
       await endStaffSession(session.id);
+      const gone = new Error(
+        `Your Mindbody sign-in ended before this was sent (${reason}). ` +
+          "Nothing was written. Sign in and try again.",
+      );
+      (gone as Error & { staffSessionEnded?: boolean }).staffSessionEnded =
+        true;
+      throw gone;
     }
     if (opts.fallback === false) {
       /* A comp: refused is refused. The error keeps its message; the
-       * route answers it as it always did. The session state above is
-       * the one thing that changed. */
-      (err as Error & { staffSessionEnded?: boolean }).staffSessionEnded =
-        staffSessionEnded;
+       * route answers it as it always did. */
       throw err;
     }
     console.warn(
@@ -133,7 +142,7 @@ export async function runAsActor<T>(
     return {
       result: await run(null),
       actorFallback: { name: session.name, reason },
-      staffSessionEnded,
+      staffSessionEnded: false,
     };
   }
 }
@@ -150,10 +159,30 @@ export function actorFields(outcome: {
   };
 }
 
-/** Whether an error thrown by runAsActor with fallback off ended the
- *  staff session, for the route's answer. */
+/** Whether an error thrown by runAsActor is the dead-token refusal
+ *  above, which has already ended the staff session. */
 export function endedStaffSession(err: unknown): boolean {
   return (
     (err as { staffSessionEnded?: unknown } | null)?.staffSessionEnded === true
+  );
+}
+
+/**
+ * T50 review: the answer for a write whose teacher token died under it,
+ * for every write route's catch. The same 401 `reason: "staff"` as
+ * requireActor, so the browser reads it the same way (drop the teacher,
+ * show the gate) and the gate can show the message; `staffSessionEnded`
+ * rides along for the dialogs that already read it. Null for any other
+ * error, which the route answers as it always did.
+ */
+export function staffSessionEndedResponse(err: unknown): NextResponse | null {
+  if (!endedStaffSession(err)) return null;
+  return NextResponse.json(
+    {
+      error: err instanceof Error ? err.message : String(err),
+      reason: "staff",
+      staffSessionEnded: true,
+    },
+    { status: 401 },
   );
 }

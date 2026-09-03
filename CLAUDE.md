@@ -298,7 +298,10 @@ while `git clone` works, so clone the repo rather than fetching files.
   in server memory only (`src/lib/staffsession.ts`; a restart signs
   everyone out, and the gate reappears). Verified live 2026-09-02: the API key issues tokens for
   other staff logins, and a staff token reads its own permission group
-  and Test-prices a cart. Still unverified: what Mindbody answers for an
+  and Test-prices a cart. A token Mindbody refuses as dead mid-write
+  ends the session and REFUSES that write (401 `reason: "staff"`, T50
+  review); it is never redone as the service account, and the gate
+  says so. Still unverified: what Mindbody answers for an
   expired staff token (`isActorTokenDead` reads a 401), and that the
   sales report actually shows the token's staff member. The probe is
   `GET /api/teacher/probe` (the sign-in modal and the dev drawer run it).

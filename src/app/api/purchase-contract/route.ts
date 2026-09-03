@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { actorFields, requireActor, runAsActor } from "@/lib/actor";
+import {
+  actorFields,
+  requireActor,
+  runAsActor,
+  staffSessionEndedResponse,
+} from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 import { isDryRun, mindbodyHttpStatus } from "@/lib/mindbody";
 
@@ -84,6 +89,12 @@ function errMessage(err: unknown): string {
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
+  /* T50: no staff session, no write. Before the body is read, so a
+   * signed-out iPad hears only the 401 and never a validation detail
+   * or a Mindbody read made on its behalf. */
+  const staff = requireActor(request);
+  if (staff.denied) return staff.denied;
+  const { session } = staff;
   let payload: any;
   try {
     payload = await request.json();
@@ -237,10 +248,6 @@ export async function POST(request: Request) {
    * refusal renders Mindbody's reason, a 5xx or dead transport is
    * honest ambiguity. */
   try {
-    /* T50: no staff session, no write. */
-    const staff = requireActor(request);
-    if (staff.denied) return staff.denied;
-    const { session } = staff;
     const run = await runAsActor(session, "/api/purchase-contract", (actor) =>
       purchaseContract({
         contractId: contractId as number,
@@ -265,6 +272,10 @@ export async function POST(request: Request) {
       ...actorFields(run),
     });
   } catch (err) {
+    /* T50 review: a dead teacher token is refused at the gate, so no
+     * contract started; the sign-in gate says so. */
+    const gone = staffSessionEndedResponse(err);
+    if (gone) return gone;
     const ambiguous = isAmbiguous(err);
     return NextResponse.json(
       {

@@ -5859,3 +5859,79 @@ where a user signs in, no big 'sign in' button like there is now."
   against the real Next routes with a mocked Mindbody (the T49 mock
   server pattern). `requireActor` is nine lines and the same in every
   route; the typecheck is the check that each route threads it.
+
+### Review
+
+Reviewed against the real routes with a mocked Mindbody (the T49 mock
+on :4550, `next start` on :3050, `POS_PIN` set so the device check is
+real; `scratchpad/t50-review-node.js`, `t50-review-ui.js`, shots
+`scratchpad/t50/review-*.png`). The claims held: every one of the eight
+write routes answers 401 `{ error: "Sign in to Mindbody first.", reason:
+"staff" }` with nobody signed in, the mock sees no call, reads stay
+open, a missing DEVICE session is still the bare 401 (the lock), a
+signed-in check-in runs under the teacher's token, a comp still needs
+the PIN token on top (401 `reason: "teacher"` with a teacher signed
+in), the T49 permission fallback is unchanged (Pete's 403 retried once
+as the service account with the amber note), `actorFor` is gone, no
+password or token in the server log. Found and fixed:
+
+1. **Ordering.** Every route called `requireActor` AFTER reading and
+   validating the body, so a signed-out iPad heard "visitId (number)
+   is required" (400) before the 401, and `purchase-contract` made two
+   Mindbody reads (the contract and a Test price) on behalf of nobody
+   before refusing. Moved to directly after `requireSession` in all
+   eight; now a garbage body, a bad shape and a comp with no PIN token
+   are all 401 `reason: "staff"` when signed out, and 400 / 401
+   `reason: "teacher"` only once someone is.
+2. **A dead token still wrote as the service account.** `runAsActor`
+   on a 401 under the teacher's token ended the session and then ran
+   the fallback, answering `ok: true` plus `staffSessionEnded`, which
+   the browser turned into the gate at once, unmounting FrontDesk and
+   its amber note before anyone could read it. So the one write T50
+   forbids (nobody signed in, done as the studio account) still
+   happened, silently. A 401 is refused at Mindbody's gate before the
+   endpoint ran, so the honest answer is a refusal: the session ends,
+   the error is thrown marked, and `staffSessionEndedResponse(err)` in
+   each route's catch answers 401 `reason: "staff"` with the line "Your
+   Mindbody sign-in ended before this was sent (...). Nothing was
+   written. Sign in and try again." Verified: a killed token on a
+   check-in and on a cash sale gives that 401, the mock sees the
+   teacher's refused call and the revoke and NO service-account call,
+   real checkouts unmoved, `/api/teacher` is null after. The ordinary
+   403 fallback is untouched. `ActorOutcome.staffSessionEnded` is now
+   always false and kept only so `actorFields` callers are unchanged;
+   the checkout-after-credit seam (credit bought, then the token dies
+   on the second call, a twelve-hour expiry landing between two calls
+   milliseconds apart) keeps its 502 seam message with the live
+   balance rather than the gate, since that outcome must be read
+   first; the next tap gets the gate.
+3. **The gate said nothing about why it was back.** A write refused
+   mid-flow (a charge included) dropped the teacher and showed the
+   blank gate, the cart gone. `AuthGate` now keeps the 401's `error`
+   line and hands it to `StaffModal` as `notice`, shown where a wrong
+   password would be, cleared by the next sign-in; a plain sign-out
+   shows none. For a charge that is honest: the 401 comes from
+   `requireActor` or from the dead-token refusal, both before anything
+   was sent.
+4. **No mode banner on the gate.** The scrim is opaque and `ModeBanner`
+   lived inside FrontDesk, so the gate was the one screen without
+   "LIVE" or "Dry run". `AuthGate` reads `/api/config` once and renders
+   the same `ModeBanner` in the shell's slot (`.staff-gate-banner`,
+   fixed, 16px inset, 1100 max) over the gate.
+5. **Header at 1024.** The 180px name slot (232 with the icon) starved
+   the class picker of its 312px and wrapped the counters to a second
+   row at a 1024 iPad landscape; 1180 fit. Capped `.staff-name` at
+   100px under 1100. At 768 the counters wrap as they did before T50.
+
+Checked and fine: focus lands in the username field on the gate;
+Escape, scrim tap and Cancel are gone under `required`; the limiter
+wording; the password is cleared from state before the request is
+sent; the fetch wrapper's `/api/teacher` read happens only after the
+device check opens, and the sign-in and probe 401s carry `reason:
+"teacher"` so the wrapper never locks the device on them; name text
+16px, icon 44px with the full name in its aria-label; tokens only,
+both palettes (`--bg`, `--surface`, `--line`, `--ink`, `--action-bg`
+all defined in both blocks); no em dashes. `.staff-btn` stays as dead
+CSS, as the build notes say. Not done: the live check of what
+Mindbody actually answers for an expired staff token is still open
+(the mock answers 401 with "Invalid or expired token").

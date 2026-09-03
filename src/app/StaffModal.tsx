@@ -86,6 +86,7 @@ export default function StaffModal({
   onClose,
   onTeacherChange,
   required = false,
+  notice = null,
 }: {
   open: boolean;
   teacher: Teacher | null;
@@ -94,6 +95,10 @@ export default function StaffModal({
   onTeacherChange: (teacher: Teacher | null) => void;
   /** T50: the full-screen gate. Not dismissable. */
   required?: boolean;
+  /** T50 review: why the gate is back, when a write was refused for a
+   *  sign-in that ended (the server's own line, so it says what was and
+   *  was not sent). Shown where a wrong password would be. */
+  notice?: string | null;
 }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -127,10 +132,10 @@ export default function StaffModal({
     }
   }, [onTeacherChange]);
 
-  /* Each opening starts clean. */
+  /* Each opening starts clean, or with the notice the gate was given. */
   useEffect(() => {
-    if (open) setMsg(null);
-  }, [open]);
+    if (open) setMsg(notice ?? null);
+  }, [open, notice]);
 
   /* The probe runs whenever the modal is open on a signed-in teacher:
    * on opening, and again the moment a sign-in lands (the teacher prop
