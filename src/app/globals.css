@@ -4730,63 +4730,35 @@ button.sale-for:disabled {
   margin-bottom: 4px;
 }
 
-/* T50 --- Sign-in is required; the header names the teacher -------------
- * Pete: "there should just be the current user's name displayed at the
- * top. next to that there can be a profile icon that allows the user to
- * sign out." The name is plain text beside a round 44px icon button (the
- * icon idiom) that opens the account modal, in the slot the T49 "Sign
- * in" button had, so the row still fits iPad landscape. The gate is the
- * staff modal's scrim made opaque: nothing of the roster shows through
- * because nothing of the roster is rendered. Tokens only. */
+/* T50 --- Sign-in is required; the header carries the account icon -------
+ * A round 44px icon button (the icon idiom) that opens the account modal,
+ * in the slot the T49 "Sign in" button had. T50 put the teacher's name
+ * as text beside it, capped at 180px (100px under 1100 wide, T50 review);
+ * T61 (Pete: "let's get rid of 'Pete Stewart' in the header. clicking on
+ * the person icon is good enough") drops the name and its rules, and the
+ * modal behind the icon names the teacher. The gate is the staff modal's
+ * scrim made opaque: nothing of the roster shows through because nothing
+ * of the roster is rendered. Tokens only. */
 
-.staff-id {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 64px;
-}
-
-.staff-name {
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-/* T50 review: under 1100 (a 1024 iPad landscape) the 180px name starved
- * the class picker of its ~312px and wrapped the counters onto a second
- * row; 100px keeps the row to one line with any name (a 151px slot fit
- * measured, 232 did not). The full name is the tooltip and the icon's
- * aria-label. */
-@media (max-width: 1100px) {
-  .staff-name {
-    max-width: 100px;
-  }
-}
-
-/* T60: the counters card now precedes Buy, the name and the account icon
- * in the row (Pete: "swapped with each other"). Flex wraps in that order,
- * so on a portrait iPad the counters would hold line one and the name
- * and icon would dangle alone on line two. Under the width where the row
- * stops fitting on one line -- the group's 404px floor, the 319px
- * counters, Buy at 76, the capped name and icon at 152, four 12px gaps
- * and 32px of page padding: 1019px on paper, and measured the row first
- * holds one line at 1020 (subpixel widths tip the exact fit; 1019 wrapped
- * before T60 too), so a 1024 landscape has 4px to spare -- the counters
- * go last again and wrap alone, right-aligned by their auto margin,
- * exactly the line split portrait had before T60. T60 review: 1018 left
- * 1019 itself with the name and icon dangling alone on a third line. */
-@media (max-width: 1019px) {
+/* T60: the counters card precedes Buy and the account icon in the row
+ * (Pete: "swapped with each other"). Flex wraps in that order, so on a
+ * portrait iPad the counters would hold line one and the icon would
+ * dangle alone on line two. Under the width where the row stops fitting
+ * on one line -- the group's 404px floor, the 319px counters, Buy at 76,
+ * the 44px icon, three 12px gaps and 32px of page padding: 911px on
+ * paper (T61 took the name's 108px and one gap out of the T60 sum of
+ * 1019), and measured the row first holds one line at 912 with 911
+ * wrapping, so a 1024 landscape has over 100px to spare -- the counters
+ * go last again and wrap alone, right-aligned by their auto margin, the
+ * line split portrait has had since T46. */
+@media (max-width: 911px) {
   .counters {
     order: 1;
   }
 }
 
 .staff-account {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;

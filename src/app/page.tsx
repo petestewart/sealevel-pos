@@ -4781,31 +4781,25 @@ function FrontDesk({
           >
             Buy
           </button>
-          {/* T50: who Mindbody records this iPad's writes under. Pete:
-              "there should just be the current user's name displayed at
-              the top. next to that there can be a profile icon that
-              allows the user to sign out. this would also be where a
-              user signs in, no big 'sign in' button". The name is plain
-              text; the round icon (44px icon idiom) opens the account
-              modal, which is where sign-out lives. Somebody is always
-              signed in here: the gate sits in front of this screen
-              otherwise. */}
-          <div className="staff-id">
-            <span className="staff-name" title={teacher.name}>
-              {teacher.name}
-            </span>
-            <button
-              className="staff-account"
-              onClick={() => {
-                setPickerFor(null);
-                setSortMenuOpen(false);
-                setStaffOpen(true);
-              }}
-              aria-label={`Signed in as ${teacher.name}. Account`}
-            >
-              <PersonIcon />
-            </button>
-          </div>
+          {/* T50: who Mindbody records this iPad's writes under. The
+              round icon (44px icon idiom) opens the account modal, which
+              names the teacher and is where sign-out lives. T50 put the
+              name as text beside it; T61 (Pete: "let's get rid of 'Pete
+              Stewart' in the header. clicking on the person icon is good
+              enough") leaves the icon alone, with the name in its label.
+              Somebody is always signed in here: the gate sits in front
+              of this screen otherwise. */}
+          <button
+            className="staff-account"
+            onClick={() => {
+              setPickerFor(null);
+              setSortMenuOpen(false);
+              setStaffOpen(true);
+            }}
+            aria-label={`Signed in as ${teacher.name}. Account`}
+          >
+            <PersonIcon />
+          </button>
         </header>
       ) : null}
 
