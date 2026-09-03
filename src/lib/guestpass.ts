@@ -68,13 +68,16 @@ export function judgeGuestPass(opts: {
 }
 
 /** The sentence the sheet shows for an ignored pass id: what Mindbody
- *  did instead, and the one remedy that gives the session back. */
+ *  did instead, and the one remedy that gives the session back. T63:
+ *  the id sent is the $0 Guest Pass just sold to the GUEST (T62 sent
+ *  the member's), so the sentence names that; the member's name stays
+ *  for the sheet's "whose guest" reading. */
 export function ignoredPassMessage(opts: {
   guestName: string;
   memberName: string;
   /** The pass Mindbody used instead; null when the visit carries none;
-   *  undefined when the visit could not be read and only the member's
-   *  unmoved count says the pass was not spent. */
+   *  undefined when the visit could not be read and only the unmoved
+   *  count says the pass was not spent. */
   ownPass: string | null | undefined;
 }): string {
   const instead =
@@ -82,10 +85,10 @@ export function ignoredPassMessage(opts: {
       ? `${opts.guestName} without spending`
       : opts.ownPass === null
         ? `${opts.guestName} with no pass instead of`
-        : `${opts.guestName} on their own pass (${opts.ownPass}) instead of`;
+        : `${opts.guestName} on another pass (${opts.ownPass}) instead of`;
   return (
-    `Mindbody booked ${instead} ${opts.memberName}'s guest pass. ` +
-    `Remove them from the class to give that session back.`
+    `Mindbody booked ${instead} the $0 Guest Pass just sold to them ` +
+    `as ${opts.memberName}'s guest. Remove them from the class to give that session back.`
   );
 }
 
@@ -103,4 +106,168 @@ export function usableGuestPass<P extends GuestPassLike>(
     }
   }
   return null;
+}
+
+/* T63 ----------------------------------------------------------------
+ * Guest passes the way the front desk does it (Pete, 2026-09-04): the
+ * GUEST is sold their own $0 Guest Pass, booked on it, and the MEMBER's
+ * Guest Pass is retired by RETURNING the sale it came from. Both halves
+ * have a pure judgement here so they can be tested without Mindbody. */
+
+/** A pass on an account as the T63 flow reads it (PassInfo's fields). */
+export interface PassInstance {
+  id: number | null;
+  name: string;
+  remaining: number | null;
+  paymentDate: string | null;
+}
+
+/**
+ * The Guest Pass a checkout just put on the guest's account. The checkout
+ * answer carries no ClientService (sale.yml CheckoutShoppingCartResponse:
+ * ShoppingCart, Classes, Appointments, Enrollments), so the guest's pass
+ * list is read again and the new one is picked out: a guest pass whose
+ * id was NOT on the list read before the sale, when that list is known;
+ * otherwise the guest pass with the newest PaymentDate (the brief's
+ * fallback, for a before-read that failed). Ties on the date go to the
+ * higher id, which Mindbody hands out in order. A pass with no id
+ * cannot be booked with and is never picked. Null when no guest pass
+ * with a session left is on the list at all.
+ */
+export function pickNewGuestPass<P extends PassInstance>(
+  after: readonly P[],
+  beforeIds: ReadonlySet<number> | null,
+): (P & { id: number }) | null {
+  const candidates = after.filter(
+    (p): p is P & { id: number } =>
+      p.id !== null && isGuestPass(p.name) && p.remaining !== null && p.remaining > 0,
+  );
+  const fresh =
+    beforeIds === null ? candidates : candidates.filter((p) => !beforeIds.has(p.id));
+  const pool = fresh.length > 0 ? fresh : beforeIds === null ? candidates : [];
+  if (pool.length === 0) return null;
+  return pool.reduce((best, p) => {
+    const a = p.paymentDate ?? "";
+    const b = best.paymentDate ?? "";
+    if (a > b) return p;
+    if (a === b && p.id > best.id) return p;
+    return best;
+  });
+}
+
+/** A sale as GET /sale/sales lists it (sale.yml Sale, PurchasedItem,
+ *  SalePayment), the fields the judgement reads. */
+export interface SaleLike {
+  id: number | null;
+  clientId: string;
+  saleDateTime: string | null;
+  items: {
+    /** PurchasedItem.Id: "use this ID when calling GET Services", the
+     *  pricing option's ProductId for a service. */
+    productId: number | null;
+    isService: boolean | null;
+    description: string | null;
+    totalAmount: number | null;
+    returned: boolean | null;
+  }[];
+  payments: { type: string | null; amount: number | null }[];
+}
+
+export type SaleVerdict =
+  | { returnable: true; saleId: number }
+  | { returnable: false; reason: string };
+
+/** Payment types that mean money or credit changed hands, matched on the
+ *  type's words: a card brand, a stored card, account credit, a gift
+ *  card, cash, a check, ACH. Anything else that is not plainly a comp is
+ *  refused too (the allow list is the rule; this list names the reason). */
+const MONEY_PAYMENT_RE = /card|visa|master|amex|american|discover|credit|debit|account|gift|cash|check|cheque|ach|bank|stripe|paypal/i;
+const COMP_PAYMENT_RE = /\bcomp\b|guest/i;
+
+/**
+ * Pete's hard rule (T63): the member's Guest Pass sale is returned ONLY
+ * when the sale holds exactly one item, that item is the Guest Pass
+ * (its ProductId, never its name alone), it has not already been
+ * returned, its total is $0.00, and it carries no card, stored-card,
+ * account, gift-card or cash payment: a Comp, or no payment at all, is
+ * the only thing that passes. `/sale/returnsale` takes a SaleId, not a
+ * line, so a sale bundling the pass with the monthly autopay would be
+ * returned whole, and this is what stops that. Nothing here is ever a
+ * refund: a sale that fails any test is left alone and the reason is
+ * shown, and the pass stays on the account until someone returns it in
+ * Mindbody by hand.
+ *
+ * `sales` is every sale the window held for this client; the newest
+ * one carrying the pass is judged (a member with two guest-pass sales
+ * in the window is rare, and the newest is the one the roster shows).
+ */
+export function judgeGuestPassSale(
+  sales: readonly SaleLike[],
+  opts: { clientId: string; productId: number },
+): SaleVerdict {
+  const withPass = sales
+    .filter((s) => s.clientId === opts.clientId)
+    .filter((s) => s.items.some((i) => i.productId === opts.productId))
+    .sort((a, b) => (b.saleDateTime ?? "").localeCompare(a.saleDateTime ?? ""));
+  const carrying = withPass.filter((s) =>
+    s.items.some((i) => i.productId === opts.productId && i.returned !== true),
+  );
+  const sale = carrying[0];
+  if (sale === undefined) {
+    const already = withPass[0];
+    return {
+      returnable: false,
+      reason:
+        already === undefined
+          ? "no sale of the Guest Pass was found on their account"
+          : `sale ${already.id ?? "?"} of the Guest Pass was already returned`,
+    };
+  }
+  if (sale.id === null) {
+    return { returnable: false, reason: "the sale has no id to return" };
+  }
+  if (sale.items.length !== 1) {
+    const others = sale.items
+      .filter((i) => i.productId !== opts.productId)
+      .map((i) => i.description ?? "another item")
+      .join(", ");
+    return {
+      returnable: false,
+      reason: `sale ${sale.id} bundles it with ${others || "other items"}, and a return would take back the whole sale`,
+    };
+  }
+  const item = sale.items[0]!;
+  /* Proof, not absence of evidence: an item Mindbody did not mark as a
+   * pricing option, or did not price, is refused as unknown. */
+  if (item.isService !== true) {
+    return { returnable: false, reason: `sale ${sale.id}'s item is not a pricing option` };
+  }
+  if (item.totalAmount === null) {
+    return { returnable: false, reason: `sale ${sale.id}'s total is not known` };
+  }
+  const total = roundCents(item.totalAmount);
+  if (total !== 0) {
+    return { returnable: false, reason: `sale ${sale.id} was for $${total.toFixed(2)}, not $0.00` };
+  }
+  for (const p of sale.payments) {
+    const amount = roundCents(p.amount ?? 0);
+    const type = (p.type ?? "").trim();
+    if (amount !== 0) {
+      return {
+        returnable: false,
+        reason: `sale ${sale.id} carries a ${type || "payment"} of $${amount.toFixed(2)}`,
+      };
+    }
+    if (MONEY_PAYMENT_RE.test(type) || !COMP_PAYMENT_RE.test(type)) {
+      return {
+        returnable: false,
+        reason: `sale ${sale.id} was paid by ${type || "an unnamed method"}, not a comp`,
+      };
+    }
+  }
+  return { returnable: true, saleId: sale.id };
+}
+
+function roundCents(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
 }
