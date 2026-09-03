@@ -5919,3 +5919,83 @@ Deliberately not done:
   the alerts and notes.
 - The waiver dialog's reading shape keeps Cancel beside "Record
   agreement and ...": a decision pair, not a Close.
+
+### Review
+
+Adversarial pass against the worktree build with the mocked Mindbody
+(`scratchpad/t52-review.js`, screenshots under `scratchpad/t52/review/`),
+plus typecheck, build and the implementer's own `t52.js` rerun on the
+fixed build. Findings, in order of weight:
+
+1. **The class title collapsed at iPad-portrait width. Fixed.** The
+   240px floor the T46 review put on `.class-pick` moved to the new
+   `.class-group`, and inside the group the dropdown was `min-width: 0`
+   so the day control could sit on its edge. At 820 wide on a viewed
+   day the group took its 240px, the dated day control took 163 of it,
+   and the title had 91px: "Fri Sep 11 · 5:00 PM Y..." over four lines,
+   the row 142px tall. `.class-group` is now `min-width: min(404px,
+   100%)`, the title floor plus the dated control, so the title keeps
+   275px at 820 and the counters wrap under it, which is what the
+   header did before T52 at that width. Measured unchanged at 1000 and
+   1180, today and viewing.
+2. **The calendar's X sat on the next-month button. Fixed.** With
+   `.modal-x` 14px from the corner and `.cal-head` at the modal's 24px
+   padding, the 44px X overlapped the 64px ">" by 30px; a tap on the
+   corner of the nav closed the calendar. `.modal-cal .cal-head` now
+   pads 52px both sides, so the X clears the nav and the month name
+   stays centred over the grid.
+3. **Only the search modal's title had room for the X. Fixed.** The
+   `padding-right: 48px` rule was scoped to `.modal-search .modal-title`,
+   so "Check out Alexandra Richardson?" or "Remove Christopher
+   Vanderbilt from this class?" at 22px would run under the new X in a
+   460px modal (the mock's "Check out Alida Abbott?" had 77px to spare).
+   The rule is `.modal-x ~ .modal-title` now: every modal renders the X
+   before its title, and the pay dialog's padding lapses with its X.
+4. **The profile card printed "99993 of 99999 left". Fixed.** The
+   fake-unlimited rule page.tsx applies everywhere a pass renders (and
+   the Membership modal applies correctly) was missing from
+   `ClientProfileCard`, which the ticket touched for the alerts block:
+   a member's profile showed the 99999 counter under Passes. The rule
+   is repeated inline there (a page file exports only its page), and
+   the card now says "Unlimited · expires Oct 1, 2026".
+
+Verified and left as built:
+
+- Auto-widen: one everyone-search per widen (mock counted 1); Enter
+  again with the toggle now off runs a plain second search and clears
+  the line, which is the teacher's own submit; the "Signed in" segment
+  with a query matching someone NOT signed in says "Nobody in this
+  class matches." and does not widen (the whole roster counts, as the
+  build notes say; a teacher who meant everyone taps the toggle); the
+  bar's Clear leaves the toggle off with the T42 idle line; Escape then
+  reopening lands on the class with no line; setting off leaves the
+  toggle on. A roster still loading is left alone. No paging loop:
+  `loadMore` never touches the flag.
+- Attach rows: Tab from the row lands on "Profile for ...", Enter
+  there opens the profile with the sale still unattached and the modal
+  still open; Enter on the row itself attaches. Rows stay 72px in the
+  fixed 377px region, the chip column and the icon align down the list
+  (icon 17px from the row's edge on every row).
+- Membership modal: a failed `/api/passes` reads "Could not read the
+  passes: ..."; reopening refetches (the error state is not cached);
+  the unlimited membership and the pack render as in the profile card;
+  Escape and the scrim close it; only members carry the chip, so the
+  empty state is reachable only when a member's list comes back empty.
+- Modal discipline: no X closes a modal mid-write. Check-out and the
+  waitlist confirm hand off to the write and close before it starts;
+  cancel-booking, the info view and the waiver dialog rest their X
+  with the scrim while busy; the pay dialog's X exists only at
+  `payStage === null`. `.modal { position: relative }` shifted nothing:
+  no modal positioned against the scrim.
+- Counters card and class group in both palettes; every colour in the
+  diff a token defined in both blocks; no hex, no em dash, no new
+  font-size under 16px; the M chip, the profile icon and the X at the
+  44px icon idiom; the glass 64 by 64 on both bars.
+
+Judged not worth fixing here:
+
+- `StaffModal` still ends in a big Close button. It is T49/T50's
+  surface and T50 is in flight on its own branch; Pete's "all these
+  modals" was about the check-in screen's. Flag for T50 or a follow-up.
+- The segment case above (hidden by "Signed in", present in class) is
+  a design choice the build notes record, not a defect.

@@ -1738,8 +1738,10 @@ body.sale-open .dev-handle {
   overflow-wrap: anywhere;
 }
 
-/* Room for the X so a long query's title never runs under it. */
-.modal-search .modal-title {
+/* Room for the X so a long title never runs under it: every modal
+ * carries the X now (T52), always rendered before its title, so the
+ * sibling rule covers them all and lapses with the pay dialog's X. */
+.modal-x ~ .modal-title {
   padding-right: 48px;
 }
 
@@ -4292,7 +4294,11 @@ button.sale-for:disabled {
  * and the dropdown wrapper takes the group's. */
 .class-group {
   flex: 1 1 0;
-  min-width: min(240px, 100%);
+  /* The T46 review's 240px title floor PLUS the day control at its dated
+   * width (T52 review): the floor on the group alone let the day control
+   * take it, and at 820 wide on a viewed day the title had 91px and
+   * wrapped to four lines. */
+  min-width: min(404px, 100%);
   max-width: 100%;
   display: flex;
   align-items: stretch;
@@ -4320,6 +4326,14 @@ button.sale-for:disabled {
 .class-group .cal-btn.viewing {
   position: relative;
   z-index: 1;
+}
+
+/* The calendar's month row steps in from both edges (T52 review): the X
+ * sits in the modal's corner like everywhere else, and at 24px from the
+ * edge the next-month button was under it. Symmetric, so the month name
+ * stays centred over the grid. */
+.modal-cal .cal-head {
+  padding: 0 52px;
 }
 
 /* The three counters as one card (Pete: "'signed up / checked in /

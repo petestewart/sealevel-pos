@@ -215,7 +215,15 @@ export function ClientProfileCard({
             <li key={p.id ?? `${p.name}-${i}`} className="profile-pass">
               <span className="profile-pass-name">{p.name}</span>
               <span className="profile-pass-meta">
-                {p.remaining === null
+                {/* The fake-unlimited rule, as page.tsx applies it
+                    everywhere else a pass renders: Mindbody hands a
+                    membership over as 99999 sessions, and this card
+                    printed "99993 of 99999 left" (T52 review). Repeated
+                    rather than imported, since a page file exports only
+                    its page. */}
+                {p.remaining === null ||
+                (p.count !== null && p.count >= 100) ||
+                p.remaining >= 100
                   ? "Unlimited"
                   : p.count !== null
                     ? `${p.remaining} of ${p.count} left`
