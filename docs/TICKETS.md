@@ -6816,3 +6816,6 @@ the feature itself: Pete creates two test clients (one with an active
 auto-renew membership so a Guest Pass lands on it), and the first guest
 check-in under the write guard is T59a. B stays the fallback if
 Mindbody refuses the member's pass id on the guest's visit.
+
+Probe accounts: the member is Pete's own client 100028410 (guest pass
+added 2026-09-03); the guest is a dummy client still to be named.
