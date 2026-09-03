@@ -385,7 +385,11 @@ interface ClientBrief {
    *  omitted it. */
   balance: number | null;
   /** `MembershipIcon` nonzero means the client holds a membership; 0 or
-   *  absent means none. */
+   *  absent means none. This is Mindbody's OWN flag, from the studio's
+   *  Membership setup, and it can rest on an autopay contract or on a
+   *  pricing option within its dates with no sessions left (T56, Pete's
+   *  Devin: one Drop In at 0 remaining, still an M). The M chip's modal
+   *  reads /api/membership to show what it rests on. */
   member: boolean;
 }
 

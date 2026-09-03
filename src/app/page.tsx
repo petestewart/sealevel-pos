@@ -225,6 +225,30 @@ interface VisitInfo {
   signedIn: boolean;
 }
 
+/** T56: what the Membership modal lists, as /api/membership serves it
+ *  (shapes derived in src/lib/clientcontext.ts). */
+interface MembershipPass extends PassInfo {
+  /** Unexpired, but nothing left on it. Shown, never offered as payment. */
+  usedUp: boolean;
+}
+
+interface ContractInfo {
+  id: number | null;
+  name: string;
+  /** Mindbody's AutopayStatus: Active, Inactive, Suspended; null if omitted. */
+  status: string | null;
+  autoRenewing: boolean | null;
+  agreementDate: string | null;
+  startDate: string | null;
+  endDate: string | null;
+}
+
+interface MembershipState {
+  data: { contracts: ContractInfo[]; passes: MembershipPass[] } | null;
+  error: string | null;
+  loading: boolean;
+}
+
 /** The on-demand pass list behind a row's payment-change dropdown. A
  *  successful fetch is cached for the session; an error is not, so
  *  reopening the dropdown retries. */
@@ -1046,14 +1070,22 @@ function FrontDesk({
    *  already been wrong once can be adjusted without a commit. */
   /** T52: the Membership modal behind a roster row's M chip (Pete:
    *  "clicking on an 'M' icon should show more info about their
-   *  membership"). It reads the row's pass list, the one /api/passes
-   *  answer the payment chevron and the background sweep already share
-   *  (`passLists`), so opening it costs nothing when the sweep has been
-   *  past and one metered call otherwise. No new Mindbody endpoint. */
+   *  membership"). T56 (Pete: "i want to understand what indicates the M
+   *  status ... i see No current memberships or passes on file"): it no
+   *  longer reads the picker's active-only pass list, which cannot show
+   *  the contract or the used-up pass an M rests on. It reads
+   *  /api/membership, two metered calls spent only on the tap, cached
+   *  per client for the session in `memberInfo`; a failure is not
+   *  cached, and the modal offers a retry. `member` is the row's flag,
+   *  so the closing line can say what Mindbody says. */
   const [memberView, setMemberView] = useState<{
     clientId: string;
     name: string;
+    member: boolean;
   } | null>(null);
+  const [memberInfo, setMemberInfo] = useState<
+    Record<string, MembershipState>
+  >({});
   const { settings } = useSettings();
   /** Whether the search-results modal is open. */
   const [searchOpen, setSearchOpen] = useState(false);
@@ -3139,17 +3171,62 @@ function FrontDesk({
     [ensurePassList],
   );
 
-  /** The M chip's tap (T52): the Membership modal, fed from the same
-   *  pass cache the chevron reads (ensurePassList is the shared fetch,
-   *  split out of openPicker for this). */
+  /** T56: the Membership modal's own read, /api/membership. A success is
+   *  cached for the session (the M's reasons do not change mid-class); a
+   *  failure is not, so the modal's "Try again" and a reopen both refetch.
+   *  `force` is that retry: it refetches even over a cached success. */
+  const ensureMemberInfo = useCallback(
+    (clientId: string, force = false) => {
+      const have = memberInfo[clientId];
+      if (have?.loading || (have?.data && !force)) return;
+      setMemberInfo((m) => ({
+        ...m,
+        [clientId]: { data: null, error: null, loading: true },
+      }));
+      fetch(`/api/membership?clientId=${encodeURIComponent(clientId)}`)
+        .then(async (r) => {
+          const body = await r.json();
+          if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+          const contracts = (body?.contracts ?? []) as ContractInfo[];
+          const passes = (body?.passes ?? []) as MembershipPass[];
+          setMemberInfo((m) => ({
+            ...m,
+            [clientId]: {
+              data: { contracts, passes },
+              error: null,
+              loading: false,
+            },
+          }));
+        })
+        .catch((err) => {
+          setMemberInfo((m) => ({
+            ...m,
+            [clientId]: {
+              data: null,
+              error: err instanceof Error ? err.message : String(err),
+              loading: false,
+            },
+          }));
+        });
+    },
+    [memberInfo],
+  );
+
+  /** The M chip's tap (T52): the Membership modal. Since T56 it reads
+   *  /api/membership (contracts and used-up passes included), not the
+   *  picker's active-only pass cache. */
   const openMember = useCallback(
     (entry: RosterEntry) => {
       setPickerFor(null);
       setSortMenuOpen(false);
-      setMemberView({ clientId: entry.clientId, name: entry.name });
-      ensurePassList(entry.clientId);
+      setMemberView({
+        clientId: entry.clientId,
+        name: entry.name,
+        member: entry.member === true,
+      });
+      ensureMemberInfo(entry.clientId);
     },
-    [ensurePassList],
+    [ensureMemberInfo],
   );
 
   /**
@@ -4772,8 +4849,8 @@ function FrontDesk({
                     {entry.member ? (
                       <button
                         className="m-chip-btn"
-                        title="Membership"
-                        aria-label={`Membership for ${entry.name}`}
+                        title="Member (Mindbody's membership flag). Tap for details."
+                        aria-label={`Member (Mindbody's membership flag). Tap for details about ${entry.name}.`}
                         aria-haspopup="dialog"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -5811,14 +5888,27 @@ function FrontDesk({
       ) : null}
 
       {/* The Membership modal (T52): what the roster's M chip opens.
-          What the app already knows about the client's memberships and
-          passes, from the pass sweep's cache: name, what is left (or
-          Unlimited, for the sessionless kinds), expiry. Read-only; the
-          X, the scrim and Escape close it. */}
+          T56: what the M rests on, from /api/membership. "Contracts"
+          (the autopay agreements, with AutopayStatus and dates), then
+          "Passes" (as before, plus unexpired passes with nothing left,
+          shown as used up in the muted colour and never offered as
+          payment), then a closing line that always names the flag, and
+          when neither list explains it, says where to look. Read-only;
+          the X, the scrim and Escape close it. */}
       {memberView
         ? (() => {
-            const list = passLists[memberView.clientId];
-            const passes = list?.data ?? null;
+            const info = memberInfo[memberView.clientId];
+            const data = info?.data ?? null;
+            const contractWhen = (c: ContractInfo): string => {
+              const from = wallDate(c.startDate ?? c.agreementDate);
+              const to = wallDate(c.endDate);
+              if (from && to) {
+                return `${from} to ${to}${c.autoRenewing ? ", renews" : ""}`;
+              }
+              if (from) return `since ${from}${c.autoRenewing ? ", renews" : ""}`;
+              if (to) return `${c.autoRenewing ? "renews" : "ends"} ${to}`;
+              return c.autoRenewing ? "auto-renewing" : "";
+            };
             return (
               <div
                 className="modal-scrim"
@@ -5841,43 +5931,101 @@ function FrontDesk({
                   </button>
                   <p className="modal-title">Membership</p>
                   <p className="modal-entity">{memberView.name}</p>
-                  {passes === null ? (
-                    list?.error ? (
-                      <p className="note">
-                        Could not read the passes: {list.error}
-                      </p>
+                  {data === null ? (
+                    info?.error ? (
+                      <>
+                        <p className="note">
+                          Could not read the membership: {info.error}
+                        </p>
+                        <div className="modal-actions">
+                          <button
+                            className="modal-cancel"
+                            onClick={() =>
+                              ensureMemberInfo(memberView.clientId, true)
+                            }
+                          >
+                            Try again
+                          </button>
+                        </div>
+                      </>
                     ) : (
                       <p className="muted">
                         <span className="spinner" aria-label="working" />{" "}
-                        Reading the passes from Mindbody...
+                        Reading the membership from Mindbody...
                       </p>
                     )
-                  ) : passes.length === 0 ? (
-                    <p className="muted">
-                      No current memberships or passes on file.
-                    </p>
                   ) : (
-                    <ul className="profile-passes member-passes">
-                      {passes.map((p, i) => (
-                        <li key={p.id ?? `${p.name}-${i}`} className="profile-pass">
-                          <span className="profile-pass-name">{p.name}</span>
-                          <span className="profile-pass-meta">
-                            {/* fakeUnlimited applies everywhere a pass
-                                renders: a membership's 99999 is not a
-                                count. */}
-                            {p.remaining === null ||
-                            fakeUnlimited(p.count, p.remaining)
-                              ? "Unlimited"
-                              : p.count !== null
-                                ? `${p.remaining} of ${p.count} left`
-                                : `${p.remaining} left`}
-                            {p.expires
-                              ? ` · expires ${wallDate(p.expires)}`
-                              : " · no expiry"}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                    <>
+                      <p className="member-label">Contracts</p>
+                      {data.contracts.length === 0 ? (
+                        <p className="modal-note member-none">No contracts.</p>
+                      ) : (
+                        <ul className="profile-passes member-passes">
+                          {data.contracts.map((c, i) => (
+                            <li
+                              key={c.id ?? `${c.name}-${i}`}
+                              className="profile-pass"
+                            >
+                              <span className="profile-pass-name">{c.name}</span>
+                              <span className="profile-pass-meta">
+                                {c.status ?? "Status unknown"}
+                                {contractWhen(c)
+                                  ? ` · ${contractWhen(c)}`
+                                  : ""}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <p className="member-label">Passes</p>
+                      {data.passes.length === 0 ? (
+                        <p className="modal-note member-none">No passes.</p>
+                      ) : (
+                        <ul className="profile-passes member-passes">
+                          {data.passes.map((p, i) => (
+                            <li
+                              key={p.id ?? `${p.name}-${i}`}
+                              className={
+                                p.usedUp
+                                  ? "profile-pass member-usedup"
+                                  : "profile-pass"
+                              }
+                            >
+                              <span className="profile-pass-name">{p.name}</span>
+                              <span className="profile-pass-meta">
+                                {p.usedUp
+                                  ? `Used up${
+                                      p.expires
+                                        ? `, exp ${wallDate(p.expires)}`
+                                        : ""
+                                    }`
+                                  : /* fakeUnlimited applies everywhere a
+                                       pass renders: a membership's 99999
+                                       is not a count. */
+                                    (p.remaining === null ||
+                                    fakeUnlimited(p.count, p.remaining)
+                                      ? "Unlimited"
+                                      : p.count !== null
+                                        ? `${p.remaining} of ${p.count} left`
+                                        : `${p.remaining} left`) +
+                                    (p.expires
+                                      ? ` · expires ${wallDate(p.expires)}`
+                                      : " · no expiry")}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {memberView.member ? (
+                        <p className="member-flag">
+                          Mindbody flags this client as a member.
+                          {data.contracts.length === 0 &&
+                          data.passes.length === 0
+                            ? " Nothing here explains it; check the Contracts tab on their Mindbody profile."
+                            : ""}
+                        </p>
+                      ) : null}
+                    </>
                   )}
                 </div>
               </div>
