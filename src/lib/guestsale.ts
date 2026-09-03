@@ -4,7 +4,6 @@ import { studioWall } from "./roster";
 import {
   checkoutCart,
   rehearseCheckout,
-  roundToCents,
   type CartLine,
   type CheckoutOutcome,
   type PricedCart,
@@ -68,27 +67,40 @@ export function sellGuestPass(
   return checkoutCart([line], guestClientId, { type: "Comp", amount: 0 }, actor, false);
 }
 
-/** Whether a rehearsed total is the $0.00 the flow requires. */
+/** Whether a rehearsed total is the $0.00 the flow requires: exactly
+ *  zero, never rounded to it (T63 review: a cart Mindbody prices at
+ *  $0.004 is not a $0 cart, and an unknown total is not zero). */
 export function isZeroTotal(grandTotal: number | null): boolean {
-  return grandTotal !== null && roundToCents(grandTotal) === 0;
+  return grandTotal === 0;
 }
 
 /** How far back the sale lookup reaches when the pass carries no
  *  PaymentDate: a Guest Pass lands monthly and expires at month end, so
  *  a window of 45 days holds any live one. */
 const SALE_WINDOW_DAYS = 45;
+/** `/sale/sales` pages at request.limit (200 is the most Mindbody
+ *  serves); the read follows PaginationResponse.TotalResults up to this
+ *  many pages, then gives up and reports the sale as not found (never
+ *  a guess), which the 45-day window can reach on a busy site. */
+const SALE_PAGE_LIMIT = 200;
+const SALE_MAX_PAGES = 10;
 
 /**
  * The sales that could be the member's Guest Pass sale, as
  * `GET /sale/sales` (sale.yml:990) lists them, judged by
  * judgeGuestPassSale. The endpoint filters by date, sale id and payment
  * method and NOT by client (latestSaleId learned the same), so the
- * window is the day of the pass's PaymentDate (site-local, so the
- * strings are built with studioWall's shape and never through
- * toISOString) and the client is matched here on `Sale.ClientId`. With
- * no PaymentDate the window is the last SALE_WINDOW_DAYS. A read, on the
- * service account; a failure is thrown for the caller to report as "not
- * returned: <reason>", never as a return.
+ * window is the day of the pass's PaymentDate and a day either side
+ * (T63 review: a sale posted late the evening before its PaymentDate,
+ * or a date Mindbody shifted across midnight, was a "no sale found"
+ * for a pass whose sale was there; the judge is what keeps the wider
+ * window safe, since nothing but a lone $0 comp sale of this product
+ * for this client passes it), site-local, so the strings are built
+ * with studioWall's shape and never through toISOString, and the
+ * client is matched here on `Sale.ClientId`. With no PaymentDate the
+ * window is the last SALE_WINDOW_DAYS. A read, on the service account,
+ * following the pages; a failure is thrown for the caller to report as
+ * "not returned: <reason>", never as a return.
  */
 export async function findGuestPassSale(opts: {
   memberClientId: string;
@@ -102,15 +114,22 @@ export async function findGuestPassSale(opts: {
   const end = `${studioWall(tomorrow).slice(0, 10)}T00:00:00`;
   const start =
     day !== null
-      ? `${day}T00:00:00`
+      ? `${shiftDay(day, -1)}T00:00:00`
       : `${studioWall(new Date(now.getTime() - SALE_WINDOW_DAYS * 24 * 60 * 60 * 1000)).slice(0, 10)}T00:00:00`;
-  const windowEnd = day !== null ? `${nextDay(day)}T00:00:00` : end;
-  const query =
-    `request.startSaleDateTime=${encodeURIComponent(start)}` +
-    `&request.endSaleDateTime=${encodeURIComponent(windowEnd)}` +
-    `&request.limit=200`;
-  const body = await mindbody(`/sale/sales?${query}`);
-  const raw: unknown[] = Array.isArray(body?.Sales) ? body.Sales : [];
+  const windowEnd = day !== null ? `${shiftDay(day, 2)}T00:00:00` : end;
+  const raw: unknown[] = [];
+  for (let page = 0; page < SALE_MAX_PAGES; page += 1) {
+    const query =
+      `request.startSaleDateTime=${encodeURIComponent(start)}` +
+      `&request.endSaleDateTime=${encodeURIComponent(windowEnd)}` +
+      `&request.limit=${SALE_PAGE_LIMIT}` +
+      `&request.offset=${page * SALE_PAGE_LIMIT}`;
+    const body = await mindbody(`/sale/sales?${query}`);
+    const got: unknown[] = Array.isArray(body?.Sales) ? body.Sales : [];
+    raw.push(...got);
+    const total = intOrNull(body?.PaginationResponse?.TotalResults);
+    if (got.length === 0 || total === null || raw.length >= total) break;
+  }
   const sales = raw.map(saleLike);
   const verdict = judgeGuestPassSale(sales, {
     clientId: opts.memberClientId,
@@ -119,9 +138,10 @@ export async function findGuestPassSale(opts: {
   return { ...verdict, window: { start, end: windowEnd }, sales: sales.length };
 }
 
-function nextDay(day: string): string {
+/** Calendar arithmetic on a "YYYY-MM-DD" string, no timezone in it. */
+function shiftDay(day: string, days: number): string {
   const d = new Date(`${day}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + 1);
+  d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
 
@@ -143,6 +163,7 @@ function saleLike(raw: unknown): SaleLike {
         description: typeof i["Description"] === "string" ? i["Description"] : null,
         totalAmount: numOrNull(i["TotalAmount"]),
         returned: typeof i["Returned"] === "boolean" ? i["Returned"] : null,
+        quantity: numOrNull(i["Quantity"]),
       };
     }),
     payments: payments.map((raw) => {

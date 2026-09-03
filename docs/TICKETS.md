@@ -7943,9 +7943,10 @@ member's row lost its pass chevron until a page refresh.
 4. **Retire the member's pass by return, and only by return.**
    `GET /sale/sales` filters by date, sale id and payment method and
    NOT by client (sale.yml:990; `latestSaleId` learned the same), so the
-   window is the day of the pass's `PaymentDate` (site-local strings,
-   never `toISOString`), or the last 45 days when the pass carries
-   none, and the client is matched on `Sale.ClientId`. The newest sale
+   window is the day of the pass's `PaymentDate` and a day either side
+   (review; site-local strings, never `toISOString`), or the last 45
+   days when the pass carries none, following the pages, and the
+   client is matched on `Sale.ClientId`. The newest sale
    whose `PurchasedItems` carry the pass's ProductId and are not
    `Returned` is judged (`judgeGuestPassSale`, pure): exactly one item,
    `IsService` true, `TotalAmount` exactly 0.00 (an unknown total is
@@ -8201,6 +8202,110 @@ from a $0 comp sale of its own; Alison is 100041277.
 8. Then the already-booked path: book Alison into the class unpaid
    (the walk-in search), run the flow: `updateclientvisit
    {ClientServiceId}` then `{SignedIn}`, no `addclienttoclass`.
+
+### Review
+
+Adversarial pass over the three commits, hunting hardest at the return
+guard, then the $0 sale, then the sequence, then the two live fixes.
+The pure judge was run over 16 more sale shapes
+(scratchpad/t63/judge63-review.mjs) and the route over 13 more
+postures on the mock (scratchpad/t63/t63-review.js, review-api.log;
+t63-review-ui.js, review-ui2.log), then the builder's api, ui, dryrun
+and three guard modes were re-run green against the fixed build
+(review-*.log beside them).
+
+Found and fixed (one commit, `T63 review: ...`):
+
+- **A Comp payment with no `Amount` passed the judge.** `p.amount ??
+  0` read an amount Mindbody did not give as zero; the rule everywhere
+  else in the judge is proof, not absence. Now refused: "carries a Comp
+  whose amount is not known" (`judgeGuestPassSale`).
+- **A return record on the list was judged returnable.** `/sale/sales`
+  marks a returned item by a negative `Quantity` (sale.yml, "Negative
+  numbers indicate returned items"); the judge never read it, so a
+  return sale carrying the pass at quantity -1, `Returned` false and a
+  $0 total was the newest sale and would have been sent to
+  `/sale/returnsale` (Mindbody would refuse; still a wrong call).
+  `SaleLike` now carries `quantity`, and any such record on the
+  member's account means the pass was already returned.
+- **Totals were rounded to zero.** `roundToCents` in `isZeroTotal` and
+  `roundCents` in the judge let a rehearsal or a sale item at $0.004
+  read as $0.00. Both are now `=== 0` (the mock cannot price a cart at
+  a sub-cent, so this is the unit run, not the wire); the judge's
+  reason shows the raw number so it never reads "$0.00, not $0.00".
+- **No single flight on the server.** The modal's `inFlight` ref holds
+  a double tap, but two POSTs reaching `/api/guest` together sold two $0
+  passes and booked the guest twice (V1 on the mock). A module-level
+  set keyed on guest and class now answers the second with 409
+  "already running. Nothing was written." (route.ts); the browser
+  check (W2: two taps, one checkout) is unchanged.
+- **The modal closed on an unread count.** `clean` read
+  `memberPass.remaining ?? 0`, so a member re-read that failed after a
+  done return closed the sheet as if the count were 0. Now `=== 0`, and
+  the sheet says "<member>'s passes could not be re-read after the
+  return. Check the pass in Mindbody." in amber (W1).
+- **The sale window was one day and one page.** A sale posted late the
+  evening before the pass's `PaymentDate` (V10 "ok" at 23:30), or a
+  date shifted across midnight (V2), was "no sale found": safe, but the
+  return never runs for a pass whose sale is there. The window is now
+  the PaymentDate day and a day either side, and the read follows
+  `PaginationResponse.TotalResults` up to ten pages of 200 (V4: 250
+  other sales ahead of the member's, two reads, found). The judge is
+  what keeps a wider window safe: only a lone $0 comp sale of this
+  product for this client passes it.
+
+Proved as built (no change):
+
+- Every field the judge reads exists in sale.yml with that casing:
+  `Sale.Id/ClientId/SaleDateTime/PurchasedItems/Payments`,
+  `PurchasedItem.Id/IsService/Description/TotalAmount/Returned/
+  Quantity`, `SalePayment.Type/Amount`, `ReturnSaleResponse.
+  ReturnSaleID/Amount`. Refused, each on the mock or the unit: two
+  items; one item not the pass (by ProductId, not name); $0 Visa,
+  Cash, Account, Gift Card, StoredCard, "Guest Card", an unnamed
+  method, two payments with one Visa; Comp $5 and Comp -$5; a
+  non-service item; an unknown total; an already-returned item; the
+  guest's own sale of the same product; a sale with no id. Two clean
+  sales the same day: the newest is returned (documented). No
+  `updateclientservice`, `ExpirationDate` or `ActiveDate` write
+  anywhere in the diff.
+- The $0 sale: rehearsal `Test: true` then one real checkout with
+  `Test: false`, `SendEmail: false`, no `PayerClientId`, `LocationId:
+  1`, `InStore: true`, `[{Type: "Comp", Metadata: {Amount: 0}}]`,
+  under the teacher with `fallback: false`; a 5xx and a destroyed
+  socket are 502 `ambiguous` with the "MAY have gone through" wording
+  and nothing after; a 400 is a 409 refusal; a rehearsal failure sells
+  nothing. `mindbody()` retries only a 401 token, never a 5xx or a
+  transport failure. The new pass: with an older Guest Pass already on
+  the guest (V5) the booking carries the NEW id; with the before-read
+  failed (V6) the newest PaymentDate picks it; with the after-read
+  failed (V7) nothing is booked and the 502 says sold-not-found.
+- Sequence and honesty: dry run and each guard shape report every step
+  as suppressed or skipped, never done; a member sign-in that fails
+  after a done return is its own red line (V11); a guest sign-in
+  refused after the booking is 502 with the visit on the pass, the
+  return skipped and the member untouched (V12).
+- The two live fixes, the chevron refetch, and the walk-in picker: the
+  builder's ui mode ran end to end (its own log had stopped at U6 on a
+  scrim; U6 to U9 pass here). No hex outside the palette blocks, no
+  em dashes, no model identifiers, nothing under 16px, buttons at
+  64px, SaleScreen.tsx and the header untouched, sale.ts additive.
+
+Chose not to fix:
+
+- The return keeps `runAsActor`'s one-shot service-account fallback
+  (said in amber). It moves no money and the judge has already seen
+  $0; the comp posture is reserved for the sale.
+- `PurchasedItem.Returned` absent (null) still counts as carrying: if
+  Mindbody omits the flag everywhere, refusing it would end the
+  feature; the negative-quantity check above and Mindbody's own
+  refusal cover the double return.
+- `/api/visit-payment` has no server-side guest-pass refusal; the T63
+  gate is in `changePass` by name. A server check would cost a pass
+  read per pass change for a route the picker already cannot reach
+  with a guest pass.
+- A returned `Amount` Mindbody omits (null) is still clean on the
+  sheet; the judge saw $0 and the field is confirmation.
 
 ## T64. The sign-in gate says one line, and a login lasts two hours (Pete, 2026-09-04)
 

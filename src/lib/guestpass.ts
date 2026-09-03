@@ -169,6 +169,9 @@ export interface SaleLike {
     description: string | null;
     totalAmount: number | null;
     returned: boolean | null;
+    /** PurchasedItem.Quantity: "Negative numbers indicate returned
+     *  items" (sale.yml), so a negative one is a return on the list. */
+    quantity: number | null;
   }[];
   payments: { type: string | null; amount: number | null }[];
 }
@@ -200,6 +203,11 @@ const COMP_PAYMENT_RE = /\bcomp\b|guest/i;
  * `sales` is every sale the window held for this client; the newest
  * one carrying the pass is judged (a member with two guest-pass sales
  * in the window is rare, and the newest is the one the roster shows).
+ *
+ * T63 review: the total and every payment amount must be exactly 0,
+ * not rounded to it, and an amount Mindbody did not give is refused,
+ * not read as zero; a sale on the list with the pass at a negative
+ * quantity is a return record, so the pass counts as already returned.
  */
 export function judgeGuestPassSale(
   sales: readonly SaleLike[],
@@ -209,6 +217,17 @@ export function judgeGuestPassSale(
     .filter((s) => s.clientId === opts.clientId)
     .filter((s) => s.items.some((i) => i.productId === opts.productId))
     .sort((a, b) => (b.saleDateTime ?? "").localeCompare(a.saleDateTime ?? ""));
+  const returnRecord = withPass.find((s) =>
+    s.items.some(
+      (i) => i.productId === opts.productId && i.quantity !== null && i.quantity < 0,
+    ),
+  );
+  if (returnRecord !== undefined) {
+    return {
+      returnable: false,
+      reason: `sale ${returnRecord.id ?? "?"} on their account is a return of the Guest Pass, so it was already returned`,
+    };
+  }
   const carrying = withPass.filter((s) =>
     s.items.some((i) => i.productId === opts.productId && i.returned !== true),
   );
@@ -245,13 +264,22 @@ export function judgeGuestPassSale(
   if (item.totalAmount === null) {
     return { returnable: false, reason: `sale ${sale.id}'s total is not known` };
   }
-  const total = roundCents(item.totalAmount);
-  if (total !== 0) {
-    return { returnable: false, reason: `sale ${sale.id} was for $${total.toFixed(2)}, not $0.00` };
+  if (item.totalAmount !== 0) {
+    /* A sub-cent total is not $0.00 either; the reason shows the raw
+     * number then, so the line never reads "$0.00, not $0.00". */
+    const cents = item.totalAmount.toFixed(2);
+    const shown = cents === "0.00" || cents === "-0.00" ? String(item.totalAmount) : cents;
+    return { returnable: false, reason: `sale ${sale.id} was for $${shown}, not $0.00` };
   }
   for (const p of sale.payments) {
-    const amount = roundCents(p.amount ?? 0);
     const type = (p.type ?? "").trim();
+    if (p.amount === null) {
+      return {
+        returnable: false,
+        reason: `sale ${sale.id} carries a ${type || "payment"} whose amount is not known`,
+      };
+    }
+    const amount = p.amount;
     if (amount !== 0) {
       return {
         returnable: false,
@@ -266,8 +294,4 @@ export function judgeGuestPassSale(
     }
   }
   return { returnable: true, saleId: sale.id };
-}
-
-function roundCents(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
 }

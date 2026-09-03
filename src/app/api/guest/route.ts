@@ -35,6 +35,7 @@ import {
   visitPayment,
 } from "@/lib/roster";
 import { guestPassOption } from "@/lib/sale";
+import type { StaffSession } from "@/lib/staffsession";
 
 export const dynamic = "force-dynamic";
 
@@ -95,6 +96,51 @@ export const dynamic = "force-dynamic";
 
 type StepOutcome = "done" | "suppressed" | "skipped" | { error: string };
 
+/** T63 review: one flow per guest and class at a time, on the server
+ *  too. The modal's inFlight ref stops a double tap, but two requests
+ *  that reach here together sold two $0 passes and booked the guest
+ *  twice on the mock; a money-shaped route keeps its own single flight
+ *  (server memory, like the staff session: a restart clears it). The
+ *  key is read off the raw body before validation; a body that fails
+ *  validation holds no claim worth keeping, and the flow refuses it. */
+const inFlight = new Set<string>();
+
+export async function POST(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
+  /* T50: no staff session, no write. Before the body is read, so a
+   * signed-out iPad hears only the 401 and never a validation detail
+   * or a Mindbody read made on its behalf. */
+  const staff = requireActor(request);
+  if (staff.denied) return staff.denied;
+
+  let raw: unknown;
+  try {
+    raw = await request.json();
+  } catch {
+    return NextResponse.json({ error: "The request was not JSON." }, { status: 400 });
+  }
+  const peek = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
+  const key = `${String(peek["guestClientId"] ?? "")}:${String(peek["classId"] ?? "")}`;
+  if (inFlight.has(key)) {
+    const who = optionalText(peek["guestName"], NAME_MAX) || "this guest";
+    return NextResponse.json(
+      {
+        error: `A guest check-in for ${who} in this class is already running. Nothing was written.`,
+        step: "sale",
+        refused: true,
+      },
+      { status: 409 },
+    );
+  }
+  inFlight.add(key);
+  try {
+    return await guestFlow(staff.session, raw);
+  } finally {
+    inFlight.delete(key);
+  }
+}
+
 const NAME_MAX = 120;
 
 function optionalText(v: unknown, max: number): string | null | undefined {
@@ -148,22 +194,7 @@ function isAmbiguous(err: unknown): boolean {
   return status !== null && status >= 500;
 }
 
-export async function POST(request: Request) {
-  const denied = requireSession(request);
-  if (denied) return denied;
-  /* T50: no staff session, no write. Before the body is read, so a
-   * signed-out iPad hears only the 401 and never a validation detail
-   * or a Mindbody read made on its behalf. */
-  const staff = requireActor(request);
-  if (staff.denied) return staff.denied;
-  const { session } = staff;
-
-  let raw: unknown;
-  try {
-    raw = await request.json();
-  } catch {
-    return NextResponse.json({ error: "The request was not JSON." }, { status: 400 });
-  }
+async function guestFlow(session: StaffSession, raw: unknown): Promise<Response> {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return NextResponse.json({ error: "The request was not an object." }, { status: 400 });
   }

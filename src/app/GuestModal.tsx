@@ -576,6 +576,13 @@ export default function GuestModal({
             text: `Mindbody still lists ${memberFirst}'s guest pass with ${answer.memberPass?.remaining} left. Check it in Mindbody.`,
             tone: "warn",
           });
+        } else if (answer.memberPass?.remaining === null || answer.memberPass?.remaining === undefined) {
+          /* T63 review: the count is a fresh read or nothing; a read
+           * that failed is said, not shown as 0. */
+          lines.push({
+            text: `${memberFirst}'s passes could not be re-read after the return. Check the pass in Mindbody.`,
+            tone: "warn",
+          });
         }
       } else if (ret === "suppressed") {
         lines.push({
@@ -626,7 +633,7 @@ export default function GuestModal({
         steps.guest === "done" &&
         steps.return === "done" &&
         (answer.memberPass?.returnedAmount ?? 0) === 0 &&
-        (answer.memberPass?.remaining ?? 0) === 0 &&
+        answer.memberPass?.remaining === 0 &&
         (steps.member === "done" || steps.member === "skipped") &&
         steps.notes === "done" &&
         answer.verified !== false &&
