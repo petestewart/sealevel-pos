@@ -4927,6 +4927,55 @@ button.sale-for:disabled {
 .modal-guest {
   --roster-cols: minmax(0, 1fr) 118px;
   width: min(720px, 100%);
+  /* T62: one size in every state. Pete: the box changed size as
+   * results appeared while typing. A fixed height, the title and the
+   * search box at the top, the rows scrolling inside, and the New
+   * client button pinned at the bottom; the confirm sheet and the
+   * outcome fill the same box with their actions pinned the same way.
+   * dvh so the iPad's toolbars do not push the bottom off screen; vh
+   * first for a browser without it. */
+  height: min(640px, 84vh);
+  height: min(640px, 84dvh);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-guest .guest-rows {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+
+.modal-guest .new-client-actions {
+  margin: auto 0 0;
+  flex: 0 0 auto;
+}
+
+.modal-guest .search-bar,
+.modal-guest .search-quiet {
+  flex: 0 0 auto;
+}
+
+/* The confirm sheet and the outcome: the sentence or the lines at the
+ * top, scrolling if they ever need to, the buttons at the bottom edge
+ * where the New client button sits in the list state. */
+.modal-guest .guest-confirm {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-guest .guest-confirm .guest-outcome {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.modal-guest .guest-confirm .modal-actions {
+  margin-top: auto;
+  flex: 0 0 auto;
 }
 
 /* A group label between the rows ("In class", the search's results):
