@@ -317,7 +317,12 @@ export async function POST(request: Request) {
    * for a comp; a non-boolean is false, never an error, because a receipt
    * must not stand between a teacher and a charge. */
   const sendEmail =
-    payload?.sendEmail === true && clientId !== undefined && method !== "comp";
+    payload?.sendEmail === true &&
+    clientId !== undefined &&
+    /* T53 review: the house client attached BY NAME (it is a real
+     * client, so search can find it) is still nobody's inbox. */
+    clientId !== houseClientId() &&
+    method !== "comp";
   /* Every valid split includes a client-bound leg: comp is excluded and
    * the two legs differ, so at least one is storedcard or credit. The
    * house client never rides a split. */

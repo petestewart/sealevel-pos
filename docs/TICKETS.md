@@ -6566,3 +6566,86 @@ carries only the news flag; a suppressed write continues with "Opt-in
 not saved (dry-run)"; Pay tapped during the lookup waits, then reveals
 the boxes or waves an opted-in client through. Screenshots in
 `scratchpad/t53/`.
+
+### Review
+
+Reviewed against the spec, the T51/T50/T48/T39 invariants and the
+implementer's harness, then driven in a browser (`next start` on
+:3053, the page-mocked fixture in `scratchpad/t53/t53.js` extended
+with a second un-opted client and re-run whole, plus
+`scratchpad/t53/t53-review.js`, shot `light-8-review-swap-gate.png`).
+The claims held: `/client/updateclient`'s body is `UpdateClientRequest`
+with `Client: ClientWithSuspensionInfo` (client.yml:7072, "the client
+ID is used to look up the existing client ... any specified values are
+updated"), and the write carries `{Client: {Id, <changed email flags>},
+CrossRegionalUpdate: false}` and nothing else, through `mindbody()`
+with `clientId` in the options; a suppressed write answers
+`suppressed` and the browser leaves the record untouched, so the toggle
+says "Opt-in not saved (dry-run)" and the checkout body says
+`sendEmail: false`. `SendEmailReceipt` and `EmailReceipt` are on
+purchaseaccountcredit (sale.yml:4791, 5918), not purchasecontract; the
+credit path passes the toggle and reads the answer, the other four
+checkout sites pass the toggle and answer `emailReceipt: null`, so the
+done screen says "emailed" only on Mindbody's own true. `sendEmail` is
+a const of the render that computed `chargeable`, it changes nothing
+about the amount, the rehearsal (`Test: true` is a separate call that
+never carried it), the single-flight ref or the outcome branches. The
+gate cannot be Entered past: Pay is a button, so Enter is its onClick
+and runs both gates; Back and re-Pay stays quiet by `consentAskedFor`,
+which resets on a sale and on Empty cart, so the next sale asks again.
+"Save and continue" cannot race the charge: it runs before pay mode
+exists, behind a scrim with every exit disabled, and its outcome is
+bounded by the server's 20s write timeout (mindbody.ts) into either
+pay mode or the inline refusal with Try again / Continue without. A
+401 `reason: "staff"` on the write is caught by page.tsx's fetch
+wrapper AND by `saveConsent`, both of which only drop the teacher;
+nothing is saved and the gate returns. The "reading" state cannot
+hang: the lookup either lands (the effect settles it) or errors (waved
+through, toggle "Could not read their email settings"), and X, scrim
+and Escape stay live while it reads. The profile rows are 16px on
+tokens both palettes, no em dashes, the gate's own words. Found:
+
+1. **The gates could be walked around in pay mode.** The header's
+   detach, attach and walk-in controls stay live in pay mode (they are
+   only locked while charging), and nothing returned the surface to
+   shelf mode when who the sale is for changed. So "Not now" for
+   Alida, detach her, attach Bob: pay mode, Charge live, Bob never
+   asked. Same shape for T51: declare a walk-in, Pay, then X the
+   walk-in card: pay mode with nobody attached and no walk-in declared,
+   exactly the charge T51 put the dialog in front of. Fixed in
+   SaleScreen with one effect: a change of the sale's identity (client
+   id, or the walk-in flag) while ALREADY in pay mode and with items in
+   the cart calls `leavePay`, and the next Pay tap runs whichever gate
+   that person needs. Already-in-pay-mode is the point: the walk-in
+   dialog's Continue sets the flag and enters pay mode in one render
+   (previous mode shelf, no drop), and a sale's own reset clears the
+   flag under the done screen with an emptied cart (no drop, scenario
+   L). Scenarios I, J, K: detach-and-attach lands in shelf mode and Pay
+   opens the gate for Bob with his own flags pre-set; the withdrawn
+   walk-in lands in shelf mode and Pay asks the walk-in question again.
+2. **The house client attached by name got a receipt.** The route
+   forced `sendEmail` false only for the ANONYMOUS form (no clientId).
+   The house client is a real Mindbody client, so search can find it
+   and a teacher can attach it; that sale would have carried
+   `SendEmail: true` to an inbox that is nobody's. Now also false when
+   `clientId === houseClientId()`, the comp formula-note's own test.
+3. **A record correction, not a code change.** The design text says an
+   unticked "news and offers" "can never revoke an opt-in made
+   elsewhere". Not so: the box opens pre-set to the record, and a
+   deliberate untick of a pre-set true box DOES send
+   `SendPromotionalEmails: false` (the implementer's own scenario B
+   shows it). What is true is narrower: a box LEFT ALONE is not sent.
+   Left as built, on purpose: the client is standing at the counter,
+   and a save that silently ignored a box they asked to untick would be
+   the dishonest one. Pete should know the gate can withdraw marketing
+   consent as well as grant it; if he wants it opt-in only, the fix is
+   to send only `true` values, one line in `saveConsent`.
+
+Not changed, recorded: an unreadable record (the stored-card read
+failed) skips the gate rather than asking, because the boxes cannot be
+pre-set and the toggle could not turn on afterwards anyway; the sale
+proceeds with "Could not read their email settings" on the toggle.
+The consent fetch has no browser-side timeout, like every other write
+fetch here; the server's 20s write timeout bounds it. Typecheck and
+build green; the full implementer harness re-run unchanged after the
+fixes (A through H, both palettes).

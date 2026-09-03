@@ -4619,6 +4619,36 @@ export default function SaleScreen(props: {
     linesRef.current?.scrollTo({ top: 0 });
   }, []);
 
+  /**
+   * T53 review: pay mode is entered for ONE "sale for", and both gates
+   * (T51's walk-in dialog, T53's opt-in) run on the Pay tap for that
+   * one. The header's attach, detach and walk-in controls stay live in
+   * pay mode, so swapping the client there (detach Alida, attach Bob;
+   * or withdraw the walk-in) would carry the surface, and its Charge,
+   * to a client neither gate saw. So a change of who the sale is for
+   * while in pay mode drops back to shelf mode, and the next Pay tap
+   * asks whatever that person needs asking. Only a CHANGE while already
+   * in pay mode (a hook, so above the `!open` return): the walk-in
+   * dialog's Continue sets the flag and enters
+   * pay mode in one render, and a sale's own reset (onSold clears the
+   * walk-in flag under the done screen) comes with an emptied cart.
+   */
+  const saleFor = client !== null ? `client:${client.id}` : walkIn ? "walk-in" : "";
+  const saleForRef = useRef<{ mode: typeof saleMode; who: string } | null>(null);
+  useEffect(() => {
+    const prev = saleForRef.current;
+    saleForRef.current = { mode: saleMode, who: saleFor };
+    if (
+      prev !== null &&
+      prev.mode === "pay" &&
+      saleMode === "pay" &&
+      prev.who !== saleFor &&
+      cart.length > 0
+    ) {
+      leavePay();
+    }
+  }, [saleMode, saleFor, cart.length, leavePay]);
+
   /* T53: the gate's reading of the record, and what it does about it.
    * Below enterPay and the lookup because it calls the one and reads
    * the other. */
