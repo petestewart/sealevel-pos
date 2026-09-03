@@ -4339,6 +4339,16 @@ function FrontDesk({
      header without a class (a picked day with nothing on it) can still
      carry it: the button that got a teacher onto another day must never
      vanish with that day's empty schedule. */
+  /* T60: the roster list, for the header tap that scrolls it to the top.
+     Smooth so the teacher sees the list travel rather than jump, unless
+     the device asks for reduced motion (T60 review: WebKit drops the
+     animation on its own for that setting, Chromium does not). */
+  const rosterRef = useRef<HTMLUListElement>(null);
+  const scrollRosterToTop = () => {
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    rosterRef.current?.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+  };
+
   const calendarButton = (
     <button
       className={viewDate ? "class-change cal-btn viewing" : "class-change cal-btn"}
@@ -4530,48 +4540,12 @@ function FrontDesk({
           </div>
           {calendarButton}
           </div>
-          {/* Opens the Buy overlay (T23; "Buy" since the second live
-              test -- the counter conversation is the student's, "I want
-              to buy a mat"). Quiet like "Change class": selling is
-              deliberate, not the thing hit at speed. The roster stays
-              mounted underneath; closing lands right back. */}
-          <button
-            className="class-change"
-            onClick={() => {
-              /* Anything anchored to roster rows (dropdowns, menus) would
-               * otherwise paint above the overlay at a higher z-index. */
-              setPickerFor(null);
-              setSortMenuOpen(false);
-              setSaleOpen(true);
-            }}
-          >
-            Buy
-          </button>
-          {/* T50: who Mindbody records this iPad's writes under. Pete:
-              "there should just be the current user's name displayed at
-              the top. next to that there can be a profile icon that
-              allows the user to sign out. this would also be where a
-              user signs in, no big 'sign in' button". The name is plain
-              text; the round icon (44px icon idiom) opens the account
-              modal, which is where sign-out lives. Somebody is always
-              signed in here: the gate sits in front of this screen
-              otherwise. */}
-          <div className="staff-id">
-            <span className="staff-name" title={teacher.name}>
-              {teacher.name}
-            </span>
-            <button
-              className="staff-account"
-              onClick={() => {
-                setPickerFor(null);
-                setSortMenuOpen(false);
-                setStaffOpen(true);
-              }}
-              aria-label={`Signed in as ${teacher.name}. Account`}
-            >
-              <PersonIcon />
-            </button>
-          </div>
+          {/* T60 (Pete): "the position of signed up/checked in/waitlist
+              and Buy/TeacherName/personicon should be swapped with each
+              other". The counters card sits against the class, and the
+              Buy button, the teacher and the account icon hold the far
+              right. Portrait keeps its old line split through an order
+              rule in the CSS; nothing else about either group changed. */}
           <div className="counters" aria-label="Counts for the selected class">
           {/* A plain stat, not a button: its list IS the roster below,
               and a modal copying the screen behind it earned nothing
@@ -4621,6 +4595,48 @@ function FrontDesk({
             </span>
             <span className="counter-label">waitlist</span>
           </button>
+          </div>
+          {/* Opens the Buy overlay (T23; "Buy" since the second live
+              test -- the counter conversation is the student's, "I want
+              to buy a mat"). Quiet like "Change class": selling is
+              deliberate, not the thing hit at speed. The roster stays
+              mounted underneath; closing lands right back. */}
+          <button
+            className="class-change"
+            onClick={() => {
+              /* Anything anchored to roster rows (dropdowns, menus) would
+               * otherwise paint above the overlay at a higher z-index. */
+              setPickerFor(null);
+              setSortMenuOpen(false);
+              setSaleOpen(true);
+            }}
+          >
+            Buy
+          </button>
+          {/* T50: who Mindbody records this iPad's writes under. Pete:
+              "there should just be the current user's name displayed at
+              the top. next to that there can be a profile icon that
+              allows the user to sign out. this would also be where a
+              user signs in, no big 'sign in' button". The name is plain
+              text; the round icon (44px icon idiom) opens the account
+              modal, which is where sign-out lives. Somebody is always
+              signed in here: the gate sits in front of this screen
+              otherwise. */}
+          <div className="staff-id">
+            <span className="staff-name" title={teacher.name}>
+              {teacher.name}
+            </span>
+            <button
+              className="staff-account"
+              onClick={() => {
+                setPickerFor(null);
+                setSortMenuOpen(false);
+                setStaffOpen(true);
+              }}
+              aria-label={`Signed in as ${teacher.name}. Account`}
+            >
+              <PersonIcon />
+            </button>
           </div>
           {viewingLine}
         </header>
@@ -4681,7 +4697,31 @@ function FrontDesk({
           column, opening an anchored menu -- it superseded the pill bar
           (T15), which crowded the roster it ordered. */}
       {sortedEntries.length > 0 ? (
-        <div className="roster-head">
+        <div
+          className="roster-head"
+          /* T60 (Pete): "tapping on the Name/Payment/Balance header area
+             should scroll the student list to the very top". Since T55
+             the list is the scroll container and this row stays put
+             above it, so it is the natural "back to the top" target for
+             a teacher thirty rows down. The sort control, its scrim and
+             its menu keep their own taps (T60 review: only those, not
+             the whole actions column, which is 328px of head above the
+             check-in chips and scrolls like the rest). */
+          role="button"
+          tabIndex={0}
+          aria-label="Scroll to the top of the list"
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest("button, .pass-scrim, .sort-dd")) return;
+            scrollRosterToTop();
+          }}
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              scrollRosterToTop();
+            }
+          }}
+        >
           <span aria-hidden="true">Name</span>
           {/* The icon-slot column: no label needed. */}
           <span aria-hidden="true" />
@@ -4752,6 +4792,7 @@ function FrontDesk({
 
       <ul
         className="roster"
+        ref={rosterRef}
         /* T55: the list is the scroll container. The picker is
            position: fixed, so scrolling would slide its row out from
            under it; close it instead (unless a save is in flight, when

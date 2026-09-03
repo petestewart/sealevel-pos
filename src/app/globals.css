@@ -560,6 +560,16 @@ button {
   color: var(--muted);
 }
 
+/* T60: the roster's head row is a tap target (it scrolls the list to the
+ * top), so a double tap must not select "Name" or "Payment". The cursor
+ * stays default: it is a heading that happens to respond, not a button
+ * to hunt for. The search modal's head is not a target; it has no
+ * handler and this rule is harmless there. */
+.shell > .roster-head {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .rrow {
   /* Anchors the payment-change dropdown (see .pass-dd). */
   position: relative;
@@ -4753,6 +4763,24 @@ button.sale-for:disabled {
 @media (max-width: 1100px) {
   .staff-name {
     max-width: 100px;
+  }
+}
+
+/* T60: the counters card now precedes Buy, the name and the account icon
+ * in the row (Pete: "swapped with each other"). Flex wraps in that order,
+ * so on a portrait iPad the counters would hold line one and the name
+ * and icon would dangle alone on line two. Under the width where the row
+ * stops fitting on one line -- the group's 404px floor, the 319px
+ * counters, Buy at 76, the capped name and icon at 152, four 12px gaps
+ * and 32px of page padding: 1019px on paper, and measured the row first
+ * holds one line at 1020 (subpixel widths tip the exact fit; 1019 wrapped
+ * before T60 too), so a 1024 landscape has 4px to spare -- the counters
+ * go last again and wrap alone, right-aligned by their auto margin,
+ * exactly the line split portrait had before T60. T60 review: 1018 left
+ * 1019 itself with the name and icon dangling alone on a third line. */
+@media (max-width: 1019px) {
+  .counters {
+    order: 1;
   }
 }
 
