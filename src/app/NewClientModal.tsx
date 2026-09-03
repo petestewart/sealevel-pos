@@ -222,6 +222,11 @@ export default function NewClientModal({
       </span>
       <input
         className="reason-input"
+        /* T59b review: the tap that opened the form left focus on the
+         * "New client" button underneath, so the first keystroke went
+         * nowhere. Land in the first name, filled or not, like the
+         * sign-in and search boxes do. */
+        autoFocus={key === "firstName"}
         type={extra.type ?? "text"}
         autoComplete={extra.autoComplete ?? "off"}
         autoCapitalize={extra.type ? "off" : "words"}
