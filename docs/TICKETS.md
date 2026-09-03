@@ -6376,3 +6376,112 @@ wide: full names on two lines beside the chevron, no client name
 truncated, rows 20px taller only where a name wrapped. The made-up
 41-character name still clamps at 1024; the studio's real longest
 ("New Student 2 Week Unlimited") fits there.
+
+## T53. Email receipts, and the opt-in asked at the counter (Pete, 2026-09-03)
+
+Pete, after the second live pass: "we should also use the opportunity to
+get clients to opt-in to emails. a teacher can ask them if they want to
+opt in to emails and receive an email receipt." And on where it sits:
+"popup should gate the sale so the teacher sees it and adds their opt in
+or moves on. if the client is already opted in this whole popup should
+skip".
+
+Two things, then: a receipt on the sale, and the opt-in that a receipt
+needs, asked once, at the moment the client is standing there.
+
+### What the spec says (docs/mindbody-openapi)
+
+- `/sale/checkoutshoppingcart` takes `SendEmail` (sale.yml:5688, "sends
+  a purchase receipt email to the client. Note that all appropriate
+  permissions and settings must be enabled for the client to receive an
+  email", default false). `src/lib/sale.ts` sent `false` on every sale
+  until now. The checkout RESPONSE has no field saying whether a receipt
+  went.
+- `/sale/purchaseaccountcredit`, the under-$10 card path's first call,
+  takes `SendEmailReceipt` (4791) and answers `EmailReceipt` (5918,
+  "whether or not an email receipt was sent"). The only confirmation
+  Mindbody gives anywhere on this app's sale paths.
+- `/sale/purchasecontract` takes NEITHER: `PurchaseContractRequest`
+  (6210) has `SendNotifications`, which T30 already sends as true, and
+  `PurchaseContractResponse` (3164) has no `EmailReceipt`. The
+  `SendEmailReceipt`/`EmailReceipt` pair the brief attributed to it
+  belongs to purchaseaccountcredit and purchasegiftcard. The membership
+  dialog is therefore untouched: it already asks Mindbody to notify.
+- The client record carries six consent flags (client.yml:5286-5306).
+  The three EMAIL flags, `SendAccountEmails` ("general account
+  notifications by email", the receipt's category), `SendScheduleEmails`
+  and `SendPromotionalEmails`, are marked "editable" and default false.
+  The three TEXT flags say "cannot be updated by developers. If included
+  in a request, it is ignored." Read on `/client/clients`, written with
+  `POST /client/updateclient`, whose payload overwrites whatever it is
+  given, so the write sends the id and the flags and nothing else (the
+  T18/T42 envelope from `updateClientField`).
+
+### The design (decided)
+
+1. **The gate.** Tapping Pay for a NAMED client whose record has
+   `SendAccountEmails` false opens a modal before pay mode: "Email
+   receipt?", the client's name and the email on file (or "No email on
+   file", with the receipt box disabled and a hint to add one to their
+   profile in Mindbody), two checkboxes, "Send receipts and account
+   emails" and "Send studio news and offers", and two buttons, "Save and
+   continue" and "Not now". "Not now" enters pay mode with nothing
+   written and no receipt. The gate shows at most once per sale per
+   client: answered either way it stays quiet until a different client
+   is attached or the sale ends. It is skipped entirely when the client
+   already has `SendAccountEmails` true, and for walk-in sales, so it and
+   T51's walk-in dialog can never both show.
+2. **The write.** "Save and continue" sends the two boxes as they stand
+   (an unticked box is an explicit false) to `POST /api/client-consent`,
+   one `updateclient` through `mindbody()` with the client id in the
+   options, under the teacher's own token (`requireActor` first, the
+   T50 pattern), dry run and the write guard applying, BEFORE pay mode
+   opens. A refusal shows in the modal with Retry and "Continue
+   without"; a suppressed write says so in amber and continues. A failed
+   opt-in never blocks the charge, and the charge never implies the
+   opt-in succeeded.
+3. **The receipt.** Pay mode's tender area carries an "Email receipt"
+   toggle: on by default when the client has account emails on (already,
+   or just saved for real) and an email on file; otherwise off and
+   disabled with the reason. The Charge tap reads the toggle in the same
+   render as `chargeable` and sends `sendEmail` in the checkout body.
+   The route honours it only for a named, non-comp sale: Mindbody gets
+   `SendEmail: <toggle>` on the checkout and `SendEmailReceipt: <toggle>`
+   on the credit purchase, and answers `receiptRequested` plus
+   `emailReceipt`, true only when Mindbody CONFIRMED one. The done
+   screen says "Receipt emailed to <address>" on a confirmed one and
+   "Receipt requested for <address>" otherwise, because a cart checkout
+   reports nothing and the screen must not claim what it cannot see.
+   Walk-in and comp sales never send.
+4. **The profile.** The client profile card (T41, T42, T52) shows the six
+   flags as two read-only rows under the email, "Emails" and "Texts",
+   in the gate's own words: "receipts and account, schedule, news and
+   offers", or "None".
+5. Nothing in the comp/PIN, single-flight or rehearsal path changes.
+
+Live check for Pete afterwards: a purchase for a test client with a real
+inbox, to see which of the two done-screen lines Mindbody earns and
+whether a cart checkout's `SendEmail` actually delivers.
+
+### Build notes
+
+Server side:
+
+- `src/lib/sale.ts`: `checkoutCart` takes `sendEmail` (default false),
+  `purchaseCredit` takes `sendEmailReceipt` and returns `emailReceipt`
+  (boolean when Mindbody answered one, else null). `PaymentProfile`, the
+  attach-time `/api/stored-card` read, now also carries `email` and
+  `sendAccountEmails`: it is the same `/client/clients` row, so the gate
+  learns the flag for free on attach rather than through a second read.
+- `src/lib/clients.ts`: `updateClientConsent(clientId, flags, actor)`,
+  the email flags only (`CONSENT_EMAIL_FLAGS`), refusing an empty set.
+- `src/app/api/client-consent/route.ts`: the write route in the
+  client-field shape: session, `requireActor` before the body, booleans
+  only, `runAsActor` with the ordinary fallback,
+  `staffSessionEndedResponse` in the catch.
+- `src/app/api/checkout/route.ts`: `sendEmail` parsed once, forced false
+  for the house client and for a comp, passed to all five checkout call
+  sites and the credit purchase; every `ok: true` answer carries
+  `receiptRequested` and `emailReceipt`.
+- `src/lib/clientprofile.ts` and `ClientProfileCard.tsx`: the `consent`
+  block on the profile, and the two rows.

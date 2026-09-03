@@ -54,6 +54,31 @@ export function wallDateTime(s: string | null): string | null {
   return `${date} at ${hour12}:${m[2]}${h < 12 ? "am" : "pm"}`;
 }
 
+/** T53: "receipts and account, news and offers" for the ticked flags of
+ *  one channel, "none" when nothing is ticked. The wording matches the
+ *  opt-in gate's checkboxes, so what the gate asked for is what this
+ *  line reports. */
+function consentLine(
+  c: NonNullable<ClientProfile["consent"]>,
+  channel: "email" | "text",
+): React.ReactNode {
+  const on = [
+    (channel === "email" ? c.accountEmails : c.accountTexts)
+      ? "receipts and account"
+      : null,
+    (channel === "email" ? c.scheduleEmails : c.scheduleTexts)
+      ? "schedule"
+      : null,
+    (channel === "email" ? c.promotionalEmails : c.promotionalTexts)
+      ? "news and offers"
+      : null,
+  ].filter(Boolean);
+  if (on.length === 0) {
+    return <span className="profile-missing">None</span>;
+  }
+  return on.join(", ");
+}
+
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="profile-row">
@@ -145,6 +170,26 @@ export function ClientProfileCard({
         </Row>
         <Row label="Email">
           {profile.email ?? <Missing why={errors.client} />}
+        </Row>
+        {/* T53: the consent flags as read-only text under the contact
+            line, one row for email and one for texts, so a teacher can
+            see at a glance whether the receipt gate will ask (it asks
+            when "receipts and account" is off). The texts row is shown
+            for the same reason it cannot be edited: the API refuses
+            those flags, so what Mindbody holds is all there is. */}
+        <Row label="Emails">
+          {profile.consent ? (
+            consentLine(profile.consent, "email")
+          ) : (
+            <Missing why={errors.client} />
+          )}
+        </Row>
+        <Row label="Texts">
+          {profile.consent ? (
+            consentLine(profile.consent, "text")
+          ) : (
+            <Missing why={errors.client} />
+          )}
         </Row>
         <Row label="Visits">
           {visits ? (

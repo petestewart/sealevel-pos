@@ -52,8 +52,19 @@ export const dynamic = "force-dynamic";
  * Body: { items: CartLine[], clientId?: string,
  *         method: "storedcard"|"credit"|"cash"|"comp",
  *         cashTendered?: number,
+ *         sendEmail?: boolean,
  *         teacherToken?: string,
  *         compReason?: { kind, detail, forStaffId?, forStaffName? } }
+ *         -- T53: `sendEmail` is the pay-mode "Email receipt" toggle.
+ *         It is honoured only on a NAMED client's non-comp sale: an
+ *         anonymous sale rides the house client, whose inbox is nobody's,
+ *         and a comp is nothing to receipt. Sent to Mindbody as the
+ *         checkout's `SendEmail` and the credit purchase's
+ *         `SendEmailReceipt`; the answer carries `receiptRequested` and
+ *         `emailReceipt` (true only when Mindbody CONFIRMED one went,
+ *         which only /sale/purchaseaccountcredit reports; a cart
+ *         checkout answers nothing, so it stays null and the done screen
+ *         says "requested", not "emailed").
  *         -- T48: `teacherToken` is REQUIRED with method "comp" and
  *         refused beside any other method. It is the one-shot value
  *         /api/teacher/verify signed for the teacher whose PIN matched,
@@ -301,6 +312,12 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  /* T53: the receipt decision, made once here from what the toggle said
+   * and what the sale is. Never for the house client (no clientId), never
+   * for a comp; a non-boolean is false, never an error, because a receipt
+   * must not stand between a teacher and a charge. */
+  const sendEmail =
+    payload?.sendEmail === true && clientId !== undefined && method !== "comp";
   /* Every valid split includes a client-bound leg: comp is excluded and
    * the two legs differ, so at least one is storedcard or credit. The
    * house client never rides a split. */
@@ -703,6 +720,7 @@ export async function POST(request: Request) {
           clientId,
           [toPayment(legA), toPayment(legB)],
           actor,
+          sendEmail,
         ),
       );
       const outcome = run.result;
@@ -724,6 +742,8 @@ export async function POST(request: Request) {
           { method: legA.method, amount: legA.amount },
           { method: legB.method, amount: legB.amount },
         ],
+        receiptRequested: sendEmail,
+        emailReceipt: null,
         ...actorFields(run),
       });
     } catch (err) {
@@ -898,6 +918,7 @@ export async function POST(request: Request) {
                 ? { type: "Cash", amount: total }
                 : { type: "Comp", amount: total },
               actor,
+              sendEmail,
             ),
           { fallback: m !== "comp" },
         );
@@ -947,6 +968,8 @@ export async function POST(request: Request) {
         total,
         saleId: ids.saleId,
         cartId: ids.cartId,
+        receiptRequested: sendEmail,
+        emailReceipt: null,
         ...actorFields(run),
       });
     }
@@ -991,6 +1014,7 @@ export async function POST(request: Request) {
           clientId,
           { type: "DebitAccount", amount: total },
           actor,
+          sendEmail,
         ),
       );
       const outcome = run.result;
@@ -1008,6 +1032,8 @@ export async function POST(request: Request) {
         total,
         saleId: ids.saleId,
         cartId: ids.cartId,
+        receiptRequested: sendEmail,
+        emailReceipt: null,
         ...actorFields(run),
       });
     }
@@ -1064,6 +1090,7 @@ export async function POST(request: Request) {
           clientId,
           { type: "StoredCard", amount: total, lastFour: card.lastFour },
           actor,
+          sendEmail,
         ),
       );
       const outcome = run.result;
@@ -1081,6 +1108,8 @@ export async function POST(request: Request) {
         total,
         saleId: ids.saleId,
         cartId: ids.cartId,
+        receiptRequested: sendEmail,
+        emailReceipt: null,
         ...actorFields(run),
       });
     }
@@ -1093,7 +1122,13 @@ export async function POST(request: Request) {
     let creditRun;
     try {
       creditRun = await runAsActor(session, "/api/checkout", (actor) =>
-        purchaseCredit(clientId as string, CARD_MINIMUM_USD, card.lastFour, actor),
+        purchaseCredit(
+          clientId as string,
+          CARD_MINIMUM_USD,
+          card.lastFour,
+          actor,
+          sendEmail,
+        ),
       );
       credit = creditRun.result;
     } catch (err) {
@@ -1132,6 +1167,7 @@ export async function POST(request: Request) {
           clientId,
           { type: "DebitAccount", amount: total },
           actor,
+          sendEmail,
         ),
       );
       const outcome = run.result;
@@ -1154,6 +1190,10 @@ export async function POST(request: Request) {
         saleId: ids.saleId,
         cartId: ids.cartId,
         creditPurchased: CARD_MINIMUM_USD,
+        receiptRequested: sendEmail,
+        /* T53: the one confirmation Mindbody gives: the credit sale's
+         * EmailReceipt. The cart checkout after it reports nothing. */
+        emailReceipt: sendEmail ? credit.emailReceipt : null,
         ...actorFields({
           actorFallback: fallback,
           staffSessionEnded: creditRun.staffSessionEnded || run.staffSessionEnded,

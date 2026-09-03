@@ -834,6 +834,12 @@ export async function checkoutCart(
   /** T49: the signed-in teacher the sale is made as, when there is one.
    *  Only the Authorization header changes; the payload is T24's. */
   actor?: Actor | null,
+  /** T53: `SendEmail` (sale.yml:5688, "sends a purchase receipt email
+   *  to the client ... all appropriate permissions and settings must be
+   *  enabled", default false). The route decides; this function sends
+   *  what it is told and nothing here reads back whether a receipt
+   *  went, because the checkout response has no field for it. */
+  sendEmail = false,
 ): Promise<CheckoutOutcome> {
   assertCartLines(items, "checkoutCart");
   const payments: readonly CheckoutPayment[] = Array.isArray(payment)
@@ -857,7 +863,7 @@ export async function checkoutCart(
       LocationId: STUDIO_LOCATION_ID,
       InStore: true,
       CalculateTax: true,
-      SendEmail: false,
+      SendEmail: sendEmail,
     },
     ...(clientId ? { clientId } : {}),
     ...(actor ? { actor } : {}),
@@ -904,6 +910,10 @@ export interface CreditPurchaseOutcome {
   amountPaid: number | null;
   /** PurchaseAccountCreditResponse.SaleId (sale.yml:5913). */
   saleId: number | null;
+  /** T53: PurchaseAccountCreditResponse.EmailReceipt (sale.yml:5918),
+   *  "whether or not an email receipt was sent". True only when
+   *  Mindbody said so; null on suppression or when the field is absent. */
+  emailReceipt: boolean | null;
 }
 
 /**
@@ -925,6 +935,10 @@ export async function purchaseCredit(
   lastFour: string,
   /** T49: the signed-in teacher, when there is one. */
   actor?: Actor | null,
+  /** T53: SendEmailReceipt (sale.yml:4791). The credit purchase is a
+   *  sale of its own in Mindbody's books, so it gets the same receipt
+   *  decision as the cart that follows it. */
+  sendEmailReceipt = false,
 ): Promise<CreditPurchaseOutcome> {
   if (!clientId) throw new Error("purchaseCredit needs a client id.");
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -936,22 +950,34 @@ export async function purchaseCredit(
       ClientId: clientId,
       Test: false,
       LocationId: STUDIO_LOCATION_ID,
-      SendEmailReceipt: false,
+      SendEmailReceipt: sendEmailReceipt,
       PaymentInfo: paymentPayload({ type: "StoredCard", amount, lastFour }),
     },
     clientId,
     ...(actor ? { actor } : {}),
   });
   if (res?.DryRun === true) {
-    return { suppressed: "dry-run", amountPaid: null, saleId: null };
+    return {
+      suppressed: "dry-run",
+      amountPaid: null,
+      saleId: null,
+      emailReceipt: null,
+    };
   }
   if (res?.WriteSuppressed === true) {
-    return { suppressed: "write-guard", amountPaid: null, saleId: null };
+    return {
+      suppressed: "write-guard",
+      amountPaid: null,
+      saleId: null,
+      emailReceipt: null,
+    };
   }
   return {
     suppressed: null,
     amountPaid: num(res?.AmountPaid),
     saleId: num(res?.SaleId),
+    emailReceipt:
+      typeof res?.EmailReceipt === "boolean" ? res.EmailReceipt : null,
   };
 }
 
@@ -975,6 +1001,14 @@ export interface PaymentProfile {
    *  credit the client can spend. Null when Mindbody omitted it. */
   balance: number | null;
   card: StoredCard | null;
+  /** T53: the client's email on file (client.yml `Email`), null when
+   *  blank. The receipt toggle needs an address to send to. */
+  email: string | null;
+  /** T53: `SendAccountEmails` (client.yml:5286, "general account
+   *  notifications by email", the receipt's own category). Mindbody
+   *  defaults it to false; a record that omits it reads as false, which
+   *  is the honest default for an opt-in. */
+  sendAccountEmails: boolean;
 }
 
 /** Is an ExpMonth/ExpYear pair in the past? Unparseable dates count as
@@ -1027,7 +1061,12 @@ export async function clientPaymentProfile(
         expired: cardExpired(str(cc?.ExpMonth), str(cc?.ExpYear)),
       }
     : null;
-  return { balance: num(row?.AccountBalance), card };
+  return {
+    balance: num(row?.AccountBalance),
+    card,
+    email: str(row?.Email),
+    sendAccountEmails: row?.SendAccountEmails === true,
+  };
 }
 
 /** Just the card on file (last four + expiry), for the attach-time
