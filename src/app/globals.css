@@ -165,13 +165,15 @@ button {
 
 /* --- Day control (T46) -----------------------------------------------
  * Beside the class dropdown: a 64px outlined button carrying the
- * calendar glyph, and the chosen date as text on any day but today.
- * Same shell as .class-change; the glyph is the whole label on today so
- * the header keeps its width. */
+ * calendar glyph, the same shell as .class-change. The glyph is the
+ * whole label on every day (T61; from T46 to T60 the chosen date sat
+ * beside it as text, and a "Viewing Fri Sep 4" line ran under the row).
+ * The accent outline says another day is showing; the date is in the
+ * button's label and tooltip. */
 .cal-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   min-width: 64px;
   padding: 0 18px;
 }
@@ -179,18 +181,6 @@ button {
 .cal-btn.viewing {
   border-color: var(--accent);
   color: var(--accent);
-}
-
-.cal-btn-date {
-  white-space: nowrap;
-}
-
-/* The header's quiet "Viewing Wed Aug 27" line: its own row under the
- * header (a full-width flex item), muted, 16px. */
-.class-viewing {
-  flex: 1 0 100%;
-  font-size: 16px;
-  color: var(--muted);
 }
 
 /* A picked day with nothing on it: the message takes the class's slot. */
