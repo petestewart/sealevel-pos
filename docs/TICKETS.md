@@ -8686,3 +8686,29 @@ text area longer to make up the difference."
   chosen, with Teacher (note 64px, four staff rows on screen) and with
   Trade, Damaged item and Other (note 345px), in both palettes.
   `npm run typecheck` and `npm run build` green.
+
+## T69: the guest pass leaves the picker; the person-plus is its control
+
+**DONE** (2026-09-04). Pete, after asking how the guest icon differs
+from the picker's Guest Pass line (it did not: both opened the same
+sheet): "do not show Guest Pass in the dropdown. if the only
+additional payment form someone has is Guest Pass, then do not show a
+dropdown icon at all. The guest icon is a much cleaner implementation."
+
+- The picker's `others` list drops every guest pass by name, so the
+  T59c/T63 guest line (and its disabled future-day and no-session
+  states) is gone with its CSS. The chevron's rule counts the same
+  list: a member whose only other pass is a guest pass gets no
+  chevron. The person-plus on the row (T59c, day of class, a session
+  left) is the one way into the guest sheet.
+- Unchanged: `changePass` still refuses a guest pass by name should a
+  stale picker send one; the walk-in picker never offered one (T63);
+  the T57 undo still works, since a member whose visit sits on a
+  guest pass by accident has their membership as the other line.
+- This supersedes step 1 of T63's live checks (the picker line and
+  its future-day copy no longer exist).
+- Verified with `scratchpad/t69.js` against the T63 mock, both
+  palettes: Pete (membership + Guest Pass 1 left) shows the
+  person-plus and no chevron; Whitney (membership + Guest Pass at 0,
+  gone from the active list) shows neither. `npm run typecheck` and
+  `npm run build` green.

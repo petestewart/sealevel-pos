@@ -4007,9 +4007,16 @@ function FrontDesk({
       entry.clientServiceId !== null && passes
         ? (passes.find((p) => p.id === entry.clientServiceId) ?? null)
         : null;
+    /* T69 (Pete: "do not show Guest Pass in the dropdown ... The guest
+     * icon is a much cleaner implementation"): a guest pass is never a
+     * line here. It checks a guest in, not the member, and the
+     * person-plus on the row is its one way in; `changePass` still
+     * refuses one by name should any reach it. */
     const others = (passes ?? []).filter(
       (p): p is PassInfo & { id: number } =>
-        p.id !== null && p.id !== entry.clientServiceId,
+        p.id !== null &&
+        p.id !== entry.clientServiceId &&
+        !isGuestPass(p.name),
     );
     /* The pass paying now, shown checked at the top. When the fetched
      * list does not carry it (or has not landed yet), the roster's own
@@ -4089,50 +4096,6 @@ function FrontDesk({
           {others.map((p) => {
             const saving = passSavingId === p.id;
             const short = shortPassName(p.name);
-            /* T59c: a Guest Pass never pays for the member's OWN visit
-             * from here (T57's accident: a tap on it burned the pass on
-             * the member). It opens the guest modal instead, and the
-             * line says so. T63 (Pete, live, a future day): EVERY guest
-             * pass takes this branch by name, usable or not, so none can
-             * fall through to the ordinary line; a pass with no session
-             * left, or an unknown count, is the line disabled with the
-             * reason, and on a future day the line is disabled with
-             * "used on the day of class", because the flow signs two
-             * people in and check-in is closed there (T46). Booking a
-             * guest ahead is a recorded option, not built. */
-            if (isGuestPass(p.name)) {
-              const guest = usableGuestPass([p]);
-              const blocked = futureClass
-                ? "Guest passes are used on the day of class"
-                : guest === null
-                  ? "No session left on it"
-                  : null;
-              return (
-                <button
-                  key={`opt-${p.id}`}
-                  className={
-                    blocked ? "pass-opt pass-opt-guest blocked" : "pass-opt pass-opt-guest"
-                  }
-                  disabled={passSavingId !== null || blocked !== null}
-                  aria-disabled={blocked !== null}
-                  onClick={() => {
-                    if (guest && blocked === null) openGuestFlow(entry, guest);
-                  }}
-                >
-                  <span className="pass-check">
-                    <PersonPlusIcon />
-                  </span>
-                  <span className="pass-opt-text">
-                    <span className="pass-opt-name">{short}</span>
-                    <span className="pass-opt-full">
-                      {blocked ?? `Checks in a guest, not ${entry.name.split(" ")[0]}`}
-                    </span>
-                  </span>
-                  <span className="pass-col">{passLeftCol(p)}</span>
-                  <span className="pass-col">{passExpCol(p)}</span>
-                </button>
-              );
-            }
             return (
               <button
                 key={`opt-${p.id}`}
@@ -5277,11 +5240,17 @@ function FrontDesk({
                       only say "no other passes". */}
                   {(() => {
                     const known = passLists[entry.clientId]?.data ?? null;
+                    /* T69: a guest pass is not a line in the picker, so
+                     * a member whose only other pass is one gets no
+                     * chevron; the person-plus beside it is the control. */
                     const showControl =
                       entry.visitId !== null &&
                       known !== null &&
                       known.some(
-                        (p) => p.id !== null && p.id !== entry.clientServiceId,
+                        (p) =>
+                          p.id !== null &&
+                          p.id !== entry.clientServiceId &&
+                          !isGuestPass(p.name),
                       );
                     return showControl ? (
                       <button
