@@ -447,7 +447,7 @@ export default function GuestModal({
           /* The confirm sheet: one sentence, one tap, single flight. */
           <div className="guest-confirm">
             {outcome === null ? (
-              <p className="modal-consequence guest-sentence">
+              <p className="guest-sentence">
                 Check in <strong>{selected.person.name}</strong> as{" "}
                 {member.name}&apos;s guest. {firstName(member.name)}&apos;s
                 Guest Pass will be used.

@@ -5127,12 +5127,7 @@ function FrontDesk({
                           : "No pass"}
                     </span>
                     {host ? (
-                      <span className="pass-facts">
-                        Guest of {host}
-                        {entry.passExpires
-                          ? `, exp ${slashDate(entry.passExpires)}`
-                          : ""}
-                      </span>
+                      <span className="pass-facts">Guest of {host}</span>
                     ) : entry.pricingOption ? (
                       <PassFactsLine
                         remaining={entry.passRemaining}

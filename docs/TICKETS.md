@@ -7386,3 +7386,213 @@ dry-run line as a whole rather than this ticket. The route answers a
 suppressed create with `ok: true, suppressed: "dry-run" | "write-guard"`,
 the check-in route's shape; the form reads `suppressed` before it
 reads anything else, so no suppression is ever shown as created.
+
+## T59c. The guest flow: a member's guest pass checks a guest in (Pete, 2026-09-03)
+
+Part of T59. Pete's answers (2026-09-03): mechanism A is the build, the
+GUEST's visit is booked or paid with the MEMBER's Guest Pass id; no
+rules on who may be a guest ("members get one pass a month and it
+expires at month end, and the app enforces nothing"); the first guest
+check-in under the write guard is the probe (T59a), with the member
+Pete's own client 100028410 (guest pass added 2026-09-03) and the
+guest Alison, client 100041277. B (free entry for the guest, the
+member's own visit moved onto the pass) stays the fallback if Mindbody
+refuses the member's pass id on the guest's visit.
+
+### The design
+
+- **Two entry points, both on the member's roster row.** The Guest
+  Pass line in their pass picker no longer reassigns their OWN visit to
+  it (T57's accident: a tap on it burned the pass on the member); it
+  opens the guest modal, and the line says "Checks in a guest, not
+  Pete" under a person-plus. And a Guest action (the 44px icon idiom,
+  person-plus, the accent) sits beside the pass chevron while the
+  cached pass list, the sweep's `passLists`, the chevron's own source,
+  holds a guest pass with a session left (`usableGuestPass` in
+  `src/lib/guestpass.ts`: the name says "guest pass", the id is
+  present, Remaining is known and above zero). Not on a future day: the
+  flow signs two people in, and check-in is closed there (T46).
+- **The guest modal** (`src/app/GuestModal.tsx`, the T52 idiom: X,
+  scrim, Escape, `.modal-x ~ .modal-title`). "Guest of Pete Stewart";
+  "Guest Pass, 1 left, exp 10/1/26"; the attach modal's search box and
+  magnifying glass, one metered call per submitted search. Rows: the
+  class's own unpaid bookings first under "In class", cut by the typed
+  text in memory as it is typed; then the studio search's results,
+  minus the member and anyone listed above. A guest who is a member
+  themselves, is already checked in, or is already in the class on a
+  pass gets an amber line and stays a candidate (no rules). "New
+  client" (64px) opens T59b's form one layer up, prefilled from the box
+  when it looked like a name, and the created person is the pick.
+- **The waiver first.** A pick with `waiverSigned === false` goes up to
+  the page as a fourth `WaiverSubject` ("guest") and runs the T18
+  dialog over the modal, exactly as the walk-in add does (T19): real
+  text, scroll to the end, "Record agreement and continue". Only a
+  recorded agreement selects the guest; nothing is written before it.
+- **The confirm sheet** inside the modal: "Check in Alison Reed as Pete
+  Stewart's guest. Pete's Guest Pass will be used." One 64px Confirm,
+  single flight (a ref, and the button disables), Cancel back to the
+  list. The class written is the one on screen, captured at open with
+  the member's row and the pass.
+- **`POST /api/guest`** (`src/app/api/guest/route.ts`), guard order
+  requireSession, requireActor, then the body: `{memberClientId,
+  guestClientId, classId, clientServiceId, guestVisitId?,
+  memberVisitId?, className?, classStartsAt?, memberName?, guestName?}`,
+  types checked, `memberClientId !== guestClientId` (400 "A member
+  cannot be their own guest."). Every write through `mindbody()` with
+  the RELEVANT client id in the options (the guest's writes carry the
+  guest's id, the member's the member's, so the write guard judges
+  each), as the signed-in teacher via `runAsActor`:
+  1. `fetchPasses(member)` re-read; the id must be a guest pass of
+     theirs with a session left, else 409 "No guest pass with sessions
+     left" and nothing written. The browser's cache is a hint.
+  2. The guest. Already booked (`guestVisitId`): `setVisitService`
+     then `setSignedIn`. Not: `bookClientIntoClass({clientId: guest,
+     classId, clientServiceId})`, the pass id on the ONE
+     `addclienttoclass` call (class.yml:3367), then `setSignedIn` on
+     the returned visit unless the booking already came back signed in
+     (T19; `BookingResult.signedIn` is new, additive). A refusal of the
+     step's FIRST write (any 4xx, the request refused at the gate)
+     answers 409 `{step: "guest", refused: true, error}` with
+     Mindbody's exact words and nothing else written; a failure after
+     that is a partial. A refused or failed guest step ends the flow:
+     signing the member in and noting a visit that did not happen
+     would be two writes about nothing.
+  3. The member: `setSignedIn` when the browser sent `memberVisitId`
+     (their row not checked in); skipped otherwise. A failure here is
+     reported as the partial it is.
+  4. Formula Notes on both, after a guest step that REALLY landed
+     (T45's rule): guest "Guest of Pete Stewart, guest pass, Hot 26
+     Fusion 9/3/26."; member "Guest pass used for Alison Reed, Hot 26
+     Fusion 9/3/26." Through `fileFormulaNote` in
+     `src/lib/formulanote.ts`, factored out of the checkout route
+     (the bounded 8s wait, the suppression report, never throwing);
+     checkout keeps its wording, its house-client skip and its log
+     lines byte for byte. The date is read off the site-local class
+     start, never through a timezone.
+  The answer: `{ok, suppressed, steps: {guest, member, notes}, notes:
+  {guest: id|null, member: id|null}, pass, guestVisitId,
+  ...actorFields}`, each step "done" | "suppressed" | "skipped" |
+  {error}. Suppression is never success: the sheet says which steps
+  were not written and why (dry run, or the write guard), in amber. No
+  write is retried automatically; the teacher's-token fallback is the
+  ordinary one (T49), reported on the sheet.
+- **After.** A clean answer (guest done, member done or skipped,
+  notes done, no fallback) closes the modal; anything else keeps it
+  open with the step lines and a Close. A guest visit that landed
+  drops the member's pass cache (`refreshClientState`: the pass at
+  zero leaves Mindbody's ShowActiveOnly list, T57, so the chevron and
+  the Guest action recompute) and the guest's, and refetches the
+  roster. The guest's row reads "Guest Pass (Pete)" with "Guest of
+  Pete Stewart" on the facts line: Mindbody's visit carries the pass
+  name alone, so the page remembers whose it was for the class view
+  (`guestBy`, cleared on a class switch). Cancel-visit and the guest
+  row's own picker (when they hold a pass of their own) remain the
+  reversal (T57).
+- **Portrait columns (T60 review).** At 820 and 810 wide the roster's
+  fixed columns outran the row, the payment column collapsed to 0 and
+  "Payment" drew over "Balance". Under 860px: `minmax(136px, 1fr) 88px
+  minmax(120px, 2.5fr) 4.5em 316px`, gaps 8px, row padding 12px, the
+  chip's padding 6px 8px; the roster's names wrap instead of
+  ellipsizing at that width, and the pass name gets a third line (T54's
+  ellipsis only past that).
+- **Switching to B** is `route.ts` alone: omit the ClientServiceId on
+  the guest's booking, and `setVisitService` on the member's visit
+  before their sign-in. The guards, the notes and the answer's shape
+  stay.
+
+### Build notes
+
+Built: `src/lib/formulanote.ts` (the shared note write; checkout's
+`fileCompNote` now composes and calls it), `src/lib/guestpass.ts`
+(`isGuestPass`, `usableGuestPass`, pure, both sides),
+`src/app/api/guest/route.ts`, `src/app/GuestModal.tsx`, the wiring in
+`src/app/page.tsx` (the picker's guest line, the Guest action, the
+"guest" waiver subject, the guest payment column, the New client
+handoff with `newClient.for`), and the CSS at the end of `globals.css`
+(tokens only, both palettes; no new tokens). `bookClientIntoClass`
+returns `signedIn` as well, so `/api/book`'s answer gains that one
+field.
+
+Verified: typecheck and build green; Playwright against a mocked
+Mindbody on 3061/4561 (scratchpad/t59c: the T59b mock grown a member
+with a Guest Pass, a member with a used-up one, an unpaid booking, a
+released stranger, an unsigned stranger, and a mutable visit list).
+The Guest action on Pete's row only (Whitney's pass at 0 is not in the
+active list). The picker's Guest Pass line opens the modal and posts
+nothing. Happy path: exactly one `addclienttoclass` with
+`ClientServiceId: 7001` and the guest's ClientId under the teacher's
+token (three synchronous taps on Confirm sent one request), the
+guest's sign-in, the member's sign-in, two Formula Notes with the
+wording above; the modal closed; the guest's row "Guest Pass (Pete)"
+checked in, the member checked in, the Guest action gone. Guest
+already booked: `updateclientvisit {ClientServiceId}` then `{SignedIn}`
+and no booking. Refused pass id: one call, 409, the sheet quoting
+Mindbody, no member sign-in and no notes. Member already checked in:
+no member write. Unsigned guest: the waiver dialog first ("Record
+agreement and continue"), the release and the receipt written, then
+the sheet, then the writes. New client from the modal: prefilled
+"Jane Doe", created, the waiver, the sheet, the writes. Partials: the
+notes failing leaves the modal open with two green lines and one red;
+the member's sign-in refused likewise, with the notes still filed. A
+refused teacher token fell back once to the service account with the
+amber line. Escape peels the sheet, then the modal. API validation:
+the member as their own guest, a wrong or unknown pass id, a string
+classId, a string visit id, a numeric name, an array body and a
+non-JSON body all answer 400 or 409 and reach Mindbody not at all.
+Dry run (`POS_DRY_RUN=true`): both steps amber, nothing reached the
+mock. Write guard with the member alone listed: the guest's write
+suppressed and said so, the member's sign-in written (the guard judges
+each write by its own client). With both probe ids listed (Pete's
+setup): every step done, the modal closed. Nothing in the modal under
+16px; rows, the search box, the buttons at 64px; the X at 44. Portrait
+820 and 810: the columns 136 / 88 / 120 / 72 / 316, no horizontal
+overflow, "Payment" and "Balance" apart. Light and dark screenshots in
+scratchpad/t59c.
+
+Not done, on purpose: mechanism B (designed for in `route.ts`, not
+built); a rule on who may be a guest (Pete: none); the walk-in
+search's own pass picker, which can still name a guest pass on a
+booking for the MEMBER (that picker is the booking's, T17, and it was
+not the accident); the attach modal's New client entry (T59b left it
+too); the guest's contact line and standing when they came from the
+roster rather than the search (the roster carries neither, T32's
+posture). The response's `notes` ids are logged and returned, not
+shown.
+
+### What to check live (Pete, the T59a probe, write-guarded)
+
+`POS_DRY_RUN=false`, `POS_WRITE_CLIENT_IDS=100028410,100041277`,
+`MINDBODY_TARGET=prod`, signed in as yourself.
+
+1. Open a class you (100028410) are booked into. Your row should show
+   the person-plus beside the chevron; the picker's Guest Pass line
+   should read "Checks in a guest, not Pete". The dev drawer's
+   `/client/clientservices` read for 100028410 should list the Guest
+   Pass with Remaining 1.
+2. Tap the person-plus, search "Alison", pick 100041277 (the sheet
+   names her), Confirm.
+3. In the dev drawer, in order: `POST /class/addclienttoclass` with
+   `ClientId: "100041277"` and `ClientServiceId` = the Guest Pass's
+   Id, `actor=<your staff id>`; its answer. If Mindbody REFUSED it
+   (the sheet says "Mindbody refused the guest pass on Alison Reed's
+   visit: ..."), that is the T59a answer: A is out, B is the build,
+   and nothing else was written. If it landed: `POST
+   /client/updateclientvisit {VisitId, SignedIn: true}` for her visit,
+   the same for yours (only if your row was not checked in), then two
+   `POST /client/addclientformulanote` calls, hers "Guest of Pete
+   Stewart, guest pass, <class> <date>." and yours "Guest pass used for
+   Alison Reed, <class> <date>."
+4. The roster: Alison's row "Guest Pass (Pete)", "Guest of Pete
+   Stewart", checked in; yours checked in, the person-plus gone.
+   Reload: her row should still read the Guest Pass by Mindbody's own
+   name (the "(Pete)" is the page's memory and goes with the reload).
+5. In Mindbody's web app: her visit paid by the Guest Pass, your Guest
+   Pass at 0 remaining, the Formula Notes on both profiles dated and
+   named to you.
+6. Reverse: the trash on Alison's row (cancel the visit); the Guest
+   Pass should return to 1 remaining on the next
+   `/client/clientservices` read (open your picker).
+7. Then the guest-already-booked path: book Alison into the class
+   without a pass (the walk-in search, unpaid), and run the flow
+   again: `updateclientvisit {VisitId, ClientServiceId}` then
+   `{SignedIn}`, no `addclienttoclass`.

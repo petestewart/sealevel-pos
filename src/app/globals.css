@@ -4963,11 +4963,13 @@ button.sale-for:disabled {
   color: var(--accent);
 }
 
-/* The confirm sheet's sentence and the outcome list. */
+/* The confirm sheet's sentence and the outcome list. The sentence is
+ * the ink, not the stop colour: nothing here is destructive. */
 .guest-sentence {
   margin: 0 0 16px;
   font-size: 18px;
   line-height: 1.45;
+  color: var(--ink);
 }
 
 .guest-outcome {
@@ -5031,5 +5033,19 @@ button.sale-for:disabled {
 
   .cell-actions .chip {
     padding: 6px 8px;
+  }
+
+  /* With 136px the name column would ellipsize "Whitney Campbell";
+   * a name a teacher cannot read is worse than a taller row, so the
+   * roster's names wrap here (the search rows' rule, T17). The pass
+   * name gets a third line for the same reason, T54's ellipsis only
+   * past that. */
+  .roster .name-text {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .pay-name {
+    -webkit-line-clamp: 3;
   }
 }
