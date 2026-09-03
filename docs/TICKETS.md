@@ -6807,11 +6807,12 @@ same T53 consent flags.
    "Guest Pass (Whitney Campbell)" for A or "Comp, guest of Whitney
    Campbell" for B; the member's pass list refreshes.
 
-### Questions for Pete
+### Pete's answers (2026-09-03)
 
-1. Dummy clients for T59a, or create them?
-2. Any rule on who may be a guest (members, repeat guests, a limit per
-   month)?
-3. Confirm B is acceptable if A is refused, given how the reports read.
-4. The sign-up form: are there fields the studio wants beyond what
-   Mindbody requires (birthday, how they heard of us)?
+A is the build. No rules on who may be a guest: members get one pass a
+month and it expires at month end, and the app enforces nothing. No
+sign-up fields beyond first, last, email and phone. The probe runs as
+the feature itself: Pete creates two test clients (one with an active
+auto-renew membership so a Guest Pass lands on it), and the first guest
+check-in under the write guard is T59a. B stays the fallback if
+Mindbody refuses the member's pass id on the guest's visit.
