@@ -4187,6 +4187,9 @@ button.sale-for:disabled {
 }
 
 .profile-alert {
+  /* Block, not .ctx-alert's flex: T58 puts the signature line under
+   * the text, and a flex row would sit it beside it instead. */
+  display: block;
   margin: 0 0 12px;
   white-space: pre-wrap;
 }
