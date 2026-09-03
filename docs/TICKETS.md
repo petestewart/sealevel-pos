@@ -7692,3 +7692,121 @@ Not defects, checked:
   present in both palettes; no em dashes; the guest row reads "Guest
   Pass (Pete)" with "Guest of Pete Stewart", the member's pass cache
   is dropped so the Guest action and the chevron recompute.
+
+## T61. Class header: the full class name, a bare calendar, no staff name (Pete, 2026-09-03)
+
+Pete, from a screenshot at 1180 wide with a future day picked ("Fri Sep
+4 6:00 AM / Hot 26 & 2 (90 min) - Sally Za..." with the calendar button
+reading "Fri Sep 4", a "Viewing Fri Sep 4" line under the header row,
+and "Pete Stewart" beside the account icon):
+
+1. "the selected class should not have elipsis, it needs to fully
+   display."
+2. "there is no reason for Fri Sep 4 to be shown next to the calendar
+   icon. (no need for 'Viewing Fri Sep 4' either for that matter)"
+3. "let's get rid of 'Pete Stewart' in the header. clicking on the
+   person icon is good enough."
+
+### The design (decided)
+
+1. **The title never ellipsizes.** The class name in the T34 dropdown
+   button wraps to a second line when the group is narrower than the
+   name; 20px stays 20px, the button grows past 64px to hold it, and
+   the date line stays on one line. The `nowrap` and `ellipsis` on
+   `.class-title` go. The group keeps taking the row's slack (T52), and
+   gets more of it from 2 and 3.
+2. **The calendar is the glyph alone**, on today and on any other day.
+   The accent outline (T46) is the signal that another day is showing;
+   the date lives in the button's aria-label and tooltip ("Viewing Fri
+   Sep 4. Change day"; "Change day" on today). The "Viewing Fri Sep 4"
+   line under the header row goes. The roster's amber "A future class.
+   Booking only" and "Editing a past class" banners STAY: they are
+   about what a tap can do, not the date.
+3. **Only the account icon.** The 44px `.staff-account` button (T50)
+   stands alone at the row's end; `.staff-id`, `.staff-name` and the
+   T50 review's 180px/100px name caps go. Its aria-label names the
+   person ("Signed in as Pete Stewart. Account") and the StaffModal it
+   opens still shows the name with sign-out; nothing there changes.
+
+Header after: [class group, grows] [calendar icon] [counters] [Buy]
+[account icon]. The T60 portrait wrap for the counters (the `order`
+breakpoint) is kept and re-measured for the narrower row.
+
+### Build notes
+
+- `src/app/globals.css`: `.class-title` loses `overflow: hidden`,
+  `text-overflow: ellipsis` and `white-space: nowrap`, gains
+  `overflow-wrap: anywhere` (a single word longer than the line breaks
+  rather than overflowing the button; nothing on the schedule is one).
+  `.class-when` is `white-space: nowrap`. `.cal-btn` loses its gap and
+  centres the glyph; `.cal-btn-date` and `.class-viewing` are removed.
+  `.staff-id`, `.staff-name` and the `max-width: 1100px` name cap are
+  removed; `.staff-account` gets `flex: 0 0 auto`. The `.class-group`
+  404px floor is kept, its comment rewritten: the day control is 64px
+  on every day now, so the floor leaves the title 340px, and keeping
+  the number keeps the breakpoint sum below anchored to it.
+- `src/app/page.tsx`: `calendarLabel` feeds both `aria-label` and
+  `title` on the day control; the `.cal-btn-date` span, `viewingLine`
+  and both places it rendered (the class header and the empty-day
+  header) are gone. `viewLoading` stays: the empty-day copy still
+  reads it. The `.staff-id` div and `.staff-name` span are gone, the
+  account button is a direct child of `.class-header`. Three comments
+  that described the Viewing line or the name are reworded.
+- **The order breakpoint, re-derived.** The row's fixed widths are now
+  the group's 404px floor, the 319px counters, Buy at 76, the 44px
+  icon, three 12px gaps and 32px of padding: 911px on paper (T60's
+  1019 less the name's 108px and one gap). Measured against the
+  production build one pixel at a time from 905 to 915: 911 wraps the
+  counters, 912 holds one line. `@media (max-width: 911px) { .counters
+  { order: 1 } }`. A 1024 landscape now has over 100px to spare.
+- `CLAUDE.md`'s T50 note says the header shows only the account icon.
+- Nothing under 16px in the header (measured: zero elements), 64px
+  targets (the class button 80px tall on two lines, 108px on three),
+  the 44px icon idiom for the account icon, tokens only and no new
+  ones, no em dashes.
+
+### Verified
+
+`npm run typecheck` and `npm run build` clean at every stage. Playwright
+against the worktree's production build (scratchpad `t61/`: mock on
+4562 with a 45-character class name, "Hot 26 & 2 Original Series,
+Extended (90 min)", and the teacher "Sally Zaslavsky", so the title is
+63 characters and 712px at 20px; server on 3062; `start.sh` and
+`stop.sh` by recorded pgid; `measure.js before|after`, `fine.js`).
+Signing in through the T50 gate, at 1180x820, 1024x768, 820x1180 and
+810x1080, light and dark, on today and on a future day picked through
+the calendar:
+
+- Before (HEAD, `measure-before.log`, `before-*.png`): 72 failures, all
+  of them the T61 targets: the title `nowrap` + `ellipsis` with 258 to
+  411px of its 712px showing; the calendar button reading "Fri Sep 4";
+  the Viewing line; `.staff-id` in the DOM.
+- After (`measure-after.log`, `after-*.png`): ALL PASS. The title's
+  scrollWidth equals its clientWidth at every width (two lines at 1180,
+  820 and 810: title 466, 516 and 506px wide; three at 1024: 392px,
+  the group 517), 20px, the button 80 or 108px tall; the calendar
+  button's text is empty on every day, `viewing` only on the future
+  day, label "Viewing Fri Sep 4. Change day"; zero `.class-viewing`,
+  zero `.staff-id` and `.staff-name`; the account icon 44 by 44 with
+  the label; StaffModal opens from it titled "Pete Stewart" and closes
+  on Escape; the future banner still renders; the header's scrollWidth
+  never exceeds its clientWidth and the document has no horizontal
+  overflow; landscape rows are one line, portrait rows wrap the
+  counters alone to line two, right-aligned to the row's edge (820:
+  counters at x 485, right edge 804, the icon on line one).
+- Breakpoint (`fine-after.log`): 905 to 911 wrap, 912 to 915 one line,
+  no overflow at any of them.
+
+Deliberately not done:
+
+- The `.class-group` floor is unchanged at 404px rather than lowered to
+  the title floor plus the bare control (304px); the extra width goes
+  to the title, and a lower floor would only trade lines of title for
+  a later wrap of the counters.
+- The "Loading Fri Sep 4..." wording lived only in the removed line; a
+  day still loading shows the previous class until the day lands or
+  the empty-day message takes the slot, as T46 review R6 already had
+  the banner behave. No spinner was added.
+- SaleScreen, the roster rows, the search and every modal but the
+  StaffModal's aria wiring are untouched (the StaffModal itself needed
+  no change: the icon's label was already its wiring).
