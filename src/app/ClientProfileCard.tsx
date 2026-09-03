@@ -117,11 +117,26 @@ export function ClientProfileCard({
         ) : null}
       </div>
 
-      {profile.redAlert ? (
-        <p className="ctx-alert profile-alert">{profile.redAlert}</p>
-      ) : null}
-      {profile.yellowAlert ? (
-        <p className="modal-warn">{profile.yellowAlert}</p>
+      {/* T52 (Pete: "the profile view should also have any notes/alerts
+          in its display if there are any"): one block under the name,
+          the red alert in the stop pair, the yellow in the warn pair,
+          the notes plain, each only when Mindbody has text for it and
+          the block itself only when any does. The fields ride the same
+          /client/clients read the roster uses (RedAlert, YellowAlert,
+          Notes); nothing extra is fetched. */}
+      {profile.redAlert || profile.yellowAlert || profile.notes ? (
+        <div className="profile-notes">
+          <p className="profile-label">Alerts and notes</p>
+          {profile.redAlert ? (
+            <p className="ctx-alert profile-alert">{profile.redAlert}</p>
+          ) : null}
+          {profile.yellowAlert ? (
+            <p className="modal-warn">{profile.yellowAlert}</p>
+          ) : null}
+          {profile.notes ? (
+            <p className="modal-note">{profile.notes}</p>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="profile-grid">
@@ -200,7 +215,15 @@ export function ClientProfileCard({
             <li key={p.id ?? `${p.name}-${i}`} className="profile-pass">
               <span className="profile-pass-name">{p.name}</span>
               <span className="profile-pass-meta">
-                {p.remaining === null
+                {/* The fake-unlimited rule, as page.tsx applies it
+                    everywhere else a pass renders: Mindbody hands a
+                    membership over as 99999 sessions, and this card
+                    printed "99993 of 99999 left" (T52 review). Repeated
+                    rather than imported, since a page file exports only
+                    its page. */}
+                {p.remaining === null ||
+                (p.count !== null && p.count >= 100) ||
+                p.remaining >= 100
                   ? "Unlimited"
                   : p.count !== null
                     ? `${p.remaining} of ${p.count} left`
@@ -211,13 +234,6 @@ export function ClientProfileCard({
           ))}
         </ul>
       )}
-
-      {profile.notes ? (
-        <>
-          <p className="profile-label profile-section">Notes</p>
-          <p className="modal-note">{profile.notes}</p>
-        </>
-      ) : null}
     </div>
   );
 }

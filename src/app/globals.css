@@ -1741,8 +1741,10 @@ body.sale-open .dev-handle {
   overflow-wrap: anywhere;
 }
 
-/* Room for the X so a long query's title never runs under it. */
-.modal-search .modal-title {
+/* Room for the X so a long title never runs under it: every modal
+ * carries the X now (T52), always rendered before its title, so the
+ * sibling rule covers them all and lapses with the pay dialog's X. */
+.modal-x ~ .modal-title {
   padding-right: 48px;
 }
 
@@ -4365,4 +4367,160 @@ button.sale-for:disabled {
 
 .sale-bar-clear ~ .sale-bar-pay {
   margin-left: 0;
+}
+
+/* T52 -------------------------------------------------------------------
+ * The second live pass's check-in screen tweaks (Pete, 2026-09-03).
+ * Tokens only, both palettes; no new tokens were needed. */
+
+/* Every modal positions its own X now (.modal-x is absolute), so the
+ * modal, not the scrim, is the containing block. */
+.modal {
+  position: relative;
+}
+
+/* The class dropdown and the day control as ONE control (Pete: "the
+ * calendar icon should be butted up against the class selector"): no gap,
+ * the inner corners squared, the shared border drawn once. The group
+ * takes the row's slack the way .class-pick did on its own (T46 review),
+ * and the dropdown wrapper takes the group's. */
+.class-group {
+  flex: 1 1 0;
+  /* The T46 review's 240px title floor PLUS the day control at its dated
+   * width (T52 review): the floor on the group alone let the day control
+   * take it, and at 820 wide on a viewed day the title had 91px and
+   * wrapped to four lines. */
+  min-width: min(404px, 100%);
+  max-width: 100%;
+  display: flex;
+  align-items: stretch;
+}
+
+/* Content-sized inside the group, so the day control sits against the
+ * dropdown's edge rather than at the far end of the slack. */
+.class-group .class-pick {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.class-group .class-pick-btn {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.class-group .cal-btn {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: -1px;
+}
+
+/* The viewing outline sits over the dropdown's edge, not under it. */
+.class-group .cal-btn.viewing {
+  position: relative;
+  z-index: 1;
+}
+
+/* The calendar's month row steps in from both edges (T52 review): the X
+ * sits in the modal's corner like everywhere else, and at 24px from the
+ * edge the next-month button was under it. Symmetric, so the month name
+ * stays centred over the grid. */
+.modal-cal .cal-head {
+  padding: 0 52px;
+}
+
+/* The three counters as one card (Pete: "'signed up / checked in /
+ * waitlist' should all be one card rather than 3"): the card carries
+ * the border and radius, the segments share it, split by thin
+ * --line-soft rules. Same numbers, same labels, 64px. */
+.counters {
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.counter {
+  border: 0;
+  border-radius: 0;
+  border-left: 1px solid var(--line-soft);
+}
+
+.counter:first-child {
+  border-left: 0;
+}
+
+/* The Search button is the glass alone (Pete: "the 'search' button can
+ * be replaced with a magnifying glass icon"): square, 64 by 64 to match
+ * the input, on both bars. */
+.search-go {
+  width: 64px;
+  min-width: 64px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The M chip as a button (Pete: "clicking on an 'M' icon should show
+ * more info about their membership"): the 44px icon idiom around the
+ * 26px chip, so the tap target is the same as the info icon's beside
+ * it. The icon column widens to two 44px slots (was 30 + 44); the
+ * roster's column template follows. */
+.cell-icons {
+  grid-template-columns: 44px 44px;
+}
+
+:root {
+  --roster-cols: minmax(0, 2fr) 88px minmax(0, 1.8fr) 7em 328px;
+}
+
+.m-chip-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.m-chip-btn:active {
+  background: var(--line);
+}
+
+/* The Membership modal: the profile card's pass list, standing alone. */
+.modal-member .member-passes {
+  margin-top: 4px;
+}
+
+/* Attach rows carry the profile icon now (Pete: "the search results
+ * should have the profile icon/button"): name | chip | 44px icon. */
+.modal-search.attach-mode {
+  --roster-cols: minmax(0, 1fr) 118px 44px;
+}
+
+/* The line over the attach rows when the modal widened the search by
+ * itself: the accent, since it explains a toggle that flipped without a
+ * tap. */
+.attach-widened {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* The profile card's alerts-and-notes block: under the name, over the
+ * facts grid. */
+.profile-notes {
+  margin: 0 0 12px;
+}
+
+.profile-notes .profile-label {
+  margin-bottom: 6px;
+}
+
+.profile-notes .modal-note {
+  margin-bottom: 4px;
 }

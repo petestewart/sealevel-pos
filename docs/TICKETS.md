@@ -5961,3 +5961,225 @@ of the scroll, the fold's own compromise (T39.8).
 - `.comp-hold:disabled` (mid-charge) has no rule of its own and now
   looks like the resting state; before T51 it looked like the ink one.
   Pre-existing, and Charge's own "Charging..." carries the state.
+
+## T52. Check-in screen, search and modal tweaks from the second live pass (Pete, 2026-09-03)
+
+Pete's words, from the second live pass:
+
+- "when I search for a client name, if there are none in that class,
+  and the 'in class' filter is on, the 'in class' filter should turn
+  off and the non-filtered results should display. this can be a
+  setting that could be toggled on and off (automatically show
+  unfiltered search results)"
+- "the search results should have the profile icon/button so a user can
+  verify more info if needed"
+- "the profile view should also have any notes/alerts in its display if
+  there are any"
+- "the info view should not have a big Close button, just an X like
+  other modals"
+- "clicking on an 'M' icon should show more info about their membership"
+- "all these modals should have X's to close them, in addition to
+  closing when i click outside of them. no big 'Close' buttons"
+- "the sort options should be in order: sign-in order, first name, last
+  name"
+- "'signed up / checked in / waitlist' should all be one card rather
+  than 3."
+- "the calendar icon should be butted up against the class selector"
+- "the 'search' button can be replaced with a magnifying glass icon,
+  both on the sign in page and the Attach a client to the sale search
+  modal"
+
+### The design (decided)
+
+1. **Auto-widen, as a setting.** `autoWidenSearch` (default on) in
+   `Settings`, a toggle in the dev drawer's Settings tab ("Widen a
+   search that finds nobody in class"). In the attach modal, with
+   `In class` on, a submitted query that matches nobody on the picked
+   roster turns the toggle off, searches everyone for the same query
+   (one call) and says so in a line over the rows: "Nobody in class
+   matched. Showing everyone." The toggle visibly flips; tapping it
+   back on works as before (T42).
+2. **Profile icon on search rows**, attach modal included: the roster's
+   `PersonIcon` at the right edge of every result row, opening the
+   T42 profile modal without selecting or booking the row.
+3. **Profile view: alerts and notes** as one block under the name: the
+   red alert in the stop pair, the yellow in the warn pair, notes
+   plain; nothing when empty.
+4. **Membership from the M chip**: the chip becomes a 44px icon-idiom
+   button opening a "Membership" modal listing what the app already
+   knows (the pass sweep's list: name, remaining or Unlimited, expiry).
+   No new endpoint.
+5. **Modal close discipline**: every modal in page.tsx gets the X
+   (`CloseIcon`, 44px, top-right, aria-label "Close") plus scrim tap;
+   the big Close buttons go (counter modal, info view, the waiver
+   dialog's close-only shape). Cancel next to a confirm is a decision
+   pair and stays. The pay dialog's Close / Not now / Cancel keeps its
+   wording and gets the X only while no stage is on the wire.
+6. **Sort order**: Sign-in order, First name, Last name.
+7. **One counters card**: three segments split by `--line-soft` rules;
+   signed up a stat, checked in and waitlist still buttons; 64px.
+8. **Calendar butted up** against the class selector: no gap, the inner
+   corners squared, one shared border.
+9. **Magnifying glass** for both Search buttons: icon-only, 64 by 64,
+   aria-label "Search", `submitSearch` unchanged.
+
+### Build notes
+
+- [x] **Auto-widen** (`page.tsx` `submitSearch`, `autoWidened`;
+      `settings.ts`; `DevDrawer.tsx` FLAGS). The zero-match test runs
+      against the WHOLE picked roster, not the segment: someone hidden
+      by "Signed in" is still in class, and widening to everyone would
+      answer the wrong question. A roster still loading is left alone.
+      A query under the minimum cannot search everyone, so the bar's
+      quiet line says "Nobody in class matched. Type at least 3 letters
+      to search everyone." instead. `startSearch` resets the flag, the
+      auto path sets it after (same batch, lands true); the toggle
+      either way, the X, the close and reopening all clear it. Setting
+      off: the T42 behaviour exactly ("Nobody in this class matches.",
+      toggle stays on).
+- [x] **Profile icon on attach rows** (`attachRowItem`, `.cell-actions`
+      with the roster's `row-icon`; `.modal-search.attach-mode
+      --roster-cols` gains a 44px column). `stopPropagation` keeps it
+      off the row's attach tap; the T42 review's `e.target !==
+      e.currentTarget` guard already keeps Enter on it off the row.
+      Walk-in rows had the icon since T42.
+- [x] **Alerts and notes block** (`ClientProfileCard.tsx`
+      `.profile-notes`): the fields were already on `ClientProfile`
+      (`clientprofile.ts` reads RedAlert, YellowAlert and Notes off the
+      same `/client/clients` record the roster uses), so no lib or
+      route change; the card rendered them apart (alerts at the top,
+      notes at the foot) and now renders them together under one label.
+- [x] **Membership modal** (`memberView`, `openMember`, `ensurePassList`):
+      the pass fetch split out of `openPicker` so the chip and the
+      chevron share one path and one cache (`passLists`, claimed into
+      the sweep's ledger too). Loading, failed and empty states; the
+      `fakeUnlimited` rule applied, since it applies everywhere a pass
+      renders. `.cell-icons` is two 44px slots now (was 30 + 44) and
+      `--roster-cols`' icon column is 88px to match; the roster row
+      measured `241 88 217 112 328` at 1180 with no overflow.
+- [x] **X on every modal**: counter, info view (rests while a save is on
+      the wire), waiver (both shapes; rests while recording), calendar,
+      check-out confirm, cancel-booking confirm (rests while busy), pay
+      dialog (`payStage === null` only), waitlist confirm, Membership.
+      Search and profile already had theirs. `.modal` is `position:
+      relative` now, so the absolute X belongs to the modal, not the
+      scrim. Removed: the counter modal's Close, the info view's Close
+      (Cancel / Save stay while editing), the waiver dialog's Close in
+      the no-text shape ("Read the waiver" stands alone there; a failed
+      fetch leaves the X as the way out).
+- [x] **Sort order**, **counters card** (`.counters` carries the border
+      and radius, `.counter` the left rule), **class group**
+      (`.class-group` takes the row's slack the way `.class-pick` did in
+      the T46 review, with the dropdown content-sized inside it so the
+      day control sits on its edge: measured gap -1px, the shared
+      border), **glass** (`SearchIcon`, `.search-go` 64 by 64).
+- CSS in one `/* T52 */` block at the end of `globals.css`; no new
+  tokens, no hex, nothing under 16px, no em dashes.
+
+Verified: `npm run typecheck`, `npm run build`, and a Playwright pass
+against the worktree's build with a mocked Mindbody
+(`scratchpad/t52-mock.js`, `t52.js`, `t52-start.sh`; both palettes at
+1180x820, screenshots under `scratchpad/t52/`): the header with the
+one card and the butted calendar (`header-*`), the search row
+(`search-row-*`), the sort menu order, the Membership modal with an
+unlimited membership and a pack (`membership-*`), the counter modal,
+the info view and the calendar each with one X and no Close, the
+walk-in results with eight profile icons on eight rows and the profile
+opened from one with its red alert (`profile-alert-*`), the attach
+modal landing on the class, a two-letter miss saying so without
+flipping, "wang" flipping the toggle off with the line and eight
+search rows each with a profile icon (`attach-widened-*`), a profile
+opened from one of them with the sale still unattached, the toggle
+back on restoring the roster with the line gone, "carla" matching in
+class and not widening, and with the setting off the same "wang"
+leaving the toggle on (`attach-setting-off`).
+
+Deliberately not done:
+
+- The staff sign-in control, the phase/gate switch and the fetch
+  wrapper's 401 handling in `page.tsx` are T50's and untouched;
+  SaleScreen's own modals are outside this ticket.
+- `clientprofile.ts` and its route are unchanged: they already carried
+  the alerts and notes.
+- The waiver dialog's reading shape keeps Cancel beside "Record
+  agreement and ...": a decision pair, not a Close.
+
+### Review
+
+Adversarial pass against the worktree build with the mocked Mindbody
+(`scratchpad/t52-review.js`, screenshots under `scratchpad/t52/review/`),
+plus typecheck, build and the implementer's own `t52.js` rerun on the
+fixed build. Findings, in order of weight:
+
+1. **The class title collapsed at iPad-portrait width. Fixed.** The
+   240px floor the T46 review put on `.class-pick` moved to the new
+   `.class-group`, and inside the group the dropdown was `min-width: 0`
+   so the day control could sit on its edge. At 820 wide on a viewed
+   day the group took its 240px, the dated day control took 163 of it,
+   and the title had 91px: "Fri Sep 11 · 5:00 PM Y..." over four lines,
+   the row 142px tall. `.class-group` is now `min-width: min(404px,
+   100%)`, the title floor plus the dated control, so the title keeps
+   275px at 820 and the counters wrap under it, which is what the
+   header did before T52 at that width. Measured unchanged at 1000 and
+   1180, today and viewing.
+2. **The calendar's X sat on the next-month button. Fixed.** With
+   `.modal-x` 14px from the corner and `.cal-head` at the modal's 24px
+   padding, the 44px X overlapped the 64px ">" by 30px; a tap on the
+   corner of the nav closed the calendar. `.modal-cal .cal-head` now
+   pads 52px both sides, so the X clears the nav and the month name
+   stays centred over the grid.
+3. **Only the search modal's title had room for the X. Fixed.** The
+   `padding-right: 48px` rule was scoped to `.modal-search .modal-title`,
+   so "Check out Alexandra Richardson?" or "Remove Christopher
+   Vanderbilt from this class?" at 22px would run under the new X in a
+   460px modal (the mock's "Check out Alida Abbott?" had 77px to spare).
+   The rule is `.modal-x ~ .modal-title` now: every modal renders the X
+   before its title, and the pay dialog's padding lapses with its X.
+4. **The profile card printed "99993 of 99999 left". Fixed.** The
+   fake-unlimited rule page.tsx applies everywhere a pass renders (and
+   the Membership modal applies correctly) was missing from
+   `ClientProfileCard`, which the ticket touched for the alerts block:
+   a member's profile showed the 99999 counter under Passes. The rule
+   is repeated inline there (a page file exports only its page), and
+   the card now says "Unlimited · expires Oct 1, 2026".
+
+Verified and left as built:
+
+- Auto-widen: one everyone-search per widen (mock counted 1); Enter
+  again with the toggle now off runs a plain second search and clears
+  the line, which is the teacher's own submit; the "Signed in" segment
+  with a query matching someone NOT signed in says "Nobody in this
+  class matches." and does not widen (the whole roster counts, as the
+  build notes say; a teacher who meant everyone taps the toggle); the
+  bar's Clear leaves the toggle off with the T42 idle line; Escape then
+  reopening lands on the class with no line; setting off leaves the
+  toggle on. A roster still loading is left alone. No paging loop:
+  `loadMore` never touches the flag.
+- Attach rows: Tab from the row lands on "Profile for ...", Enter
+  there opens the profile with the sale still unattached and the modal
+  still open; Enter on the row itself attaches. Rows stay 72px in the
+  fixed 377px region, the chip column and the icon align down the list
+  (icon 17px from the row's edge on every row).
+- Membership modal: a failed `/api/passes` reads "Could not read the
+  passes: ..."; reopening refetches (the error state is not cached);
+  the unlimited membership and the pack render as in the profile card;
+  Escape and the scrim close it; only members carry the chip, so the
+  empty state is reachable only when a member's list comes back empty.
+- Modal discipline: no X closes a modal mid-write. Check-out and the
+  waitlist confirm hand off to the write and close before it starts;
+  cancel-booking, the info view and the waiver dialog rest their X
+  with the scrim while busy; the pay dialog's X exists only at
+  `payStage === null`. `.modal { position: relative }` shifted nothing:
+  no modal positioned against the scrim.
+- Counters card and class group in both palettes; every colour in the
+  diff a token defined in both blocks; no hex, no em dash, no new
+  font-size under 16px; the M chip, the profile icon and the X at the
+  44px icon idiom; the glass 64 by 64 on both bars.
+
+Judged not worth fixing here:
+
+- `StaffModal` still ends in a big Close button. It is T49/T50's
+  surface and T50 is in flight on its own branch; Pete's "all these
+  modals" was about the check-in screen's. Flag for T50 or a follow-up.
+- The segment case above (hidden by "Signed in", present in class) is
+  a design choice the build notes record, not a defect.
