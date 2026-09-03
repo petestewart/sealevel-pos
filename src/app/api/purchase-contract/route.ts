@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { actorFields, actorFor, runAsActor } from "@/lib/actor";
+import { actorFields, requireActor, runAsActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 import { isDryRun, mindbodyHttpStatus } from "@/lib/mindbody";
 
@@ -237,7 +237,10 @@ export async function POST(request: Request) {
    * refusal renders Mindbody's reason, a 5xx or dead transport is
    * honest ambiguity. */
   try {
-    const { session } = actorFor(request);
+    /* T50: no staff session, no write. */
+    const staff = requireActor(request);
+    if (staff.denied) return staff.denied;
+    const { session } = staff;
     const run = await runAsActor(session, "/api/purchase-contract", (actor) =>
       purchaseContract({
         contractId: contractId as number,

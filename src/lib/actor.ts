@@ -1,3 +1,5 @@
+import { NextResponse } from "next/server";
+
 import { isActorRefusal, isActorTokenDead, type Actor } from "./mindbody";
 import {
   actorOf,
@@ -9,8 +11,9 @@ import {
 /**
  * Running a write as the signed-in teacher, with the one fallback (T49).
  *
- * The rule: a write runs under the teacher's token when someone is
- * signed in, and if Mindbody refuses THE TEACHER (401/403, or its "You
+ * The rule: a write runs under the signed-in teacher's token (T50: a
+ * sign-in is required, see requireActor; there is no signed-out write
+ * any more), and if Mindbody refuses THE TEACHER (401/403, or its "You
  * do not have permission" wording, see isActorRefusal) it is retried
  * ONCE as the service account, which then succeeds or fails on its own
  * merits. The answer carries `actorFallback: {name, reason}` so the UI
@@ -27,8 +30,8 @@ import {
  *
  * A 401 under the teacher's token reads as the token itself being dead
  * (isActorTokenDead): the staff session ends, the fallback still runs,
- * and the answer adds `staffSessionEnded: true` so the header control
- * goes back to "Sign in".
+ * and the answer adds `staffSessionEnded: true` so the browser drops the
+ * teacher and shows the sign-in gate again (T50).
  *
  * `fallback: false` is the comp's posture: a comp under a teacher's
  * token that Mindbody refuses is REFUSED, with the message, never
@@ -51,13 +54,38 @@ export interface ActorOutcome<T> {
   staffSessionEnded: boolean;
 }
 
-/** The session and actor a request carries, resolved once per route. */
-export function actorFor(request: Request): {
-  session: StaffSession | null;
-  actor: Actor | null;
-} {
+/**
+ * T50: the sign-in is required. Pete, after the T49 live test: "seems
+ * like it's optional to login. that shouldn't be the case." Every write
+ * route calls this first (after the device session) and answers the 401
+ * as-is when nobody is signed in, so no write ever runs as the service
+ * account for want of a teacher. The wording is the browser's cue: the
+ * fetch wrapper reads `reason: "staff"` as "show the sign-in gate", not
+ * as the device lock (a bare 401) or the comp PIN (`reason: "teacher"`).
+ *
+ * Reads stay open and stay on the service account: the roster, search,
+ * the catalog and a profile carry nobody's name in Mindbody.
+ *
+ * The fallback in runAsActor is untouched by this: it is what happens
+ * when a SIGNED-IN teacher's token is refused, and that can only start
+ * from a session this helper found.
+ */
+export function requireActor(
+  request: Request,
+):
+  | { denied: NextResponse; session: null }
+  | { denied: null; session: StaffSession; actor: Actor } {
   const session = staffSessionFrom(request);
-  return { session, actor: session ? actorOf(session) : null };
+  if (session === null) {
+    return {
+      denied: NextResponse.json(
+        { error: "Sign in to Mindbody first.", reason: "staff" },
+        { status: 401 },
+      ),
+      session: null,
+    };
+  }
+  return { denied: null, session, actor: actorOf(session) };
 }
 
 export async function runAsActor<T>(

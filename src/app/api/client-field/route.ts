@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { actorFields, actorFor, runAsActor } from "@/lib/actor";
+import { actorFields, requireActor, runAsActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 
 import {
@@ -58,7 +58,10 @@ export async function POST(request: Request) {
     }
     /* T49: as the signed-in teacher when there is one, with the one
      * loud fallback. */
-    const { session } = actorFor(request);
+    /* T50: no staff session, no write. */
+    const staff = requireActor(request);
+    if (staff.denied) return staff.denied;
+    const { session } = staff;
     const run = await runAsActor(session, "/api/client-field", (actor) =>
       updateClientField(clientId, field as EditableClientField, value, actor),
     );

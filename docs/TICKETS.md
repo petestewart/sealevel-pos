@@ -5252,6 +5252,8 @@ tokens on restart, which the `.env.example` note and the dialog cover.
 
 ## T49. Mindbody sign-in: writes run as the teacher (Pete, 2026-09-02)
 
+Superseded in part by T50: sign-in is now required.
+
 Pete, on T48: "Mindbody sign-in might be the right move then. today
 that's what they already do, and this probably makes observability
 better, assuming MB tracks who made sales, etc." Decided: the app acts AS
@@ -5777,3 +5779,83 @@ deferred on B1 and P3.
 
 - [ ] Shared PIN (stubbed in `.env.example`) or per-teacher identity per the
       P1 answer, whichever exists first. Nothing above waits on this.
+
+## T50. Signing in to Mindbody is required, and the header shows who (Pete, 2026-09-03)
+
+Pete, after the T49 live test worked: "seems like it's optional to
+login. that shouldn't be the case" and "instead of a First Name
+displaying in a button where the sign in button was, there should just
+be the current user's name displayed at the top. next to that there can
+be a profile icon that allows the user to sign out. this would also be
+where a user signs in, no big 'sign in' button like there is now."
+
+### The design (decided)
+
+1. **The client gate.** After the device lock opens, the app requires a
+   staff session. `GET /api/teacher` answering `teacher: null` renders
+   the sign-in full-screen instead of the roster: StaffModal's own
+   sign-in form under `required`, with no scrim close, no Cancel, no
+   Escape, and an opaque scrim. The roster, search and Buy are not
+   rendered until someone is signed in. A 401 from any `/api` fetch
+   carrying `reason: "staff"` drops the teacher and shows the gate
+   again (the server restarted, or the twelve hours ran out); the comp
+   PIN's `reason: "teacher"` is handled as before, and a bare 401 is
+   still the device lock.
+2. **Header identity.** Where the T49 "Sign in" / first-name button was:
+   the signed-in teacher's full name as plain text (16px, ellipsis past
+   180px) and a round 44px icon button (the roster's `PersonIcon`
+   glyph, `aria-label="Signed in as <name>. Account"`) opening
+   StaffModal in its signed-in state: name, permission probe, Sign out.
+   Signing out drops the session and the gate reappears. No "Sign in"
+   text button anywhere.
+3. **Server side.** Every write route that threads an actor (book,
+   cancel-visit, checkin, checkout, client-field, purchase-contract,
+   visit-payment, waiver-agree) refuses with 401 `{ error: "Sign in to
+   Mindbody first.", reason: "staff" }` when there is no staff session,
+   through one helper, `requireActor(request)` in `src/lib/actor.ts`,
+   which answers either the ready 401 or the session and actor.
+   `actorFor` is gone, so a future write cannot reach for the
+   signed-out path by name. Reads (roster, search, catalog, profile,
+   config) stay on the service account and stay open. The T49
+   fallback (a permission refusal under the teacher's token retried
+   once as the service account, with the amber note) is unchanged and
+   cannot start without a session. Comps keep requiring the PIN on
+   top. `/api/auth`, `/api/teacher/*` and the dev drawer routes are
+   untouched.
+4. The dev drawer's Settings tab still names the signed-in teacher.
+5. CLAUDE.md's T49 paragraphs no longer say writes run as the service
+   account with nobody signed in.
+
+### Build notes
+
+- `AuthGate` (page.tsx) now owns the teacher: `undefined` until
+  `/api/teacher` answers (nothing renders, as with the device check, so
+  a signed-in counter does not flash the gate), `null` renders
+  `<StaffModal required>`, a teacher renders `<FrontDesk teacher
+  onTeacherChange>`. FrontDesk's own teacher state and its start-up
+  read are gone; `setTeacher` inside it is the prop, so every T49 call
+  site (`noteActor`, SaleScreen's `onStaffSessionEnded`, the account
+  modal) is unchanged. Signing out unmounts FrontDesk; an unsent cart
+  does not survive it, which is right for a deliberate sign-out and
+  unavoidable for an ended session.
+- The fetch wrapper's 401 branch gained one case: `reason: "staff"`
+  drops the teacher; everything else is as it was.
+- StaffModal: the `required` prop; the signed-out copy no longer says
+  "Optional"; the signed-in face is unchanged.
+- CSS is one appended block (`.staff-id`, `.staff-name`,
+  `.staff-account`, `.modal-scrim.staff-gate`), tokens only, nothing
+  new defined. `.staff-btn` is left in place, unused, rather than edit
+  near the header rules T52 is changing in parallel.
+- Verified: `npm run typecheck`, `npm run build`, and a Playwright run
+  against `next start` with `/api` mocked in the page
+  (`scratchpad/t50.js`, shots in `scratchpad/t50/`): load shows the
+  gate and no roster, header or Buy; a wrong password stays at the gate
+  with the message; a right one shows the roster with the name and the
+  icon and no "Sign in" text; the icon opens the signed-in modal with
+  the probe summary; Sign out returns the gate; a check-in answering
+  401 `reason: "staff"` returns the gate without locking the device;
+  a comp-style 401 `reason: "teacher"` does not. Both palettes.
+- Not done: the routes are exercised with the mocked `/api` only, not
+  against the real Next routes with a mocked Mindbody (the T49 mock
+  server pattern). `requireActor` is nine lines and the same in every
+  route; the typecheck is the check that each route threads it.

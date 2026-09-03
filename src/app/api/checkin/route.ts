@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { actorFields, actorFor, runAsActor } from "@/lib/actor";
+import { actorFields, requireActor, runAsActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 
 import { setSignedIn } from "@/lib/roster";
@@ -28,7 +28,10 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    const { session } = actorFor(request);
+    /* T50: no staff session, no write. */
+    const staff = requireActor(request);
+    if (staff.denied) return staff.denied;
+    const { session } = staff;
     const run = await runAsActor(session, "/api/checkin", (actor) =>
       setSignedIn(
         visitId,

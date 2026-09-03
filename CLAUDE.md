@@ -242,10 +242,14 @@ while `git clone` works, so clone the repo rather than fetching files.
   `AddProductsOnRetailScreen`. Plus `Desk staff` ticked on the staff profile.
   Since T49 this applies to EACH TEACHER'S permission group too, not just
   the service account's: a signed-in teacher's writes run under their own
-  token. A write their group refuses is retried once as the service
-  account and says so in amber ("Done as the studio account: ..."), except
-  a comp, which is refused outright. `GET /api/teacher/probe` reads a
-  signed-in teacher's group and Test-prices a cart under their token.
+  token, and since T50 a sign-in is required, so every write route
+  refuses with 401 `reason: "staff"` when nobody is signed in rather
+  than running as the service account (`requireActor` in
+  `src/lib/actor.ts`; reads stay on the service account). A write their
+  group refuses is retried once as the service account and says so in
+  amber ("Done as the studio account: ..."), except a comp, which is
+  refused outright. `GET /api/teacher/probe` reads a signed-in teacher's
+  group and Test-prices a cart under their token.
 
 ## Conventions
 
@@ -285,12 +289,14 @@ while `git clone` works, so clone the repo rather than fetching files.
 - **Teacher attribution is unverified live (T49).** A comp still takes
   the teacher's own PIN in the dialog, every time (T48: stored hashed and
   unique in `teacher_pins`, enrolled through a one-time Mindbody sign-in
-  or the devtools-gated admin route). On top of that a teacher can sign
-  in with their own Mindbody login (the header's "Sign in"), and from then
-  on every write runs under THEIR token so Mindbody names them; with
-  nobody signed in, writes run as the service account as before. The token lives
+  or the devtools-gated admin route). On top of that every teacher signs
+  in with their own Mindbody login (T50: required, the full-screen gate
+  after the device lock; the header shows their name and an account
+  icon for sign-out), and every write runs under THEIR token so Mindbody
+  names them; with nobody signed in, writes are refused (401
+  `reason: "staff"`) and the gate comes back. The token lives
   in server memory only (`src/lib/staffsession.ts`; a restart signs
-  everyone out). Verified live 2026-09-02: the API key issues tokens for
+  everyone out, and the gate reappears). Verified live 2026-09-02: the API key issues tokens for
   other staff logins, and a staff token reads its own permission group
   and Test-prices a cart. Still unverified: what Mindbody answers for an
   expired staff token (`isActorTokenDead` reads a 401), and that the

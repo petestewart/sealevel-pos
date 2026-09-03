@@ -4274,3 +4274,51 @@ button.sale-for:disabled {
   flex: 0 0 auto;
   color: var(--warn);
 }
+
+/* T50 --- Sign-in is required; the header names the teacher -------------
+ * Pete: "there should just be the current user's name displayed at the
+ * top. next to that there can be a profile icon that allows the user to
+ * sign out." The name is plain text beside a round 44px icon button (the
+ * icon idiom) that opens the account modal, in the slot the T49 "Sign
+ * in" button had, so the row still fits iPad landscape. The gate is the
+ * staff modal's scrim made opaque: nothing of the roster shows through
+ * because nothing of the roster is rendered. Tokens only. */
+
+.staff-id {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 64px;
+}
+
+.staff-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.staff-account {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.staff-account:active {
+  background: var(--action-bg);
+}
+
+.modal-scrim.staff-gate {
+  background: var(--bg);
+}

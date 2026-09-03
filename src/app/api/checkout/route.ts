@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   actorFields,
-  actorFor,
+  requireActor,
   endedStaffSession,
   runAsActor,
 } from "@/lib/actor";
@@ -211,7 +211,10 @@ export async function POST(request: Request) {
   const items = parsed.items;
   /* T49: the staff session this browser holds, if any. Resolved once;
    * every write below runs through runAsActor with it. */
-  const { session } = actorFor(request);
+  /* T50: no staff session, no write. */
+  const staff = requireActor(request);
+  if (staff.denied) return staff.denied;
+  const { session } = staff;
 
   /* T28: an optional `split` -- exactly two payment legs, in the
    * teacher's order, charged in ONE checkoutshoppingcart call so there
