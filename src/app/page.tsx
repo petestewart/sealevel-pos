@@ -1224,6 +1224,17 @@ function FrontDesk({
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
   /** The client id whose payment-change dropdown is open, if any. */
   const [pickerFor, setPickerFor] = useState<string | null>(null);
+  /** Where the roster's dropdown sits (T55): the roster list is the
+   *  scroll container now, and an absolute dropdown anchored to a row
+   *  would be clipped at the list's edge, so like the search modal's
+   *  picker it is position: fixed with its coordinates captured from
+   *  the row at open time. Null until measured; the row's chevron sets
+   *  it in the same handler that opens the picker. */
+  const [pickerPos, setPickerPos] = useState<{
+    top: number;
+    right: number;
+    maxHeight: number;
+  } | null>(null);
   /** On-demand pass lists per client, for the dropdown. Successes cache
    *  for the session; errors do not, so reopening retries. */
   const [passLists, setPassLists] = useState<Record<string, PassListState>>(
@@ -3080,8 +3091,27 @@ function FrontDesk({
   );
 
   const openPicker = useCallback(
-    (entry: RosterEntry) => {
+    (entry: RosterEntry, row: Element | null) => {
       setPassMsg(null);
+      /* T55: measured at open time, like the search modal's picker. The
+       * estimate sizes the box against the viewport so a picker opened
+       * near the bottom rises rather than running off screen; the real
+       * height is capped inline by maxHeight. */
+      const r = row?.getBoundingClientRect();
+      if (r) {
+        const capHeight = Math.min(window.innerHeight * 0.48, 420);
+        const top = Math.min(
+          r.bottom + 6,
+          Math.max(window.innerHeight - capHeight - 8, 16),
+        );
+        setPickerPos({
+          top,
+          right: Math.max(window.innerWidth - r.right, 8),
+          maxHeight: Math.min(window.innerHeight - top - 8, capHeight),
+        });
+      } else {
+        setPickerPos(null);
+      }
       setPickerFor(entry.clientId);
       ensurePassList(entry.clientId);
     },
@@ -3695,7 +3725,16 @@ function FrontDesk({
           role="presentation"
         />
         <div
-          className="pass-dd"
+          className={pickerPos ? "pass-dd dd-fixed" : "pass-dd"}
+          style={
+            pickerPos
+              ? {
+                  top: pickerPos.top,
+                  right: pickerPos.right,
+                  maxHeight: pickerPos.maxHeight,
+                }
+              : undefined
+          }
           role="dialog"
           aria-label={`Change how ${entry.name} is paying`}
           onClick={(e) => e.stopPropagation()}
@@ -4613,7 +4652,18 @@ function FrontDesk({
         </p>
       ) : null}
 
-      <ul className="roster">
+      <ul
+        className="roster"
+        /* T55: the list is the scroll container. The picker is
+           position: fixed, so scrolling would slide its row out from
+           under it; close it instead (unless a save is in flight, when
+           the dropdown is showing the outcome). */
+        onScroll={
+          pickerFor !== null && passSavingId === null
+            ? () => setPickerFor(null)
+            : undefined
+        }
+      >
         {sortedEntries.map((entry) => {
           const working = busy.includes(entry.clientId);
           /* False only. Null is unknown (lookup failed) and fails open:
@@ -4802,7 +4852,7 @@ function FrontDesk({
                           if (pickerFor === entry.clientId) {
                             if (passSavingId === null) setPickerFor(null);
                           } else {
-                            openPicker(entry);
+                            openPicker(entry, e.currentTarget.closest(".rrow"));
                           }
                         }}
                       >

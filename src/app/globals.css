@@ -74,6 +74,25 @@ button {
   max-width: 1100px;
   margin: 0 auto;
   padding: 16px;
+  /* T55 (Pete, 2026-09-03: "it should only be the rows of students that
+   * scroll while the rest stays stationary"): the shell is the viewport's
+   * height and a column, so the banner, class bar, search and column
+   * headings stay put and the roster list below them is the one thing
+   * that scrolls. min-height: 0 on the list lets it shrink under the
+   * pinned parts instead of growing the shell past the viewport. */
+  box-sizing: border-box;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell > .roster {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* Room under the last row so it clears the dev pill, and so the
+   * bottom border is not the viewport's edge. */
+  padding-bottom: 24px;
 }
 
 /* --- Class header ---------------------------------------------------

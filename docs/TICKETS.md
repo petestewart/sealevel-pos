@@ -6376,3 +6376,31 @@ wide: full names on two lines beside the chevron, no client name
 truncated, rows 20px taller only where a name wrapped. The made-up
 41-character name still clamps at 1024; the studio's real longest
 ("New Student 2 Week Unlimited") fits there.
+
+## T55. Only the roster scrolls, and the pass picker stays on screen (Pete, 2026-09-03)
+
+Pete: "the whole sign in screen scrolls when there is enough students,
+but really it should only be the rows of students that scroll while the
+rest stays stationary", and "when the row i am clicking on the payment
+dropdown for is near the bottom of the screen the options are hidden
+unless i scroll up to see them".
+
+- `.shell` is the viewport's height and a flex column; `.shell > .roster`
+  takes the remaining height with `overflow-y: auto`. The banner, class
+  bar, search and column headings never move. The lock screen's
+  `.lock-shell` keeps its own centring.
+- The roster's pass picker was `position: absolute` under its row, which
+  the new scroll container would clip at the list's edge and which ran
+  off the bottom of the viewport before this too. It now uses the search
+  modal's `dd-fixed` treatment: the chevron measures its row at open
+  time (`openPicker(entry, row)`), the picker is `position: fixed` at the
+  row's right edge, lifted so its estimated height fits above the
+  bottom of the viewport, and capped by an inline max-height that
+  scrolls a long list. Scrolling the roster closes it (a fixed box would
+  otherwise slide off its row), except while a save is in flight and the
+  box is showing the outcome.
+
+Verified on a 30-row mock at 1180x820 and 1024x768: page scroll height
+zero, list scrolls 2200px, banner and head at the same y after
+scrolling, a picker opened on a row in the bottom third sits fully
+inside the viewport with its options visible and closes on scroll.
