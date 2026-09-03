@@ -5002,6 +5002,43 @@ button.sale-for:disabled {
   color: var(--stop);
 }
 
+/* T59c review: the Guest action beside the chevron took 48px from the
+ * pass name, and "Monthly Committed Membership" ellipsized at 1180
+ * (142px left; the two-line wrap needs 158). The roster's two pass
+ * icons now sit in one right-pinned group, .pay-icons, which stacks
+ * vertically when the Guest action is present (.has-guest, decided
+ * with the button in page.tsx): the name keeps the width it has with
+ * the chevron alone, the row grows to the two icons' 88px instead, and
+ * the name may take a third line before T54's ellipsis, which at
+ * 1024's 116px is what "Membership" needs. */
+.cell-pay .pay-icons {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cell-pay .pay-icons .pass-toggle {
+  margin-left: 0;
+}
+
+/* No icons, no group: an empty span would still cost the name the
+ * cell's 4px gap, which at 1024 is the difference between "Monthly
+ * Committed" on one line (158px) and an ellipsis. */
+.cell-pay .pay-icons:empty {
+  display: none;
+}
+
+.cell-pay.has-guest .pay-icons {
+  flex-direction: column;
+  gap: 0;
+}
+
+.cell-pay.has-guest .pay-name {
+  -webkit-line-clamp: 3;
+}
+
 /* Portrait (T60 review, folded in here): at 820 and 810 wide the
  * roster's fixed columns (220 + 88 + 7em + 328, plus four 12px gaps and
  * the row's padding) outran the row, the payment column collapsed to
@@ -5047,5 +5084,20 @@ button.sale-for:disabled {
 
   .pay-name {
     -webkit-line-clamp: 3;
+  }
+
+  /* T59c review: at the 120px payment floor the stacked icons would
+   * leave the name 72px, less than "Membership"; the group wraps under
+   * the name instead, on the member's row alone. */
+  .cell-pay.has-guest {
+    flex-wrap: wrap;
+  }
+
+  .cell-pay.has-guest .pay-stack {
+    flex: 1 1 100%;
+  }
+
+  .cell-pay.has-guest .pay-icons {
+    flex-direction: row;
   }
 }

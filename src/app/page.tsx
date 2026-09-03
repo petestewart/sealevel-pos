@@ -5019,6 +5019,13 @@ function FrontDesk({
             "unpaid"
           );
 
+          /* T59c review: the Guest action's presence changes the payment
+           * cell's shape (see .cell-pay.has-guest), so it is decided
+           * once, here, for the cell's class and the button both. */
+          const guestPass = futureClass
+            ? null
+            : usableGuestPass(passLists[entry.clientId]?.data ?? null);
+
           return (
             <li key={entry.clientId}>
               {/* The row body is NOT a check-in target (T16 reversal:
@@ -5098,7 +5105,7 @@ function FrontDesk({
                   </span>
                 </div>
 
-                <div className="cell-pay">
+                <div className={guestPass ? "cell-pay has-guest" : "cell-pay"}>
                   {/* Two lines: the pass name, and under it the remaining/
                       expiry facts that used to be their own grid columns
                       (T15). No pass, no sub-line. */}
@@ -5149,12 +5156,15 @@ function FrontDesk({
                       while the cached pass list (the sweep's, the same
                       source as the chevron) holds a guest pass with a
                       session left. Not on a future day: the flow signs
-                      two people in, and check-in is closed there (T46). */}
+                      two people in, and check-in is closed there (T46).
+                      T59c review: the two icons share one right-pinned
+                      group that stacks when both are present, so the
+                      pass name keeps the width it had with the chevron
+                      alone (T54: no ellipsis). */}
+                  <span className="pay-icons">
                   {(() => {
-                    const guest = usableGuestPass(
-                      passLists[entry.clientId]?.data ?? null,
-                    );
-                    return guest && !futureClass ? (
+                    const guest = guestPass;
+                    return guest ? (
                       <button
                         className="row-icon guest-btn"
                         disabled={passSavingId !== null}
@@ -5221,6 +5231,7 @@ function FrontDesk({
                       </button>
                     ) : null;
                   })()}
+                  </span>
                   {pickerFor === entry.clientId
                     ? renderPassDropdown(entry)
                     : null}

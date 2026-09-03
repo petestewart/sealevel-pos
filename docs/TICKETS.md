@@ -7596,3 +7596,99 @@ shown.
    without a pass (the walk-in search, unpaid), and run the flow
    again: `updateclientvisit {VisitId, ClientServiceId}` then
    `{SignedIn}`, no `addclienttoclass`.
+
+### Review
+
+Adversarial pass over `git diff c52dfa5..work/t59c`, against a mocked
+Mindbody on 3061/4561 (scratchpad/t59c-review: the T59c mock with a
+steerable booking delay, plus a build of the parent commit for the
+before pictures). Typecheck and build green before and after.
+
+Confirmed and fixed:
+
+- **A guest step that failed AFTER its first write read as nothing
+  having happened.** A booking (or a pass change on an existing visit)
+  that went through, followed by a sign-in Mindbody refused, answered
+  502 with Mindbody's words alone; the sheet showed "Client cannot be
+  signed in: ..." with no hint that the guest's visit was now on the
+  pass and the session spent, the page treated it as not landed (no
+  roster refresh, the member's pass cache kept, so the Guest action
+  stayed on a row whose pass was at zero, and the next attempt met 409
+  "No guest pass with sessions left"). The answer now carries `landed`
+  and the visit id; the sheet says "Alison Reed is on Pete's guest pass
+  but NOT signed in: <reason>. Check them in from their row." with
+  "Pete Stewart: not checked in." under it, and the page refreshes the
+  rows and drops both pass caches as for any landed guest.
+- **The Guest action ellipsized the member's pass name** (the
+  coordinator's report from modal-pick-dark.png): the second 44px icon
+  beside the chevron left "Monthly Committed Membership" 142px at 1180
+  (the two-line wrap needs 158), 66px at 1024 and 24px at 820. The
+  roster's two pass icons now sit in one right-pinned group
+  (`.pay-icons`) that stacks vertically when the Guest action is
+  present (`.cell-pay.has-guest`, decided once per row in page.tsx):
+  the name keeps the width it has with the chevron alone (190 at 1180,
+  114 at 1024, where a third clamp line fits "Membership" before T54's
+  ellipsis) and the member's row grows to the icons' 88px (106px tall).
+  Under 860 the group wraps under the name instead (the 120px payment
+  floor minus 48 would be less than "Membership"), on that row alone
+  (153px tall at 820). An empty group is hidden, since its 4px gap was
+  the difference between "Monthly Committed" on one line and an
+  ellipsis for every other row at 1024 (Whitney's 162 became 158).
+  Measured after: no pass name clipped on any row at 820, 810, 1024 or
+  1180, no horizontal overflow, the head's Payment and Balance apart
+  at 820/810 (before: the payment column 0px and the page 828 wide).
+
+Not defects, checked:
+
+- The checkout refactor is behaviour-neutral: `fileCompNote` keeps the
+  wording, the house-client skip, the `[comp]` log lines, the route tag
+  `/api/checkout formula-note`, the 8s bound and the receipt's note id;
+  the moved body is the same code with the same error text.
+- Write discipline: every write through `mindbody()` with the client
+  whose visit it is (the guest's three writes with the guest id, the
+  member's with the member's, the notes each with their own), nothing
+  merged into a payload; the actor via `runAsActor`, and the only
+  retry is the existing one-shot fallback (a refused teacher token on
+  the booking fell back once, said so in amber). Suppression is
+  `suppressed: true` and an amber line per step, never success (dry
+  run: both steps amber, nothing reached the mock; guard with the
+  member alone listed: the guest suppressed, the member's own sign-in
+  written, as the ticket says). The pass re-read rejects a pass that
+  is not the member's (Whitney's 7002 through Pete: 409, no write),
+  the member's own membership (409 with the name), an unknown id, and
+  a pass spent by the previous call (409 on the second call).
+  Signed out: 401 `reason: "staff"` before the body is read.
+- Ordering: the guest step's first write refused (booking, or the pass
+  change on an existing visit) is a 409 with Mindbody's words and
+  nothing else written; the member's sign-in refused is a 200 partial
+  with the notes still filed; notes failing or hanging (8.0s measured)
+  is a 200 with `notes: {error}`; a booking that came back signed in
+  makes no second sign-in write; the member already in makes no
+  member write. Single flight: three taps on Confirm with a 4s booking
+  sent one request; Escape and the scrim stand down while busy.
+- Body trust: the caption fields are bounded (120 / 40) and whitespace
+  including newlines collapses to one space, so a note is one line;
+  bracket tags survive but Formula Notes are not read by T58's
+  signature parser (that reads `Notes` and the alerts). The class name
+  and date in the note come from the browser, not from `classId`:
+  the server has no class cache (charter) and a lookup would be a
+  metered call for a caption; a signed-in teacher's device can mislabel
+  its own staff-only note and nothing else. Recorded, not changed.
+- The visit ids are trusted the same way `/api/visit-payment` and
+  `/api/checkin` trust theirs: a crafted `guestVisitId` naming the
+  MEMBER's own visit moves that visit onto the guest pass (T57's
+  accident, reachable only by a hand-made request, since the browser
+  sends the picked row's id). Same posture as the routes it sits
+  beside; noted for a later ownership check if one is ever wanted.
+- UI: the member is neither in the in-class list nor in the search
+  results; the Guest action is on Pete's row only (Whitney's pass at
+  zero is not in the active list) and not on a future day; the
+  picker's Guest Pass line opens the modal and posts nothing; the
+  waiver gate for a guest is the T18 dialog with "Record agreement and
+  continue", the release then the receipt note, and only then the
+  sheet; Escape peels the sheet, then the modal; the X, the scrim and
+  the padding are the T52 idiom; nothing under 16px in the modal, rows
+  and buttons 64px, the X and the icons 44px; every colour a token
+  present in both palettes; no em dashes; the guest row reads "Guest
+  Pass (Pete)" with "Guest of Pete Stewart", the member's pass cache
+  is dropped so the Guest action and the chevron recompute.
