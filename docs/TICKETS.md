@@ -6702,3 +6702,116 @@ The consent fetch has no browser-side timeout, like every other write
 fetch here; the server's 20s write timeout bounds it. Typecheck and
 build green; the full implementer harness re-run unchanged after the
 fixes (A through H, both palettes).
+
+## T59. Guest passes at the counter (PLANNED, not started; Pete, 2026-09-03)
+
+Pete's spec: the teacher picks Guest Pass as the form of payment; a
+modal picks the guest, who may be someone already signed up, an existing
+client, or a new client; a new client signs the waiver and gets an
+account (there is no sign-up flow yet, so build one or require an
+account); in one transaction the guest is checked in as a comped visit,
+the member is checked in, and the member's guest pass is used up; and
+the guest's account gets a record that they used John Doe's guest pass.
+
+### What we know (T47 and the data)
+
+- The guest pass is a $0 one-session pricing option ("Guest Pass (for
+  auto-debit members only)") that the auto-renew membership drops onto
+  the MEMBER's account each month. It shows in the member's pass list
+  (Whitney Campbell's row today: "Guest Pass, 0 remaining, exp 10/1/26"
+  after T57's accident used it).
+- Every guest-pass visit in the last year had a member in the same
+  class, and the visits paid with one are mostly non-members. So in
+  Mindbody's own records the GUEST's visit is the one paid by the guest
+  pass, while the member's visit stays on the membership.
+- The booking and visit-payment calls take a `ClientServiceId` the spec
+  calls "on the client's account" (class.yml:3370). Whether Mindbody
+  accepts the MEMBER's guest pass id on the GUEST's visit is the one
+  unknown, and it decides the shape of the write.
+- Picking a pass in the roster picker today reassigns the member's OWN
+  visit to it. That is how a guest pass gets burned by mistake (T57),
+  and it is the tap Pete wants to become the guest flow.
+
+### The two mechanisms
+
+**A (preferred): the guest's visit pays with the member's pass.** Book
+or check the guest in with `ClientServiceId` = the member's guest pass.
+One write consumes the pass and the guest's row reads "Guest Pass",
+exactly as staff-entered guest visits read today. Reversal is the
+existing cancel-visit or a pass change on the guest's row.
+
+**B (fallback, Pete's literal spec): comp the guest, spend the pass on
+the member.** Book the guest with free entry (the existing no-payment
+path, `BookClassesAndEventsWithoutPayment`), then move the member's own
+visit onto the guest pass with the existing visit-payment write. The
+membership is unlimited so the member loses nothing, the pass is used
+up, but the reports read "member used a guest pass, guest was comped",
+which is not how staff record it today. There is no API call that spends
+a session without a visit, so B is the only way to consume the pass if A
+is refused.
+
+### T59a. The probe (first, small, needs Pete)
+
+A write-guarded run in production (`POS_DRY_RUN=false`,
+`POS_WRITE_CLIENT_IDS` naming two dummy clients): sell dummy member the
+$0 guest pass through Buy, book dummy guest into a class with the
+member's guest pass id, read both pass lists and the visit back, then
+cancel the visit and confirm the session returns. Also read
+`GET /client/requiredclientfields` under a staff token, which fixes the
+sign-up form's fields. Output: A or B chosen, and the field list.
+Needs from Pete: the two dummy client ids (or permission to create
+them), and a class to book against.
+
+### T59b. New client sign-up (small, useful beyond guests)
+
+`POST /client/addclient` under the teacher's token (business-mode
+required fields; Mindbody refuses a duplicate of first, last and email).
+A modal with first name, last name, email, phone, plus whatever T59a's
+field list adds, then the existing waiver dialog (T18: release flag,
+receipt in Notes and the database). Reachable from the guest modal and
+from the walk-in search's "Nobody matched" state. Email opt-in rides the
+same T53 consent flags.
+
+### T59c. The guest flow
+
+1. **Entry.** In the member's pass picker the Guest Pass line opens the
+   guest modal instead of reassigning the member's visit. The picker
+   never puts the member's own visit on a guest pass (T57's accident
+   becomes impossible). A "Guest" action also appears on the member's
+   expanded row while their pass list holds a guest pass with sessions
+   left.
+2. **Pick the guest.** Search idiom from the attach modal: people in
+   this class first (signed up, unpaid), then the whole studio, then
+   "New client" (T59b). A guest who is a member themselves, or who has
+   used a guest pass recently, is allowed with an amber line, unless
+   Pete sets a rule.
+3. **Waiver.** A guest without a release goes through the waiver dialog
+   before anything is written.
+4. **Confirm.** One sheet: "Check in Jane Doe as Whitney Campbell's
+   guest. Whitney's guest pass (1 left, exp 10/1/26) will be used." A
+   single tap, single flight.
+5. **The writes, in order**, all as the signed-in teacher, each through
+   `mindbody()` with the client id in the options:
+   - guest: book with the pass (A) or free entry (B); a guest already
+     booked gets the visit-payment write instead;
+   - member: check in if not yet (B also moves their visit to the pass);
+   - Formula Notes (T45's endpoint): on the guest "Guest of Whitney
+     Campbell, guest pass, Hot 26 Fusion 9/3/26", on the member "Guest
+     pass used for Jane Doe, Hot 26 Fusion 9/3/26". Mindbody dates them
+     and names the teacher itself.
+   No transaction exists across these, so the guest's write goes first
+   as the one Mindbody may refuse, and every later failure is reported
+   as exactly what did and did not land, with no automatic retry. Dry
+   run and the write guard report suppression, never success.
+6. **Roster.** Both rows go green; the guest's payment column reads
+   "Guest Pass (Whitney Campbell)" for A or "Comp, guest of Whitney
+   Campbell" for B; the member's pass list refreshes.
+
+### Questions for Pete
+
+1. Dummy clients for T59a, or create them?
+2. Any rule on who may be a guest (members, repeat guests, a limit per
+   month)?
+3. Confirm B is acceptable if A is refused, given how the reports read.
+4. The sign-up form: are there fields the studio wants beyond what
+   Mindbody requires (birthday, how they heard of us)?
