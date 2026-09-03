@@ -6404,3 +6404,86 @@ Verified on a 30-row mock at 1180x820 and 1024x768: page scroll height
 zero, list scrolls 2200px, banner and head at the same y after
 scrolling, a picker opened on a row in the bottom third sits fully
 inside the viewport with its options visible and closes on scroll.
+
+## T56. The M chip explains itself: contracts, used-up passes, and Mindbody's own flag (Pete, 2026-09-03)
+
+Pete, tapping the M on a member whose only pass was a Drop In with 0
+remaining: "i want to understand what indicates the M status. when i
+click on it for devin for instance, i see No current memberships or
+passes on file."
+
+The M is `MembershipIcon` nonzero on the `/client/clients` row
+(roster.ts, `member`), Mindbody's own flag from the studio's Membership
+setup, which can rest on an autopay contract or on a pricing option
+within its dates regardless of sessions left. The T52 modal listed
+`fetchPasses` from `/client/clientservices?ShowActiveOnly=true`, which
+excludes exhausted passes, and never read contracts. An M with an empty
+modal was both a filter gap and a missing endpoint.
+
+### The design (decided)
+
+1. **Contracts.** `fetchContracts(clientId)` in clientcontext.ts reads
+   `GET /client/clientcontracts` (client.yml:493, `ClientContract` at
+   6532): ContractName, AutopayStatus (Active / Inactive / Suspended,
+   the spec's enum), AutoRenewing, AgreementDate, StartDate, EndDate.
+2. **Used-up passes.** `fetchMembershipPasses(clientId)` reads
+   clientservices WITHOUT `ShowActiveOnly`, drops expired items by
+   studio-local date, and flags an unexpired item that is `Current:
+   false` with `Remaining: 0` as `usedUp`. The picker's `fetchPasses`
+   is untouched: a used-up pass is not choosable (T15/T18).
+3. **The route.** `GET /api/membership?clientId=` runs both reads on the
+   service account and answers `{contracts, passes}`; either failing is
+   a 502, never an empty list, since an empty modal is the wrong answer
+   this ticket exists to fix.
+4. **The modal.** Sections in order: "Contracts" (name; status and the
+   start-to-end dates, ", renews" when auto-renewing), "Passes" (as
+   before, plus used-up ones with the facts line "Used up, exp <date>",
+   the whole row in `--muted`), then a closing line that always names
+   the flag: "Mindbody flags this client as a member." and, when both
+   lists are empty, "Nothing here explains it; check the Contracts tab
+   on their Mindbody profile." Loading, error and a "Try again" button.
+5. **Chip tooltip.** "Member (Mindbody's membership flag). Tap for
+   details."
+
+### Build notes
+
+- Why a second clientservices call rather than one call without the
+  flag serving both the picker and the modal: `/api/passes` is what the
+  roster's background sweep spends per ROW, dozens per class, and the
+  picker's list is a live-verified T15/T18 decision that should not
+  drift with a changed query. The modal opens a handful of times a day,
+  so two reads on the tap (contracts plus the unfiltered pass list) is
+  the cheaper total, and it costs nothing until an M is tapped. The
+  answer is cached per client for the session; a failure is not cached,
+  so "Try again" and a reopen both refetch. The modal no longer touches
+  `passLists`, so opening it does not prime the picker; the sweep does
+  that anyway.
+- `/client/clientcontracts` carries `PayerClientId`, which names who
+  PAYS, and a parent paying for a child's contract is a legitimate
+  mismatch, so it is NOT used to scope the response the way
+  clientservices' `ClientID` is. A site-wide spill from an unresolved
+  id has not been observed on this endpoint; if a live look shows one,
+  add the guard then rather than throw away a family contract now.
+- Not-current, unexpired items that are NOT at zero (a future activation
+  date, a sessionless kind) are left out of the modal rather than
+  mislabelled "Used up". Expired passes are left out: the modal explains
+  the M, and an expired pass cannot.
+- The spec's `AutopayStatusEnum` has no "Terminated"; the modal shows
+  the status string as Mindbody sends it, so a value outside the enum
+  still renders. A missing status shows "Status unknown".
+- Playwright pass against a mocked Mindbody (contracts endpoint, a
+  used-up Drop In next to two active passes, an expired Drop In, and
+  the T50 sign-in gate), both palettes: a member with a contract and no
+  pass shows the contract with status and dates; a member with a
+  used-up pass shows it as used up in `--muted` with the expired one
+  absent; a member with nothing shows the explanatory line; non-member
+  rows carry no chip; the roster picker for the member with the used-up
+  pass offers the visit's pass plus the two active ones and not the
+  Drop In; three modals cost three contract reads and three unfiltered
+  pass reads, a reopen costs nothing; a 502 shows the error with "Try
+  again", which recovers. Typecheck and build green.
+- Unverified live: the exact field names `/client/clientcontracts`
+  returns on site 471 (the spec's `Contracts` array with `ContractName`
+  and `AutopayStatus` is what the parser reads), and whether Mindbody's
+  M can rest on a contract whose AutopayStatus is Inactive. The dev
+  drawer records the call, so the first live tap answers both.

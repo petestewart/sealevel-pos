@@ -4643,3 +4643,35 @@ button.sale-for:disabled {
 .staff-gate-banner .banner {
   margin: 0;
 }
+
+/* T56 --- The Membership modal explains the M ---------------------------
+ * Pete: "i want to understand what indicates the M status." Section
+ * labels in the info view's muted idiom, a used-up pass in --muted end
+ * to end (shown, never offered as payment), and the closing line that
+ * names Mindbody's flag. Tokens only; both palettes come from the swap. */
+.member-label {
+  margin: 12px 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.member-label:first-of-type {
+  margin-top: 0;
+}
+
+.modal-member .member-none {
+  margin: 0 0 4px;
+  color: var(--muted);
+}
+
+.member-usedup .profile-pass-name,
+.member-usedup .profile-pass-meta {
+  color: var(--muted);
+}
+
+.member-flag {
+  margin: 16px 0 0;
+  font-size: 16px;
+  color: var(--muted);
+}
