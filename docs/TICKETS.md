@@ -6818,4 +6818,145 @@ check-in under the write guard is T59a. B stays the fallback if
 Mindbody refuses the member's pass id on the guest's visit.
 
 Probe accounts: the member is Pete's own client 100028410 (guest pass
-added 2026-09-03); the guest is a dummy client still to be named.
+added 2026-09-03); the guest is Alison, client 100041277.
+
+## T58. Notes and alerts are signed by the teacher who wrote them (Pete, 2026-09-03)
+
+Pete: "whatever teacher is signed in has their name auto appended to any
+note or alert that they add. we can use an identifier so that the app
+knows that it was added by them and display it in a way that looks good
+(put the name in a lighter/different font next to the note, etc.)"
+
+`Notes`, `RedAlert` and `YellowAlert` are free text on the Mindbody
+client record, written whole by `POST /api/client-field` and edited in
+the info view. Front-desk staff also edit them in Mindbody's own web
+app, so whatever marks an entry as a teacher's has to be plain text that
+reads well there too.
+
+### The design (decided)
+
+1. **The marker.** An entry is signed by a trailing tag on its last
+   line: `Knee: no deep lunges [by Pete Stewart, 9/3/26]`. ASCII, a
+   space before it, the studio's wall-clock date (America/Los_Angeles)
+   as M/D/YY. An entry is a block of text separated from the next by a
+   blank line. Format, regex, parser and joiner live in ONE module,
+   `src/lib/notesig.ts`, used by the server and the browser:
+   `parseEntries`, `stripSignatures`, `signEntries`, `joinEntries`,
+   `studioDate`.
+2. **Signing is server-side, with the session's name.** The browser
+   sends `{clientId, field, value, previous}`: `value` is the draft as
+   the textarea showed it (tags stripped), `previous` the raw field the
+   edit started from. The route splits both into entries; an entry of
+   the draft whose text equals an entry of `previous` keeps that
+   entry's signature or its absence, every other entry (new or
+   reworded) is signed with the StaffSession's name and today's studio
+   date. It joins, writes through `updateClientField` (same surgical
+   envelope, teacher's token, dry run and the write guard applying)
+   and answers with the raw text it wrote as `value`. Empty `value`
+   clears the field. `previous` missing means sign everything.
+3. **The editor** shows the entries with signatures stripped, so a
+   teacher edits plain text, and says "Saved as <name>" under the
+   textarea, 14px muted (the recorded metadata exception).
+4. **Display.** One idiom everywhere: each entry is its own block in
+   the field's existing class (stop pair for red, warn pair for
+   yellow, plain for notes) and a signed one carries "by Name, date"
+   on the line after its text, 14px, `--muted`, regular weight even
+   inside the bold red alert. Nothing raw with brackets shows in our
+   UI; the search rows' one-line "Alert:" / "Note:" summary strips the
+   tag.
+5. Local state after a save (roster entries, search results, waitlist,
+   the info view) takes the server's returned `value`.
+
+### Build notes
+
+- `src/lib/notesig.ts` (new): the format and the four functions, plus
+  `studioDate`, which carries its own `America/Los_Angeles` constant
+  because roster.ts, which has one, imports the Mindbody client and
+  is not for the browser bundle.
+- One deliberate widening of the brief's parser: a line that ENDS with
+  a signature tag closes its entry too, not only a blank line. The
+  waiver receipt (waiver-agree route) appends its line with a single
+  newline, so under the blank-line-only rule a signed note followed by
+  a receipt became one unsigned block with a raw tag in the middle of
+  it. With the widening, the note stays signed and the receipt is its
+  own unsigned entry, and a round trip through the editor separates
+  them with a blank line. That append mechanism itself is untouched.
+- `POST /api/client-field` signs after validation and before the
+  write; `previous` is optional and refused with 400 when present and
+  not a string. The signature stays the teacher's even on the T49
+  fallback to the service account: it says who wrote the note, and
+  the fallback only changes whose token carried it.
+- `src/app/NoteText.tsx` (new) renders a field entry by entry with the
+  `.note-sig` line; the info view and the profile card use it. The
+  search rows (which the attach modal shares) render
+  `stripSignatures(...)` in their summary line. No other surface
+  rendered the three fields: the roster row only uses them to light
+  the info icon, and the waitlist carries notes only for the receipt
+  append.
+- CSS: `.note-sig` and `.note-signed-as`, tokens only (`--muted`),
+  both palettes unchanged.
+- Verified: `npm run typecheck`, `npm run build`, and a Playwright
+  harness (scratchpad/t58, mock Mindbody on 4558, `next start` on
+  3058, signed in as Kim through the real gate): a note edited and one
+  added among three are signed by Kim while the untouched one keeps
+  Pete's older signature and the receipt line stays unsigned; the
+  editor shows the stripped text and "Saved as Kim Farrell"; a red
+  alert reworded is re-signed; a yellow alert from empty is signed;
+  clearing writes "" and the view says "None."; no "[by" appears in
+  the info view, the search row or the profile card; the signature
+  lines are 14px in `--muted` in both palettes; a signed-out write is
+  refused 401 `reason: "staff"`.
+- Not done: nothing in Mindbody's web app is changed, so a note typed
+  there is simply unsigned, which is the design. Signatures are not
+  editable in place: to re-attribute an entry, reword it. Existing
+  notes written before T58 render unsigned.
+- To check live: that Mindbody keeps the bracketed tag verbatim in all
+  three fields (they are free text, but RedAlert and YellowAlert have
+  not been round-tripped with brackets yet), and how the tag looks on
+  the client profile in Mindbody's web app.
+
+### Review
+
+Adversarial pass over `567959d..work/t58`, parser first (a script run
+directly against `notesig.ts`: 22 cases), then the route through a real
+signed-in session against the mock (scratchpad/t58/review.js), then the
+implementer's harness in both palettes.
+
+- **Fixed: a signer name the tag cannot carry.** `signEntries` took the
+  session's name verbatim, so a name holding `]` or a line break, or an
+  empty one, wrote a tag the parser could not read back and the raw
+  brackets would have shown on every screen. Now sanitised in that one
+  place (bracket and line breaks become a space, whitespace collapsed,
+  empty falls back to `staff`); a comma survives, and the regex's lazy
+  name reads `[by Ann Lee, Jr., 9/3/26]` back correctly. The "Saved as"
+  line under the editor still shows the session name unsanitised, which
+  is the honest name and only differs from the tag for a name with a
+  bracket in it.
+- Not defects, confirmed: a `[by ...]` mid-line is text; a hand-typed tag
+  in the draft is dropped and the entry signed by the session, never by
+  the typed name; Windows line endings from Mindbody parse and are
+  written back as LF; a whitespace-only edit keeps its signature; an
+  unchanged save writes identical text (the first save after T58 may
+  normalise a single-newline receipt separator to a blank line, which
+  changes no signature); a moved entry keeps its signature; two
+  identical entries pair off in order; a multi-line entry is not split
+  by the tag-closes-entry rule, since only a line that ENDS with a tag
+  closes one; `studioDate` gives 9/2 for 05:30Z on 9/3; the spec puts no
+  length limit on the three fields.
+- Security, confirmed: 401 `reason: "staff"` before the body is parsed
+  (a signed-out post with a non-JSON body gets it and the mock sees no
+  call); the whitelist and the surgical `{Id, <field>}` envelope are
+  unchanged; the name never comes from the body. One accepted risk of
+  the design, recorded rather than fixed: `previous` is the browser's
+  word, so a device behind both the device session and a staff sign-in
+  could send a `previous` that attributes an entry to another name and
+  the server keeps it; closing that means re-reading the field from
+  Mindbody before every save. The dev drawer shows the signed payload as
+  it shows every Mindbody body, behind `POS_DEVTOOLS`.
+- Display, confirmed: the only places the three fields render text are
+  the info view, the profile card and the search rows' summary line;
+  the roster row, the waitlist, the waiver dialog and the sale screen
+  do not render them. Signature lines are 14px `--muted`, regular
+  weight inside the bold alert blocks, in both palettes; no em dashes.
+- Verified: `npm run typecheck`, `npm run build`, the implementer's
+  harness (20 checks) and the review script (12 checks) all pass.

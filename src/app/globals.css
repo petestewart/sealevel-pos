@@ -1020,6 +1020,31 @@ button.pass-opt:disabled {
   white-space: pre-wrap;
 }
 
+/* T58: who wrote an entry. Pete: "put the name in a lighter/different
+ * font next to the note". One idiom everywhere a note or alert renders
+ * (the info view, the profile card, a search row's alert line does not
+ * show it at all): the name and date on the line after the entry's
+ * text, 14px muted, the recorded metadata exception, and regular
+ * weight even inside the bold red alert. Tokens only, both palettes. */
+.note-sig {
+  display: block;
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.3;
+  color: var(--muted);
+  white-space: normal;
+}
+
+/* Under the editor: the teacher is told the save carries their name,
+ * so nobody is surprised by the signature they never typed. Same 14px
+ * muted metadata line. */
+.note-signed-as {
+  margin: -8px 0 16px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
 /* A section heading in the info view, with its edit pencil pinned to the
  * line's right end. Muted: the labels are wayfinding, the texts below
  * them are the content. */
@@ -4162,6 +4187,9 @@ button.sale-for:disabled {
 }
 
 .profile-alert {
+  /* Block, not .ctx-alert's flex: T58 puts the signature line under
+   * the text, and a flex row would sit it beside it instead. */
+  display: block;
   margin: 0 0 12px;
   white-space: pre-wrap;
 }
