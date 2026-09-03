@@ -1009,6 +1009,10 @@ export interface PaymentProfile {
    *  defaults it to false; a record that omits it reads as false, which
    *  is the honest default for an opt-in. */
   sendAccountEmails: boolean;
+  /** T53: `SendPromotionalEmails` (client.yml:5294), so the gate's
+   *  "news and offers" box opens pre-set to what Mindbody holds and a
+   *  teacher leaving it alone changes nothing. */
+  sendPromotionalEmails: boolean;
 }
 
 /** Is an ExpMonth/ExpYear pair in the past? Unparseable dates count as
@@ -1066,6 +1070,7 @@ export async function clientPaymentProfile(
     card,
     email: str(row?.Email),
     sendAccountEmails: row?.SendAccountEmails === true,
+    sendPromotionalEmails: row?.SendPromotionalEmails === true,
   };
 }
 
