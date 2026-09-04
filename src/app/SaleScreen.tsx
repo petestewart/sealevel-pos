@@ -11,6 +11,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { actorFallbackLine } from "./actornote";
+import { toggleTheme } from "./theme";
 
 import {
   COMP_DETAIL_MAX,
@@ -407,169 +408,123 @@ function estimateCart(
   };
 }
 
-function CloseIcon() {
+/* T70: the icons are the mockups' (docs/design/mockups/visual-pass/
+ * Buy.dc.html, Payment.dc.html): inline SVG, stroke 2, SQUARE caps, no
+ * fill, in currentColor so each takes its cell's colour. Square caps are
+ * part of the look; the round 2.4 strokes they replace are gone. */
+function Icon(props: { d?: string; size?: number; children?: ReactNode }) {
+  const size = props.size ?? 20;
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        d="M6 6l12 12M18 6L6 18"
-      />
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="square"
+      aria-hidden="true"
+    >
+      {props.children}
+      {props.d ? <path d={props.d} /> : null}
     </svg>
   );
+}
+
+function CloseIcon() {
+  return <Icon d="M6 6l12 12M18 6 6 18" />;
 }
 
 function MinusIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        d="M5 12h14"
-      />
-    </svg>
-  );
+  return <Icon d="M5 12h14" />;
 }
 
-/** Trash can, the roster's glyph (page.tsx TrashIcon, same path) at the
- *  stepper's scale: the cart's Remove is an icon since T41. */
+/** Trash can, the roster's glyph at the stepper's scale: the cart's
+ *  Remove is an icon since T41. */
 function TrashIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M4 6.5h16M9.5 6.5V4h5v2.5M6.5 6.5 7.5 20h9l1-13.5"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        d="M10 10.5v6M14 10.5v6"
-      />
-    </svg>
+    <Icon
+      d="M4 6.5h16M9.5 6.5V4h5v2.5M6.5 6.5 7.5 20h9l1-13.5M10 10.5v6M14 10.5v6"
+      size={22}
+    />
   );
 }
 
 function PlusIcon() {
+  return <Icon d="M12 5v14M5 12h14" size={22} />;
+}
+
+/** The mockups' arrow-left, on Back and Back to items. */
+function ArrowLeftIcon() {
+  return <Icon d="M20 12H4M10 6 4 12l6 6" />;
+}
+
+/** The sun cell in the header: light becomes dark and back (theme.ts). */
+function SunIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        d="M12 5v14M5 12h14"
-      />
+    <Icon
+      d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"
+      size={22}
+    >
+      <circle cx="12" cy="12" r="4" />
+    </Icon>
+  );
+}
+
+/** The check on the bar's Charged state and the done block. */
+function CheckIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="22"
+      height="22"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="3"
+      strokeLinecap="square"
+      aria-hidden="true"
+    >
+      <path d="m4 12.5 5 5L20 6.5" />
     </svg>
   );
 }
 
 /* T51 (Pete: "'Card', 'Cash' and 'Account' should have icons next to
- * them"): three 20px glyphs in currentColor, so they take the tile's
- * colour and dim with it when the tile is off. A card with its stripe,
- * a banknote, a person in a circle for the account. */
+ * them"): a card with its stripe, a banknote, a person for the account,
+ * the first two as Payment.dc.html draws them. */
 function CardIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <rect
-        x="2.5"
-        y="5.5"
-        width="19"
-        height="13"
-        rx="2.5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-      <path stroke="currentColor" strokeWidth="2.6" d="M2.5 10h19" />
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        d="M6.5 14.5h4"
-      />
-    </svg>
+    <Icon d="M2 10h20" size={24}>
+      <rect x="2" y="5" width="20" height="14" />
+    </Icon>
   );
 }
 
 function CashIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <rect
-        x="2.5"
-        y="6.5"
-        width="19"
-        height="11"
-        rx="2"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-      <circle
-        cx="12"
-        cy="12"
-        r="2.6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        d="M6 12h.01M18 12h.01"
-      />
-    </svg>
+    <Icon size={24}>
+      <rect x="2" y="6" width="20" height="12" />
+      <circle cx="12" cy="12" r="2.5" />
+    </Icon>
   );
 }
 
 function AccountIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <circle
-        cx="12"
-        cy="12"
-        r="9.5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-      <circle
-        cx="12"
-        cy="10"
-        r="3.2"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        fill="none"
-        d="M6.2 18.4c1.3-2.3 3.3-3.4 5.8-3.4s4.5 1.1 5.8 3.4"
-      />
-    </svg>
+    <Icon d="M4 21c0-4 3.6-6 8-6s8 2 8 6" size={24}>
+      <circle cx="12" cy="8" r="4" />
+    </Icon>
   );
 }
 
-/** The favorite star. Outline at rest; the `.shelf-star.on` CSS fills it
- *  with the warn/gold token. */
+/** The favorite star (Buy.dc.html). Outline at rest; `.shelf-star.on`
+ *  fills it with the gold token. */
 function StarIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-        d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8L12 3.6z"
-      />
-    </svg>
+    <Icon
+      d="m12 4 2.5 5.2 5.5.8-4 3.9 1 5.6-5-2.9-5 2.9 1-5.6-4-3.9 5.5-.8Z"
+      size={18}
+    />
   );
 }
 
@@ -799,6 +754,13 @@ function PaymentPanel(props: {
    * an effect after paint. Null until the bar has mounted.
    */
   barSlot: HTMLElement | null;
+  /**
+   * T70: the ticket's tender slot, under its Total (Payment.dc.html).
+   * The panel renders one "<Method> received $X" line per tender and the
+   * change or the shortfall through it, the same way as the bar's
+   * primary, so the ticket reads the lines this render computed.
+   */
+  ticketSlot: HTMLElement | null;
   /** T39.6: what SaleScreen wants said above the figures in pay mode --
    *  the suppressed notice, the disagree stop with T38's audit table --
    *  so the figures never stand next to a total they contradict. The
@@ -850,6 +812,7 @@ function PaymentPanel(props: {
     cardLookup,
     visible,
     barSlot,
+    ticketSlot,
     notice,
     onSold,
     onDone,
@@ -2192,7 +2155,17 @@ function PaymentPanel(props: {
           ? tenderNote || `${money(dueCents / 100)} still to pay`
           : firstLineProblem ?? (lines.length === 0 && !comped ? "Choose how they are paying" : "Not ready to charge");
   const primary =
-    result?.kind === "paid" ? null : (
+    result?.kind === "paid" ? (
+      /* T70 (Payment.dc.html): after the write the bar's segment fills
+         --ok with the check and "Charged" and the amount, inert: the
+         done block above carries Done. Only a completed sale reaches
+         it; suppression is never success and never fills green. */
+      <span className="sale-bar-pay done" role="status">
+        <CheckIcon />
+        <span>{result.comped ? "Comped" : "Charged"}</span>
+        <span className="sale-bar-amt">{money(result.total)}</span>
+      </span>
+    ) : (
       <button
         className={primaryOn ? "sale-bar-pay" : "sale-bar-pay off"}
         aria-disabled={!primaryOn}
@@ -2204,9 +2177,14 @@ function PaymentPanel(props: {
         }}
       >
         {charging ? (
+          /* The amount stays in the label while the write is in flight
+             (Payment.dc.html: "the amount is always in the label"). */
           <>
             <span className="spinner" aria-label="working" />
-            <span>Charging...</span>
+            <span>{comped ? "Comping" : "Charging"}</span>
+            {primaryAmount !== null ? (
+              <span className="sale-bar-amt">{money(primaryAmount)}</span>
+            ) : null}
           </>
         ) : (
           <>
@@ -2239,7 +2217,7 @@ function PaymentPanel(props: {
                reaches this branch. */
             <div className="pay-done" role="status">
               <span className="pay-done-check" aria-hidden="true">
-                &#10003;
+                <CheckIcon />
               </span>
               <p className="pay-done-title">Sale complete</p>
               <p className="pay-done-charged">
@@ -2349,6 +2327,10 @@ function PaymentPanel(props: {
                   const reopen =
                     s === "cash" && cashLine !== undefined && reason === "Already in the payment";
                   const off = reason !== null && !reopen;
+                  /* T70: the card's note is always there and always
+                     honest (Payment.dc.html): T35's reason when there is
+                     one, else what a tap does. The stored card is a card
+                     on file, not a reader, so the note says so. */
                   const shown = off
                     ? reason
                     : reopen
@@ -2357,11 +2339,21 @@ function PaymentPanel(props: {
                         ? /* The prototype's word for an available Credit:
                              rule 1 makes it the first thing applied. */
                           "Applies first"
-                        : null;
+                        : dueCents !== null
+                          ? s === "cash"
+                            ? `Take ${money(dueCents / 100)} in cash`
+                            : `Charge ${money(dueCents / 100)} to the card on file`
+                          : null;
+                  /* In the payment: the selected marker (--accent-bg and
+                     the 4px accent edge), whether or not the tile can
+                     still take a tap. */
+                  const inPayment = usedSources.has(s);
                   return (
                     <button
                       key={s}
-                      className={off ? "pay-tile off" : "pay-tile"}
+                      className={
+                        (off ? "pay-tile off" : "pay-tile") + (inPayment ? " in" : "")
+                      }
                       disabled={off || charging}
                       onClick={() =>
                         reopen && cashLine !== undefined
@@ -2392,6 +2384,11 @@ function PaymentPanel(props: {
                 })}
               </div>
 
+              {/* T70: the body under the cards (Payment.dc.html): the
+                  tender rows, the hint, the receipt row, the notices and
+                  the foot, padded as a group; the figures and the cards
+                  above run edge to edge. */}
+              <div className="pay-body">
               {lines.length > 0 ? (
                 <div className="tender-lines" aria-label="Payment lines">
                   {lines.map((line, i) => {
@@ -2432,7 +2429,7 @@ function PaymentPanel(props: {
                           aria-label={`Remove the ${sourceLabel(line.source)} payment`}
                           title="Remove this payment"
                         >
-                          &#215;
+                          <CloseIcon />
                         </button>
                       </div>
                     );
@@ -2557,6 +2554,7 @@ function PaymentPanel(props: {
                   {comped ? "Comped. Tap to unselect." : "Comp this sale"}
                 </button>
               </div>
+              </div>
             </>
           )}
         </div>
@@ -2583,25 +2581,31 @@ function PaymentPanel(props: {
           onClick={dismissPad}
         >
           <div
-            className="modal modal-amount"
+            className="modal modal-amount modal-pad"
             role="dialog"
             aria-modal="true"
             aria-label={`${sourceLabel(padLine.source)} amount`}
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="modal-title">{sourceLabel(padLine.source)}</p>
+            {/* T70: the keypad panel's three columns (Payment.dc.html):
+                the kicker with the live entry, the due, the chips and
+                the change line at the left; the 3x4 keys; Done. Still
+                the T36 modal (Pete: "having it be a modal is def
+                better"), with the panel's 2px accent border. */}
+            <div className="pad-left">
+            <p className="modal-title pad-head">
+              <span className="pad-kicker">
+                {padLine.source === "cash"
+                  ? "Cash received"
+                  : `${sourceLabel(padLine.source)} amount`}
+              </span>
+              <span className="pad-entered-amt">{money(draftCents / 100)}</span>
+            </p>
             <div className="pad-row">
               <span className="pad-label">Amount due</span>
               <span className="pad-amt">
                 {padDueCents !== null ? money(padDueCents / 100) : "--"}
               </span>
-            </div>
-            {/* T39.7: the Entered box (0.2), on the bar's ground with the
-                30px figure, so what has been typed is the loudest thing
-                in the modal. */}
-            <div className="pad-entered">
-              <span className="pad-label">Entered</span>
-              <span className="pad-entered-amt">{money(draftCents / 100)}</span>
             </div>
 
             {/* Chips are CASH ONLY, per Pete ("for cash, it was helpful
@@ -2632,23 +2636,6 @@ function PaymentPanel(props: {
               </div>
             ) : null}
 
-            <div className="pad-keys">
-              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0"].map(
-                (k) => (
-                  <button key={k} className="pad-key" onClick={() => padTap(k)}>
-                    {k}
-                  </button>
-                ),
-              )}
-              <button
-                className="pad-key"
-                aria-label="Delete last digit"
-                onClick={() => padTap("back")}
-              >
-                &#9003;
-              </button>
-            </div>
-
             {/* The change math, and only where it is true. On a two-line
                 tender the OTHER line absorbs the difference, so the
                 modal says what that line becomes rather than calling a
@@ -2660,11 +2647,13 @@ function PaymentPanel(props: {
               </p>
             ) : padSurplus !== null && padSurplus > 0 ? (
               <p className="pad-change">
-                Change due {money(padSurplus / 100)}
+                Change due{" "}
+                <span className="pad-change-amt">{money(padSurplus / 100)}</span>
               </p>
             ) : padSurplus !== null && padSurplus < 0 ? (
               <p className="pad-change short">
-                Short {money(-padSurplus / 100)}
+                Short{" "}
+                <span className="pad-change-amt">{money(-padSurplus / 100)}</span>
               </p>
             ) : (
               <p className="pad-change muted-note">
@@ -2673,13 +2662,31 @@ function PaymentPanel(props: {
                   : "Cash may be more than the due; the change shows here."}
               </p>
             )}
+            </div>
+
+            <div className="pad-keys">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0"].map(
+                (k) => (
+                  <button key={k} className="pad-key" onClick={() => padTap(k)}>
+                    {k}
+                  </button>
+                ),
+              )}
+              <button
+                className="pad-key del"
+                aria-label="Delete last digit"
+                onClick={() => padTap("back")}
+              >
+                del
+              </button>
+            </div>
 
             <div className="modal-actions">
-              <button className="modal-cancel" onClick={dismissPad}>
-                Cancel
-              </button>
               <button className="modal-confirm go" onClick={applyPad}>
                 Done
+              </button>
+              <button className="modal-cancel" onClick={dismissPad}>
+                Cancel
               </button>
             </div>
           </div>
@@ -2718,8 +2725,8 @@ function PaymentPanel(props: {
           <div
             className={
               reasonStep === "reason"
-                ? "modal modal-amount modal-reason reason-sized"
-                : "modal modal-amount modal-reason"
+                ? "modal modal-sale modal-amount modal-reason reason-sized"
+                : "modal modal-sale modal-amount modal-reason"
             }
             role="dialog"
             aria-modal="true"
@@ -3080,6 +3087,41 @@ function PaymentPanel(props: {
           (the slot is the shelf's Pay otherwise) and only once the bar
           has mounted. */}
       {visible && barSlot ? createPortal(primary, barSlot) : null}
+      {/* T70: the ticket's tender lines, under its Total, through the
+          ticket's slot (Payment.dc.html: "this is the counter's actual
+          question and it belongs on the receipt side"). Same render as
+          the figures, so the change here is the change up there. */}
+      {visible && ticketSlot && result?.kind !== "paid" && (lines.length > 0 || comped)
+        ? createPortal(
+            <div className="t-tender">
+              {comped ? (
+                <div className="t-line t-muted">
+                  <span>Comped, on the studio</span>
+                  <span className="amt">{total !== null ? money(total) : "--"}</span>
+                </div>
+              ) : (
+                lines.map((line) => (
+                  <div className="t-line t-muted" key={line.id}>
+                    <span>{sourceLabel(line.source)} received</span>
+                    <span className="amt">{money(line.cents / 100)}</span>
+                  </div>
+                ))
+              )}
+              {!comped && changeCents > 0 ? (
+                <div className="t-line t-change">
+                  <span>Change due</span>
+                  <span className="amt">{money(changeCents / 100)}</span>
+                </div>
+              ) : !comped && dueCents !== null && dueCents > 0 ? (
+                <div className="t-line t-still">
+                  <span>Still due</span>
+                  <span className="amt">{money(dueCents / 100)}</span>
+                </div>
+              ) : null}
+            </div>,
+            ticketSlot,
+          )
+        : null}
     </>
   );
 }
@@ -3535,7 +3577,7 @@ function ContractDialog(props: {
       }}
     >
       <div
-        className="modal modal-contract"
+        className="modal modal-sale modal-contract"
         role="dialog"
         aria-modal="true"
         aria-label={`Start the ${contract.name} membership`}
@@ -3986,6 +4028,8 @@ export default function SaleScreen(props: {
    *  ref into state, since the element exists only after the first
    *  commit. */
   const [barSlot, setBarSlot] = useState<HTMLElement | null>(null);
+  /** T70: the ticket's tender slot, the same idiom (see `ticketSlot`). */
+  const [ticketSlot, setTicketSlot] = useState<HTMLElement | null>(null);
   useEffect(() => {
     if (open) setSaleMode("shelf");
   }, [open]);
@@ -5222,8 +5266,20 @@ export default function SaleScreen(props: {
               NOT mid-charge: closing would unmount the payment panel and
               its outcome -- the split-failure warning included -- while
               money is moving. */}
+          {/* T70: the sun cell (Buy.dc.html), the one theme control on
+              this screen; theme.ts stores the choice and sets the
+              attribute the two palette blocks key on. */}
           <button
-            className="class-change sale-back"
+            className="sale-sun"
+            type="button"
+            onClick={() => toggleTheme()}
+            aria-label="Switch between light and dark"
+            title="Light / dark"
+          >
+            <SunIcon />
+          </button>
+          <button
+            className="sale-back"
             onClick={close}
             disabled={charging}
             aria-label="Back to the roster"
@@ -5231,7 +5287,8 @@ export default function SaleScreen(props: {
             {/* T39.8: the arrow 1a draws, the same glyph as the bar's
                 Back to items; the X it had read as a close, and Back is
                 a return. */}
-            {"\u2190"} Back
+            <ArrowLeftIcon />
+            Back
           </button>
         </div>
 
@@ -5380,7 +5437,7 @@ export default function SaleScreen(props: {
                           key={`${item.type}-${item.id}`}
                         >
                           <button
-                            className="shelf-item"
+                            className={count > 0 ? "shelf-item in-cart" : "shelf-item"}
                             onClick={() => addItem(item)}
                             aria-label={`Add ${item.name}, ${money(item.price)}`}
                           >
@@ -5486,6 +5543,7 @@ export default function SaleScreen(props: {
             cardLookup={cardLookup}
             visible={inPay}
             barSlot={barSlot}
+            ticketSlot={ticketSlot}
             notice={payNotice}
             onSold={() => {
               setCart([]);
@@ -5538,7 +5596,7 @@ export default function SaleScreen(props: {
 
             {cart.length === 0 ? (
               <div className="t-lines-wrap">
-                <p className="t-empty">Nothing rung up yet.</p>
+                <p className="t-empty">Nothing on the ticket yet. Tap an item.</p>
                 {/* T38: a recheck that dropped every line lands here,
                     and the teacher must still be told what went. */}
                 {report && report.dropped.length > 0 ? (
@@ -5821,6 +5879,10 @@ export default function SaleScreen(props: {
                         already carries which shape priced the cart. */}
                   </>
                 ) : null}
+                {/* T70: the tender lines' slot (Payment.dc.html). The
+                    panel fills it in pay mode through a portal, the way
+                    the bar's primary is filled; empty in shelf mode. */}
+                <span className="t-tender-slot" ref={setTicketSlot} />
                 </div>
               </>
             )}
@@ -5849,7 +5911,8 @@ export default function SaleScreen(props: {
               disabled={charging}
               onClick={leavePay}
             >
-              {"\u2190"} Back to items
+              <ArrowLeftIcon />
+              Back to items
             </button>
           ) : (
             /* T51: `sale-bar-clear` moves it to sit just left of Pay
@@ -5942,7 +6005,7 @@ export default function SaleScreen(props: {
       {cartPrompt ? (
         <div className="modal-scrim" role="presentation" onClick={keepCart}>
           <div
-            className="modal"
+            className="modal modal-sale"
             role="dialog"
             aria-modal="true"
             aria-label="Start a new cart?"
@@ -5981,7 +6044,7 @@ export default function SaleScreen(props: {
           onClick={cancelWalkInPrompt}
         >
           <div
-            className="modal modal-walkin"
+            className="modal modal-sale modal-walkin"
             role="dialog"
             aria-modal="true"
             aria-label="No client attached"
@@ -6035,7 +6098,7 @@ export default function SaleScreen(props: {
           onClick={consentBusy ? undefined : cancelConsentPrompt}
         >
           <div
-            className="modal modal-consent"
+            className="modal modal-sale modal-consent"
             role="dialog"
             aria-modal="true"
             aria-label="Email receipt?"
@@ -6138,7 +6201,7 @@ export default function SaleScreen(props: {
       {clearPrompt !== null ? (
         <div className="modal-scrim" role="presentation" onClick={cancelClear}>
           <div
-            className="modal"
+            className="modal modal-sale"
             role="dialog"
             aria-modal="true"
             aria-label="Clear the cart?"
