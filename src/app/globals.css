@@ -10,41 +10,52 @@
    * checkboxes in the settings panel, the search field's caret and autofill
    * shading, scrollbars, and default focus rings. Without it those render
    * light on a dark screen no matter how carefully the palette below is
-   * written. */
-  color-scheme: light dark;
+   * written. Light here; the dark block below sets it to dark. */
+  color-scheme: light;
 
-  /* T39.1: the Counter palette (docs/design/pos-design-implementation.md
-   * 0.2), read off the 1a frame. Warm paper, one teal accent, and the
-   * dark block below is the same set flipped off 1b. --accent-ink is
-   * what sits on the accent fill: the dark accent is a light teal, so
-   * that text cannot be --surface any more (it was, twice, and one of
-   * those was the unreadable check-in chip). --line-soft is the dashed
-   * ticket rule and the key border; --bar-bg the action bar's ground
-   * (T39.5) and a selected cart row (T39.4); --shadow lifts the bar off
-   * the columns; the disabled pair is the primary button with nothing
-   * to do (Pay on an empty cart). */
-  --bg: #f6f3ec;
-  --surface: #fffdf8;
-  --line: #e4ded2;
-  --line-soft: #ded7ca;
-  --ink: #1a1815;
-  --muted: #7a7163;
-  --ok: #0d6b47;
-  --ok-bg: #e7f1ea;
-  --warn: #7a5a10;
-  --warn-bg: #faf1de;
-  --stop: #b0332c;
-  --stop-bg: #fbe9e9;
-  --accent: #0f5c55;
+  /* T70: the modernist palette (docs/design/mockups/visual-pass/README.md,
+   * "Design tokens"), replacing T39.1's warm paper. Cool-warm neutrals, the
+   * studio teal-green as the one accent, and every token defined again in
+   * the dark block below with the same names. Roles:
+   *   --bg page ground; --surface rows, bars, cards; --surface-2 quiet
+   *   fills, hover, keypad keys; --line the 1px hairline between rows and
+   *   cells; --rule the strong 2px divider between regions.
+   *   --accent means actionable or selected and nothing else (--accent-press
+   *   under a finger, --accent-ink on the fill, --accent-bg the selected
+   *   surface). --ok checked in; --warn unpaid, no pass, change due; --stop
+   *   destructive or blocked only; --gold the member badge, count badges
+   *   and "1 left". --scrim the modal backdrop, --shadow-lg the one shadow
+   *   (modals and dropdowns; nothing else casts one).
+   * The T39 names below the rule are aliases kept so older rules keep
+   * resolving while the pass lands; new CSS uses the names above. */
+  --bg: #f0efee;
+  --surface: #ffffff;
+  --surface-2: #f8f4f4;
+  --line: #d7d3d3;
+  --rule: #201e1d;
+  --ink: #201e1d;
+  --muted: #605d5d;
+  --accent: #166d67;
+  --accent-press: #0f4f4a;
   --accent-ink: #ffffff;
-  --action-bg: #f1ede4;
-  --bar-bg: #f2efe7;
-  --shadow: 0 -8px 24px rgba(26, 24, 21, 0.08);
-  --disabled-bg: #d5cfc2;
-  /* T39.8: the canvas draws the disabled primary as muted on #d5cfc2,
-   * which is 3.1:1; the shelf price's darker muted (#5f5749, 0.2) is
-   * 4.6 on the same ground and in the same family. Dark is 4.6 as it is. */
-  --disabled-ink: #5f5749;
+  --accent-bg: #e3efee;
+  --ok: #0f6b46;
+  --ok-bg: #e3f1e9;
+  --warn: #7a4f00;
+  --warn-bg: #f7ecd4;
+  --stop: #a32020;
+  --stop-bg: #f8e6e6;
+  --gold: #6d4a05;
+  --gold-bg: #f0dcae;
+  --scrim: rgba(24, 22, 21, 0.55);
+  --shadow-lg: 0 16px 48px rgba(24, 22, 21, 0.28);
+  /* Aliases (T39 names). */
+  --line-soft: var(--line);
+  --action-bg: var(--surface-2);
+  --bar-bg: var(--surface);
+  --shadow: none;
+  --disabled-bg: var(--surface-2);
+  --disabled-ink: var(--muted);
 }
 
 * {
@@ -57,8 +68,11 @@ body {
   padding: 0;
   background: var(--bg);
   color: var(--ink);
-  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-    sans-serif;
+  /* T70: Archivo (400 / 600 / 800), one family for headings and body,
+   * self-hosted by next/font from layout.tsx; the system stack is the
+   * fallback while it loads. */
+  font: 16px/1.4 var(--font-archivo), -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -200,7 +214,7 @@ button {
 .day-banner {
   margin: 12px 0 0;
   padding: 10px 16px;
-  border-radius: 12px;
+  border-radius: 0;
   font-size: 16px;
   font-weight: 600;
   background: var(--warn-bg);
@@ -243,7 +257,7 @@ button {
   width: 64px;
   min-height: 64px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: transparent;
   color: var(--ink);
   display: inline-flex;
@@ -274,7 +288,7 @@ button {
   aspect-ratio: 1;
   min-height: 44px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 0;
   background: transparent;
   color: var(--ink);
   font-size: 18px;
@@ -331,7 +345,7 @@ button {
   min-height: 64px;
   padding: 0 20px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 16px;
@@ -363,7 +377,7 @@ button {
   min-width: 96px;
   padding: 8px 14px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   text-align: left;
 }
@@ -421,7 +435,7 @@ button {
   min-width: 240px;
   padding: 8px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
   display: grid;
@@ -453,7 +467,7 @@ button {
   min-height: 64px;
   padding: 0 24px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 16px;
@@ -477,7 +491,7 @@ button {
   padding: 0 64px 0 16px; /* room for the clear button */
   font-size: 20px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
 }
@@ -494,7 +508,7 @@ button {
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 12px;
+  border-radius: 0;
   background: none;
   color: var(--muted);
 }
@@ -519,7 +533,7 @@ button {
   min-height: 72px;
   padding: 12px 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   text-align: left;
 }
@@ -593,7 +607,7 @@ button {
   min-height: 72px;
   padding: 8px 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
 }
 
@@ -629,7 +643,7 @@ button {
 .mini-signed {
   flex: 0 0 auto;
   padding: 1px 10px;
-  border-radius: 999px;
+  border-radius: 0;
   font-size: 16px;
   font-weight: 600;
   white-space: nowrap;
@@ -737,7 +751,7 @@ button {
   width: 44px;
   height: 44px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   text-decoration: none;
@@ -885,7 +899,7 @@ button {
   max-width: min(520px, 92vw);
   padding: 8px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
   display: grid;
@@ -921,7 +935,7 @@ button {
   min-height: 64px;
   padding: 20px 12px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -998,7 +1012,7 @@ button.pass-opt:disabled {
 .pass-note {
   margin: 0;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--warn-bg);
   color: var(--warn);
   font-size: 16px;
@@ -1011,7 +1025,7 @@ button.pass-opt:disabled {
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--stop-bg);
   color: var(--stop);
   font-size: 16px;
@@ -1031,7 +1045,7 @@ button.pass-opt:disabled {
   display: block;
   margin: 0 0 12px;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--warn-bg);
   color: var(--warn);
   font-size: 16px;
@@ -1113,7 +1127,7 @@ button.pass-opt:disabled {
  * one colour means one thing everywhere. Tokens only, both palettes. */
 .detail-last {
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--warn-bg);
   color: var(--warn);
   font-weight: 700;
@@ -1127,7 +1141,7 @@ button.pass-opt:disabled {
   justify-content: center;
   min-width: 26px;
   min-height: 26px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--accent);
   color: var(--accent-ink);
   font-size: 16px;
@@ -1146,7 +1160,7 @@ button.pass-opt:disabled {
   min-width: 104px;
   min-height: 32px;
   padding: 6px 12px;
-  border-radius: 999px;
+  border-radius: 0;
   font-size: 16px;
   font-weight: 600;
   text-align: center;
@@ -1176,7 +1190,7 @@ button.pass-opt:disabled {
   vertical-align: -2px;
   border: 2px solid var(--muted);
   border-top-color: transparent;
-  border-radius: 50%;
+  border-radius: 0;
   animation: spin 700ms linear infinite;
 }
 
@@ -1233,7 +1247,7 @@ button.pass-opt:disabled {
 .note {
   margin: 16px 0;
   padding: 12px 16px;
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--stop-bg);
   color: var(--stop);
 }
@@ -1242,30 +1256,42 @@ button.pass-opt:disabled {
   color: var(--muted);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* 1b: paper goes to ink, teal lifts. Stop and the pressed ground
-     * are not drawn on the canvas, so they keep the values they had. */
-    --bg: #131311;
-    --surface: #1c1b18;
-    --line: #2c2b26;
-    --line-soft: #33322b;
-    --ink: #f2efe7;
-    --muted: #9b9284;
-    --ok: #68c79b;
-    --ok-bg: #0f2a20;
-    --warn: #e0b264;
-    --warn-bg: #2e2410;
-    --stop: #f08a8a;
-    --stop-bg: #341616;
-    --accent: #5fd2a4;
-    --accent-ink: #0b1a14;
-    --action-bg: #464036;
-    --bar-bg: #191816;
-    --shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
-    --disabled-bg: #2c2b26;
-    --disabled-ink: #9b9284;
-  }
+/* The dark palette. The html element carries data-theme="dark" when the
+ * iPad's setting is dark or a teacher chose dark with the sun toggle
+ * (src/app/theme.ts sets it before first paint from layout.tsx), so this
+ * is the ONE dark block and there is no prefers-color-scheme query in the
+ * CSS. Every token above appears here with the same name. The dark accent
+ * is lightened so it clears 4.5:1 on --surface; never reuse the light
+ * accent on the dark ground. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121313;
+  --surface: #1c1d1d;
+  --surface-2: #252626;
+  --line: #3a3b3b;
+  --rule: #f3f2f2;
+  --ink: #f3f2f2;
+  --muted: #9b9797;
+  --accent: #3fa89f;
+  --accent-press: #59bdb4;
+  --accent-ink: #07211f;
+  --accent-bg: #16302e;
+  --ok: #6cc79b;
+  --ok-bg: #12291f;
+  --warn: #e2b768;
+  --warn-bg: #2c2110;
+  --stop: #e88b8b;
+  --stop-bg: #2e1616;
+  --gold: #e8cf94;
+  --gold-bg: #2b2410;
+  --scrim: rgba(24, 22, 21, 0.55);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --line-soft: var(--line);
+  --action-bg: var(--surface-2);
+  --bar-bg: var(--surface);
+  --shadow: none;
+  --disabled-bg: var(--surface-2);
+  --disabled-ink: var(--muted);
 }
 
 /* A confirming action that is not destructive: adding someone to the
@@ -1279,7 +1305,7 @@ button.pass-opt:disabled {
 .banner {
   margin: 0 0 12px;
   padding: 10px 16px;
-  border-radius: 12px;
+  border-radius: 0;
   font-weight: 600;
   background: var(--ok-bg);
   color: var(--ok);
@@ -1300,7 +1326,7 @@ button.pass-opt:disabled {
   padding: 10px 16px;
   border: 1px solid var(--line);
   border-left: 6px solid var(--accent);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 17px;
@@ -1320,7 +1346,7 @@ button.pass-opt:disabled {
   min-height: 44px;
   padding: 8px 16px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--muted);
   font-size: 14px;
@@ -1344,7 +1370,7 @@ body.sale-open .dev-handle {
 .dev-badge {
   margin-left: 8px;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--stop-bg);
   color: var(--stop);
 }
@@ -1380,7 +1406,7 @@ body.sale-open .dev-handle {
   margin-left: auto;
   padding: 4px 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   font-size: 13px;
@@ -1451,7 +1477,7 @@ body.sale-open .dev-handle {
   margin-left: auto;
   padding: 3px 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   font-family: inherit;
@@ -1469,7 +1495,7 @@ body.sale-open .dev-handle {
 .dev-detail pre {
   margin: 0;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--bg);
   overflow-x: auto;
   white-space: pre-wrap;
@@ -1481,7 +1507,7 @@ body.sale-open .dev-handle {
 .dev-tab {
   padding: 4px 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   font-size: 13px;
@@ -1512,7 +1538,7 @@ body.sale-open .dev-handle {
   width: 90px;
   padding: 6px 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--bg);
   color: var(--ink);
   font: inherit;
@@ -1533,7 +1559,7 @@ body.sale-open .dev-handle {
   min-width: 0;
   padding: 6px 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--bg);
   color: var(--ink);
   font: inherit;
@@ -1542,7 +1568,7 @@ body.sale-open .dev-handle {
 .dev-setting button {
   padding: 4px 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -1580,7 +1606,7 @@ body.sale-open .dev-handle {
   width: 44px;
   height: 44px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
 }
@@ -1606,7 +1632,7 @@ body.sale-open .dev-handle {
   width: min(460px, 100%);
   padding: 24px;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 0;
   background: var(--surface);
   box-shadow: 0 12px 48px rgb(0 0 0 / 0.4);
 }
@@ -1668,7 +1694,7 @@ body.sale-open .dev-handle {
   min-height: 64px;
   padding: 0 20px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 16px;
@@ -1734,7 +1760,7 @@ body.sale-open .dev-handle {
   display: inline-flex;
   flex: 0 0 auto;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   overflow: hidden;
 }
@@ -1884,7 +1910,7 @@ body.sale-open .dev-handle {
 .modal-actions button {
   flex: 1;
   min-height: 64px;
-  border-radius: 12px;
+  border-radius: 0;
   font-size: 17px;
   font-weight: 600;
 }
@@ -1931,7 +1957,7 @@ body.sale-open .dev-handle {
   margin: 0 0 16px;
   padding: 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--bg);
   color: var(--ink);
   font: inherit;
@@ -1961,7 +1987,7 @@ body.sale-open .dev-handle {
   margin: 0 0 12px;
   padding: 14px 16px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--bg);
   color: var(--ink);
   max-height: min(46vh, 440px);
@@ -2006,7 +2032,7 @@ body.sale-open .dev-handle {
   gap: 12px;
   padding: 24px;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 0;
   background: var(--surface);
 }
 
@@ -2032,7 +2058,7 @@ body.sale-open .dev-handle {
   gap: 12px;
   min-height: 44px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--bg);
 }
 
@@ -2043,7 +2069,7 @@ body.sale-open .dev-handle {
 .lock-dot {
   width: 12px;
   height: 12px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--ink);
 }
 
@@ -2084,7 +2110,7 @@ body.sale-open .dev-handle {
   justify-content: center;
   min-height: 64px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   font-size: 22px;
   font-weight: 600;
@@ -2106,7 +2132,7 @@ body.sale-open .dev-handle {
 .lock-unlock {
   min-height: 64px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--accent);
   color: var(--accent-ink);
   font-size: 18px;
@@ -2259,7 +2285,7 @@ body.sale-open .dev-handle {
   min-height: 260px;
   overflow-y: auto;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 0;
   background: var(--surface);
   font-size: 16px;
 }
@@ -2337,7 +2363,7 @@ body.sale-open .dev-handle {
 }
 
 .t-total > span:first-child {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
   font-size: 17px;
   font-weight: 700;
@@ -2438,10 +2464,10 @@ body.sale-open .dev-handle {
   min-height: 64px;
   margin: 12px 0 0;
   border: 1px solid var(--stop);
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--stop);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
   font-size: 17px;
   font-weight: 700;
@@ -2455,7 +2481,7 @@ body.sale-open .dev-handle {
 /* Dry-run suppression where the totals would render. Amber, never a
  * number: no total exists. Reuses the pass-note pairing via its class. */
 .pass-note.t-suppressed {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
 }
 
@@ -2465,12 +2491,12 @@ body.sale-open .dev-handle {
 .sale-stop {
   margin: 8px 0;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--stop-bg);
   color: var(--stop);
   font-size: 16px;
   font-weight: 600;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
 }
 
@@ -2549,7 +2575,7 @@ body.sale-open .dev-handle {
   margin-bottom: 2px;
   padding: 8px 10px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 0;
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
@@ -2572,7 +2598,7 @@ body.sale-open .dev-handle {
 }
 
 .t-row .t-name {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
   font-weight: 500;
 }
@@ -2610,7 +2636,7 @@ body.sale-open .dev-handle {
   width: 64px;
   height: 64px;
   border: 1px solid var(--line-soft);
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
 }
@@ -2647,7 +2673,7 @@ body.sale-open .dev-handle {
   height: 64px;
   padding: 0;
   border: 1px solid var(--stop);
-  border-radius: 10px;
+  border-radius: 0;
   background: transparent;
   color: var(--stop);
 }
@@ -2677,10 +2703,10 @@ body.sale-open .dev-handle {
   margin: 0 0 4px;
   padding: 6px 8px 6px 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
   font-size: 17px;
   font-weight: 600;
@@ -2752,7 +2778,7 @@ button.sale-for:disabled {
 .bal-chip {
   flex: 0 0 auto;
   padding: 5px 11px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--ok-bg);
   color: var(--ok);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -2798,7 +2824,7 @@ button.sale-for:disabled {
   min-height: 60px;
   padding: 0 14px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 16px;
@@ -2857,7 +2883,7 @@ button.sale-for:disabled {
   min-height: 96px;
   padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   text-align: left;
@@ -2903,7 +2929,7 @@ button.sale-for:disabled {
 .shelf-count {
   flex: 0 0 auto;
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--accent);
   color: var(--accent-ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -2948,7 +2974,7 @@ button.sale-for:disabled {
   justify-content: center;
   padding: 0;
   border: 0;
-  border-radius: 10px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   opacity: 0.55;
@@ -3014,7 +3040,7 @@ button.sale-for:disabled {
   height: 64px;
   padding: 0 20px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 16px;
@@ -3042,7 +3068,7 @@ button.sale-for:disabled {
   height: 68px;
   padding: 0 30px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 0;
   background: var(--accent);
   color: var(--accent-ink);
   font-size: 20px;
@@ -3263,7 +3289,7 @@ button.sale-for:disabled {
   min-height: 0;
   padding: 18px;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 0;
   background: var(--surface);
 }
 
@@ -3289,7 +3315,7 @@ button.sale-for:disabled {
   min-width: 0;
   padding: 14px 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--bg);
   color: var(--ink);
 }
@@ -3363,7 +3389,7 @@ button.sale-for:disabled {
   min-height: 82px;
   padding: 14px 16px;
   border: 1.5px solid var(--accent);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   text-align: left;
@@ -3401,7 +3427,7 @@ button.sale-for:disabled {
   top: 10px;
   right: 12px;
   padding: 2px 9px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--ok-bg);
   color: var(--ok);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -3427,7 +3453,7 @@ button.sale-for:disabled {
   gap: 10px;
   padding: 8px 10px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--bg);
 }
 
@@ -3456,7 +3482,7 @@ button.sale-for:disabled {
   min-width: 6.5em;
   padding: 0 14px;
   border: 1px solid var(--line-soft);
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -3482,7 +3508,7 @@ button.sale-for:disabled {
   width: 64px;
   min-height: 64px;
   border: 1px solid var(--line-soft);
-  border-radius: 10px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   font-size: 22px;
@@ -3549,7 +3575,7 @@ button.sale-for:disabled {
   gap: 10px;
   width: min(420px, 100%);
   padding: 20px;
-  border-radius: 20px;
+  border-radius: 0;
 }
 
 .modal-amount .modal-title {
@@ -3580,7 +3606,7 @@ button.sale-for:disabled {
   justify-content: space-between;
   align-items: baseline;
   padding: 10px 14px;
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--bar-bg);
   font-size: 16px;
 }
@@ -3604,7 +3630,7 @@ button.sale-for:disabled {
   min-height: 64px;
   padding: 0 12px;
   border: 1px solid var(--line-soft);
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--bg);
   color: var(--ink);
   font-size: 16px;
@@ -3629,7 +3655,7 @@ button.sale-for:disabled {
 .pad-key {
   min-height: 66px;
   border: 1px solid var(--line-soft);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--bg);
   color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -3660,7 +3686,7 @@ button.sale-for:disabled {
 }
 
 .pad-change.muted-note {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
   font-size: 16px;
   font-weight: 400;
@@ -3699,7 +3725,7 @@ button.sale-for:disabled {
   min-height: 64px;
   padding: 0 18px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 16px;
@@ -3742,7 +3768,7 @@ button.sale-for:disabled {
   min-height: 64px;
   padding: 0 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--bg);
   color: var(--ink);
   font-size: 18px;
@@ -3837,7 +3863,7 @@ textarea.reason-note-field {
   min-height: 64px;
   padding: 0 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--bg);
   color: var(--ink);
   font-size: 18px;
@@ -3890,7 +3916,7 @@ textarea.reason-note-field {
   min-height: 64px;
   padding: 0 20px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   font-size: 16px;
@@ -3947,7 +3973,7 @@ textarea.reason-note-field {
   justify-content: center;
   width: 88px;
   height: 88px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--ok-bg);
   color: var(--ok);
   font-size: 40px;
@@ -3994,7 +4020,7 @@ textarea.reason-note-field {
   margin-top: 6px;
   padding: 0 26px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--accent);
   color: var(--accent-ink);
   font-size: 17px;
@@ -4091,7 +4117,7 @@ textarea.reason-note-field {
   min-height: 64px;
   margin-top: 12px;
   border: 1px dashed var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   font-size: 16px;
@@ -4178,7 +4204,7 @@ textarea.reason-note-field {
   padding: 12px;
   overflow-y: auto;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--bg);
   color: var(--muted);
   font-size: 16px;
@@ -4208,10 +4234,10 @@ textarea.reason-note-field {
 .profile-card {
   padding: 12px 16px 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
   font-size: 17px;
   line-height: 1.3;
@@ -4298,7 +4324,7 @@ textarea.reason-note-field {
  * keeps the warn pair the roster's waiver chip uses. */
 .profile-unsigned {
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: 0;
   background: var(--warn-bg);
   color: var(--warn);
   font-weight: 600;
@@ -4441,7 +4467,7 @@ textarea.reason-note-field {
   height: 64px;
   padding: 0 20px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 16px;
@@ -4523,7 +4549,7 @@ textarea.reason-note-field {
   min-height: 64px;
   padding: 0 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   font-size: 17px;
   font-weight: 600;
@@ -4562,7 +4588,7 @@ textarea.reason-note-field {
   margin-top: 10px;
   padding: 0 18px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 17px;
@@ -4705,7 +4731,7 @@ textarea.reason-note-field {
 .counters {
   gap: 0;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   overflow: hidden;
 }
@@ -4754,7 +4780,7 @@ textarea.reason-note-field {
   height: 44px;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
 }
 
@@ -4831,7 +4857,7 @@ textarea.reason-note-field {
   height: 44px;
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
 }
@@ -5067,7 +5093,7 @@ textarea.reason-note-field {
 
 .guest-line {
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 0;
   font-size: 16px;
   font-weight: 600;
 }
