@@ -8844,3 +8844,115 @@ T67 and T69 pass in both palettes. Not exercised: a real iPad's Safari
 and the live API. Two pre-existing things the reviewer noted and left:
 the row pass picker's position estimate on lower rows, and the T21
 lock shake.
+
+## T71: one chip width, the badge column, live opt-ins, a teacher select, the search hit in bold
+
+**DONE** (2026-09-04). Five asks from Pete's first look at T70 on the
+counter, all presentational or one existing write route, none of them
+touching a safety rail:
+
+1. "The check in and checked in buttons are different widths. All
+   buttons/pills in that column need to be the same standard widths."
+2. "The M / i icons should be lined up in the same column rather than
+   just to the right of the names."
+3. "The comp this sale dialog should make the note box greyed out until
+   the category is chosen. It also shouldn't say '(optional)'. Also the
+   teacher selection should be via a dropdown rather than a permanently
+   showing list."
+4. "When searching for a client, if I type part of their email address
+   in, the match should be shown like it is in mindbody" (with a
+   screenshot of Mindbody's own search bolding "held8" inside
+   stephanie.held8@gmail.com).
+5. "When I see a profile, the Emails/Text field should be checkboxes
+   that I can change right there ... make one main field called
+   Opt-ins. Then check marks for the phone and email options."
+
+### What changed
+
+- **Chip column.** `--roster-cols` is now name | badges 78px | payment |
+  balance 104px | chip 156px | actions 188px, and every chip in the
+  column is 100% of its cell (`.rrow > .cell-chip > .chip`), so
+  "check in", "checked in", "unpaid", "failed", "no waiver" and the
+  busy "checking in" (the widest, 152px of content) are one box. 148px
+  under the 860px query, where the chip padding is already 10px.
+- **Badge column.** The M button and the info icon left `.name-line`
+  for a `.cell-icons` grid cell between the name and the payment: 32px
+  M slot (an empty `.m-slot` on a non-member row) + 2px + 44px info, so
+  both markers line up down the list. The roster header carries an
+  empty span for it. The name/payment fr split moved from 2.1:1.4 to
+  1.6:1.9 so "Monthly Committed Membership" still sits on one line at
+  1194 with the guest icon beside it; measured 251px name, 298px
+  payment. This is T15's fixed icon column back, which T70b had folded
+  into the name line after the mockup.
+- **Comp dialog.** The note is `disabled` until a reason chip is chosen
+  (page ground, muted text, placeholder "Choose a reason first"); after
+  a chip it reads "Add a note", "What was traded?" or "What happened?"
+  per T67's rule, never "(optional)". Focus moves into the note when a
+  kind that needs it (trade, other) is chosen. The teacher picker is a
+  native `<select>` (`.reason-select`, the reason-input box with the
+  native arrow hidden and an inline chevron in the ink token), the class
+  teacher preselected as before, "Choose the teacher" as the empty
+  option so Next stays disabled until a staff id is picked; loading and
+  failure states are the empty option's text plus the T45 line. The
+  T45 scrolling list, its scroll-into-view effect and `splitName` are
+  gone. The dialog keeps T68's fixed 680px box, the note filling the
+  body with or without the select.
+- **Opt-ins.** `ClientProfileCard` replaces the T53 "Emails"/"Texts"
+  lines with one "Opt-ins" row holding an `OptIns` table: a line per
+  kind (Receipts and account, Schedule, News and offers) with an Email
+  box and a Text box, the boxes in 44px label cells (the icon-square
+  size; the profile grid is tighter than the gate's 64px options) with
+  the gate's 26px checkbox inside. Email boxes are live: page.tsx
+  `saveOptIn` posts ONE flag per tap to the T53 route
+  `/api/client-consent` (the teacher's token with the loud fallback,
+  `mindbody()` with the client id so dry run and the write guard
+  apply). The box flips only when Mindbody has answered; a suppressed
+  write leaves it as the record says and names the reason under the
+  table ("Dry run: not saved..." / "Write guard: ..."); a fallback to
+  the studio account shows the amber line; a refusal shows "Could not
+  save: ..."; a dead teacher token drops the teacher (the gate returns)
+  and leaves the box alone. A profile closed or reopened mid-write
+  drops the answer (the T41 generation guard). Text boxes are disabled
+  on purpose: the spec says the three text flags "cannot be updated by
+  developers. If included in a request, it is ignored"
+  (client.yml:5290-5309), so the card shows what Mindbody holds and the
+  line under the table says "Texts are set in Mindbody." Schedule
+  emails are the one flag the T53 gate never asked about; the route
+  already accepted `sendScheduleEmails`.
+- **Search hit.** `Hit` in page.tsx bolds every occurrence of each
+  query word (two characters or more, case-insensitive, plain string
+  search, overlapping spans merged) in a result's name and contact
+  line, as a `<mark class="hit">` with the browser's yellow overridden:
+  800 in the name, 700 in the ink inside the muted contact line.
+  `foundFor` is the query the rows answer, set with the first page, so
+  text typed after a search stays out of the rows until it is searched.
+  Both the walk-in results and the attach modal's search rows carry
+  it; attach mode's in-class rows (roster rows, no contact line) do
+  not. Mindbody's `searchText` already matches on email
+  (client.yml:1403, "Can include FirstName, LastName, and Email"); the
+  gap was the row not saying why it matched. Whether the Public API
+  matches a mid-address fragment like "held8" the way the staff web
+  app's search does is Pete's to try live; the dev drawer shows the
+  call either way.
+
+### Verified
+
+Harness at `scratchpad/t71/` (the T70 review mock on 4573 with its
+search extended to email, `next start` on 3073, Playwright at
+1194x834 and 834x1194, both palettes): every roster chip 156px wide at
+x=814 in landscape (148px at 478 in portrait), busy "checking in"
+152px of content in the 152px box, badge column at x=287 on every row
+with the M at 365/32 and the info icon at 321/44; "bo@" bolds `bo@` in
+the contact line and nothing in the name, "amy wang" bolds both words
+in the name and `amy` in the email; the profile's Schedule email tap
+sends exactly `{Client: {Id, SendScheduleEmails: true},
+CrossRegionalUpdate: false}` under the teacher's token and the box
+flips after the answer; the comp note is disabled with the "Choose a
+reason first" placeholder, the select preselects the class teacher at
+64px/18px, Trade focuses the note, the dialog stays 420x680. The T67
+comp-rule harness and T69 pass against the build. Audit: 0 text under
+16px, 0 buttons under 44px, no enabled text under 4.5:1 in either
+palette. Portrait note: the badge column costs 78px there, so the
+payment column sits at its 120px floor and "Monthly Committed
+Membership" wraps to three lines (T54's wrap, never an ellipsis);
+landscape is the target and unchanged in that respect.
