@@ -2167,7 +2167,10 @@ function PaymentPanel(props: {
       </span>
     ) : (
       <button
-        className={primaryOn ? "sale-bar-pay" : "sale-bar-pay off"}
+        className={
+          (primaryOn ? "sale-bar-pay" : "sale-bar-pay off") +
+          (charging ? " busy" : "")
+        }
         aria-disabled={!primaryOn}
         aria-label={primaryOn ? chargeLabel : `${primaryLabel}: ${primaryWhy ?? ""}`}
         title={primaryOn ? chargeLabel : (primaryWhy ?? undefined)}
