@@ -2176,64 +2176,116 @@ body.sale-open .dev-handle {
   background: var(--bg);
 }
 
-/* T39.1: 1400 wide (the canvas frame is a 1366 iPad edge to edge), 16/20
- * padding, so three columns fit at the studio's real numbers. The
- * roster's .shell matches it at 1400 since T66. */
+/* T39.1: 1400 wide, the roster's .shell width since T66. T70: no padding
+ * (Buy.dc.html runs edge to edge; structure is rules, not gaps). */
 .sale-shell {
   width: 100%;
   max-width: 1400px;
   margin: 0 auto;
-  /* T39.8: 12 below, not 16; the bar's own hairline and shadow already
-   * separate it from the columns, and the 768 budget (TICKETS T39.8-9)
-   * needed every band that repeats a separator. */
-  padding: 16px 20px 12px;
+  padding: 0;
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
 }
 
-/* The mode banner runs edge to edge inside the overlay, as 1a draws it:
- * a line across the top, not a card. It is the same ModeBanner as the
- * roster's, 16px, in every state; only its shape changes here. */
+/* The mode banner runs edge to edge inside the overlay, a line across
+ * the top, not a card. It is the same ModeBanner as the roster's, 16px,
+ * in every state; only its shape changes here. */
 .sale-shell .banner {
-  margin: -16px -20px 0;
-  /* 32px tall: 16px text on 5px; the canvas's is 30 at 13px. */
+  margin: 0;
+  /* 32px tall: 16px text on 5px. */
   padding: 5px 20px;
   border-radius: 0;
 }
 
-/* The header: one 76px row, Buy, the client card, Back at the far right,
- * a hairline under it that runs the overlay's width (the negative margin
- * takes it through the shell padding). */
+/* The header (T70, Buy.dc.html): 76px on the surface, a 2px rule under,
+ * a row of cells split by 1px lines, each a flex cell of its own: Buy,
+ * the client slot, then the sun and Back at the right edge. */
 .sale-top {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: 76px;
-  margin: 0 -20px 12px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--line);
+  align-items: stretch;
+  gap: 0;
+  height: 76px;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  border-bottom: 2px solid var(--rule);
+  background: var(--surface);
+}
+
+.sale-top > * {
+  border-left: 1px solid var(--line);
+}
+
+.sale-top > :first-child {
+  border-left: 0;
 }
 
 .sale-title {
   margin: 0;
   flex: 0 0 auto;
-  font-size: 23px;
-  font-weight: 700;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  font-size: 24px;
+  font-weight: 800;
   letter-spacing: -0.02em;
 }
 
 /* The client card lives in the header, beside the title (Pete, fourth
- * live test): identity, not a payment control, and the payment column
- * keeps the room. It takes the slack between the title and Back rather
- * than the full width it had atop the cart. */
+ * live test): identity, not a payment control. Its cell takes its own
+ * width; the sun cell's auto margin takes the slack. */
 .sale-top .sale-for {
   width: auto;
   min-width: 0;
   max-width: 520px;
   margin: 0;
-  margin-right: auto;
+}
+
+/* The sun cell: 64 wide, the muted icon, the slack of the row before
+ * it. Back: the arrow and the word, 17px/800, in its own cell. */
+.sale-sun {
+  flex: 0 0 64px;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.sale-sun:active {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+.sale-back {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 22px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.sale-back:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.sale-back:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* T39.2: rail, grid, cart, the layout of record (1a). The rail is 154
@@ -2243,8 +2295,10 @@ body.sale-open .dev-handle {
  * them without touching the markup. */
 .sale-panes {
   display: grid;
-  grid-template-columns: 154px minmax(0, 1fr) 388px;
-  gap: 14px;
+  /* T70 (Buy.dc.html): rail 190, ticket 320, the grid between; the
+   * rules on the rail and the ticket draw the seams, so no gap. */
+  grid-template-columns: 190px minmax(0, 1fr) 320px;
+  gap: 0;
   /* T39.4: the panes are the rest of the viewport; the columns stretch
    * to it and each bounds its own overflow (min-height: 0 is what lets
    * a grid item be shorter than its content). */
@@ -2284,38 +2338,39 @@ body.sale-open .dev-handle {
   flex: 1 1 auto;
   min-height: 260px;
   overflow-y: auto;
-  border: 1px solid var(--line);
+  /* T70: the pane draws the seam (.sale-left's 2px rule); the ticket is
+   * the surface itself, borderless. One family, tabular figures; the
+   * mono of T39 is gone with it. */
+  border: 0;
   border-radius: 0;
   background: var(--surface);
   font-size: 16px;
+  font-variant-numeric: tabular-nums;
 }
 
-/* The head line: TICKET, uppercase and letter-spaced in muted, the item
- * count beside it in mono (14px, the recorded metadata exception), a
- * dashed rule under both. */
+/* The head line (Buy.dc.html): 52px, TICKET uppercase 16px/600 in ink,
+ * the count muted beside it, a 2px rule under. */
 .t-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   flex: none;
-  /* T39.8: 10/16/8 (the canvas's 14/16/10); the head is a label, and
-   * six of its pixels were a seventh cart row's at 768. */
-  padding: 10px 16px 8px;
-  border-bottom: 1px dashed var(--line-soft);
+  height: 52px;
+  padding: 0 18px;
+  border-bottom: 2px solid var(--rule);
 }
 
 .t-head-name {
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--ink);
 }
 
 .t-head-count {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 400;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -2323,20 +2378,17 @@ body.sale-open .dev-handle {
 .t-rule {
   border: 0;
   border-top: 1px solid var(--line);
-  margin: 6px 0 2px;
+  margin: 4px 0 0;
 }
 
-/* A totals row: label and figure, both mono, muted. The canvas sets
- * 15px at 1.9; ours is 16px at 1.5 (T39.8), which is 24px a row where
- * 1.9 was 30, and the twelve pixels are the difference between a
- * seven-line cart fitting at 820 and not. */
+/* A totals row: label and figure, muted, 6px apart (Buy.dc.html). */
 .t-line {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 16px;
   line-height: 1.5;
+  padding: 3px 0;
 }
 
 .t-line .amt {
@@ -2353,40 +2405,38 @@ body.sale-open .dev-handle {
   color: var(--muted);
 }
 
-/* Total: the label in the body face at 17px/700, the figure at 26px
- * mono, on a hairline. The estimate's row keeps the muted treatment
+/* Total: the label at 18px/800 beside the 26px/800 figure, over a
+ * hairline (Buy.dc.html). The estimate's row keeps the muted treatment
  * through .t-muted (T38: never a number dressed as the total). */
 .t-total {
   align-items: baseline;
-  padding-top: 6px;
+  padding-top: 10px;
   line-height: 1.2;
 }
 
 .t-total > span:first-child {
-  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-    sans-serif;
-  font-size: 17px;
-  font-weight: 700;
+  font-size: 18px;
+  font-weight: 800;
 }
 
 .t-total .amt {
   font-size: 26px;
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: -0.02em;
 }
 
 .t-empty {
   margin: 0;
-  padding: 16px 0;
-  text-align: center;
+  padding: 28px 18px;
+  text-align: left;
   color: var(--muted);
 }
 
-/* The totals block: flex: none under the lines, a dashed rule above. */
+/* The totals block: flex: none under the lines, a 2px rule above. */
 .t-totals {
   flex: none;
-  padding: 10px 16px;
-  border-top: 1px dashed var(--line-soft);
+  padding: 14px 18px;
+  border-top: 2px solid var(--rule);
 }
 
 /* Quiet guidance lines: the needs-client estimate note on the ticket and
@@ -2429,7 +2479,7 @@ body.sale-open .dev-handle {
   color: var(--ink);
   font-size: 16px;
   font-weight: 400;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 .audit th,
@@ -2467,10 +2517,10 @@ body.sale-open .dev-handle {
   border-radius: 0;
   background: var(--surface);
   color: var(--stop);
-  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-    sans-serif;
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 800;
+  text-align: left;
+  padding: 0 16px;
 }
 
 .audit-recheck:disabled {
@@ -2481,8 +2531,7 @@ body.sale-open .dev-handle {
 /* Dry-run suppression where the totals would render. Amber, never a
  * number: no total exists. Reuses the pass-note pairing via its class. */
 .pass-note.t-suppressed {
-  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-    sans-serif;
+  font-variant-numeric: normal;
 }
 
 /* The loud pricing failure: totals disagreement or a failed call. Stop
@@ -2496,8 +2545,6 @@ body.sale-open .dev-handle {
   color: var(--stop);
   font-size: 16px;
   font-weight: 600;
-  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-    sans-serif;
 }
 
 /* The cart lines scroll internally, so the totals and the charge button
@@ -2523,7 +2570,7 @@ body.sale-open .dev-handle {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 6px;
+  padding: 0;
 }
 
 /* The fade: the ticket's own surface over the last visible row, so the
@@ -2570,61 +2617,59 @@ body.sale-open .dev-handle {
  * an immediate visible answer and no consequence, and at 64 a seven-line
  * cart is 460px of rows and never fits a 768px screen, which is what
  * this ticket exists to do. Every control it reveals is 64. */
+/* T70 (Buy.dc.html): a 56px line on a 1px hairline, name left and
+ * amount right; the selected row takes the accent tint. */
 .t-row {
-  min-height: 44px;
-  margin-bottom: 2px;
-  padding: 8px 10px;
-  border: 1px solid transparent;
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  margin: 0;
+  padding: 0 18px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
   border-radius: 0;
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
 }
 
-.t-row:last-child {
-  margin-bottom: 0;
-}
-
-/* The selected row: an accent border on the bar's ground, and its
- * controls under the line. */
+/* The selected row: the accent tint, and its controls under the line. */
 .t-row.sel {
-  border-color: var(--accent);
-  background: var(--bar-bg);
+  background: var(--accent-bg);
+  padding-bottom: 10px;
 }
 
 .t-row .t-line {
-  align-items: baseline;
+  align-items: center;
   line-height: 1.3;
+  padding: 0;
 }
 
 .t-row .t-name {
-  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-    sans-serif;
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .t-row .amt {
-  font-weight: 500;
+  font-weight: 600;
 }
 
-/* `2 @ 1.81`: 14px mono muted, the recorded metadata exception, and
- * only above quantity one. */
+/* `2 @ 1.81`: muted, only above quantity one. 16px since T70. */
 .t-sub-line {
   margin-top: 2px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.3;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
-/* The selected row's controls: minus / count / plus at 64px, the trash
- * pushed right, outlined in the stop colour. */
+/* The selected row's controls: minus / count / plus at 64px, square on
+ * the quiet fill, the trash pushed right in the stop colour. */
 .t-ctl {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 6px;
+  gap: 2px;
+  margin-top: 8px;
   cursor: default;
 }
 
@@ -2635,14 +2680,14 @@ body.sale-open .dev-handle {
   justify-content: center;
   width: 64px;
   height: 64px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   border-radius: 0;
   background: var(--surface);
   color: var(--ink);
 }
 
 .t-ctl-btn:active:not(:disabled) {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 .t-ctl-btn:disabled,
@@ -2654,9 +2699,8 @@ body.sale-open .dev-handle {
 .t-ctl-qty {
   min-width: 2.4em;
   text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 20px;
-  font-weight: 600;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2672,9 +2716,9 @@ body.sale-open .dev-handle {
   width: 64px;
   height: 64px;
   padding: 0;
-  border: 1px solid var(--stop);
+  border: 1px solid var(--line);
   border-radius: 0;
-  background: transparent;
+  background: var(--surface);
   color: var(--stop);
 }
 
@@ -2694,23 +2738,26 @@ body.sale-open .dev-handle {
  * 44px detach; unattached it is the same card carrying the plus, the
  * verb and its hint, still a real button (the hint's 16px holds the
  * floor; the label line-height is tightened so two lines sit in 60). */
+/* T70 (Buy.dc.html): a header cell. Unattached it is the "Attach a
+ * client" cell, the plus in the accent, the verb at 17px/800 and its
+ * hint under it in muted; attached it is the accent tint with SALE FOR
+ * over the name (below). */
 .sale-for {
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
-  min-height: 60px;
-  margin: 0 0 4px;
-  padding: 6px 8px 6px 16px;
-  border: 1px solid var(--line);
+  min-height: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0 20px;
+  border: 0;
   border-radius: 0;
-  background: var(--surface);
+  background: transparent;
   color: var(--ink);
-  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-    sans-serif;
   font-size: 17px;
-  font-weight: 600;
-  line-height: 1.15;
+  font-weight: 800;
+  line-height: 1.2;
   text-align: left;
 }
 
@@ -2718,32 +2765,37 @@ body.sale-open .dev-handle {
   flex: 0 0 auto;
 }
 
+button.sale-for > svg {
+  color: var(--accent);
+}
+
 .sale-for-hint {
   display: block;
   font-size: 16px;
   font-weight: 400;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 button.sale-for:active {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
-/* SALE FOR over the name. 14px is the recorded metadata exception for
- * this one label (the canvas draws it at 12); the name is the 17px line. */
+/* SALE FOR over the name: the kicker in the accent at 16px/600, the
+ * name at 18px/800. */
 .sale-for-who {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  line-height: 1.15;
+  line-height: 1.2;
 }
 
 .sale-for-label {
-  font-size: 14px;
-  font-weight: 400;
-  letter-spacing: 0.04em;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--accent);
 }
 
 /* Mid-charge the attach control is refused entirely (no client change
@@ -2756,32 +2808,39 @@ button.sale-for:disabled {
 .sale-for.attached {
   display: flex;
   align-items: center;
-  gap: 12px;
-  border-style: solid;
+  gap: 16px;
+  padding: 0 18px;
+  background: var(--accent-bg);
   color: var(--ink);
 }
 
 .sale-for-name {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 800;
 }
 
+/* The detach x: 44px (the icon idiom; the mockup's 36 is under the
+ * floor), muted, the stop colour under a finger. */
 .sale-for-clear {
   color: var(--muted);
 }
 
-/* Account balance pill beside the attached name: credit in the ok pair
- * (1a's "$40.00 credit"), mono because it is money; owed money keeps
- * the stop pairing the roster's balance column uses. */
+.sale-for-clear:active {
+  color: var(--stop);
+  background: transparent;
+}
+
+/* Account balance pill beside the attached name: credit in the ok pair,
+ * tabular because it is money; owed money keeps the stop pairing the
+ * roster's balance column uses. */
 .bal-chip {
   flex: 0 0 auto;
   padding: 5px 11px;
   border-radius: 0;
   background: var(--ok-bg);
   color: var(--ok);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 16px;
   font-weight: 600;
   line-height: 1;
@@ -2794,64 +2853,49 @@ button.sale-for:disabled {
   font-weight: 600;
 }
 
-/* The middle pane: the shelf (the chips left it for the rail in T39.2). */
+/* The middle pane: the shelf, padded 18 (Buy.dc.html). */
 .sale-right {
   display: grid;
   gap: 16px;
+  padding: 18px;
 }
 
-/* T39.2: the rail. A 154px column of entries; under 1040 the media query
- * above turns the same element back into a wrapping row. T39.8: the
- * studio's rail is eight entries, and eight at 64 with 6px gaps is 554,
- * which is taller than the 539px pane at 1080x768 and scrolled the last
- * entry (Memberships) under the edge. Entries are now 60 tall on 4px
- * gaps, 508 for eight, and each one's hit area reaches 2px into the gap
- * on either side (the ::before below), so the tap target is the full 64
- * pitch while the visual is the canvas's 62 less two. */
+/* T70 (Buy.dc.html): the rail, a 190px column on the surface with a
+ * 2px rule at its right edge, 64px cells split by 1px lines. Under 1040
+ * the media query below turns the same element back into a row. */
 .sale-cats {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
+  border-right: 2px solid var(--rule);
+  background: var(--surface);
 }
 
-/* Rail entries: primary targets on this screen, 64px of hit area on a
- * 60px visual (see .sale-cats). Active is filled with the accent pairing
- * (same as the M chip), both halves tokens; "more" is muted, since it is
- * a door, not a shelf. */
+/* Rail entries: 64px cells, 17px/800, a line under each. Active is
+ * FILLED with the accent pairing (ui-refactor 2.4; no ring); "more" is
+ * muted, since it is a door, not a shelf. */
 .cat-chip {
   position: relative;
+  flex: 0 0 auto;
   width: 100%;
-  min-height: 60px;
-  padding: 0 14px;
-  border: 1px solid var(--line);
+  height: 64px;
+  padding: 0 18px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
   border-radius: 0;
   background: var(--surface);
   color: var(--ink);
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 17px;
+  font-weight: 800;
   line-height: 1.2;
   text-align: left;
 }
 
-/* The 2px of gap above and below belong to the entry's tap target. -3,
- * not -2: a button's positioned children are placed against its padding
- * box, inside the 1px border, so -2 reached one pixel past the edge and
- * left a pixel of gap that hit the rail (measured). */
-.cat-chip::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -3px;
-  bottom: -3px;
-}
-
 .cat-chip:active {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 .cat-chip.on {
-  border-color: var(--accent);
   background: var(--accent);
   color: var(--accent-ink);
 }
@@ -2860,28 +2904,26 @@ button.sale-for:disabled {
   color: var(--muted);
 }
 
-/* T39.3: 184px is the canvas's card minimum, and at 1366 the grid's 756px
- * is four of them exactly (the fold rules below narrow it to 166). */
+/* T70 (Buy.dc.html): three columns, 12px gaps. */
 .shelf-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
   /* T39.7: the grid is the pane's height (T39.4's bound); without this
    * a short shelf stretched its one row of cards to fill it. */
   align-content: start;
 }
 
-/* One sellable thing, 1a's card: the name at the top, a bottom row with
- * the price left and, when the item is in the cart, the count pill
- * right. 96px tall, so a two-line name still leaves the price its row;
- * ellipsis is not allowed on a price. */
+/* One sellable thing (Buy.dc.html): 104px on a 1px line, the name at
+ * the top left, the price bottom left and, when the item is in the
+ * cart, a 2px accent border and the count badge bottom right. */
 .shelf-item {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  gap: 10px;
-  min-height: 96px;
-  padding: 14px;
+  gap: 8px;
+  min-height: 104px;
+  padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: 0;
   background: var(--surface);
@@ -2890,52 +2932,58 @@ button.sale-for:disabled {
 }
 
 .shelf-item:active {
-  background: var(--action-bg);
+  border-color: var(--accent);
+}
+
+.shelf-item.in-cart {
+  padding: 13px 15px;
+  border: 2px solid var(--accent);
 }
 
 .shelf-name {
   min-width: 0;
   overflow-wrap: anywhere;
   font-size: 17px;
-  font-weight: 600;
-  line-height: 1.25;
-  letter-spacing: -0.01em;
+  font-weight: 800;
+  line-height: 1.2;
 }
 
-/* The bottom row: price bottom-left, count pill bottom-right. */
+/* The bottom row: price bottom-left, count badge bottom-right. */
 .shelf-foot {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
 .shelf-price {
   min-width: 0;
-  font-size: 16px;
+  font-size: 18px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
-/* Mono only for money: the figure, never the note beside it. */
 .shelf-amt {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-weight: 500;
+  font-weight: 400;
 }
 
 /* How many of this card the cart holds, from cart state (T39.3): the
- * accent pill, mono at 14px (the recorded exception for this count),
- * reading "x2". Absent when the item is not in the cart. */
+ * accent-filled badge, 28px tall, 16px/800, reading "x2". Absent when
+ * the item is not in the cart. */
 .shelf-count {
   flex: 0 0 auto;
-  padding: 3px 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 28px;
+  padding: 0 8px;
   border-radius: 0;
   background: var(--accent);
   color: var(--accent-ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.3;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2957,16 +3005,16 @@ button.sale-for:disabled {
  * gives way: the price row sits below the star's 44px and the count pill
  * keeps the card's own corner (T39.3). */
 .shelf-cell .shelf-name {
-  padding-right: 38px;
+  padding-right: 34px;
 }
 
-/* The star: quiet at rest, filled with the warn/gold pair when starred.
- * 44px square hit area (the roster's 44px icon precedent, above the 40px
- * floor), icon centered inside it. Both palettes come from the tokens. */
+/* The star: quiet at rest, filled with the gold token when starred
+ * (Buy.dc.html). 44px square hit area (the icon idiom), the 18px glyph
+ * centred in the card's corner. */
 .shelf-star {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: 2px;
+  right: 2px;
   width: 44px;
   height: 44px;
   display: flex;
@@ -2981,11 +3029,11 @@ button.sale-for:disabled {
 }
 
 .shelf-star:active {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 .shelf-star.on {
-  color: var(--warn);
+  color: var(--gold);
   opacity: 1;
 }
 
@@ -2993,12 +3041,12 @@ button.sale-for:disabled {
   fill: currentColor;
 }
 
-/* A bundle card on the Favorites shelf: a dashed --line-soft border says
- * "several things in one tap" without inventing a new colour, and the
- * word "bundle" follows the name (from Slate; Pete, T39). */
+/* A bundle card on the Favorites shelf: a dashed border says "several
+ * things in one tap" without inventing a new colour, and the word
+ * "bundle" follows the name (from Slate; Pete, T39). */
 .shelf-bundle {
   border-style: dashed;
-  border-color: var(--line-soft);
+  border-color: var(--line);
 }
 
 .shelf-bundle-mark {
@@ -3019,36 +3067,56 @@ button.sale-for:disabled {
   z-index: 5;
   flex: none;
   width: 100%;
-  border-top: 1px solid var(--line);
-  background: var(--bar-bg);
-  box-shadow: var(--shadow);
+  /* T70 (Buy.dc.html): 80px on the surface, a 2px rule over, no shadow
+   * (only modals cast one). */
+  border-top: 2px solid var(--rule);
+  background: var(--surface);
 }
 
 .sale-bar-in {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 92px;
+  align-items: stretch;
+  gap: 0;
+  height: 80px;
   max-width: 1400px;
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0;
 }
 
-/* Empty cart: the secondary, quiet at the left, outlined on the surface
- * at 64px. T38's confirm stands behind it. */
+/* Empty cart and Back to items: quiet cells, 17px/800, a 1px line at
+ * the left edge; Empty cart goes to the stop pair under a finger. T38's
+ * confirm stands behind Empty cart. */
 .sale-bar-empty {
-  height: 64px;
-  padding: 0 20px;
-  border: 1px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+  padding: 0 22px;
+  border: 0;
+  border-left: 1px solid var(--line);
   border-radius: 0;
-  background: var(--surface);
+  background: transparent;
   color: var(--ink);
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.sale-bar-in > .sale-bar-empty:first-child {
+  border-left: 0;
 }
 
 .sale-bar-empty:active:not(:disabled) {
-  background: var(--action-bg);
+  background: var(--surface-2);
+}
+
+.sale-bar-empty.sale-bar-clear {
+  padding: 0 26px;
+  color: var(--muted);
+}
+
+.sale-bar-empty.sale-bar-clear:active:not(:disabled) {
+  color: var(--stop);
+  background: var(--stop-bg);
 }
 
 .sale-bar-empty:disabled {
@@ -3056,34 +3124,52 @@ button.sale-for:disabled {
   cursor: default;
 }
 
-/* The primary: 68px, radius 14, the accent pairing, a 20px label with
- * the count and a 22px mono amount. `.off` is the disabled pair (Pay on
- * an empty cart, or with no server total to show); it stays a real
- * button with aria-disabled so its title can say why. */
+/* The primary: the accent-filled segment at the bar's right, its label
+ * flush left at 22px/800 with the count at 16px/600 and the tabular
+ * amount. `.off` is the disabled pair (Pay on an empty cart, Due while
+ * anything is owed); it stays a real button with aria-disabled so its
+ * title can say why. `.done` is the --ok fill after the write. */
 .sale-bar-pay {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 14px;
-  height: 68px;
-  padding: 0 30px;
+  justify-content: flex-start;
+  gap: 18px;
+  height: 100%;
+  min-width: 260px;
+  padding: 0 32px;
   border: 0;
   border-radius: 0;
   background: var(--accent);
   color: var(--accent-ink);
-  font-size: 20px;
-  font-weight: 700;
+  font-size: 22px;
+  font-weight: 800;
   line-height: 1;
+  text-align: left;
 }
 
 .sale-bar-pay.off {
-  background: var(--disabled-bg);
-  color: var(--disabled-ink);
+  background: var(--surface-2);
+  color: var(--muted);
   cursor: default;
 }
 
-.sale-bar-pay:active:not(.off) {
-  filter: brightness(0.92);
+.sale-bar-pay.done {
+  background: var(--ok);
+  color: var(--bg);
+}
+
+.sale-bar-pay:active:not(.off):not(.done) {
+  background: var(--accent-press);
+}
+
+/* The spinner is the one radius the pass keeps (README, "Geometry"). */
+.sale-bar-pay .spinner {
+  width: 18px;
+  height: 18px;
+  border-color: currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
 }
 
 .sale-bar-count {
@@ -3093,9 +3179,8 @@ button.sale-for:disabled {
 }
 
 .sale-bar-amt {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 22px;
-  font-weight: 700;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
 
@@ -3110,20 +3195,21 @@ button.sale-for:disabled {
  * is three of 166 with two 10px gaps exactly. */
 @media (max-width: 1190px) {
   .sale-panes {
-    grid-template-columns: 154px minmax(0, 1fr) 340px;
+    grid-template-columns: 190px minmax(0, 1fr) 320px;
   }
 
   .shelf-grid {
-    grid-template-columns: repeat(auto-fill, minmax(166px, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 /* Under 1040 the rail folds back to the horizontal chip row above the
  * grid (layout plan 2.1): two columns, the rail spanning the grid's, the
- * cart riding both rows on the right. */
+ * cart riding both rows on the right. The cells keep their lines, now
+ * at their right edges, under a 2px rule. */
 @media (max-width: 1040px) {
   .sale-panes {
-    grid-template-columns: minmax(0, 1fr) 340px;
+    grid-template-columns: minmax(0, 1fr) 320px;
     /* The cart spans both rows; without this the span's height is shared
      * out to row one and the chips float above an empty band. */
     grid-template-rows: auto 1fr;
@@ -3134,18 +3220,16 @@ button.sale-for:disabled {
     grid-row: 1;
     flex-direction: row;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 0;
+    border-right: 0;
+    border-bottom: 2px solid var(--rule);
   }
 
   .sale-cats .cat-chip {
     width: auto;
     padding: 0 20px;
-  }
-
-  /* The 64 pitch is the column's; in the row the chips sit on 8px gaps
-   * and the reach would only stretch into the header's margin. Off. */
-  .sale-cats .cat-chip::before {
-    display: none;
+    border-bottom: 0;
+    border-right: 1px solid var(--line);
   }
 
   .sale-right {
@@ -3192,6 +3276,11 @@ button.sale-for:disabled {
   .t-lines {
     max-height: min(44vh, 540px);
   }
+
+  .sale-left {
+    border-left: 0;
+    border-top: 2px solid var(--rule);
+  }
 }
 
 /* --- The payment seam (T24): live method cards, the cash keypad, the
@@ -3203,7 +3292,11 @@ button.sale-for:disabled {
 .sale-left {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
+  /* T70 (Buy.dc.html): the ticket pane, the surface with a 2px rule at
+   * its left edge. */
+  border-left: 2px solid var(--rule);
+  background: var(--surface);
 }
 
 .sale-left > * {
@@ -3234,7 +3327,7 @@ button.sale-for:disabled {
 }
 
 .sale-panes.pay {
-  grid-template-columns: minmax(0, 1fr) 388px;
+  grid-template-columns: minmax(0, 1fr) 320px;
   grid-template-rows: none;
 }
 
@@ -3255,7 +3348,7 @@ button.sale-for:disabled {
 
 @media (max-width: 1190px) {
   .sale-panes.pay {
-    grid-template-columns: minmax(0, 1fr) 340px;
+    grid-template-columns: minmax(0, 1fr) 320px;
   }
 }
 
@@ -3278,50 +3371,66 @@ button.sale-for:disabled {
   display: contents;
 }
 
-/* --- T39.7: the payment surface (0.2), Counter. ---------------------
- * Radius 16 on the surface, padding 18, 12px gaps, filling the pane;
- * the foot is pushed to the bottom with margin-top: auto. */
+/* --- T39.7: the payment surface; T70 restyles it to Payment.dc.html:
+ * the figures and the method cards run edge to edge on the surface
+ * under their rules, the body under them is padded 16/20, the foot is
+ * pushed to the bottom with margin-top: auto. --- */
 .pay-surface {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  gap: 12px;
+  gap: 0;
   min-height: 0;
-  padding: 18px;
-  border: 1px solid var(--line);
+  padding: 0;
+  border: 0;
   border-radius: 0;
-  background: var(--surface);
+  background: transparent;
 }
 
 .pay-surface > .sale-stop,
 .pay-surface > .pass-note {
-  margin: 0;
+  margin: 12px 20px 0;
 }
 
-/* The three figures: Total, Due, Change, on the frame ground, a 14px
- * uppercase label over a 34px mono figure. Due is the loudest of the
- * three (decided): the ink border. Settled Due takes the ok pair, a
- * positive Change the warn pair; the tinted tiles' borders are the pair's
- * text colour at reduced opacity rather than two more tokens (0.2). */
+.pay-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 14px;
+  min-height: 0;
+  padding: 16px 20px;
+}
+
+/* The three amount tiles (Payment.dc.html): 1px-divided on the surface,
+ * a 2px rule under, the kicker over a 34px/800 tabular figure. DUE
+ * fills the ok pair at zero; CHANGE turns --warn when non-zero. */
 .pay-figures {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 0;
+  flex: none;
+  border-bottom: 2px solid var(--rule);
+  background: var(--surface);
 }
 
 .pay-fig {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
+  padding: 14px 20px;
+  border: 0;
+  border-right: 1px solid var(--line);
   border-radius: 0;
-  background: var(--bg);
+  background: var(--surface);
   color: var(--ink);
 }
 
+.pay-fig:last-child {
+  border-right: 0;
+}
+
 .pay-fig-label {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -3329,26 +3438,14 @@ button.sale-for:disabled {
 }
 
 .pay-fig-amt {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 34px;
-  font-weight: 700;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
+  font-weight: 800;
+  line-height: 1.1;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.pay-fig.due {
-  border-color: var(--ink);
-  border-width: 1.5px;
-}
-
-.pay-fig.due .pay-fig-label {
-  color: var(--ink);
-}
-
 .pay-fig.due.settled {
-  border-color: color-mix(in srgb, var(--ok) 55%, transparent);
   background: var(--ok-bg);
   color: var(--ok);
 }
@@ -3358,45 +3455,49 @@ button.sale-for:disabled {
 }
 
 .pay-fig.change {
-  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
-  background: var(--warn-bg);
   color: var(--warn);
 }
 
-.pay-fig.change .pay-fig-label {
-  color: var(--warn);
-}
-
-/* Source tiles: three across (two when Credit is absent, no dead slot),
- * min-height 82, a 1.5px accent border when available and a soft one at
- * half opacity when not; the name at 18px, T35's reason under it at
- * 14px only when there is one, Credit's balance badge top-right in the
- * ok pair. */
+/* Method cards (Payment.dc.html): equal 96px cells 1px-divided under a
+ * 1px line, the icon beside a 20px/800 label, a 16px muted note under
+ * them that is always honest (T35's reason, or what a tap does). In the
+ * payment (.in) a card fills --accent-bg, colours its icon and label
+ * with the accent and carries the 4px accent bottom edge: the selected
+ * marker, no ring. Off (T35's refusal) dims the name and the badge;
+ * Credit's balance badge sits top-right in the ok pair. */
 .pay-tiles {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
-  gap: 10px;
+  gap: 0;
+  flex: none;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
 }
 
 .pay-tile {
   position: relative;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: flex-start;
-  gap: 3px;
-  min-height: 82px;
-  padding: 14px 16px;
-  border: 1.5px solid var(--accent);
+  gap: 6px;
+  height: 96px;
+  padding: 16px 20px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-bottom: 4px solid transparent;
   border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   text-align: left;
 }
 
+.pay-tile:last-child {
+  border-right: 0;
+}
+
 .pay-tile.off {
-  border-color: color-mix(in srgb, var(--line-soft) 50%, transparent);
   cursor: default;
 }
 
@@ -3405,20 +3506,30 @@ button.sale-for:disabled {
   opacity: 0.5;
 }
 
+.pay-tile.in {
+  background: var(--accent-bg);
+  border-bottom-color: var(--accent);
+}
+
+.pay-tile.in .pay-tile-name {
+  color: var(--accent);
+  opacity: 1;
+}
+
 .pay-tile:active:not(:disabled) {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 .pay-tile-name {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 18px;
-  font-weight: 700;
+  gap: 10px;
+  font-size: 20px;
+  font-weight: 800;
 }
 
 .pay-tile-reason {
-  font-size: 14px;
+  font-size: 16px;
   color: var(--muted);
 }
 
@@ -3430,31 +3541,31 @@ button.sale-for:disabled {
   border-radius: 0;
   background: var(--ok-bg);
   color: var(--ok);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
 }
 
-/* Tender rows (0.2): on the frame ground, radius 12, padding 8/10; the
- * name 16px/600 with the `covers $X` sub-line under an over-tendered cash
- * line; the amount a 64px mono button, the x a 64px square. A second row
- * IS the split (T35). */
+/* Tender rows (Payment.dc.html): 64px on a 1px line, the method at
+ * 19px/800 with the `covers $X` sub-line under an over-tendered cash
+ * line; a 160px amount cell (22px/800 tabular) that opens the keypad;
+ * a 64px x cell. A second row IS the split (T35). */
 .tender-lines {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
+  flex: none;
 }
 
 .tender-line {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: var(--bg);
+  background: var(--surface);
 }
 
 .tender-line.bad {
@@ -3464,37 +3575,42 @@ button.sale-for:disabled {
 .tender-src-name {
   flex: 1;
   min-width: 0;
-  font-size: 16px;
-  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 64px;
+  padding: 0 18px;
+  font-size: 19px;
+  font-weight: 800;
 }
 
 .tender-sub {
   display: block;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 400;
   color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
 }
 
 .tender-amt {
+  flex: 0 0 160px;
   min-height: 64px;
-  min-width: 6.5em;
-  padding: 0 14px;
-  border: 1px solid var(--line-soft);
+  padding: 0 18px;
+  border: 0;
+  border-left: 1px solid var(--line);
   border-radius: 0;
   background: var(--surface);
   color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 20px;
-  font-weight: 700;
+  font-size: 22px;
+  font-weight: 800;
   line-height: 1;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
+.tender-amt:active:not(:disabled),
 .tender-amt.on {
-  border: 2px solid var(--accent);
+  background: var(--accent-bg);
   color: var(--accent);
 }
 
@@ -3505,31 +3621,43 @@ button.sale-for:disabled {
 }
 
 .tender-x {
+  flex: 0 0 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 64px;
   min-height: 64px;
-  border: 1px solid var(--line-soft);
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
   border-radius: 0;
   background: transparent;
   color: var(--muted);
-  font-size: 22px;
   line-height: 1;
+}
+
+.tender-x:active:not(:disabled) {
+  color: var(--stop);
+  background: var(--stop-bg);
 }
 
 /* The hint under the rows. It carries a rule, so 16px. */
 .pay-hint {
   margin: 0;
+  flex: none;
   font-size: 16px;
   color: var(--muted);
 }
 
-/* The foot: a hairline above, the quiet line left, Comp right. */
+/* The foot: pushed to the bottom, the quiet line left, Comp right. */
 .pay-foot {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex: none;
   margin-top: auto;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
+  padding-top: 0;
+  border-top: 0;
 }
 
 .pay-quiet {
@@ -3543,19 +3671,13 @@ button.sale-for:disabled {
   overflow-wrap: anywhere;
 }
 
-/* T39.7: the 768 budget. At 1080x768 the pane is 531 tall and the surface
- * with two tender rows and a wrapped tile reason ran to its last pixel
- * (Comp's lower edge one under the pane's); the padding and gaps give
- * back 16px so the foot never meets the bar. AFTER the base rules above
+/* T39.7: the 768 budget, kept: the body's padding and gaps give back a
+ * few pixels so the foot never meets the bar. AFTER the base rules above
  * on purpose: same specificity, later wins (the T39.2 lesson). */
 @media (max-width: 1190px) {
-  .pay-surface {
-    padding: 14px;
+  .pay-body {
+    padding: 12px 16px;
     gap: 10px;
-  }
-
-  .pay-tile {
-    padding: 12px 14px;
   }
 }
 
@@ -3583,6 +3705,41 @@ button.sale-for:disabled {
   font-size: 20px;
 }
 
+/* T70 (Payment.dc.html): the keypad panel's three columns inside the
+ * modal: the entry column, the 300px keys, the 96px Done. The panel's
+ * own 2px accent border, no shell rule. */
+.modal-pad {
+  width: min(760px, 100%);
+  grid-template-columns: minmax(0, 1fr) 300px 96px;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 2px solid var(--accent);
+  box-shadow: var(--shadow-lg);
+}
+
+.pad-left {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.modal-pad .modal-title.pad-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+}
+
+.pad-kicker {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 .pad-row {
   display: flex;
   justify-content: space-between;
@@ -3595,26 +3752,14 @@ button.sale-for:disabled {
 }
 
 .pad-amt {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 18px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-.pad-entered {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  padding: 10px 14px;
-  border-radius: 0;
-  background: var(--bar-bg);
-  font-size: 16px;
-}
-
 .pad-entered-amt {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 30px;
-  font-weight: 700;
+  font-weight: 800;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
@@ -3624,21 +3769,24 @@ button.sale-for:disabled {
   gap: 8px;
 }
 
+/* The quick cells: outlined, 800, the accent under a finger. 64 tall
+ * (the house floor; the mockup draws 52). */
 .pad-chip {
   flex: 1 1 0;
   min-width: 0;
   min-height: 64px;
   padding: 0 12px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   border-radius: 0;
-  background: var(--bg);
+  background: var(--surface);
   color: var(--ink);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 800;
 }
 
 .pad-chip:active:not(:disabled) {
-  background: var(--action-bg);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .pad-chip:disabled {
@@ -3646,90 +3794,108 @@ button.sale-for:disabled {
   cursor: default;
 }
 
+/* The keys: 3x4 on the quiet fill, 20px/800, del in the stop colour.
+ * 64 tall (the floor; the mockup draws 56). */
 .pad-keys {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+  gap: 6px;
+  align-content: start;
 }
 
 .pad-key {
-  min-height: 66px;
-  border: 1px solid var(--line-soft);
+  min-height: 64px;
+  border: 0;
   border-radius: 0;
-  background: var(--bg);
+  background: var(--surface-2);
   color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 23px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 800;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
-.pad-key:active {
-  background: var(--action-bg);
+.pad-key.del {
+  color: var(--stop);
 }
 
-/* The change / short / partner line: 18px mono in the warn colour (0.2).
- * The cap note under it is the quiet exception. */
+.pad-key:active {
+  background: var(--accent-bg);
+}
+
+/* The change / short / partner line: "Change due" muted with the figure
+ * in ink at 800 (Payment.dc.html); the cap note is the quiet exception. */
 .pad-change {
   margin: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 400;
   line-height: 1.4;
-  color: var(--warn);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
-.pad-change.short {
+.pad-change-amt {
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.pad-change.short .pad-change-amt {
   color: var(--warn);
 }
 
 .pad-change.muted-note {
-  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-    sans-serif;
   font-size: 16px;
   font-weight: 400;
   color: var(--muted);
 }
 
-.modal-amount .modal-actions {
-  justify-content: flex-end;
-  gap: 8px;
+/* Done: the 96px accent column, full height; Cancel a quiet cell under
+ * it (the mockup has no Cancel; ours leaves the line as it was). */
+.modal-pad .modal-actions {
+  flex-direction: column;
+  gap: 6px;
 }
 
-.modal-amount .modal-actions button {
-  flex: none;
+.modal-pad .modal-actions button {
+  flex: 1 1 auto;
   min-height: 64px;
-  padding: 0 20px;
+  padding: 0 12px;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.modal-pad .modal-cancel {
+  flex: 0 0 auto;
+  background: var(--surface);
+  color: var(--muted);
   font-size: 16px;
 }
 
-.modal-amount .modal-cancel {
-  background: var(--surface);
-}
-
-.modal-amount .modal-confirm.go {
-  padding: 0 26px;
+.modal-pad .modal-confirm.go {
   background: var(--accent);
   color: var(--accent-ink);
 }
 
-/* Comp lives OUT of the tender list and arms on a hold: outlined at 64px
- * at the foot's right (0.2), warn-coloured once armed so a comped sale is
+.modal-pad .modal-confirm.go:active {
+  background: var(--accent-press);
+}
+
+/* Comp lives OUT of the tender list: quiet and outlined at the foot's
+ * right at 64px (Payment.dc.html; the stop colour under a finger, below
+ * in the T53 block), warn-coloured once armed so a comped sale is
  * unmissable. */
 .comp-hold {
   flex: none;
   display: inline-flex;
   align-items: center;
   min-height: 64px;
-  padding: 0 18px;
+  padding: 0 22px;
   border: 1px solid var(--line);
   border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 800;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -3740,7 +3906,7 @@ button.sale-for:disabled {
   border-style: solid;
   background: var(--warn-bg);
   color: var(--warn);
-  font-weight: 600;
+  font-weight: 800;
 }
 
 /* T43: the comp reason dialog, in the keypad modal's shape (it is a
@@ -3769,7 +3935,7 @@ button.sale-for:disabled {
   padding: 0 16px;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: var(--bg);
+  background: var(--surface-2);
   color: var(--ink);
   font-size: 18px;
 }
@@ -3829,9 +3995,8 @@ textarea.reason-note-field {
   margin: 0;
   max-width: 34em;
   overflow-wrap: anywhere;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 19px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--warn);
 }
 
@@ -3864,14 +4029,14 @@ textarea.reason-note-field {
   padding: 0 16px;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: var(--bg);
+  background: var(--surface);
   color: var(--ink);
   font-size: 18px;
   text-align: left;
 }
 
 .reason-teacher:active:not(:disabled) {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 .reason-teacher.on {
@@ -3909,7 +4074,7 @@ textarea.reason-note-field {
 
 .lock-dot.empty {
   background: transparent;
-  border: 2px solid var(--line-soft);
+  border: 2px solid var(--line);
 }
 
 .reason-link {
@@ -3924,7 +4089,7 @@ textarea.reason-note-field {
 }
 
 .reason-link:active:not(:disabled) {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 .reason-link:disabled {
@@ -3935,7 +4100,7 @@ textarea.reason-note-field {
 .reason-who {
   margin: 0;
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 800;
   color: var(--ink);
 }
 
@@ -3956,41 +4121,50 @@ textarea.reason-note-field {
  * surface, an 88px ok-bg circle with the check, a 30px title, the charged
  * line and the change from the drawer in 19px mono, the summary under
  * them, and Done in the accent. Only a completed sale renders it. */
+/* T70: the done sheet, the square shell (2px rule, --shadow-lg) on the
+ * surface, flush left like everything else, in the pane's body. */
 .pay-done {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 24px;
-  text-align: center;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 12px;
+  margin: 20px;
+  padding: 20px;
+  border: 2px solid var(--rule);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  text-align: left;
 }
 
 .pay-done-check {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 88px;
-  height: 88px;
+  width: 64px;
+  height: 64px;
   border-radius: 0;
   background: var(--ok-bg);
   color: var(--ok);
-  font-size: 40px;
+}
+
+.pay-done-check svg {
+  width: 32px;
+  height: 32px;
 }
 
 .pay-done-title {
   margin: 0;
   font-size: 30px;
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: -0.02em;
 }
 
 .pay-done-charged {
   margin: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 19px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.5;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
@@ -3999,7 +4173,7 @@ textarea.reason-note-field {
 .pay-done-change {
   display: block;
   color: var(--warn);
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .pay-done-line {
@@ -4024,11 +4198,12 @@ textarea.reason-note-field {
   background: var(--accent);
   color: var(--accent-ink);
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 800;
+  text-align: left;
 }
 
 .pay-done-btn:active {
-  filter: brightness(0.92);
+  background: var(--accent-press);
 }
 
 /* A dry run's suppressed outcome takes the canvas's title; still amber,
@@ -4036,7 +4211,7 @@ textarea.reason-note-field {
 .pay-rehearsed {
   margin: 0 0 6px;
   font-size: 22px;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 /* The under-$10 split failure: stop treatment, structured, prominent.
@@ -4125,7 +4300,7 @@ textarea.reason-note-field {
 }
 
 .pay-free:active:not(:disabled) {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 .pay-free:disabled {
@@ -4205,7 +4380,7 @@ textarea.reason-note-field {
   overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: var(--bg);
+  background: var(--surface-2);
   color: var(--muted);
   font-size: 16px;
   white-space: pre-wrap;
@@ -4447,11 +4622,11 @@ textarea.reason-note-field {
  * row, and its 520 cap becomes the row's so the pair never crowds Back. */
 .sale-top .sale-for-row {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: stretch;
+  gap: 0;
   min-width: 0;
   max-width: 660px;
-  margin-right: auto;
+  margin-right: 0;
 }
 
 .sale-top .sale-for-row .sale-for {
@@ -4459,23 +4634,25 @@ textarea.reason-note-field {
   margin-right: 0;
 }
 
-/* Walk-in: the secondary next to Attach a client, outlined on the
- * surface at 64px (the house floor) like the bar's Empty cart. Off with
- * its reason in the title when the server has no house client (T41). */
+/* Walk-in: the cell next to Attach a client (Buy.dc.html), 17px/800 on
+ * a 1px line. Off with its reason in the title when the server has no
+ * house client (T41). */
 .sale-walkin {
   flex: 0 0 auto;
-  height: 64px;
-  padding: 0 20px;
-  border: 1px solid var(--line);
+  height: 100%;
+  padding: 0 22px;
+  border: 0;
+  border-left: 1px solid var(--line);
   border-radius: 0;
-  background: var(--surface);
+  background: transparent;
   color: var(--ink);
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 17px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .sale-walkin:active:not(:disabled) {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 .sale-walkin:disabled {
@@ -4484,10 +4661,10 @@ textarea.reason-note-field {
 }
 
 /* The declared walk-in wears the attached card's shape with "Walk-in
- * sale" where the name goes; muted rather than ink, because it names
- * nobody, and the X is the same detach control. */
+ * sale" where the name goes (Payment.dc.html draws it in ink), and the
+ * X is the same detach control. */
 .sale-for.sale-for-walkin .sale-for-name {
-  color: var(--muted);
+  color: var(--ink);
 }
 
 /* The friction dialog is the house confirm with the modal-x in its
@@ -4565,8 +4742,8 @@ textarea.reason-note-field {
 }
 
 .consent-opt.off {
-  color: var(--disabled-ink);
-  background: var(--disabled-bg);
+  color: var(--muted);
+  background: var(--surface-2);
   border-color: transparent;
   cursor: default;
 }
@@ -4578,34 +4755,40 @@ textarea.reason-note-field {
 /* T53: the receipt toggle under the tender hint: the filter-toggle
  * idiom stretched to a row, the name left and the address or the reason
  * right, accent while on, the disabled pair when it cannot send. */
+/* T70 (Payment.dc.html): the 64px row on the quiet fill, the name at
+ * 18px/800, the note right; on takes the accent tint and the 4px accent
+ * edge like a selected method card; off fades to 0.7. */
 .receipt-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
   width: 100%;
   min-height: 64px;
-  margin-top: 10px;
+  flex: none;
+  margin-top: 0;
   padding: 0 18px;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: var(--surface);
+  background: var(--surface-2);
   color: var(--ink);
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 800;
   text-align: left;
 }
 
 .receipt-toggle.on {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink);
+  border-color: var(--line);
+  border-bottom: 4px solid var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
 }
 
 .receipt-toggle:disabled {
-  color: var(--disabled-ink);
-  background: var(--disabled-bg);
-  border-color: transparent;
+  color: var(--ink);
+  background: var(--surface-2);
+  opacity: 0.7;
+  cursor: default;
 }
 
 .receipt-toggle-name {
@@ -4622,7 +4805,7 @@ textarea.reason-note-field {
 }
 
 .receipt-toggle.on .receipt-sub {
-  color: var(--accent-ink);
+  color: var(--accent);
 }
 
 .receipt-toggle:not(.on):not(:disabled) .receipt-sub {
@@ -4635,13 +4818,15 @@ textarea.reason-note-field {
  * hint and the armed state (.comp-hold.on, warn pair, which wins on
  * specificity) are exactly T43/T48's. */
 .comp-hold {
-  border-color: color-mix(in srgb, var(--line-soft) 50%, transparent);
+  border-color: var(--line);
   color: var(--muted);
-  font-weight: 500;
+  font-weight: 800;
 }
 
 .comp-hold:active:not(:disabled):not(.on) {
-  background: var(--action-bg);
+  border-color: var(--stop);
+  color: var(--stop);
+  background: var(--surface);
 }
 
 /* Empty cart sits just left of Pay with the bar's own 12px gap, not at
@@ -4654,6 +4839,150 @@ textarea.reason-note-field {
 
 .sale-bar-clear ~ .sale-bar-pay {
   margin-left: 0;
+}
+
+/* T70 -------------------------------------------------------------------
+ * The sale screen's modals share one square shell (Dialogs.dc.html; the
+ * README's section 5): a 2px rule around the surface, --shadow-lg, the
+ * title as a head bar with a 2px rule under it, and the actions as
+ * equal 68px cells split by a 1px line with their labels flush left,
+ * the confirming one filled. The shared .modal base is the roster's;
+ * this is layered on through the sale modals' own modifier. The head
+ * and the actions bleed through the modal's 20px padding with negative
+ * margins, so the markup between them stays as it was. */
+.modal.modal-sale {
+  padding: 20px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.modal-sale > .modal-title,
+.modal-sale > .modal-title.pad-head {
+  margin: -20px -20px 16px;
+  padding: 18px 20px;
+  border-bottom: 2px solid var(--rule);
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.modal-sale .modal-x ~ .modal-title {
+  padding-right: 68px;
+}
+
+.modal-sale .modal-x {
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+}
+
+.modal-sale > .modal-actions,
+.modal-sale .reason-body ~ .modal-actions {
+  gap: 0;
+  margin: 16px -20px -20px;
+  border-top: 1px solid var(--line);
+}
+
+.modal-sale .modal-actions button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 68px;
+  padding: 0 20px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  justify-content: flex-start;
+  text-align: left;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.modal-sale .modal-actions button:first-child {
+  border-left: 0;
+}
+
+.modal-sale .modal-cancel {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.modal-sale .modal-cancel:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+/* The destructive confirm: the stop fill with --bg text (measured: the
+ * README's white fails 4.5:1 on the dark stop); the non-destructive
+ * `.go` is the accent fill. */
+.modal-sale .modal-confirm {
+  background: var(--stop);
+  color: var(--bg);
+}
+
+.modal-sale .modal-confirm:active:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+.modal-sale .modal-confirm.go {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.modal-sale .modal-confirm.go:active:not(:disabled) {
+  background: var(--accent-press);
+  filter: none;
+}
+
+/* The comp dialog keeps the keypad modal's grid (T43, T68's fixed
+ * size); the head and the actions rows are the grid's first and last
+ * tracks, so the bleed applies unchanged. Its chips and inputs sit on
+ * the surface between them. */
+.modal-sale.modal-reason .modal-actions {
+  margin-top: 0;
+}
+
+.modal-sale.modal-reason .reason-sub,
+.modal-sale.modal-reason .pad-row {
+  padding: 0;
+}
+
+/* The contract sheet's commitment button carries the recurring terms as
+ * its label, so it wraps and takes the wider share of the row. */
+.modal-sale .modal-actions .contract-confirm {
+  flex: 2 1 0;
+  padding: 10px 20px;
+  line-height: 1.3;
+  white-space: normal;
+}
+
+/* The receipt side of the tender (Payment.dc.html): under Total and a
+ * hairline, one "<Method> received $X" line per tender in muted, then
+ * "Change due" in --warn at 20px/800, or "Still due" in ink. Filled by
+ * the panel through the ticket's slot in pay mode only. */
+.t-tender-slot {
+  display: block;
+}
+
+.t-tender {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.t-tender .t-change,
+.t-tender .t-still {
+  align-items: baseline;
+  font-weight: 600;
+}
+
+.t-tender .t-change {
+  color: var(--warn);
+}
+
+.t-tender .t-change .amt,
+.t-tender .t-still .amt {
+  font-size: 20px;
+  font-weight: 800;
 }
 
 /* T52 -------------------------------------------------------------------
