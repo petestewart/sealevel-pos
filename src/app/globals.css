@@ -2196,10 +2196,12 @@ body.sale-open .dev-handle {
  * pinned to the modal's top corner. */
 .modal-x {
   position: absolute;
-  top: 14px;
-  right: 14px;
-  width: 40px;
-  height: 40px;
+  top: 12px;
+  right: 12px;
+  /* T70 review: the 44px icon square every quiet icon gets (README,
+   * "64px+ tap targets ... 44px for quiet ... icons"); it was 40. */
+  width: 44px;
+  height: 44px;
   color: var(--muted);
 }
 
@@ -3535,6 +3537,15 @@ button.sale-for:disabled {
   cursor: default;
 }
 
+/* T70 review: while the write is on the wire the segment stays on the
+ * accent with the spinner (Payment.dc.html keeps the accent fill while
+ * the due is covered, busy included; the roster's chip does the same),
+ * rather than dropping to the quiet "not ready" pair mid-charge. */
+.sale-bar-pay.off.busy {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
 .sale-bar-pay.done {
   background: var(--ok);
   color: var(--bg);
@@ -4231,22 +4242,31 @@ button.sale-for:disabled {
 }
 
 /* Done: the 96px accent column, full height; Cancel a quiet cell under
- * it (the mockup has no Cancel; ours leaves the line as it was). */
+ * it (the mockup has no Cancel; ours leaves the line as it was).
+ * T70 review: the shared .modal-actions became an edge-to-edge grid row
+ * (Dialogs.dc.html), which put Done and Cancel side by side in the 96px
+ * column and bled them past the pad's edge; this column is its own
+ * shape, so it sets the display, the margins and the rule itself. */
 .modal-pad .modal-actions {
+  display: flex;
   flex-direction: column;
   gap: 6px;
+  margin: 0;
+  border-top: 0;
 }
 
 .modal-pad .modal-actions button {
   flex: 1 1 auto;
   min-height: 64px;
   padding: 0 12px;
+  border-right: 0;
   font-size: 18px;
   font-weight: 800;
 }
 
 .modal-pad .modal-cancel {
   flex: 0 0 auto;
+  border: 1px solid var(--line);
   background: var(--surface);
   color: var(--muted);
   font-size: 16px;
@@ -4621,6 +4641,13 @@ textarea.reason-note-field {
   width: min(560px, 100%);
   max-height: 92vh;
   overflow-y: auto;
+}
+
+/* T70 review: the free-entry line sits UNDER the action row here, so the
+ * row keeps its edge bleed but not the bottom pull that assumes it is
+ * the modal's last thing; the dashed button gets its 12px gap back. */
+.modal-pay .modal-actions {
+  margin-bottom: 0;
 }
 
 /* The option list scrolls past a handful so the actions never leave the
@@ -5330,9 +5357,14 @@ textarea.reason-note-field {
 }
 
 /* The contract sheet's commitment button carries the recurring terms as
- * its label, so it wraps and takes the wider share of the row. */
+ * its label, so it wraps and takes the wider share of the row. T70
+ * review: the shared row is a grid of equal tracks now, so the share is
+ * set on the row's template rather than the button's flex. */
+.modal-contract .modal-actions {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+
 .modal-sale .modal-actions .contract-confirm {
-  flex: 2 1 0;
   padding: 10px 20px;
   line-height: 1.3;
   white-space: normal;
