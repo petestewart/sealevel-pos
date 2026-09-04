@@ -2242,6 +2242,12 @@ function FrontDesk({
     }
   }, [attachInClass, query, settings.minQueryLength, startSearch, stopSearch]);
 
+  /** T71: the profile card's opt-in write in flight, and its outcome. */
+  const [optIn, setOptIn] = useState<{
+    busy: OptInKind | null;
+    msg: { text: string; tone: "warn" | "stop" } | null;
+  }>({ busy: null, msg: null });
+
   /**
    * The client profile modal (T42): fetched at open, never at render,
    * since /api/client-profile is three metered reads. A stale answer
@@ -2251,6 +2257,10 @@ function FrontDesk({
     const gen = ++profileGen.current;
     setProfileView({ clientId, name });
     setProfileState({ profile: null, loading: true, error: null });
+    /* An opt-in write still on the wire for the last profile answers to
+     * the old generation and is dropped, so its busy flag has to clear
+     * here or the new profile's boxes stay disabled until close. */
+    setOptIn({ busy: null, msg: null });
     fetch(`/api/client-profile?clientId=${encodeURIComponent(clientId)}`)
       .then(async (r) => {
         const body = await r.json();
@@ -2272,12 +2282,6 @@ function FrontDesk({
         });
       });
   }, []);
-
-  /** T71: the profile card's opt-in write in flight, and its outcome. */
-  const [optIn, setOptIn] = useState<{
-    busy: OptInKind | null;
-    msg: { text: string; tone: "warn" | "stop" } | null;
-  }>({ busy: null, msg: null });
 
   const closeProfile = useCallback(() => {
     profileGen.current += 1;
