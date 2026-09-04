@@ -135,13 +135,15 @@ export function ClientProfileCard({
 
   return (
     <div className="profile-card">
-      <div className="profile-head">
-        <span className="profile-label">Client</span>
-        <span className="profile-name">{profile.name ?? "Unnamed client"}</span>
-        {profile.mindbodyId !== null ? (
+      {/* T70 review: the modal's head (kicker "Client" + the name) sits
+          right above this card, so the card no longer restates them; the
+          Mindbody id, which the head does not carry, stays as the first
+          line. */}
+      {profile.mindbodyId !== null ? (
+        <div className="profile-head">
           <span className="profile-id">id {profile.mindbodyId}</span>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {/* T52 (Pete: "the profile view should also have any notes/alerts
           in its display if there are any"): one block under the name,
