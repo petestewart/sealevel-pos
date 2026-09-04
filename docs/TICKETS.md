@@ -8712,3 +8712,135 @@ dropdown icon at all. The guest icon is a much cleaner implementation."
   person-plus and no chevron; Whitney (membership + Guest Pass at 0,
   gone from the active list) shows neither. `npm run typecheck` and
   `npm run build` green.
+
+## T70: the modernist visual pass (Pete's design system, light and dark)
+
+**DONE** (2026-09-04). Pete supplied a design handoff ("Professional POS
+system design": Roster, Buy, Payment and Dialogs prototypes with a
+README of tokens, type, geometry and interaction rules) and asked for
+its UI changes to be implemented. The bundle is filed as the design of
+record at `docs/design/mockups/visual-pass/` (README.md is the spec;
+the `.dc.html` files open in a browser). It supersedes T39's Counter
+palette and the 12px-radius look; nothing in it changes a write path,
+the pessimistic check-in, the T14 aligned-column roster or any safety
+rail, and none of those moved.
+
+Landed in four steps, each its own commit set on feature/phase-2:
+
+- **T70a (orchestrator).** The token remap in both palettes under the
+  README's names (`--bg`, `--surface`, `--surface-2`, `--line`, `--rule`,
+  `--ink`, `--muted`, the accent trio plus `--accent-bg`, the ok / warn /
+  stop pairs, the new `--gold` pair, `--scrim`, `--shadow-lg`). Every
+  pair the design draws was measured for WCAG contrast in both palettes
+  and clears 4.5:1; the one gap in the mockups is white text on the
+  `--stop` and `--warn` fills, which fails in dark (2.47 and 1.87), so
+  text on those fills is `var(--bg)` (6.6 and 6.2 light, 7.5 and 9.9
+  dark). Radius 0 everywhere but the spinner and the lock dots. Archivo
+  400/600/800 self-hosted through next/font as `--font-archivo`, one
+  family for headings and body. The dark palette moved from a
+  `prefers-color-scheme` query to `:root[data-theme="dark"]`:
+  `src/app/theme.ts` sets the attribute before first paint (inline boot
+  script in layout.tsx) from the iPad's setting or the sun toggle's
+  stored choice (`pos.theme` in localStorage), follows the iPad while no
+  choice is stored, and rewrites the theme-color metas from the
+  palette's `--bg` so the status bar matches. The dev drawer's settings
+  tab has a theme select (system / light / dark) for handing the choice
+  back to the iPad. The T39 alias tokens (`--action-bg`, `--bar-bg`,
+  `--line-soft`, `--shadow`, `--disabled-*`) were kept while the screens
+  were ported and deleted once nothing resolved them. CLAUDE.md's
+  palette convention updated.
+- **T70b (roster builder).** Roster, dialogs and the attach modal in
+  the existing page.tsx markup and class vocabulary: full-bleed shell
+  with the banners on top; the 76px top bar as rule-divided cells
+  (class picker with kicker and 22px/800 title, calendar, the three
+  counters at 152/152/128 with 26px/800 numbers, the accent Buy cell,
+  the sun toggle, the account icon); the class dropdown as 72px rows
+  with gold count badges; the 60px borderless search with its glass
+  cell; the uppercase column header over a 2px rule; 72px rows on the
+  README's grid with 19px/600 names, the 24px gold M, 48px square chips
+  in the README's state table, and 44px action squares. The four
+  destructive dialogs (check-out, remove from class, waiver, waitlist)
+  and the info view's red alert carry the `.modal-entity` pattern
+  (kicker + title over a 2px rule, entity card, the consequence as the
+  only stop line, two 68px flush-left action cells); the same square
+  shell went onto every other modal and the lock screen.
+- **T70c (sale builder).** Buy and Payment in the existing SaleScreen
+  markup: the 76px header (Buy wordmark, Attach a client / Walk-in
+  cells or the SALE FOR accent cell, sun, Back); the 190px rail with the
+  active category filled; 104px cards with the 2px accent edge and ×N
+  badge once in the cart; the 320px ticket with its 52px head, 56px
+  lines and the totals over a 2px rule; the 80px bar with the flush-left
+  `Pay · N items · $X` segment. Payment: the three 34px/800 tiles (DUE
+  goes ok at zero, CHANGE warn when non-zero), 96px method cells with a
+  4px accent bottom edge when in the payment, 64px tender rows, the T36
+  pad modal restyled as the keypad panel, the receipt row, the quiet
+  Comp control, tender and change-due lines on the ticket, and the
+  Charge button's four states with the amount always in its label. The
+  consent, comp, contract and walk-in sheets share the square shell.
+- **T70 review.** See below.
+
+Deviations from the mockups, all deliberate:
+- No inline "check in anyway" chip: the app's unpaid tap opens the T25
+  pay dialog (`confirmUnpaid`), which carries the entity pattern instead.
+- The trash icon stays on the row: the app has remove-from-class
+  (`/class/removeclientfromclass`) behind a confirm, and it shares the
+  undo's slot.
+- Keypad keys and quick cells are 64px, the detach × and other icon
+  squares 44px, where the mockup drew 56/52/36: the tap-target floors.
+- The keypad stays a modal (T36, Pete's call) wearing the panel's look;
+  quick amounts stay Exact/$5/$10/$20 (Pete named them).
+- Ticket lines select (minus / qty / plus / remove) rather than remove
+  on tap: the app's idiom.
+- No `API n` counter and no footer nav: the app has no on-screen call
+  count, and the links were prototype navigation.
+- The card note says "card on file", not "to the reader": the tender is
+  a stored card.
+- No em dashes: "name, teacher" and " · " throughout.
+- The title in the class picker wraps rather than ellipsizes (T61).
+
+Verified: `npm run typecheck` and `npm run build` green after each
+merge; the builders' harnesses (`scratchpad/t70-roster/`,
+`scratchpad/t70-sale/`) drove every screen and state at 1194x834 in
+both palettes and every screenshot was looked at; the reviewer's
+harness (`scratchpad/t70-review/`) re-ran them on the merged tree plus
+the T63, T67 and T69 regression scripts. Mechanical scans on the merged
+tree: no hex or rgb outside the two palette blocks (the dev drawer's
+handle shadow excepted), no em dashes in tsx, no font size under 16px
+outside the dev drawer and the recorded 14px exceptions
+(`.contact-line`, `.note-sig`, `.note-signed-as`), `src/lib` and
+`src/app/api` untouched.
+
+### Review
+
+A separate reviewer took the merged tree, drove 100 screen states in
+both palettes (2440 text nodes measured), and re-ran the T63, T67 and
+T69 harnesses against it. Three fix commits:
+
+- The two builders' work collided in one place: T70b made the shared
+  `.modal-actions` an edge-to-edge grid row, and the sale builder's pad
+  modal had styled Done and Cancel against the old flex row, so after
+  the merge Cancel was clipped off the cash keypad at 834 wide. The pad
+  column sets its own layout now. The contract sheet's 2:1 confirm and
+  the T25 pay dialog's comp line under the action row were the same
+  class of thing.
+- `.modal-x` was 40px on every modal (pre-existing; the comment said
+  44): now 44.
+- The Charge segment went quiet (`.off`) while the write was out, so
+  the one moment that matters read as inert; it keeps the accent with
+  the spinner now, as the mockup and the busy chip do. Presentational
+  only: the button was already inert in flight.
+- The profile modal named the client twice (the new head kicker plus
+  the card's own label); the card keeps the id line and drops the rest.
+
+Audit numbers on the final tree: 0 text nodes under 16px outside the
+dev drawer and the recorded exceptions; 0 buttons under 44px; every
+token defined in both blocks; no enabled text under 4.5:1 in either
+palette (the sub-4.5 pairs are all disabled controls at 0.6 opacity,
+accepted). No behaviour change anywhere: every removed logic line was
+read, and `src/lib` and `src/app/api` are untouched. The T63 API,
+dry-run and UI harnesses pass except U6 to U9, which wait for the pass
+picker's guest line that T69 removed (stale steps, not a regression);
+T67 and T69 pass in both palettes. Not exercised: a real iPad's Safari
+and the live API. Two pre-existing things the reviewer noted and left:
+the row pass picker's position estimate on lower rows, and the T21
+lock shake.
