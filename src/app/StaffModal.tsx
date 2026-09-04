@@ -250,7 +250,10 @@ export default function StaffModal({
             >
               <CloseIcon />
             </button>
-            <p className="modal-title">{teacher.name}</p>
+            <div className="modal-head">
+              <p className="modal-kicker">Signed in</p>
+              <p className="modal-title">{teacher.name}</p>
+            </div>
             <p className="reason-sub">
               Signed in to Mindbody. Check-ins, bookings and sales from this
               iPad are recorded under this login until sign-out or two
@@ -275,7 +278,10 @@ export default function StaffModal({
           </>
         ) : (
           <>
-            <p className="modal-title">Sign in to Mindbody</p>
+            <div className="modal-head">
+              <p className="modal-kicker">Staff</p>
+              <p className="modal-title">Sign in to Mindbody</p>
+            </div>
             <p className="reason-sub">Sign in with your Mindbody login.</p>
             <input
               className="reason-input"

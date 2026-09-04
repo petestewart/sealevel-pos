@@ -123,17 +123,22 @@ export default function LockScreen() {
 
   return (
     <main className="shell lock-shell">
-      {config ? (
-        <p className={config.dryRun ? "banner" : "banner live"}>
-          {config.dryRun
-            ? "Dry run. Nothing is written to Mindbody."
-            : "LIVE. Taps check real students in."}{" "}
-          {config.target === "prod" ? "Production" : "Sandbox"} site.
-        </p>
-      ) : null}
-      {config?.banner ? <p className="studio-banner">{config.banner}</p> : null}
+      {/* T70: the banners sit at the top of the screen, full width, like
+          the roster's and the staff gate's; the card stays centred. */}
+      <div className="lock-banners">
+        {config ? (
+          <p className={config.dryRun ? "banner" : "banner live"}>
+            {config.dryRun
+              ? "Dry run. Nothing is written to Mindbody."
+              : "LIVE. Taps check real students in."}{" "}
+            {config.target === "prod" ? "Production" : "Sandbox"} site.
+          </p>
+        ) : null}
+        {config?.banner ? <p className="studio-banner">{config.banner}</p> : null}
+      </div>
 
       <div className="lock-card">
+        <p className="lock-kicker">Front desk</p>
         <h1 className="lock-title">Sealevel Hot Yoga</h1>
         <p className="lock-sub">Enter the counter PIN to unlock.</p>
 

@@ -85,13 +85,12 @@ button {
 }
 
 .shell {
-  /* T66 (Pete, 2026-09-04: "why is the buy screen nice and big, using
-   * the whole screen but the sign in screen is only taking a portion"):
-   * 1400 like .sale-shell, so the roster fills the iPad the way Buy
-   * does. It was 1100 from the first layout plan. */
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 16px;
+  /* T70: edge to edge (Roster.dc.html). The bars and rules run the whole
+   * width and the rows carry their own 20px inset; the 1400 cap and the
+   * 16px inset of T66 are gone with it. */
+  max-width: none;
+  margin: 0;
+  padding: 0;
   /* T55 (Pete, 2026-09-03: "it should only be the rows of students that
    * scroll while the rest stays stationary"): the shell is the viewport's
    * height and a column, so the banner, class bar, search and column
@@ -125,60 +124,125 @@ button {
  * three counters compacted on the right so the whole thing fits iPad
  * landscape. Wraps on narrower screens rather than clipping. */
 
+/* T70: the top bar (Roster.dc.html). 76px, on the surface, a 2px rule
+ * under it, every control a cell split from the next by a hairline.
+ * The picker takes the slack; nothing wraps, because the bar's cells
+ * are sized for the counter iPad in landscape (the 860 query below
+ * narrows them for portrait). */
 .class-header {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 4px;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  gap: 0;
+  min-height: 76px;
+  margin: 0;
+  border-bottom: 2px solid var(--rule);
+  background: var(--surface);
 }
 
-/* The class selector is the Buy view's dropdown idiom (Pete, fourth live
- * test): the current class IS the button, and the menu hangs off it. The
- * wrapper is the anchor .pass-dd positions against. */
 .class-pick {
   position: relative;
-  /* Takes the row's slack (T46 review): a wrapping flex row packs by
-   * content width, so with the day control carrying a date beside it a
-   * content-sized title pushed the counters onto a second line at 1080
-   * wide. A zero flex basis means the title never asks for room of its
-   * own; it grows into whatever the other controls leave (about 300px
-   * on a viewed day at 1080, 400px on today), and below the floor the
-   * counters wrap instead. The title ellipsizes past that; the dropdown
-   * carries the full line. A fixed cap truncated "Bikram Yoga - Pete
-   * Stewart" on today at 1080 with 100px of row to spare. */
   flex: 1 1 0;
-  min-width: min(240px, 100%);
-  max-width: 100%;
+  min-width: 0;
   display: flex;
 }
 
-/* The button keeps its content width (the wrapper takes the slack, so
- * a short class name does not stretch it); it only ever shrinks. */
+/* The current class IS the button: kicker over title, chevron at the
+ * far right, no border of its own (the bar's hairlines draw it). */
 .class-pick-btn {
-  flex: 0 1 auto;
-  max-width: 100%;
+  flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
+  min-height: 76px;
+  padding: 0 18px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
   text-align: left;
 }
 
-/* Left-aligned under the button, not right-aligned like the pass menus,
- * and wide enough for a class line with its teacher. */
-.class-pick-dd {
+.class-pick-btn:active {
+  background: var(--surface-2);
+}
+
+.class-pick-btn > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+/* The dropdown hangs off the picker cell's full width: 2px rule, the
+ * one shadow, a 120ms fade, no padding (the rows draw their own
+ * hairlines). */
+.class-pick .class-pick-dd {
+  top: calc(100% + 2px);
   left: 0;
   right: auto;
-  min-width: min(560px, 92vw);
-  max-width: min(560px, 92vw);
+  width: 100%;
+  min-width: 0;
+  max-width: none;
   max-height: min(60vh, 520px);
   overflow-y: auto;
 }
 
-/* No pass columns here: a check and the class line. */
+/* One 72px row per class: time in a 108px column, name over teacher,
+ * the count badge at the right. The selected class is the filled row
+ * (2.4), not a check. */
 .class-pick-dd .pass-opt {
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 108px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 72px;
+  padding: 0 18px;
+}
+
+.class-opt-time {
+  display: flex;
+  flex-direction: column;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.class-opt-day {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.class-pick-dd .pass-opt-name {
+  font-weight: 600;
+}
+
+.class-opt-teacher {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Gold when anyone is booked; the quiet pair at zero, so the filled
+ * selected row and a busy class can never be confused (2.4). */
+.class-opt-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: var(--gold-bg);
+  color: var(--gold);
+}
+
+.class-opt-count.zero {
+  background: var(--surface-2);
+  color: var(--muted);
 }
 
 /* --- Day control (T46) -----------------------------------------------
@@ -189,22 +253,37 @@ button {
  * The accent outline says another day is showing; the date is in the
  * button's label and tooltip. */
 .cal-btn {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 64px;
-  padding: 0 18px;
+  width: 76px;
+  min-height: 76px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
 }
 
+.cal-btn:active {
+  background: var(--surface-2);
+}
+
+/* Another day is showing: the accent pair on the cell, since the date
+ * itself lives in the label and the roster's banner. */
 .cal-btn.viewing {
-  border-color: var(--accent);
+  background: var(--accent-bg);
   color: var(--accent);
 }
 
 /* A picked day with nothing on it: the message takes the class's slot. */
 .class-none {
+  flex: 1 1 auto;
   margin: 0;
-  min-height: 64px;
+  padding: 0 18px;
+  min-height: 76px;
   display: flex;
   align-items: center;
 }
@@ -212,9 +291,10 @@ button {
 /* The day banner above the roster: the warn pair, both palettes, 16px.
  * The mode banner at the top keeps its own shape. */
 .day-banner {
-  margin: 12px 0 0;
-  padding: 10px 16px;
+  margin: 0;
+  padding: 10px 20px;
   border-radius: 0;
+  border-bottom: 1px solid var(--line);
   font-size: 16px;
   font-weight: 600;
   background: var(--warn-bg);
@@ -225,8 +305,9 @@ button {
  * the day banner's geometry in the muted colour, so the list does not
  * jump when the banner takes its place. */
 .day-loading {
-  margin: 12px 0 0;
-  padding: 10px 16px;
+  margin: 0;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line);
   font-size: 16px;
 }
 
@@ -266,7 +347,7 @@ button {
 }
 
 .cal-nav:active {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 .cal-grid {
@@ -296,7 +377,7 @@ button {
 }
 
 .cal-day:active {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 /* Today is ringed; the chosen day is filled. Today chosen is both, and
@@ -318,6 +399,9 @@ button {
 
 .class-when {
   font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
   /* The date line stays one line (T61); only the title wraps. */
   white-space: nowrap;
@@ -334,8 +418,10 @@ button {
 .class-title {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
 }
 
 /* Quiet, but a real labelled button: switching classes is deliberate and
@@ -353,7 +439,51 @@ button {
 }
 
 .class-change:active:not(:disabled) {
-  background: var(--action-bg);
+  background: var(--surface-2);
+}
+
+/* T70: the Buy cell, the bar's one accent fill (Roster.dc.html): it
+ * navigates to the sale screen and never sells by itself. Flush-left
+ * label like every wide button. */
+.class-buy {
+  flex: 0 0 auto;
+  width: 108px;
+  min-height: 76px;
+  padding: 0 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 19px;
+  font-weight: 800;
+}
+
+.class-buy:active {
+  background: var(--accent-press);
+}
+
+/* The sun cell: light or dark for this iPad. */
+.class-theme {
+  flex: 0 0 auto;
+  width: 64px;
+  min-height: 76px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.class-theme:active {
+  background: var(--surface-2);
+  color: var(--ink);
 }
 
 .class-change:disabled {
@@ -366,20 +496,33 @@ button {
  * label) but never under the 64px tap floor. */
 
 .counters {
+  flex: 0 0 auto;
   display: flex;
-  gap: 8px;
-  margin-left: auto;
+  gap: 0;
+  margin-left: 0;
+  border-left: 1px solid var(--line);
 }
 
+/* 152 / 152 / 128 wide (Roster.dc.html), a hairline between, the label
+ * over the number, flush left. */
 .counter {
   position: relative;
-  min-height: 64px;
-  min-width: 96px;
-  padding: 8px 14px;
-  border: 1px solid var(--line);
+  width: 152px;
+  min-height: 76px;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border: 0;
+  border-right: 1px solid var(--line);
   border-radius: 0;
-  background: var(--surface);
+  background: transparent;
   text-align: left;
+}
+
+.counter:last-child {
+  width: 128px;
+  border-right: 0;
 }
 
 /* The signed-up counter is a stat, not a control: same card, no pressed
@@ -389,7 +532,7 @@ button {
 }
 
 .counter:active {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 /* T66: the same idea as the Buy screen's Total/Due/Change figures (a
@@ -399,21 +542,25 @@ button {
  * waitlist count and the row's booking-only state. */
 .counter-label {
   display: block;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  white-space: nowrap;
   color: var(--muted);
 }
 
 .counter-num {
   display: block;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.1;
   font-variant-numeric: tabular-nums;
+}
+
+/* CHECKED IN's number is the one green figure in the bar. */
+.counter-num.ok {
+  color: var(--ok);
 }
 
 /* Roster order: ONE quiet 44px icon at the right end of the column-header
@@ -429,17 +576,18 @@ button {
 
 .sort-dd {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 10px);
   right: 0;
   z-index: 25;
-  min-width: 240px;
-  padding: 8px;
-  border: 1px solid var(--line);
+  min-width: 260px;
+  padding: 0;
+  border: 2px solid var(--rule);
   border-radius: 0;
   background: var(--surface);
-  box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
+  box-shadow: var(--shadow-lg);
   display: grid;
-  gap: 2px;
+  gap: 0;
+  animation: pos-fade 120ms ease-out;
 }
 
 /* Sort options reuse the dropdown-option idiom minus the fact columns. */
@@ -452,8 +600,11 @@ button {
  * Enter"). */
 .search-bar {
   display: flex;
-  gap: 8px;
-  margin: 12px 0;
+  align-items: stretch;
+  gap: 0;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
 }
 
 .search-wrap {
@@ -464,36 +615,44 @@ button {
 
 .search-go {
   flex: 0 0 auto;
-  min-height: 64px;
-  padding: 0 24px;
-  border: 1px solid var(--line);
+  min-height: 60px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
   border-radius: 0;
-  background: var(--surface);
+  background: transparent;
   color: var(--ink);
   font-size: 16px;
   font-weight: 600;
 }
 
 .search-go:active {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 /* The quiet minimum-length message under the search bar. */
 .search-quiet {
-  margin: -4px 0 12px;
+  margin: 0;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--line);
   font-size: 16px;
   color: var(--muted);
 }
 
 .search {
   width: 100%;
-  min-height: 64px;
-  padding: 0 64px 0 16px; /* room for the clear button */
-  font-size: 20px;
-  border: 1px solid var(--line);
+  min-height: 60px;
+  padding: 0 60px 0 18px; /* room for the clear button */
+  font-size: 19px;
+  border: 0;
   border-radius: 0;
-  background: var(--surface);
+  outline: none;
+  background: transparent;
   color: var(--ink);
+}
+
+.search:focus-visible {
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 /* Clears the query. Same quiet treatment as the row's check-out X; a full
@@ -503,7 +662,7 @@ button {
   right: 0;
   top: 0;
   bottom: 0;
-  width: 64px;
+  width: 60px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -522,17 +681,19 @@ button {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 8px;
+  gap: 0;
 }
 
+/* The counter modals' list rows: a hairline between, nothing else. */
 .row {
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
   min-height: 72px;
-  padding: 12px 16px;
-  border: 1px solid var(--line);
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
   border-radius: 0;
   background: var(--surface);
   text-align: left;
@@ -573,21 +734,31 @@ button {
    * client name, so the payment column takes the larger share. The
    * name column floors at 220px, which fits the studio's longest names
    * at 20px/600 before the payment column starts giving way. */
-  --roster-cols: minmax(220px, 1.3fr) 74px minmax(0, 2.5fr) 7em 328px;
+  /* T70 (Roster.dc.html): name (the M badge and the info icon trail it)
+   * | payment | balance | chip | actions. The chip's own fixed column is
+   * what keeps the tap line straight down the list; the actions cell
+   * holds four 44px squares 2px apart (undo or trash, sell, profile,
+   * Mindbody) with 6px to spare. */
+  --roster-cols: minmax(0, 2.1fr) minmax(0, 1.4fr) 104px 132px 188px;
 }
 
 .roster-head,
 .rrow {
   display: grid;
   grid-template-columns: var(--roster-cols);
-  gap: 12px;
+  gap: 16px;
   align-items: center;
 }
 
+/* The column heads: 16px uppercase kickers over a 2px rule. */
 .roster-head {
-  margin-top: 4px;
-  padding: 0 16px 4px;
+  margin: 0;
+  padding: 10px 20px;
+  border-bottom: 2px solid var(--rule);
   font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
@@ -605,8 +776,9 @@ button {
   /* Anchors the payment-change dropdown (see .pass-dd). */
   position: relative;
   min-height: 72px;
-  padding: 8px 16px;
-  border: 1px solid var(--line);
+  padding: 0 20px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
   border-radius: 0;
   background: var(--surface);
 }
@@ -629,8 +801,9 @@ button {
   cursor: pointer;
 }
 
+.rrow.rrow-tap:hover,
 .rrow.rrow-tap:active {
-  background: var(--action-bg);
+  background: var(--accent-bg);
 }
 
 /* The standing pill on a search row (T32, T42): where this person sits
@@ -642,7 +815,10 @@ button {
 .mini-in,
 .mini-signed {
   flex: 0 0 auto;
-  padding: 1px 10px;
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px;
   border-radius: 0;
   font-size: 16px;
   font-weight: 600;
@@ -679,7 +855,7 @@ button {
 }
 
 .mini-signed {
-  background: var(--line);
+  background: var(--surface-2);
   color: var(--muted);
 }
 
@@ -694,16 +870,19 @@ button {
  * column must stay equal to it. One info slot since T20: the alert and
  * notes icons folded into the single info icon. */
 .cell-icons {
-  display: grid;
-  grid-template-columns: 30px 44px;
-  align-items: center;
-  justify-items: center;
-}
-
-.icon-slot {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 2px;
+}
+
+/* The M badge's button and the info icon keep their 44px height inside
+ * a name line that is only 28px tall: the negative margin lets the row
+ * stay 72px with a subline under the name. */
+.name-line .row-icon,
+.name-line .m-chip-btn {
+  height: 44px;
+  margin: -8px 0;
 }
 
 /* Gap 2px: the name-line icons cluster right after the name instead of
@@ -714,17 +893,17 @@ button {
 .name-line {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 8px;
   min-width: 0;
 }
 
 .name-text {
   min-width: 0;
-  margin-right: 6px;
+  margin-right: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 600;
 }
 
@@ -732,6 +911,10 @@ button {
  * message (in-flight, failed, gate) which outranks it. */
 .subline {
   display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 16px;
   color: var(--muted);
 }
@@ -757,8 +940,19 @@ button {
   text-decoration: none;
 }
 
+/* Hover and press tints (Roster.dc.html): neutral icons go ink on the
+ * quiet fill, the sell icon takes the accent pair, undo and trash the
+ * stop pair (see .undo-btn). */
+.row-icon:hover,
 .row-icon:active {
-  background: var(--line);
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+.row-icon.sell:hover,
+.row-icon.sell:active {
+  color: var(--accent);
+  background: var(--accent-bg);
 }
 
 .row-icon:disabled {
@@ -796,6 +990,14 @@ button {
   color: var(--accent);
 }
 
+.cell-pay .pass-toggle:hover,
+.cell-pay .pass-toggle:active,
+.guest-btn:hover,
+.guest-btn:active {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
 /* The two-line block in the payment cell: pass name over its facts. The
  * chevron sits OUTSIDE this stack (flex sibling, margin-left auto), so it
  * stays pinned right and vertically centered against both lines. */
@@ -809,6 +1011,7 @@ button {
   min-width: 0;
   overflow: hidden;
   font-size: 16px;
+  font-weight: 600;
   /* Wraps to a second line before it truncates (Pete, 2026-09-03): a
    * pass name cut to "Monthly Committed Membe..." tells the teacher
    * less than a row 20px taller does. Two lines, then the ellipsis. */
@@ -829,7 +1032,9 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
+  /* T70: 16px like the mockup's expiry line; the 14px exception T15
+   * recorded here is retired with the pass. */
+  font-size: 16px;
   color: var(--muted);
 }
 
@@ -845,6 +1050,7 @@ button {
  * into the row padding rather than render "...". */
 .cell-bal {
   font-size: 16px;
+  font-weight: 600;
   text-align: right;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -862,11 +1068,17 @@ button {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 2px;
 }
 
-.cell-actions .chip {
-  border: 0;
+/* The chip column: the chip is wider than "checked in" needs only by
+ * its padding, and may run into the 16px gap beside it; nothing sits
+ * there. */
+.rrow > .cell-chip {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: visible;
 }
 
 .act-spacer {
@@ -892,18 +1104,32 @@ button {
  * left-anchored dropdown under the payment cell could. */
 .pass-dd {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 2px);
   right: 0;
   z-index: 25;
   min-width: min(520px, 92vw);
   max-width: min(520px, 92vw);
-  padding: 8px;
-  border: 1px solid var(--line);
+  padding: 0;
+  border: 2px solid var(--rule);
   border-radius: 0;
   background: var(--surface);
-  box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
+  box-shadow: var(--shadow-lg);
   display: grid;
-  gap: 2px;
+  gap: 0;
+  animation: pos-fade 120ms ease-out;
+}
+
+@keyframes pos-fade {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pass-dd,
+  .sort-dd,
+  .modal {
+    animation: none;
+  }
 }
 
 /* The search modal's pass picker: the same dropdown, but position: fixed
@@ -933,8 +1159,9 @@ button {
   align-items: start;
   gap: 10px;
   min-height: 64px;
-  padding: 20px 12px;
+  padding: 20px 16px;
   border: 0;
+  border-bottom: 1px solid var(--line);
   border-radius: 0;
   background: transparent;
   color: inherit;
@@ -942,17 +1169,24 @@ button {
   font-size: 16px;
 }
 
+.pass-opt:last-child {
+  border-bottom: 0;
+}
+
+button.pass-opt:hover,
 button.pass-opt:active {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 button.pass-opt:disabled {
   cursor: default;
 }
 
-/* The pass paying now: checked at the top, not an action. */
-.pass-opt.current {
-  color: var(--ok);
+/* The pass paying now, or the class showing: the FILLED row (2.4), with
+ * the check where the dropdown has a check column. */
+.pass-opt.current,
+button.pass-opt.current:hover {
+  background: var(--accent-bg);
   font-weight: 600;
 }
 
@@ -1002,7 +1236,7 @@ button.pass-opt:disabled {
 
 .pass-empty {
   margin: 0;
-  padding: 8px 12px;
+  padding: 12px 16px;
   font-size: 16px;
   color: var(--muted);
 }
@@ -1011,7 +1245,7 @@ button.pass-opt:disabled {
  * dressed as success: a dry-run "write" did not happen. */
 .pass-note {
   margin: 0;
-  padding: 8px 12px;
+  padding: 8px 16px;
   border-radius: 0;
   background: var(--warn-bg);
   color: var(--warn);
@@ -1139,31 +1373,41 @@ button.pass-opt:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 26px;
-  min-height: 26px;
+  width: 24px;
+  height: 24px;
   border-radius: 0;
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--gold-bg);
+  color: var(--gold);
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 /* One width for every chip, whatever the label. The chip is the rightmost
  * thing on every row, so ragged widths make the column edge zigzag and the
  * eye has to re-find the target on each row. Wide enough for the longest
  * label ("checked in") so nothing wraps or truncates. */
+/* T70: the chip state machine (README, "Chip state machine"). 48px, square,
+ * flush-left 16px/800 label; a 1px transparent border on the quiet
+ * states so the 2px borders of the loud ones do not move the text. */
 .chip {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  gap: 8px;
   min-width: 104px;
-  min-height: 32px;
-  padding: 6px 12px;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid transparent;
   border-radius: 0;
   font-size: 16px;
-  font-weight: 600;
-  text-align: center;
+  font-weight: 800;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.chip > svg {
+  flex: 0 0 auto;
 }
 
 .chip.in {
@@ -1174,23 +1418,34 @@ button.pass-opt:disabled {
 .chip.unpaid {
   background: var(--warn-bg);
   color: var(--warn);
+  border-color: var(--warn);
+  border-width: 2px;
+  padding: 0 13px;
 }
 
+/* The write is on the wire: the accent fill while it lasts, then the
+ * calm green above. Chosen in this direction (README); the spinner
+ * rides the label's ink. */
 .chip.busy {
-  background: var(--line);
-  color: var(--muted);
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  border-width: 2px;
+  padding: 0 13px;
 }
 
 /* A spinner rather than a frozen row: the wait for Mindbody is 300-900ms,
- * which is long enough to look broken if nothing moves. */
+ * which is long enough to look broken if nothing moves. The one round
+ * thing on the screen, deliberately. */
 .spinner {
   display: inline-block;
   width: 15px;
   height: 15px;
+  flex: 0 0 auto;
   vertical-align: -2px;
-  border: 2px solid var(--muted);
+  border: 2px solid currentColor;
   border-top-color: transparent;
-  border-radius: 0;
+  border-radius: 50%;
   animation: spin 700ms linear infinite;
 }
 
@@ -1218,13 +1473,22 @@ button.pass-opt:disabled {
  * near-white on near-white. A hardcoded colour next to a themed one is the
  * bug, not the particular shade. */
 .chip.action {
-  background: var(--action-bg);
+  background: var(--surface-2);
   color: var(--ink);
+  border-color: var(--line);
+}
+
+button.chip.action:hover,
+button.chip.action:active {
+  background: var(--line);
 }
 
 .chip.failed {
   background: var(--stop-bg);
   color: var(--stop);
+  border-color: var(--stop);
+  border-width: 2px;
+  padding: 0 13px;
 }
 
 /* The blocked state: no released waiver on file. Same stop pairing as a
@@ -1234,14 +1498,18 @@ button.pass-opt:disabled {
 /* T46: the check-in chip on a future day. Disabled and muted, both
  * halves tokens: it says "not yet", not "blocked" or "failed". */
 .chip.future {
-  background: var(--line);
+  background: var(--surface-2);
   color: var(--muted);
+  border-color: var(--line);
   cursor: default;
 }
 
 .chip.stop {
   background: var(--stop-bg);
   color: var(--stop);
+  border-color: var(--stop);
+  border-width: 2px;
+  padding: 0 13px;
 }
 
 .note {
@@ -1297,15 +1565,16 @@ button.pass-opt:disabled {
 /* A confirming action that is not destructive: adding someone to the
  * waiting list gets the action pairing, not the stop pairing. */
 .modal-confirm.go {
-  background: var(--action-bg);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 /* Mode banner. The counter must never wonder whether a tap was real. */
 .banner {
-  margin: 0 0 12px;
-  padding: 10px 16px;
+  margin: 0;
+  padding: 10px 20px;
   border-radius: 0;
+  font-size: 16px;
   font-weight: 600;
   background: var(--ok-bg);
   color: var(--ok);
@@ -1322,9 +1591,10 @@ button.pass-opt:disabled {
  * never read as, or crowd out, the dry-run/live line. Tokens only, both
  * palettes. */
 .studio-banner {
-  margin: 0 0 12px;
-  padding: 10px 16px;
-  border: 1px solid var(--line);
+  margin: 0;
+  padding: 10px 20px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
   border-left: 6px solid var(--accent);
   border-radius: 0;
   background: var(--surface);
@@ -1611,8 +1881,10 @@ body.sale-open .dev-handle {
   color: var(--muted);
 }
 
+.undo-btn:hover,
 .undo-btn:active {
-  background: var(--line);
+  color: var(--stop);
+  background: var(--stop-bg);
 }
 
 /* Confirmation dialog. */
@@ -1625,16 +1897,45 @@ body.sale-open .dev-handle {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgb(0 0 0 / 0.5);
+  background: var(--scrim);
 }
 
+/* T70: the dialog shell (Dialogs.dc.html): 2px rule, the one shadow,
+ * square. The body keeps 20px of inset; the head and the action cells
+ * reach the edges with negative margins so every modal gets the
+ * pattern without restructuring its content. */
 .modal {
   width: min(460px, 100%);
-  padding: 24px;
-  border: 1px solid var(--line);
+  padding: 18px 20px;
+  border: 2px solid var(--rule);
   border-radius: 0;
   background: var(--surface);
-  box-shadow: 0 12px 48px rgb(0 0 0 / 0.4);
+  box-shadow: var(--shadow-lg);
+  animation: pos-fade 140ms ease-out;
+}
+
+.modal-head {
+  margin: -18px -20px 16px;
+  padding: 16px 64px 14px 20px;
+  border-bottom: 2px solid var(--rule);
+}
+
+.modal-kicker {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.modal-kicker.stop {
+  color: var(--stop);
+}
+
+.modal-head .modal-title {
+  margin: 0;
+  padding-right: 0;
 }
 
 /* Counter modals hold a list, so they run wider than a confirmation and
@@ -1660,6 +1961,12 @@ body.sale-open .dev-handle {
  * no passes, no balance, no icons ("don't need all the info here"). */
 .modal-search.attach-mode {
   --roster-cols: minmax(0, 1fr) 118px;
+  width: min(760px, 100%);
+  align-self: flex-start;
+  margin-top: 60px;
+  max-height: calc(100dvh - 84px);
+  display: flex;
+  flex-direction: column;
 }
 
 /* --- Attach picker (T27 round three, T32, reshaped in T42) ----------
@@ -1669,8 +1976,19 @@ body.sale-open .dev-handle {
  * Tokens only, so both palettes come from :root and the dark block. */
 .attach-quick {
   display: grid;
-  gap: 10px;
-  margin: 0 0 14px;
+  gap: 0;
+  margin: 0 -20px -18px;
+  min-height: 0;
+}
+
+/* The search row in the attach modal reaches the edges like the
+ * roster's. */
+.attach-mode .search-bar {
+  margin: 0 -20px;
+}
+
+.attach-mode .search-quiet {
+  margin: 0 -20px;
 }
 
 /* The filter row: toggle | dropdown (about half the row) | segment. The
@@ -1678,8 +1996,9 @@ body.sale-open .dev-handle {
 .attach-filters {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
+  align-items: stretch;
+  gap: 0;
+  border-bottom: 2px solid var(--rule);
 }
 
 .attach-filters.off .attach-class,
@@ -1691,19 +2010,18 @@ body.sale-open .dev-handle {
  * the accent while on. 64px, the tap-target floor. */
 .filter-toggle {
   flex: 0 0 auto;
-  min-height: 64px;
+  min-height: 60px;
   padding: 0 20px;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 800;
   white-space: nowrap;
 }
 
 .filter-toggle.on {
-  border-color: var(--accent);
   background: var(--accent);
   color: var(--accent-ink);
 }
@@ -1724,12 +2042,19 @@ body.sale-open .dev-handle {
 .attach-class-btn {
   flex: 1;
   min-width: 0;
+  min-height: 60px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 14px;
+  padding: 0 16px;
+  border: 0;
+  border-left: 1px solid var(--line);
   text-align: left;
+}
+
+.attach-class-btn > svg {
+  color: var(--muted);
 }
 
 .attach-class-name {
@@ -1759,7 +2084,7 @@ body.sale-open .dev-handle {
 .seg {
   display: inline-flex;
   flex: 0 0 auto;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 0;
   background: var(--surface);
   overflow: hidden;
@@ -1771,8 +2096,8 @@ body.sale-open .dev-handle {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  min-width: 88px;
-  min-height: 64px;
+  width: 108px;
+  min-height: 60px;
   padding: 0 10px;
   border: 0;
   border-left: 1px solid var(--line);
@@ -1780,10 +2105,6 @@ body.sale-open .dev-handle {
   color: var(--muted);
   font-size: 16px;
   font-weight: 600;
-}
-
-.seg-btn:first-child {
-  border-left: 0;
 }
 
 .seg-btn svg {
@@ -1809,8 +2130,14 @@ body.sale-open .dev-handle {
   height: min(46vh, 420px);
   overflow-y: auto;
   display: grid;
-  gap: 8px;
+  gap: 0;
   align-content: start;
+}
+
+/* Attach rows: 68px, name | standing tag | the profile icon, a hairline
+ * between, the accent tint under a finger (Buy.dc.html). */
+.attach-mode .rrow {
+  min-height: 68px;
 }
 
 /* The previous rows stay on screen, dimmed, while a search is in flight,
@@ -1821,7 +2148,8 @@ body.sale-open .dev-handle {
 }
 
 .attach-line {
-  margin: 4px 0;
+  margin: 0;
+  padding: 12px 20px;
   font-size: 16px;
   color: var(--muted);
 }
@@ -1883,56 +2211,96 @@ body.sale-open .dev-handle {
   position: absolute;
   top: 14px;
   right: 14px;
-  color: var(--ink);
+  width: 40px;
+  height: 40px;
+  color: var(--muted);
 }
 
 .modal-roster {
   max-height: min(55vh, 520px);
   overflow-y: auto;
-  margin-bottom: 20px;
+  margin-bottom: 0;
 }
 
 .modal-title {
   margin: 0 0 8px;
   font-size: 22px;
-  font-weight: 600;
+  font-weight: 800;
 }
 
 .modal p.muted {
-  margin: 0 0 20px;
+  margin: 0 0 16px;
 }
 
+/* The action cells (Dialogs.dc.html): equal, 68px, split by a hairline,
+ * reaching the modal's edges, labels flush left. One button fills the
+ * row; two split it. */
 .modal-actions {
-  display: flex;
-  gap: 12px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 0;
+  margin: 16px -20px -18px;
+  border-top: 1px solid var(--line);
 }
 
 .modal-actions button {
-  flex: 1;
-  min-height: 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 68px;
+  padding: 0 20px;
+  border: 0;
+  border-right: 1px solid var(--line);
   border-radius: 0;
   font-size: 17px;
-  font-weight: 600;
+  font-weight: 800;
+  text-align: left;
+}
+
+.modal-actions button:last-child {
+  border-right: 0;
 }
 
 .modal-cancel {
-  border: 1px solid var(--line);
-  background: transparent;
+  background: var(--surface);
   color: var(--ink);
 }
 
-/* The cancel-booking dialog's middle lines: the entity (who/what pass) is
- * quiet; the consequence is the ONLY stop-coloured text in the dialog, so
- * the one loud line is the thing that happens on confirm. */
+.modal-cancel:hover:not(:disabled),
+.modal-cancel:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+/* The entity card (2.5, Dialogs.dc.html): who and what state, on the
+ * quiet fill inside a hairline; the consequence under it is the ONLY
+ * stop-coloured text in the dialog, so the one loud line is the thing
+ * that happens on confirm. */
 .modal-entity {
-  margin: 0 0 8px;
-  font-size: 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.modal-entity-name {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.modal-entity-facts {
   color: var(--muted);
 }
 
 .modal-consequence {
   margin: 0 0 16px;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--stop);
 }
@@ -1958,7 +2326,7 @@ body.sale-open .dev-handle {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: var(--bg);
+  background: var(--surface-2);
   color: var(--ink);
   font: inherit;
   font-size: 17px;
@@ -1988,7 +2356,7 @@ body.sale-open .dev-handle {
   padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: var(--bg);
+  background: var(--surface-2);
   color: var(--ink);
   max-height: min(46vh, 440px);
   overflow-y: auto;
@@ -2005,10 +2373,17 @@ body.sale-open .dev-handle {
   margin-right: 8px;
 }
 
+/* The destructive cell: filled with the stop colour. The label is --bg,
+ * not white: on the dark palette's stop, white fails contrast (2.47:1)
+ * while --bg clears it (7.5:1 dark, 6.6:1 light). */
 .modal-confirm {
-  border: 1px solid transparent;
-  background: var(--stop-bg);
-  color: var(--stop);
+  background: var(--stop);
+  color: var(--bg);
+}
+
+.modal-confirm:hover:not(:disabled),
+.modal-confirm:active:not(:disabled) {
+  filter: brightness(0.92);
 }
 
 /* --- Lock screen (T21) ----------------------------------------------
@@ -2020,34 +2395,47 @@ body.sale-open .dev-handle {
 .lock-shell {
   max-width: 420px;
   min-height: 100dvh;
+  margin: 0 auto;
+  padding: 0 16px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 12px;
 }
 
+/* The one card on the page takes the dialog shell (T70). */
 .lock-card {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 24px;
-  border: 1px solid var(--line);
+  padding: 20px;
+  border: 2px solid var(--rule);
   border-radius: 0;
   background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.lock-kicker {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .lock-title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 700;
-  text-align: center;
+  margin: -8px 0 0;
+  font-size: 22px;
+  font-weight: 800;
+  text-align: left;
 }
 
 .lock-sub {
   margin: 0;
   font-size: 16px;
   color: var(--muted);
-  text-align: center;
+  text-align: left;
 }
 
 /* The masked entry: one dot per digit typed, never the digits. */
@@ -2059,7 +2447,7 @@ body.sale-open .dev-handle {
   min-height: 44px;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: var(--bg);
+  background: var(--surface-2);
 }
 
 .lock-dots.shake {
@@ -2069,7 +2457,7 @@ body.sale-open .dev-handle {
 .lock-dot {
   width: 12px;
   height: 12px;
-  border-radius: 0;
+  border-radius: 50%;
   background: var(--ink);
 }
 
@@ -2091,7 +2479,7 @@ body.sale-open .dev-handle {
   min-height: 22px;
   font-size: 16px;
   color: var(--stop);
-  text-align: center;
+  text-align: left;
 }
 
 .lock-msg-empty {
@@ -2111,13 +2499,13 @@ body.sale-open .dev-handle {
   min-height: 64px;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: var(--surface);
+  background: var(--surface-2);
   font-size: 22px;
   font-weight: 600;
 }
 
 .key:active:not(:disabled) {
-  background: var(--action-bg);
+  background: var(--line);
 }
 
 .key:disabled {
@@ -2130,13 +2518,19 @@ body.sale-open .dev-handle {
 }
 
 .lock-unlock {
-  min-height: 64px;
-  border: 1px solid transparent;
+  min-height: 68px;
+  padding: 0 20px;
+  border: 0;
   border-radius: 0;
   background: var(--accent);
   color: var(--accent-ink);
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.lock-unlock:active:not(:disabled) {
+  background: var(--accent-press);
 }
 
 .lock-unlock:disabled {
@@ -3909,7 +4303,7 @@ textarea.reason-note-field {
 
 .lock-dot.empty {
   background: transparent;
-  border: 2px solid var(--line-soft);
+  border: 2px solid var(--line);
 }
 
 .reason-link {
@@ -4085,8 +4479,8 @@ textarea.reason-note-field {
 /* The chosen option: accent outline, same family as a selected method
  * card on the sale screen. */
 .modal-pay .pass-opt.sel {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--ink);
   font-weight: 600;
 }
 
@@ -4125,7 +4519,7 @@ textarea.reason-note-field {
 }
 
 .pay-free:active:not(:disabled) {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 .pay-free:disabled {
@@ -4254,9 +4648,10 @@ textarea.reason-note-field {
 .profile-label {
   flex: 1 0 100%;
   margin: 0;
-  font-size: 14px;
-  font-weight: 400;
-  letter-spacing: 0.04em;
+  /* T70: the 16px kicker, retiring the 14px exception. */
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
 }
@@ -4343,11 +4738,11 @@ textarea.reason-note-field {
   justify-content: space-between;
   gap: 2px 12px;
   padding: 8px 0;
-  border-top: 1px solid var(--line-soft);
+  border-top: 1px solid var(--line);
 }
 
 .profile-pass:last-child {
-  border-bottom: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line);
 }
 
 .profile-pass-name {
@@ -4396,7 +4791,8 @@ textarea.reason-note-field {
 }
 
 .actor-banner {
-  margin: 0 0 12px;
+  margin: 0;
+  padding: 10px 20px;
 }
 
 .probe {
@@ -4673,15 +5069,9 @@ textarea.reason-note-field {
  * and the dropdown wrapper takes the group's. */
 .class-group {
   flex: 1 1 0;
-  /* A floor for the title beside the day control (T52 review: the floor
-   * on the group alone let the day control take it, and at 820 wide on a
-   * viewed day the title had 91px and wrapped to four lines). The day
-   * control is the bare 64px glyph on every day since T61, so the 404px
-   * floor now leaves the title 340px, enough that the longest name on the
-   * schedule with its teacher wraps to two or three lines, never more;
-   * the number is kept, not recomputed, so the T60 wrap breakpoint below
-   * still adds up from it. */
-  min-width: min(404px, 100%);
+  /* T70: the group takes whatever the fixed cells leave (450px at 1194,
+   * the title wrapping under that rather than ellipsizing, T61). */
+  min-width: 0;
   max-width: 100%;
   display: flex;
   align-items: stretch;
@@ -4700,20 +5090,6 @@ textarea.reason-note-field {
   flex: 1 1 auto;
   width: 100%;
   justify-content: space-between;
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-
-.class-group .cal-btn {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  margin-left: -1px;
-}
-
-/* The viewing outline sits over the dropdown's edge, not under it. */
-.class-group .cal-btn.viewing {
-  position: relative;
-  z-index: 1;
 }
 
 /* The calendar's month row steps in from both edges (T52 review): the X
@@ -4730,28 +5106,16 @@ textarea.reason-note-field {
  * --line-soft rules. Same numbers, same labels, 64px. */
 .counters {
   gap: 0;
-  border: 1px solid var(--line);
   border-radius: 0;
-  background: var(--surface);
-  overflow: hidden;
-}
-
-.counter {
-  border: 0;
-  border-radius: 0;
-  border-left: 1px solid var(--line-soft);
-}
-
-.counter:first-child {
-  border-left: 0;
+  background: transparent;
 }
 
 /* The Search button is the glass alone (Pete: "the 'search' button can
  * be replaced with a magnifying glass icon"): square, 64 by 64 to match
  * the input, on both bars. */
 .search-go {
-  width: 64px;
-  min-width: 64px;
+  width: 76px;
+  min-width: 76px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -4763,20 +5127,12 @@ textarea.reason-note-field {
  * 26px chip, so the tap target is the same as the info icon's beside
  * it. The icon column widens to two 44px slots (was 30 + 44); the
  * roster's column template follows. */
-.cell-icons {
-  grid-template-columns: 44px 44px;
-}
-
-:root {
-  --roster-cols: minmax(220px, 1.3fr) 88px minmax(0, 2.5fr) 7em 328px;
-}
-
 .m-chip-btn {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
+  width: 32px;
   height: 44px;
   padding: 0;
   border: 0;
@@ -4784,8 +5140,9 @@ textarea.reason-note-field {
   background: transparent;
 }
 
+.m-chip-btn:hover,
 .m-chip-btn:active {
-  background: var(--line);
+  background: var(--surface-2);
 }
 
 /* The Membership modal: the profile card's pass list, standing alone. */
@@ -4842,28 +5199,27 @@ textarea.reason-note-field {
  * wrapping, so a 1024 landscape has over 100px to spare -- the counters
  * go last again and wrap alone, right-aligned by their auto margin, the
  * line split portrait has had since T46. */
-@media (max-width: 911px) {
-  .counters {
-    order: 1;
-  }
-}
+/* T70: the bar never wraps now (its cells narrow under 860 instead), so
+ * T60's portrait reordering of the counters is gone. */
 
 .staff-account {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 64px;
+  min-height: 76px;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 0;
+  border-left: 1px solid var(--line);
   border-radius: 0;
-  background: var(--surface);
-  color: var(--ink);
+  background: transparent;
+  color: var(--muted);
 }
 
 .staff-account:active {
-  background: var(--action-bg);
+  background: var(--surface-2);
+  color: var(--ink);
 }
 
 .modal-scrim.staff-gate {
@@ -4888,12 +5244,12 @@ textarea.reason-note-field {
  * roster's does. */
 .staff-gate-banner {
   position: fixed;
-  top: 16px;
-  left: 16px;
-  right: 16px;
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 31;
-  max-width: 1400px;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
 }
 
 .staff-gate-banner .banner {
@@ -4915,7 +5271,7 @@ textarea.reason-note-field {
 /* The first label sits under the name line (.modal-entity), whose own
  * bottom margin is the gap. :first-of-type could not select it: the
  * title and the name are paragraphs too, so the label is never first. */
-.modal-entity + .member-label {
+.modal-head + .member-label {
   margin-top: 0;
 }
 
@@ -4980,7 +5336,7 @@ textarea.reason-note-field {
 /* The "New client" button under "Nobody found": a single full-width
  * 64px action, quiet until it is the only thing to do. */
 .new-client-actions {
-  margin: 0 0 8px;
+  margin: 8px 0 0;
 }
 
 /* T59c -------------------------------------------------------------------
@@ -5018,7 +5374,7 @@ textarea.reason-note-field {
 }
 
 .modal-guest .new-client-actions {
-  margin: auto 0 0;
+  margin: auto -20px -18px;
   flex: 0 0 auto;
 }
 
@@ -5161,7 +5517,7 @@ textarea.reason-note-field {
  * keep T54's two-line wrap, never an ellipsis. */
 @media (max-width: 860px) {
   :root {
-    --roster-cols: minmax(136px, 1fr) 88px minmax(120px, 2.5fr) 4.5em 316px;
+    --roster-cols: minmax(0, 2fr) minmax(120px, 1.4fr) 4.5em 120px 188px;
   }
 
   .roster-head,
@@ -5179,8 +5535,34 @@ textarea.reason-note-field {
     padding-right: 12px;
   }
 
-  .cell-actions .chip {
-    padding: 6px 8px;
+  .chip {
+    padding: 0 10px;
+    min-width: 96px;
+  }
+
+  /* The top bar's fixed cells give back what portrait lacks; the
+   * kickers wrap to two lines inside the 76px rather than overflow. */
+  .counter {
+    width: 108px;
+    padding: 0 12px;
+  }
+
+  .counter-label {
+    white-space: normal;
+    line-height: 1.15;
+  }
+
+  .pass-facts {
+    white-space: normal;
+  }
+
+  .counter:last-child {
+    width: 96px;
+  }
+
+  .class-buy {
+    width: 88px;
+    padding: 0 16px;
   }
 
   /* With 136px the name column would ellipsize "Whitney Campbell";
@@ -5211,4 +5593,29 @@ textarea.reason-note-field {
   .cell-pay.has-guest .pay-icons {
     flex-direction: row;
   }
+}
+
+/* T70 --- The roster builder's late rules -------------------------------
+ * The banners and notes above the bar sit flush like it; the shell's
+ * own quiet lines take the row inset. */
+.shell > .note {
+  margin: 0;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.shell > p.muted {
+  margin: 0;
+  padding: 8px 20px;
+  font-size: 16px;
+}
+
+/* The lock screen's banners: the staff gate's fixed strip, so the mode
+ * line reads the same on every screen a teacher can land on. */
+.lock-banners {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
 }

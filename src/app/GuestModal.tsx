@@ -721,8 +721,16 @@ export default function GuestModal({
         >
           <CloseIcon />
         </button>
-        <p className="modal-title">Guest of {member.name}</p>
-        <p className="muted modal-who">{passLine}</p>
+        {/* T70 (Dialogs.dc.html): the head, then the member and their
+            guest pass as the entity card. */}
+        <div className="modal-head">
+          <p className="modal-kicker">Guest pass</p>
+          <p className="modal-title">Guest of {member.name}</p>
+        </div>
+        <div className="modal-entity">
+          <span className="modal-entity-name">{member.name}</span>
+          <span className="modal-entity-facts">{passLine}</span>
+        </div>
 
         {selected ? (
           /* The confirm sheet: one sentence, one tap, single flight. */
