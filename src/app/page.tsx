@@ -20,7 +20,12 @@ import SaleScreen, {
   type ModeConfig,
   type SaleClient,
 } from "./SaleScreen";
-import { ClientProfileCard, wallDate } from "./ClientProfileCard";
+import {
+  ClientProfileCard,
+  OPT_IN_EMAIL_FLAG,
+  type OptInKind,
+  wallDate,
+} from "./ClientProfileCard";
 import StaffModal, { type Teacher } from "./StaffModal";
 import NewClientModal from "./NewClientModal";
 import GuestModal, {
@@ -189,6 +194,57 @@ function byLastThenFirst(a: { name: string }, b: { name: string }): number {
  *  when neither is on file, and then the line does not render. */
 function contactLine(c: { email: string | null; phone: string | null }): string {
   return [c.email, c.phone].filter(Boolean).join(" · ");
+}
+
+/**
+ * T71 (Pete: "if I type part of their email address in, the match
+ * should be shown like it is in mindbody"): the searched text in bold
+ * wherever it occurs in a result's name or contact line, the way
+ * Mindbody's own search bolds "held8" inside stephanie.held8@gmail.com.
+ * Mindbody's `searchText` already matches on email (client.yml:1403,
+ * "Can include FirstName, LastName, and Email"); what was missing was
+ * the row saying WHY it matched, since a hit on the email alone leaves
+ * the name looking like a stranger. Case-insensitive, every occurrence,
+ * the query's words matched separately so "steph held" bolds both; the
+ * text is split on the plain string, never a regex built from input.
+ */
+function Hit({ text, q }: { text: string; q: string }) {
+  const words = q
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length >= 2);
+  if (words.length === 0 || !text) return <>{text}</>;
+  const lower = text.toLowerCase();
+  /* Every match span, then merged so overlapping words bold once. */
+  const spans: [number, number][] = [];
+  for (const w of words) {
+    let at = lower.indexOf(w);
+    while (at >= 0) {
+      spans.push([at, at + w.length]);
+      at = lower.indexOf(w, at + 1);
+    }
+  }
+  if (spans.length === 0) return <>{text}</>;
+  spans.sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [];
+  for (const sp of spans) {
+    const last = merged[merged.length - 1];
+    if (last && sp[0] <= last[1]) last[1] = Math.max(last[1], sp[1]);
+    else merged.push([sp[0], sp[1]]);
+  }
+  const out: React.ReactNode[] = [];
+  let pos = 0;
+  merged.forEach(([a, b], i) => {
+    if (a > pos) out.push(text.slice(pos, a));
+    out.push(
+      <mark className="hit" key={i}>
+        {text.slice(a, b)}
+      </mark>,
+    );
+    pos = b;
+  });
+  if (pos < text.length) out.push(text.slice(pos));
+  return <>{out}</>;
 }
 
 /**
@@ -794,6 +850,10 @@ function FrontDesk({
   const [entries, setEntries] = useState<RosterEntry[]>([]);
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<SearchResult[]>([]);
+  /** T71: the query `found` answers, for the bold match in each row. Set
+   *  with the first page, so a query typed after the search stays out
+   *  of the rows until it is searched. */
+  const [foundFor, setFoundFor] = useState("");
   /** T59b: the new-client form, open over the walk-in search's empty
    *  state with the names the search box held when it looked like one. */
   /**
@@ -1877,6 +1937,7 @@ function FrontDesk({
             const seen = new Set(prev.map((p) => p.id));
             return [...prev, ...page.filter((p) => !seen.has(p.id))];
           });
+          if (first) setFoundFor(q);
           const next = offset + page.length;
           setSearchPage({
             offset: next,
@@ -2212,10 +2273,98 @@ function FrontDesk({
       });
   }, []);
 
+  /** T71: the profile card's opt-in write in flight, and its outcome. */
+  const [optIn, setOptIn] = useState<{
+    busy: OptInKind | null;
+    msg: { text: string; tone: "warn" | "stop" } | null;
+  }>({ busy: null, msg: null });
+
   const closeProfile = useCallback(() => {
     profileGen.current += 1;
     setProfileView(null);
+    setOptIn({ busy: null, msg: null });
   }, []);
+
+  /**
+   * T71: an email opt-in box on the profile card. ONE /api/client-consent
+   * write per tap carrying exactly the flag tapped (the T53 gate's
+   * route and envelope, under the teacher's token with the loud
+   * fallback, through the dry-run and write-guard gates). The box does
+   * not flip until Mindbody has answered: a suppressed write leaves it
+   * where the record says and names the reason, so a dry-run counter
+   * never shows an opt-in that was not saved. A dead teacher token
+   * brings the gate back and leaves the box alone.
+   */
+  const saveOptIn = useCallback(
+    async (kind: OptInKind, value: boolean) => {
+      if (!profileView || optIn.busy !== null) return;
+      const { clientId } = profileView;
+      const gen = profileGen.current;
+      setOptIn({ busy: kind, msg: null });
+      try {
+        const res = await fetch("/api/client-consent", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clientId, [OPT_IN_EMAIL_FLAG[kind]]: value }),
+        });
+        const body = await res.json().catch(() => null);
+        if (profileGen.current !== gen) return;
+        if (body?.staffSessionEnded === true || body?.reason === "staff") {
+          setTeacher(null);
+          setOptIn({ busy: null, msg: null });
+          return;
+        }
+        if (!res.ok || body?.ok !== true) {
+          throw new Error(body?.error ?? `HTTP ${res.status}`);
+        }
+        const fallback = noteActor(body, clientId);
+        if (body.suppressed) {
+          setOptIn({
+            busy: null,
+            msg: {
+              tone: "warn",
+              text:
+                body.suppressed === "dry-run"
+                  ? "Dry run: not saved, nothing was written."
+                  : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
+            },
+          });
+          return;
+        }
+        const patch =
+          kind === "account"
+            ? { accountEmails: value }
+            : kind === "schedule"
+              ? { scheduleEmails: value }
+              : { promotionalEmails: value };
+        setProfileState((st) =>
+          st.profile && st.profile.clientId === clientId && st.profile.consent
+            ? {
+                ...st,
+                profile: {
+                  ...st.profile,
+                  consent: { ...st.profile.consent, ...patch },
+                },
+              }
+            : st,
+        );
+        setOptIn({
+          busy: null,
+          msg: fallback ? { tone: "warn", text: fallback } : null,
+        });
+      } catch (err) {
+        if (profileGen.current !== gen) return;
+        setOptIn({
+          busy: null,
+          msg: {
+            tone: "stop",
+            text: `Could not save: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        });
+      }
+    },
+    [profileView, optIn.busy, noteActor],
+  );
 
   /** Escape closes the profile modal. It stacks above the search modal,
    *  whose own Escape handler stands down while this is open. */
@@ -4371,8 +4520,14 @@ function FrontDesk({
           }}
         >
           <div className="cell-name">
-            <span className="name-text">{client.name}</span>
-            {contact ? <span className="contact-line">{contact}</span> : null}
+            <span className="name-text">
+              <Hit text={client.name} q={attachInClass ? "" : foundFor} />
+            </span>
+            {contact ? (
+              <span className="contact-line">
+                <Hit text={contact} q={foundFor} />
+              </span>
+            ) : null}
           </div>
           {/* Their standing in the picked class, and TEXT rather than
               a control: attaching a sale moves no attendance. */}
@@ -4812,6 +4967,8 @@ function FrontDesk({
           }}
         >
           <span aria-hidden="true">Name</span>
+          {/* T71: the badge column, no label. */}
+          <span aria-hidden="true" />
           <span aria-hidden="true">Payment</span>
           <span className="cell-bal" aria-hidden="true">
             Balance
@@ -4970,48 +5127,6 @@ function FrontDesk({
                 <div className="cell-name">
                   <span className="name-line">
                     <span className="name-text">{entry.name}</span>
-                    {/* T70: the M badge and the info icon sit after the
-                        name (Roster.dc.html), no longer in fixed slots
-                        of their own column; the chip column is what
-                        keeps the tap line straight. */}
-                    <span className="cell-icons">
-                      {/* T52: the M is a button (Pete: "clicking on an
-                          'M' icon should show more info about their
-                          membership"), opening the Membership modal. */}
-                      {entry.member ? (
-                        <button
-                          className="m-chip-btn"
-                          title="Member (Mindbody's membership flag). Tap for details."
-                          aria-label={`Member (Mindbody's membership flag). Tap for details about ${entry.name}.`}
-                          aria-haspopup="dialog"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openMember(entry);
-                          }}
-                        >
-                          <span className="m-chip">M</span>
-                        </button>
-                      ) : null}
-                      {/* On EVERY row: dimmed when the client has no red
-                          alert, no yellow alert and no notes, because
-                          adding the first one starts here too; bright
-                          when any exist. */}
-                      <button
-                        className={
-                          entry.redAlert || entry.yellowAlert || entry.notes
-                            ? "row-icon"
-                            : "row-icon dim"
-                        }
-                        aria-label={`Alerts and notes for ${entry.name}`}
-                        title="Alerts and notes"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openInfoView(entry);
-                        }}
-                      >
-                        <InfoIcon />
-                      </button>
-                    </span>
                   </span>
                   {statusMsg ? (
                     <span
@@ -5029,6 +5144,52 @@ function FrontDesk({
                     <span className="subline">{history}</span>
                   ) : null}
                 </div>
+                {/* T71: the M badge and the info icon in a fixed column
+                    of their own between the name and the payment (Pete:
+                    "lined up in the same column rather than just to the
+                    right of the names"); T70 had them trailing the name.
+                    Two slots in a set order, the M slot empty on a
+                    non-member row so the info icons line up too. */}
+                <span className="cell-icons">
+                  {/* T52: the M is a button (Pete: "clicking on an 'M'
+                      icon should show more info about their
+                      membership"), opening the Membership modal. */}
+                  {entry.member ? (
+                    <button
+                      className="m-chip-btn"
+                      title="Member (Mindbody's membership flag). Tap for details."
+                      aria-label={`Member (Mindbody's membership flag). Tap for details about ${entry.name}.`}
+                      aria-haspopup="dialog"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openMember(entry);
+                      }}
+                    >
+                      <span className="m-chip">M</span>
+                    </button>
+                  ) : (
+                    <span className="m-slot" aria-hidden="true" />
+                  )}
+                  {/* On EVERY row: dimmed when the client has no red
+                      alert, no yellow alert and no notes, because adding
+                      the first one starts here too; bright when any
+                      exist. */}
+                  <button
+                    className={
+                      entry.redAlert || entry.yellowAlert || entry.notes
+                        ? "row-icon"
+                        : "row-icon dim"
+                    }
+                    aria-label={`Alerts and notes for ${entry.name}`}
+                    title="Alerts and notes"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openInfoView(entry);
+                    }}
+                  >
+                    <InfoIcon />
+                  </button>
+                </span>
 
                 <div className={guestPass ? "cell-pay has-guest" : "cell-pay"}>
                   {/* Two lines: the pass name, and under it the remaining/
@@ -5935,9 +6096,13 @@ function FrontDesk({
                                 teacher cannot read truncated. An absurdly
                                 long name wraps; "..." is not an option
                                 here (T17). */}
-                            <span className="name-text">{client.name}</span>
+                            <span className="name-text">
+                              <Hit text={client.name} q={foundFor} />
+                            </span>
                             {contact ? (
-                              <span className="contact-line">{contact}</span>
+                              <span className="contact-line">
+                                <Hit text={contact} q={foundFor} />
+                              </span>
                             ) : null}
                             {/* T42 review: the info icon left the search
                                 rows, and with it the only cue that a
@@ -6216,6 +6381,9 @@ function FrontDesk({
                 profile={profileState.profile}
                 loading={profileState.loading}
                 error={profileState.error}
+                onOptIn={saveOptIn}
+                optInBusy={optIn.busy}
+                optInMsg={optIn.msg}
               />
             </div>
           </div>

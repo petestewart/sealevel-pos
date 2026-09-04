@@ -703,15 +703,6 @@ function matchClassTeacher(
   return byFirst.length === 1 ? (byFirst[0] as StaffChoice) : null;
 }
 
-/** "Kim Farrell" as a bold first name and the rest. */
-function splitName(name: string): [string, string] {
-  const trimmed = name.trim();
-  const at = trimmed.indexOf(" ");
-  return at < 0
-    ? [trimmed, ""]
-    : [trimmed.slice(0, at), trimmed.slice(at + 1).trim()];
-}
-
 /**
  * THE T24 SEAM, now live, and since the second live test the whole LEFT
  * column: the tender block above the receipt, the receipt itself (passed
@@ -902,19 +893,19 @@ function PaymentPanel(props: {
   }>({ status: "idle", list: [] });
   const staffRef = useRef(staff);
   staffRef.current = staff;
-  /** T45 review: the list holds every teacher (fifteen at the studio) in
-   *  a box that shows about five, and the preselected class teacher can
-   *  sit anywhere in it alphabetically; at the studio's size the default
-   *  landed below the fold, with Comp enabled for a name nobody could
-   *  see. Bring the chosen row into view when the list lands or the
-   *  selection changes; `nearest` leaves a row already in view alone. */
-  const teacherListRef = useRef<HTMLDivElement | null>(null);
+  /** T71: the note field, focused once a kind is chosen. It is disabled
+   *  until then (Pete: "greyed out until the category is chosen"), so
+   *  autoFocus on open would land nowhere; the focus follows the chip
+   *  tap instead, and only for the kinds that need the note written. The
+   *  teacher picker is a native select since T71 (it was a scrolling
+   *  list of fifteen rows that hid the preselected teacher below the
+   *  fold), so nothing here scrolls a chosen row into view anymore. */
+  const noteRef = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => {
-    if (!reasonOpen || reasonDraft.kind !== "teacher") return;
-    teacherListRef.current
-      ?.querySelector<HTMLElement>(".reason-teacher.on")
-      ?.scrollIntoView({ block: "nearest" });
-  }, [reasonOpen, reasonDraft.kind, reasonDraft.forStaffId, staff.status]);
+    if (!reasonOpen || reasonDraft.kind === null) return;
+    if (!compNeedsDetail(reasonDraft.kind)) return;
+    noteRef.current?.focus();
+  }, [reasonOpen, reasonDraft.kind]);
   /** Select a teacher in the draft, keeping the kind. */
   const pickTeacher = (t: StaffChoice | null) =>
     setReasonDraft((d) => ({
@@ -2768,64 +2759,72 @@ function PaymentPanel(props: {
               ))}
             </div>
             {/* T68: the body between the chips and the actions is the one
-                row that flexes, so the dialog is the same size whether or
-                not the teacher list is showing: with it, the list fills
-                and the note is its 64px line; without it, the note takes
-                the whole body (Pete: "make the note text area longer to
-                make up the difference"). */}
+                row that flexes, so the dialog is the same size whatever
+                chip is chosen. T71: the teacher picker is a 64px select
+                on its own line and the note fills the rest either way. */}
             <div className="reason-body">
             {reasonDraft.kind === "teacher" ? (
-              /* The teacher picker: the active teachers from /api/staff,
-                 the current class's teacher preselected. A list that
-                 could not load says so and leaves Comp disabled; a name
-                 is never typed or guessed. */
-              <div
-                className="reason-teachers"
-                aria-label="Which teacher"
-                ref={teacherListRef}
-              >
-                {staff.status === "loading" ? (
-                  <p className="reason-note">Loading teachers...</p>
-                ) : null}
+              /* The teacher picker (T71, Pete: "via a dropdown rather than
+                 a permanently showing list"): a native select over the
+                 active teachers from /api/staff, the current class's
+                 teacher preselected. A list that could not load says so
+                 and leaves Next disabled; a name is never typed or
+                 guessed. The empty option is the prompt, not a choice:
+                 compValid needs a staff id. */
+              <>
+                <span className="reason-select-wrap">
+                <select
+                  className="reason-input reason-select"
+                  aria-label="Which teacher"
+                  value={reasonDraft.forStaffId ?? ""}
+                  disabled={staff.status !== "ready"}
+                  onChange={(e) => {
+                    const id = Number(e.target.value);
+                    pickTeacher(staff.list.find((t) => t.id === id) ?? null);
+                  }}
+                >
+                  <option value="">
+                    {staff.status === "loading"
+                      ? "Loading teachers..."
+                      : staff.status === "error"
+                        ? "Could not load teachers"
+                        : "Choose the teacher"}
+                  </option>
+                  {staff.list.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+                <Icon d="M6 9l6 6 6-6" />
+                </span>
                 {staff.status === "error" ? (
                   <p className="reason-note">
                     Could not load teachers. Tap Teacher to try again.
                   </p>
                 ) : null}
-                {staff.list.map((t) => {
-                  const [first, rest] = splitName(t.name);
-                  const on = reasonDraft.forStaffId === t.id;
-                  return (
-                    <button
-                      key={t.id}
-                      className={on ? "reason-teacher on" : "reason-teacher"}
-                      aria-pressed={on}
-                      onClick={() => pickTeacher(t)}
-                    >
-                      <span className="reason-teacher-first">{first}</span>
-                      {rest ? ` ${rest}` : ""}
-                    </button>
-                  );
-                })}
-              </div>
+              </>
             ) : null}
+            {/* T71: the note is greyed out and inert until a kind is
+                chosen, and the placeholder no longer says "(optional)":
+                for Trade and Other it is required (T67), for the rest
+                the empty field is the answer. */}
             <textarea
-              className={
-                reasonDraft.kind === "teacher"
-                  ? "reason-input reason-note-field"
-                  : "reason-input reason-note-field fill"
-              }
+              ref={noteRef}
+              className="reason-input reason-note-field fill"
               value={reasonDraft.detail}
               maxLength={COMP_DETAIL_MAX}
               autoComplete="off"
-              autoFocus
               rows={1}
+              disabled={reasonDraft.kind === null}
               placeholder={
-                reasonDraft.kind !== null && compNeedsDetail(reasonDraft.kind)
-                  ? reasonDraft.kind === "trade"
-                    ? "What was traded?"
-                    : "What happened?"
-                  : "Add a note (optional)"
+                reasonDraft.kind === null
+                  ? "Choose a reason first"
+                  : compNeedsDetail(reasonDraft.kind)
+                    ? reasonDraft.kind === "trade"
+                      ? "What was traded?"
+                      : "What happened?"
+                    : "Add a note"
               }
               aria-label="Note for the comp"
               onChange={(e) =>

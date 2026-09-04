@@ -727,12 +727,22 @@ button {
    * client name, so the payment column takes the larger share. The
    * name column floors at 220px, which fits the studio's longest names
    * at 20px/600 before the payment column starts giving way. */
-  /* T70 (Roster.dc.html): name (the M badge and the info icon trail it)
-   * | payment | balance | chip | actions. The chip's own fixed column is
-   * what keeps the tap line straight down the list; the actions cell
-   * holds four 44px squares 2px apart (undo or trash, sell, profile,
-   * Mindbody) with 6px to spare. */
-  --roster-cols: minmax(0, 2.1fr) minmax(0, 1.4fr) 104px 132px 188px;
+  /* T70 (Roster.dc.html): name | payment | balance | chip | actions.
+   * The chip's own fixed column is what keeps the tap line straight
+   * down the list; the actions cell holds four 44px squares 2px apart
+   * (undo or trash, sell, profile, Mindbody) with 6px to spare. */
+  /* T71 (Pete: "all buttons/pills in that column need to be the same
+   * standard width"): the chip column is the width of the widest label
+   * ("checking in" with its spinner, at 16px/800 Archivo plus 14px
+   * padding each side), and every chip in it is 100% of the cell, so
+   * "check in" and "checked in" are the same box. The M badge and the
+   * info icon left the name line for a fixed 78px column of their own
+   * between the name and the payment (Pete: "lined up in the same
+   * column rather than just to the right of the names"); the name
+   * column gave up the width, and the split moved to 1.6:1.9 so
+   * "Monthly Committed Membership" still sits on one line at 1194
+   * beside the guest icon (a name never runs as long as a pass). */
+  --roster-cols: minmax(0, 1.6fr) 78px minmax(0, 1.9fr) 104px 156px 188px;
 }
 
 .roster-head,
@@ -842,6 +852,21 @@ button {
   color: var(--muted);
 }
 
+/* T71: the searched text inside a result, bold and in the ink, no
+ * fill: a <mark> for the semantics (screen readers announce it), the
+ * browser's yellow highlight overridden with the tokens. In the name
+ * (600) it steps up to 800; in the muted contact line it goes to the
+ * ink at 700, which is what makes an email-only match legible. */
+.hit {
+  background: transparent;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.contact-line .hit {
+  font-weight: 700;
+}
+
 .mini-in {
   background: var(--ok-bg);
   color: var(--ok);
@@ -856,17 +881,23 @@ button {
   min-width: 0;
 }
 
-/* The roster's fixed icon block between the name and the payment: two
- * slots in a set order (M | info), each the same width on every row and
- * empty when the row lacks the marker, so every marker aligns as its own
- * column down the list. 74px total = 30 + 44, and the --roster-cols
- * column must stay equal to it. One info slot since T20: the alert and
- * notes icons folded into the single info icon. */
+/* The roster's fixed icon block between the name and the payment (back
+ * in its own grid column since T71): two slots in a set order (M |
+ * info), each the same width on every row and empty when the row lacks
+ * the marker, so every marker aligns as its own column down the list.
+ * 78px total = 32 (the M button) + 2 + 44 (the info icon), and the
+ * --roster-cols column must stay equal to it. One info slot since T20:
+ * the alert and notes icons folded into the single info icon. */
 .cell-icons {
-  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  min-width: 0;
+}
+
+.cell-icons .m-slot {
+  flex: 0 0 auto;
+  width: 32px;
 }
 
 /* The M badge's button and the info icon keep their 44px height inside
@@ -1072,6 +1103,12 @@ button {
   align-items: center;
   min-width: 0;
   overflow: visible;
+}
+
+/* T71: one width for every chip in the column, whatever the label. */
+.rrow > .cell-chip > .chip {
+  width: 100%;
+  min-width: 0;
 }
 
 .act-spacer {
@@ -4355,10 +4392,10 @@ button.sale-for:disabled {
  * had. fix it so it's stationary size"): the reason step is one fixed
  * box, 680 tall or 88dvh on a short screen, whatever chip is chosen.
  * Title, total, chips and actions keep their own heights; the body
- * row between them takes the rest. With the teacher list showing, the
- * list scrolls inside that row and the note keeps its 64px line;
- * without it, the note (a textarea, top-aligned, no newline) fills the
- * row instead. The PIN and enrollment steps keep their own shapes. */
+ * row between them takes the rest. T71: the teacher picker is a 64px
+ * select on its own line, so the note (a textarea, top-aligned, no
+ * newline) fills the rest of the row with or without it. The PIN and
+ * enrollment steps keep their own shapes. */
 .modal-reason.reason-sized {
   height: min(680px, 88dvh);
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
@@ -4371,12 +4408,7 @@ button.sale-for:disabled {
   min-height: 0;
 }
 
-.reason-body .reason-teachers {
-  flex: 1 1 auto;
-  max-height: none;
-}
-
-.reason-body .reason-note-field {
+.reason-body .reason-select {
   flex: 0 0 auto;
 }
 
@@ -4390,6 +4422,63 @@ textarea.reason-note-field {
   line-height: 1.3;
   font-family: inherit;
   overflow: hidden;
+}
+
+/* T71: the note is inert until a reason chip is chosen (Pete: "greyed
+ * out until the category is chosen"): the muted pair on the page
+ * ground, no outline, and the placeholder says why. Text on it is the
+ * muted token, which clears 4.5:1 on --bg in both palettes. */
+textarea.reason-note-field:disabled {
+  background: var(--bg);
+  border-color: var(--line);
+  color: var(--muted);
+  opacity: 1;
+}
+
+textarea.reason-note-field:disabled::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+/* T71: the teacher select. The reason-input box with the native arrow
+ * hidden and an inline chevron in the ink token over it (a native
+ * arrow cannot take a token), 48px of right padding for it, and the
+ * same 18px as the note. A disabled select (list loading or failed)
+ * reads as the disabled note above. */
+.reason-select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 64px;
+  padding-right: 48px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.reason-select:disabled {
+  background-color: var(--bg);
+  color: var(--muted);
+  opacity: 1;
+  cursor: default;
+}
+
+.reason-select-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.reason-select-wrap > svg {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--ink);
+}
+
+.reason-select-wrap > select:disabled + svg {
+  color: var(--muted);
 }
 
 .pay-done-reason {
@@ -4409,45 +4498,6 @@ textarea.reason-note-field {
   overflow-wrap: anywhere;
   font-size: 17px;
   color: var(--muted);
-}
-
-/* T45: the teacher picker inside the comp dialog. A column of 64px rows
- * (first name bold, last name after it) in the prompt's choice idiom,
- * scrolling inside the dialog once a studio's staff list outgrows the
- * screen; the chosen row takes the accent pairing like a chosen chip.
- * The quiet line above it (loading, could not load) is 16px muted. */
-.reason-teachers {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 40vh;
-  overflow-y: auto;
-}
-
-.reason-teacher {
-  flex: 0 0 auto;
-  min-height: 64px;
-  padding: 0 16px;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  background: var(--surface);
-  color: var(--ink);
-  font-size: 18px;
-  text-align: left;
-}
-
-.reason-teacher:active:not(:disabled) {
-  background: var(--surface-2);
-}
-
-.reason-teacher.on {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-
-.reason-teacher-first {
-  font-weight: 700;
 }
 
 .reason-note {
@@ -4505,7 +4555,9 @@ textarea.reason-note-field {
   color: var(--ink);
 }
 
-.modal-reason .reason-input:disabled {
+/* The enrollment step's inputs while the sign-in is on the wire. The
+ * comp note and the teacher select have their own disabled looks. */
+.modal-reason .reason-input:disabled:not(.reason-note-field):not(.reason-select) {
   opacity: 0.6;
 }
 
@@ -5160,6 +5212,86 @@ textarea.reason-note-field {
 
 .consent-error {
   margin: 0 0 16px;
+}
+
+/* T71: the profile card's Opt-ins table. A line per kind, the Email
+ * and Text boxes in 44px label cells (the icon-square idiom, since the
+ * profile grid's rows are tighter than the gate's 64px options) with
+ * the gate's 26px box inside; a Text cell is the muted "off" look,
+ * because the API cannot set it and the line under the table says so.
+ * The head is the two channel kickers in the muted token. */
+.optins {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 72px;
+  align-items: center;
+  margin: 0 0 6px;
+}
+
+.optins-head,
+.optins-row {
+  display: contents;
+}
+
+.optins-head > span {
+  padding-bottom: 4px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--muted);
+}
+
+.optins-kind {
+  min-width: 0;
+  padding-right: 8px;
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+
+.optins-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+  width: 44px;
+  height: 44px;
+  cursor: pointer;
+}
+
+.optins-box input[type="checkbox"] {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.optins-box.off,
+.optins-box.saving {
+  cursor: default;
+}
+
+.optins-box.off input[type="checkbox"] {
+  accent-color: var(--muted);
+  opacity: 0.55;
+}
+
+.optins-box.saving input[type="checkbox"] {
+  opacity: 0.5;
+}
+
+.optins-msg {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.optins-msg.warn-text {
+  color: var(--warn);
+}
+
+.optins-msg.stop-text {
+  color: var(--stop);
 }
 
 /* T53: the receipt toggle under the tender hint: the filter-toggle
@@ -5865,7 +5997,7 @@ textarea.reason-note-field {
  * keep T54's two-line wrap, never an ellipsis. */
 @media (max-width: 860px) {
   :root {
-    --roster-cols: minmax(0, 2fr) minmax(120px, 1.4fr) 4.5em 120px 188px;
+    --roster-cols: minmax(0, 2fr) 78px minmax(120px, 1.4fr) 4.5em 148px 188px;
   }
 
   .roster-head,

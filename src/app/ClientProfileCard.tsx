@@ -55,29 +55,106 @@ export function wallDateTime(s: string | null): string | null {
   return `${date} at ${hour12}:${m[2]}${h < 12 ? "am" : "pm"}`;
 }
 
-/** T53: "receipts and account, news and offers" for the ticked flags of
- *  one channel, "none" when nothing is ticked. The wording matches the
- *  opt-in gate's checkboxes, so what the gate asked for is what this
- *  line reports. */
-function consentLine(
+/** T71: the three opt-in kinds, one line each in the Opt-ins table, in
+ *  the gate's wording (T53) so what the gate asked for is what this
+ *  table shows. */
+const OPT_IN_KINDS = [
+  { key: "account", label: "Receipts and account" },
+  { key: "schedule", label: "Schedule" },
+  { key: "promotional", label: "News and offers" },
+] as const;
+
+export type OptInKind = (typeof OPT_IN_KINDS)[number]["key"];
+
+/** The email flag the card writes for one kind, in the shape
+ *  /api/client-consent takes. Texts have no entry on purpose: the API
+ *  ignores the text flags in a request (client.yml, "cannot be updated
+ *  by developers"), so the card never offers to set one. */
+export const OPT_IN_EMAIL_FLAG: Record<
+  OptInKind,
+  "sendAccountEmails" | "sendScheduleEmails" | "sendPromotionalEmails"
+> = {
+  account: "sendAccountEmails",
+  schedule: "sendScheduleEmails",
+  promotional: "sendPromotionalEmails",
+};
+
+function consentOf(
   c: NonNullable<ClientProfile["consent"]>,
+  kind: OptInKind,
   channel: "email" | "text",
-): React.ReactNode {
-  const on = [
-    (channel === "email" ? c.accountEmails : c.accountTexts)
-      ? "receipts and account"
-      : null,
-    (channel === "email" ? c.scheduleEmails : c.scheduleTexts)
-      ? "schedule"
-      : null,
-    (channel === "email" ? c.promotionalEmails : c.promotionalTexts)
-      ? "news and offers"
-      : null,
-  ].filter(Boolean);
-  if (on.length === 0) {
-    return <span className="profile-missing">None</span>;
+): boolean {
+  if (channel === "email") {
+    return kind === "account"
+      ? c.accountEmails
+      : kind === "schedule"
+        ? c.scheduleEmails
+        : c.promotionalEmails;
   }
-  return on.join(", ");
+  return kind === "account"
+    ? c.accountTexts
+    : kind === "schedule"
+      ? c.scheduleTexts
+      : c.promotionalTexts;
+}
+
+/**
+ * T71 (Pete: "the Emails/Text field should be checkboxes that i can
+ * change right there ... one main field called Opt-ins. Then check
+ * marks for the phone and email options"): one table, a line per kind,
+ * an Email box and a Text box on each. The email boxes write on tap
+ * (one /api/client-consent call per tap, the flag it changes and
+ * nothing else); the text boxes only show what Mindbody holds, since
+ * the API refuses those flags, and say so under the table. Each box is
+ * a 44px label cell (the icon-square idiom) so a hot-room thumb has
+ * something to hit; the box itself is the gate's 26px.
+ */
+function OptIns({
+  consent,
+  busy,
+  onChange,
+}: {
+  consent: NonNullable<ClientProfile["consent"]>;
+  busy: OptInKind | null;
+  onChange?: (kind: OptInKind, value: boolean) => void;
+}) {
+  return (
+    <div className="optins">
+      <div className="optins-head" aria-hidden="true">
+        <span />
+        <span>Email</span>
+        <span>Text</span>
+      </div>
+      {OPT_IN_KINDS.map((k) => {
+        const email = consentOf(consent, k.key, "email");
+        const text = consentOf(consent, k.key, "text");
+        const saving = busy === k.key;
+        return (
+          <div className="optins-row" key={k.key}>
+            <span className="optins-kind">{k.label}</span>
+            <label
+              className={saving ? "optins-box saving" : "optins-box"}
+              aria-label={`${k.label} by email`}
+            >
+              <input
+                type="checkbox"
+                checked={email}
+                disabled={busy !== null || !onChange}
+                onChange={(e) => onChange?.(k.key, e.target.checked)}
+              />
+            </label>
+            <label
+              className="optins-box off"
+              aria-label={`${k.label} by text (set in Mindbody)`}
+              title="Text opt-ins can only be changed in Mindbody"
+            >
+              <input type="checkbox" checked={text} disabled readOnly />
+            </label>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -101,10 +178,20 @@ export function ClientProfileCard({
   profile,
   loading,
   error,
+  onOptIn,
+  optInBusy = null,
+  optInMsg = null,
 }: {
   profile: ClientProfile | null;
   loading: boolean;
   error: string | null;
+  /** T71: save one email opt-in; absent, the boxes are read-only. */
+  onOptIn?: (kind: OptInKind, value: boolean) => void;
+  /** The kind whose write is on the wire, if any. */
+  optInBusy?: OptInKind | null;
+  /** The last write's outcome when it was not a plain success: a
+   *  suppression, a fallback to the studio account, or a refusal. */
+  optInMsg?: { text: string; tone: "warn" | "stop" } | null;
 }) {
   if (loading && !profile) {
     return (
@@ -170,22 +257,34 @@ export function ClientProfileCard({
         <Row label="Email">
           {profile.email ?? <Missing why={errors.client} />}
         </Row>
-        {/* T53: the consent flags as read-only text under the contact
-            line, one row for email and one for texts, so a teacher can
-            see at a glance whether the receipt gate will ask (it asks
-            when "receipts and account" is off). The texts row is shown
-            for the same reason it cannot be edited: the API refuses
-            those flags, so what Mindbody holds is all there is. */}
-        <Row label="Emails">
+        {/* T71: the opt-ins as one row of live checkboxes (see OptIns);
+            T53 had them as two read-only lines. The line under the
+            table names a write that did not plainly land. */}
+        <Row label="Opt-ins">
           {profile.consent ? (
-            consentLine(profile.consent, "email")
-          ) : (
-            <Missing why={errors.client} />
-          )}
-        </Row>
-        <Row label="Texts">
-          {profile.consent ? (
-            consentLine(profile.consent, "text")
+            <>
+              <OptIns
+                consent={profile.consent}
+                busy={optInBusy}
+                onChange={onOptIn}
+              />
+              {optInMsg ? (
+                <p
+                  className={
+                    optInMsg.tone === "stop"
+                      ? "optins-msg stop-text"
+                      : "optins-msg warn-text"
+                  }
+                  role="status"
+                >
+                  {optInMsg.text}
+                </p>
+              ) : (
+                <p className="optins-msg">
+                  Email opt-ins save on tap. Texts are set in Mindbody.
+                </p>
+              )}
+            </>
           ) : (
             <Missing why={errors.client} />
           )}
