@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { actorFallbackLine } from "./actornote";
+import { Hit } from "./Hit";
 
 /**
  * T59c: a member's guest pass checks a guest in. Opened from the
@@ -682,8 +683,14 @@ export default function GuestModal({
           }}
         >
           <div className="cell-name">
-            <span className="name-text">{pick.person.name}</span>
-            {contact ? <span className="contact-line">{contact}</span> : null}
+            <span className="name-text">
+              <Hit text={pick.person.name} q={searched} />
+            </span>
+            {contact ? (
+              <span className="contact-line">
+                <Hit text={contact} q={searched} />
+              </span>
+            ) : null}
             {note ? <span className="subline guest-caution">{note}</span> : null}
           </div>
           <span className="cell-chip">

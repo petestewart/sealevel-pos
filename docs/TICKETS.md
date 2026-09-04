@@ -8933,7 +8933,8 @@ touching a safety rail:
   gap was the row not saying why it matched. Whether the Public API
   matches a mid-address fragment like "held8" the way the staff web
   app's search does is Pete's to try live; the dev drawer shows the
-  call either way.
+  call either way. `Hit` lives in `src/app/Hit.tsx` since the review,
+  because the guest modal's search rows (T59c) carry it too.
 
 ### Verified
 
@@ -8956,3 +8957,38 @@ palette. Portrait note: the badge column costs 78px there, so the
 payment column sits at its 120px floor and "Monthly Committed
 Membership" wraps to three lines (T54's wrap, never an ellipsis);
 landscape is the target and unchanged in that respect.
+
+### Review
+
+A separate reviewer took the tree, re-ran the roster, search, profile
+and comp harnesses in both palettes and orientations, exercised the
+opt-in write under the write guard, dry run, a 401 and a 5xx, and unit
+tested `Hit` in node. One fix commit:
+
+- `openProfile` bumped the T41 generation counter but never reset the
+  opt-in state, so a write in flight for one profile returned early on
+  the guard with `busy` still set and left the NEXT profile's email
+  boxes disabled until close. Reachable with a hardware keyboard (the
+  profile modal has no focus trap, so Tab reaches the roster's profile
+  buttons behind the scrim). `openProfile` resets it now; verified
+  with a keyboard harness that the second profile's boxes stay live
+  while the first write is on the wire, and the late answer is dropped
+  without patching the wrong client.
+
+Verified by the reviewer on top of the builder's numbers: write guard
+(`POS_WRITE_CLIENT_IDS=999`) leaves the box unticked with the
+write-guard line and zero Mindbody calls; dry run the same with the
+`[dry-run] suppressed POST /client/updateclient` server line; a 401
+brings the gate back with nothing written and no fallback to the
+service account; a 5xx shows "Could not save: ..." and re-enables the
+boxes; a forced second tap mid-flight sends nothing. Every row type's
+cell count matches its grid (roster 6, walk-in 5, attach 3, guest 2);
+all 38 hex values sit inside the two palette blocks; no em dashes; no
+text under 16px and no button under 44px on any screen. Left as
+reported: `Hit` lowercases with `toLowerCase()`, so a name carrying a
+character whose lowercase is two code units (Turkish dotted I) would
+bold one character off later in the same string, no crash; and the
+portrait payment column now sits at its 120px floor (was 164), which
+is the price of the badge column and is Pete's call if it grates. The
+reviewer also noted the guest modal's rows lacked the bold hit, added
+after the review in the same push.
