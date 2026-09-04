@@ -26,8 +26,8 @@
    *   destructive or blocked only; --gold the member badge, count badges
    *   and "1 left". --scrim the modal backdrop, --shadow-lg the one shadow
    *   (modals and dropdowns; nothing else casts one).
-   * The T39 names below the rule are aliases kept so older rules keep
-   * resolving while the pass lands; new CSS uses the names above. */
+   * The T39 names (--action-bg, --bar-bg, --line-soft, --shadow, the
+   * disabled pair) are gone; nothing resolves them any more. */
   --bg: #f0efee;
   --surface: #ffffff;
   --surface-2: #f8f4f4;
@@ -49,13 +49,6 @@
   --gold-bg: #f0dcae;
   --scrim: rgba(24, 22, 21, 0.55);
   --shadow-lg: 0 16px 48px rgba(24, 22, 21, 0.28);
-  /* Aliases (T39 names). */
-  --line-soft: var(--line);
-  --action-bg: var(--surface-2);
-  --bar-bg: var(--surface);
-  --shadow: none;
-  --disabled-bg: var(--surface-2);
-  --disabled-ink: var(--muted);
 }
 
 * {
@@ -1554,12 +1547,6 @@ button.chip.action:active {
   --gold-bg: #2b2410;
   --scrim: rgba(24, 22, 21, 0.55);
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6);
-  --line-soft: var(--line);
-  --action-bg: var(--surface-2);
-  --bar-bg: var(--surface);
-  --shadow: none;
-  --disabled-bg: var(--surface-2);
-  --disabled-ink: var(--muted);
 }
 
 /* A confirming action that is not destructive: adding someone to the

@@ -37,7 +37,17 @@ export function resolvedTheme(): "light" | "dark" {
 
 export function applyTheme(): "light" | "dark" {
   const t = resolvedTheme();
-  document.documentElement.setAttribute("data-theme", t);
+  const root = document.documentElement;
+  root.setAttribute("data-theme", t);
+  /* The status bar follows the palette too. layout.tsx's themeColor
+   * entries key on the iPad's setting, which a stored choice overrides,
+   * so both meta tags take the palette's --bg once the attribute is on. */
+  const bg = getComputedStyle(root).getPropertyValue("--bg").trim();
+  if (bg) {
+    document
+      .querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')
+      .forEach((m) => m.setAttribute("content", bg));
+  }
   return t;
 }
 
