@@ -278,14 +278,23 @@ while `git clone` works, so clone the repo rather than fetching files.
 - Sized for a hot room and a queue: nothing under 16px, tap targets at least
   64px tall.
 - **Every colour is a token, in both palettes.** `globals.css` defines the
-  palette twice, in `:root` and in the `prefers-color-scheme: dark` block, and
-  no hex belongs anywhere else in the CSS or in a component. A hardcoded colour
-  sitting next to a themed one is the bug that made the check-in chip
-  unreadable twice: the text flipped with the theme and the background did not.
-  `color-scheme: light dark` on `:root` covers what variables cannot reach
-  (input spinners, checkboxes, carets, scrollbars, focus rings), and the two
-  `themeColor` entries in `layout.tsx` must stay equal to `--bg` in the
-  matching palette.
+  palette twice, in `:root` (light) and in the `:root[data-theme="dark"]`
+  block, and no hex belongs anywhere else in the CSS or in a component. A
+  hardcoded colour sitting next to a themed one is the bug that made the
+  check-in chip unreadable twice: the text flipped with the theme and the
+  background did not. Since T70 there is no `prefers-color-scheme` query in
+  the CSS: `src/app/theme.ts` puts `data-theme` on `<html>` before first
+  paint (an inline boot script in `layout.tsx`) from the iPad's setting or
+  the sun toggle's stored choice, and each block sets its own
+  `color-scheme`, which covers what variables cannot reach (input spinners,
+  checkboxes, carets, scrollbars, focus rings). The two `themeColor`
+  entries in `layout.tsx` must stay equal to `--bg` in the matching block.
+  Token roles (docs/design/mockups/visual-pass/README.md): `--accent` means
+  actionable or selected and nothing else, `--gold` badges and counts,
+  `--stop` destructive or blocked only. Text on a `--stop` or `--warn` fill
+  is `--bg` (white fails in dark). Radius is 0 everywhere; structure is
+  drawn with `--rule` (2px) and `--line` (1px), and only modals and
+  dropdowns cast `--shadow-lg`. The font is Archivo through next/font.
 
 ## Known gaps
 

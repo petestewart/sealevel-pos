@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { DEFAULT_SETTINGS, type Settings, useSettings } from "./settings";
+import { readThemeChoice, setThemeChoice, type ThemeChoice } from "./theme";
 import { ProbeView, type ProbeResult, type Teacher } from "./StaffModal";
 
 /**
@@ -349,8 +350,42 @@ function SettingsPanel({
           />
         </label>
       ))}
+      <ThemeSetting />
       <TeacherPanel />
     </div>
+  );
+}
+
+/* T70: the sun toggle in the top bar stores light or dark; this is the
+ * one place to hand the choice back to the iPad's own setting. */
+function ThemeSetting() {
+  const [choice, setChoice] = useState<ThemeChoice>("system");
+  useEffect(() => {
+    setChoice(readThemeChoice());
+  }, []);
+  return (
+    <label className="dev-setting">
+      <span className="dev-setting-label">
+        theme
+        <span className="muted">
+          {" "}
+          system follows the iPad; the sun icon in the top bar stores light
+          or dark
+        </span>
+      </span>
+      <select
+        value={choice}
+        onChange={(e) => {
+          const next = e.target.value as ThemeChoice;
+          setThemeChoice(next);
+          setChoice(next);
+        }}
+      >
+        <option value="system">system</option>
+        <option value="light">light</option>
+        <option value="dark">dark</option>
+      </select>
+    </label>
   );
 }
 
