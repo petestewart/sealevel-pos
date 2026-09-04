@@ -265,7 +265,10 @@ export default function NewClientModal({
         >
           <CloseIcon />
         </button>
-        <p className="modal-title">New client</p>
+        <div className="modal-head">
+          <p className="modal-kicker">Walk-in</p>
+          <p className="modal-title">New client</p>
+        </div>
         <p className="reason-sub nc-sub">
           Makes their Mindbody account. The waiver comes up when they are
           added to a class.

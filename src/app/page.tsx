@@ -30,6 +30,7 @@ import GuestModal, {
 import { isGuestPass, usableGuestPass } from "@/lib/guestpass";
 import { actorFallbackLine } from "./actornote";
 import { useSettings } from "./settings";
+import { toggleTheme, watchSystemTheme } from "./theme";
 import type { ClientProfile } from "@/lib/clientprofile";
 import { stripSignatures } from "@/lib/notesig";
 
@@ -350,333 +351,171 @@ const ROSTER_SORT_KEY = "pos.rosterSort";
 const HISTORY_SWEEP_CONCURRENCY = 4;
 
 /** X, for clearing the search box. */
-function CloseIcon() {
+/** T70: the mockups' glyphs (docs/design/mockups/visual-pass/Roster.dc.html),
+ *  inline so the counter never waits on an icon package: stroke 2,
+ *  SQUARE caps (part of the look), currentColor so every icon takes the
+ *  ink of the cell it sits in, in both palettes. */
+function Icon({
+  d,
+  size = 20,
+  extra,
+  width = 2,
+}: {
+  d: string;
+  size?: number;
+  extra?: ReactNode;
+  width?: number;
+}) {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        d="M6 6l12 12M18 6L6 18"
-      />
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={width}
+      strokeLinecap="square"
+      aria-hidden="true"
+    >
+      {extra}
+      <path d={d} />
     </svg>
   );
 }
 
+function CloseIcon() {
+  return <Icon d="M6 6l12 12M18 6 6 18" />;
+}
+
 /** Magnifying glass: the submit control on both search bars (T52, Pete:
- *  "the 'search' button can be replaced with a magnifying glass icon").
- *  currentColor, so it takes the button's ink in both palettes. */
+ *  "the 'search' button can be replaced with a magnifying glass icon"). */
 function SearchIcon() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      width="26"
-      height="26"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <circle cx="10.5" cy="10.5" r="6.5" />
-      <path d="M15.5 15.5L21 21" />
-    </svg>
+    <Icon
+      d="m16.5 16.5 4.5 4.5"
+      size={24}
+      extra={<circle cx="11" cy="11" r="7" />}
+    />
   );
 }
 
 /** Counter-clockwise arrow: check-out is undoing a check-in, and the icon
- *  says so. Grey and unlabelled: the quiet action on the row, deliberately
+ *  says so. Quiet and unlabelled: the deliberate action on the row,
  *  separate from the check-in gesture. */
 function UndoIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M3.5 4.5v6h6"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M5.1 15.2a8 8 0 1 0 1.7-8.6L3.5 10.5"
-      />
-    </svg>
-  );
+  return <Icon d="M3 8v5h5M3.5 13a8.5 8.5 0 1 0 2.5-6" />;
 }
 
 /** Trash can: cancels the booking itself, behind a confirmation. */
 function TrashIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M4 6.5h16M9.5 6.5V4h5v2.5M6.5 6.5 7.5 20h9l1-13.5"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        d="M10 10.5v6M14 10.5v6"
-      />
-    </svg>
-  );
+  return <Icon d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />;
 }
 
-/** Plus sign: the add action on a search-result row (books, or offers the
- *  waiting list on a full class -- the aria-label says which). */
-/** A person with a check: the search modal's row action in attach mode
- *  (T23). Selects the client for the sale and closes; books nothing. */
 /** A person silhouette: the profile icon on roster and search rows
- *  (T42), opening the client profile modal. */
-function PersonIcon() {
+ *  (T42), opening the client profile modal; the account icon too. */
+function PersonIcon({ size = 22 }: { size?: number }) {
   return (
-    <svg
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="8" r="4" />
-      <path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" />
-    </svg>
+    <Icon
+      d="M4 21c0-4 3.6-6 8-6s8 2 8 6"
+      size={size}
+      extra={<circle cx="12" cy="8" r="4" />}
+    />
   );
 }
 
 /** T59c: a person with a plus, the Guest action on a member's row:
- *  their guest pass checks someone else in. currentColor like the other
- *  row icons. */
+ *  their guest pass checks someone else in. */
 function PersonPlusIcon() {
   return (
-    <svg
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="10" cy="8" r="4" />
-      <path d="M2 21c0-4 3.6-7 8-7 1.4 0 2.7.3 3.8.9" />
-      <path d="M19 14v6M16 17h6" />
-    </svg>
+    <Icon
+      d="M2 21c0-4 3.6-6 8-6c1.4 0 2.7.3 3.8.9M19 14v6M16 17h6"
+      size={22}
+      extra={<circle cx="10" cy="8" r="4" />}
+    />
   );
 }
 
 /** An "i" in a circle: the row's ONE info affordance (T20), opening the
- *  combined red alert / yellow alert / notes view. Replaces the separate
- *  alert-triangle and note-sheet icons. */
+ *  combined red alert / yellow alert / notes view. */
 function InfoIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <circle
-        cx="12"
-        cy="12"
-        r="9"
-        stroke="currentColor"
-        strokeWidth="2"
-        fill="none"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-        d="M12 11v5.4M12 7.4v.1"
-      />
-    </svg>
+    <Icon
+      d="M12 11v6M12 7.5v.01"
+      size={18}
+      extra={<circle cx="12" cy="12" r="9" />}
+    />
   );
 }
 
 /** Paired up/down arrows: opens the roster-order menu. */
 function SortIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M8 19V5M8 5 4.5 8.5M8 5l3.5 3.5"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M16 5v14M16 19l-3.5-3.5M16 19l3.5-3.5"
-      />
-    </svg>
+    <Icon d="M7 4v16m0 0-3.5-3.5M7 20l3.5-3.5M17 20V4m0 0-3.5 3.5M17 4l3.5 3.5" />
   );
 }
 
 /** Pencil: switches the notes modal into its editing state. */
 function PencilIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M15.5 4.5 19.5 8.5 8 20H4v-4Z"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        d="M13 7l4 4"
-      />
-    </svg>
-  );
+  return <Icon d="M15.5 4.5 19.5 8.5 8 20H4v-4ZM13 7l4 4" size={18} />;
 }
 
 /** Arrow out of a box: opens the client in the Mindbody staff web app. */
 function ExternalLinkIcon() {
+  return <Icon d="M14 4h6v6M20 4 11 13M19 15v5H4V5h5" />;
+}
+
+/** A dollar in a circle: opens the Buy overlay with the row's client
+ *  already attached. T70: a dollar circle rather than the shopping bag it
+ *  replaced, because at arm's length the bag read as a second trash can
+ *  (README, "Roster"). */
+function SellIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M10 5H5v14h14v-5"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M14 4h6v6M20 4l-9 9"
-      />
-    </svg>
+    <Icon
+      d="M14.8 9.6c-.8-.8-1.9-1.1-2.9-1.1-1.4 0-2.3.7-2.3 1.6 0 1 .9 1.4 2.4 1.7 1.7.3 2.9.8 2.9 2.1 0 1.2-1.1 1.9-2.6 1.9-1.2 0-2.4-.4-3.2-1.3M12 6.6v10.8"
+      extra={<circle cx="12" cy="12" r="9" />}
+    />
   );
 }
 
-/** A shopping bag: opens the Buy overlay with the row's client already
- *  attached. The quiet per-row companion to the header's Buy button. */
-function BagIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M5.5 8h13l-1 12.5h-11Z"
-      />
-      <path
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M8.8 10.5V6.7a3.2 3.2 0 0 1 6.4 0v3.8"
-      />
-    </svg>
-  );
-}
-
-/** Chevron opening the payment-change dropdown on a roster row. */
-function ChevronDownIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M5.5 9.5 12 16l6.5-6.5"
-      />
-    </svg>
-  );
+/** Chevron: the class picker's and the payment-change dropdown's. */
+function ChevronDownIcon({ size = 18 }: { size?: number }) {
+  return <Icon d="m6 9 6 6 6-6" size={size} width={2.2} />;
 }
 
 /** The calendar glyph on the header's day control (T46). */
 function CalendarIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-      <g
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-      >
-        <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
-        <path d="M3.5 10h17M8 3v4M16 3v4" />
-      </g>
-    </svg>
+    <Icon
+      d="M3 10h18M8 2v4M16 2v4"
+      size={24}
+      extra={<rect x="3" y="4" width="18" height="18" />}
+    />
   );
 }
 
 /** Month stepping in the calendar. */
 function ChevronLeftIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M14.5 5.5 8 12l6.5 6.5"
-      />
-    </svg>
-  );
+  return <Icon d="m15 6-6 6 6 6" size={22} width={2.2} />;
 }
 
 function ChevronRightIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M9.5 5.5 16 12l-6.5 6.5"
-      />
-    </svg>
-  );
+  return <Icon d="m9 6 6 6-6 6" size={22} width={2.2} />;
 }
 
-/** Checkmark marking the pass currently paying, in the change dropdown. */
-function CheckIcon() {
+/** Checkmark: the pass currently paying in a dropdown, and the glyph on
+ *  a checked-in chip. */
+function CheckIcon({ size = 18 }: { size?: number }) {
+  return <Icon d="m4 12.5 5 5L20 6.5" size={size} width={2.4} />;
+}
+
+/** The sun: the top bar's light/dark toggle (T70, src/app/theme.ts). */
+function SunIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M4.5 12.5 10 18 19.5 6.5"
-      />
-    </svg>
+    <Icon
+      d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"
+      size={22}
+      extra={<circle cx="12" cy="12" r="4" />}
+    />
   );
 }
 
@@ -884,6 +723,20 @@ function passLeftCol(p: {
 
 function passExpCol(p: { expires: string | null }): string {
   return p.expires ? `exp ${slashDate(p.expires)}` : "";
+}
+
+/** T70: the facts line of a dialog's entity card (Dialogs.dc.html): the
+ *  pass, what is left on it, and where the row stands, so a confirm
+ *  restates who and what state before the one loud consequence line. */
+function entityFacts(entry: RosterEntry): string {
+  return [
+    entry.pricingOption ? shortPassName(entry.pricingOption) : "No pass",
+    passLeftCol({ remaining: entry.passRemaining, count: entry.passCount }),
+    passExpCol({ expires: entry.passExpires }),
+    entry.checkedIn ? "checked in" : "not checked in",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /**
@@ -4581,7 +4434,7 @@ function FrontDesk({
     : "Change day";
   const calendarButton = (
     <button
-      className={viewDate ? "class-change cal-btn viewing" : "class-change cal-btn"}
+      className={viewDate ? "cal-btn viewing" : "cal-btn"}
       aria-haspopup="dialog"
       aria-expanded={calOpen}
       aria-label={calendarLabel}
@@ -4670,10 +4523,14 @@ function FrontDesk({
           what the old bar used. */}
       {activeClass ? (
         <header className="class-header">
+          {/* T70: the mockup's top bar (Roster.dc.html): one 76px row of
+              cells split by hairlines. The class picker fills, then the
+              day control, the three counters, Buy, the sun (light/dark)
+              and the account icon. */}
           {/* The class is its own dropdown (Pete, fourth live test), the
               Buy view's picker idiom: the current class IS the control,
               so the separate "Change class" button is gone. The list
-              carries the "N booked" line the modal had; the collapsed
+              carries each class's booked count as a badge; the collapsed
               line does not, because the header's counters already say it
               for the class in front of you. */}
           {/* T52 (Pete): "the calendar icon should be butted up against
@@ -4682,7 +4539,7 @@ function FrontDesk({
           <div className="class-group">
           <div className="class-pick">
             <button
-              className="class-change class-pick-btn"
+              className="class-pick-btn"
               aria-haspopup="dialog"
               aria-expanded={classPickerOpen}
               aria-label="Change class"
@@ -4695,10 +4552,10 @@ function FrontDesk({
                 </span>
                 <span className="class-title">
                   {activeClass.name}
-                  {activeClass.teacher ? ` - ${activeClass.teacher}` : ""}
+                  {activeClass.teacher ? `, ${activeClass.teacher}` : ""}
                 </span>
               </span>
-              <ChevronDownIcon />
+              <ChevronDownIcon size={22} />
             </button>
             {classPickerOpen ? (
               <>
@@ -4719,31 +4576,56 @@ function FrontDesk({
                   ) : (
                     classes.map((c) => {
                       const current = c.classId === activeId;
+                      /* The around-now window can straddle midnight, so
+                       * a class on another day than the one showing
+                       * keeps its date under the time. */
+                      const otherDay =
+                        dayDate(c.startsAt) !== dayDate(activeClass.startsAt);
                       return (
                         <button
                           key={`pick-${c.classId}`}
-                          className={current ? "pass-opt current" : "pass-opt"}
+                          className={
+                            current ? "pass-opt class-opt current" : "pass-opt class-opt"
+                          }
                           aria-pressed={current}
                           onClick={() => {
                             selectClass(c.classId);
                             setClassPickerOpen(false);
                           }}
                         >
-                          <span className="pass-check">
-                            {current ? <CheckIcon /> : null}
-                          </span>
-                          <span className="pass-opt-text">
-                            <span className="pass-opt-name">
-                              {dayDate(c.startsAt)} · {clockTime(c.startsAt)} ·{" "}
-                              {c.name}
-                              {c.teacher ? ` - ${c.teacher}` : ""}
-                            </span>
-                            {c.booked !== null ? (
-                              <span className="pass-facts">
-                                {c.booked} booked
+                          <span className="class-opt-time">
+                            {clockTime(c.startsAt)}
+                            {otherDay ? (
+                              <span className="class-opt-day">
+                                {dayDate(c.startsAt)}
                               </span>
                             ) : null}
                           </span>
+                          <span className="pass-opt-text">
+                            <span className="pass-opt-name">{c.name}</span>
+                            {c.teacher ? (
+                              <span className="class-opt-teacher">
+                                {c.teacher}
+                              </span>
+                            ) : null}
+                          </span>
+                          {/* The count badge: gold when anyone is
+                              booked, the quiet pair at zero, so
+                              "selected" (the filled row) and "busy"
+                              can never be confused (2.4). */}
+                          {c.booked !== null ? (
+                            <span
+                              className={
+                                c.booked > 0
+                                  ? "class-opt-count"
+                                  : "class-opt-count zero"
+                              }
+                            >
+                              {c.capacity !== null
+                                ? `${c.booked}/${c.capacity}`
+                                : `${c.booked}`}
+                            </span>
+                          ) : null}
                         </button>
                       );
                     })
@@ -4756,10 +4638,8 @@ function FrontDesk({
           </div>
           {/* T60 (Pete): "the position of signed up/checked in/waitlist
               and Buy/TeacherName/personicon should be swapped with each
-              other". The counters card sits against the class, and the
-              Buy button, the teacher and the account icon hold the far
-              right. Portrait keeps its old line split through an order
-              rule in the CSS; nothing else about either group changed. */}
+              other". The counters sit against the class, and Buy and
+              the account icon hold the far right. */}
           <div className="counters" aria-label="Counts for the selected class">
           {/* A plain stat, not a button: its list IS the roster below,
               and a modal copying the screen behind it earned nothing
@@ -4775,7 +4655,7 @@ function FrontDesk({
             aria-haspopup="dialog"
           >
             <span className="counter-label">checked in</span>
-            <span className="counter-num">
+            <span className="counter-num ok">
               {entries.filter((e) => e.checkedIn).length}
             </span>
           </button>
@@ -4807,11 +4687,11 @@ function FrontDesk({
           </div>
           {/* Opens the Buy overlay (T23; "Buy" since the second live
               test -- the counter conversation is the student's, "I want
-              to buy a mat"). Quiet like "Change class": selling is
-              deliberate, not the thing hit at speed. The roster stays
+              to buy a mat"). The one accent-filled cell in the bar: it
+              navigates, it never sells by itself. The roster stays
               mounted underneath; closing lands right back. */}
           <button
-            className="class-change"
+            className="class-buy"
             onClick={() => {
               /* Anything anchored to roster rows (dropdowns, menus) would
                * otherwise paint above the overlay at a higher z-index. */
@@ -4822,12 +4702,19 @@ function FrontDesk({
           >
             Buy
           </button>
+          {/* T70: light or dark, stored for this iPad; until a teacher
+              taps it the screen follows the device's own setting. */}
+          <button
+            className="class-theme"
+            aria-label="Switch between light and dark"
+            title="Light / dark"
+            onClick={() => toggleTheme()}
+          >
+            <SunIcon />
+          </button>
           {/* T50: who Mindbody records this iPad's writes under. The
-              round icon (44px icon idiom) opens the account modal, which
-              names the teacher and is where sign-out lives. T50 put the
-              name as text beside it; T61 (Pete: "let's get rid of 'Pete
-              Stewart' in the header. clicking on the person icon is good
-              enough") leaves the icon alone, with the name in its label.
+              icon opens the account modal, which names the teacher and
+              is where sign-out lives (T61: the name left the header).
               Somebody is always signed in here: the gate sits in front
               of this screen otherwise. */}
           <button
@@ -4839,7 +4726,7 @@ function FrontDesk({
             }}
             aria-label={`Signed in as ${teacher.name}. Account`}
           >
-            <PersonIcon />
+            <PersonIcon size={24} />
           </button>
         </header>
       ) : null}
@@ -4925,12 +4812,12 @@ function FrontDesk({
           }}
         >
           <span aria-hidden="true">Name</span>
-          {/* The icon-slot column: no label needed. */}
-          <span aria-hidden="true" />
           <span aria-hidden="true">Payment</span>
           <span className="cell-bal" aria-hidden="true">
             Balance
           </span>
+          {/* The chip column: no label needed. */}
+          <span aria-hidden="true" />
           <span className="head-actions">
             <button
               className="row-icon"
@@ -5048,9 +4935,13 @@ function FrontDesk({
                     ? "chip action"
                     : "chip unpaid";
           const chipLabel = entry.checkedIn ? (
-            "checked in"
+            <>
+              <CheckIcon size={17} /> checked in
+            </>
           ) : working ? (
-            <span className="spinner" aria-label="working" />
+            <>
+              <span className="spinner" aria-label="working" /> checking in
+            </>
           ) : failed[entry.clientId] ? (
             "failed"
           ) : noWaiver ? (
@@ -5079,6 +4970,48 @@ function FrontDesk({
                 <div className="cell-name">
                   <span className="name-line">
                     <span className="name-text">{entry.name}</span>
+                    {/* T70: the M badge and the info icon sit after the
+                        name (Roster.dc.html), no longer in fixed slots
+                        of their own column; the chip column is what
+                        keeps the tap line straight. */}
+                    <span className="cell-icons">
+                      {/* T52: the M is a button (Pete: "clicking on an
+                          'M' icon should show more info about their
+                          membership"), opening the Membership modal. */}
+                      {entry.member ? (
+                        <button
+                          className="m-chip-btn"
+                          title="Member (Mindbody's membership flag). Tap for details."
+                          aria-label={`Member (Mindbody's membership flag). Tap for details about ${entry.name}.`}
+                          aria-haspopup="dialog"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openMember(entry);
+                          }}
+                        >
+                          <span className="m-chip">M</span>
+                        </button>
+                      ) : null}
+                      {/* On EVERY row: dimmed when the client has no red
+                          alert, no yellow alert and no notes, because
+                          adding the first one starts here too; bright
+                          when any exist. */}
+                      <button
+                        className={
+                          entry.redAlert || entry.yellowAlert || entry.notes
+                            ? "row-icon"
+                            : "row-icon dim"
+                        }
+                        aria-label={`Alerts and notes for ${entry.name}`}
+                        title="Alerts and notes"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openInfoView(entry);
+                        }}
+                      >
+                        <InfoIcon />
+                      </button>
+                    </span>
                   </span>
                   {statusMsg ? (
                     <span
@@ -5095,56 +5028,6 @@ function FrontDesk({
                   ) : history ? (
                     <span className="subline">{history}</span>
                   ) : null}
-                </div>
-
-                {/* Fixed icon slots in a set order (M | info), the same
-                    width on every row, so each marker lines up as its own
-                    column down the roster instead of trailing the name at
-                    whatever x the name ends. A row without the marker
-                    keeps the empty slot. One info icon since T20: the
-                    separate alert and notes icons folded into it. */}
-                <div className="cell-icons">
-                  <span className="icon-slot">
-                    {/* T52: the M is a button now (Pete: "clicking on an
-                        'M' icon should show more info about their
-                        membership"), the 44px icon idiom with the chip
-                        as its face, opening the Membership modal. */}
-                    {entry.member ? (
-                      <button
-                        className="m-chip-btn"
-                        title="Member (Mindbody's membership flag). Tap for details."
-                        aria-label={`Member (Mindbody's membership flag). Tap for details about ${entry.name}.`}
-                        aria-haspopup="dialog"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openMember(entry);
-                        }}
-                      >
-                        <span className="m-chip">M</span>
-                      </button>
-                    ) : null}
-                  </span>
-                  <span className="icon-slot">
-                    {/* On EVERY row: dimmed when the client has no red
-                        alert, no yellow alert and no notes, because
-                        adding the first one starts here too; bright when
-                        any exist. */}
-                    <button
-                      className={
-                        entry.redAlert || entry.yellowAlert || entry.notes
-                          ? "row-icon"
-                          : "row-icon dim"
-                      }
-                      aria-label={`Alerts and notes for ${entry.name}`}
-                      title="Alerts and notes"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openInfoView(entry);
-                      }}
-                    >
-                      <InfoIcon />
-                    </button>
-                  </span>
                 </div>
 
                 <div className={guestPass ? "cell-pay has-guest" : "cell-pay"}>
@@ -5299,7 +5182,10 @@ function FrontDesk({
                     : ""}
                 </span>
 
-                <div className="cell-actions">
+                {/* The chip's own fixed column (T70, Roster.dc.html): the
+                    tap line stays straight whatever the actions cell
+                    beside it holds. */}
+                <span className="cell-chip">
                   {entry.checkedIn && !working ? (
                     <span className={chipClass}>{chipLabel}</span>
                   ) : (
@@ -5318,6 +5204,8 @@ function FrontDesk({
                       {chipLabel}
                     </button>
                   )}
+                </span>
+                <div className="cell-actions">
                   {/* The undo renders on EVERY checked-in row, waiver state
                       included (audited for T15): the waiver gate lives in
                       tapCheckIn, which returns early for checked-in rows, so it
@@ -5363,7 +5251,7 @@ function FrontDesk({
                       already attached (id, name, balance from the row),
                       and any held cart reprices for them. */}
                   <button
-                    className="row-icon"
+                    className="row-icon sell"
                     onClick={(e) => {
                       e.stopPropagation();
                       openBuyFor({
@@ -5375,7 +5263,7 @@ function FrontDesk({
                     aria-label={`Buy for ${entry.name}`}
                     title={`Buy for ${entry.name}`}
                   >
-                    <BagIcon />
+                    <SellIcon />
                   </button>
                   {/* The client profile (T42): the same basic facts as
                       Mindbody's client-info page, in a modal, read at
@@ -5539,11 +5427,14 @@ function FrontDesk({
             >
               <CloseIcon />
             </button>
-            <p className="modal-title">
-              {attachMode
-                ? "Attach a client to the sale"
-                : `Results for "${searchTitle}"`}
-            </p>
+            <div className="modal-head">
+              <p className="modal-kicker">{attachMode ? "Sale" : "Walk-in"}</p>
+              <p className="modal-title">
+                {attachMode
+                  ? "Attach a client to the sale"
+                  : `Results for "${searchTitle}"`}
+              </p>
+            </div>
             {/* Attach mode opens the modal BEFORE any search exists, so
                 the search bar renders here: the same query state, the
                 same submitSearch, the same one-call-on-submit rule as the
@@ -5718,7 +5609,7 @@ function FrontDesk({
                             <span className="attach-class-name">
                               {picked
                                 ? `${clockTime(picked.startsAt)} · ${picked.name}${
-                                    picked.teacher ? ` - ${picked.teacher}` : ""
+                                    picked.teacher ? `, ${picked.teacher}` : ""
                                   }`
                                 : "Pick a class"}
                             </span>
@@ -5775,7 +5666,7 @@ function FrontDesk({
                                       <span className="pass-opt-text">
                                         <span className="pass-opt-name">
                                           {clockTime(c.startsAt)} · {c.name}
-                                          {c.teacher ? ` - ${c.teacher}` : ""}
+                                          {c.teacher ? `, ${c.teacher}` : ""}
                                         </span>
                                       </span>
                                     </button>
@@ -6316,7 +6207,10 @@ function FrontDesk({
             >
               <CloseIcon />
             </button>
-            <p className="modal-title">{profileView.name}</p>
+            <div className="modal-head">
+              <p className="modal-kicker">Client</p>
+              <p className="modal-title">{profileView.name}</p>
+            </div>
             <div className="profile-scroll">
               <ClientProfileCard
                 profile={profileState.profile}
@@ -6370,8 +6264,10 @@ function FrontDesk({
                   >
                     <CloseIcon />
                   </button>
-                  <p className="modal-title">Membership</p>
-                  <p className="modal-entity">{memberView.name}</p>
+                  <div className="modal-head">
+                    <p className="modal-kicker">Membership</p>
+                    <p className="modal-title">{memberView.name}</p>
+                  </div>
                   {data === null ? (
                     info?.error ? (
                       <>
@@ -6505,11 +6401,16 @@ function FrontDesk({
             >
               <CloseIcon />
             </button>
-            <p className="modal-title">
-              {counterModal === "checkedIn"
-                ? `Checked in (${entries.filter((e) => e.checkedIn).length} of ${entries.length})`
-                : `Waiting list${waitlist !== null ? ` (${waitlist.length})` : ""}`}
-            </p>
+            <div className="modal-head">
+              <p className="modal-kicker">
+                {clockTime(activeClass.startsAt)} · {activeClass.name}
+              </p>
+              <p className="modal-title">
+                {counterModal === "checkedIn"
+                  ? `Checked in (${entries.filter((e) => e.checkedIn).length} of ${entries.length})`
+                  : `Waiting list${waitlist !== null ? ` (${waitlist.length})` : ""}`}
+              </p>
+            </div>
 
             {counterModal === "checkedIn" ? (
               entries.filter((e) => e.checkedIn).length === 0 ? (
@@ -6626,7 +6527,14 @@ function FrontDesk({
             >
               <CloseIcon />
             </button>
-            <p className="modal-title">{infoView.name}</p>
+            {/* T70 (Dialogs.dc.html): the kicker names the loudest thing
+                in the view, in the stop colour when it is a red alert. */}
+            <div className="modal-head">
+              <p className={infoView.redAlert ? "modal-kicker stop" : "modal-kicker"}>
+                {infoView.redAlert ? "Red alert" : "Alerts and notes"}
+              </p>
+              <p className="modal-title">{infoView.name}</p>
+            </div>
             {(
               [
                 {
@@ -6771,12 +6679,20 @@ function FrontDesk({
             </button>
             {/* Titled the way Mindbody's own dialog is: the document name
                 on top, the person as the line beneath it. */}
-            <p className="modal-title">Liability Waiver</p>
-            <p className="muted modal-who">
-              {waiverText
-                ? `For ${waiverName} to read and agree to.`
-                : `${waiverName} has not signed the waiver.`}
-            </p>
+            <div className="modal-head">
+              <p className="modal-kicker">
+                {waiverText ? "Read and agree" : "Waiver needed"}
+              </p>
+              <p className="modal-title">Liability Waiver</p>
+            </div>
+            <div className="modal-entity">
+              <span className="modal-entity-name">{waiverName}</span>
+              <span className="modal-entity-facts">
+                {waiverText
+                  ? "To read and agree to."
+                  : "Has not signed the waiver."}
+              </span>
+            </div>
             {waiverText ? (
               <>
                 <div
@@ -6836,7 +6752,8 @@ function FrontDesk({
               </>
             ) : (
               <>
-                <p className="ctx-alert modal-alert">
+                {/* The consequence, the one stop-coloured line (2.5). */}
+                <p className="modal-consequence">
                   {waiverPrompt.source === "walkin"
                     ? "No liability waiver on file. They cannot be added to the class until they have read and agreed to it."
                     : waiverPrompt.source === "promote"
@@ -7023,11 +6940,20 @@ function FrontDesk({
             >
               <CloseIcon />
             </button>
-            <p className="modal-title">Check out {checkingOut.name}?</p>
-            <p className="muted">
-              This marks them as not having attended. Only do it if the
-              check-in was a mistake.
-            </p>
+            {/* T70 (Dialogs.dc.html, 2.5): who and what state in a card,
+                then the consequence as the only stop-coloured line. */}
+            <div className="modal-head">
+              <p className="modal-kicker">Check out</p>
+              <p className="modal-title">Check out {checkingOut.name}?</p>
+            </div>
+            <div className="modal-entity">
+              <span className="modal-entity-name">{checkingOut.name}</span>
+              <span className="modal-entity-facts">
+                {entityFacts(checkingOut)}
+              </span>
+            </div>
+            <p className="modal-consequence">Marks them as not attended.</p>
+            <p className="muted">Only do it if the check-in was a mistake.</p>
             <div className="modal-actions">
               <button className="modal-cancel" onClick={() => setCheckingOut(null)}>
                 Cancel
@@ -7079,14 +7005,18 @@ function FrontDesk({
             >
               <CloseIcon />
             </button>
-            <p className="modal-title">
-              Remove {cancelling.entry.name} from this class?
-            </p>
-            <p className="modal-entity">
-              {cancelling.entry.pricingOption
-                ? shortPassName(cancelling.entry.pricingOption)
-                : "No pass"}
-            </p>
+            <div className="modal-head">
+              <p className="modal-kicker">Remove from class</p>
+              <p className="modal-title">
+                Remove {cancelling.entry.name} from this class?
+              </p>
+            </div>
+            <div className="modal-entity">
+              <span className="modal-entity-name">{cancelling.entry.name}</span>
+              <span className="modal-entity-facts">
+                {entityFacts(cancelling.entry)}
+              </span>
+            </div>
             <p className="modal-consequence">
               Cancels their booking for this class.
             </p>
@@ -7148,12 +7078,26 @@ function FrontDesk({
                 <CloseIcon />
               </button>
             ) : null}
-            <p className="modal-title">
-              {payDialog.flavor === "renewal"
-                ? "Last session used. Sell the next pack?"
-                : "Pay and check in"}
-            </p>
-            <p className="modal-entity">{payDialog.entry.name}</p>
+            <div className="modal-head">
+              <p className="modal-kicker">
+                {payDialog.flavor === "renewal"
+                  ? "Last session used"
+                  : "Pay and check in"}
+              </p>
+              <p className="modal-title">
+                {payDialog.flavor === "renewal"
+                  ? "Sell the next pack?"
+                  : payDialog.entry.name}
+              </p>
+            </div>
+            {payDialog.flavor === "renewal" ? (
+              <div className="modal-entity">
+                <span className="modal-entity-name">{payDialog.entry.name}</span>
+                <span className="modal-entity-facts">
+                  {entityFacts(payDialog.entry)}
+                </span>
+              </div>
+            ) : null}
 
             {/* The pass to sell. Sorted single-visit first (the default
                 selection's own order), 64px rows, short name with the
@@ -7390,15 +7334,28 @@ function FrontDesk({
             >
               <CloseIcon />
             </button>
-            <p className="modal-title">
-              This class is full
-              {activeClass &&
-              activeClass.capacity !== null &&
-              activeClass.booked !== null
-                ? ` (${activeClass.booked} of ${activeClass.capacity})`
-                : ""}
-              .
-            </p>
+            {/* T70 (2.5): the class summary is the entity card rather
+                than a count folded into the title. */}
+            <div className="modal-head">
+              <p className="modal-kicker">Waiting list</p>
+              <p className="modal-title">This class is full.</p>
+            </div>
+            {activeClass ? (
+              <div className="modal-entity">
+                <span className="modal-entity-name">{activeClass.name}</span>
+                <span className="modal-entity-facts">
+                  {[
+                    `${dayDate(activeClass.startsAt)} · ${clockTime(activeClass.startsAt)}`,
+                    activeClass.teacher || null,
+                    activeClass.capacity !== null && activeClass.booked !== null
+                      ? `${activeClass.booked} of ${activeClass.capacity}`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              </div>
+            ) : null}
             <p className="muted">
               Add {waitlistPrompt.name} to the waiting list? They get the next
               spot that opens up.
@@ -7629,6 +7586,9 @@ function AuthGate() {
  * so the fallback flashes at most once, before hydration.
  */
 export default function FrontDeskPage() {
+  /* T70: follows the iPad's own light/dark setting until the sun toggle
+   * stores a choice (src/app/theme.ts). */
+  useEffect(() => watchSystemTheme(), []);
   return (
     <Suspense fallback={null}>
       <AuthGate />
