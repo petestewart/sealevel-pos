@@ -5266,18 +5266,13 @@ textarea.reason-note-field:disabled::placeholder {
   accent-color: var(--accent);
 }
 
-.optins-box.off,
-.optins-box.saving {
+.optins-box.off {
   cursor: default;
 }
 
 .optins-box.off input[type="checkbox"] {
   accent-color: var(--muted);
   opacity: 0.55;
-}
-
-.optins-box.saving input[type="checkbox"] {
-  opacity: 0.5;
 }
 
 .optins-msg {

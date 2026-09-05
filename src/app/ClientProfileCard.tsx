@@ -102,20 +102,20 @@ function consentOf(
  * T71 (Pete: "the Emails/Text field should be checkboxes that i can
  * change right there ... one main field called Opt-ins. Then check
  * marks for the phone and email options"): one table, a line per kind,
- * an Email box and a Text box on each. The email boxes write on tap
- * (one /api/client-consent call per tap, the flag it changes and
- * nothing else); the text boxes only show what Mindbody holds, since
- * the API refuses those flags, and say so under the table. Each box is
+ * an Email box and a Text box on each. The email boxes flip on tap and
+ * the taps are written in the background (T72: one /api/client-consent
+ * call after a short idle or on close, page.tsx flushOptIn; a write
+ * that did not land puts the box back and says why); the text boxes
+ * only show what Mindbody holds, since the API refuses those flags,
+ * and say so under the table. Each box is
  * a 44px label cell (the icon-square idiom) so a hot-room thumb has
  * something to hit; the box itself is the gate's 26px.
  */
 function OptIns({
   consent,
-  busy,
   onChange,
 }: {
   consent: NonNullable<ClientProfile["consent"]>;
-  busy: OptInKind | null;
   onChange?: (kind: OptInKind, value: boolean) => void;
 }) {
   return (
@@ -128,18 +128,14 @@ function OptIns({
       {OPT_IN_KINDS.map((k) => {
         const email = consentOf(consent, k.key, "email");
         const text = consentOf(consent, k.key, "text");
-        const saving = busy === k.key;
         return (
           <div className="optins-row" key={k.key}>
             <span className="optins-kind">{k.label}</span>
-            <label
-              className={saving ? "optins-box saving" : "optins-box"}
-              aria-label={`${k.label} by email`}
-            >
+            <label className="optins-box" aria-label={`${k.label} by email`}>
               <input
                 type="checkbox"
                 checked={email}
-                disabled={busy !== null || !onChange}
+                disabled={!onChange}
                 onChange={(e) => onChange?.(k.key, e.target.checked)}
               />
             </label>
@@ -179,16 +175,13 @@ export function ClientProfileCard({
   loading,
   error,
   onOptIn,
-  optInBusy = null,
   optInMsg = null,
 }: {
   profile: ClientProfile | null;
   loading: boolean;
   error: string | null;
-  /** T71: save one email opt-in; absent, the boxes are read-only. */
+  /** T71: an email opt-in tapped; absent, the boxes are read-only. */
   onOptIn?: (kind: OptInKind, value: boolean) => void;
-  /** The kind whose write is on the wire, if any. */
-  optInBusy?: OptInKind | null;
   /** The last write's outcome when it was not a plain success: a
    *  suppression, a fallback to the studio account, or a refusal. */
   optInMsg?: { text: string; tone: "warn" | "stop" } | null;
@@ -263,11 +256,7 @@ export function ClientProfileCard({
         <Row label="Opt-ins">
           {profile.consent ? (
             <>
-              <OptIns
-                consent={profile.consent}
-                busy={optInBusy}
-                onChange={onOptIn}
-              />
+              <OptIns consent={profile.consent} onChange={onOptIn} />
               {optInMsg ? (
                 <p
                   className={
@@ -281,7 +270,7 @@ export function ClientProfileCard({
                 </p>
               ) : (
                 <p className="optins-msg">
-                  Email opt-ins save on tap. Texts are set in Mindbody.
+                  Email opt-ins save by themselves. Texts are set in Mindbody.
                 </p>
               )}
             </>

@@ -989,6 +989,10 @@ function FrontDesk({
     loading: boolean;
     error: string | null;
   }>({ profile: null, loading: false, error: null });
+  /** T72: the open profile as a ref, for a background write's answer
+   *  to know whether its profile is still the one on screen. */
+  const profileViewRef = useRef(profileView);
+  profileViewRef.current = profileView;
   const profileGen = useRef(0);
   /** Tunables live in the dev drawer's settings tab, so the ones that have
    *  already been wrong once can be adjusted without a commit. */
@@ -2193,11 +2197,33 @@ function FrontDesk({
     }
   }, [attachInClass, query, settings.minQueryLength, startSearch, stopSearch]);
 
-  /** T71: the profile card's opt-in write in flight, and its outcome. */
-  const [optIn, setOptIn] = useState<{
-    busy: OptInKind | null;
-    msg: { text: string; tone: "warn" | "stop" } | null;
-  }>({ busy: null, msg: null });
+  /** T71/T72: the line under the profile card's Opt-ins table when the
+   *  last write did not plainly land (a suppression, a fallback to the
+   *  studio account, a refusal). */
+  const [optInMsg, setOptInMsg] = useState<{
+    text: string;
+    tone: "warn" | "stop";
+  } | null>(null);
+  /**
+   * T72 (Pete: "every click holds everything up while the request is
+   * made. can we make this update happen in the background? and
+   * perhaps either with a delay or wait until the modal is closed to
+   * update everything at once?"): the taps since the last write, for
+   * the profile they were made on. `base` is what Mindbody held before
+   * the first tap (the revert target), `flags` what the boxes show now.
+   * Flushed as ONE /api/client-consent write carrying only the flags
+   * that differ from the base, 2.5s after the last tap or when the
+   * modal closes, whichever comes first. A ref, not state: the flush
+   * runs from a timer and from closeProfile, and must see the latest
+   * taps without a render in between.
+   */
+  const optInPending = useRef<{
+    clientId: string;
+    name: string;
+    base: NonNullable<ClientProfile["consent"]>;
+    flags: Partial<Record<OptInKind, boolean>>;
+    timer: ReturnType<typeof setTimeout> | null;
+  } | null>(null);
 
   /**
    * The client profile modal (T42): fetched at open, never at render,
@@ -2208,10 +2234,7 @@ function FrontDesk({
     const gen = ++profileGen.current;
     setProfileView({ clientId, name });
     setProfileState({ profile: null, loading: true, error: null });
-    /* An opt-in write still on the wire for the last profile answers to
-     * the old generation and is dropped, so its busy flag has to clear
-     * here or the new profile's boxes stay disabled until close. */
-    setOptIn({ busy: null, msg: null });
+    setOptInMsg(null);
     fetch(`/api/client-profile?clientId=${encodeURIComponent(clientId)}`)
       .then(async (r) => {
         const body = await r.json();
@@ -2234,91 +2257,164 @@ function FrontDesk({
       });
   }, []);
 
-  const closeProfile = useCallback(() => {
-    profileGen.current += 1;
-    setProfileView(null);
-    setOptIn({ busy: null, msg: null });
+  /** The banner line under the mode banner, 20s, for a word about a
+   *  write whose dialog is already gone (T59b's new-client note, T72's
+   *  opt-in outcome after the profile closed). */
+  const flashBanner = useCallback((text: string) => {
+    setActorBanner(text);
+    if (actorBannerTimer.current) clearTimeout(actorBannerTimer.current);
+    actorBannerTimer.current = setTimeout(() => setActorBanner(null), 20_000);
   }, []);
 
   /**
-   * T71: an email opt-in box on the profile card. ONE /api/client-consent
-   * write per tap carrying exactly the flag tapped (the T53 gate's
-   * route and envelope, under the teacher's token with the loud
-   * fallback, through the dry-run and write-guard gates). The box does
-   * not flip until Mindbody has answered: a suppressed write leaves it
-   * where the record says and names the reason, so a dry-run counter
-   * never shows an opt-in that was not saved. A dead teacher token
-   * brings the gate back and leaves the box alone.
+   * T72: send the pending opt-in taps as one write. Runs in the
+   * background: the boxes already show the taps, and the answer only
+   * matters when it is not a plain success. Suppressed (dry run, write
+   * guard) or refused, the boxes go back to what Mindbody holds and the
+   * reason shows under the table while that profile is still open, or
+   * in the banner when it has closed. A fallback to the studio account
+   * keeps the taps and says so the same way. A dead teacher token drops
+   * the teacher (the gate returns) and reverts, since nothing was
+   * written. Nothing here reads profileGen: a write for a closed
+   * profile still has to answer somewhere.
+   */
+  const flushOptIn = useCallback(async () => {
+    const pending = optInPending.current;
+    if (!pending) return;
+    optInPending.current = null;
+    if (pending.timer) clearTimeout(pending.timer);
+    const { clientId, name, base, flags } = pending;
+    const body: Record<string, string | boolean> = { clientId };
+    const reverted: Partial<NonNullable<ClientProfile["consent"]>> = {};
+    for (const kind of Object.keys(flags) as OptInKind[]) {
+      const value = flags[kind];
+      const held =
+        kind === "account"
+          ? base.accountEmails
+          : kind === "schedule"
+            ? base.scheduleEmails
+            : base.promotionalEmails;
+      if (value === undefined || value === held) continue;
+      body[OPT_IN_EMAIL_FLAG[kind]] = value;
+      if (kind === "account") reverted.accountEmails = held;
+      else if (kind === "schedule") reverted.scheduleEmails = held;
+      else reverted.promotionalEmails = held;
+    }
+    /* Tapped back to where it started: nothing to send. */
+    if (Object.keys(body).length === 1) return;
+    /* What to show, and where: under the table if that profile is
+     * still the open one, else the banner with the name. */
+    const say = (text: string, tone: "warn" | "stop") => {
+      if (profileViewRef.current?.clientId === clientId) {
+        setOptInMsg({ text, tone });
+      } else {
+        flashBanner(`Opt-ins for ${name}: ${text}`);
+      }
+    };
+    const revert = () =>
+      setProfileState((st) =>
+        st.profile && st.profile.clientId === clientId && st.profile.consent
+          ? {
+              ...st,
+              profile: {
+                ...st.profile,
+                consent: { ...st.profile.consent, ...reverted },
+              },
+            }
+          : st,
+      );
+    try {
+      const res = await fetch("/api/client-consent", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const answer = await res.json().catch(() => null);
+      if (answer?.staffSessionEnded === true || answer?.reason === "staff") {
+        setTeacher(null);
+        revert();
+        return;
+      }
+      if (!res.ok || answer?.ok !== true) {
+        throw new Error(answer?.error ?? `HTTP ${res.status}`);
+      }
+      const fallback = noteActor(answer, clientId);
+      if (answer.suppressed) {
+        revert();
+        say(
+          answer.suppressed === "dry-run"
+            ? "Dry run: not saved, nothing was written."
+            : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
+          "warn",
+        );
+        return;
+      }
+      if (fallback) say(fallback, "warn");
+    } catch (err) {
+      revert();
+      say(
+        `Could not save: ${err instanceof Error ? err.message : String(err)}`,
+        "stop",
+      );
+    }
+  }, [noteActor, flashBanner]);
+
+  const closeProfile = useCallback(() => {
+    profileGen.current += 1;
+    setProfileView(null);
+    setOptInMsg(null);
+    /* T72: the taps go out now rather than after the idle delay. */
+    void flushOptIn();
+  }, [flushOptIn]);
+
+  /**
+   * T72: an email opt-in box tapped on the profile card. The box flips
+   * at once (the profile's consent is patched locally) and the tap
+   * joins the pending write, which goes out after 2.5s without another
+   * tap or when the modal closes. The base is captured on the first
+   * tap for this profile so a later revert lands on what Mindbody held,
+   * not on an earlier tap. A tap on a different profile than the
+   * pending one flushes the old taps first.
    */
   const saveOptIn = useCallback(
-    async (kind: OptInKind, value: boolean) => {
-      if (!profileView || optIn.busy !== null) return;
-      const { clientId } = profileView;
-      const gen = profileGen.current;
-      setOptIn({ busy: kind, msg: null });
-      try {
-        const res = await fetch("/api/client-consent", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ clientId, [OPT_IN_EMAIL_FLAG[kind]]: value }),
-        });
-        const body = await res.json().catch(() => null);
-        if (profileGen.current !== gen) return;
-        if (body?.staffSessionEnded === true || body?.reason === "staff") {
-          setTeacher(null);
-          setOptIn({ busy: null, msg: null });
-          return;
-        }
-        if (!res.ok || body?.ok !== true) {
-          throw new Error(body?.error ?? `HTTP ${res.status}`);
-        }
-        const fallback = noteActor(body, clientId);
-        if (body.suppressed) {
-          setOptIn({
-            busy: null,
-            msg: {
-              tone: "warn",
-              text:
-                body.suppressed === "dry-run"
-                  ? "Dry run: not saved, nothing was written."
-                  : "Write guard: this client is not in POS_WRITE_CLIENT_IDS.",
-            },
-          });
-          return;
-        }
-        const patch =
-          kind === "account"
-            ? { accountEmails: value }
-            : kind === "schedule"
-              ? { scheduleEmails: value }
-              : { promotionalEmails: value };
-        setProfileState((st) =>
-          st.profile && st.profile.clientId === clientId && st.profile.consent
-            ? {
-                ...st,
-                profile: {
-                  ...st.profile,
-                  consent: { ...st.profile.consent, ...patch },
-                },
-              }
-            : st,
-        );
-        setOptIn({
-          busy: null,
-          msg: fallback ? { tone: "warn", text: fallback } : null,
-        });
-      } catch (err) {
-        if (profileGen.current !== gen) return;
-        setOptIn({
-          busy: null,
-          msg: {
-            tone: "stop",
-            text: `Could not save: ${err instanceof Error ? err.message : String(err)}`,
-          },
-        });
+    (kind: OptInKind, value: boolean) => {
+      const view = profileView;
+      const consent = profileState.profile?.consent;
+      if (!view || !consent || profileState.profile?.clientId !== view.clientId) {
+        return;
       }
+      setOptInMsg(null);
+      const patch =
+        kind === "account"
+          ? { accountEmails: value }
+          : kind === "schedule"
+            ? { scheduleEmails: value }
+            : { promotionalEmails: value };
+      setProfileState((st) =>
+        st.profile && st.profile.clientId === view.clientId && st.profile.consent
+          ? {
+              ...st,
+              profile: {
+                ...st.profile,
+                consent: { ...st.profile.consent, ...patch },
+              },
+            }
+          : st,
+      );
+      const pending = optInPending.current;
+      if (pending && pending.clientId !== view.clientId) {
+        void flushOptIn();
+      }
+      const current =
+        optInPending.current?.clientId === view.clientId
+          ? optInPending.current
+          : { clientId: view.clientId, name: view.name, base: consent, flags: {}, timer: null };
+      if (current.timer) clearTimeout(current.timer);
+      current.flags[kind] = value;
+      current.timer = setTimeout(() => void flushOptIn(), 2500);
+      optInPending.current = current;
     },
-    [profileView, optIn.busy, noteActor],
+    [profileView, profileState.profile, flushOptIn],
   );
 
   /** Escape closes the profile modal. It stacks above the search modal,
@@ -6337,8 +6433,7 @@ function FrontDesk({
                 loading={profileState.loading}
                 error={profileState.error}
                 onOptIn={saveOptIn}
-                optInBusy={optIn.busy}
-                optInMsg={optIn.msg}
+                optInMsg={optInMsg}
               />
             </div>
           </div>

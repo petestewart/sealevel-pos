@@ -8992,3 +8992,40 @@ portrait payment column now sits at its 120px floor (was 164), which
 is the price of the badge column and is Pete's call if it grates. The
 reviewer also noted the guest modal's rows lacked the bold hit, added
 after the review in the same push.
+
+## T72: opt-in taps flip at once and save in the background, batched
+
+**DONE** (2026-09-05). Pete, after trying T71's opt-ins live: "every
+click holds everything up while the request is made. can we make this
+update happen in the background? and perhaps either with a delay or
+wait until the modal is closed to update everything at once?"
+
+The box now flips on the tap (the profile's consent is patched
+locally) and the tap joins a pending set for that profile, held in a
+ref with the consent Mindbody held before the first tap as the revert
+target. The set goes out as ONE `/api/client-consent` write carrying
+only the flags that differ from what Mindbody held, 2.5 seconds after
+the last tap or when the modal closes, whichever comes first; a tap
+undone within the delay sends nothing, and a tap on a different
+profile flushes the old set first. The route, the teacher's token, the
+loud fallback, dry run and the write guard are all as in T53 and T71;
+only the timing and the batching changed.
+
+The answer is read in the background and only matters when it is not a
+plain success: a suppression (dry run, write guard) or a refusal puts
+the boxes back to what Mindbody holds and says why, under the table
+while that profile is still open, or in the 20-second banner under the
+mode banner, prefixed with the client's name, when the modal has
+already closed. A fallback to the studio account keeps the taps and
+shows the amber line the same way. A dead teacher token drops the
+teacher (the gate returns) and reverts, since nothing was written. The
+boxes are never disabled while a write is out, and the T71 busy state
+is gone with the reviewer's fix for it.
+
+Verified with `scratchpad/t71/optin2.js` against the mock: two quick
+taps flip within 70ms with no call, still no call at 1.2s, then one
+`updateclient` carrying both flags; a tap then close sends one call at
+once; under `POS_WRITE_CLIENT_IDS=999` the boxes revert after the idle
+with the write-guard line under the table, and after tap-then-close
+the banner reads "Opt-ins for Pete Stewart: Write guard: ..."; tap and
+untap within the delay sends nothing. Typecheck and build green.
