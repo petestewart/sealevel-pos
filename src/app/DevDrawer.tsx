@@ -892,16 +892,21 @@ function ShelfPanel() {
     void load();
   }, [load]);
 
-  const groupOf = (id: string | number): string =>
-    groups.find((g) => g.ids.includes(String(id)))?.label ?? "";
+  /* The select's value is the group's INDEX, not its label: a label is
+   * being typed while the select is live, so it can be empty (the same
+   * value as None) or momentarily equal to another group's. */
+  const groupOf = (id: string | number): string => {
+    const index = groups.findIndex((g) => g.ids.includes(String(id)));
+    return index < 0 ? "" : String(index);
+  };
 
-  const setGroupOf = (id: string | number, label: string) => {
+  const setGroupOf = (id: string | number, index: string) => {
     const key = String(id);
     setGroups((prev) =>
-      prev.map((g) => ({
+      prev.map((g, i) => ({
         ...g,
         ids:
-          g.label === label
+          String(i) === index
             ? g.ids.includes(key)
               ? g.ids
               : [...g.ids, key]
@@ -1097,7 +1102,7 @@ function ShelfPanel() {
                   >
                     <option value="">None</option>
                     {groups.map((g, i) => (
-                      <option key={i} value={g.label}>
+                      <option key={i} value={String(i)}>
                         {g.label || `(group ${i + 1})`}
                       </option>
                     ))}
