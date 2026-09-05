@@ -3299,6 +3299,12 @@ button.sale-for:disabled {
   display: grid;
   gap: 16px;
   padding: 18px;
+  /* T74: the pane can now hold two rows (the pass sub-chips and the
+   * grid, or several sections). Grid rows share free space by default,
+   * which put a two-card grid halfway down the pane; anchor everything
+   * at the top. One child is drawn exactly as before, since .shelf-grid
+   * already starts its cards at the top. */
+  align-content: start;
 }
 
 /* T70 (Buy.dc.html): the rail, a 190px column on the surface with a
@@ -3353,6 +3359,60 @@ button.sale-for:disabled {
   /* T39.7: the grid is the pane's height (T39.4's bound); without this
    * a short shelf stretched its one row of cards to fill it. */
   align-content: start;
+}
+
+/* T74: the Passes shelf's sub-category chips, over the grid. The rail's
+ * quiet / filled idiom at the roster chip's 48px, flush-left, wrapping
+ * when the studio's labels outgrow one line. Absent entirely when no
+ * groups are configured. */
+.shelf-subchips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.sub-chip {
+  flex: 0 0 auto;
+  height: 48px;
+  min-width: 96px;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.sub-chip:active {
+  background: var(--surface-2);
+}
+
+.sub-chip.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* One group's cards under its kicker, when the shelf shows All. The
+ * kicker is the roster head's idiom: 16px uppercase, muted, over a
+ * 2px rule. */
+.shelf-section {
+  display: grid;
+  gap: 12px;
+}
+
+.shelf-kicker {
+  margin: 0;
+  padding: 0 0 8px;
+  border-bottom: 2px solid var(--rule);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 /* One sellable thing (Buy.dc.html): 104px on a 1px line, the name at

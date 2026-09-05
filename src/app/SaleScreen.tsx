@@ -129,6 +129,9 @@ interface ShelfItem {
   taxRate: number | null;
   type: "Product" | "Service" | "Package";
   categoryId: number | null;
+  /** T74: a pass's sub-category label (the shelf config's group), null
+   *  when ungrouped. Absent on products and packages. */
+  group?: string | null;
 }
 
 /** Mirrors src/lib/sale.ts AutopayScheduleInfo. */
@@ -180,6 +183,9 @@ interface CatalogState {
   packages: ShelfItem[];
   /** T30: contracts feed the Memberships chip and its dialog only. */
   contracts: ContractInfo[];
+  /** T74: pass sub-category labels in rail order, only those with a
+   *  visible pass. Empty means the Passes shelf is one plain grid. */
+  passGroups: string[];
 }
 
 /** A bundle every line of which resolved against the loaded catalog; only
@@ -245,7 +251,45 @@ function parseCatalog(body: any): CatalogState {
     passes: body?.passes ?? [],
     packages: body?.packages ?? [],
     contracts: body?.contracts ?? [],
+    passGroups: Array.isArray(body?.passGroups) ? body.passGroups : [],
   };
+}
+
+/** T74: the sub-chip over the Passes shelf for the passes in no group.
+ *  Shown only beside real groups; never a group label itself (the admin
+ *  route refuses nothing here, but a group named "Other" would simply
+ *  share the word, which is acceptable for a dev-drawer config). */
+const OTHER_GROUP_LABEL = "Other";
+
+/**
+ * T74: the Passes shelf in sections. `All` (null) is every pass with a
+ * kicker over each group's cards and "Other" over the ungrouped ones; a
+ * chosen chip is that group's cards alone, no kicker. With no groups
+ * among the items the shelf is one unlabelled section, exactly the
+ * grid it was before T74.
+ */
+function groupedSections(
+  items: ShelfItem[],
+  passGroups: string[],
+  chosen: string | null,
+): { label: string | null; items: ShelfItem[] }[] {
+  const groups = passGroups.filter((g) => items.some((i) => i.group === g));
+  if (groups.length === 0) return [{ label: null, items }];
+  const ungrouped = items.filter(
+    (i) => !i.group || !groups.includes(i.group),
+  );
+  if (chosen === OTHER_GROUP_LABEL) return [{ label: null, items: ungrouped }];
+  if (chosen !== null && groups.includes(chosen)) {
+    return [{ label: null, items: items.filter((i) => i.group === chosen) }];
+  }
+  const sections = groups.map((g) => ({
+    label: g,
+    items: items.filter((i) => i.group === g),
+  }));
+  if (ungrouped.length > 0) {
+    sections.push({ label: OTHER_GROUP_LABEL, items: ungrouped });
+  }
+  return sections;
 }
 
 /**
@@ -3818,6 +3862,12 @@ export default function SaleScreen(props: {
    *  with a "more" entry. Sticky for the session: a teacher who opened
    *  the rest keeps them. */
   const [railExpanded, setRailExpanded] = useState(false);
+  /** T74: the chosen pass sub-chip; null is `All`. Resets whenever the
+   *  rail category changes, so coming back to Passes starts from All. */
+  const [passGroup, setPassGroup] = useState<string | null>(null);
+  useEffect(() => {
+    setPassGroup(null);
+  }, [activeCat]);
 
   /**
    * The per-device stars, loaded from localStorage once the target is
@@ -4939,6 +4989,107 @@ export default function SaleScreen(props: {
     (!onFavorites || resolvedBundles.length === 0) &&
     !onMemberships;
 
+  /** T74: one shelf card, shared by every section of the grid. The
+   *  markup is exactly the card the grid always drew; only its home
+   *  moved, so a sectioned Passes shelf and a plain one draw the same
+   *  thing. */
+  const shelfCard = (item: ShelfItem) => {
+    const starred = favSet.has(itemKey(item.type, item.id));
+    const count = inCart.get(itemKey(item.type, item.id)) ?? 0;
+    return (
+      <div
+        className="shelf-cell"
+        key={`${item.type}-${item.id}`}
+      >
+        <button
+          className={count > 0 ? "shelf-item in-cart" : "shelf-item"}
+          onClick={() => addItem(item)}
+          aria-label={`Add ${item.name}, ${money(item.price)}`}
+        >
+          <span className="shelf-name">{item.name}</span>
+          <span className="shelf-foot">
+            <span className="shelf-price">
+              <span className="shelf-amt">
+                {money(item.price)}
+              </span>
+              {item.taxExempt ? (
+                <span className="shelf-notax"> no tax</span>
+              ) : null}
+              {/* A package's shelf price is a local
+                  component-sum estimate (the API gives a
+                  package no price of its own); the cart
+                  total is Mindbody's, as always. */}
+              {item.type === "Package" ? (
+                /* "est." because this number is OUR
+                   component-sum guess, not a Mindbody
+                   price; the cart total is Mindbody's. */
+                <span className="shelf-bundle-mark">
+                  {" "}
+                  package, est.
+                </span>
+              ) : null}
+            </span>
+            {/* T39.3: how many are rung up, from cart
+                state. Reads "x2" so a teacher can see a
+                double tap landed without looking at
+                the ticket. */}
+            {count > 0 ? (
+              <span
+                className="shelf-count"
+                aria-label={`${count} in the cart`}
+              >
+                &#215;{count}
+              </span>
+            ) : null}
+          </span>
+        </button>
+        {/* Its own tap target beside (not inside) the add
+            button: nested buttons are invalid HTML and
+            double-fire. stopPropagation belt-and-braces. */}
+        <button
+          className={starred ? "shelf-star on" : "shelf-star"}
+          aria-pressed={starred}
+          aria-label={
+            starred
+              ? `Unstar ${item.name}`
+              : `Star ${item.name} as a favorite`
+          }
+          title={starred ? "Unstar" : "Star"}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleFavorite(item);
+          }}
+        >
+          <StarIcon />
+        </button>
+      </div>
+    );
+  };
+
+  /** T74: the Passes shelf sub-chips, only groups with a visible pass
+   *  on THIS shelf (a group whose passes were all routed elsewhere by
+   *  T41 never shows a chip), plus Other when ungrouped passes sit
+   *  beside them. Any other shelf has none. */
+  const onPasses = category !== null && category.categoryIds.length === 0;
+  const passGroupsHere = onPasses
+    ? (catalog?.passGroups ?? []).filter((g) =>
+        shelfItems.some((i) => i.group === g),
+      )
+    : [];
+  const passChips =
+    passGroupsHere.length > 0 &&
+    shelfItems.some((i) => !i.group || !passGroupsHere.includes(i.group))
+      ? [...passGroupsHere, OTHER_GROUP_LABEL]
+      : passGroupsHere;
+  /** A chosen chip the catalog no longer carries (a recheck removed the
+   *  group) reads as All rather than as an empty shelf. */
+  const chosenPassGroup =
+    passGroup !== null && passChips.includes(passGroup) ? passGroup : null;
+  const shelfSections = onPasses
+    ? groupedSections(shelfItems, passGroupsHere, chosenPassGroup)
+    : [{ label: null, items: shelfItems }];
+
+
   /** What the totals area shows, in priority order: the amber suppression
    *  notice, the loud disagreement, a failed call, the spinner, or the
    *  server's numbers. Never a locally computed total dressed as one. */
@@ -5429,104 +5580,90 @@ export default function SaleScreen(props: {
                       : "Nothing sellable in this category."}
                   </p>
                 ) : (
-                  <div className="shelf-grid">
-                    {shelfItems.map((item) => {
-                      const starred = favSet.has(itemKey(item.type, item.id));
-                      const count = inCart.get(itemKey(item.type, item.id)) ?? 0;
-                      return (
-                        <div
-                          className="shelf-cell"
-                          key={`${item.type}-${item.id}`}
-                        >
+                  <>
+                    {/* T74: the Passes shelf in sub-categories when the
+                        config has any. The chip row sits over the grid,
+                        `All` first, a chip per group with a visible pass,
+                        `Other` only when ungrouped passes sit alongside
+                        groups. With no groups this whole row is absent
+                        and the grid below is exactly what it was. */}
+                    {passChips.length > 0 ? (
+                      <div
+                        className="shelf-subchips"
+                        role="tablist"
+                        aria-label="Pass types"
+                      >
+                        {[null, ...passChips].map((label) => (
                           <button
-                            className={count > 0 ? "shelf-item in-cart" : "shelf-item"}
-                            onClick={() => addItem(item)}
-                            aria-label={`Add ${item.name}, ${money(item.price)}`}
-                          >
-                            <span className="shelf-name">{item.name}</span>
-                            <span className="shelf-foot">
-                              <span className="shelf-price">
-                                <span className="shelf-amt">
-                                  {money(item.price)}
-                                </span>
-                                {item.taxExempt ? (
-                                  <span className="shelf-notax"> no tax</span>
-                                ) : null}
-                                {/* A package's shelf price is a local
-                                    component-sum estimate (the API gives a
-                                    package no price of its own); the cart
-                                    total is Mindbody's, as always. */}
-                                {item.type === "Package" ? (
-                                  /* "est." because this number is OUR
-                                     component-sum guess, not a Mindbody
-                                     price; the cart total is Mindbody's. */
-                                  <span className="shelf-bundle-mark">
-                                    {" "}
-                                    package, est.
-                                  </span>
-                                ) : null}
-                              </span>
-                              {/* T39.3: how many are rung up, from cart
-                                  state. Reads "x2" so a teacher can see a
-                                  double tap landed without looking at
-                                  the ticket. */}
-                              {count > 0 ? (
-                                <span
-                                  className="shelf-count"
-                                  aria-label={`${count} in the cart`}
-                                >
-                                  &#215;{count}
-                                </span>
-                              ) : null}
-                            </span>
-                          </button>
-                          {/* Its own tap target beside (not inside) the add
-                              button: nested buttons are invalid HTML and
-                              double-fire. stopPropagation belt-and-braces. */}
-                          <button
-                            className={starred ? "shelf-star on" : "shelf-star"}
-                            aria-pressed={starred}
-                            aria-label={
-                              starred
-                                ? `Unstar ${item.name}`
-                                : `Star ${item.name} as a favorite`
+                            key={label ?? "all"}
+                            role="tab"
+                            aria-selected={chosenPassGroup === label}
+                            className={
+                              chosenPassGroup === label
+                                ? "sub-chip on"
+                                : "sub-chip"
                             }
-                            title={starred ? "Unstar" : "Star"}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleFavorite(item);
-                            }}
+                            onClick={() => setPassGroup(label)}
                           >
-                            <StarIcon />
+                            {label ?? "All"}
                           </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {shelfSections.map((section, index) => {
+                      const grid = (
+                        <div
+                          className="shelf-grid"
+                          key={section.label ?? "grid"}
+                        >
+                          {section.items.map(shelfCard)}
+                          {/* Bundles, after the starred items. One card,
+                              one tap, every line into the cart. Only the
+                              Favorites shelf has any, and it is always a
+                              single section, so they land in the grid
+                              they always did. */}
+                          {onFavorites && index === shelfSections.length - 1
+                            ? resolvedBundles.map((bundle) => (
+                                <button
+                                  key={`bundle-${bundle.name}`}
+                                  className="shelf-item shelf-bundle"
+                                  onClick={() => addBundle(bundle)}
+                                  aria-label={`Add the ${bundle.name} bundle, ${money(bundle.total)}, ${bundle.items.length} items`}
+                                >
+                                  <span className="shelf-name">
+                                    {bundle.name}
+                                    <span className="shelf-bundle-mark"> bundle</span>
+                                  </span>
+                                  <span className="shelf-foot">
+                                    <span className="shelf-price">
+                                      <span className="shelf-amt">
+                                        {money(bundle.total)}
+                                      </span>
+                                    </span>
+                                  </span>
+                                </button>
+                              ))
+                            : null}
                         </div>
                       );
+                      /* An unlabelled section is the bare grid, so the
+                         markup without groups is unchanged. A labelled
+                         one carries its kicker: the roster head's 16px
+                         uppercase muted idiom. */
+                      return section.label === null ? (
+                        grid
+                      ) : (
+                        <section
+                          className="shelf-section"
+                          key={section.label}
+                          aria-label={section.label}
+                        >
+                          <h3 className="shelf-kicker">{section.label}</h3>
+                          {grid}
+                        </section>
+                      );
                     })}
-                    {/* Bundles, after the starred items. One card, one tap,
-                        every line into the cart. */}
-                    {onFavorites
-                      ? resolvedBundles.map((bundle) => (
-                          <button
-                            key={`bundle-${bundle.name}`}
-                            className="shelf-item shelf-bundle"
-                            onClick={() => addBundle(bundle)}
-                            aria-label={`Add the ${bundle.name} bundle, ${money(bundle.total)}, ${bundle.items.length} items`}
-                          >
-                            <span className="shelf-name">
-                              {bundle.name}
-                              <span className="shelf-bundle-mark"> bundle</span>
-                            </span>
-                            <span className="shelf-foot">
-                              <span className="shelf-price">
-                                <span className="shelf-amt">
-                                  {money(bundle.total)}
-                                </span>
-                              </span>
-                            </span>
-                          </button>
-                        ))
-                      : null}
-                  </div>
+                  </>
                 )}
               </>
             ) : null}
