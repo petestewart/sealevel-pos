@@ -3,17 +3,9 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 
 import { counterBundles, type CounterBundle } from "@/lib/bundles";
-import { counterCategories } from "@/lib/categories";
+import { currentShelfConfig, rawCatalog } from "@/lib/catalog";
 import { enabledDbBundles } from "@/lib/db";
-import { target } from "@/lib/mindbody";
-import {
-  catalogFor,
-  contractsFor,
-  pricingOptions,
-  sellablePackages,
-  type CatalogItem,
-  type ContractSummary,
-} from "@/lib/sale";
+import { applyShelfConfig } from "@/lib/shelfconfig";
 
 export const dynamic = "force-dynamic";
 
@@ -21,32 +13,13 @@ export const dynamic = "force-dynamic";
  * GET /api/catalog
  *
  * The sale screen's shelf: retail products for the hardcoded counter
- * categories plus the pricing options (passes). Reads only.
- *
- * Cached per process for 10 minutes. The catalog changes rarely (a studio
- * adds a product a few times a year), and the design doc's no-stale-pricing
- * rule is honored because nothing here IS the price of a sale: the cart's
- * total always comes live from /api/price-cart, and any drift between a
- * cached shelf price and Mindbody's live total is exactly the disagreement
- * priceCart is built to surface, never swallow.
+ * categories plus the pricing options (passes), packages and contracts.
+ * Reads only. The raw catalog and its ten-minute cache live in
+ * src/lib/catalog.ts (T74 moved them there so the shelf admin route can
+ * list every item from the same reads); this route applies what sits
+ * OUTSIDE that cache at response time: the bundles (T29) and the shelf
+ * config (T74), both local, both read per request.
  */
-const CACHE_TTL_MS = 10 * 60 * 1000;
-
-interface CatalogPayload {
-  categories: typeof counterCategories;
-  products: CatalogItem[];
-  passes: CatalogItem[];
-  /** T30: packages ride the same shelf/cart machinery as products. */
-  packages: CatalogItem[];
-  /** T30: contracts are NOT cart items; they feed the Memberships chip
-   *  and its dedicated purchase dialog. */
-  contracts: ContractSummary[];
-}
-
-/** Keyed by MINDBODY_TARGET for the same reason the staff-token cache is
- *  keyed by site id: a process that switches target must never serve the
- *  sandbox's catalog as the studio's shelf, or vice versa. */
-let cache: { key: string; at: number; data: CatalogPayload } | null = null;
 
 /**
  * Bundles ride the catalog response but sit OUTSIDE its cache: they are
@@ -66,45 +39,9 @@ async function currentBundles(): Promise<{
   return { bundles: counterBundles, bundleSource: "config" };
 }
 
-/**
- * T41: a pricing option whose `RevenueCategory` names a counter category
- * (categories.ts `revenueCategories`) is stamped with that category's id
- * so the shelf files it there rather than under Passes. Towel and mat
- * rentals are the case: category -14 is a service category, so filtering
- * /sale/products on it can never fill the button. Every pass still rides
- * the same `passes` array with the same shape; only `categoryId` changes
- * from null, and the screen reads null as "Passes".
- */
-function routeServices(passes: CatalogItem[]): CatalogItem[] {
-  const byName = new Map<string, number>();
-  const byPattern: { re: RegExp; id: number }[] = [];
-  for (const c of counterCategories) {
-    const id = c.categoryIds[0];
-    if (id === undefined) continue;
-    for (const name of c.revenueCategories ?? []) {
-      byName.set(name.trim().toLowerCase(), id);
-    }
-    /* T41 follow-up: the option's own name is the second handle (see
-     * categories.ts `nameMatches`); a revenue-category match wins when
-     * both apply. */
-    for (const source of c.nameMatches ?? []) {
-      byPattern.push({ re: new RegExp(source, "i"), id });
-    }
-  }
-  if (byName.size === 0 && byPattern.length === 0) return passes;
-  return passes.map((p) => {
-    const routed =
-      (p.revenueCategory
-        ? byName.get(p.revenueCategory.trim().toLowerCase())
-        : undefined) ?? byPattern.find(({ re }) => re.test(p.name))?.id;
-    return routed === undefined ? p : { ...p, categoryId: routed };
-  });
-}
-
 export async function GET(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
-  const key = target();
   /**
    * `?refresh=1` skips the cache and refetches (Pete, fifth live test).
    * A cart whose total disagrees with Mindbody's is most likely a shelf
@@ -117,38 +54,21 @@ export async function GET(request: Request) {
    */
   const refresh =
     new URL(request.url).searchParams.get("refresh") === "1";
-  if (
-    !refresh &&
-    cache &&
-    cache.key === key &&
-    Date.now() - cache.at < CACHE_TTL_MS
-  ) {
-    return NextResponse.json({
-      ...cache.data,
-      ...(await currentBundles()),
-      cached: true,
-    });
-  }
   try {
-    const categoryIds = counterCategories.flatMap((c) => c.categoryIds);
-    const [products, passes, packages, contracts] = await Promise.all([
-      catalogFor(categoryIds),
-      pricingOptions(),
-      sellablePackages(),
-      contractsFor(),
-    ]);
-    const data: CatalogPayload = {
-      categories: counterCategories,
-      products,
-      passes: routeServices(passes),
-      packages,
-      contracts,
-    };
-    cache = { key, at: Date.now(), data };
+    const { data, cached } = await rawCatalog(refresh);
+    /* T74: the hide list and the pass groups, applied over the cached
+     * raw catalog so hidden items never reach the screen and every pass
+     * carries its group label. A bundle whose line names a hidden item
+     * fails to resolve on the shelf exactly as a stale id does (it does
+     * not render, one console.warn), which is the honest outcome. */
+    const { config, shelfSource } = await currentShelfConfig();
+    const shelf = applyShelfConfig(data, config);
     return NextResponse.json({
-      ...data,
+      categories: data.categories,
+      ...shelf,
       ...(await currentBundles()),
-      cached: false,
+      shelfSource,
+      cached,
     });
   } catch (err) {
     /* A failure is never cached: the next request retries Mindbody. */
