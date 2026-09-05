@@ -44,7 +44,9 @@ export default function DevDrawer() {
   const [expanded, setExpanded] = useState<number | null>(null);
   /** Which call id was just copied, for the momentary "copied" label. */
   const [copied, setCopied] = useState<number | "all" | null>(null);
-  const [tab, setTab] = useState<"calls" | "settings" | "bundles">("calls");
+  const [tab, setTab] = useState<"calls" | "settings" | "bundles" | "shelf">(
+    "calls",
+  );
   const { settings, set, reset } = useSettings();
 
   const poll = useCallback(async () => {
@@ -167,6 +169,12 @@ export default function DevDrawer() {
           >
             bundles
           </button>
+          <button
+            className={tab === "shelf" ? "dev-tab on" : "dev-tab"}
+            onClick={() => setTab("shelf")}
+          >
+            shelf
+          </button>
           {tab === "calls" ? (
             <>
               <button
@@ -195,6 +203,8 @@ export default function DevDrawer() {
             <SettingsPanel settings={settings} set={set} />
           ) : tab === "bundles" ? (
             <BundlesPanel />
+          ) : tab === "shelf" ? (
+            <ShelfPanel />
           ) : calls.length === 0 ? (
             <p className="muted">No calls yet.</p>
           ) : (
@@ -798,6 +808,331 @@ function BundlesPanel() {
         >
           clear
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* --- Shelf tab (T74) -------------------------------------------------
+ * The admin surface for the shelf config: which catalog items never
+ * reach the shelf, and which pass sub-category each pricing option files
+ * under. Same audience and gates as the Bundles tab (PIN, then devtools),
+ * same density, nothing teacher-facing. Talks to /api/admin/shelf, which
+ * 404s without devtools exactly like /api/devlog.
+ *
+ * One Save writes the whole config; nothing here is seeded, Pete hides
+ * and groups what he wants himself.
+ */
+
+/** Mirrors src/lib/shelfconfig.ts, re-declared like the bundle shapes so
+ *  no server module is pulled into the client bundle. */
+interface ShelfAdminItem {
+  type: "Product" | "Service" | "Package" | "Contract";
+  id: string | number;
+  key: string;
+  name: string;
+  price: number;
+}
+
+interface ShelfAdminGroup {
+  label: string;
+  ids: string[];
+}
+
+interface ShelfAdminConfig {
+  hidden: string[];
+  groups: ShelfAdminGroup[];
+}
+
+const SHELF_KINDS: { type: ShelfAdminItem["type"]; heading: string }[] = [
+  { type: "Service", heading: "passes" },
+  { type: "Product", heading: "products" },
+  { type: "Package", heading: "packages" },
+  { type: "Contract", heading: "memberships (contracts)" },
+];
+
+function ShelfPanel() {
+  const [loaded, setLoaded] = useState(false);
+  const [available, setAvailable] = useState(false);
+  const [configured, setConfigured] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [items, setItems] = useState<ShelfAdminItem[]>([]);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [groups, setGroups] = useState<ShelfAdminGroup[]>([]);
+  const [newLabel, setNewLabel] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [outcome, setOutcome] = useState<
+    { ok: true; text: string } | { ok: false; text: string } | null
+  >(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/shelf");
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setLoadError(String(body?.error ?? `HTTP ${res.status}`));
+        setLoaded(true);
+        return;
+      }
+      setAvailable(Boolean(body.available));
+      setConfigured(Boolean(body.configured));
+      setItems(body.items ?? []);
+      const config: ShelfAdminConfig = body.config ?? { hidden: [], groups: [] };
+      setHidden(new Set(config.hidden ?? []));
+      setGroups((config.groups ?? []).map((g) => ({ ...g, ids: [...g.ids] })));
+      setLoadError(null);
+      setLoaded(true);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : String(err));
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /* The select's value is the group's INDEX, not its label: a label is
+   * being typed while the select is live, so it can be empty (the same
+   * value as None) or momentarily equal to another group's. */
+  const groupOf = (id: string | number): string => {
+    const index = groups.findIndex((g) => g.ids.includes(String(id)));
+    return index < 0 ? "" : String(index);
+  };
+
+  const setGroupOf = (id: string | number, index: string) => {
+    const key = String(id);
+    setGroups((prev) =>
+      prev.map((g, i) => ({
+        ...g,
+        ids:
+          String(i) === index
+            ? g.ids.includes(key)
+              ? g.ids
+              : [...g.ids, key]
+            : g.ids.filter((x) => x !== key),
+      })),
+    );
+  };
+
+  const toggleHidden = (key: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const addGroup = () => {
+    const label = newLabel.trim();
+    if (label.length === 0) return;
+    if (groups.some((g) => g.label.toLowerCase() === label.toLowerCase())) {
+      setOutcome({ ok: false, text: `"${label}" is already a group` });
+      return;
+    }
+    setGroups((prev) => [...prev, { label, ids: [] }]);
+    setNewLabel("");
+    setOutcome(null);
+  };
+
+  const renameGroup = (index: number, label: string) =>
+    setGroups((prev) =>
+      prev.map((g, i) => (i === index ? { ...g, label } : g)),
+    );
+
+  const moveGroup = (index: number, dir: -1 | 1) =>
+    setGroups((prev) => {
+      const to = index + dir;
+      if (to < 0 || to >= prev.length) return prev;
+      const next = [...prev];
+      const a = next[index];
+      const b = next[to];
+      if (!a || !b) return prev;
+      next[index] = b;
+      next[to] = a;
+      return next;
+    });
+
+  /* Removing a group ungroups its passes: the ids simply go with it. */
+  const removeGroup = (index: number) =>
+    setGroups((prev) => prev.filter((_, i) => i !== index));
+
+  const save = async () => {
+    setSaving(true);
+    setOutcome(null);
+    try {
+      const config: ShelfAdminConfig = {
+        hidden: [...hidden],
+        groups: groups.map((g) => ({ label: g.label.trim(), ids: g.ids })),
+      };
+      const res = await fetch("/api/admin/shelf", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setOutcome({
+          ok: false,
+          text: String(body?.error ?? `save failed (${res.status})`),
+        });
+        if (body?.available === false) setAvailable(false);
+        return;
+      }
+      const stored: ShelfAdminConfig = body.config ?? config;
+      setHidden(new Set(stored.hidden ?? []));
+      setGroups((stored.groups ?? []).map((g) => ({ ...g, ids: [...g.ids] })));
+      setOutcome({
+        ok: true,
+        text: "saved; the shelf shows it on the next catalog load",
+      });
+    } catch (err) {
+      setOutcome({
+        ok: false,
+        text: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!loaded) return <p className="muted">Loading.</p>;
+
+  if (loadError !== null) {
+    return (
+      <div className="dev-settings">
+        <p className="dev-bad">Shelf admin unavailable: {loadError}</p>
+      </div>
+    );
+  }
+
+  const byKind = (type: ShelfAdminItem["type"]) =>
+    items.filter((i) => i.type === type);
+
+  return (
+    <div className="dev-settings">
+      <p className="muted">
+        What the Buy screen may sell, and how the Passes shelf is split.
+        Hidden items never reach the shelf (a bundle line naming one stops
+        rendering, with a console warning); pass groups become sub-chips
+        over the Passes shelf, in this order. Ids are per site.
+      </p>
+      {!available ? (
+        <p className="muted">
+          {configured
+            ? "Database configured but not reachable; the shelf uses the code default (nothing hidden, no groups) until it answers, and this config cannot be saved."
+            : "No database configured (DATABASE_URL unset). The shelf uses the code default (nothing hidden, no groups) and this config cannot be saved. See docker-compose.yml to run one locally."}
+        </p>
+      ) : null}
+
+      <div className="dev-label">pass groups</div>
+      {groups.length === 0 ? (
+        <p className="muted">No groups: the Passes shelf is one grid.</p>
+      ) : (
+        groups.map((g, index) => (
+          <div key={index} className="dev-setting">
+            <input
+              type="text"
+              className="dev-text"
+              aria-label={`Group ${index + 1} label`}
+              value={g.label}
+              maxLength={40}
+              onChange={(e) => renameGroup(index, e.target.value)}
+            />
+            <span className="muted">{g.ids.length} passes</span>
+            <button
+              onClick={() => moveGroup(index, -1)}
+              disabled={index === 0}
+              aria-label={`Move ${g.label} up`}
+            >
+              up
+            </button>
+            <button
+              onClick={() => moveGroup(index, 1)}
+              disabled={index === groups.length - 1}
+              aria-label={`Move ${g.label} down`}
+            >
+              down
+            </button>
+            <button
+              onClick={() => removeGroup(index)}
+              aria-label={`Remove group ${g.label}`}
+            >
+              remove
+            </button>
+          </div>
+        ))
+      )}
+      <div className="dev-setting">
+        <input
+          type="text"
+          className="dev-text"
+          placeholder="new group label"
+          aria-label="New group label"
+          value={newLabel}
+          maxLength={40}
+          onChange={(e) => setNewLabel(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") addGroup();
+          }}
+        />
+        <button onClick={addGroup} disabled={newLabel.trim().length === 0}>
+          add group
+        </button>
+      </div>
+
+      {SHELF_KINDS.map(({ type, heading }) => {
+        const list = byKind(type);
+        if (list.length === 0) return null;
+        return (
+          <div key={type}>
+            <div className="dev-label">{heading}</div>
+            {list.map((item) => (
+              <div key={item.key} className="dev-setting">
+                <span className="dev-setting-label">
+                  {item.name}
+                  <span className="muted"> ${item.price.toFixed(2)}</span>
+                </span>
+                {type === "Service" ? (
+                  <select
+                    className="dev-text dev-shelf-group"
+                    aria-label={`Group for ${item.name}`}
+                    value={groupOf(item.id)}
+                    onChange={(e) => setGroupOf(item.id, e.target.value)}
+                  >
+                    <option value="">None</option>
+                    {groups.map((g, i) => (
+                      <option key={i} value={String(i)}>
+                        {g.label || `(group ${i + 1})`}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+                <label className="dev-bundle-toggle">
+                  <span className="muted">hidden</span>
+                  <input
+                    type="checkbox"
+                    checked={hidden.has(item.key)}
+                    onChange={() => toggleHidden(item.key)}
+                  />
+                </label>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+
+      <div className="dev-setting">
+        <button onClick={() => void save()} disabled={saving || !available}>
+          {saving ? "saving" : "Save"}
+        </button>
+        {outcome ? (
+          <span className={outcome.ok ? "muted" : "dev-bad"}>{outcome.text}</span>
+        ) : (
+          <span className="muted">
+            One save writes the whole config: hidden items and every group.
+          </span>
+        )}
       </div>
     </div>
   );

@@ -854,6 +854,19 @@ export async function updateBundle(
 /** Key for the studio banner. The one setting shipping with T29. */
 export const BANNER_SETTING_KEY = "banner_text";
 
+/** T74: whether a setting can be written right now (a database is
+ *  configured, reachable and migrated). getSetting cannot tell "unset"
+ *  from "unavailable", and the shelf admin surface must say honestly
+ *  which one it is facing before it offers a Save. */
+export async function dbAvailable(): Promise<boolean> {
+  try {
+    return (await ready()) !== null;
+  } catch (err) {
+    logDbError("availability", err);
+    return false;
+  }
+}
+
 /** Null when unset OR unavailable; the caller cannot and should not tell
  *  the difference, because both mean "use the env fallback". */
 export async function getSetting(key: string): Promise<string | null> {
