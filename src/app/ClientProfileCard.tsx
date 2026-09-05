@@ -111,6 +111,23 @@ function consentOf(
  * a 44px label cell (the icon-square idiom) so a hot-room thumb has
  * something to hit; the box itself is the gate's 26px.
  */
+function CheckMark() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={22}
+      height={22}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="square"
+      aria-hidden="true"
+    >
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </svg>
+  );
+}
+
 function OptIns({
   consent,
   onChange,
@@ -139,13 +156,19 @@ function OptIns({
                 onChange={(e) => onChange?.(k.key, e.target.checked)}
               />
             </label>
-            <label
-              className="optins-box off"
-              aria-label={`${k.label} by text (set in Mindbody)`}
-              title="Text opt-ins can only be changed in Mindbody"
+            {/* T73: a plain mark, not a control. */}
+            <span
+              className="optins-mark"
+              role="img"
+              aria-label={
+                text
+                  ? `${k.label} by text: on (set in Mindbody)`
+                  : `${k.label} by text: off (set in Mindbody)`
+              }
+              title="Text opt-ins are set in Mindbody"
             >
-              <input type="checkbox" checked={text} disabled readOnly />
-            </label>
+              {text ? <CheckMark /> : null}
+            </span>
           </div>
         );
       })}

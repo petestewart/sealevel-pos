@@ -5654,7 +5654,9 @@ function FrontDesk({
                 above the class picker and the rows: it is the one control
                 that is always useful, and a bar that moves down the modal
                 as the rows change is a bar a teacher has to look for. */}
-            {attachMode ? (
+            {/* T73 (Pete): the walk-in modal carries the bar too, "so it
+                can be redone"; the same state and rules in both modes. */}
+            {(
               <div className="search-bar">
                 <div className="search-wrap">
                   <input
@@ -5671,7 +5673,11 @@ function FrontDesk({
                       }
                     }}
                     enterKeyHint="search"
-                    placeholder="Who is the sale for? (press Enter)"
+                    placeholder={
+                      attachMode
+                        ? "Who is the sale for? (press Enter)"
+                        : "Search for a walk-in (press Enter)"
+                    }
                     autoComplete="off"
                     autoCorrect="off"
                     spellCheck={false}
@@ -5697,7 +5703,7 @@ function FrontDesk({
                   <SearchIcon />
                 </button>
               </div>
-            ) : null}
+            )}
             {attachMode && searchMsg ? (
               <p className="search-quiet">{searchMsg}</p>
             ) : null}
@@ -5978,22 +5984,27 @@ function FrontDesk({
                 every result row: with the class full, every add offers
                 the waiting list instead. Booking flow only; a sale does
                 not care whether the class is full. */}
-            {!attachMode && classFull && shownResults.length > 0 ? (
+            {/* T73: the walk-in body is ONE scroll region of a fixed
+                height, like attach mode's (Pete: "it should always be
+                the same height. currently it expands until a certain
+                height"): messages, the head and the rows all live in
+                it, so the modal is the same box whether the search
+                found nobody or forty people. */}
+            {!attachMode ? (
+            <div className="search-body">
+            {classFull && shownResults.length > 0 ? (
               <p className="muted">Class is full. Adding goes to the waiting list.</p>
             ) : null}
-            {!attachMode && searching ? (
+            {searching ? (
               <p className="muted">
                 <span className="spinner" aria-label="working" /> Searching
                 Mindbody...
               </p>
             ) : null}
-            {!attachMode && searchError ? (
+            {searchError ? (
               <p className="note">{searchError}</p>
             ) : null}
-            {!attachMode &&
-            !searching &&
-            !searchError &&
-            shownResults.length === 0 ? (
+            {!searching && !searchError && shownResults.length === 0 ? (
               <>
                 <p className="muted">
                   Nobody found. Check the spelling, or try fewer letters.
@@ -6035,7 +6046,7 @@ function FrontDesk({
                 confirm), and someone already on the roster or the
                 waiting list gets a chip and no tap at all. The Buy bag
                 left these rows; it stays on the roster's. */}
-            {!attachMode && shownResults.length > 0 ? (
+            {shownResults.length > 0 ? (
               <>
                 <div className="roster-head">
                   <span aria-hidden="true">Name</span>
@@ -6395,6 +6406,8 @@ function FrontDesk({
                   ) : null}
                 </ul>
               </>
+            ) : null}
+            </div>
             ) : null}
           </div>
         </div>

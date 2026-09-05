@@ -9029,3 +9029,31 @@ once; under `POS_WRITE_CLIENT_IDS=999` the boxes revert after the idle
 with the write-guard line under the table, and after tap-then-close
 the banner reads "Opt-ins for Pete Stewart: Write guard: ..."; tap and
 untap within the delay sends nothing. Typecheck and build green.
+
+## T73: the walk-in search modal is one fixed box with its own bar; text opt-ins as marks
+
+**DONE** (2026-09-05). Pete: "the search modal should include the
+search text input bar at the top so it can be redone, and it should
+always be the same height. currently it expands until a certain
+height." And on the profile card: "show the Text column as plain check
+marks."
+
+- The walk-in results modal renders the same search bar attach mode
+  has had since T32 (same query state, same Enter-to-search rule, the
+  walk-in placeholder), under the head and above the rows. Both modes
+  now share one layout: pinned 60px from the top, `100dvh - 84px`
+  tall whatever the rows are doing, the bar and the head fixed and a
+  `.search-body` region scrolling the messages, the column head and
+  the list together. The list's own `max-height` scroll is gone. The
+  "Nobody found" state and its New client button live in the same box.
+- The Opt-ins table's Text column is a check mark in the ink (or
+  nothing) with an aria-label naming the state, never a control: the
+  API cannot set those flags (client.yml, "cannot be updated by
+  developers"), so a disabled checkbox promised an edit that could not
+  happen. The Email boxes are unchanged.
+
+Verified with `scratchpad/t71/t73.js`: the modal is 750px tall at
+y=84 with the bar inside it for "nobody found", two rows and forty
+rows alike (the body scrolls at 764 over 566); no text under 16px, no
+button under 44px; the profile row carries one input (Email) and a
+mark per line.
