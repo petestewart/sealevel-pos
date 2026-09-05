@@ -9057,3 +9057,110 @@ y=84 with the bar inside it for "nobody found", two rows and forty
 rows alike (the body scrolls at 764 over 566); no text under 16px, no
 button under 44px; the profile row carries one input (Email) and a
 mark per line.
+
+## T74: shelf customization, a hide list and pass sub-categories
+
+**DONE** (2026-09-05). Pete: "on the store we need the ability to do
+some customization on what is displayed and how. we need to be able to
+hide certain items. for instance, Auto monthly grandfathered should
+never be available to sell. same with expired specials. in passes we
+should be able to have sub-categories. class packs, unlimited,
+specials."
+
+### The design (decided)
+
+- **One config, `ShelfConfig`** (`src/lib/shelfconfig.ts`): a hide
+  list of `<Type>:<id>` keys over products, passes (Service), packages
+  and membership contracts, and an ordered list of pass groups, each a
+  label and the pricing option ids in it. Validated by one pure
+  function the route and a node test share: labels 1 to 40 characters,
+  unique case-insensitively, no em dash; a pass in at most one group;
+  at most twelve groups; keys of the four types only. Nothing is
+  seeded: the ids are the studio's, and Pete enters his own hide list
+  and the three labels.
+- **Stored in `app_settings`** under `shelf_config`, the T29 charter's
+  home for what Mindbody has no home for. Read per catalog request,
+  outside the ten-minute catalog cache, exactly as bundles are, so a
+  change in the drawer shows on the next load. A bad row falls back to
+  the default and logs once with the object's keys only. No database:
+  the code default (nothing hidden, no groups) and an admin panel that
+  says it cannot save.
+- **`/api/catalog` applies it at response time** over the cached raw
+  catalog, which moved unchanged into `src/lib/catalog.ts` (same TTL,
+  same target key, `?refresh=1` bypass, failure never cached). Hidden
+  items are dropped from all four arrays, so the sale screen, the
+  Favorites shelf and the Memberships list never see them; every pass
+  carries `group`, and the payload carries `passGroups` (labels in
+  order, only groups with a visible pass) and `shelfSource` for the
+  drawer. A bundle whose line names a hidden item fails to resolve
+  exactly as a stale id does (not rendered, one console.warn). No
+  Mindbody call was added anywhere.
+- **The dev drawer's `shelf` tab** and `GET`/`PUT /api/admin/shelf`,
+  gated like the bundles admin (PIN session, then devtools, 404
+  otherwise). GET lists the unfiltered catalog, contracts included,
+  from the same cached reads; the panel has the group editor (label
+  inputs, up, down, remove, add) over the passes, products, packages
+  and memberships, each with a hidden box and, for passes, a group
+  select; one Save PUTs the whole config (400 with the reason on a bad
+  body, 503 with no database) and shows the outcome inline.
+- **The Passes shelf in sections**: when a configured group has a
+  visible pass, a 48px chip row (All, one per group, Other only when
+  ungrouped passes sit beside groups) in the quiet/filled idiom above
+  the grid; All shows every pass under 16px uppercase kickers over a
+  2px rule per group, a chosen chip that group's cards alone. The
+  choice resets when the rail category changes. With no groups the
+  markup is exactly the pre-T74 grid. `.sale-right` gained
+  `align-content: start` so a chosen chip's few cards sit at the top
+  rather than halfway down the pane.
+
+### Verified by the builder
+
+Typecheck and build green. A node unit test of the validator and the
+apply step: 13 of 13. Playwright with a browser-mocked catalog, both
+palettes at 1194x834: 48 of 48 checks (no config unchanged; two groups
+plus an ungrouped pass with a hidden contract and a hidden starred
+pass: the chip row, the kickers, chip filtering, a tap through a
+section ringing up, the reset on category change, Memberships showing
+one contract; everything grouped: no Other). The drawer against a
+real `next start` through the sign-in gate, once without a database
+(default served, Save disabled, PUT 503, a two-group PUT 400 naming
+the pass) and once with a scratch Postgres 16 (groups added, renamed,
+moved, removed; passes assigned; the grandfathered contract and the
+expired special hidden; saved; the catalog answering from the cached
+raw reads with both gone and `passGroups` in the moved order; the live
+Buy screen showing the chips). Not exercised: the real catalog's ids
+(Pete's to enter), a bundle over a hidden item, the drawer in dark.
+
+### Review
+
+A separate reviewer took the builder's branch, diffed the moved
+catalog code against the old route (byte-identical cache, TTL, target
+key and refresh bypass), confirmed no new Mindbody call and that the
+admin route shares the catalog's one cache, drove seven hostile stored
+rows through the catalog route, and re-ran every harness plus T67 and
+T69. Two fix commits, three defects:
+
+- A group labelled "Other" drew two Other chips and the first one
+  filtered the wrong cards (the group's pass plus the ungrouped ones).
+  The builder had left the label allowed; the validator now refuses it
+  case-insensitively, and a stored row carrying it falls back to the
+  default.
+- The hide list and a group's ids had no bound and a quadratic
+  duplicate check, so a stored row of ten thousand keys was accepted
+  and applied on every catalog request. Each list is capped at 1000
+  entries, the dedupe is linear, and the fallback log names at most
+  ten keys.
+- The drawer's pass select was keyed by group label, so a label
+  emptied for retyping collided with "None" and choosing None filed
+  the pass into that group. Keyed by index now; rename keeps ids and
+  removing a group ungroups its passes in what is sent.
+
+On record, not defects: a chosen sub-chip survives a catalog refresh
+(a vanished group reads as All); an empty stored config reports
+`shelfSource: "db"`, the bundles precedent. Reviewer numbers on the
+final tree: unit tests 22 of 22, sale harnesses 42 and 48 checks in
+both palettes, portrait and 1024 wide with the chips flush-left and no
+overflow, drawer round trip 21 of 21 against Postgres 16, the gates
+401 without the PIN session and 404 without devtools for GET and PUT
+alike; no text under 16px, no button under 44px; typecheck and build
+green.
