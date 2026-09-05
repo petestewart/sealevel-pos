@@ -256,9 +256,9 @@ function parseCatalog(body: any): CatalogState {
 }
 
 /** T74: the sub-chip over the Passes shelf for the passes in no group.
- *  Shown only beside real groups; never a group label itself (the admin
- *  route refuses nothing here, but a group named "Other" would simply
- *  share the word, which is acceptable for a dev-drawer config). */
+ *  Shown only beside real groups; never a group label itself, since
+ *  validateShelfConfig (src/lib/shelfconfig.ts RESERVED_GROUP_LABEL)
+ *  refuses a group so named, in any case. */
 const OTHER_GROUP_LABEL = "Other";
 
 /**

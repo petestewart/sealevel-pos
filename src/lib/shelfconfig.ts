@@ -56,6 +56,15 @@ const ITEM_TYPES: readonly ShelfItemType[] = [
 
 export const MAX_GROUPS = 12;
 export const MAX_GROUP_LABEL = 40;
+/** A bound on the hide list and on one group's ids. The whole catalog
+ *  is a few dozen items; a stored row with thousands of entries is not
+ *  a config, it is a fault, and it is refused rather than applied on
+ *  every catalog request. */
+export const MAX_ENTRIES = 1000;
+/** The sale screen's own label for the passes in no group (SaleScreen
+ *  OTHER_GROUP_LABEL). A group so named would draw two "Other" chips
+ *  and two "Other" sections, so it is refused here, case-insensitively. */
+export const RESERVED_GROUP_LABEL = "Other";
 
 /** The hide-list key for an item: one rule for the route, the admin
  *  surface and the tests. Ids compare as strings, since a product's id
@@ -80,6 +89,9 @@ export function validateShelfConfig(
 
   if (!Array.isArray(hidden)) {
     return { error: "hidden must be an array of \"<Type>:<id>\" keys" };
+  }
+  if (hidden.length > MAX_ENTRIES) {
+    return { error: `at most ${MAX_ENTRIES} hidden keys` };
   }
   const cleanHidden: string[] = [];
   const seenHidden = new Set<string>();
@@ -129,12 +141,22 @@ export function validateShelfConfig(
       return { error: `group label ${JSON.stringify(cleanLabel)} must not contain an em dash` };
     }
     const folded = cleanLabel.toLowerCase();
+    if (folded === RESERVED_GROUP_LABEL.toLowerCase()) {
+      return {
+        error: `group label ${JSON.stringify(RESERVED_GROUP_LABEL)} is reserved for the passes in no group`,
+      };
+    }
     if (seenLabels.has(folded)) {
       return { error: `group label ${JSON.stringify(cleanLabel)} is used twice` };
     }
     seenLabels.add(folded);
     if (!Array.isArray(ids)) {
       return { error: `group ${JSON.stringify(cleanLabel)} needs an ids array` };
+    }
+    if (ids.length > MAX_ENTRIES) {
+      return {
+        error: `group ${JSON.stringify(cleanLabel)}: at most ${MAX_ENTRIES} ids`,
+      };
     }
     const cleanIds: string[] = [];
     for (const id of ids) {
@@ -150,7 +172,8 @@ export function validateShelfConfig(
           error: `pass ${cleanId} is in both ${JSON.stringify(already)} and ${JSON.stringify(cleanLabel)}`,
         };
       }
-      if (cleanIds.includes(cleanId)) continue;
+      /* Seen already in THIS group (the other case returned above). */
+      if (already !== undefined) continue;
       seenIds.set(cleanId, cleanLabel);
       cleanIds.push(cleanId);
     }
@@ -183,9 +206,12 @@ export function parseShelfConfig(
   }
   const result = validateShelfConfig(parsed);
   if ("error" in result) {
-    const keys =
-      typeof parsed === "object" && parsed !== null
-        ? Object.keys(parsed).join(", ")
+    /* Keys only, and a few of them: the log line must never carry the
+     * blob, nor ten thousand array indices. */
+    const keys = Array.isArray(parsed)
+      ? `an array of ${parsed.length}`
+      : typeof parsed === "object" && parsed !== null
+        ? Object.keys(parsed).slice(0, 10).join(", ")
         : typeof parsed;
     return {
       config: shelfConfigDefault,
