@@ -4040,14 +4040,20 @@ export default function SaleScreen(props: {
     }
   }, [favKey]);
 
-  /** A served list wins whenever the catalog lands (the first load, a
-   *  recheck, Refresh): it is what every other iPad sees. */
-  useEffect(() => {
-    if (catalog?.favorites) {
+  /** The catalog landing (the first load, a recheck, Refresh) sets the
+   *  shelf AND, when the payload carries a stored list, the favorites,
+   *  in ONE batch: the default-cell effect then sees Favorites with its
+   *  content on the same render, instead of choosing Passes a tick
+   *  before the shared stars arrive (which a trailing effect did, seen
+   *  on a fresh device in the T76 harness). A served list wins over the
+   *  device's own: it is what every other iPad sees. */
+  const landCatalog = useCallback((fresh: CatalogState) => {
+    if (fresh.favorites) {
       favSource.current = "db";
-      setFavorites(catalog.favorites);
+      setFavorites(fresh.favorites);
     }
-  }, [catalog]);
+    setCatalog(fresh);
+  }, []);
 
   const favSet = useMemo(
     () => new Set(favorites.map((f) => itemKey(f.type, f.id))),
@@ -4576,7 +4582,7 @@ export default function SaleScreen(props: {
       }
       /* The shelf shows the fresh prices too: a teacher who re-adds the
        * dropped item must not get the stale card back. */
-      setCatalog(fresh);
+      landCatalog(fresh);
       /* Always a NEW array, even when nothing changed: the teacher asked
        * for a recheck, and only a fresh POST can say whether the stop
        * stands. */
@@ -4592,7 +4598,7 @@ export default function SaleScreen(props: {
     } finally {
       setRechecking(false);
     }
-  }, [rechecking]);
+  }, [rechecking, landCatalog]);
 
   /** Fetch the shelf once per screen life; the route caches server-side
    *  for two minutes anyway (T75). A failure renders with a retry button. */
@@ -4603,15 +4609,15 @@ export default function SaleScreen(props: {
       .then(async (r) => {
         const body = await r.json();
         if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
-        setCatalog(parseCatalog(body));
-        /* The default chip is picked by the effect above, which also
+        landCatalog(parseCatalog(body));
+        /* The default cell is picked by the effect above, which also
            knows whether Favorites has anything to show. */
       })
       .catch((e) =>
         setCatalogError(e instanceof Error ? e.message : String(e)),
       )
       .finally(() => setCatalogLoading(false));
-  }, []);
+  }, [landCatalog]);
 
   useEffect(() => {
     if (open && catalog === null && !catalogLoading && catalogError === null) {
