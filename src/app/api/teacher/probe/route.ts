@@ -59,7 +59,7 @@ function strings(v: unknown): string[] {
 export async function GET(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
-  const session = staffSessionFrom(request);
+  const session = await staffSessionFrom(request);
   if (!session) {
     /* T77: marked as an ended session, not just a miss. The page can
      * hold a teacher the server has forgotten (a deploy restarts the

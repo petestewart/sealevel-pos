@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
-  const session = staffSessionFrom(request);
+  const session = await staffSessionFrom(request);
   return NextResponse.json({
     teacher: session ? { id: session.staffId, name: session.name } : null,
   });

@@ -47,7 +47,7 @@ export async function POST(request: Request) {
   /* T50: no staff session, no write. Before the body is read, so a
    * signed-out iPad hears only the 401 and never a validation detail
    * or a Mindbody read made on its behalf. */
-  const staff = requireActor(request);
+  const staff = await requireActor(request);
   if (staff.denied) return staff.denied;
   const { session } = staff;
   /* A Mindbody write like the rest: behind the device session (T44

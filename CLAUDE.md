@@ -323,10 +323,13 @@ while `git clone` works, so clone the repo rather than fetching files.
   icon, and the modal behind it names them and holds sign-out), and
   every write runs under THEIR token so Mindbody
   names them; with nobody signed in, writes are refused (401
-  `reason: "staff"`) and the gate comes back. The token lives
-  in server memory only (`src/lib/staffsession.ts`; two hours from
-  sign-in since T64; a restart signs everyone out, and the gate
-  reappears). Verified live 2026-09-02: the API key issues tokens for
+  `reason: "staff"`) and the gate comes back. The session lives in
+  server memory and, since T78, in the `staff_sessions` table with the
+  token encrypted under a key derived from `POS_SESSION_SECRET`
+  (`src/lib/staffsession.ts`, `src/lib/staffcrypto.ts`; two hours from
+  sign-in since T64), so a restart keeps every teacher signed in when
+  that secret and `DATABASE_URL` are set and signs everyone out when
+  either is not. Verified live 2026-09-02: the API key issues tokens for
   other staff logins, and a staff token reads its own permission group
   and Test-prices a cart. A token Mindbody refuses as dead mid-write
   ends the session and REFUSES that write (401 `reason: "staff"`, T50
