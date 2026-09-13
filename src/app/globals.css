@@ -1895,6 +1895,25 @@ body.sale-open .dev-handle {
   opacity: 0.5;
 }
 
+/* T86: the shelf tab's sub-category order block. The up and down
+ * controls are 44px squares, the recorded exception to the 64px floor:
+ * this is the dev drawer's own density, not a teacher-facing control,
+ * and a row per sub-category at 64px would not fit the drawer. */
+
+.dev-order-row {
+  gap: 8px;
+}
+
+.dev-setting button.dev-order-move {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  padding: 0;
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1;
+}
+
 .dev-bundle-toggle {
   display: flex;
   align-items: center;
