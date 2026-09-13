@@ -116,21 +116,61 @@ export const NEEDS_HOUSE_CLIENT_LINE =
  * overlay: a teacher mid-sale must not have to leave the screen to know
  * whether the counter is live.
  */
-export function ModeBanner({ config }: { config: ModeConfig | null }) {
-  if (!config || config.configError) return null;
+/** The mode line's text, which is also the key its dismissal is stored
+ *  under: any change of mode (dry run, target, site, the guard) brings a
+ *  hidden banner back. */
+function modeLine(config: ModeConfig): string {
   return (
-    <p className={config.dryRun ? "banner" : "banner live"}>
-      {config.dryRun
-        ? /* T89: a dry run this browser asked for says so, since the
-             counter beside it may be writing for real. */
-          config.dryRunSource === "browser"
-          ? "Dry run on this iPad. Nothing is written to Mindbody."
-          : "Dry run. Nothing is written to Mindbody."
-        : "LIVE. Taps check real students in."}{" "}
-      {config.target === "prod" ? "Production" : "Sandbox"} site {config.siteId}.
-      {!config.dryRun && config.writeClientIds.length > 0
-        ? ` Writes limited to client ${config.writeClientIds.join(", ")}.`
-        : ""}
+    (config.dryRun
+      ? /* T89: a dry run this browser asked for says so, since the
+           counter beside it may be writing for real. */
+        config.dryRunSource === "browser"
+        ? "Dry run on this iPad. Nothing is written to Mindbody."
+        : "Dry run. Nothing is written to Mindbody."
+      : "LIVE. Taps check real students in.") +
+    ` ${config.target === "prod" ? "Production" : "Sandbox"} site ${config.siteId}.` +
+    (!config.dryRun && config.writeClientIds.length > 0
+      ? ` Writes limited to client ${config.writeClientIds.join(", ")}.`
+      : "")
+  );
+}
+
+/** The mode line a teacher hid, shared by the banner's three homes (the
+ *  roster, the sale overlay, the sign-in gate) and by nothing else: in
+ *  memory only, so a reload shows the banner again. */
+let hiddenModeLine: string | null = null;
+const bannerListeners = new Set<() => void>();
+
+/** The mode banner, with an X (Pete: "have an X on the right so I can
+ *  hide it"). Hiding lasts until the page reloads or the line changes
+ *  (dry run, target, site, the guard), so a counter that switched to
+ *  sandbox or dry run cannot keep a stale dismissal. */
+export function ModeBanner({ config }: { config: ModeConfig | null }) {
+  const line = config && !config.configError ? modeLine(config) : null;
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const l = () => bump((n) => n + 1);
+    bannerListeners.add(l);
+    return () => {
+      bannerListeners.delete(l);
+    };
+  }, []);
+  if (line === null || hiddenModeLine === line) return null;
+  return (
+    <p className={config!.dryRun ? "banner" : "banner live"}>
+      <span className="banner-text">{line}</span>
+      <button
+        type="button"
+        className="banner-x"
+        aria-label="Hide this banner"
+        title="Hide until the page reloads or the mode changes"
+        onClick={() => {
+          hiddenModeLine = line;
+          bannerListeners.forEach((l) => l());
+        }}
+      >
+        <CloseIcon />
+      </button>
     </p>
   );
 }
@@ -1070,6 +1110,12 @@ function PaymentPanel(props: {
    *  token to charge with. */
   const [pinEntry, setPinEntry] = useState("");
   const pinEntryRef = useRef("");
+  /** The signed-in teacher's PIN length, read from /api/teacher when the
+   *  PIN step opens (Pete: "I should not have to click Done, it should
+   *  automatically enable Done on the last digit"): at that many digits
+   *  the entry submits itself. Null (a PIN set before the length was
+   *  recorded, no database, or the read failed) keeps the Done key. */
+  const [pinLength, setPinLength] = useState<number | null>(null);
   const [pinMsg, setPinMsg] = useState<string | null>(null);
   const [pinShake, setPinShake] = useState(0);
   const [pinBusy, setPinBusy] = useState(false);
@@ -2211,7 +2257,34 @@ function PaymentPanel(props: {
           : cur + key;
     pinEntryRef.current = next;
     setPinEntry(next);
+    /* The last digit IS Done when the teacher's PIN length is known. */
+    if (key !== "back" && pinLength !== null && next.length === pinLength) {
+      void submitPin();
+    }
   };
+  /* Read the signed-in teacher's PIN length when the PIN step opens; a
+   * local call, not metered. Any failure leaves null and the Done key. */
+  useEffect(() => {
+    if (reasonStep !== "pin") return;
+    let live = true;
+    fetch("/api/teacher")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => {
+        if (!live) return;
+        const n = b?.pinLength;
+        setPinLength(
+          typeof n === "number" && Number.isInteger(n) && n >= PIN_MIN && n <= PIN_MAX
+            ? n
+            : null,
+        );
+      })
+      .catch(() => {
+        if (live) setPinLength(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [reasonStep]);
   /** Done on the PIN step: one post to /api/teacher/verify. A match
    *  moves to "Comping as <name>" with the token in hand; a miss clears
    *  the digits and says so; the lockout counts down under the dots. */
@@ -5268,6 +5341,22 @@ export default function SaleScreen(props: {
    * buttons when i click on one to make it show"). One line at a time;
    * the same tap again puts them away; a removed line clears it. */
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  /* A tap anywhere outside the revealed row puts its controls away
+   * (Pete: "if i click anywhere else on the screen, the +/-/X buttons
+   * should disappear"). pointerdown on the document, so a tap that
+   * lands on a shelf card both adds the item and hides the controls;
+   * the row itself (its controls included) is excluded so the stepper
+   * keeps working. */
+  useEffect(() => {
+    if (revealedKey === null) return;
+    const away = (e: PointerEvent) => {
+      const el = e.target instanceof Element ? e.target : null;
+      if (el && el.closest(".t-row.sel")) return;
+      setRevealedKey(null);
+    };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  }, [revealedKey]);
   const removeLine = useCallback((key: string) => {
     setRevealedKey((k) => (k === key ? null : k));
     setCart((lines) => lines.filter((l) => l.key !== key));

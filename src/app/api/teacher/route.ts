@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
 import { staffSessionFrom } from "@/lib/staffsession";
-import { hasTeacherPin } from "@/lib/teacherpins";
+import { hasTeacherPin, teacherPinLength } from "@/lib/teacherpins";
 
 export const dynamic = "force-dynamic";
 
@@ -29,5 +29,8 @@ export async function GET(request: Request) {
   return NextResponse.json({
     teacher: session ? { id: session.staffId, name: session.name } : null,
     hasPin: session ? await hasTeacherPin(session.staffId) : null,
+    /* The PIN's digit count, so the discount dialog can submit on the
+     * last digit; null when unknown. Never the digits. */
+    pinLength: session ? await teacherPinLength(session.staffId) : null,
   });
 }

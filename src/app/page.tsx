@@ -6688,11 +6688,26 @@ function FrontDesk({
                   ) : (
                     <>
                       <p className="member-label">Contracts</p>
-                      {data.contracts.length === 0 ? (
-                        <p className="modal-note member-none">No contracts.</p>
+                      {/* Only the contracts that are not Inactive (Pete:
+                          "i don't need to see Inactive contracts"): a
+                          member renewed every six months for five years
+                          listed nine dead ones above the live one. A
+                          suspended contract and one with no status stay,
+                          since either is worth a look. */}
+                      {(() => {
+                        const shown = data.contracts.filter(
+                          (c) => (c.status ?? "").toLowerCase() !== "inactive",
+                        );
+                        const hidden = data.contracts.length - shown.length;
+                        return shown.length === 0 ? (
+                        <p className="modal-note member-none">
+                          {hidden > 0
+                            ? `No active contract (${hidden} inactive not shown).`
+                            : "No contracts."}
+                        </p>
                       ) : (
                         <ul className="profile-passes member-passes">
-                          {data.contracts.map((c, i) => (
+                          {shown.map((c, i) => (
                             <li
                               key={c.id ?? `${c.name}-${i}`}
                               className="profile-pass"
@@ -6706,8 +6721,16 @@ function FrontDesk({
                               </span>
                             </li>
                           ))}
+                          {hidden > 0 ? (
+                            <li className="profile-pass member-hidden-note">
+                              <span className="profile-pass-meta">
+                                {hidden} inactive not shown
+                              </span>
+                            </li>
+                          ) : null}
                         </ul>
-                      )}
+                      );
+                      })()}
                       <p className="member-label">Passes</p>
                       {data.passes.length === 0 ? (
                         <p className="modal-note member-none">No passes.</p>
