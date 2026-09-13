@@ -62,6 +62,87 @@ interface CallLogState {
 const G = globalThis as typeof globalThis & { __posCallLog?: CallLogState };
 const state: CallLogState = (G.__posCallLog ??= { entries: [], nextId: 1 });
 
+/* T84: a card number passes through the server once, in the request that
+ * saves it, and the drawer is the one place it could come to rest -- a
+ * ring buffer in memory, copied to a clipboard by a `copy` button. So the
+ * buffer never sees it. Redaction happens HERE rather than at the call
+ * site, so any future endpoint carrying a card is covered by default:
+ * forgetting to redact must not be possible.
+ *
+ * A card number is replaced by a marker rather than dropped, so the
+ * record still shows that a card WAS sent and the shape Mindbody got. On
+ * the way OUT (the request) nothing else about the card is kept beyond
+ * LastFour: not the holder, not the billing address, not the expiry. On
+ * the way BACK (Mindbody's answer, which cannot contain a PAN -- the
+ * model returns LastFour) the descriptive fields the profile renders are
+ * kept, because a card save that came back wrong is diagnosed from them.
+ */
+const REDACTED = "<redacted>";
+
+/** Keys whose value is a secret in its own right, wherever they appear.
+ *  CVV is not in Mindbody's ClientCreditCard model at all; it is listed
+ *  so that a field added later cannot slip through unredacted. */
+const SECRET_KEY = /^(CardNumber|CVV|CVC|CardCode|SecurityCode)$/i;
+
+/** What survives from a card object, per direction. */
+const REQUEST_CARD_KEEP = ["LastFour"];
+const RESPONSE_CARD_KEEP = ["LastFour", "CardType", "ExpMonth", "ExpYear"];
+
+function isCardObject(key: string | null, value: Record<string, unknown>): boolean {
+  return (
+    key === "ClientCreditCard" ||
+    Object.keys(value).some((k) => SECRET_KEY.test(k))
+  );
+}
+
+function redactCard(
+  value: unknown,
+  keep: string[],
+  key: string | null = null,
+): unknown {
+  if (Array.isArray(value)) return value.map((v) => redactCard(v, keep));
+  if (!value || typeof value !== "object") return value;
+  const obj = value as Record<string, unknown>;
+  if (isCardObject(key, obj)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (SECRET_KEY.test(k)) out[k] = REDACTED;
+      else if (keep.includes(k)) out[k] = v;
+    }
+    return out;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    out[k] = SECRET_KEY.test(k) ? REDACTED : redactCard(v, keep, k);
+  }
+  return out;
+}
+
+/** A body with every card field redacted, as an object or as text. Text
+ *  bodies (Mindbody's raw answer) are parsed and rebuilt when they are
+ *  JSON; when they are not, the one pattern that could carry a number is
+ *  struck out of the text itself. */
+export function redactBody(value: unknown, keep = RESPONSE_CARD_KEEP): unknown {
+  if (typeof value === "string") {
+    try {
+      return JSON.stringify(redactCard(JSON.parse(value), keep), null, 2);
+    } catch {
+      return value.replace(
+        /("(?:CardNumber|CVV|CVC|CardCode|SecurityCode)"\s*:\s*)"[^"]*"/gi,
+        `$1"${REDACTED}"`,
+      );
+    }
+  }
+  return redactCard(value, keep);
+}
+
+/** The request-body redaction, for the log lines mindbody() writes when a
+ *  write is suppressed: those print the payload to the server log, which
+ *  is no better a home for a card number than the drawer. */
+export function redactRequest(value: unknown): unknown {
+  return redactBody(value, REQUEST_CARD_KEEP);
+}
+
 function clip(value: unknown): string | null {
   if (value === undefined || value === null) return null;
   const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
@@ -82,8 +163,9 @@ export function record(entry: CallInput): void {
     ...entry,
     id: state.nextId++,
     at: new Date().toISOString(),
-    requestBody: clip(entry.requestBody),
-    responseBody: clip(entry.responseBody),
+    /* T84: never the card number, in either direction. */
+    requestBody: clip(redactBody(entry.requestBody, REQUEST_CARD_KEEP)),
+    responseBody: clip(redactBody(entry.responseBody, RESPONSE_CARD_KEEP)),
   });
   if (state.entries.length > LIMIT) state.entries = state.entries.slice(0, LIMIT);
 }
