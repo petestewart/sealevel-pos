@@ -9210,3 +9210,17 @@ the pre-tax audit line; a tax-exempt pass at $230 is clean. Both
 palettes at 1194 and 834 shot: the Refresh cell is 64px, muted, at the
 rail's bottom edge, and one tap makes exactly one `refresh=1` call.
 Typecheck and build green.
+
+## T77: the account modal no longer names a teacher the server has forgotten
+
+**DONE** (2026-09-13). Pete, on the deployed app minutes after the T75
+deploy: the account modal read "Signed in: Pete Stewart" over "Nobody
+is signed in." Teacher sessions live in server memory (T50), the deploy
+restarted the server, and the page still held the teacher it had
+before. The probe's no-session 401 did not carry `staffSessionEnded`,
+which is the flag the modal reacts to, so it reported the miss and kept
+the name. The probe answers `staffSessionEnded: true` for a missing
+session now, so the modal drops the teacher and the sign-in gate comes
+back with "Nobody is signed in. Sign in again.", the same path a
+refused write takes. The write routes were never affected: they refuse
+without a session regardless of what the page believes.

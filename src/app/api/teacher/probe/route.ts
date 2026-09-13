@@ -37,7 +37,9 @@ export const dynamic = "force-dynamic";
  * A 401 on either read is the token itself being dead: the session
  * ends, the cookie clears, and the answer is 401 `reason: "teacher"` so
  * the page's fetch wrapper leaves it to the header control rather than
- * the device lock. No session at all is the same 401.
+ * the device lock. No session at all is the same 401, and since T77 it
+ * carries `staffSessionEnded` too, so the account modal drops a teacher
+ * the server no longer knows.
  */
 
 /** The six permissions this app needs, CLAUDE.md's list. */
@@ -59,8 +61,19 @@ export async function GET(request: Request) {
   if (denied) return denied;
   const session = staffSessionFrom(request);
   if (!session) {
+    /* T77: marked as an ended session, not just a miss. The page can
+     * hold a teacher the server has forgotten (a deploy restarts the
+     * server and its in-memory sessions; the two hours can run out
+     * while the page sits open), and the account modal then named the
+     * teacher over "Nobody is signed in." With the flag the modal drops
+     * the teacher and the sign-in gate returns, the same path a refused
+     * write takes. */
     return NextResponse.json(
-      { error: "Nobody is signed in.", reason: "teacher" },
+      {
+        error: "Nobody is signed in. Sign in again.",
+        reason: "teacher",
+        staffSessionEnded: true,
+      },
       { status: 401 },
     );
   }
