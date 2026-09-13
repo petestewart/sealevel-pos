@@ -154,17 +154,19 @@ interface AttachRow {
 }
 
 /**
- * The attach modal's in-class segment (T42): which of the picked class's
- * people the list shows. "in" is checkedIn on the roster entry, "not" is
- * booked and not yet checked in. A filter over rows already in memory,
- * so switching it never calls Mindbody.
+ * The attach modal's one segment (T87, Pete: "instead of a class selector
+ * and all the buttons, just use All | Class. the class will always be the
+ * class selected in the signin screen"). "class" is the sign-in screen's
+ * selected class, everyone booked in it, filtered in memory by whatever is
+ * typed, so it never calls Mindbody; "all" is the live Mindbody search
+ * (T81). It replaced the "In class" toggle, the class dropdown and the
+ * three-way All / Signed in / Not yet segment.
  */
-type AttachSegment = "all" | "in" | "not";
+type AttachTab = "all" | "class";
 
-const ATTACH_SEGMENTS: { value: AttachSegment; label: string }[] = [
+const ATTACH_TABS: { value: AttachTab; label: string }[] = [
   { value: "all", label: "All" },
-  { value: "in", label: "Signed in" },
-  { value: "not", label: "Not yet" },
+  { value: "class", label: "Class" },
 ];
 
 /** The attach modal's page size (T42). Raised from the walk-in search's
@@ -404,13 +406,6 @@ function SearchIcon() {
       extra={<circle cx="11" cy="11" r="7" />}
     />
   );
-}
-
-/** Counter-clockwise arrow: "not checked in" in the attach modal's
- *  segment control (T42). It was the roster's check-out button until T81,
- *  when the checked-in chip itself became the way out. */
-function UndoIcon() {
-  return <Icon d="M3 8v5h5M3.5 13a8.5 8.5 0 1 0 2.5-6" />;
 }
 
 /** Trash can: cancels the booking itself, behind a confirmation. */
@@ -981,19 +976,21 @@ function FrontDesk({
   const [searchSentinel, setSearchSentinel] = useState<HTMLElement | null>(
     null,
   );
-  /** The attach modal's "In class" toggle (T42): on, the rows are the
-   *  picked class's roster filtered in memory; off, the search bar asks
-   *  Mindbody about everyone. On by default with the roster's current
-   *  class, which is what Pete asked to land on. */
-  const [attachInClass, setAttachInClass] = useState(true);
+  /** The attach modal's segment (T87): "class" shows the sign-in
+   *  screen's selected class, filtered in memory; "all" asks Mindbody
+   *  about everyone. Chosen once per open (openAttachSearch) and never
+   *  by the modal itself after that, bar the T52 widen the teacher's own
+   *  Enter asks for. */
+  const [attachTab, setAttachTab] = useState<AttachTab>("class");
   /** T52: the attach modal turned "In class" off by itself because the
    *  submitted query matched nobody in the class (Pete: "the 'in class'
    *  filter should turn off and the non-filtered results should
    *  display"; behind the autoWidenSearch setting). Drives the one line
-   *  over the rows that says so; cleared by the toggle, the X, a new
-   *  submit and the close. */
+   *  over the rows that says so; cleared by the segment, the X, a new
+   *  submit and the close. T87: what it flips is the segment, Class to
+   *  All, the only path that moves the segment while the modal is open,
+   *  and only on the teacher's own Enter. */
   const [autoWidened, setAutoWidened] = useState(false);
-  const [attachSeg, setAttachSeg] = useState<AttachSegment>("all");
   /** The client profile modal (T42): who it is about, and the read. The
    *  fetch fires on OPEN, not on the icon's render, since the profile is
    *  three metered reads; `profileGen` drops an answer that lands after
@@ -1274,35 +1271,23 @@ function FrontDesk({
    *  de-duplication) steps aside. */
   const [attachMode, setAttachMode] = useState(false);
   /**
-   * Attach-mode furniture ONLY, all of it (T27 round three, Pete's third
-   * live test): the person a sale is for is usually standing in a class
-   * that is already on screen, so the attach modal offers the roster
-   * BEFORE the search -- an "In class" quick-pick of tappable rows, with
-   * a class dropdown above it for a student signed up for a DIFFERENT
-   * class today. The booking-mode search modal renders none of this.
+   * Attach-mode furniture (T27 round three, reshaped in T87): the person
+   * a sale is for is usually standing in the class already on screen, so
+   * the attach modal leads with that class's roster as tappable rows
+   * behind a "Class" segment cell, with "All" for the Mindbody search.
+   * The booking-mode search modal renders none of this.
    *
-   * `attachClassId` is whose roster the quick-pick shows; it starts as
-   * the selected class, whose roster is already in memory (zero calls).
+   * T87 removed the rest of it: the "In class" toggle, the class
+   * dropdown over the rows (and the day's classes it was fed), the
+   * three-way segment, and the roster fetch for a class other than the
+   * selected one. The class is the sign-in screen's, whose roster is
+   * `entries`, already in memory: zero calls.
    */
-  const [attachClassId, setAttachClassId] = useState<number | null>(null);
-  /** Whether the quick-pick's class dropdown menu is open. Pure UI. */
-  const [attachClassMenuOpen, setAttachClassMenuOpen] = useState(false);
-  /** The whole teaching day's classes, for the dropdown: fetched lazily
-   *  on the modal's first open of the day (ONE metered call, the
-   *  around-now window is too narrow), then served from the per-day
-   *  session cache below. */
-  const [dayClasses, setDayClasses] = useState<{
-    list: ClassSummary[] | null;
-    loading: boolean;
-    error: string | null;
-  }>({ list: null, loading: false, error: null });
   /** Session cache for the day-classes call, keyed by STUDIO-local date
    *  (`YYYY-MM-DD`), so a counter left open overnight refetches for the
-   *  new day. ONE cache for both readers (T46): the attach quick-pick's
-   *  dropdown and the calendar's picked day both go through
-   *  `loadDayClasses`, so a day the teacher viewed costs the attach
-   *  modal nothing and vice versa. Class lists only, for the page's
-   *  life; never rosters, passes or clients. */
+   *  new day. The calendar's picked day (T46) is its one reader since
+   *  T87 took the attach modal's dropdown out. Class lists only, for the
+   *  page's life; never rosters, passes or clients. */
   const dayClassesCache = useRef(new Map<string, ClassSummary[]>());
   /** Day keys with a classes fetch in flight, each holding the flight
    *  itself: a second reader for the same day (the modal reopened, the
@@ -1311,19 +1296,6 @@ function FrontDesk({
   const dayClassesInFlight = useRef(
     new Map<string, Promise<ClassSummary[]>>(),
   );
-  /** Rosters fetched for the quick-pick when a NON-selected class is
-   *  picked, cached per classId for the session (the selected class's
-   *  roster is `entries`, used directly, zero calls). */
-  const attachRosterCache = useRef(new Map<number, RosterEntry[]>());
-  /** classIds with a quick-pick roster fetch already in flight: a
-   *  re-pick mid-flight must not fire a second metered call (the first
-   *  answer still lands, via the attachClassIdRef guard). */
-  const attachRosterFetching = useRef(new Set<number>());
-  /** The day key the attach modal is showing, readable at fetch-response
-   *  time: a slow answer for a SUPERSEDED day (the modal reopened
-   *  overnight) must not render as the current one. The dedupe itself
-   *  lives in loadDayClasses. */
-  const attachDayKeyRef = useRef<string | null>(null);
   /**
    * T46: the day the roster screen is showing, as a studio-local
    * `YYYY-MM-DD`, or null for the around-now window the app starts in.
@@ -1357,16 +1329,6 @@ function FrontDesk({
     const k = studioToday();
     return { y: Number(k.slice(0, 4)), m: Number(k.slice(5, 7)) };
   });
-  const [attachRoster, setAttachRoster] = useState<{
-    entries: RosterEntry[] | null;
-    loading: boolean;
-    error: string | null;
-  }>({ entries: null, loading: false, error: null });
-  /** Which class the quick-pick is showing, readable at fetch-response
-   *  time: a roster landing after the teacher picked another class must
-   *  be dropped, not rendered. Same pattern as activeIdRef. */
-  const attachClassIdRef = useRef<number | null>(null);
-  attachClassIdRef.current = attachClassId;
   /** The class currently on screen, readable from inside an async fetch:
    *  a waitlist response that comes back after the teacher has switched
    *  classes must be dropped, not written into state under the new class. */
@@ -2017,31 +1979,28 @@ function FrontDesk({
       clearTimeout(liveTimer.current);
       liveTimer.current = null;
     }
-    /* With the attach modal's in-class filter on, the query filters the
-     * roster in memory as it is typed (T42), so Enter has nothing to ask
-     * Mindbody for... unless it matched nobody. T52 (Pete): "if there
-     * are none in that class, and the 'in class' filter is on, the 'in
-     * class' filter should turn off and the non-filtered results should
-     * display." Counted against the WHOLE picked roster, not the
-     * segment: someone hidden by "Signed in" is still in class, and
-     * widening to everyone would answer the wrong question. A roster
-     * still loading cannot say nobody matched, so it is left alone. The
-     * toggle visibly flips (setAttachInClass), and the line over the
-     * rows says why. */
-    if (attachMode && attachInClass) {
+    /* On the Class cell the query filters that roster in memory as it is
+     * typed (T42, T87), so Enter has nothing to ask Mindbody for...
+     * unless it matched nobody. T52 (Pete): "if there are none in that
+     * class, and the 'in class' filter is on, the 'in class' filter
+     * should turn off and the non-filtered results should display."
+     * Counted against the whole roster of the class the sign-in screen
+     * has selected, which since T87 is the only roster the modal shows.
+     * An empty roster cannot say nobody matched, so it is left alone.
+     * The segment visibly moves to All, and the line over the rows says
+     * why. */
+    if (attachMode && attachTab === "class") {
       setSearchMsg(null);
-      const roster = attachClassId === activeId ? entries : attachRoster.entries;
-      if (!settings.autoWidenSearch || !q || roster === null) return;
+      if (!settings.autoWidenSearch || !q || entries.length === 0) return;
       const lq = q.toLowerCase();
-      if (roster.some((en) => en.name.toLowerCase().includes(lq))) return;
+      if (entries.some((en) => en.name.toLowerCase().includes(lq))) return;
       if (q.length < settings.minQueryLength) {
         setSearchMsg(
           `Nobody in class matched. Type at least ${settings.minQueryLength} letters to search everyone.`,
         );
         return;
       }
-      setAttachInClass(false);
-      setAttachClassMenuOpen(false);
+      setAttachTab("all");
       startSearch(q);
       /* After startSearch, which resets it: the same render batch, so
        * the flag lands true. */
@@ -2056,11 +2015,8 @@ function FrontDesk({
     }
     startSearch(q);
   }, [
-    activeId,
-    attachClassId,
-    attachInClass,
     attachMode,
-    attachRoster.entries,
+    attachTab,
     entries,
     query,
     settings.autoWidenSearch,
@@ -2116,14 +2072,15 @@ function FrontDesk({
    * characters"), with the modal, if open, left open and empty for the
    * next letters, and the bar keeping focus.
    *
-   * Not while the attach modal's In class filter is on: the box filters
-   * the roster in memory there, and Enter alone widens it (T42, T52).
+   * Not while the attach modal is on its Class cell: the box filters
+   * that roster in memory there, and Enter alone widens it (T42, T52,
+   * T87).
    * Skipped when a search for exactly this query is already in flight
    * or has landed (Enter got there first, or the last keystroke put the
    * query back), so the same call never goes out twice.
    */
   useEffect(() => {
-    if (attachMode && attachInClass) return;
+    if (attachMode && attachTab === "class") return;
     const q = query.trim();
     /* T81 review: the drawer's number field reads 0 while it is being
      * retyped, and an older stored blob can hold anything, so the
@@ -2151,8 +2108,8 @@ function FrontDesk({
       liveTimer.current = null;
     };
   }, [
-    attachInClass,
     attachMode,
+    attachTab,
     query,
     searchTitle,
     settings.minQueryLength,
@@ -2220,16 +2177,22 @@ function FrontDesk({
     stopSearch();
     setAutoWidened(false);
     setAttachMode(false);
-    setAttachClassMenuOpen(false);
   }, [stopSearch]);
 
-  /** Open the search modal as the sale's attach picker (T23): no query
-   *  yet, so the modal renders its own copy of the search bar, wired to
-   *  the SAME query state and submitSearch, and the one metered call
-   *  still fires on submit only. Since T27 round three the modal leads
-   *  with the "In class" quick-pick, so opening also points it at the
-   *  selected class (roster already in memory) and lazily fetches the
-   *  day's classes for its dropdown, once per day per session. */
+  /**
+   * Open the search modal as the sale's attach picker (T23): no query
+   * yet, so the modal renders its own copy of the search bar, wired to
+   * the SAME query state and submitSearch, and the search fires on the
+   * live debounce or Enter, never on the open.
+   *
+   * T87 picks the segment here, once: Class when the sign-in screen has
+   * a class selected AND somebody is booked in it, since that is who is
+   * standing at the counter and its roster is already in memory (zero
+   * calls); All otherwise, because a Class cell that can only say
+   * "Nobody is booked yet." is not where to land. Nothing moves the
+   * segment after this but the teacher's own tap, or their Enter on a
+   * query nobody in class matches (T52).
+   */
   const openAttachSearch = useCallback(() => {
     setAttachMode(true);
     setSearchMsg(null);
@@ -2238,120 +2201,43 @@ function FrontDesk({
     setFound([]);
     setQuery("");
     setSearchOpen(true);
-    setAttachClassMenuOpen(false);
-    setAttachClassId(activeIdRef.current);
-    setAttachRoster({ entries: null, loading: false, error: null });
-    /* T42: land on the current class's whole roster every time. */
-    setAttachInClass(true);
     setAutoWidened(false);
-    setAttachSeg("all");
-    /* The day window anchors on the SELECTED class's date (not the
-     * browser clock): the quick-pick is about the day that class sits
-     * in. Cached per STUDIO-local date, so reopening the modal all shift
-     * long costs nothing more. startsAt is Mindbody's NAIVE studio-local
-     * string, so its own date part IS the studio date (a browser-local
-     * or UTC reading drifts a day at timezone boundaries: toDateString
-     * on a UTC-set iPad called a 5pm class tomorrow); with no class
-     * selected the anchor is "now", whose studio date comes from Intl,
-     * mirroring roster.ts's STUDIO_TZ. */
-    const startsAt =
-      classes.find((c) => c.classId === activeIdRef.current)?.startsAt ?? "";
-    const key = startsAt ? startsAt.slice(0, 10) : studioToday();
-    attachDayKeyRef.current = key;
-    const cached = dayClassesCache.current.get(key);
-    if (cached) {
-      setDayClasses({ list: cached, loading: false, error: null });
-      return;
-    }
-    setDayClasses({ list: null, loading: true, error: null });
-    /* loadDayClasses joins a flight already in the air for this day (the
-     * modal reopened before the answer landed): no second call. */
-    loadDayClasses(key)
-      .then((list) => {
-        /* A newer day superseded this one (open overnight): it is
-         * cached, but must not render as the current day. */
-        if (attachDayKeyRef.current !== key) return;
-        setDayClasses({ list, loading: false, error: null });
-      })
-      .catch((e) => {
-        if (attachDayKeyRef.current !== key) return;
-        setDayClasses({
-          list: null,
-          loading: false,
-          error: e instanceof Error ? e.message : String(e),
-        });
-      });
-  }, [classes, loadDayClasses]);
-
-  /** Point the quick-pick at another class. The selected class's roster
-   *  is on screen already (zero calls); any other class's is fetched
-   *  through the existing /api/roster route once and session-cached per
-   *  classId. */
-  const pickAttachClass = useCallback((classId: number) => {
-    setAttachClassMenuOpen(false);
-    setAttachClassId(classId);
-    if (classId === activeIdRef.current) return;
-    const cached = attachRosterCache.current.get(classId);
-    if (cached) {
-      setAttachRoster({ entries: cached, loading: false, error: null });
-      return;
-    }
-    setAttachRoster({ entries: null, loading: true, error: null });
-    /* A fetch for this class is already in flight (picked away and back
-     * before it landed): its answer still renders through the
-     * attachClassIdRef guard below, so no second metered call. */
-    if (attachRosterFetching.current.has(classId)) return;
-    attachRosterFetching.current.add(classId);
-    fetch(`/api/roster?classId=${classId}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.error) throw new Error(String(d.error));
-        const list: RosterEntry[] = d.entries ?? [];
-        attachRosterCache.current.set(classId, list);
-        attachRosterFetching.current.delete(classId);
-        if (attachClassIdRef.current !== classId) return;
-        setAttachRoster({ entries: list, loading: false, error: null });
-      })
-      .catch((e) => {
-        attachRosterFetching.current.delete(classId);
-        if (attachClassIdRef.current !== classId) return;
-        setAttachRoster({
-          entries: null,
-          loading: false,
-          error: e instanceof Error ? e.message : String(e),
-        });
-      });
-  }, []);
+    setAttachTab(
+      activeIdRef.current !== null && entries.length > 0 ? "class" : "all",
+    );
+  }, [entries.length]);
 
   /**
-   * The attach modal's "In class" toggle (T42). Coming ON drops whatever
-   * search was up: the rows are the roster again and the box filters
-   * them locally. Going OFF with a long-enough query already typed asks
-   * Mindbody for everyone matching it, one call, so the teacher who
-   * typed the name first and then widened the net is not made to press
-   * Enter again; with a short or empty query the hint shows instead.
+   * Tapping a segment cell (T87). To Class: whatever search was up is
+   * dropped, the rows are the selected class's roster again and the box
+   * filters them in memory. To All with a long-enough query already
+   * typed: that search goes out at once, one call, so the teacher who
+   * typed the name first and then widened the net is not made to wait
+   * out the debounce again; with a short or empty query the hint shows
+   * instead. The typed text survives either way.
    */
-  const toggleAttachInClass = useCallback(() => {
-    setAttachClassMenuOpen(false);
-    /* A deliberate tap on the toggle, either way, ends the auto-widened
-     * state (T52): the line over the rows explains a flip the teacher
-     * did not make, not one they did. */
-    setAutoWidened(false);
-    const next = !attachInClass;
-    setAttachInClass(next);
-    if (next) {
-      stopSearch();
-      setSearchMsg(null);
-      return;
-    }
-    const q = query.trim();
-    if (q.length >= settings.minQueryLength) startSearch(q);
-    else if (q.length > 0) {
-      setSearchMsg(
-        `Type at least ${settings.minQueryLength} letters, then search.`,
-      );
-    }
-  }, [attachInClass, query, settings.minQueryLength, startSearch, stopSearch]);
+  const pickAttachTab = useCallback(
+    (tab: AttachTab) => {
+      /* A deliberate tap, either way, ends the auto-widened state (T52):
+       * the line over the rows explains a move the teacher did not make,
+       * not one they did. */
+      setAutoWidened(false);
+      setAttachTab(tab);
+      if (tab === "class") {
+        stopSearch();
+        setSearchMsg(null);
+        return;
+      }
+      const q = query.trim();
+      if (q.length >= settings.minQueryLength) startSearch(q);
+      else if (q.length > 0) {
+        setSearchMsg(
+          `Type at least ${settings.minQueryLength} letters, then search.`,
+        );
+      }
+    },
+    [query, settings.minQueryLength, startSearch, stopSearch],
+  );
 
   /** T71/T72: the line under the profile card's Opt-ins table when the
    *  last write did not plainly land (a suppression, a fallback to the
@@ -2715,10 +2601,6 @@ function FrontDesk({
       ) {
         if (walkinPicker) {
           setWalkinPicker(null);
-        } else if (attachClassMenuOpen) {
-          /* The quick-pick's class dropdown is a layer too: Escape peels
-           * it before closing the modal, same as the pass picker. */
-          setAttachClassMenuOpen(false);
         } else {
           closeSearch();
         }
@@ -2733,7 +2615,6 @@ function FrontDesk({
     infoView,
     profileView,
     walkinPicker,
-    attachClassMenuOpen,
     newClient,
     closeSearch,
   ]);
@@ -4709,7 +4590,7 @@ function FrontDesk({
   const attachRowItem = ({ client, status }: AttachRow) => {
     /* Search rows carry the contact line whether or not they also
      * happen to be on the picked roster; class rows never do. */
-    const contact = attachInClass ? "" : contactLine(client);
+    const contact = attachTab === "class" ? "" : contactLine(client);
     return (
       <li key={`attach-${client.id}`}>
         <div
@@ -4728,7 +4609,10 @@ function FrontDesk({
         >
           <div className="cell-name">
             <span className="name-text">
-              <Hit text={client.name} q={attachInClass ? "" : foundFor} />
+              <Hit
+                text={client.name}
+                q={attachTab === "class" ? "" : foundFor}
+              />
             </span>
             {contact ? (
               <span className="contact-line">
@@ -5872,53 +5756,28 @@ function FrontDesk({
             {attachMode && searchMsg ? (
               <p className="search-quiet">{searchMsg}</p>
             ) : null}
-            {/* The filter row and the rows (T27 round three, T32, reshaped
-                in T42, attach mode ONLY): an "In class" toggle, on by
-                default with the roster's current class, whose dropdown
-                (the pass-dropdown idiom, the day's classes fetched once
-                per day per session, see openAttachSearch) and three-way
-                segment grey out together when it is off. On, the rows
-                are the picked class's roster (session-cached per class;
-                the selected class's is `entries`, zero calls) filtered
-                in memory by the segment and the typed query; off, they
-                are the search's pages. Tapping a row attaches. */}
+            {/* The segment and the rows (T27 round three, T32, T42,
+                reshaped in T87, attach mode ONLY): one "All | Class"
+                segment under the search bar. Class is the class the
+                sign-in screen has selected, everyone booked in it, its
+                roster already in memory (`entries`, zero calls),
+                alphabetical by last name and filtered by the typed query
+                with no minimum length; All is the live Mindbody search
+                (T81) with a standing chip on anyone who is on that
+                roster. Tapping a row attaches. */}
             {attachMode
               ? (() => {
-                  const menuClasses = dayClasses.list ?? classes;
-                  const picked =
-                    menuClasses.find((c) => c.classId === attachClassId) ??
-                    classes.find((c) => c.classId === attachClassId) ??
-                    null;
-                  const showingActive =
-                    attachClassId !== null && attachClassId === activeId;
-                  const quickEntries = showingActive
-                    ? entries
-                    : attachRoster.entries;
-                  /* The rows (T42). In-class ON: the picked class's
-                     roster, alphabetical by last name, cut by the segment
-                     and then by the typed query, all in memory -- no
-                     minimum length, no call. In-class OFF: the search's
-                     pages as they land, with a standing chip for anyone
-                     who happens to be on the picked roster. */
+                  const inClass = attachTab === "class";
                   const q = query.trim().toLowerCase();
                   const onRoster = new Map(
-                    (quickEntries ?? []).map(
-                      (en) => [en.clientId, en] as const,
-                    ),
+                    entries.map((en) => [en.clientId, en] as const),
                   );
                   const rosterRow = (en: RosterEntry): AttachRow => ({
                     client: rosterAsResult(en),
                     status: en.checkedIn ? "checked in" : "signed up",
                   });
-                  const rows: AttachRow[] = attachInClass
-                    ? (quickEntries ?? [])
-                        .filter((en) =>
-                          attachSeg === "all"
-                            ? true
-                            : attachSeg === "in"
-                              ? en.checkedIn
-                              : !en.checkedIn,
-                        )
+                  const rows: AttachRow[] = inClass
+                    ? entries
                         .filter(
                           (en) => !q || en.name.toLowerCase().includes(q),
                         )
@@ -5930,27 +5789,15 @@ function FrontDesk({
                           ? { client: f, status: rosterRow(en).status }
                           : { client: f, status: null };
                       });
-                  const rosterEmpty =
-                    attachInClass &&
-                    quickEntries !== null &&
-                    quickEntries.length === 0;
-                  const searched = !attachInClass && searchTitle !== "";
+                  const searched = !inClass && searchTitle !== "";
                   /* The one quiet line under the rows, or in their place:
-                     the roster's own states first, then the search's. */
-                  const line = attachInClass
-                    ? !showingActive && attachRoster.loading
-                      ? "loading"
-                      : !showingActive && attachRoster.error
-                        ? `Roster unavailable: ${attachRoster.error}`
-                        : rosterEmpty
-                          ? "Nobody is booked yet."
-                          : rows.length === 0
-                            ? q
-                              ? "Nobody in this class matches."
-                              : attachSeg === "in"
-                                ? "Nobody is signed in yet."
-                                : "Everyone booked is signed in."
-                            : null
+                     the class's own states first, then the search's. */
+                  const line = inClass
+                    ? entries.length === 0
+                      ? "Nobody is booked yet."
+                      : rows.length === 0
+                        ? "Nobody in this class matches."
+                        : null
                     : searchError
                       ? null
                       : searched && !searching && rows.length === 0
@@ -5960,133 +5807,32 @@ function FrontDesk({
                           : null;
                   return (
                     <div className="attach-quick">
-                      {/* The filter row (T42): the In class toggle, then
-                          the class dropdown and the three-way segment it
-                          governs, which grey out together when it is off. */}
+                      {/* T87 (Pete: "instead of a class selector and all
+                          the buttons, just use All | Class"): two cells,
+                          the selected one filled with the accent. No
+                          class dropdown: the class is the sign-in
+                          screen's, named on that screen already. */}
                       <div
-                        className={
-                          attachInClass
-                            ? "attach-filters"
-                            : "attach-filters off"
-                        }
+                        className="attach-tabs"
+                        role="radiogroup"
+                        aria-label="Who to show"
                       >
-                        <button
-                          type="button"
-                          className={
-                            attachInClass ? "filter-toggle on" : "filter-toggle"
-                          }
-                          aria-pressed={attachInClass}
-                          onClick={toggleAttachInClass}
-                        >
-                          In class
-                        </button>
-                        <div className="attach-class">
+                        {ATTACH_TABS.map((tb) => (
                           <button
-                            className="class-change attach-class-btn"
-                            disabled={!attachInClass}
-                            aria-haspopup="dialog"
-                            aria-expanded={attachClassMenuOpen}
-                            aria-label="Pick which class to show"
-                            onClick={() => setAttachClassMenuOpen((o) => !o)}
+                            key={tb.value}
+                            type="button"
+                            className={
+                              attachTab === tb.value
+                                ? "attach-tab on"
+                                : "attach-tab"
+                            }
+                            role="radio"
+                            aria-checked={attachTab === tb.value}
+                            onClick={() => pickAttachTab(tb.value)}
                           >
-                            <span className="attach-class-name">
-                              {picked
-                                ? `${clockTime(picked.startsAt)} · ${picked.name}${
-                                    picked.teacher ? `, ${picked.teacher}` : ""
-                                  }`
-                                : "Pick a class"}
-                            </span>
-                            <ChevronDownIcon />
+                            {tb.label}
                           </button>
-                          {attachClassMenuOpen ? (
-                            <>
-                              <div
-                                className="pass-scrim"
-                                role="presentation"
-                                onClick={() => setAttachClassMenuOpen(false)}
-                              />
-                              <div
-                                className="pass-dd attach-class-dd"
-                                role="dialog"
-                                aria-label="Classes today"
-                              >
-                                {dayClasses.loading ? (
-                                  <p className="pass-empty">
-                                    <span
-                                      className="spinner"
-                                      aria-label="working"
-                                    />{" "}
-                                    Loading the day&apos;s classes...
-                                  </p>
-                                ) : null}
-                                {dayClasses.error ? (
-                                  /* Quiet: the around-now classes below
-                                     still work, the wider day just is not
-                                     available. */
-                                  <p className="pass-empty">
-                                    Only the classes around now are
-                                    available: {dayClasses.error}
-                                  </p>
-                                ) : null}
-                                {menuClasses.map((c) => {
-                                  const current = c.classId === attachClassId;
-                                  return (
-                                    <button
-                                      key={`ac-${c.classId}`}
-                                      className={
-                                        current
-                                          ? "pass-opt current"
-                                          : "pass-opt"
-                                      }
-                                      aria-pressed={current}
-                                      onClick={() =>
-                                        pickAttachClass(c.classId)
-                                      }
-                                    >
-                                      <span className="pass-check">
-                                        {current ? <CheckIcon /> : null}
-                                      </span>
-                                      <span className="pass-opt-text">
-                                        <span className="pass-opt-name">
-                                          {clockTime(c.startsAt)} · {c.name}
-                                          {c.teacher ? `, ${c.teacher}` : ""}
-                                        </span>
-                                      </span>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </>
-                          ) : null}
-                        </div>
-                        <div
-                          className="seg"
-                          role="radiogroup"
-                          aria-label="Who in the class to show"
-                        >
-                          {ATTACH_SEGMENTS.map((sg) => (
-                            <button
-                              key={sg.value}
-                              type="button"
-                              className={
-                                attachSeg === sg.value ? "seg-btn on" : "seg-btn"
-                              }
-                              role="radio"
-                              aria-checked={attachSeg === sg.value}
-                              disabled={!attachInClass}
-                              onClick={() => setAttachSeg(sg.value)}
-                            >
-                              {sg.value === "all" ? (
-                                <PersonIcon />
-                              ) : sg.value === "in" ? (
-                                <CheckIcon />
-                              ) : (
-                                <UndoIcon />
-                              )}
-                              <span>{sg.label}</span>
-                            </button>
-                          ))}
-                        </div>
+                        ))}
                       </div>
                       {/* One scroll region of a FIXED height (T42, Pete:
                           "should stay the same size always"): the modal
@@ -6100,7 +5846,7 @@ function FrontDesk({
                         }
                         aria-busy={searching || searchMore}
                       >
-                        {autoWidened && !attachInClass ? (
+                        {autoWidened && !inClass ? (
                           <p className="attach-line attach-widened" role="status">
                             Nobody in class matched. Showing everyone.
                           </p>
@@ -6111,12 +5857,7 @@ function FrontDesk({
                             Searching Mindbody...
                           </p>
                         ) : null}
-                        {line === "loading" ? (
-                          <p className="attach-line">
-                            <span className="spinner" aria-label="working" />{" "}
-                            Loading the roster...
-                          </p>
-                        ) : line ? (
+                        {line ? (
                           <p className="attach-line">{line}</p>
                         ) : null}
                         {searchError ? (
@@ -6129,7 +5870,7 @@ function FrontDesk({
                         ) : null}
                         {/* The paging sentinel and its quiet line: only
                             while the search says there is more. */}
-                        {!attachInClass && !searchPage.done ? (
+                        {!inClass && !searchPage.done ? (
                           <div
                             className="attach-more"
                             ref={setSearchSentinel}
