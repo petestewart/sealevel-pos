@@ -1943,6 +1943,11 @@ function FrontDesk({
         })
         .catch((e) => {
           if (ctl.signal.aborted) return;
+          /* T81 review: a live first page that never reached the server
+           * (the iPad off the network) opens the modal too, or the
+           * error under it would show nowhere and typing would look
+           * ignored. */
+          if (first) setSearchOpen(true);
           setSearchError(e instanceof Error ? e.message : String(e));
           endPaging();
         })
