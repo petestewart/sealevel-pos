@@ -3351,6 +3351,23 @@ button.sale-for:disabled {
   color: var(--muted);
 }
 
+/* T75: the Refresh cell at the rail's foot, the icon-and-word idiom,
+ * pushed down by the auto margin so it sits under whatever the rail
+ * holds; a line above it rather than below. Busy, it keeps the muted
+ * pair with the spinner in place of the icon. */
+.cat-chip.refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+.cat-chip.refresh:disabled {
+  opacity: 1;
+}
+
 /* T70 (Buy.dc.html): three columns, 12px gaps. */
 .shelf-grid {
   display: grid;
@@ -3740,6 +3757,12 @@ button.sale-for:disabled {
     padding: 0 20px;
     border-bottom: 0;
     border-right: 1px solid var(--line);
+  }
+
+  /* T75: in the row the Refresh cell is one more chip, no rule above. */
+  .sale-cats .cat-chip.refresh {
+    margin-top: 0;
+    border-top: 0;
   }
 
   .sale-right {

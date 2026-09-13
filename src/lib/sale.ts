@@ -496,6 +496,28 @@ export function expectedTotal(items: readonly CartLine[]): number {
 }
 
 /**
+ * T75: what the shelf says the cart costs BEFORE tax, each line's price
+ * times its quantity. This is the figure the disagree assertion compares
+ * now, against Mindbody's SubTotal. Tax left the assertion on the first
+ * live retail sale (2026-09-13): every product record on site 471 carries
+ * TaxRate 0.1055 while the checkout taxes at 10.35%, so the tax arithmetic
+ * above said $3.00 where Mindbody said $2.99 on a $2.71 drink and the
+ * stop refused every retail sale. Pete: "why are we hanging on to our
+ * estimate? Today we do all sales thru mindbody so the mindbody amount
+ * is the right amount." Mindbody's tax is Mindbody's; what the assertion
+ * is FOR is catching a cart priced somewhere other than the studio
+ * (wrong LocationId or InStore prices online items differently: the 10
+ * Class Pack is $230 in studio and $260 online), and that shows in the
+ * pre-tax figure. expectedTotal above stays as the labelled estimate for
+ * the states with no server total.
+ */
+export function expectedSubtotal(items: readonly CartLine[]): number {
+  let total = 0;
+  for (const line of items) total += line.price * line.quantity;
+  return roundToCents(total);
+}
+
+/**
  * Strict disagreement after rounding to cents. True means the cart was
  * priced somewhere other than the studio (wrong LocationId, wrong InStore)
  * or our catalog data is stale, and the CALLER must render it as an error.
@@ -521,11 +543,16 @@ export interface PricedCart {
   taxTotal: number | null;
   /** The total. Mindbody's number, the only one that may be charged. */
   grandTotal: number | null;
-  /** Our local assertion, always computed. */
+  /** Our local estimate with tax, always computed; a labelled estimate
+   *  for the states with no server total, never the assertion (T75). */
   expectedTotal: number;
-  /** totalsDisagree(expectedTotal, grandTotal); false while suppressed,
-   *  and false BY CONSTRUCTION for a package-bearing cart (see
-   *  packagePricing). */
+  /** T75: the shelf's pre-tax sum, what `disagrees` compares. */
+  expectedSubtotal: number;
+  /** totalsDisagree(expectedSubtotal, Mindbody's pre-tax figure): its
+   *  SubTotal, or GrandTotal less TaxTotal when SubTotal is absent.
+   *  False while suppressed, false when Mindbody sent no pre-tax figure
+   *  to compare, and false BY CONSTRUCTION for a package-bearing cart
+   *  (see packagePricing). Tax is never part of it since T75. */
   disagrees: boolean;
   /**
    * T30 carve-out: true when the cart held a Package line. The Package
@@ -631,6 +658,7 @@ export async function priceCart(
 ): Promise<PricedCart> {
   assertCartLines(items, "priceCart");
   const expected = expectedTotal(items);
+  const expectedSub = expectedSubtotal(items);
   /* T30: a package line has no tax basis of its own (see PricedCart
    * .packagePricing), so the strict assertion is skipped for the whole
    * cart. NOTE for the sandbox probe: the Comp stub's Amount below is
@@ -713,6 +741,7 @@ export async function priceCart(
       taxTotal: null,
       grandTotal: null,
       expectedTotal: expected,
+      expectedSubtotal: expectedSub,
       disagrees: false,
       packagePricing,
       usedPaymentStub,
@@ -728,16 +757,24 @@ export async function priceCart(
       "Mindbody accepted the pricing request but returned no GrandTotal.",
     );
   }
-  const disagrees = packagePricing
-    ? false
-    : totalsDisagree(expected, grandTotal);
+  const subTotal = num(cart?.SubTotal);
+  const taxTotal = num(cart?.TaxTotal);
+  /* T75: the pre-tax figure Mindbody priced, SubTotal first, else the
+   * grand total less its tax. Neither present, nothing to assert. */
+  const theirSubtotal =
+    subTotal ?? (taxTotal !== null ? roundToCents(grandTotal - taxTotal) : null);
+  const disagrees =
+    packagePricing || theirSubtotal === null
+      ? false
+      : totalsDisagree(expectedSub, theirSubtotal);
   return {
     suppressed: false,
-    subTotal: num(cart?.SubTotal),
+    subTotal,
     discountTotal: num(cart?.DiscountTotal),
-    taxTotal: num(cart?.TaxTotal),
+    taxTotal,
     grandTotal,
     expectedTotal: expected,
+    expectedSubtotal: expectedSub,
     ...(disagrees ? { lineAudit: auditLines(items, cart) } : {}),
     /* The T30 carve-out: a package-bearing cart is excluded from the
      * strict assertion (no tax basis for a package line); every other
@@ -764,7 +801,6 @@ function auditLines(items: readonly CartLine[], cart: any): LineAudit[] {
         String(t?.Item?.Id ?? "") === id ||
         String(t?.Item?.ProductId ?? "") === id,
     );
-    const rate = line.taxExempt ? 0 : (line.taxRate ?? STUDIO_TAX_RATE);
     return {
       name: typeof match?.Item?.Name === "string" ? match.Item.Name : null,
       type: line.type,
@@ -772,7 +808,8 @@ function auditLines(items: readonly CartLine[], cart: any): LineAudit[] {
       quantity: line.quantity,
       ourPrice: line.price,
       ourTaxRate: line.taxExempt ? 0 : line.taxRate,
-      ourExtended: roundToCents(line.price * line.quantity * (1 + rate)),
+      /* T75: before tax, like the assertion. */
+      ourExtended: roundToCents(line.price * line.quantity),
       theirPrice: num(match?.Item?.Price),
       theirTaxRate: num(match?.Item?.TaxRate),
       theirQuantity: num(match?.Quantity),

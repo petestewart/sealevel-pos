@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 
 import {
+  expectedSubtotal,
   expectedTotal,
   houseClientId,
   parseCartLines,
@@ -67,6 +68,7 @@ export async function POST(request: Request) {
       taxTotal: null,
       grandTotal: null,
       expectedTotal: expectedTotal(parsed.items),
+      expectedSubtotal: expectedSubtotal(parsed.items),
       disagrees: false,
       /* Honest even here: a package's estimate is a component-sum guess
        * (see sale.ts sellablePackages), so the UI can label it. */
