@@ -244,6 +244,7 @@ export default function DevDrawer({
             <SettingsPanel
               settings={settings}
               set={set}
+              open={open}
               onTargetSwitched={onTargetSwitched}
               onConfigChanged={onConfigChanged}
             />
@@ -334,11 +335,19 @@ const FLAGS: { key: keyof Settings; label: string; hint: string }[] = [
 function SettingsPanel({
   settings,
   set,
+  open,
   onTargetSwitched,
   onConfigChanged,
 }: {
   settings: Settings;
   set: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+  /** T89 review: the drawer stays mounted while it is shut, so the panel
+   *  re-reads /api/config every time it OPENS. Without that, `targetAdmin`
+   *  is whatever it was when the roster mounted: an admin who hands the
+   *  counter over through "sign in as someone else" left the switch drawn
+   *  for a teacher who is not one. The route refuses them either way, but
+   *  a control that cannot work must not be on the screen. */
+  open: boolean;
   onTargetSwitched: (next: string, notice: string) => void;
   onConfigChanged: () => void;
 }) {
@@ -381,12 +390,13 @@ function SettingsPanel({
       .catch(() => undefined);
   }, []);
   useEffect(() => {
+    if (!open) return;
     readMode();
-  }, [readMode]);
+  }, [readMode, open]);
   return (
     <div className="dev-settings">
       {mode?.targetAdmin ? (
-        <TargetPanel onSwitched={onTargetSwitched} />
+        <TargetPanel open={open} onSwitched={onTargetSwitched} />
       ) : mode !== null ? (
         <>
           <div className="dev-label">mindbody target</div>
@@ -494,8 +504,12 @@ interface TargetInfo {
 const studioWord = (t: string) => (t === "prod" ? "Production" : "Sandbox");
 
 function TargetPanel({
+  open,
   onSwitched,
 }: {
+  /** As SettingsPanel: re-read whenever the drawer opens, never from a
+   *  mount that may predate the teacher who is looking at it. */
+  open: boolean;
   onSwitched: (next: string, notice: string) => void;
 }) {
   const [info, setInfo] = useState<TargetInfo | null>(null);
@@ -522,8 +536,9 @@ function TargetPanel({
   }, []);
 
   useEffect(() => {
+    if (!open) return;
     void load();
-  }, [load]);
+  }, [load, open]);
 
   const other =
     info === null ? null : info.target === "prod" ? "sandbox" : "prod";
