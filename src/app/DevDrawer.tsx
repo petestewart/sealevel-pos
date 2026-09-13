@@ -295,6 +295,9 @@ function SettingsPanel({
   /* T29: the one quiet line saying which store is behind the DB features.
    * "none" is full fallback mode and is normal for local work. */
   const [storage, setStorage] = useState<string | null>(null);
+  /* T78: where staff sessions live ("postgres" survives a restart; a
+   * "memory (...)" mode names what is missing), from the same read. */
+  const [staffSessions, setStaffSessions] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     fetch("/api/config")
@@ -302,6 +305,9 @@ function SettingsPanel({
       .then((body) => {
         if (live && body && typeof body.storage === "string") {
           setStorage(body.storage);
+        }
+        if (live && body && typeof body.staffSessions === "string") {
+          setStaffSessions(body.staffSessions);
         }
       })
       .catch(() => undefined);
@@ -323,6 +329,9 @@ function SettingsPanel({
             ? " (no DATABASE_URL; bundles, waiver receipts and banner use their fallbacks)"
             : ""}
         </p>
+      ) : null}
+      {staffSessions !== null ? (
+        <p className="muted">staff sessions: {staffSessions}</p>
       ) : null}
       {NUMBERS.map((field) => (
         <label key={field.key} className="dev-setting">
