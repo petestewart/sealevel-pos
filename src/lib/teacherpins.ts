@@ -2,6 +2,7 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypt
 
 import {
   findTeacherPin,
+  teacherPinExists,
   upsertTeacherPin,
   type TeacherPinWrite,
 } from "./db";
@@ -158,6 +159,23 @@ function safeEqualStr(a: string, b: string): boolean {
   const ba = Buffer.from(a, "utf8");
   const bb = Buffer.from(b, "utf8");
   return ba.length === bb.length && timingSafeEqual(ba, bb);
+}
+
+/**
+ * Whether this teacher already has a PIN (T80, Pete: "when a teacher
+ * first signs in, if they have not set up a PIN they should be prompted
+ * to do so"). True or false when the store answered; null when there is
+ * no database or the read failed, which means PINs are UNAVAILABLE, not
+ * unset: nothing could be enrolled, so the sign-in must say so rather
+ * than prompt for one. The dev-only POS_TEACHER_PINS list is
+ * deliberately not consulted -- a PIN there cannot be set from the
+ * screen either, so it is the same "unavailable" as no database.
+ * Never throws.
+ */
+export async function hasTeacherPin(
+  staffId: number | string,
+): Promise<boolean | null> {
+  return teacherPinExists(String(staffId));
 }
 
 /** Store (or replace) a teacher's PIN. `setVia` is who vouched for the

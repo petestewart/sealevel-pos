@@ -685,6 +685,28 @@ export async function findTeacherPin(
   }
 }
 
+/** Whether this staff id has a PIN (T80): true, false, or null when
+ *  there is no database or it failed, which means PINs are unavailable
+ *  rather than unset. One indexed read on the primary key; it never
+ *  throws, and it never reads the hash or the lookup value, so nothing
+ *  derived from a PIN leaves this function. */
+export async function teacherPinExists(
+  staffId: string,
+): Promise<boolean | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT 1 FROM teacher_pins WHERE staff_id = $1`,
+      [staffId],
+    );
+    return res.rows.length > 0;
+  } catch (err) {
+    logDbError("teacher-pin-read", err);
+    return null;
+  }
+}
+
 export type TeacherPinWrite =
   | { ok: true }
   | { ok: false; reason: "taken" | "unavailable" };
