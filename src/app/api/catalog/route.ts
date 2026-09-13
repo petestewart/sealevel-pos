@@ -3,7 +3,11 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 
 import { counterBundles, type CounterBundle } from "@/lib/bundles";
-import { currentShelfConfig, rawCatalog } from "@/lib/catalog";
+import {
+  currentFavorites,
+  currentShelfConfig,
+  rawCatalog,
+} from "@/lib/catalog";
 import { enabledDbBundles } from "@/lib/db";
 import { applyShelfConfig } from "@/lib/shelfconfig";
 
@@ -17,8 +21,9 @@ export const dynamic = "force-dynamic";
  * Reads only. The raw catalog and its two-minute cache live in
  * src/lib/catalog.ts (T74 moved them there so the shelf admin route can
  * list every item from the same reads); this route applies what sits
- * OUTSIDE that cache at response time: the bundles (T29) and the shelf
- * config (T74), both local, both read per request.
+ * OUTSIDE that cache at response time: the bundles (T29), the shelf
+ * config (T74) and the shared favorites (T76), all local, all read per
+ * request.
  */
 
 /**
@@ -61,12 +66,20 @@ export async function GET(request: Request) {
      * carries its group label. A bundle whose line names a hidden item
      * fails to resolve on the shelf exactly as a stale id does (it does
      * not render, one console.warn), which is the honest outcome. */
-    const { config, shelfSource } = await currentShelfConfig();
+    const [{ config, shelfSource }, favorites, bundles] = await Promise.all([
+      currentShelfConfig(),
+      /* T76: the shared stars. Pairs only; the screen resolves them
+       * against the visible items below, so a hidden item's star never
+       * renders. */
+      currentFavorites(),
+      currentBundles(),
+    ]);
     const shelf = applyShelfConfig(data, config);
     return NextResponse.json({
       categories: data.categories,
       ...shelf,
-      ...(await currentBundles()),
+      ...bundles,
+      ...favorites,
       shelfSource,
       cached,
     });

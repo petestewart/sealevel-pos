@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -166,6 +167,10 @@ interface ContractInfo {
 interface ShelfCategory {
   label: string;
   categoryIds: number[];
+  /** T76: the rail section this entry lives under (categories.ts
+   *  CounterSection). Optional only so an older payload still draws a
+   *  rail (see `sectionOf`). */
+  section?: string;
 }
 
 /** Mirrors src/lib/bundles.ts CounterBundle, as /api/catalog serves it. */
@@ -186,6 +191,10 @@ interface CatalogState {
   /** T74: pass sub-category labels in rail order, only those with a
    *  visible pass. Empty means the Passes shelf is one plain grid. */
   passGroups: string[];
+  /** T76: the shared favorites from app_settings, or null when nothing
+   *  is stored for this target (no database, no row), in which case the
+   *  device's own localStorage list applies. */
+  favorites: FavPair[] | null;
 }
 
 /** A bundle every line of which resolved against the loaded catalog; only
@@ -213,17 +222,48 @@ const FAVORITES_LABEL = "Favorites";
 const PACKAGES_LABEL = "Packages";
 const MEMBERSHIPS_LABEL = "Memberships";
 
-/** T39.2: rail entries shown before the rest fold behind "more". Seven
- *  is the canvas's count and what a 768px-tall column holds at 64px
- *  entries with 6px gaps. The fold only happens when it hides at least
- *  two: "more" takes a slot of its own, so folding one entry behind it
- *  saves nothing and costs a tap. The studio's rail is exactly eight
- *  (Favorites, five categories, Packages, Memberships), which is the
- *  case that bit. */
-const RAIL_LIMIT = 7;
+/** T76: the rail's top level after Favorites, in its fixed order. Passes
+ *  and Retail are SECTIONS whose children are the pass sub-categories
+ *  (plus Packages and Memberships) and the retail categories; Rentals is
+ *  a leaf. The strings are categories.ts's `section` names, so the
+ *  Passes header and the config entry that IS Passes share one label.
+ *  The T39.2 "more" fold (RAIL_LIMIT) was retired here: the hierarchy
+ *  holds every entry without folding. */
+const PASSES_SECTION = "Passes";
+const RETAIL_SECTION = "Retail";
+const RENTALS_SECTION = "Rentals";
+type RailSection =
+  | typeof PASSES_SECTION
+  | typeof RETAIL_SECTION
+  | typeof RENTALS_SECTION;
+
+/** A category's section, tolerating the pre-T76 payload (no `section`):
+ *  no ids is Passes, a rental-sounding label is Rentals, the rest is
+ *  Retail. The T67 harness feeds that older shape. */
+function sectionOf(c: ShelfCategory): RailSection {
+  if (
+    c.section === PASSES_SECTION ||
+    c.section === RETAIL_SECTION ||
+    c.section === RENTALS_SECTION
+  ) {
+    return c.section;
+  }
+  if (c.categoryIds.length === 0) return PASSES_SECTION;
+  return /rental|towel/i.test(c.label) ? RENTALS_SECTION : RETAIL_SECTION;
+}
+
+/** T76: "TEACHER ..." retail items are the staff's own stock (Food/Drink
+ *  carries a TEACHER-prefixed twin of several drinks). A retail child
+ *  with any of them gets General | Teacher sub-tabs: General hides
+ *  them, Teacher shows them alone. Case-insensitive, trimmed. */
+function isTeacherItem(item: ShelfItem): boolean {
+  return /^teacher\b/i.test(item.name.trim());
+}
 
 /** One starred type+id pair, as persisted. Packages star like anything
- *  else on the shelf (T30): they are ordinary cart items. */
+ *  else on the shelf (T30): they are ordinary cart items. The shared
+ *  list (T76) carries string ids; a device's older localStorage list
+ *  may carry a pass's numeric id; itemKey stringifies, so both match. */
 interface FavPair {
   type: "Product" | "Service" | "Package";
   id: string | number;
@@ -231,9 +271,28 @@ interface FavPair {
 
 /** localStorage key, PER TARGET: sandbox stars must never render on the
  *  studio's shelf (item ids differ per site, so at best they would miss;
- *  at worst a sandbox id could collide with an unrelated prod item). */
+ *  at worst a sandbox id could collide with an unrelated prod item).
+ *  Since T76 this is the fallback behind the shared list in the
+ *  database: what the screen uses when /api/catalog serves no
+ *  favorites, and what a star tap keeps writing so nothing regresses
+ *  without a database. */
 function favoritesKey(target: string): string {
   return `pos.favorites.${target}`;
+}
+
+/** A stored or served favorites list, kept only if it is one. */
+function readFavPairs(parsed: unknown): FavPair[] {
+  return Array.isArray(parsed)
+    ? parsed.filter(
+        (p): p is FavPair =>
+          p !== null &&
+          typeof p === "object" &&
+          (p.type === "Product" ||
+            p.type === "Service" ||
+            p.type === "Package") &&
+          (typeof p.id === "string" || typeof p.id === "number"),
+      )
+    : [];
 }
 
 /** Same key shape the cart uses, so an item is one identity everywhere. */
@@ -252,44 +311,84 @@ function parseCatalog(body: any): CatalogState {
     packages: body?.packages ?? [],
     contracts: body?.contracts ?? [],
     passGroups: Array.isArray(body?.passGroups) ? body.passGroups : [],
+    favorites: Array.isArray(body?.favorites)
+      ? readFavPairs(body.favorites)
+      : null,
   };
 }
 
-/** T74: the sub-chip over the Passes shelf for the passes in no group.
- *  Shown only beside real groups; never a group label itself, since
- *  validateShelfConfig (src/lib/shelfconfig.ts RESERVED_GROUP_LABEL)
- *  refuses a group so named, in any case. */
+/** T74's label for passes the payload left ungrouped. Since T76 every
+ *  pass on the Passes shelf carries a group (the rule fills what no T74
+ *  group names), so this is a fallback for an older payload only; it is
+ *  never a group label (shelfconfig's RESERVED_GROUP_LABEL refuses it). */
 const OTHER_GROUP_LABEL = "Other";
 
+/** One block of the grid: a kicker (null for the bare grid) over its
+ *  items, or over contracts for the Memberships block (a contract is
+ *  not a shelf item, T30; it renders its own card and opens the
+ *  membership dialog). */
+interface ShelfSection {
+  label: string | null;
+  items: ShelfItem[];
+  contracts: ContractInfo[];
+}
+
 /**
- * T74: the Passes shelf in sections. `All` (null) is every pass with a
- * kicker over each group's cards and "Other" over the ungrouped ones; a
- * chosen chip is that group's cards alone, no kicker. With no groups
- * among the items the shelf is one unlabelled section, exactly the
- * grid it was before T74.
+ * T76: the Passes section's children in rail order: the pass groups
+ * with an item on the Passes shelf (the payload's order: the fixed
+ * labels, custom labels after), an Other fallback when a pass carries
+ * no known group, then Packages and Memberships when they have
+ * something to sell. Pete's list did not name the last two; they have
+ * nowhere else to live.
  */
-function groupedSections(
-  items: ShelfItem[],
-  passGroups: string[],
-  chosen: string | null,
-): { label: string | null; items: ShelfItem[] }[] {
-  const groups = passGroups.filter((g) => items.some((i) => i.group === g));
-  if (groups.length === 0) return [{ label: null, items }];
-  const ungrouped = items.filter(
-    (i) => !i.group || !groups.includes(i.group),
+function passChildren(catalog: CatalogState, passes: ShelfItem[]): string[] {
+  const groups = catalog.passGroups.filter((g) =>
+    passes.some((i) => i.group === g),
   );
-  if (chosen === OTHER_GROUP_LABEL) return [{ label: null, items: ungrouped }];
-  if (chosen !== null && groups.includes(chosen)) {
-    return [{ label: null, items: items.filter((i) => i.group === chosen) }];
+  const other = passes.some((i) => !i.group || !groups.includes(i.group));
+  return [
+    ...groups,
+    ...(other ? [OTHER_GROUP_LABEL] : []),
+    ...(catalog.packages.length > 0 ? [PACKAGES_LABEL] : []),
+    ...(catalog.contracts.length > 0 ? [MEMBERSHIPS_LABEL] : []),
+  ];
+}
+
+/**
+ * The Passes shelf's blocks: with no child chosen, every child under
+ * its kicker (the T74 "All" rendering); a chosen child's block alone,
+ * unlabelled. A child the catalog no longer offers reads as All.
+ */
+function passSections(
+  catalog: CatalogState,
+  passes: ShelfItem[],
+  children: string[],
+  child: string | null,
+): ShelfSection[] {
+  const groups = children.filter(
+    (l) =>
+      l !== OTHER_GROUP_LABEL && l !== PACKAGES_LABEL && l !== MEMBERSHIPS_LABEL,
+  );
+  const block = (label: string): ShelfSection => {
+    if (label === PACKAGES_LABEL) {
+      return { label, items: catalog.packages, contracts: [] };
+    }
+    if (label === MEMBERSHIPS_LABEL) {
+      return { label, items: [], contracts: catalog.contracts };
+    }
+    if (label === OTHER_GROUP_LABEL) {
+      return {
+        label,
+        items: passes.filter((i) => !i.group || !groups.includes(i.group)),
+        contracts: [],
+      };
+    }
+    return { label, items: passes.filter((i) => i.group === label), contracts: [] };
+  };
+  if (child !== null && children.includes(child)) {
+    return [{ ...block(child), label: null }];
   }
-  const sections = groups.map((g) => ({
-    label: g,
-    items: items.filter((i) => i.group === g),
-  }));
-  if (ungrouped.length > 0) {
-    sections.push({ label: OTHER_GROUP_LABEL, items: ungrouped });
-  }
-  return sections;
+  return children.map(block);
 }
 
 /**
@@ -483,6 +582,16 @@ function CloseIcon() {
 
 function RefreshIcon() {
   return <Icon size={18} d="M3 8v5h5M3.5 13a8.5 8.5 0 1 0 2.5-6" />;
+}
+
+/** T76: the section header's disclosure mark, pointing right when the
+ *  section is closed and turned down by CSS when it is open. */
+function ChevronIcon() {
+  return (
+    <span className="cat-chev" aria-hidden="true">
+      <Icon size={20} d="M9 6l6 6-6 6" />
+    </span>
+  );
 }
 
 function MinusIcon() {
@@ -3859,79 +3968,207 @@ export default function SaleScreen(props: {
   const [catalog, setCatalog] = useState<CatalogState | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  /** The active category chip, by label (labels are unique in the
-   *  hardcoded list, and FAVORITES_LABEL sits outside it). Defaults once
-   *  the catalog lands: Favorites when it has anything to show, else the
-   *  first category (see the effect below). */
+  /** The active top-level cell: Favorites, or a section name (T76:
+   *  Passes, Retail, Rentals). Defaults once the catalog lands:
+   *  Favorites when it has anything to show, else the first section
+   *  with a shelf (see the effect below). */
   const [activeCat, setActiveCat] = useState<string | null>(null);
-  /** T39.2: whether the rail shows every category or stops at RAIL_LIMIT
-   *  with a "more" entry. Sticky for the session: a teacher who opened
-   *  the rest keeps them. */
-  const [railExpanded, setRailExpanded] = useState(false);
-  /** T74: the chosen pass sub-chip; null is `All`. Resets whenever the
-   *  rail category changes, so coming back to Passes starts from All. */
-  const [passGroup, setPassGroup] = useState<string | null>(null);
+  /** T76: the chosen child of the active section (a pass group label,
+   *  Packages, Memberships, or a retail category label); null shows the
+   *  whole section under kickers. */
+  const [activeChild, setActiveChild] = useState<string | null>(null);
+  /** T76: the open section. An accordion: opening one closes the other,
+   *  and a section stays open while Favorites or Rentals is shown, so a
+   *  teacher coming back finds it as they left it. */
+  const [expanded, setExpanded] = useState<RailSection | null>(null);
+  /** T76: the retail child's General | Teacher sub-tab. Resets with the
+   *  rail selection, so every child starts on General. */
+  const [retailTab, setRetailTab] = useState<"general" | "teacher">("general");
   useEffect(() => {
-    setPassGroup(null);
-  }, [activeCat]);
+    setRetailTab("general");
+  }, [activeCat, activeChild]);
+
+  /** A top-level tap: select it and, for a section, open it (closing
+   *  the other) with no child chosen, which is the section's All view. */
+  const tapTop = useCallback((label: string) => {
+    setActiveCat(label);
+    setActiveChild(null);
+    if (label === PASSES_SECTION || label === RETAIL_SECTION) setExpanded(label);
+  }, []);
+
+  const tapChild = useCallback((section: RailSection, label: string) => {
+    setActiveCat(section);
+    setActiveChild(label);
+    if (section === PASSES_SECTION || section === RETAIL_SECTION) {
+      setExpanded(section);
+    }
+  }, []);
 
   /**
-   * The per-device stars, loaded from localStorage once the target is
-   * known (the key is per target; see favoritesKey). Held as the stored
-   * pairs so re-saving never mangles an id's string/number type; the Set
-   * of keys is derived. Storage failing (private mode, an iPad with site
-   * data blocked) degrades to an empty, non-persisting shelf, the same
+   * The stars. Since T76 the source of truth is the SHARED list in the
+   * database, served on the catalog payload (`favorites`); a star on
+   * one iPad shows on the next load of every other. With nothing stored
+   * (no database, no row yet) the per-device localStorage list applies,
+   * exactly as before T76, and the first star tap on that device
+   * uploads it (the one-time migration). Held as the stored pairs so
+   * re-saving never mangles an id's string/number type; the Set of keys
+   * is derived. Storage failing (private mode, an iPad with site data
+   * blocked) degrades to an empty, non-persisting shelf, the same
    * try/catch posture as settings.ts.
    */
   const [favorites, setFavorites] = useState<FavPair[]>([]);
   const favKey = config ? favoritesKey(config.target) : null;
+  /** Where the current list came from: the device until the catalog
+   *  serves a stored list or a PUT reports it stored. A ref, so the
+   *  localStorage load below can never overwrite a served list. */
+  const favSource = useRef<"local" | "db">("local");
+  /** The list as the screen shows it, mirrored in a ref so a PUT sends
+   *  the latest taps and not the list of the closure it was queued
+   *  from; the last list the server confirmed (or served), which is
+   *  what a failed PUT reverts to; and the single flight: a star while
+   *  a PUT is out marks the list dirty, and the flight sends the whole
+   *  list once more when it lands, so two PUTs never race each other
+   *  and a later star is never lost to an earlier answer. */
+  const favLatest = useRef<FavPair[]>([]);
+  const favConfirmed = useRef<FavPair[]>([]);
+  const favFlying = useRef(false);
+  const favDirty = useRef(false);
+  const showFavorites = useCallback((list: FavPair[]) => {
+    favLatest.current = list;
+    setFavorites(list);
+  }, []);
+  /** T76: the quiet line under a star that could not be saved (the PUT
+   *  failed and the tap was undone). Cleared by the next tap or by a
+   *  rail change. */
+  const [favNotice, setFavNotice] = useState<string | null>(null);
+  useEffect(() => {
+    setFavNotice(null);
+  }, [activeCat, activeChild]);
 
   useEffect(() => {
-    if (favKey === null) return;
+    if (favKey === null || favSource.current === "db") return;
+    let list: FavPair[] = [];
     try {
       const raw = window.localStorage.getItem(favKey);
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      setFavorites(
-        Array.isArray(parsed)
-          ? parsed.filter(
-              (p): p is FavPair =>
-                p !== null &&
-                typeof p === "object" &&
-                (p.type === "Product" ||
-                  p.type === "Service" ||
-                  p.type === "Package") &&
-                (typeof p.id === "string" || typeof p.id === "number"),
-            )
-          : [],
-      );
+      list = readFavPairs(raw ? JSON.parse(raw) : []);
     } catch {
-      setFavorites([]);
+      list = [];
     }
-  }, [favKey]);
+    favConfirmed.current = list;
+    showFavorites(list);
+  }, [favKey, showFavorites]);
+
+  /** The catalog landing (the first load, a recheck, Refresh) sets the
+   *  shelf AND, when the payload carries a stored list, the favorites,
+   *  in ONE batch: the default-cell effect then sees Favorites with its
+   *  content on the same render, instead of choosing Passes a tick
+   *  before the shared stars arrive (which a trailing effect did, seen
+   *  on a fresh device in the T76 harness). A served list wins over the
+   *  device's own: it is what every other iPad sees. Not while a PUT is
+   *  in flight, though: the list on its way out is newer than the one
+   *  the catalog read a moment ago. */
+  const landCatalog = useCallback(
+    (fresh: CatalogState) => {
+      if (fresh.favorites) {
+        favSource.current = "db";
+        if (!favFlying.current) {
+          favConfirmed.current = fresh.favorites;
+          showFavorites(fresh.favorites);
+        }
+      }
+      setCatalog(fresh);
+    },
+    [showFavorites],
+  );
 
   const favSet = useMemo(
     () => new Set(favorites.map((f) => itemKey(f.type, f.id))),
     [favorites],
   );
 
-  const toggleFavorite = useCallback(
-    (item: ShelfItem) => {
-      setFavorites((prev) => {
-        const key = itemKey(item.type, item.id);
-        const next = prev.some((f) => itemKey(f.type, f.id) === key)
-          ? prev.filter((f) => itemKey(f.type, f.id) !== key)
-          : [...prev, { type: item.type, id: item.id }];
-        if (favKey !== null) {
-          try {
-            window.localStorage.setItem(favKey, JSON.stringify(next));
-          } catch {
-            /* Not persistable here; the star still works for this visit. */
-          }
-        }
-        return next;
-      });
+  const persistFavorites = useCallback(
+    (list: FavPair[]) => {
+      if (favKey === null) return;
+      try {
+        window.localStorage.setItem(favKey, JSON.stringify(list));
+      } catch {
+        /* Not persistable here; the star still works for this visit. */
+      }
     },
     [favKey],
+  );
+
+  /** The whole list to the shared one, one PUT at a time. A migration
+   *  is the first PUT from a device whose list came from localStorage
+   *  while the table had none. A failure undoes every tap since the
+   *  last confirmed list, quietly: the shared list is the truth, and a
+   *  star that only this iPad can see would mislead the next one. */
+  const pushFavorites = useCallback(async () => {
+    if (favFlying.current) {
+      favDirty.current = true;
+      return;
+    }
+    favFlying.current = true;
+    try {
+      do {
+        favDirty.current = false;
+        const sent = favLatest.current;
+        const migrating =
+          favSource.current === "local" && favConfirmed.current.length > 0;
+        try {
+          const r = await fetch("/api/favorites", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              favorites: sent.map((f) => ({ type: f.type, id: String(f.id) })),
+            }),
+          });
+          const body = await r.json().catch(() => null);
+          if (!r.ok || body?.ok !== true) {
+            throw new Error(body?.error ?? `HTTP ${r.status}`);
+          }
+          favConfirmed.current = sent;
+          if (body.stored === true) {
+            favSource.current = "db";
+            if (body.migrated === true || migrating) {
+              console.info(
+                `[favorites] this device's list of ${sent.length} is now the shared favorites`,
+              );
+            }
+          }
+        } catch (err) {
+          const back = favConfirmed.current;
+          favDirty.current = false;
+          showFavorites(back);
+          persistFavorites(back);
+          setFavNotice(
+            `The star was not saved to the shared favorites and was undone (${
+              err instanceof Error ? err.message : String(err)
+            }).`,
+          );
+        }
+      } while (favDirty.current);
+    } finally {
+      favFlying.current = false;
+    }
+  }, [persistFavorites, showFavorites]);
+
+  const toggleFavorite = useCallback(
+    (item: ShelfItem) => {
+      const key = itemKey(item.type, item.id);
+      const prev = favLatest.current;
+      const next = prev.some((f) => itemKey(f.type, f.id) === key)
+        ? prev.filter((f) => itemKey(f.type, f.id) !== key)
+        : [...prev, { type: item.type, id: item.id }];
+      /* Optimistic on screen and in the device's own store (the
+       * no-database path is exactly the pre-T76 behaviour), then the
+       * whole list to the shared one. */
+      setFavNotice(null);
+      showFavorites(next);
+      persistFavorites(next);
+      void pushFavorites();
+    },
+    [persistFavorites, pushFavorites, showFavorites],
   );
 
   /** Every sellable thing the catalog loaded, for star lookup and bundle
@@ -4015,42 +4252,92 @@ export default function SaleScreen(props: {
     starredItems.length > 0 || resolvedBundles.length > 0;
 
   /** T41 (Pete: "when a category has no items it should not even display
-   *  in the UI as a button at all"): the categories with something to
-   *  sell, in config order. Only these reach the rail; Favorites, Packages
-   *  and Memberships have their own rules. Empty while the catalog is
-   *  still loading, and the rail does not render then either, so nothing
-   *  is hidden on a guess. */
-  const shownCategories = useMemo(
+   *  in the UI as a button at all"), kept through T76: only a cell with
+   *  something to sell reaches the rail. The Passes shelf is every
+   *  unrouted pricing option; its children are the pass groups with an
+   *  item there plus Packages and Memberships; Retail's children are the
+   *  retail categories with a shelf, in config order; Rentals is its
+   *  category when it has anything. Empty while the catalog loads, and
+   *  the rail does not render then either. */
+  const passesCategory = useMemo(
+    () => catalog?.categories.find((c) => sectionOf(c) === PASSES_SECTION) ?? null,
+    [catalog],
+  );
+  const passesShelf = useMemo(
+    () => (catalog && passesCategory ? categoryShelf(catalog, passesCategory) : []),
+    [catalog, passesCategory],
+  );
+  const passKids = useMemo(
+    () => (catalog ? passChildren(catalog, passesShelf) : []),
+    [catalog, passesShelf],
+  );
+  const retailCategories = useMemo(
     () =>
       catalog
         ? catalog.categories.filter(
-            (c) => categoryShelf(catalog, c).length > 0,
+            (c) =>
+              sectionOf(c) === RETAIL_SECTION &&
+              categoryShelf(catalog, c).length > 0,
           )
         : [],
     [catalog],
   );
+  const rentalsCategory = useMemo(
+    () =>
+      catalog
+        ? (catalog.categories.find(
+            (c) =>
+              sectionOf(c) === RENTALS_SECTION &&
+              categoryShelf(catalog, c).length > 0,
+          ) ?? null)
+        : null,
+    [catalog],
+  );
+  /** The top-level cells with something to show, in rail order after
+   *  Favorites (which has its own rule: always rendered). */
+  const railSections = useMemo<RailSection[]>(() => {
+    const out: RailSection[] = [];
+    if (passKids.length > 0) out.push(PASSES_SECTION);
+    if (retailCategories.length > 0) out.push(RETAIL_SECTION);
+    if (rentalsCategory) out.push(RENTALS_SECTION);
+    return out;
+  }, [passKids, retailCategories, rentalsCategory]);
 
-  /** The default chip, decided once per screen life when the catalog
-   *  lands: Favorites when it has anything to show, else the first
-   *  category with a shelf. Later star changes never yank the selection
-   *  around. T41: a category that lost its last item on a recheck falls
+  /** The default cell, decided when the catalog lands: Favorites when it
+   *  has anything to show, else the first section with a shelf, opened.
+   *  Later star changes never yank the selection around (the early
+   *  return). T41: a cell that lost its last item on a recheck falls
    *  back the same way rather than leaving an active button the rail
    *  no longer shows. */
   useEffect(() => {
     if (!catalog) return;
+    const stillShown =
+      activeCat === FAVORITES_LABEL ||
+      railSections.some((section) => section === activeCat);
+    if (activeCat !== null && stillShown) return;
     const fallback = favoritesHasContent
       ? FAVORITES_LABEL
-      : (shownCategories[0]?.label ?? null);
-    setActiveCat((cur) => {
-      if (cur === null) return fallback;
-      const stillShown =
-        cur === FAVORITES_LABEL ||
-        (cur === PACKAGES_LABEL && catalog.packages.length > 0) ||
-        (cur === MEMBERSHIPS_LABEL && catalog.contracts.length > 0) ||
-        shownCategories.some((c) => c.label === cur);
-      return stillShown ? cur : fallback;
-    });
-  }, [catalog, favoritesHasContent, shownCategories]);
+      : (railSections[0] ?? null);
+    setActiveCat(fallback);
+    setActiveChild(null);
+    if (fallback === PASSES_SECTION || fallback === RETAIL_SECTION) {
+      setExpanded(fallback);
+    }
+  }, [catalog, favoritesHasContent, railSections, activeCat]);
+
+  /** A chosen child the reloaded catalog no longer offers (a recheck
+   *  emptied the group, a category lost its last item) drops to its
+   *  section's All view rather than an empty shelf. */
+  useEffect(() => {
+    if (activeChild === null) return;
+    const kids =
+      activeCat === PASSES_SECTION
+        ? passKids
+        : activeCat === RETAIL_SECTION
+          ? retailCategories.map((c) => c.label)
+          : [];
+    if (!kids.includes(activeChild)) setActiveChild(null);
+  }, [activeCat, activeChild, passKids, retailCategories]);
 
   const [cart, setCart] = useState<CartEntry[]>([]);
   const [priced, setPriced] = useState<PricedResult | null>(null);
@@ -4346,7 +4633,7 @@ export default function SaleScreen(props: {
       }
       /* The shelf shows the fresh prices too: a teacher who re-adds the
        * dropped item must not get the stale card back. */
-      setCatalog(fresh);
+      landCatalog(fresh);
       /* Always a NEW array, even when nothing changed: the teacher asked
        * for a recheck, and only a fresh POST can say whether the stop
        * stands. */
@@ -4362,7 +4649,7 @@ export default function SaleScreen(props: {
     } finally {
       setRechecking(false);
     }
-  }, [rechecking]);
+  }, [rechecking, landCatalog]);
 
   /** Fetch the shelf once per screen life; the route caches server-side
    *  for two minutes anyway (T75). A failure renders with a retry button. */
@@ -4373,15 +4660,15 @@ export default function SaleScreen(props: {
       .then(async (r) => {
         const body = await r.json();
         if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
-        setCatalog(parseCatalog(body));
-        /* The default chip is picked by the effect above, which also
+        landCatalog(parseCatalog(body));
+        /* The default cell is picked by the effect above, which also
            knows whether Favorites has anything to show. */
       })
       .catch((e) =>
         setCatalogError(e instanceof Error ? e.message : String(e)),
       )
       .finally(() => setCatalogLoading(false));
-  }, []);
+  }, [landCatalog]);
 
   useEffect(() => {
     if (open && catalog === null && !catalogLoading && catalogError === null) {
@@ -4974,26 +5261,58 @@ export default function SaleScreen(props: {
   if (!open) return null;
 
   const onFavorites = activeCat === FAVORITES_LABEL;
-  const onPackages = activeCat === PACKAGES_LABEL;
-  const onMemberships = activeCat === MEMBERSHIPS_LABEL;
-  const category =
-    catalog?.categories.find((c) => c.label === activeCat) ?? null;
-  /** The Favorites shelf is starred items first (bundles render after the
-   *  grid maps these); Packages is its own T30 shelf riding the same
-   *  cart; Memberships renders contracts instead of shelf items (a
-   *  contract never enters the cart); a category shelf is what it
-   *  always was. */
-  const shelfItems: ShelfItem[] = onFavorites
-    ? starredItems
-    : onPackages
-      ? (catalog?.packages ?? [])
-      : onMemberships || catalog === null || category === null
-        ? []
-        : categoryShelf(catalog, category);
+  const onPasses = activeCat === PASSES_SECTION;
+  const onRetail = activeCat === RETAIL_SECTION;
+  /** T76: the chosen retail child and its items; the General | Teacher
+   *  sub-tabs render only when a TEACHER item is among them. */
+  const retailChild =
+    onRetail && activeChild !== null
+      ? (retailCategories.find((c) => c.label === activeChild) ?? null)
+      : null;
+  const retailChildItems =
+    catalog && retailChild ? categoryShelf(catalog, retailChild) : [];
+  const teacherTabs = retailChildItems.some(isTeacherItem);
+  /** What the grid shows, as blocks. Favorites is the starred items
+   *  (bundles render after them); Passes is its children under kickers
+   *  or one child alone (passSections); Retail is its categories under
+   *  kickers or one category alone, filtered by the sub-tab when it has
+   *  one; Rentals is its category. */
+  const shelfSections: ShelfSection[] = onFavorites
+    ? [{ label: null, items: starredItems, contracts: [] }]
+    : onPasses && catalog
+      ? passSections(catalog, passesShelf, passKids, activeChild)
+      : onRetail && catalog
+        ? retailChild
+          ? [
+              {
+                label: null,
+                items: teacherTabs
+                  ? retailChildItems.filter(
+                      (i) => isTeacherItem(i) === (retailTab === "teacher"),
+                    )
+                  : retailChildItems,
+                contracts: [],
+              },
+            ]
+          : retailCategories.map((c) => ({
+              label: c.label,
+              items: categoryShelf(catalog, c),
+              contracts: [],
+            }))
+        : activeCat === RENTALS_SECTION && catalog && rentalsCategory
+          ? [
+              {
+                label: null,
+                items: categoryShelf(catalog, rentalsCategory),
+                contracts: [],
+              },
+            ]
+          : [];
   const shelfEmpty =
-    shelfItems.length === 0 &&
-    (!onFavorites || resolvedBundles.length === 0) &&
-    !onMemberships;
+    shelfSections.every(
+      (section) => section.items.length === 0 && section.contracts.length === 0,
+    ) &&
+    (!onFavorites || resolvedBundles.length === 0);
 
   /** T74: one shelf card, shared by every section of the grid. The
    *  markup is exactly the card the grid always drew; only its home
@@ -5072,28 +5391,42 @@ export default function SaleScreen(props: {
     );
   };
 
-  /** T74: the Passes shelf sub-chips, only groups with a visible pass
-   *  on THIS shelf (a group whose passes were all routed elsewhere by
-   *  T41 never shows a chip), plus Other when ungrouped passes sit
-   *  beside them. Any other shelf has none. */
-  const onPasses = category !== null && category.categoryIds.length === 0;
-  const passGroupsHere = onPasses
-    ? (catalog?.passGroups ?? []).filter((g) =>
-        shelfItems.some((i) => i.group === g),
-      )
-    : [];
-  const passChips =
-    passGroupsHere.length > 0 &&
-    shelfItems.some((i) => !i.group || !passGroupsHere.includes(i.group))
-      ? [...passGroupsHere, OTHER_GROUP_LABEL]
-      : passGroupsHere;
-  /** A chosen chip the catalog no longer carries (a recheck removed the
-   *  group) reads as All rather than as an empty shelf. */
-  const chosenPassGroup =
-    passGroup !== null && passChips.includes(passGroup) ? passGroup : null;
-  const shelfSections = onPasses
-    ? groupedSections(shelfItems, passGroupsHere, chosenPassGroup)
-    : [{ label: null, items: shelfItems }];
+  /** T30: a contract is NOT a cart item; tapping its card opens the
+   *  dedicated purchase dialog instead of ringing anything up. The card
+   *  shows the recurring amount, the honest headline of an autopay.
+   *  Since T76 it renders inside any Passes block (the Memberships
+   *  child, or its kicker in the All view). */
+  const contractCard = (c: ContractInfo) => (
+    <button
+      key={`contract-${c.id}`}
+      className="shelf-item shelf-contract"
+      onClick={() => setContractDialog(c)}
+      aria-label={`Start the ${c.name} membership`}
+    >
+      <span className="shelf-name">
+        {c.name}
+        <span className="shelf-bundle-mark"> membership</span>
+      </span>
+      <span className="shelf-foot">
+        <span className="shelf-price">
+          {c.autopayEnabled &&
+          c.recurringPaymentTotal !== null &&
+          c.recurringPaymentTotal > 0 ? (
+            <>
+              <span className="shelf-amt">
+                {money(c.recurringPaymentTotal)}
+              </span>{" "}
+              {frequencyPhrase(c)}
+            </>
+          ) : c.firstPaymentTotal !== null ? (
+            <span className="shelf-amt">{money(c.firstPaymentTotal)}</span>
+          ) : (
+            ""
+          )}
+        </span>
+      </span>
+    </button>
+  );
 
 
   /** What the totals area shows, in priority order: the amber suppression
@@ -5437,99 +5770,104 @@ export default function SaleScreen(props: {
         </div>
 
         <div className={inPay ? "sale-panes pay" : "sale-panes"}>
-          {/* RAIL (T39.2): the first column, 154px, Favorites pinned first
-              and filled when active, Packages and Memberships in T30's
-              order after Passes. Past the seventh entry the rest collapse
-              behind a muted "more" that expands the rail in place, but
-              only when at least two would hide (RAIL_LIMIT); the studio's
-              rail is exactly eight and shows whole. Under 1040px the CSS
-              folds the same element back into the chip row above the
-              grid. */}
+          {/* RAIL (T39.2, T76): the first column, a hierarchy. Favorites
+              first; then Passes and Retail, sections that open on a tap
+              (an accordion) to show their children as indented 48px
+              cells, the section header itself being the All view; then
+              Rentals, a leaf; and the T75 Refresh cell at the foot,
+              sticky so it stays there when the rail scrolls. Only a cell
+              with something to sell renders (T41). Under 1040px the CSS
+              lays the top level out as a row and the open section's
+              children as a second row of chips (the `order` rules and
+              the break element). */}
           {catalog && !catalogLoading && !catalogError ? (
             <nav className="sale-cats" role="tablist" aria-label="Categories">
-              {(() => {
-                /* T30: the Packages and Memberships entries slot in
-                   right after Passes (the one category with no
-                   category ids), each rendered ONLY when it has
-                   something to sell; an empty extra entry would be a
-                   button that can never show anything. */
-                const extras: string[] = [
-                  ...(catalog.packages.length > 0 ? [PACKAGES_LABEL] : []),
-                  ...(catalog.contracts.length > 0 ? [MEMBERSHIPS_LABEL] : []),
-                ];
-                /* T41: only categories with a shelf (shownCategories);
-                   Passes keeps its slot when it has any unrouted option. */
-                const labels = shownCategories.map((c) => c.label);
-                const passesIdx = shownCategories.findIndex(
-                  (c) => c.categoryIds.length === 0,
-                );
-                labels.splice(
-                  passesIdx >= 0 ? passesIdx + 1 : labels.length,
-                  0,
-                  ...extras,
-                );
-                const all = [FAVORITES_LABEL, ...labels];
-                /* Expanded by the tap, because there is nothing worth
-                   folding (see RAIL_LIMIT), or because the active entry
-                   would otherwise be hidden behind "more". */
-                const expanded =
-                  railExpanded ||
-                  all.length <= RAIL_LIMIT + 1 ||
-                  all.indexOf(activeCat ?? "") >= RAIL_LIMIT;
-                const shown = expanded ? all : all.slice(0, RAIL_LIMIT);
+              <button
+                role="tab"
+                aria-selected={onFavorites}
+                className={onFavorites ? "cat-chip on" : "cat-chip"}
+                onClick={() => tapTop(FAVORITES_LABEL)}
+              >
+                {FAVORITES_LABEL}
+              </button>
+              {railSections.map((section) => {
+                const isSection = section !== RENTALS_SECTION;
+                const label =
+                  section === RENTALS_SECTION
+                    ? (rentalsCategory?.label ?? RENTALS_SECTION)
+                    : section;
+                const selected = activeCat === section && activeChild === null;
+                const open = isSection && expanded === section;
+                const kids =
+                  section === PASSES_SECTION
+                    ? passKids
+                    : section === RETAIL_SECTION
+                      ? retailCategories.map((c) => c.label)
+                      : [];
                 return (
-                  <>
-                    {shown.map((label) => (
-                      <button
-                        key={label}
-                        role="tab"
-                        aria-selected={activeCat === label}
-                        className={
-                          activeCat === label ? "cat-chip on" : "cat-chip"
-                        }
-                        onClick={() => setActiveCat(label)}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                    {expanded ? null : (
-                      <button
-                        className="cat-chip more"
-                        onClick={() => setRailExpanded(true)}
-                        aria-label={`Show ${all.length - RAIL_LIMIT} more categories`}
-                      >
-                        more
-                      </button>
-                    )}
-                    {/* T75 (Pete: a product that existed for months did
-                        not show, then did; "add a refresh"): the rail's
-                        last cell refetches the catalog past the server
-                        cache, the same recheckPrices the disagree stop
-                        uses, so cart lines are rebuilt from the fresh
-                        shelf too. Muted like "more": a door, not a
-                        shelf. Pinned to the rail's bottom by CSS. */}
+                  <Fragment key={section}>
                     <button
-                      className={
-                        rechecking ? "cat-chip more refresh busy" : "cat-chip more refresh"
-                      }
-                      disabled={rechecking}
-                      onClick={() => void recheckPrices()}
-                      aria-label="Refresh the catalog from Mindbody"
-                      title="Refresh the catalog from Mindbody"
+                      role="tab"
+                      aria-selected={selected}
+                      aria-expanded={isSection ? open : undefined}
+                      className={[
+                        "cat-chip",
+                        isSection ? "section" : "",
+                        selected ? "on" : "",
+                        open ? "open" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      onClick={() => tapTop(section)}
                     >
-                      {rechecking ? (
-                        <>
-                          <span className="spinner" aria-label="working" /> Refreshing
-                        </>
-                      ) : (
-                        <>
-                          <RefreshIcon /> Refresh
-                        </>
-                      )}
+                      {label}
+                      {isSection ? <ChevronIcon /> : null}
                     </button>
-                  </>
+                    {open
+                      ? kids.map((kid) => {
+                          const on = activeCat === section && activeChild === kid;
+                          return (
+                            <button
+                              key={kid}
+                              role="tab"
+                              aria-selected={on}
+                              className={on ? "cat-chip child on" : "cat-chip child"}
+                              onClick={() => tapChild(section, kid)}
+                            >
+                              {kid}
+                            </button>
+                          );
+                        })
+                      : null}
+                  </Fragment>
                 );
-              })()}
+              })}
+              {/* The line break before the children's row under 1040px;
+                  nothing in the column layout. */}
+              <span className="rail-break" aria-hidden="true" />
+              {/* T75 (Pete: a product that existed for months did not
+                  show, then did; "add a refresh"): the rail's last cell
+                  refetches the catalog past the server cache, the same
+                  recheckPrices the disagree stop uses, so cart lines are
+                  rebuilt from the fresh shelf too. Muted: a door, not a
+                  shelf. Pinned to the rail's bottom by CSS. */}
+              <button
+                className={rechecking ? "cat-chip refresh busy" : "cat-chip refresh"}
+                disabled={rechecking}
+                onClick={() => void recheckPrices()}
+                aria-label="Refresh the catalog from Mindbody"
+                title="Refresh the catalog from Mindbody"
+              >
+                {rechecking ? (
+                  <>
+                    <span className="spinner" aria-label="working" /> Refreshing
+                  </>
+                ) : (
+                  <>
+                    <RefreshIcon /> Refresh
+                  </>
+                )}
+              </button>
             </nav>
           ) : null}
 
@@ -5550,47 +5888,37 @@ export default function SaleScreen(props: {
               </div>
             ) : catalog ? (
               <>
-                {onMemberships ? (
-                  /* T30: contracts are NOT cart items -- tapping one
-                     opens the dedicated purchase dialog instead of
-                     ringing anything up. The card shows the recurring
-                     amount, the honest headline of an autopay. */
-                  <div className="shelf-grid">
-                    {catalog.contracts.map((c) => (
+                {/* T76: the General | Teacher sub-tabs over a retail
+                    child that carries TEACHER items (Food/Drink). The
+                    T74 sub-chip idiom, 48px; no All, since General is
+                    the default and hides the teacher stock. Rendered
+                    outside the empty check so a tab is reachable even
+                    when the other one is empty. */}
+                {teacherTabs ? (
+                  <div
+                    className="shelf-subchips"
+                    role="tablist"
+                    aria-label="Who the stock is for"
+                  >
+                    {(["general", "teacher"] as const).map((tab) => (
                       <button
-                        key={`contract-${c.id}`}
-                        className="shelf-item shelf-contract"
-                        onClick={() => setContractDialog(c)}
-                        aria-label={`Start the ${c.name} membership`}
+                        key={tab}
+                        role="tab"
+                        aria-selected={retailTab === tab}
+                        className={retailTab === tab ? "sub-chip on" : "sub-chip"}
+                        onClick={() => setRetailTab(tab)}
                       >
-                        <span className="shelf-name">
-                          {c.name}
-                          <span className="shelf-bundle-mark"> membership</span>
-                        </span>
-                        <span className="shelf-foot">
-                          <span className="shelf-price">
-                            {c.autopayEnabled &&
-                            c.recurringPaymentTotal !== null &&
-                            c.recurringPaymentTotal > 0 ? (
-                              <>
-                                <span className="shelf-amt">
-                                  {money(c.recurringPaymentTotal)}
-                                </span>{" "}
-                                {frequencyPhrase(c)}
-                              </>
-                            ) : c.firstPaymentTotal !== null ? (
-                              <span className="shelf-amt">
-                                {money(c.firstPaymentTotal)}
-                              </span>
-                            ) : (
-                              ""
-                            )}
-                          </span>
-                        </span>
+                        {tab === "general" ? "General" : "Teacher"}
                       </button>
                     ))}
                   </div>
-                ) : shelfEmpty ? (
+                ) : null}
+                {favNotice !== null ? (
+                  <p className="muted fav-notice" role="status">
+                    {favNotice}
+                  </p>
+                ) : null}
+                {shelfEmpty ? (
                   <p className="muted">
                     {onFavorites
                       ? "Star items on any shelf, and configure bundles in src/lib/bundles.ts."
@@ -5598,35 +5926,6 @@ export default function SaleScreen(props: {
                   </p>
                 ) : (
                   <>
-                    {/* T74: the Passes shelf in sub-categories when the
-                        config has any. The chip row sits over the grid,
-                        `All` first, a chip per group with a visible pass,
-                        `Other` only when ungrouped passes sit alongside
-                        groups. With no groups this whole row is absent
-                        and the grid below is exactly what it was. */}
-                    {passChips.length > 0 ? (
-                      <div
-                        className="shelf-subchips"
-                        role="tablist"
-                        aria-label="Pass types"
-                      >
-                        {[null, ...passChips].map((label) => (
-                          <button
-                            key={label ?? "all"}
-                            role="tab"
-                            aria-selected={chosenPassGroup === label}
-                            className={
-                              chosenPassGroup === label
-                                ? "sub-chip on"
-                                : "sub-chip"
-                            }
-                            onClick={() => setPassGroup(label)}
-                          >
-                            {label ?? "All"}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
                     {shelfSections.map((section, index) => {
                       const grid = (
                         <div
@@ -5634,6 +5933,7 @@ export default function SaleScreen(props: {
                           key={section.label ?? "grid"}
                         >
                           {section.items.map(shelfCard)}
+                          {section.contracts.map(contractCard)}
                           {/* Bundles, after the starred items. One card,
                               one tap, every line into the cart. Only the
                               Favorites shelf has any, and it is always a
@@ -5666,7 +5966,12 @@ export default function SaleScreen(props: {
                       /* An unlabelled section is the bare grid, so the
                          markup without groups is unchanged. A labelled
                          one carries its kicker: the roster head's 16px
-                         uppercase muted idiom. */
+                         uppercase muted idiom. A block with nothing in
+                         it (a section's All view never has one, but a
+                         child list can) draws nothing. */
+                      if (section.items.length === 0 && section.contracts.length === 0) {
+                        return null;
+                      }
                       return section.label === null ? (
                         grid
                       ) : (

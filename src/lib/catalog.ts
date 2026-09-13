@@ -10,6 +10,11 @@ import {
   type ContractSummary,
 } from "./sale";
 import {
+  favoritesSettingKey,
+  parseFavorites,
+  type FavoritePair,
+} from "./favorites";
+import {
   parseShelfConfig,
   SHELF_SETTING_KEY,
   type ShelfConfig,
@@ -152,5 +157,35 @@ export async function currentShelfConfig(): Promise<{
   return {
     config: parsed.config,
     shelfSource: parsed.stored ? "db" : "config",
+  };
+}
+
+/**
+ * T76: the shared favorites, read per request like the shelf config and
+ * for the same reasons (local, unmetered, a star on one iPad must show
+ * on the next load of another). `null` means nothing is stored for this
+ * target (no database, no row, or a row that failed validation), and the
+ * screen then keeps the device's own localStorage list; a stored list,
+ * even an empty one, wins. `favoritesSource` is dev-drawer-payload
+ * detail only. A bad row is logged once per process, the reason only.
+ */
+let warnedBadFavorites = false;
+
+export async function currentFavorites(): Promise<{
+  favorites: FavoritePair[] | null;
+  favoritesSource: "db" | "none";
+}> {
+  const raw = await getSetting(favoritesSettingKey(target()));
+  const parsed = parseFavorites(raw);
+  if (parsed.error !== null && !warnedBadFavorites) {
+    warnedBadFavorites = true;
+    console.error(
+      `[favorites] stored ${favoritesSettingKey(target())} ignored: ${parsed.error}`,
+    );
+  }
+  if (parsed.error === null) warnedBadFavorites = false;
+  return {
+    favorites: parsed.favorites,
+    favoritesSource: parsed.favorites === null ? "none" : "db",
   };
 }
