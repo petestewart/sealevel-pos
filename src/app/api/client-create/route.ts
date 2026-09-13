@@ -81,7 +81,7 @@ export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
   /* T50: no staff session, no write. Before the body is read. */
-  const staff = requireActor(request);
+  const staff = await requireActor(request);
   if (staff.denied) return staff.denied;
   const { session } = staff;
 

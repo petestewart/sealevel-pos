@@ -77,12 +77,14 @@ export interface ActorOutcome<T> {
  * when a SIGNED-IN teacher's token is refused, and that can only start
  * from a session this helper found.
  */
-export function requireActor(
+export async function requireActor(
   request: Request,
-):
+): Promise<
   | { denied: NextResponse; session: null }
-  | { denied: null; session: StaffSession; actor: Actor } {
-  const session = staffSessionFrom(request);
+  | { denied: null; session: StaffSession; actor: Actor }
+> {
+  /* Async since T78: a Map miss may read the persisted row. */
+  const session = await staffSessionFrom(request);
   if (session === null) {
     return {
       denied: NextResponse.json(
