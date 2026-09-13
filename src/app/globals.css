@@ -2838,15 +2838,6 @@ button.chip.action:active {
   color: var(--muted);
 }
 
-/* The spinner line while Mindbody prices the cart: the totals area IS the
- * wait, same posture as check-in. Since T38 it sits under the browser's
- * muted estimate rather than standing in for the totals. */
-.t-pricing {
-  margin: 0;
-  padding: 8px 0;
-  color: var(--muted);
-}
-
 /* T38: the recheck report, above the totals area. The failure form is
  * stop-coloured; a report of changes is a quiet note like the others. */
 .t-recheck.bad {
