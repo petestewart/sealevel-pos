@@ -302,7 +302,7 @@ New (Phase 2), the §2.9 two-pane shape. Left pane + the same 320px ticket.
   - Left: `CASH RECEIVED` kicker + the live 30px/800 entry, quick-amount cells
     (`Exact`, `$10`, `$20`, `$50` — 52px, outlined, hover → accent), and
     `Change due $X` under.
-  - Middle: 3×4 keypad, 300px wide, 56px keys on `--surface-2`, `del` in `--stop`.
+  - Middle: 3×4 keypad, 300px wide, 56px keys on `--surface-2`, the delete key in `--stop`, drawn since T82 as a backspace glyph with an X rather than the word `del`.
   - Right: 96px accent-filled `Done`.
   - **Cash only.** A stored-card charge is always the cart total — never render an
     editable amount for it (§2.9).
