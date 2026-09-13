@@ -286,7 +286,8 @@ New (Phase 2), the §2.9 two-pane shape. Left pane + the same 320px ticket.
 - **Header**: `SALE FOR / Walk-in sale` (`--accent-bg`) with `×`; refresh; theme
   toggle. (No `Buy`, no `Back` since T85.)
 - **Amount tiles**: two equal cells, 1px-divided, over a 2px rule — TOTAL and CHANGE
-  (T82 removed DUE; what is unpaid is said in words by the foot's quiet line).
+  (T82 removed DUE; what is unpaid is said in words by the foot's quiet line once
+  something is tendered, and by `Finalize Sale`'s title before that).
   Kicker 16px/600 uppercase, amount 34px/800 tabular. CHANGE turns `--warn` when
   non-zero.
 - **Method cards**: two equal 96px cells, `Card` and `Cash`, each icon (lucide
