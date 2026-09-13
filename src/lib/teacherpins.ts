@@ -10,6 +10,7 @@ import {
 import { isPinShape } from "./comp";
 import { target } from "./mindbody";
 import { listTeachers } from "./staff";
+import { ensureTarget } from "./target";
 import type { TeacherIdentity } from "./auth";
 
 /**
@@ -121,6 +122,13 @@ export type PinCheck =
  * a hit cost the same.
  */
 export async function verifyTeacherPin(pin: string): Promise<PinCheck> {
+  /* T89 review: envPins() below refuses the plaintext POS_TEACHER_PINS
+   * list when the target is prod, and nothing else on the comp gate's
+   * path loads the stored target: on a fresh process pointed at the
+   * studio by the SETTING rather than by MINDBODY_TARGET, that guard
+   * read the environment and would have let a dev PIN through against
+   * the real studio. */
+  await ensureTarget();
   const found = await findTeacherPin(pinLookup(pin));
   if (found.available) {
     const row = found.row;

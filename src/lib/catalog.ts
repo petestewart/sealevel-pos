@@ -1,6 +1,7 @@
 import { counterCategories } from "./categories";
 import { getSetting } from "./db";
 import { target } from "./mindbody";
+import { ensureTarget } from "./target";
 import {
   catalogFor,
   contractsFor,
@@ -134,6 +135,11 @@ function routeProducts(products: CatalogItem[]): CatalogItem[] {
 export async function rawCatalog(
   refresh = false,
 ): Promise<{ data: RawCatalog; cached: boolean }> {
+  /* T89 review: the cache key is the target, and it is read BEFORE the
+   * four Mindbody reads below load the stored override; on a fresh
+   * process the first catalog read would otherwise be keyed by the
+   * environment's target and filled from the stored one's site. */
+  await ensureTarget();
   const key = target();
   if (
     !refresh &&
@@ -210,6 +216,8 @@ export async function currentFavorites(): Promise<{
   favorites: FavoritePair[] | null;
   favoritesSource: "db" | "none";
 }> {
+  /* T89 review: same reason as the cache key above. */
+  await ensureTarget();
   const raw = await getSetting(favoritesSettingKey(target()));
   const parsed = parseFavorites(raw);
   if (parsed.error !== null && !warnedBadFavorites) {
