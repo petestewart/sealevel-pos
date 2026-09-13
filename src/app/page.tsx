@@ -15,7 +15,7 @@ import DevDrawer from "./DevDrawer";
 import LockScreen from "./LockScreen";
 import NavBar, {
   BuyIcon,
-  DevIcon,
+  SettingsIcon,
   PayIcon,
   ProfileIcon,
   SignInIcon,
@@ -4846,31 +4846,35 @@ function FrontDesk({
         saleNav.payTap();
       },
     },
-    {
-      key: "profile",
-      label: "Profile",
-      icon: <ProfileIcon />,
-      on: staffOpen,
-      why: null,
-      onTap: () => {
-        setPickerFor(null);
-        setSortMenuOpen(false);
-        setStaffOpen(true);
-      },
-    },
   ];
-  /* Dev only when /api/devlog answered: on the counter iPad the bar is
-   * four items, and the drawer is not reachable at all. */
+  /* Settings (the dev drawer) only when /api/devlog answered: on the
+   * counter iPad the bar is four items, and the drawer is not reachable
+   * at all. It sits before Profile (Pete: "swap position of Dev and
+   * Profile"). */
   if (devAvailable) {
     navItems.push({
       key: "dev",
-      label: "Dev",
-      icon: <DevIcon />,
+      label: "Settings",
+      icon: <SettingsIcon />,
       on: devOpen,
       why: null,
       onTap: () => setDevOpen((o) => !o),
     });
   }
+  /* Profile is labelled with the signed-in teacher's own name (Pete:
+   * "Change Profile to say the currently logged in teacher's name"). */
+  navItems.push({
+    key: "profile",
+    label: teacher.name,
+    icon: <ProfileIcon />,
+    on: staffOpen,
+    why: null,
+    onTap: () => {
+      setPickerFor(null);
+      setSortMenuOpen(false);
+      setStaffOpen(true);
+    },
+  });
 
   return (
     <main className="shell">

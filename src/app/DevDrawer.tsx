@@ -59,8 +59,12 @@ export default function DevDrawer({
   /** Which call id was just copied, for the momentary "copied" label. */
   const [copied, setCopied] = useState<number | "all" | null>(null);
   const [tab, setTab] = useState<"calls" | "settings" | "bundles" | "shelf">(
-    "calls",
+    "settings",
   );
+  /* Every open lands on the settings tab, whatever was showing last. */
+  useEffect(() => {
+    if (open) setTab("settings");
+  }, [open]);
   const { settings, set, reset } = useSettings();
 
   const poll = useCallback(async () => {
@@ -161,12 +165,10 @@ export default function DevDrawer({
     <>
       <section className={open ? "dev-drawer open" : "dev-drawer"}>
         <header className="dev-head">
-          <button
-            className={tab === "calls" ? "dev-tab on" : "dev-tab"}
-            onClick={() => setTab("calls")}
-          >
-            calls
-          </button>
+          {/* Settings first and open by default, the call log last and
+              called logs (Pete: "when Settings is opened, have it open to
+              the settings tab", "change Calls to Logs and move that tab
+              all the way over to the right"). */}
           <button
             className={tab === "settings" ? "dev-tab on" : "dev-tab"}
             onClick={() => setTab("settings")}
@@ -184,6 +186,12 @@ export default function DevDrawer({
             onClick={() => setTab("shelf")}
           >
             shelf
+          </button>
+          <button
+            className={tab === "calls" ? "dev-tab on" : "dev-tab"}
+            onClick={() => setTab("calls")}
+          >
+            logs
           </button>
           {tab === "calls" ? (
             <>
