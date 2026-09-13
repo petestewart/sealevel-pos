@@ -648,6 +648,27 @@ function defaultClassId(list: ClassSummary[], hoursBack: number): number | null 
   return pick?.classId ?? null;
 }
 
+/** The pay-and-check-in dialog's option order, shared by the list and
+ *  the default pick: the plain adult Drop In first (Pete, live: "the top
+ *  option after I click unpaid should be Drop In"; by count and price
+ *  alone the $10 Buddy Pass and Child and the $15 Teen Drop In, all one
+ *  visit, outranked it), then by visit count (a drop-in is 1; the
+ *  fake-unlimited counters at 100 and up sort last), price breaking ties. */
+function isPlainDropIn(name: string): boolean {
+  return /drop.?in/i.test(name) && !/teen|child|kid|youth|guest|buddy/i.test(name);
+}
+function payOptionOrder(
+  a: { name: string; count: number | null; price: number },
+  b: { name: string; count: number | null; price: number },
+): number {
+  const da = isPlainDropIn(a.name) ? 0 : 1;
+  const db = isPlainDropIn(b.name) ? 0 : 1;
+  if (da !== db) return da - db;
+  const ca = a.count !== null && a.count < 100 ? a.count : Number.MAX_SAFE_INTEGER;
+  const cb = b.count !== null && b.count < 100 ? b.count : Number.MAX_SAFE_INTEGER;
+  return ca - cb || a.price - b.price;
+}
+
 /** "3rd", "21st". Plain numeric ordinals, no lookup table to run out of. */
 function nth(n: number): string {
   const rem10 = n % 10;
@@ -3077,13 +3098,7 @@ function FrontDesk({
         return;
       }
     }
-    const best = [...passes].sort((a, b) => {
-      const ca =
-        a.count !== null && a.count < 100 ? a.count : Number.MAX_SAFE_INTEGER;
-      const cb =
-        b.count !== null && b.count < 100 ? b.count : Number.MAX_SAFE_INTEGER;
-      return ca - cb || a.price - b.price;
-    })[0];
+    const best = [...passes].sort(payOptionOrder)[0];
     if (best) setPaySelectedId(best.id);
   }, [payDialog, paySelectedId, payCatalog.passes]);
 
@@ -7486,17 +7501,7 @@ function FrontDesk({
             ) : payCatalog.passes ? (
               <div className="pay-opts" aria-label="Pass to sell">
                 {[...payCatalog.passes]
-                  .sort((a, b) => {
-                    const ca =
-                      a.count !== null && a.count < 100
-                        ? a.count
-                        : Number.MAX_SAFE_INTEGER;
-                    const cb =
-                      b.count !== null && b.count < 100
-                        ? b.count
-                        : Number.MAX_SAFE_INTEGER;
-                    return ca - cb || a.price - b.price;
-                  })
+                  .sort(payOptionOrder)
                   .map((p) => {
                     const short = shortPassName(p.name);
                     const selected = paySelectedId === p.id;
