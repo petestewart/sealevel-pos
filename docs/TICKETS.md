@@ -9540,3 +9540,94 @@ Enter and Space; tokens only, 48px, 16px. Flagged for later: when the
 modal opens while the first roster load is still in flight the roster
 reads as empty and the default is All; in attach mode T73's fixed box
 leaves dead space under the rows region.
+
+## T79: Comp becomes Discount, a dollar amount or a percent; 100% is a comp
+
+Pete: "we need an option to comp part of a sale. like if it's $100
+sale i should be able to comp $60 of it and they pay $40. or maybe in
+that case it's a discount? we could switch the verbage from comp to
+discount. 100% discount would be a comp in essense. also we don't need
+'Teacher' as a reason. discounts can be dollar amount or percentage."
+Whole cart, not per line (offered, not taken).
+
+### What changed
+
+- **The vocabulary.** "Comp" is "Discount" everywhere teacher-facing;
+  a 100% discount reads "Comped" on the ticket, the done screen and the
+  record. Server-side identifiers (`compReason`, `comp_receipts`,
+  `[comp]`) keep their names.
+- **The dialog** is one fixed 760x680 box: an amount step (Amount |
+  Percent | Whole sale, the T36 keypad and quick cells, the running
+  effect "Discount $60.00, they pay $40.00"), the three reason chips
+  (Trade, Damaged item, Other; Teacher is gone with its select and
+  `forStaffId`/`forStaffName`/`matchClassTeacher`), a 64px note, then
+  the PIN step as before. Every discount takes the teacher's PIN.
+- **The cart** carries the discount as state, re-spread when lines
+  change: a dollar amount over the lines in proportion to pre-tax
+  extended price, rounded to cents with the remainder on the largest
+  line; a percent per line. A Package line refuses the dialog (the spec
+  says `DiscountAmount` is ignored for packages). The ticket shows
+  "Discount (60%) -$60.00" or "Comped" in the stop tone.
+- **Pricing and checkout** take `{mode, value}` only; the per-line
+  `DiscountAmount` is recomputed server-side from the cart lines, never
+  from the browser. The price check compares `expectedSubtotal` with
+  SubTotal (T75) and `expectedDiscount` with DiscountTotal, strict to
+  the cent; a disagreement is the existing stop naming both figures.
+  For 100% the checkout sends the discount lines with no Payments
+  first and falls back ONCE to the proven Comp-payment shape when
+  Mindbody answers a 4xx naming payment; the answer and the record
+  carry `discountShape: "lines" | "comp-payment"`.
+- **The record.** "Discount $60.00 (60%) on $100.00, paid $40.00:
+  Trade, <detail>. By <teacher>" or "Comped $100.00: ..." in the
+  `[comp]` line, the `comp_receipts` row (migration 9 adds
+  `discount_amount`, `discount_percent`, `sale_total`, additive) and
+  the T62 Notes entry.
+
+### Verified by the builder
+
+Typecheck and build. 15 node unit tests (spread, validator, wording).
+The route suite against `next start`, the T79 mock and a scratch
+Postgres: $60 off a $100 two-line cart, 25%, the off-by-a-cent stop,
+cash checkout of the remainder with per-line DiscountAmount, both 100%
+shapes, an ambiguous attempt never retried, the package refusal, 16
+validator refusals, the receipt row and Notes entry, migration 9; dry
+run and write guard suppressed honestly. Playwright: 132 checks in both
+palettes and both orientations. T67 as a copy with the Teacher step
+removed; T69 unchanged. The builder's own harness caught one bug:
+adding a tender still disarmed the comp, so tapping Cash for the
+remainder dropped the discount; fixed.
+
+Known gaps: the 100% shape is unverified live (`discountShape` will
+say which Mindbody takes); the two shapes put different amounts on the
+studio ($100.00 pre-tax for lines, $107.45 tax-inclusive for the Comp
+payment), a decision for when the first live comp answers; whether
+`DiscountAmount` is per line or per unit is undocumented and the strict
+DiscountTotal check turns the other reading into a stop.
+
+### Review
+
+Adversarial review in its own worktree:
+
+- **The 100% fallback could open on an error Mindbody never
+  answered.** The gate treated "not ambiguous and the message names
+  payment" as a definite refusal, but an error raised on our own side
+  has no HTTP status: the dead-token path (which ends the staff session
+  and quotes Mindbody's 401) and checkoutCart's own guard both matched.
+  Under the old gate a refused token produced a SECOND money write
+  under a session already ended, breaking T50's "refused, never
+  redone". The gate now asks positively for a 4xx Mindbody answered,
+  not an ended session, naming payment. Tests added for a 5xx naming
+  payment (ambiguous, no fallback), a 4xx not naming payment (refused,
+  no fallback) and the dead-token case (401 reason staff, one write).
+- The dead `classTeacher` prop removed from page.tsx now that T87
+  landed.
+- The branch's merge commit carried no trailer; rebuilt with the same
+  tree and parents.
+
+Reviewed and correct: browser numbers never charged; DiscountTotal of 0
+from Mindbody is a stop; the spread over 20,000 random carts sums
+exactly and never goes below zero or above a line; amount mode after a
+cart edit re-spreads or clears with a message; PIN before the first
+call; suppression never success; nothing else clears the discount
+wrongly; 100% still skips the tender. Route suite 69, Playwright 33 x
+4, T67 18, all green.
