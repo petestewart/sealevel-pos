@@ -54,9 +54,19 @@
    * full-height screen subtracts it and every fixed screen stops above
    * it, so nothing the bar covers can be the last row of a scroll
    * region. The iPad's home indicator is inside the bar, not under the
-   * content. */
+   * content.
+   *
+   * T85 review: the room is the items' 64px PLUS the 2px rule over them
+   * plus the indicator's inset. It was 64 flat, and the bar is
+   * border-box, so the items had 62px of content box to stand 64px in
+   * and the last 2px of every one of them fell past the viewport's
+   * bottom edge: measurably under the 64px floor this project sets for a
+   * thumb in a hot room. */
   --nav-h: 64px;
-  --nav-space: calc(64px + env(safe-area-inset-bottom, 0px));
+  --nav-rule: 2px;
+  --nav-space: calc(
+    var(--nav-h) + var(--nav-rule) + env(safe-area-inset-bottom, 0px)
+  );
 }
 
 * {
@@ -6219,7 +6229,7 @@ textarea.reason-note-field:disabled::placeholder {
   gap: 0;
   height: var(--nav-space);
   padding-bottom: env(safe-area-inset-bottom, 0px);
-  border-top: 2px solid var(--rule);
+  border-top: var(--nav-rule) solid var(--rule);
   background: var(--surface);
 }
 
