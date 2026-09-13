@@ -973,6 +973,9 @@ function FrontDesk({
     downAt: number;
     deferred: (() => void) | null;
   }>({ down: false, downAt: 0, deferred: null });
+  /** T81 review: the watchdog that lifts a press whose pointerup never
+   *  reached the window, so a held result set cannot be held for ever. */
+  const listLiftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** The sentinel at the end of the results list, as a state-held node so
    *  the IntersectionObserver effect re-arms when the list (re)mounts. */
   const [searchSentinel, setSearchSentinel] = useState<HTMLElement | null>(
@@ -2163,26 +2166,41 @@ function FrontDesk({
    *  window, since a finger can leave the list before it lifts. A page
    *  that landed during the press is held in `deferred` and applied on
    *  the lift (see fetchSearchPage). */
+  const liftListTap = useCallback(() => {
+    const tap = listTapGuard.current;
+    if (listLiftTimer.current !== null) {
+      clearTimeout(listLiftTimer.current);
+      listLiftTimer.current = null;
+    }
+    if (!tap.down) return;
+    tap.down = false;
+    const apply = tap.deferred;
+    tap.deferred = null;
+    apply?.();
+  }, []);
   const noteListTap = useCallback(() => {
     listTapGuard.current.down = true;
     listTapGuard.current.downAt = Date.now();
-  }, []);
+    /* T81 review: a pointerup that never arrives must not hold the
+     * results for good. A touch takes implicit pointer capture, so a
+     * lift whose target left the document is delivered to that detached
+     * node and never reaches the window; the press was then down for
+     * ever and EVERY later result set was held, so search rendered
+     * nothing again until a reload. No press lasts a second and a
+     * half. */
+    if (listLiftTimer.current !== null) clearTimeout(listLiftTimer.current);
+    listLiftTimer.current = setTimeout(liftListTap, 1500);
+  }, [liftListTap]);
   useEffect(() => {
-    const lift = () => {
-      const tap = listTapGuard.current;
-      if (!tap.down) return;
-      tap.down = false;
-      const apply = tap.deferred;
-      tap.deferred = null;
-      apply?.();
-    };
-    window.addEventListener("pointerup", lift);
-    window.addEventListener("pointercancel", lift);
+    window.addEventListener("pointerup", liftListTap);
+    window.addEventListener("pointercancel", liftListTap);
     return () => {
-      window.removeEventListener("pointerup", lift);
-      window.removeEventListener("pointercancel", lift);
+      window.removeEventListener("pointerup", liftListTap);
+      window.removeEventListener("pointercancel", liftListTap);
+      if (listLiftTimer.current !== null) clearTimeout(listLiftTimer.current);
+      listLiftTimer.current = null;
     };
-  }, []);
+  }, [liftListTap]);
 
   /** The X in either search bar (T42, Pete: "the search results should
    *  disappear"): the query AND the results go together. */
