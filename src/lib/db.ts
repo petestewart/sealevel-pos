@@ -360,6 +360,17 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         ADD COLUMN IF NOT EXISTS sale_total numeric;
     `,
   },
+  {
+    /* The PIN's length, so the discount dialog's PIN step can submit
+     * itself on the last digit (Pete: "I should not have to click
+     * Done"). Only the length, never the digits; rows from before read
+     * null and keep the Done button. */
+    version: 10,
+    sql: `
+      ALTER TABLE teacher_pins
+        ADD COLUMN IF NOT EXISTS pin_length smallint;
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -693,14 +704,26 @@ export async function findTeacherPin(
 export async function teacherPinExists(
   staffId: string,
 ): Promise<boolean | null> {
+  const info = await teacherPinInfo(staffId);
+  return info === null ? null : info.exists;
+}
+
+/** Whether a teacher has a PIN and, when recorded, how many digits it
+ *  has. Null when the database is absent or failed. */
+export async function teacherPinInfo(
+  staffId: string,
+): Promise<{ exists: boolean; length: number | null } | null> {
   try {
     const p = await ready();
     if (!p) return null;
     const res = await p.query(
-      `SELECT 1 FROM teacher_pins WHERE staff_id = $1`,
+      `SELECT pin_length FROM teacher_pins WHERE staff_id = $1`,
       [staffId],
     );
-    return res.rows.length > 0;
+    const row = res.rows[0] as { pin_length: number | null } | undefined;
+    if (!row) return { exists: false, length: null };
+    const n = Number(row.pin_length);
+    return { exists: true, length: Number.isInteger(n) && n > 0 ? n : null };
   } catch (err) {
     logDbError("teacher-pin-read", err);
     return null;
@@ -720,18 +743,19 @@ export async function upsertTeacherPin(row: {
   pinHash: string;
   pinLookup: string;
   setVia: string;
+  pinLength: number;
 }): Promise<TeacherPinWrite> {
   try {
     const p = await ready();
     if (!p) return { ok: false, reason: "unavailable" };
     await p.query(
-      `INSERT INTO teacher_pins (staff_id, name, pin_hash, pin_lookup, set_via)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO teacher_pins (staff_id, name, pin_hash, pin_lookup, set_via, pin_length)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (staff_id) DO UPDATE
          SET name = excluded.name, pin_hash = excluded.pin_hash,
              pin_lookup = excluded.pin_lookup, set_via = excluded.set_via,
-             set_at = now()`,
-      [row.staffId, row.name, row.pinHash, row.pinLookup, row.setVia],
+             pin_length = excluded.pin_length, set_at = now()`,
+      [row.staffId, row.name, row.pinHash, row.pinLookup, row.setVia, row.pinLength],
     );
     return { ok: true };
   } catch (err) {

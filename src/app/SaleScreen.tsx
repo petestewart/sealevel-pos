@@ -1062,6 +1062,12 @@ function PaymentPanel(props: {
    *  token to charge with. */
   const [pinEntry, setPinEntry] = useState("");
   const pinEntryRef = useRef("");
+  /** The signed-in teacher's PIN length, read from /api/teacher when the
+   *  PIN step opens (Pete: "I should not have to click Done, it should
+   *  automatically enable Done on the last digit"): at that many digits
+   *  the entry submits itself. Null (a PIN set before the length was
+   *  recorded, no database, or the read failed) keeps the Done key. */
+  const [pinLength, setPinLength] = useState<number | null>(null);
   const [pinMsg, setPinMsg] = useState<string | null>(null);
   const [pinShake, setPinShake] = useState(0);
   const [pinBusy, setPinBusy] = useState(false);
@@ -2203,7 +2209,34 @@ function PaymentPanel(props: {
           : cur + key;
     pinEntryRef.current = next;
     setPinEntry(next);
+    /* The last digit IS Done when the teacher's PIN length is known. */
+    if (key !== "back" && pinLength !== null && next.length === pinLength) {
+      void submitPin();
+    }
   };
+  /* Read the signed-in teacher's PIN length when the PIN step opens; a
+   * local call, not metered. Any failure leaves null and the Done key. */
+  useEffect(() => {
+    if (reasonStep !== "pin") return;
+    let live = true;
+    fetch("/api/teacher")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => {
+        if (!live) return;
+        const n = b?.pinLength;
+        setPinLength(
+          typeof n === "number" && Number.isInteger(n) && n >= PIN_MIN && n <= PIN_MAX
+            ? n
+            : null,
+        );
+      })
+      .catch(() => {
+        if (live) setPinLength(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [reasonStep]);
   /** Done on the PIN step: one post to /api/teacher/verify. A match
    *  moves to "Comping as <name>" with the token in hand; a miss clears
    *  the digits and says so; the lockout counts down under the dots. */

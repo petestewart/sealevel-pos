@@ -3,6 +3,7 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypt
 import {
   findTeacherPin,
   teacherPinExists,
+  teacherPinInfo,
   upsertTeacherPin,
   type TeacherPinWrite,
 } from "./db";
@@ -191,5 +192,16 @@ export async function setTeacherPin(
     pinHash: hashPin(pin),
     pinLookup: pinLookup(pin),
     setVia,
+    pinLength: pin.length,
   });
+}
+
+/** How many digits the teacher's PIN has, when it was recorded (PINs
+ *  set before the length was stored read null); null too without a
+ *  database. The discount dialog submits itself at that count. */
+export async function teacherPinLength(
+  staffId: number | string,
+): Promise<number | null> {
+  const info = await teacherPinInfo(String(staffId));
+  return info && info.exists ? info.length : null;
 }
