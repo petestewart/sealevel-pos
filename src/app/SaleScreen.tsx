@@ -632,6 +632,20 @@ function MinusIcon() {
   return <Icon d="M5 12h14" />;
 }
 
+/** T82 (Pete): "in the number pad entry for amounts (discount, cash)
+ *  change 'del' to a delete icon (backspace with X)". The house Icon at
+ *  24: the tab pointing left at the entry it deletes from, with the X
+ *  inside it. The key keeps its size and its stop colour; the word it
+ *  replaces rides the aria-label. */
+function BackspaceIcon() {
+  return (
+    <Icon
+      d="M9.5 5H20a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H9.5L3 12l6.5-7zM12.5 9.5l5 5M17.5 9.5l-5 5"
+      size={24}
+    />
+  );
+}
+
 function PlusIcon() {
   return <Icon d="M12 5v14M5 12h14" size={22} />;
 }
@@ -3016,9 +3030,10 @@ function PaymentPanel(props: {
               <button
                 className="pad-key del"
                 aria-label="Delete last digit"
+                title="Delete"
                 onClick={() => padTap("back")}
               >
-                del
+                <BackspaceIcon />
               </button>
             </div>
 
@@ -3225,10 +3240,11 @@ function PaymentPanel(props: {
               <button
                 className="pad-key del"
                 aria-label="Delete last digit"
+                title="Delete"
                 disabled={discountDraft.mode === "whole"}
                 onClick={() => discountTap("back")}
               >
-                del
+                <BackspaceIcon />
               </button>
             </div>
             </div>

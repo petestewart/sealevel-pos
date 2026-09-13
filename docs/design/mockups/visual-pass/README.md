@@ -155,9 +155,9 @@ and under every modal scrim, the lock screen and the sign-in gate.
 What it replaced: the roster header's accent `Buy` cell and its account icon, the Buy
 screen's `Buy` wordmark and its `Back`, the action bar's `Back to items`, and the dev
 drawer's floating pill. The action bar is gone with them, and its two remaining controls
-are feet of the column they belong to: `Empty cart` over the accent `Pay · 2 items ·
-$5.00` at the foot of the ticket pane (outside the ticket's own scroll), and the
-`Due` / `Charge` / `Comp` primary at the foot of the payment pane beside `Discount`.
+are feet of the column they belong to: `Empty cart` over the accent `Pay` at the foot of
+the ticket pane (outside the ticket's own scroll), and `Finalize Sale` at the foot of the
+payment pane beside `Discount`. Since T82 neither carries a count or an amount.
 The sun stays where it was, the last cell of the header, on every screen.
 
 ## Screens
@@ -285,9 +285,10 @@ New (Phase 2), the §2.9 two-pane shape. Left pane + the same 320px ticket.
 
 - **Header**: `SALE FOR / Walk-in sale` (`--accent-bg`) with `×`; refresh; theme
   toggle. (No `Buy`, no `Back` since T85.)
-- **Amount tiles**: three equal cells, 1px-divided, over a 2px rule — TOTAL, DUE, CHANGE.
-  Kicker 16px/600 uppercase, amount 34px/800 tabular. When DUE reaches zero its cell
-  fills `--ok-bg` with `--ok` text; CHANGE turns `--warn` when non-zero.
+- **Amount tiles**: two equal cells, 1px-divided, over a 2px rule — TOTAL and CHANGE
+  (T82 removed DUE; what is unpaid is said in words by the foot's quiet line).
+  Kicker 16px/600 uppercase, amount 34px/800 tabular. CHANGE turns `--warn` when
+  non-zero.
 - **Method cards**: two equal 96px cells, `Card` and `Cash`, each icon (lucide
   `credit-card` / `banknote`) + 20px/800 label + a 16px `--muted` note. The selected
   method fills `--accent-bg`, colors its icon/label `--accent`, and carries a **4px
@@ -314,10 +315,11 @@ New (Phase 2), the §2.9 two-pane shape. Left pane + the same 320px ticket.
   falls short. This is the counter's actual question and it belongs on the receipt side.
 - **Payment pane foot** (T85, was the action bar): the quiet line, then `Discount`,
   then the primary — `--surface-2` / `--muted` and inert while anything is still due;
-  accent-filled `Charge $5.00` once covered; spinner + `Charging` during the write;
-  `--ok` fill + check glyph + `Charged` after, in a foot of its own under the done
-  block. The amount is always in the label. `Back to items` is gone: the nav bar's Buy
-  item is the way back to the shelf.
+  accent-filled once covered; spinner beside the label during the write; `--ok` fill +
+  check glyph + `Charged $5.00` after, in a foot of its own under the done block. Since
+  T82 the label is `Finalize Sale` in every state and carries no amount (the amount is
+  in the tiles, in the title and on the done foot). `Back to items` is gone: the nav
+  bar's Buy item is the way back to the shelf.
 
 ### 5. Dialogs — `Dialogs.dc.html`
 

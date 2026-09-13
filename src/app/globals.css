@@ -4439,7 +4439,13 @@ button.sale-for:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+/* T82: the delete key is the backspace glyph, not the word "del". Its
+ * stop colour is unchanged, and the flex centring is what a glyph needs
+ * where a line of text centred itself. */
 .pad-key.del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--stop);
 }
 
