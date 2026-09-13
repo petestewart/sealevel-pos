@@ -112,17 +112,57 @@ export const NEEDS_HOUSE_CLIENT_LINE =
  * overlay: a teacher mid-sale must not have to leave the screen to know
  * whether the counter is live.
  */
-export function ModeBanner({ config }: { config: ModeConfig | null }) {
-  if (!config || config.configError) return null;
+/** The mode line's text, which is also the key its dismissal is stored
+ *  under: any change of mode (dry run, target, site, the guard) brings a
+ *  hidden banner back. */
+function modeLine(config: ModeConfig): string {
   return (
-    <p className={config.dryRun ? "banner" : "banner live"}>
-      {config.dryRun
-        ? "Dry run. Nothing is written to Mindbody."
-        : "LIVE. Taps check real students in."}{" "}
-      {config.target === "prod" ? "Production" : "Sandbox"} site {config.siteId}.
-      {!config.dryRun && config.writeClientIds.length > 0
-        ? ` Writes limited to client ${config.writeClientIds.join(", ")}.`
-        : ""}
+    (config.dryRun
+      ? "Dry run. Nothing is written to Mindbody."
+      : "LIVE. Taps check real students in.") +
+    ` ${config.target === "prod" ? "Production" : "Sandbox"} site ${config.siteId}.` +
+    (!config.dryRun && config.writeClientIds.length > 0
+      ? ` Writes limited to client ${config.writeClientIds.join(", ")}.`
+      : "")
+  );
+}
+
+/** The mode line a teacher hid, shared by the banner's three homes (the
+ *  roster, the sale overlay, the sign-in gate) and by nothing else: in
+ *  memory only, so a reload shows the banner again. */
+let hiddenModeLine: string | null = null;
+const bannerListeners = new Set<() => void>();
+
+/** The mode banner, with an X (Pete: "have an X on the right so I can
+ *  hide it"). Hiding lasts until the page reloads or the line changes
+ *  (dry run, target, site, the guard), so a counter that switched to
+ *  sandbox or dry run cannot keep a stale dismissal. */
+export function ModeBanner({ config }: { config: ModeConfig | null }) {
+  const line = config && !config.configError ? modeLine(config) : null;
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const l = () => bump((n) => n + 1);
+    bannerListeners.add(l);
+    return () => {
+      bannerListeners.delete(l);
+    };
+  }, []);
+  if (line === null || hiddenModeLine === line) return null;
+  return (
+    <p className={config!.dryRun ? "banner" : "banner live"}>
+      <span className="banner-text">{line}</span>
+      <button
+        type="button"
+        className="banner-x"
+        aria-label="Hide this banner"
+        title="Hide until the page reloads or the mode changes"
+        onClick={() => {
+          hiddenModeLine = line;
+          bannerListeners.forEach((l) => l());
+        }}
+      >
+        <CloseIcon />
+      </button>
     </p>
   );
 }
