@@ -115,7 +115,7 @@ use. **Until this is done the app must not sit at the counter**: it is an open
 endpoint against live student data.
 
 - [x] Auth: shared device PIN (T21); teacher identity only where it matters, a comp, by the teacher's own stored PIN (T48, superseding T44's shift sign-in)
-- [ ] Railway service, deployed
+- [ ] Railway service, deployed (steps in docs/DEPLOY.md)
 - [ ] `POS_DEVTOOLS=false`, `POS_DRY_RUN=false`, mode banner verified
 - [ ] Add to Home Screen on the studio iPad
 - [ ] **Watch a teacher work a 6pm rush.** Fix what they actually hit before
