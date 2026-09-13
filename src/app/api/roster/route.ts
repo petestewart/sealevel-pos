@@ -59,9 +59,9 @@ async function withGuestMarkers(roster: ClassRoster): Promise<ClassRoster> {
  *                                     around-now lookup could never hit)
  * GET /api/roster?day=1&anchor=ISO -> every class on the studio-local day
  *                                     containing `anchor` (default now).
- *                                     One metered call; the attach
- *                                     quick-pick fetches it lazily and
- *                                     caches per day (T27 round three).
+ *                                     One metered call; the calendar
+ *                                     fetches it lazily and caches per
+ *                                     day (T27 round three, T46).
  */
 export async function GET(request: Request) {
   const denied = requireSession(request);

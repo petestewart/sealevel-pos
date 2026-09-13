@@ -1934,8 +1934,8 @@ function FrontDesk({
   );
 
   /** Abort the in-flight search and drop the held results: the X, the
-   *  close, and the in-class toggle coming back on all mean the same
-   *  thing, that the query on screen no longer has results. */
+   *  close, and the attach modal's Class cell all mean the same thing,
+   *  that the query on screen no longer has results. */
   const stopSearch = useCallback(() => {
     searchAbort.current?.abort();
     searchAbort.current = null;
@@ -1949,8 +1949,8 @@ function FrontDesk({
   }, []);
 
   /** A NEW search for `q`, page one: the state reset every search shares,
-   *  whichever control fired it (Enter, the Search button, the in-class
-   *  toggle going off with a query already typed, or the typing itself,
+   *  whichever control fired it (Enter, the Search button, the attach
+   *  modal's All cell with a query already typed, or the typing itself,
    *  T81). A submit opens the modal now; a live search (`live`) leaves
    *  it to the first page, so nothing covers the roster until there is
    *  something to show. */
