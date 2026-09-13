@@ -16,17 +16,43 @@
  * resolved against the live catalog at response time. A key that no
  * longer matches anything is harmless.
  *
+ * T86 added the two things Pete asked for next: `groupOrder`, the order
+ * the rail draws the pass sub-categories in, and `products`, one retail
+ * product moved off Mindbody's own category onto another counter cell.
+ * Both are optional, so a config stored before T86 reads exactly as it
+ * did.
+ *
  * This module is pure and dependency-free on purpose: the catalog route,
  * the admin route and a plain node test share one rule, and the dev
  * drawer re-declares the shape it needs (the codebase's convention for
  * keeping server modules out of the client bundle).
  */
 
+import { counterCategories } from "./categories";
+
 export interface ShelfGroup {
   /** The sub-category label as the sale screen shows it. */
   label: string;
   /** Pricing option ids (the `Service` type's numeric id) as strings. */
   ids: string[];
+}
+
+/**
+ * T86: one retail product moved off Mindbody's own category onto another
+ * counter cell. Pete: "why can't i set categories on retail items in the
+ * shelf? only passes?" A product's category is Mindbody's (T41 routes
+ * rentals by name on top of it); this names the cell the counter files it
+ * under instead, and nothing else about the item changes.
+ */
+export interface ShelfProductOverride {
+  /** The product's hide-list key, `itemKey("Product", id)`. The same key
+   *  the hide list uses, so one row can be both moved and hidden. */
+  key: string;
+  /** A Retail child's or Rentals' category id from categories.ts
+   *  `counterCategories` (36, 26, 32, 49, -14). Any other id is refused:
+   *  a product filed under a category the rail does not draw would
+   *  simply vanish. */
+  categoryId: number;
 }
 
 export interface ShelfConfig {
@@ -37,6 +63,15 @@ export interface ShelfConfig {
   /** Pass sub-categories, in rail order. A pass in no group is
    *  ungrouped. */
   groups: ShelfGroup[];
+  /** T86: the pass sub-categories in the order the rail draws them,
+   *  fixed labels and custom ones together. Absent (a config from before
+   *  T86) means the code order: the fixed PASS_GROUPS, then custom
+   *  labels in config order. A label this does not name keeps that
+   *  order, after the ones it does. Pete: "can i also change the order
+   *  of subcategories easily". */
+  groupOrder?: string[];
+  /** T86: retail products moved to another counter category. */
+  products?: ShelfProductOverride[];
 }
 
 /** The code default: nothing hidden, no groups. What the shelf is
@@ -69,6 +104,22 @@ export const MAX_ENTRIES = 1000;
  *  OTHER_GROUP_LABEL). A group so named would draw two "Other" chips
  *  and two "Other" sections, so it is refused here, case-insensitively. */
 export const RESERVED_GROUP_LABEL = "Other";
+/** T86: a bound on `groupOrder`. The rail can hold the eight fixed labels
+ *  plus MAX_GROUPS custom ones, so 64 is far more than a real config
+ *  needs and small enough that a fault is refused rather than sorted on
+ *  every catalog request. */
+export const MAX_GROUP_ORDER = 64;
+
+/**
+ * T86: the category ids a product override may name, read off
+ * `counterCategories` rather than repeated here, so adding a Retail child
+ * to that list is the only edit needed. The Passes entry is excluded: it
+ * carries no ids, and a retail product has no business on the Passes
+ * shelf.
+ */
+export const PRODUCT_CATEGORY_IDS: readonly number[] = counterCategories
+  .filter((c) => c.section !== "Passes")
+  .flatMap((c) => c.categoryIds);
 
 /** The hide-list key for an item: one rule for the route, the admin
  *  surface and the tests. Ids compare as strings, since a product's id
@@ -89,7 +140,10 @@ export function validateShelfConfig(
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     return { error: "config must be an object with hidden and groups" };
   }
-  const { hidden, groups } = input as Record<string, unknown>;
+  const { hidden, groups, groupOrder, products } = input as Record<
+    string,
+    unknown
+  >;
 
   if (!Array.isArray(hidden)) {
     return { error: "hidden must be an array of \"<Type>:<id>\" keys" };
@@ -184,7 +238,97 @@ export function validateShelfConfig(
     cleanGroups.push({ label: cleanLabel, ids: cleanIds });
   }
 
-  return { hidden: cleanHidden, groups: cleanGroups };
+  /* T86: the sub-category order. A label naming neither a fixed group
+   * nor a group in this config is DROPPED rather than refused: removing
+   * a custom group must not make the whole stored config invalid and
+   * throw the hide list away with it. Duplicates fold the same way. */
+  let cleanOrder: string[] | undefined;
+  if (groupOrder !== undefined && groupOrder !== null) {
+    if (!Array.isArray(groupOrder)) {
+      return { error: "groupOrder must be an array of sub-category labels" };
+    }
+    if (groupOrder.length > MAX_GROUP_ORDER) {
+      return { error: `at most ${MAX_GROUP_ORDER} groupOrder labels` };
+    }
+    const known = new Set<string>([
+      ...PASS_GROUPS.map((g) => g.toLowerCase()),
+      ...cleanGroups.map((g) => canonicalGroupLabel(g.label).toLowerCase()),
+    ]);
+    const seenOrder = new Set<string>();
+    cleanOrder = [];
+    for (const raw of groupOrder) {
+      if (typeof raw !== "string") {
+        return { error: "every groupOrder entry must be a label string" };
+      }
+      const label = canonicalGroupLabel(raw);
+      const folded = label.toLowerCase();
+      if (!known.has(folded) || seenOrder.has(folded)) continue;
+      seenOrder.add(folded);
+      cleanOrder.push(label);
+    }
+  }
+
+  /* T86: the retail product overrides. Strict, unlike the order above: a
+   * category id the rail does not draw would make the product vanish, so
+   * it is refused at the gate rather than dropped silently. */
+  let cleanProducts: ShelfProductOverride[] | undefined;
+  if (products !== undefined && products !== null) {
+    if (!Array.isArray(products)) {
+      return { error: "products must be an array of { key, categoryId }" };
+    }
+    if (products.length > MAX_ENTRIES) {
+      return { error: `at most ${MAX_ENTRIES} product overrides` };
+    }
+    cleanProducts = [];
+    const seenProducts = new Map<string, number>();
+    for (const raw of products) {
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        return {
+          error: "every product override must be { key, categoryId }",
+        };
+      }
+      const { key, categoryId } = raw as Record<string, unknown>;
+      if (typeof key !== "string") {
+        return { error: 'every product override needs a "Product:<id>" key' };
+      }
+      const trimmed = key.trim();
+      const colon = trimmed.indexOf(":");
+      const type = colon > 0 ? trimmed.slice(0, colon) : "";
+      const id = colon > 0 ? trimmed.slice(colon + 1).trim() : "";
+      if (type !== "Product" || id.length === 0) {
+        return {
+          error: `product override key ${JSON.stringify(key)} is not "Product:<id>"`,
+        };
+      }
+      if (typeof categoryId !== "number" || !Number.isInteger(categoryId)) {
+        return {
+          error: `product override ${JSON.stringify(`Product:${id}`)} needs an integer categoryId`,
+        };
+      }
+      if (!PRODUCT_CATEGORY_IDS.includes(categoryId)) {
+        return {
+          error: `category ${categoryId} is not a counter category (${PRODUCT_CATEGORY_IDS.join(", ")})`,
+        };
+      }
+      const clean = itemKey("Product", id);
+      const already = seenProducts.get(clean);
+      if (already !== undefined) {
+        if (already === categoryId) continue;
+        return {
+          error: `product ${id} is moved to both category ${already} and category ${categoryId}`,
+        };
+      }
+      seenProducts.set(clean, categoryId);
+      cleanProducts.push({ key: clean, categoryId });
+    }
+  }
+
+  /* The two new fields are added only when they were sent, so a config
+   * from before T86 round-trips through the table byte for byte. */
+  const clean: ShelfConfig = { hidden: cleanHidden, groups: cleanGroups };
+  if (cleanOrder !== undefined) clean.groupOrder = cleanOrder;
+  if (cleanProducts !== undefined) clean.products = cleanProducts;
+  return clean;
 }
 
 /**
@@ -308,10 +452,28 @@ export function canonicalGroupLabel(label: string): string {
   return PASS_GROUPS.find((g) => g.toLowerCase() === folded) ?? label.trim();
 }
 
+/**
+ * T86: the product overrides as a map from item key to category id. One
+ * reading for `applyShelfConfig` and for the shelf admin route's
+ * placement line, so the drawer can never disagree with the shelf.
+ */
+export function productCategoryOverrides(
+  config: ShelfConfig,
+): Map<string, number> {
+  return new Map((config.products ?? []).map((o) => [o.key, o.categoryId]));
+}
+
 /** The least a shelf item needs to be filtered: its type and id. */
 export interface Keyed {
   type: "Product" | "Service" | "Package";
   id: string | number;
+}
+
+/** T86: what a retail product needs beyond its key, so a config can move
+ *  it to another counter category. Packages ride the same generic and
+ *  carry the field too (null on a package). */
+export interface CategoryKeyed extends Keyed {
+  categoryId?: number | null;
 }
 
 /** What a pass needs beyond its key for the rule: its name and the
@@ -321,14 +483,22 @@ export interface PassKeyed extends Keyed, PassRuleInput {
   categoryId?: number | null;
 }
 
-export interface ShelfInput<P extends Keyed, S extends PassKeyed, C extends { id: number }> {
+export interface ShelfInput<
+  P extends CategoryKeyed,
+  S extends PassKeyed,
+  C extends { id: number },
+> {
   products: P[];
   passes: S[];
   packages: P[];
   contracts: C[];
 }
 
-export interface ShelfOutput<P extends Keyed, S extends PassKeyed, C extends { id: number }> {
+export interface ShelfOutput<
+  P extends CategoryKeyed,
+  S extends PassKeyed,
+  C extends { id: number },
+> {
   products: P[];
   /** Every pass gains `group`: its sub-category label. Since T76 a pass
    *  on the Passes shelf always has one (a T74 group's label when the
@@ -337,10 +507,11 @@ export interface ShelfOutput<P extends Keyed, S extends PassKeyed, C extends { i
   passes: (S & { group: string | null })[];
   packages: P[];
   contracts: C[];
-  /** Group labels in rail order: the fixed PASS_GROUPS first, then any
-   *  custom T74 label in config order, only those with at least one
-   *  visible pass on the Passes shelf, so the screen never draws an
-   *  empty cell. */
+  /** Group labels in rail order: since T86 the labels `config.groupOrder`
+   *  names, in its order, then every other label in the code order (the
+   *  fixed PASS_GROUPS first, then any custom T74 label in config order).
+   *  Only labels with at least one visible pass on the Passes shelf, so
+   *  the screen never draws an empty cell. */
   passGroups: string[];
 }
 
@@ -351,7 +522,7 @@ export interface ShelfOutput<P extends Keyed, S extends PassKeyed, C extends { i
  * over the cached raw catalog and the test applies it over a fixture.
  */
 export function applyShelfConfig<
-  P extends Keyed,
+  P extends CategoryKeyed,
   S extends PassKeyed,
   C extends { id: number },
 >(catalog: ShelfInput<P, S, C>, config: ShelfConfig): ShelfOutput<P, S, C> {
@@ -366,6 +537,16 @@ export function applyShelfConfig<
       if (!groupOf.has(id)) groupOf.set(id, label);
     }
   }
+  /* T86: a moved retail product takes its new category BEFORE the hide
+   * filter runs, so a product can be both moved and hidden, and the
+   * admin route's placement line agrees with what the rail draws. */
+  const moved = productCategoryOverrides(config);
+  const products = catalog.products.map((p) => {
+    const to = moved.get(itemKey("Product", p.id));
+    /* The spread widens P, and the one field it changes is a field P
+     * declares; the cast asserts only that. */
+    return to === undefined ? p : ({ ...p, categoryId: to } as P);
+  });
   const onPassesShelf = (p: PassKeyed) =>
     p.categoryId === undefined || p.categoryId === null;
   const passes = catalog.passes.filter(visible).map((p) => ({
@@ -384,13 +565,24 @@ export function applyShelfConfig<
         !fixed.includes(label) &&
         all.indexOf(label) === i,
     );
+  /* T86: the configured order first, for the labels it names that have
+   * something to show; every other label keeps the code order after
+   * them. */
+  const named = (config.groupOrder ?? [])
+    .map(canonicalGroupLabel)
+    .filter(
+      (label, i, all) =>
+        all.indexOf(label) === i &&
+        (fixed.includes(label) || custom.includes(label)),
+    );
+  const rest = [...fixed, ...custom].filter((label) => !named.includes(label));
   return {
-    products: catalog.products.filter(visible),
+    products: products.filter(visible),
     passes,
     packages: catalog.packages.filter(visible),
     contracts: catalog.contracts.filter(
       (c) => !hidden.has(itemKey("Contract", c.id)),
     ),
-    passGroups: [...fixed, ...custom],
+    passGroups: [...named, ...rest],
   };
 }
