@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   actorFields,
+  endedStaffSession,
   requireActor,
   runAsActor,
   staffSessionEndedResponse,
@@ -79,9 +80,10 @@ export const dynamic = "force-dynamic";
  *         `compReason`, both refused without one. Method "comp" is the
  *         100% case only: the discount must cover the whole subtotal,
  *         no tender is read, and the write goes out first with the
- *         discount lines and NO Payments; if Mindbody refuses that with
- *         an error naming payment, ONE retry goes out in the proven
- *         T43 shape (no DiscountAmount, one Comp payment for the full
+ *         discount lines and NO Payments; if Mindbody ANSWERS a 4xx
+ *         naming payment -- a definite refusal, so nothing was written,
+ *         never a 5xx, a dead transport or an error raised on our own
+ *         side -- ONE retry goes out in the proven T43 shape (no DiscountAmount, one Comp payment for the full
  *         undiscounted total, rehearsed first), and the answer and the
  *         record carry `discountShape: "lines" | "comp-payment"`. Any
  *         other method (or a split) needs a discount that leaves
@@ -976,7 +978,23 @@ export async function POST(request: Request) {
         );
       } catch (first) {
         const message = errMessage(first);
-        if (isAmbiguous(first) || !/payment/i.test(message)) {
+        /* The ONE documented fallback opens on a DEFINITE 4xx answer
+         * from Mindbody naming payment, and on nothing else. Asking
+         * !isAmbiguous() was not that: an error with no HTTP status at
+         * all reads as not-ambiguous, so an error raised on our own
+         * side before the request -- a staff session the token check
+         * just ended, or checkoutCart's own "needs a payment" argument
+         * guards, which carry the word -- would have opened it and sent
+         * a second write. A 4xx is the only answer that says Mindbody
+         * read the cart and refused it. */
+        const status = mindbodyHttpStatus(first);
+        const refusedForPayment =
+          status !== null &&
+          status >= 400 &&
+          status < 500 &&
+          !endedStaffSession(first) &&
+          /payment/i.test(message);
+        if (!refusedForPayment) {
           console.log(
             `[comp] ${target()} sale=none outcome=${isAmbiguous(first) ? "ambiguous" : "refused"} ` +
               `client=${clientId ?? "house"} total=${discounted.toFixed(2)} ` +
