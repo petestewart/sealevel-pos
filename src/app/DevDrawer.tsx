@@ -842,6 +842,9 @@ interface ShelfAdminItem {
   key: string;
   name: string;
   price: number;
+  /** Where the counter files it as saved (the route computes it the
+   *  way /api/catalog does); absent from a pre-placement answer. */
+  placement?: string;
 }
 
 interface ShelfAdminGroup {
@@ -1142,6 +1145,12 @@ function ShelfPanel() {
                 <span className="dev-setting-label">
                   {item.name}
                   <span className="muted"> ${item.price.toFixed(2)}</span>
+                  {item.placement ? (
+                    <span className="muted dev-shelf-where">
+                      {" "}
+                      {item.placement}
+                    </span>
+                  ) : null}
                 </span>
                 {type === "Service" ? (
                   <select

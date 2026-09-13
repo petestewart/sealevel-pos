@@ -11,6 +11,7 @@ import {
   storageMode,
 } from "@/lib/db";
 import {
+  applyShelfConfig,
   itemKey,
   SHELF_SETTING_KEY,
   validateShelfConfig,
@@ -49,6 +50,13 @@ interface ShelfAdminItem {
   key: string;
   name: string;
   price: number;
+  /** Where the counter files this item as the config stands ("Passes >
+   *  Specials", "Retail > Food/Drink", "Rentals", "hidden", or "not on
+   *  any shelf: category 27"), computed the way /api/catalog computes
+   *  it, so the drawer answers "why is X not showing" without a guess
+   *  (Pete, live: "2026 Annual Unlimited Special is not showing up
+   *  anywhere in the UI"). */
+  placement: string;
 }
 
 export async function GET(request: Request) {
@@ -60,16 +68,46 @@ export async function GET(request: Request) {
       currentShelfConfig(),
       dbAvailable(),
     ]);
+    const shelf = applyShelfConfig(data, config);
+    const shown = new Set<string>([
+      ...shelf.products.map((p) => itemKey("Product", p.id)),
+      ...shelf.passes.map((p) => itemKey("Service", p.id)),
+      ...shelf.packages.map((p) => itemKey("Package", p.id)),
+      ...shelf.contracts.map((c) => itemKey("Contract", c.id)),
+    ]);
+    const passGroup = new Map(
+      shelf.passes.map((p) => [itemKey("Service", p.id), p.group]),
+    );
+    const categoryLabel = (categoryId: number | null): string | null => {
+      const c = data.categories.find((x) => x.categoryIds.includes(categoryId ?? NaN));
+      return c ? (c.section === "Rentals" ? c.label : `${c.section} > ${c.label}`) : null;
+    };
     const item = (
       type: ShelfItemType,
       id: string | number,
       name: string,
       price: number,
-    ): ShelfAdminItem => ({ type, id, key: itemKey(type, id), name, price });
+      categoryId: number | null,
+    ): ShelfAdminItem => {
+      const key = itemKey(type, id);
+      const placement = !shown.has(key)
+        ? "hidden"
+        : type === "Service"
+          ? (passGroup.get(key)
+              ? `Passes > ${passGroup.get(key)}`
+              : (categoryLabel(categoryId) ?? "not on any shelf"))
+          : type === "Package"
+            ? "Passes > Packages"
+            : type === "Contract"
+              ? "Passes > Memberships"
+              : (categoryLabel(categoryId) ??
+                `not on any shelf: category ${categoryId ?? "none"}`);
+      return { type, id, key, name, price, placement };
+    };
     const items: ShelfAdminItem[] = [
-      ...data.products.map((p) => item("Product", p.id, p.name, p.price)),
-      ...data.passes.map((p) => item("Service", p.id, p.name, p.price)),
-      ...data.packages.map((p) => item("Package", p.id, p.name, p.price)),
+      ...data.products.map((p) => item("Product", p.id, p.name, p.price, p.categoryId)),
+      ...data.passes.map((p) => item("Service", p.id, p.name, p.price, p.categoryId)),
+      ...data.packages.map((p) => item("Package", p.id, p.name, p.price, null)),
       /* A contract's headline is its recurring charge (what the shelf
        * card shows, T30), else the first payment. */
       ...data.contracts.map((c) =>
@@ -78,6 +116,7 @@ export async function GET(request: Request) {
           c.id,
           c.name,
           c.recurringPaymentTotal ?? c.firstPaymentTotal ?? 0,
+          null,
         ),
       ),
     ];

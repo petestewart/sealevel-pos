@@ -6774,7 +6774,7 @@ function FrontDesk({
           role="presentation"
         >
           <div
-            className="modal modal-list"
+            className="modal modal-list modal-counter"
             role="dialog"
             aria-modal="true"
             aria-label={
