@@ -19,17 +19,21 @@ import {
  * The raw catalog and its cache (T22), lifted out of /api/catalog in T74
  * so the shelf admin route can list EVERY item, hidden ones included,
  * from the same cached reads rather than adding Mindbody calls of its
- * own. Nothing about the cache changed: ten minutes per process, keyed
+ * own. Nothing about the cache changed then: two minutes per process since T75, keyed
  * by target, a failure never cached, `?refresh=1` the one bypass.
  *
- * Cached per process for 10 minutes. The catalog changes rarely (a studio
- * adds a product a few times a year), and the design doc's no-stale-pricing
+ * Cached per process for two minutes (ten until T75, when a product that
+ * had existed for months was missing from the shelf and then appeared,
+ * and Pete asked for a refresh; the Buy rail's Refresh cell is the
+ * other half). The catalog changes rarely (a studio adds a product a few
+ * times a year) and is only fetched when someone opens Buy, so a short
+ * cache costs a handful of reads a day. The design doc's no-stale-pricing
  * rule is honored because nothing here IS the price of a sale: the cart's
  * total always comes live from /api/price-cart, and any drift between a
  * cached shelf price and Mindbody's live total is exactly the disagreement
  * priceCart is built to surface, never swallow.
  */
-const CACHE_TTL_MS = 10 * 60 * 1000;
+const CACHE_TTL_MS = 2 * 60 * 1000;
 
 export interface RawCatalog {
   categories: typeof counterCategories;
@@ -121,7 +125,7 @@ export async function rawCatalog(
  * T74: the shelf config, read per request and never held longer. Like
  * the bundles (T29) it is local, so reading it per request costs nothing
  * metered, and a change saved in the drawer must show on the next load,
- * not up to ten minutes later. `shelfSource` says whether the table
+ * not up to two minutes later. `shelfSource` says whether the table
  * answered ("db") or the code default applies ("config": no database,
  * no row, or a row that failed validation). Dev-drawer-payload detail
  * only; nothing teacher-facing shows it.

@@ -335,6 +335,8 @@ interface PricedResult {
   taxTotal: number | null;
   grandTotal: number | null;
   expectedTotal: number;
+  /** T75: the shelf's pre-tax sum, the figure `disagrees` compares. */
+  expectedSubtotal: number;
   disagrees: boolean;
   /** T30: true when the cart holds a package line. The server skips the
    *  strict disagree assertion for these carts (a package row carries no
@@ -477,6 +479,10 @@ function Icon(props: { d?: string; size?: number; children?: ReactNode }) {
 
 function CloseIcon() {
   return <Icon d="M6 6l12 12M18 6 6 18" />;
+}
+
+function RefreshIcon() {
+  return <Icon size={18} d="M3 8v5h5M3.5 13a8.5 8.5 0 1 0 2.5-6" />;
 }
 
 function MinusIcon() {
@@ -4290,7 +4296,7 @@ export default function SaleScreen(props: {
   /**
    * T38: the second way out, for the disagree stop specifically. The
    * likeliest cause of "our math says X, Mindbody says Y" is a shelf
-   * priced from the ten-minute catalog cache after the studio changed a
+   * priced from the two-minute catalog cache after the studio changed a
    * price, so Recheck refetches the catalog past that cache
    * (`/api/catalog?refresh=1`), rebuilds every cart line from the fresh
    * item with the same id and quantity, and hands the result to the
@@ -4359,7 +4365,7 @@ export default function SaleScreen(props: {
   }, [rechecking]);
 
   /** Fetch the shelf once per screen life; the route caches server-side
-   *  for 10 minutes anyway. A failure renders with a retry button. */
+   *  for two minutes anyway (T75). A failure renders with a retry button. */
   const loadCatalog = useCallback(() => {
     setCatalogLoading(true);
     setCatalogError(null);
@@ -5193,19 +5199,9 @@ export default function SaleScreen(props: {
                 a.theirQuantity === null;
               const priceOff =
                 a.theirPrice !== null && a.theirPrice !== a.ourPrice;
-              /* A line the catalog carried no rate
-                 for was asserted at the studio
-                 fallback, so that is the figure
-                 Mindbody's rate is measured against
-                 (the second live test's 13% against
-                 10.35% is exactly this case). With no
-                 fallback in hand, nothing to compare. */
-              const ourRate =
-                a.ourTaxRate ?? config?.studioTaxRate ?? null;
-              const rateOff =
-                a.theirTaxRate !== null &&
-                ourRate !== null &&
-                a.theirTaxRate !== ourRate;
+              /* T75: the tax rate is shown for the record and never
+                 marked bad; tax left the assertion (see
+                 expectedSubtotal in src/lib/sale.ts). */
               const qtyOff =
                 a.theirQuantity !== null && a.theirQuantity !== a.quantity;
               return (
@@ -5221,11 +5217,8 @@ export default function SaleScreen(props: {
                   <td>
                     {money(a.ourPrice)} x{a.quantity}
                     <span className="audit-sub">
-                      {a.ourTaxRate === null
-                        ? "studio fallback rate"
-                        : pct(a.ourTaxRate)}
-                      {" = "}
-                      {money(a.ourExtended)}
+                      {"= "}
+                      {money(a.ourExtended)} before tax
                     </span>
                   </td>
                   <td className={unmatched ? "audit-bad" : undefined}>
@@ -5239,12 +5232,10 @@ export default function SaleScreen(props: {
                         <span className={qtyOff ? "audit-bad" : undefined}>
                           x{a.theirQuantity ?? "?"}
                         </span>
-                        <span
-                          className={
-                            rateOff ? "audit-sub audit-bad" : "audit-sub"
-                          }
-                        >
-                          {pct(a.theirTaxRate)}
+                        <span className="audit-sub">
+                          {a.theirTaxRate !== null
+                            ? `${pct(a.theirTaxRate)} tax`
+                            : "tax not stated"}
                         </span>
                       </>
                     )}
@@ -5273,9 +5264,9 @@ export default function SaleScreen(props: {
       </div>
     ) : cart.length > 0 && !pricing && totals?.disagrees ? (
       <div className="sale-stop">
-        Totals disagree. Our math says {money(totals.expectedTotal)},
-        Mindbody says{" "}
-        {totals.grandTotal !== null ? money(totals.grandTotal) : "nothing"}.
+        Prices disagree before tax. The shelf says{" "}
+        {money(totals.expectedSubtotal)}, Mindbody says{" "}
+        {totals.subTotal !== null ? money(totals.subTotal) : "nothing"}.
         Do not charge; this is a bug to report.
         {auditTable}
         <button
@@ -5510,6 +5501,32 @@ export default function SaleScreen(props: {
                         more
                       </button>
                     )}
+                    {/* T75 (Pete: a product that existed for months did
+                        not show, then did; "add a refresh"): the rail's
+                        last cell refetches the catalog past the server
+                        cache, the same recheckPrices the disagree stop
+                        uses, so cart lines are rebuilt from the fresh
+                        shelf too. Muted like "more": a door, not a
+                        shelf. Pinned to the rail's bottom by CSS. */}
+                    <button
+                      className={
+                        rechecking ? "cat-chip more refresh busy" : "cat-chip more refresh"
+                      }
+                      disabled={rechecking}
+                      onClick={() => void recheckPrices()}
+                      aria-label="Refresh the catalog from Mindbody"
+                      title="Refresh the catalog from Mindbody"
+                    >
+                      {rechecking ? (
+                        <>
+                          <span className="spinner" aria-label="working" /> Refreshing
+                        </>
+                      ) : (
+                        <>
+                          <RefreshIcon /> Refresh
+                        </>
+                      )}
+                    </button>
                   </>
                 );
               })()}
@@ -5948,10 +5965,10 @@ export default function SaleScreen(props: {
                   <>
                     {totals.disagrees ? (
                       <div className="sale-stop">
-                        Totals disagree. Our math says{" "}
-                        {money(totals.expectedTotal)}, Mindbody says{" "}
-                        {totals.grandTotal !== null
-                          ? money(totals.grandTotal)
+                        Prices disagree before tax. The shelf says{" "}
+                        {money(totals.expectedSubtotal)}, Mindbody says{" "}
+                        {totals.subTotal !== null
+                          ? money(totals.subTotal)
                           : "nothing"}
                         . Do not charge; this is a bug to report.
                         {/* T38: the per-line audit, so the stop names

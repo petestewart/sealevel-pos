@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  *
  * The sale screen's shelf: retail products for the hardcoded counter
  * categories plus the pricing options (passes), packages and contracts.
- * Reads only. The raw catalog and its ten-minute cache live in
+ * Reads only. The raw catalog and its two-minute cache live in
  * src/lib/catalog.ts (T74 moved them there so the shelf admin route can
  * list every item from the same reads); this route applies what sits
  * OUTSIDE that cache at response time: the bundles (T29) and the shelf
@@ -26,7 +26,7 @@ export const dynamic = "force-dynamic";
  * local (code config or our own table, never a Mindbody call), so reading
  * them per request costs nothing metered, and an admin who just toggled a
  * bundle in the drawer must see the shelf change on the next load, not up
- * to ten minutes later. The database takes over only when it has rows
+ * to two minutes later. The database takes over only when it has rows
  * (see enabledDbBundles); `bundleSource` records which config answered.
  * Dev-drawer-payload detail only -- nothing teacher-facing shows it.
  */

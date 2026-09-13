@@ -9164,3 +9164,49 @@ overflow, drawer round trip 21 of 21 against Postgres 16, the gates
 401 without the PIN session and 404 without devtools for GET and PUT
 alike; no text under 16px, no button under 44px; typecheck and build
 green.
+
+## T75: a Refresh cell on the Buy rail, a two-minute catalog cache, and the price check drops tax
+
+**DONE** (2026-09-13), from the first live retail sale on the deployed
+app.
+
+**Refresh.** Pete: a Food/Drink product that had existed for months was
+missing from the shelf, then appeared; "add a refresh". The rail's last
+cell is now Refresh (muted like "more", pinned to the rail's foot in
+landscape, one more chip in the portrait row), which runs the T38
+recheck: `/api/catalog?refresh=1` past the server cache, every cart
+line rebuilt from the fresh shelf. The server cache is two minutes
+instead of ten; the catalog is only read when someone opens Buy, so
+that is a handful of reads a day. Why the product was missing is not
+established: the cache is the likeliest explanation and could not be
+proved after the fact.
+
+**The price check.** The same sale tripped the T38 stop on a $2.71
+drink: our estimate said $3.00, Mindbody $2.99. The dev drawer showed
+why, and it is systemic: every product record on site 471 carries
+`TaxRate: 0.1055` while Mindbody's checkout taxes at 10.35%, so the
+per-line tax assertion (chosen in the second live test, when the
+sandbox's 13% exposed the hardcoded 10.35%) refused every retail sale
+on the studio's own site. Pete: "why are we hanging on to our estimate?
+Today we do all sales thru mindbody so the mindbody amount is the right
+amount." The assertion now compares BEFORE tax: the shelf's price times
+quantity per line (`expectedSubtotal`) against Mindbody's `SubTotal`
+(or GrandTotal less TaxTotal when SubTotal is absent; nothing to assert
+when both are). Mindbody's tax is Mindbody's. What the check is for,
+a cart priced somewhere other than the studio (the 10 Class Pack is
+$230 in studio and $260 online), still shows in the pre-tax figure and
+still stops the sale. The stop's wording is "Prices disagree before
+tax. The shelf says X, Mindbody says Y."; the audit table shows each
+side's pre-tax extended price and states Mindbody's tax rate without
+marking it bad. `expectedTotal` (with tax) remains the labelled
+estimate for the states with no server total. The package carve-out
+and "never widen into a tolerance" stand.
+
+Verified against the mock through the real route: a $2.71 product with
+a 10.55% catalog rate priced by the mock at 10.35% answers
+`disagrees: false` with subTotal 2.71 and grandTotal 2.99; the same
+item with a wrong shelf price of $2.99 answers `disagrees: true` with
+the pre-tax audit line; a tax-exempt pass at $230 is clean. Both
+palettes at 1194 and 834 shot: the Refresh cell is 64px, muted, at the
+rail's bottom edge, and one tap makes exactly one `refresh=1` call.
+Typecheck and build green.
