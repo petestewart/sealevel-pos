@@ -1993,8 +1993,12 @@ function PaymentPanel(props: {
         : dueCents;
     if (cents <= 0) return;
     const id = nextLineId.current++;
-    /* Adding a tender disarms comp: the sale is being paid for. */
-    setComp(null);
+    /* T79: a PARTIAL discount survives a tender -- the remainder is
+     * exactly what this line is paying, and dropping the discount here
+     * repriced the cart at full price under a line entered against the
+     * discounted total (the T79 UI run caught it). A 100% discount
+     * leaves nothing due, so the guard above already returned and no
+     * tender can reach an armed comp. */
     setCompCleared(false);
     setLines((cur) => [...cur, { id, source, cents }]);
     dismissPad();
