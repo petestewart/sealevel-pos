@@ -271,8 +271,27 @@ export default function StaffModal({
 
   if (!open) return null;
 
+  /* T80: the PIN box REPLACES this modal while it is up rather than
+   * stacking on it. Two boxes at once, one half behind the other, reads
+   * as a mistake; closing it comes straight back here. */
+  if (teacher && pinOpen) {
+    return (
+      <PinModal
+        open
+        teacher={teacher}
+        mode={hasPin === true ? "change" : "set"}
+        dismissLabel="Cancel"
+        onClose={() => setPinOpen(false)}
+        onDone={() => {
+          setPinOpen(false);
+          setHasPin(true);
+          setMsg("PIN set");
+        }}
+      />
+    );
+  }
+
   return (
-    <>
     <div
       className={required ? "modal-scrim staff-gate" : "modal-scrim"}
       role="presentation"
@@ -392,22 +411,6 @@ export default function StaffModal({
         )}
       </div>
     </div>
-    {/* T80: over the account modal, since it was opened from it. */}
-    {teacher && pinOpen ? (
-      <PinModal
-        open
-        teacher={teacher}
-        mode={hasPin === true ? "change" : "set"}
-        dismissLabel="Cancel"
-        onClose={() => setPinOpen(false)}
-        onDone={() => {
-          setPinOpen(false);
-          setHasPin(true);
-          setMsg("PIN set");
-        }}
-      />
-    ) : null}
-    </>
   );
 }
 
