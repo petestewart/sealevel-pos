@@ -12,6 +12,7 @@
  */
 
 import { record, redactRequest, scrubCardDigits } from "./calllog";
+import { ensureTarget, targetOverride } from "./target";
 
 export interface MindbodyEnv {
   apiKey: string;
@@ -30,8 +31,17 @@ export type Target = "sandbox" | "prod";
  * for it -- the studio's own staff login is not one, since staff accounts
  * belong to a site -- so the safe default is also a usable one. Reaching
  * the real studio's classes and students stays a deliberate act.
+ *
+ * T89: the stored setting wins when one is loaded (src/lib/target.ts),
+ * else MINDBODY_TARGET. Still synchronous, because isDryRun(), the
+ * catalog cache key and every read call this: the row is loaded into
+ * memory by `ensureTarget()` at the top of mindbody() below, so no
+ * caller had to become async. No database, no row and no reachable
+ * store all mean the environment decides, exactly as before T89.
  */
 export function target(): Target {
+  const stored = targetOverride();
+  if (stored !== null) return stored;
   return process.env["MINDBODY_TARGET"] === "prod" ? "prod" : "sandbox";
 }
 
@@ -43,7 +53,29 @@ export function target(): Target {
  * the studio's own staff login will not authenticate there.
  */
 export function mindbodyEnv(): MindbodyEnv {
-  const sandbox = target() === "sandbox";
+  const t = target();
+  const resolved = resolveEnv(t);
+  if (resolved.env === null) {
+    const prefix = t === "sandbox" ? "MINDBODY_SANDBOX_" : "MINDBODY_PROD_";
+    throw new Error(
+      `Mindbody is not configured for target "${t}": set ${prefix}API_KEY, ` +
+        `${prefix}SITE_ID, ${prefix}STAFF_USERNAME and ${prefix}STAFF_PASSWORD ` +
+        "(or the unprefixed MINDBODY_* names, which serve as the fallback).",
+    );
+  }
+  return resolved.env;
+}
+
+/**
+ * The credential set for a target, resolved the way mindbodyEnv() resolves
+ * the current one, plus the NAMES of whatever is missing. Split out for
+ * T89: the target switch must refuse before it flips anything when the
+ * set it would switch to is incomplete, and say which variable to set.
+ * Names only, never a value: this answer reaches a browser.
+ */
+function resolveEnv(t: Target): { env: MindbodyEnv | null; missing: string[] } {
+  const sandbox = t === "sandbox";
+  const prefix = sandbox ? "MINDBODY_SANDBOX_" : "MINDBODY_PROD_";
   const pick = (name: string, fallback = ""): string =>
     (sandbox
       ? process.env[`MINDBODY_SANDBOX_${name}`]
@@ -62,23 +94,45 @@ export function mindbodyEnv(): MindbodyEnv {
     sandbox ? (process.env["MINDBODY_STAFF_PASSWORD"] ?? "") : "",
   );
 
-  if (!apiKey || !siteId || !username || !password) {
-    const prefix = sandbox ? "MINDBODY_SANDBOX_" : "MINDBODY_PROD_";
-    throw new Error(
-      `Mindbody is not configured for target "${target()}": set ${prefix}API_KEY, ` +
-        `${prefix}SITE_ID, ${prefix}STAFF_USERNAME and ${prefix}STAFF_PASSWORD ` +
-        "(or the unprefixed MINDBODY_* names, which serve as the fallback).",
-    );
-  }
+  const missing: string[] = [];
+  if (!apiKey) missing.push(`${prefix}API_KEY`);
+  if (!siteId) missing.push(`${prefix}SITE_ID`);
+  if (!username) missing.push(`${prefix}STAFF_USERNAME`);
+  if (!password) missing.push(`${prefix}STAFF_PASSWORD`);
+  if (missing.length > 0) return { env: null, missing };
   return {
-    apiKey,
-    siteId,
-    username,
-    password,
-    baseUrl:
-      process.env["MINDBODY_API_BASE_URL"] ||
-      "https://api.mindbodyonline.com/public/v6",
+    env: {
+      apiKey,
+      siteId,
+      username,
+      password,
+      baseUrl:
+        process.env["MINDBODY_API_BASE_URL"] ||
+        "https://api.mindbodyonline.com/public/v6",
+    },
+    missing,
   };
+}
+
+/**
+ * T89: which environment variables a target is missing, by name, empty
+ * when its set is complete. The unprefixed MINDBODY_* fallback counts as
+ * present, as it does everywhere else; a sandbox falls back to site -99
+ * and to the unprefixed staff login, so a complete-looking sandbox set
+ * can still be credentials issued for the studio rather than for -99,
+ * which Mindbody answers with "Site is deactivated" or "Staff identity
+ * authentication failed" (see CLAUDE.md). This checks that the variables
+ * are SET, which is all an environment can be checked for without
+ * spending a call.
+ */
+export function missingCredentials(t: Target): string[] {
+  return resolveEnv(t).missing;
+}
+
+/** The site id a target would use, or null when its set is incomplete.
+ *  Not a secret: /api/config already reports the current one. */
+export function siteIdFor(t: Target): string | null {
+  return resolveEnv(t).env?.siteId ?? null;
 }
 
 /**
@@ -164,6 +218,11 @@ export async function signInAsStaff(
     }
   | { ok: false; status: number }
 > {
+  /* T89: a sign-in must reach the site the counter is pointed at NOW,
+   * not the one the environment names, so the override is loaded here
+   * too; this is the one Mindbody call that deliberately does not go
+   * through mindbody(). */
+  await ensureTarget();
   const env = mindbodyEnv();
   const res = await fetch(`${env.baseUrl}/usertoken/issue`, {
     method: "POST",
@@ -393,6 +452,12 @@ export async function mindbody<T = any>(
   path: string,
   opts: MindbodyCallOptions = {},
 ): Promise<T> {
+  /* T89: the stored target, loaded before anything reads target(). At
+   * most one local read every five seconds (src/lib/target.ts), bounded,
+   * and it never throws: every Mindbody call passes through here, so this
+   * is the one place the override has to be fresh, and the one place that
+   * can afford to check. */
+  await ensureTarget();
   const env = mindbodyEnv();
   const method = opts.method ?? "GET";
 

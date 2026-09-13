@@ -10,6 +10,7 @@ import {
 } from "@/lib/mindbody";
 import { STUDIO_TAX_RATE, houseClientId } from "@/lib/sale";
 import { staffSessionStorage } from "@/lib/staffsession";
+import { ensureTarget, targetSource } from "@/lib/target";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,11 @@ async function bannerText(): Promise<string | null> {
 }
 
 export async function GET(request: Request) {
+  /* T89: the target can now be a stored setting, and this route is what
+   * the banner and the drawer read it from, so the override is loaded
+   * before target() is called. Bounded and never throws; with no
+   * database it is a no-op and the environment answers, as before. */
+  await ensureTarget();
   const bannerOnly = authRequired() && !isAuthenticated(request);
   if (bannerOnly) {
     /* The lock screen shows the same banner the counter does, database
@@ -89,5 +95,11 @@ export async function GET(request: Request) {
      * The money path still reads houseClientId() itself in /api/checkout
      * and /api/price-cart and refuses without it. */
     houseClient: houseClientId() !== null,
+    /* T89: whether the target above came from the stored setting
+     * (switched from the drawer) or from MINDBODY_TARGET in the server
+     * environment. The banner says which STUDIO; this says who decided.
+     * Dry run and the write guard have no equivalent: they are env only,
+     * always, and that is the rail T89 kept. */
+    targetSource: targetSource(),
   });
 }
