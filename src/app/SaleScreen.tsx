@@ -63,6 +63,10 @@ import {
 /** Mirrors /api/config's payload, as page.tsx holds it. */
 export interface ModeConfig {
   dryRun: boolean;
+  /** T89: who asked for the dry run, "env" (the server) or "browser"
+   *  (this iPad's own, which the banner names). Absent before the config
+   *  loads and null when nothing is suppressed. */
+  dryRunSource?: string | null;
   target: string;
   siteId: string | null;
   configError: string | null;
@@ -117,7 +121,11 @@ export function ModeBanner({ config }: { config: ModeConfig | null }) {
   return (
     <p className={config.dryRun ? "banner" : "banner live"}>
       {config.dryRun
-        ? "Dry run. Nothing is written to Mindbody."
+        ? /* T89: a dry run this browser asked for says so, since the
+             counter beside it may be writing for real. */
+          config.dryRunSource === "browser"
+          ? "Dry run on this iPad. Nothing is written to Mindbody."
+          : "Dry run. Nothing is written to Mindbody."
         : "LIVE. Taps check real students in."}{" "}
       {config.target === "prod" ? "Production" : "Sandbox"} site {config.siteId}.
       {!config.dryRun && config.writeClientIds.length > 0

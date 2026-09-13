@@ -339,30 +339,63 @@ function SettingsPanel({
   /* T78: where staff sessions live ("postgres" survives a restart; a
    * "memory (...)" mode names what is missing), from the same read. */
   const [staffSessions, setStaffSessions] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
+  /* T89: the target as anyone may read it, and whether the teacher signed
+   * in here may SWITCH it (POS_ADMIN_STAFF_IDS). Non-admins get the one
+   * read-only line; the switch does not exist for them, and the route
+   * refuses them regardless of what this renders. */
+  const [mode, setMode] = useState<{
+    target: string;
+    targetSource: string;
+    siteId: string | null;
+    dryRun: boolean;
+    dryRunSource: string | null;
+    targetAdmin: boolean;
+  } | null>(null);
+  const readMode = useCallback(() => {
     fetch("/api/config")
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
-        if (live && body && typeof body.storage === "string") {
-          setStorage(body.storage);
-        }
-        if (live && body && typeof body.staffSessions === "string") {
+        if (!body) return;
+        if (typeof body.storage === "string") setStorage(body.storage);
+        if (typeof body.staffSessions === "string") {
           setStaffSessions(body.staffSessions);
         }
+        setMode({
+          target: String(body.target ?? ""),
+          targetSource: String(body.targetSource ?? "env"),
+          siteId: body.siteId ?? null,
+          dryRun: body.dryRun === true,
+          dryRunSource: body.dryRunSource ?? null,
+          targetAdmin: body.targetAdmin === true,
+        });
       })
       .catch(() => undefined);
-    return () => {
-      live = false;
-    };
   }, []);
+  useEffect(() => {
+    readMode();
+  }, [readMode]);
   return (
     <div className="dev-settings">
-      <TargetPanel onSwitched={onTargetSwitched} />
+      {mode?.targetAdmin ? (
+        <TargetPanel onSwitched={onTargetSwitched} />
+      ) : mode !== null ? (
+        <>
+          <div className="dev-label">mindbody target</div>
+          <p className="dev-target-now">
+            {mode.target === "prod" ? "Production" : "Sandbox"} site{" "}
+            {mode.siteId ?? "not configured"}.{" "}
+            {mode.targetSource === "setting"
+              ? "Stored setting."
+              : "From MINDBODY_TARGET in the server environment."}
+          </p>
+        </>
+      ) : null}
+      <BrowserDryRun mode={mode} onChange={readMode} />
       <p className="muted">
         The rest is stored in this browser. Applies immediately, no restart.
-        Dry run and the write guard are server settings and deliberately not
-        here.
+        The server's own dry run and the write guard stay in the server
+        environment and are deliberately not here: the control above can
+        only add suppression for this iPad, never take it away.
       </p>
       {storage !== null ? (
         <p className="muted">
@@ -603,6 +636,70 @@ function TargetPanel({
           </button>
         </div>
       ) : null}
+    </>
+  );
+}
+
+/* --- Dry run on this iPad (T89) ---------------------------------------
+ *
+ * A dry run for ONE browser, in a cookie the server reads per request. It
+ * can only ADD suppression: the server's POS_DRY_RUN being on wins (the
+ * control then reads as forced on) and the sandbox forces both off, so
+ * the worst this can do is stop this iPad writing. That is why it is
+ * visible to anyone with the drawer while the target switch is not: one
+ * only ever makes the counter safer, the other decides which studio a
+ * real write lands in.
+ */
+
+const DRY_RUN_COOKIE = "pos_dry_run";
+
+function BrowserDryRun({
+  mode,
+  onChange,
+}: {
+  mode: {
+    dryRun: boolean;
+    dryRunSource: string | null;
+    target: string;
+  } | null;
+  onChange: () => void;
+}) {
+  if (mode === null) return null;
+  const forced = mode.dryRun && mode.dryRunSource === "env";
+  const sandbox = mode.target === "sandbox";
+  const on = mode.dryRunSource === "browser";
+  const set = (next: boolean) => {
+    try {
+      document.cookie = next
+        ? `${DRY_RUN_COOKIE}=1; path=/; max-age=31536000; samesite=lax`
+        : `${DRY_RUN_COOKIE}=; path=/; max-age=0; samesite=lax`;
+    } catch {
+      /* Cookies disabled: nothing changes, and the next read says so. */
+    }
+    onChange();
+  };
+  return (
+    <>
+      <div className="dev-label">dry run on this iPad</div>
+      <p className="muted">
+        {sandbox
+          ? "The sandbox never suppresses writes, here or in the server environment: that is what a sandbox is for."
+          : forced
+            ? "Forced on for the whole server by POS_DRY_RUN. Nothing this browser does can turn it off."
+            : on
+              ? "On for this browser only. Writes from this iPad are logged and suppressed; every other iPad still writes."
+              : "Off. Writes from this iPad reach Mindbody. Turning this on suppresses them for this browser only."}
+      </p>
+      <div className="dev-target-buttons">
+        <button
+          type="button"
+          className={on ? "dev-target-btn dev-target-go" : "dev-target-btn"}
+          disabled={forced || sandbox}
+          onClick={() => set(!on)}
+        >
+          {on ? "Turn off dry run here" : "Turn on dry run here"}
+        </button>
+      </div>
     </>
   );
 }

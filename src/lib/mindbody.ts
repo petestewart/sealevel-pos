@@ -11,6 +11,8 @@
  * ~400ms and the counter cannot afford that on a check-in.
  */
 
+import { cookies } from "next/headers";
+
 import { record, redactRequest, scrubCardDigits } from "./calllog";
 import { ensureTarget, targetOverride } from "./target";
 
@@ -338,6 +340,53 @@ export function isDryRun(): boolean {
 }
 
 /**
+ * T89: a dry run for ONE browser, on top of the server's.
+ *
+ * The cookie can only ADD suppression, never remove it: the env flag
+ * being on wins and the control in the drawer then shows as forced on,
+ * and the sandbox still forces both off for the reason above. That is
+ * what makes it safe to hand to anyone with the drawer -- the worst it
+ * can do is stop this iPad from writing, which is the direction this
+ * whole app errs in anyway. A teacher rehearsing on the counter machine
+ * no longer has to redeploy the server to do it, and nobody else's iPad
+ * changes.
+ *
+ * Not HttpOnly, deliberately: the drawer's control sets and clears it in
+ * the browser. It carries no authority, so nothing is lost by a script
+ * being able to read it, and a cookie is what makes the server side of
+ * the decision per REQUEST rather than per process.
+ */
+export const DRY_RUN_COOKIE = "pos_dry_run";
+
+/** Whether THIS request's browser asked for its own dry run. Outside a
+ *  request scope (a module load, a background task) `cookies()` throws
+ *  and the answer is simply no. */
+async function browserDryRun(): Promise<boolean> {
+  if (target() === "sandbox") return false;
+  try {
+    const jar = await cookies();
+    return jar.get(DRY_RUN_COOKIE)?.value === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether this write is suppressed and by whom: the server environment
+ * ("env", POS_DRY_RUN) or this browser ("browser", the cookie). Env
+ * first, so a server in dry run reports itself as the reason and the
+ * drawer can show its control as forced.
+ */
+export async function dryRunState(): Promise<{
+  on: boolean;
+  source: "env" | "browser" | null;
+}> {
+  if (isDryRun()) return { on: true, source: "env" };
+  if (await browserDryRun()) return { on: true, source: "browser" };
+  return { on: false, source: null };
+}
+
+/**
  * Which calls dry run has to intercept. Issuing a user token is a POST but
  * changes nothing, and nothing works without it, so it is not a write.
  */
@@ -462,11 +511,15 @@ export async function mindbody<T = any>(
   const method = opts.method ?? "GET";
 
   if (isWrite(method, path)) {
-    if (isDryRun()) {
+    /* T89: the server's dry run, or this browser's own. */
+    const dry = await dryRunState();
+    if (dry.on) {
+      const byBrowser = dry.source === "browser";
       console.warn(
         /* T84: redacted, because a card save's payload would otherwise
          * print a card number into the server log. */
-        `[dry-run] suppressed ${method} ${path} ${JSON.stringify(redactRequest(opts.body ?? {}))}`,
+        `[dry-run] suppressed ${method} ${path} ${JSON.stringify(redactRequest(opts.body ?? {}))}` +
+          (byBrowser ? " (this browser)" : ""),
       );
       record({
         method,
@@ -476,7 +529,9 @@ export async function mindbody<T = any>(
         outcome: "dry-run",
         actor: null,
         requestBody: opts.body ?? null,
-        responseBody: "suppressed: POS_DRY_RUN is on",
+        responseBody: byBrowser
+          ? "suppressed: dry run is on for this browser"
+          : "suppressed: POS_DRY_RUN is on",
       });
       return { DryRun: true } as T;
     }
