@@ -191,6 +191,10 @@ interface CatalogState {
   /** T74: pass sub-category labels in rail order, only those with a
    *  visible pass. Empty means the Passes shelf is one plain grid. */
   passGroups: string[];
+  /** T76: the shared favorites from app_settings, or null when nothing
+   *  is stored for this target (no database, no row), in which case the
+   *  device's own localStorage list applies. */
+  favorites: FavPair[] | null;
 }
 
 /** A bundle every line of which resolved against the loaded catalog; only
@@ -257,7 +261,9 @@ function isTeacherItem(item: ShelfItem): boolean {
 }
 
 /** One starred type+id pair, as persisted. Packages star like anything
- *  else on the shelf (T30): they are ordinary cart items. */
+ *  else on the shelf (T30): they are ordinary cart items. The shared
+ *  list (T76) carries string ids; a device's older localStorage list
+ *  may carry a pass's numeric id; itemKey stringifies, so both match. */
 interface FavPair {
   type: "Product" | "Service" | "Package";
   id: string | number;
@@ -265,9 +271,28 @@ interface FavPair {
 
 /** localStorage key, PER TARGET: sandbox stars must never render on the
  *  studio's shelf (item ids differ per site, so at best they would miss;
- *  at worst a sandbox id could collide with an unrelated prod item). */
+ *  at worst a sandbox id could collide with an unrelated prod item).
+ *  Since T76 this is the fallback behind the shared list in the
+ *  database: what the screen uses when /api/catalog serves no
+ *  favorites, and what a star tap keeps writing so nothing regresses
+ *  without a database. */
 function favoritesKey(target: string): string {
   return `pos.favorites.${target}`;
+}
+
+/** A stored or served favorites list, kept only if it is one. */
+function readFavPairs(parsed: unknown): FavPair[] {
+  return Array.isArray(parsed)
+    ? parsed.filter(
+        (p): p is FavPair =>
+          p !== null &&
+          typeof p === "object" &&
+          (p.type === "Product" ||
+            p.type === "Service" ||
+            p.type === "Package") &&
+          (typeof p.id === "string" || typeof p.id === "number"),
+      )
+    : [];
 }
 
 /** Same key shape the cart uses, so an item is one identity everywhere. */
@@ -286,6 +311,9 @@ function parseCatalog(body: any): CatalogState {
     packages: body?.packages ?? [],
     contracts: body?.contracts ?? [],
     passGroups: Array.isArray(body?.passGroups) ? body.passGroups : [],
+    favorites: Array.isArray(body?.favorites)
+      ? readFavPairs(body.favorites)
+      : null,
   };
 }
 
@@ -3977,38 +4005,49 @@ export default function SaleScreen(props: {
   }, []);
 
   /**
-   * The per-device stars, loaded from localStorage once the target is
-   * known (the key is per target; see favoritesKey). Held as the stored
-   * pairs so re-saving never mangles an id's string/number type; the Set
-   * of keys is derived. Storage failing (private mode, an iPad with site
-   * data blocked) degrades to an empty, non-persisting shelf, the same
+   * The stars. Since T76 the source of truth is the SHARED list in the
+   * database, served on the catalog payload (`favorites`); a star on
+   * one iPad shows on the next load of every other. With nothing stored
+   * (no database, no row yet) the per-device localStorage list applies,
+   * exactly as before T76, and the first star tap on that device
+   * uploads it (the one-time migration). Held as the stored pairs so
+   * re-saving never mangles an id's string/number type; the Set of keys
+   * is derived. Storage failing (private mode, an iPad with site data
+   * blocked) degrades to an empty, non-persisting shelf, the same
    * try/catch posture as settings.ts.
    */
   const [favorites, setFavorites] = useState<FavPair[]>([]);
   const favKey = config ? favoritesKey(config.target) : null;
+  /** Where the current list came from: the device until the catalog
+   *  serves a stored list or a PUT reports it stored. A ref, so the
+   *  localStorage load below can never overwrite a served list. */
+  const favSource = useRef<"local" | "db">("local");
+  /** T76: the quiet line under a star that could not be saved (the PUT
+   *  failed and the tap was undone). Cleared by the next tap or by a
+   *  rail change. */
+  const [favNotice, setFavNotice] = useState<string | null>(null);
+  useEffect(() => {
+    setFavNotice(null);
+  }, [activeCat, activeChild]);
 
   useEffect(() => {
-    if (favKey === null) return;
+    if (favKey === null || favSource.current === "db") return;
     try {
       const raw = window.localStorage.getItem(favKey);
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      setFavorites(
-        Array.isArray(parsed)
-          ? parsed.filter(
-              (p): p is FavPair =>
-                p !== null &&
-                typeof p === "object" &&
-                (p.type === "Product" ||
-                  p.type === "Service" ||
-                  p.type === "Package") &&
-                (typeof p.id === "string" || typeof p.id === "number"),
-            )
-          : [],
-      );
+      setFavorites(readFavPairs(raw ? JSON.parse(raw) : []));
     } catch {
       setFavorites([]);
     }
   }, [favKey]);
+
+  /** A served list wins whenever the catalog lands (the first load, a
+   *  recheck, Refresh): it is what every other iPad sees. */
+  useEffect(() => {
+    if (catalog?.favorites) {
+      favSource.current = "db";
+      setFavorites(catalog.favorites);
+    }
+  }, [catalog]);
 
   const favSet = useMemo(
     () => new Set(favorites.map((f) => itemKey(f.type, f.id))),
@@ -4017,22 +4056,62 @@ export default function SaleScreen(props: {
 
   const toggleFavorite = useCallback(
     (item: ShelfItem) => {
-      setFavorites((prev) => {
-        const key = itemKey(item.type, item.id);
-        const next = prev.some((f) => itemKey(f.type, f.id) === key)
-          ? prev.filter((f) => itemKey(f.type, f.id) !== key)
-          : [...prev, { type: item.type, id: item.id }];
-        if (favKey !== null) {
-          try {
-            window.localStorage.setItem(favKey, JSON.stringify(next));
-          } catch {
-            /* Not persistable here; the star still works for this visit. */
-          }
+      const key = itemKey(item.type, item.id);
+      const prev = favorites;
+      const next = prev.some((f) => itemKey(f.type, f.id) === key)
+        ? prev.filter((f) => itemKey(f.type, f.id) !== key)
+        : [...prev, { type: item.type, id: item.id }];
+      const persist = (list: FavPair[]) => {
+        if (favKey === null) return;
+        try {
+          window.localStorage.setItem(favKey, JSON.stringify(list));
+        } catch {
+          /* Not persistable here; the star still works for this visit. */
         }
-        return next;
-      });
+      };
+      /* Optimistic on screen and in the device's own store (the no-database
+       * path is exactly the pre-T76 behaviour), then the whole list to the
+       * shared one. A migration is the first PUT from a device whose list
+       * came from localStorage while the table had none. */
+      setFavNotice(null);
+      setFavorites(next);
+      persist(next);
+      const migrating = favSource.current === "local" && prev.length > 0;
+      void (async () => {
+        try {
+          const r = await fetch("/api/favorites", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              favorites: next.map((f) => ({ type: f.type, id: String(f.id) })),
+            }),
+          });
+          const body = await r.json().catch(() => null);
+          if (!r.ok || body?.ok !== true) {
+            throw new Error(body?.error ?? `HTTP ${r.status}`);
+          }
+          if (body.stored === true) {
+            favSource.current = "db";
+            if (body.migrated === true || migrating) {
+              console.info(
+                `[favorites] this device's list of ${next.length} is now the shared favorites`,
+              );
+            }
+          }
+        } catch (err) {
+          /* Undone, quietly: the shared list is the truth, and a star
+           * that only this iPad can see would mislead the next one. */
+          setFavorites(prev);
+          persist(prev);
+          setFavNotice(
+            `The star was not saved to the shared favorites and was undone (${
+              err instanceof Error ? err.message : String(err)
+            }).`,
+          );
+        }
+      })();
     },
-    [favKey],
+    [favKey, favorites],
   );
 
   /** Every sellable thing the catalog loaded, for star lookup and bundle
@@ -5776,6 +5855,11 @@ export default function SaleScreen(props: {
                       </button>
                     ))}
                   </div>
+                ) : null}
+                {favNotice !== null ? (
+                  <p className="muted fav-notice" role="status">
+                    {favNotice}
+                  </p>
                 ) : null}
                 {shelfEmpty ? (
                   <p className="muted">
