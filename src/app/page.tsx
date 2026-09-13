@@ -4418,8 +4418,8 @@ function FrontDesk({
               (chargeBody?.ambiguous === true
                 ? ""
                 : flavor === "renewal"
-                  ? " Sell the pack in Buy, on account credit."
-                  : " Sell the pass in Buy, on account credit, then attach " +
+                  ? " Sell the pack in Buy, on account balance."
+                  : " Sell the pass in Buy, on account balance, then attach " +
                     "and check in from the row."),
             mindbody: String(chargeBody?.error ?? "no reason returned"),
           });
@@ -5107,7 +5107,7 @@ function FrontDesk({
           <span aria-hidden="true" />
           <span aria-hidden="true">Payment</span>
           <span className="cell-bal" aria-hidden="true">
-            Balance
+            Account
           </span>
           {/* The chip column: no label needed. */}
           <span aria-hidden="true" />
@@ -5471,6 +5471,8 @@ function FrontDesk({
                   className={
                     entry.balance !== null && entry.balance < 0
                       ? "cell-bal neg"
+                      : entry.balance !== null && entry.balance > 0
+                      ? "cell-bal pos"
                       : "cell-bal"
                   }
                 >
@@ -6011,7 +6013,7 @@ function FrontDesk({
                   <span aria-hidden="true">Name</span>
                   <span aria-hidden="true">Passes</span>
                   <span className="cell-bal" aria-hidden="true">
-                    Balance
+                    Account
                   </span>
                   <span aria-hidden="true" />
                   <span aria-hidden="true" />
@@ -6324,6 +6326,8 @@ function FrontDesk({
                             className={
                               client.balance !== null && client.balance < 0
                                 ? "cell-bal neg"
+                                : client.balance !== null && client.balance > 0
+                                ? "cell-bal pos"
                                 : "cell-bal"
                             }
                           >
@@ -7416,7 +7420,7 @@ function FrontDesk({
                 reason rather than disappearing. */}
             <p className="pay-method-line">
               {payMethod === "credit"
-                ? `Pays with account credit (${
+                ? `Pays with account balance (${
                     payBalance !== null ? money(payBalance) : ""
                   }).`
                 : payMethod === "storedcard" && payCard

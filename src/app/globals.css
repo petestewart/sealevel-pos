@@ -1082,9 +1082,16 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-/* Money owed renders in the stop colour; credit and zero do not shout. */
+/* Money owed renders in the stop colour, money on account in the ok
+ * colour (Pete: "make the Balance amounts green or red depending on
+ * positive or negative"); zero does not shout. */
 .cell-bal.neg {
   color: var(--stop);
+  font-weight: 600;
+}
+
+.cell-bal.pos {
+  color: var(--ok);
   font-weight: 600;
 }
 
