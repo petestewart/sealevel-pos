@@ -840,7 +840,11 @@ function FrontDesk({
   teacher: Teacher;
   /** Signed out, or the session ended (null); or signed in as someone
    *  else from the account modal. AuthGate owns the state. */
-  onTeacherChange: (teacher: Teacher | null) => void;
+  /** T89: the second argument is the line the sign-in gate shows when
+   *  this is a sign-OUT the counter should explain (the studio target
+   *  just changed). Omitted everywhere else, which shows the gate's
+   *  standing wording. */
+  onTeacherChange: (teacher: Teacher | null, notice?: string | null) => void;
   /** T80: a word the gate earned before this screen existed ("PIN set"),
    *  shown in the banner slot once the roster is up. */
   initialFlash?: string | null;
@@ -1471,12 +1475,28 @@ function FrontDesk({
     }
   }, []);
 
+  /* T89: read once, then every 30 seconds. The banner has to be right
+   * about which studio this is within seconds of a switch made on
+   * ANOTHER iPad, and the config read is local apart from the banner
+   * row; nothing here calls Mindbody. A failed refetch keeps the last
+   * answer rather than blanking the banner. */
+  const readConfig = useCallback(() => {
+    fetch("/api/config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (body) setConfig(body);
+      })
+      .catch(() => undefined);
+  }, []);
+
   useEffect(() => {
     fetch("/api/config")
       .then((r) => r.json())
       .then(setConfig)
       .catch(() => setConfig(null));
-  }, []);
+    const timer = setInterval(readConfig, 30_000);
+    return () => clearInterval(timer);
+  }, [readConfig]);
 
   useEffect(() => {
     /* T46: another day is showing. Its list came from the calendar pick
@@ -7801,13 +7821,25 @@ function FrontDesk({
         open={staffOpen}
         teacher={teacher}
         onClose={() => setStaffOpen(false)}
-        onTeacherChange={setTeacher}
+        /* The modal's second argument is `hasPin` (T80) and this one's is
+         * a gate notice (T89), so the teacher alone is passed on. */
+        onTeacherChange={(t) => setTeacher(t)}
       />
 
       <DevDrawer
         open={devOpen}
         onOpenChange={setDevOpen}
         onAvailableChange={setDevAvailable}
+        /* T89: the counter now talks to the other studio. The banner is
+           re-read at once rather than at the next 30 second tick, and
+           the teacher goes back to the gate, because the server has
+           just ended every staff session: a token belongs to the site
+           that issued it. */
+        onTargetSwitched={(_next, notice) => {
+          readConfig();
+          setTeacher(null, notice);
+        }}
+        onConfigChanged={readConfig}
       />
 
       {/* T85: the one nav bar, the last child and fixed to the bottom on
@@ -7897,19 +7929,27 @@ function AuthGate() {
     };
   }, [phase]);
 
+  /* T89: read whenever the gate could be showing (so a sign-out after a
+   * target switch does not leave the gate's banner naming the studio the
+   * counter just left) and every 30 seconds after that, which is how an
+   * iPad sitting on the gate learns about a switch made elsewhere. */
   useEffect(() => {
     if (phase !== "open") return;
     let cancelled = false;
-    fetch("/api/config")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((body) => {
-        if (!cancelled) setGateConfig(body ?? null);
-      })
-      .catch(() => undefined);
+    const read = () =>
+      fetch("/api/config")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body) => {
+          if (!cancelled && body) setGateConfig(body);
+        })
+        .catch(() => undefined);
+    void read();
+    const timer = setInterval(read, 30_000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, [phase]);
+  }, [phase, teacher]);
 
   /* The one shared chokepoint for "a data fetch answered 401": wrap
    * window.fetch while the app is open. Every call site (FrontDesk, the
@@ -8016,7 +8056,13 @@ function AuthGate() {
   return (
     <FrontDesk
       teacher={teacher}
-      onTeacherChange={setTeacher}
+      onTeacherChange={(t, notice) => {
+        /* T89: a sign-out with a reason (the studio target changed) says
+         * so on the gate; every other call passes no notice and clears
+         * whatever was there. */
+        setGateNotice(notice ?? null);
+        setTeacher(t);
+      }}
       initialFlash={pinFlash}
       onInitialFlashShown={() => setPinFlash(null)}
     />

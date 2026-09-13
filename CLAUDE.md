@@ -57,6 +57,35 @@ something they forgot to prevent.
   reading `MINDBODY_SANDBOX_*` or `MINDBODY_PROD_*`; the unprefixed
   `MINDBODY_*` names remain the production fallback.
 
+**The target, and only the target, can also be switched from the drawer**
+(T89, Pete: "we also should make it so that it can flip between sandbox and
+prod with a setting rather than a redeploy", and, told this relaxes the rail
+below: "go"). One `app_settings` row, `mindbody_target`, wins over
+`MINDBODY_TARGET` when present; `src/lib/target.ts` loads it into memory at
+the top of every `mindbody()` call, so `target()` stays synchronous, and no
+database, no row or a row naming neither studio all mean the environment
+decides. A store that does not ANSWER is not a switch: the loaded target
+stays and the log says so, because a blip must not move a counter onto the
+studio `MINDBODY_TARGET` names. A stored target whose credential set is
+missing from the environment is ignored, loudly, and the environment
+decides. `PUT /api/admin/target` requires ALL of: the device session, the
+devtools gate, a signed-in teacher, that teacher's staff id in
+`POS_ADMIN_STAFF_IDS` (admin-only, empty means nobody), and both credential
+sets present in the environment, which it refuses by variable NAME.
+Switching ends every staff session (a token belongs to the site that issued
+it), clears the catalog cache, and refuses every write for two seconds
+afterwards, so a route that already read one studio cannot post to the
+other half way through (`targetSettling`). **Dry run and the write guard did not
+move**: they stay in the server environment, so a switch to prod still
+writes nothing until `POS_DRY_RUN=false` is deployed.
+
+**A dry run can also be added for ONE browser** (T89): the drawer's "dry run
+on this iPad" control sets the `pos_dry_run` cookie, read per request beside
+`POS_DRY_RUN`. It can only ADD suppression, never remove it, which is why
+anyone with the drawer may use it: the env flag wins, the sandbox still
+forces both off, and the worst it does is stop that iPad writing. Suppressed
+writes log `(this browser)`, and `/api/config` reports `dryRunSource`.
+
 Mindbody's site -99 sandbox works, but **only with credentials issued for
 it**: staff accounts belong to a site, so the studio's own API login
 (`sealevelapiuser@gmail.com`, site 471) authenticates against 471 and nothing
@@ -148,10 +177,21 @@ localStorage, apply immediately, and need no restart. Testing a number should
 not cost a commit. Under them, "signed-in teacher" names who is signed in and
 runs the T49 permission probe.
 
-Anything that decides whether a write reaches Mindbody -- dry run, target,
-the write guard -- is deliberately NOT here. Those stay in the server
-environment where a browser cannot reach them; a settings panel that could
-switch off dry run would defeat the point of dry run.
+Since T89 the tab opens on the Mindbody target: the studio and site in
+words, whether that came from the setting or the environment, and, for a
+teacher whose staff id is in `POS_ADMIN_STAFF_IDS`, one 64px control that
+asks once before switching. Everybody else sees the line and no control.
+Under it, "dry run on this iPad" turns on a suppression for this browser
+only.
+
+Anything that decides whether a write reaches Mindbody in the LOOSER
+direction -- the server's dry run, the write guard -- is still
+deliberately NOT here. Those stay in the server environment where a
+browser cannot reach them; a settings panel that could switch off dry run
+would defeat the point of dry run. The two T89 controls are the recorded
+exceptions, and both are safe in only one direction: the target switch is
+admin-only, audited in the log and refuses an incomplete credential set,
+and the local dry run can only make this iPad safer.
 
 ## The API spec is vendored. Use it.
 

@@ -11,7 +11,10 @@
  * ~400ms and the counter cannot afford that on a check-in.
  */
 
+import { cookies } from "next/headers";
+
 import { record, redactRequest, scrubCardDigits } from "./calllog";
+import { ensureTarget, targetOverride, targetSettling } from "./target";
 
 export interface MindbodyEnv {
   apiKey: string;
@@ -30,8 +33,17 @@ export type Target = "sandbox" | "prod";
  * for it -- the studio's own staff login is not one, since staff accounts
  * belong to a site -- so the safe default is also a usable one. Reaching
  * the real studio's classes and students stays a deliberate act.
+ *
+ * T89: the stored setting wins when one is loaded (src/lib/target.ts),
+ * else MINDBODY_TARGET. Still synchronous, because isDryRun(), the
+ * catalog cache key and every read call this: the row is loaded into
+ * memory by `ensureTarget()` at the top of mindbody() below, so no
+ * caller had to become async. No database, no row and no reachable
+ * store all mean the environment decides, exactly as before T89.
  */
 export function target(): Target {
+  const stored = targetOverride();
+  if (stored !== null) return stored;
   return process.env["MINDBODY_TARGET"] === "prod" ? "prod" : "sandbox";
 }
 
@@ -43,7 +55,29 @@ export function target(): Target {
  * the studio's own staff login will not authenticate there.
  */
 export function mindbodyEnv(): MindbodyEnv {
-  const sandbox = target() === "sandbox";
+  const t = target();
+  const resolved = resolveEnv(t);
+  if (resolved.env === null) {
+    const prefix = t === "sandbox" ? "MINDBODY_SANDBOX_" : "MINDBODY_PROD_";
+    throw new Error(
+      `Mindbody is not configured for target "${t}": set ${prefix}API_KEY, ` +
+        `${prefix}SITE_ID, ${prefix}STAFF_USERNAME and ${prefix}STAFF_PASSWORD ` +
+        "(or the unprefixed MINDBODY_* names, which serve as the fallback).",
+    );
+  }
+  return resolved.env;
+}
+
+/**
+ * The credential set for a target, resolved the way mindbodyEnv() resolves
+ * the current one, plus the NAMES of whatever is missing. Split out for
+ * T89: the target switch must refuse before it flips anything when the
+ * set it would switch to is incomplete, and say which variable to set.
+ * Names only, never a value: this answer reaches a browser.
+ */
+function resolveEnv(t: Target): { env: MindbodyEnv | null; missing: string[] } {
+  const sandbox = t === "sandbox";
+  const prefix = sandbox ? "MINDBODY_SANDBOX_" : "MINDBODY_PROD_";
   const pick = (name: string, fallback = ""): string =>
     (sandbox
       ? process.env[`MINDBODY_SANDBOX_${name}`]
@@ -62,23 +96,45 @@ export function mindbodyEnv(): MindbodyEnv {
     sandbox ? (process.env["MINDBODY_STAFF_PASSWORD"] ?? "") : "",
   );
 
-  if (!apiKey || !siteId || !username || !password) {
-    const prefix = sandbox ? "MINDBODY_SANDBOX_" : "MINDBODY_PROD_";
-    throw new Error(
-      `Mindbody is not configured for target "${target()}": set ${prefix}API_KEY, ` +
-        `${prefix}SITE_ID, ${prefix}STAFF_USERNAME and ${prefix}STAFF_PASSWORD ` +
-        "(or the unprefixed MINDBODY_* names, which serve as the fallback).",
-    );
-  }
+  const missing: string[] = [];
+  if (!apiKey) missing.push(`${prefix}API_KEY`);
+  if (!siteId) missing.push(`${prefix}SITE_ID`);
+  if (!username) missing.push(`${prefix}STAFF_USERNAME`);
+  if (!password) missing.push(`${prefix}STAFF_PASSWORD`);
+  if (missing.length > 0) return { env: null, missing };
   return {
-    apiKey,
-    siteId,
-    username,
-    password,
-    baseUrl:
-      process.env["MINDBODY_API_BASE_URL"] ||
-      "https://api.mindbodyonline.com/public/v6",
+    env: {
+      apiKey,
+      siteId,
+      username,
+      password,
+      baseUrl:
+        process.env["MINDBODY_API_BASE_URL"] ||
+        "https://api.mindbodyonline.com/public/v6",
+    },
+    missing,
   };
+}
+
+/**
+ * T89: which environment variables a target is missing, by name, empty
+ * when its set is complete. The unprefixed MINDBODY_* fallback counts as
+ * present, as it does everywhere else; a sandbox falls back to site -99
+ * and to the unprefixed staff login, so a complete-looking sandbox set
+ * can still be credentials issued for the studio rather than for -99,
+ * which Mindbody answers with "Site is deactivated" or "Staff identity
+ * authentication failed" (see CLAUDE.md). This checks that the variables
+ * are SET, which is all an environment can be checked for without
+ * spending a call.
+ */
+export function missingCredentials(t: Target): string[] {
+  return resolveEnv(t).missing;
+}
+
+/** The site id a target would use, or null when its set is incomplete.
+ *  Not a secret: /api/config already reports the current one. */
+export function siteIdFor(t: Target): string | null {
+  return resolveEnv(t).env?.siteId ?? null;
 }
 
 /**
@@ -164,6 +220,11 @@ export async function signInAsStaff(
     }
   | { ok: false; status: number }
 > {
+  /* T89: a sign-in must reach the site the counter is pointed at NOW,
+   * not the one the environment names, so the override is loaded here
+   * too; this is the one Mindbody call that deliberately does not go
+   * through mindbody(). */
+  await ensureTarget();
   const env = mindbodyEnv();
   const res = await fetch(`${env.baseUrl}/usertoken/issue`, {
     method: "POST",
@@ -276,6 +337,53 @@ export function isDryRun(): boolean {
    */
   if (target() === "sandbox") return false;
   return (process.env["POS_DRY_RUN"] ?? "true").toLowerCase() !== "false";
+}
+
+/**
+ * T89: a dry run for ONE browser, on top of the server's.
+ *
+ * The cookie can only ADD suppression, never remove it: the env flag
+ * being on wins and the control in the drawer then shows as forced on,
+ * and the sandbox still forces both off for the reason above. That is
+ * what makes it safe to hand to anyone with the drawer -- the worst it
+ * can do is stop this iPad from writing, which is the direction this
+ * whole app errs in anyway. A teacher rehearsing on the counter machine
+ * no longer has to redeploy the server to do it, and nobody else's iPad
+ * changes.
+ *
+ * Not HttpOnly, deliberately: the drawer's control sets and clears it in
+ * the browser. It carries no authority, so nothing is lost by a script
+ * being able to read it, and a cookie is what makes the server side of
+ * the decision per REQUEST rather than per process.
+ */
+export const DRY_RUN_COOKIE = "pos_dry_run";
+
+/** Whether THIS request's browser asked for its own dry run. Outside a
+ *  request scope (a module load, a background task) `cookies()` throws
+ *  and the answer is simply no. */
+async function browserDryRun(): Promise<boolean> {
+  if (target() === "sandbox") return false;
+  try {
+    const jar = await cookies();
+    return jar.get(DRY_RUN_COOKIE)?.value === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether this write is suppressed and by whom: the server environment
+ * ("env", POS_DRY_RUN) or this browser ("browser", the cookie). Env
+ * first, so a server in dry run reports itself as the reason and the
+ * drawer can show its control as forced.
+ */
+export async function dryRunState(): Promise<{
+  on: boolean;
+  source: "env" | "browser" | null;
+}> {
+  if (isDryRun()) return { on: true, source: "env" };
+  if (await browserDryRun()) return { on: true, source: "browser" };
+  return { on: false, source: null };
 }
 
 /**
@@ -393,15 +501,25 @@ export async function mindbody<T = any>(
   path: string,
   opts: MindbodyCallOptions = {},
 ): Promise<T> {
+  /* T89: the stored target, loaded before anything reads target(). At
+   * most one local read every five seconds (src/lib/target.ts), bounded,
+   * and it never throws: every Mindbody call passes through here, so this
+   * is the one place the override has to be fresh, and the one place that
+   * can afford to check. */
+  await ensureTarget();
   const env = mindbodyEnv();
   const method = opts.method ?? "GET";
 
   if (isWrite(method, path)) {
-    if (isDryRun()) {
+    /* T89: the server's dry run, or this browser's own. */
+    const dry = await dryRunState();
+    if (dry.on) {
+      const byBrowser = dry.source === "browser";
       console.warn(
         /* T84: redacted, because a card save's payload would otherwise
          * print a card number into the server log. */
-        `[dry-run] suppressed ${method} ${path} ${JSON.stringify(redactRequest(opts.body ?? {}))}`,
+        `[dry-run] suppressed ${method} ${path} ${JSON.stringify(redactRequest(opts.body ?? {}))}` +
+          (byBrowser ? " (this browser)" : ""),
       );
       record({
         method,
@@ -411,7 +529,9 @@ export async function mindbody<T = any>(
         outcome: "dry-run",
         actor: null,
         requestBody: opts.body ?? null,
-        responseBody: "suppressed: POS_DRY_RUN is on",
+        responseBody: byBrowser
+          ? "suppressed: dry run is on for this browser"
+          : "suppressed: POS_DRY_RUN is on",
       });
       return { DryRun: true } as T;
     }
@@ -435,6 +555,34 @@ export async function mindbody<T = any>(
           `POS_WRITE_CLIENT_IDS (${[...allowed].join(", ")})`,
       });
       return { WriteSuppressed: true } as T;
+    }
+    /* T89 review: the target moved a moment ago, so this write is not
+     * sent at all. A route makes several calls and the override can be
+     * refreshed between two of them (this process's own switch, or one
+     * read from the row after another process made it); a sale whose
+     * rehearsal priced one studio must never post to the other. Refused
+     * rather than suppressed: nothing is pretended to have worked. */
+    const settling = targetSettling();
+    if (settling > 0) {
+      console.warn(
+        `[target] refused ${method} ${path}: the studio target just changed, ` +
+          `settling for ${settling}ms. Sign in again and retry.`,
+      );
+      record({
+        method,
+        path,
+        status: null,
+        ms: 0,
+        outcome: "target-switch",
+        actor: null,
+        requestBody: opts.body ?? null,
+        responseBody:
+          "refused: the studio target just changed; this write was not sent",
+      });
+      throw new Error(
+        "The studio target just changed, so this write was not sent. " +
+          "Sign in again and try it once more.",
+      );
     }
   }
 

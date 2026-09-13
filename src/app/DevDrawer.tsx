@@ -47,11 +47,22 @@ export default function DevDrawer({
   open,
   onOpenChange,
   onAvailableChange,
+  onTargetSwitched,
+  onConfigChanged,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** True once /api/devlog answers, false while it 404s. */
   onAvailableChange: (available: boolean) => void;
+  /** T89: the counter was just pointed at the other studio. The page
+   *  re-reads /api/config for the banner and sends everyone back to the
+   *  sign-in gate, since every staff session has just ended. */
+  onTargetSwitched: (next: string, notice: string) => void;
+  /** T89: something in /api/config changed from in here (this browser's
+   *  own dry run), so the page re-reads it rather than waiting for its
+   *  30 second tick. The mode banner is the whole reason: it must never
+   *  say LIVE while this iPad is suppressing its writes. */
+  onConfigChanged: () => void;
 }) {
   const [available, setAvailable] = useState(false);
   const [calls, setCalls] = useState<CallRecord[]>([]);
@@ -230,7 +241,13 @@ export default function DevDrawer({
 
         <div className="dev-body">
           {tab === "settings" ? (
-            <SettingsPanel settings={settings} set={set} />
+            <SettingsPanel
+              settings={settings}
+              set={set}
+              open={open}
+              onTargetSwitched={onTargetSwitched}
+              onConfigChanged={onConfigChanged}
+            />
           ) : tab === "bundles" ? (
             <BundlesPanel />
           ) : tab === "shelf" ? (
@@ -318,9 +335,21 @@ const FLAGS: { key: keyof Settings; label: string; hint: string }[] = [
 function SettingsPanel({
   settings,
   set,
+  open,
+  onTargetSwitched,
+  onConfigChanged,
 }: {
   settings: Settings;
   set: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+  /** T89 review: the drawer stays mounted while it is shut, so the panel
+   *  re-reads /api/config every time it OPENS. Without that, `targetAdmin`
+   *  is whatever it was when the roster mounted: an admin who hands the
+   *  counter over through "sign in as someone else" left the switch drawn
+   *  for a teacher who is not one. The route refuses them either way, but
+   *  a control that cannot work must not be on the screen. */
+  open: boolean;
+  onTargetSwitched: (next: string, notice: string) => void;
+  onConfigChanged: () => void;
 }) {
   /* T29: the one quiet line saying which store is behind the DB features.
    * "none" is full fallback mode and is normal for local work. */
@@ -328,29 +357,70 @@ function SettingsPanel({
   /* T78: where staff sessions live ("postgres" survives a restart; a
    * "memory (...)" mode names what is missing), from the same read. */
   const [staffSessions, setStaffSessions] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
+  /* T89: the target as anyone may read it, and whether the teacher signed
+   * in here may SWITCH it (POS_ADMIN_STAFF_IDS). Non-admins get the one
+   * read-only line; the switch does not exist for them, and the route
+   * refuses them regardless of what this renders. */
+  const [mode, setMode] = useState<{
+    target: string;
+    targetSource: string;
+    siteId: string | null;
+    dryRun: boolean;
+    dryRunSource: string | null;
+    targetAdmin: boolean;
+  } | null>(null);
+  const readMode = useCallback(() => {
     fetch("/api/config")
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
-        if (live && body && typeof body.storage === "string") {
-          setStorage(body.storage);
-        }
-        if (live && body && typeof body.staffSessions === "string") {
+        if (!body) return;
+        if (typeof body.storage === "string") setStorage(body.storage);
+        if (typeof body.staffSessions === "string") {
           setStaffSessions(body.staffSessions);
         }
+        setMode({
+          target: String(body.target ?? ""),
+          targetSource: String(body.targetSource ?? "env"),
+          siteId: body.siteId ?? null,
+          dryRun: body.dryRun === true,
+          dryRunSource: body.dryRunSource ?? null,
+          targetAdmin: body.targetAdmin === true,
+        });
       })
       .catch(() => undefined);
-    return () => {
-      live = false;
-    };
   }, []);
+  useEffect(() => {
+    if (!open) return;
+    readMode();
+  }, [readMode, open]);
   return (
     <div className="dev-settings">
+      {mode?.targetAdmin ? (
+        <TargetPanel open={open} onSwitched={onTargetSwitched} />
+      ) : mode !== null ? (
+        <>
+          <div className="dev-label">mindbody target</div>
+          <p className="dev-target-now">
+            {mode.target === "prod" ? "Production" : "Sandbox"} site{" "}
+            {mode.siteId ?? "not configured"}.{" "}
+            {mode.targetSource === "setting"
+              ? "Stored setting."
+              : "From MINDBODY_TARGET in the server environment."}
+          </p>
+        </>
+      ) : null}
+      <BrowserDryRun
+        mode={mode}
+        onChange={() => {
+          readMode();
+          onConfigChanged();
+        }}
+      />
       <p className="muted">
-        Stored in this browser. Applies immediately, no restart. Dry run,
-        target and the write guard are server settings and deliberately not
-        here.
+        The rest is stored in this browser. Applies immediately, no restart.
+        The server's own dry run and the write guard stay in the server
+        environment and are deliberately not here: the control above can
+        only add suppression for this iPad, never take it away.
       </p>
       {storage !== null ? (
         <p className="muted">
@@ -402,6 +472,265 @@ function SettingsPanel({
       <ThemeSetting />
       <TeacherPanel />
     </div>
+  );
+}
+
+/* --- Mindbody target (T89) --------------------------------------------
+ *
+ * The one setting in this tab that is NOT stored in the browser: which
+ * studio the counter talks to, stored server-side in app_settings and
+ * switched through PUT /api/admin/target, which is gated by the device
+ * session, the devtools flag, a signed-in teacher and both credential
+ * sets being present in the server environment.
+ *
+ * Pete asked for it ("flip between sandbox and prod with a setting
+ * rather than a redeploy") and, told this relaxes the rail that kept
+ * write-reaching decisions out of the drawer, said "go". Dry run and the
+ * write guard did NOT come with it, and the block says so in a line:
+ * switching to prod lands in dry run unless the deployment turned it
+ * off, which is the whole point of keeping them in the environment.
+ */
+
+interface TargetInfo {
+  target: string;
+  targetSource: string;
+  siteId: string | null;
+  dryRun: boolean;
+  configured: boolean;
+  available: boolean;
+  targets: { target: string; siteId: string | null; missing: string[] }[];
+}
+
+const studioWord = (t: string) => (t === "prod" ? "Production" : "Sandbox");
+
+function TargetPanel({
+  open,
+  onSwitched,
+}: {
+  /** As SettingsPanel: re-read whenever the drawer opens, never from a
+   *  mount that may predate the teacher who is looking at it. */
+  open: boolean;
+  onSwitched: (next: string, notice: string) => void;
+}) {
+  const [info, setInfo] = useState<TargetInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  /** The target the confirm is asking about, or null for no question. */
+  const [asking, setAsking] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/target");
+      if (!res.ok) {
+        setLoaded(true);
+        return;
+      }
+      setInfo((await res.json()) as TargetInfo);
+    } catch {
+      /* The block stays quiet; the banner still says where we are. */
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    void load();
+  }, [load, open]);
+
+  const other =
+    info === null ? null : info.target === "prod" ? "sandbox" : "prod";
+  const otherReady =
+    info === null || other === null
+      ? null
+      : (info.targets.find((t) => t.target === other) ?? null);
+  const missing = otherReady?.missing ?? [];
+
+  const switchTo = async (next: string) => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/target", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target: next }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || body?.switched !== true) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        if (body?.target) setInfo(body as TargetInfo);
+        return;
+      }
+      setInfo(body as TargetInfo);
+      setAsking(null);
+      setDone(
+        `Switched to ${studioWord(next).toLowerCase()} site ${body.siteId ?? "?"}. ` +
+          "Every teacher signs in again.",
+      );
+      onSwitched(
+        next,
+        `The studio target changed to ${next}. Sign in again.`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!loaded) return <p className="muted">Loading the target.</p>;
+  if (info === null) {
+    return (
+      <p className="muted">
+        The target cannot be read here. The banner above still names it.
+      </p>
+    );
+  }
+
+  return (
+    <>
+      <div className="dev-label">mindbody target</div>
+      <p className="dev-target-now">
+        {studioWord(info.target)} site {info.siteId ?? "not configured"}.{" "}
+        {info.targetSource === "setting"
+          ? "Stored setting."
+          : "From MINDBODY_TARGET in the server environment."}
+      </p>
+      <p className="muted">
+        Dry run is {info.dryRun ? "on" : "off"}. Dry run and the write guard
+        stay in the server environment and this switch cannot change them, so
+        a switch to production still writes nothing until POS_DRY_RUN=false is
+        deployed.
+      </p>
+      {!info.configured || !info.available ? (
+        <p className="muted">
+          {info.configured
+            ? "The database is configured but not answering, so the target cannot be switched here; MINDBODY_TARGET in the server environment decides."
+            : "No database configured (DATABASE_URL unset), so MINDBODY_TARGET in the server environment decides and the target cannot be switched here."}
+        </p>
+      ) : missing.length > 0 && other !== null ? (
+        <p className="muted">
+          Cannot switch to {other}: the server environment is missing{" "}
+          {missing.join(", ")}.
+        </p>
+      ) : null}
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      {other !== null && asking === other ? (
+        <div className="dev-target-ask">
+          <p className="dev-target-question">
+            Switch this counter to {other.toUpperCase()}? Every teacher signs
+            in again.
+          </p>
+          <div className="dev-target-buttons">
+            <button
+              type="button"
+              className="dev-target-btn"
+              disabled={busy}
+              onClick={() => setAsking(null)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className={
+                other === "prod"
+                  ? "dev-target-btn dev-target-go stop"
+                  : "dev-target-btn dev-target-go"
+              }
+              disabled={busy}
+              onClick={() => void switchTo(other)}
+            >
+              {busy ? "Switching" : `Yes, switch to ${other}`}
+            </button>
+          </div>
+        </div>
+      ) : other !== null ? (
+        <div className="dev-target-buttons">
+          <button
+            type="button"
+            className="dev-target-btn"
+            disabled={
+              busy || missing.length > 0 || !info.configured || !info.available
+            }
+            onClick={() => {
+              setError(null);
+              setDone(null);
+              setAsking(other);
+            }}
+          >
+            Switch to {other}
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/* --- Dry run on this iPad (T89) ---------------------------------------
+ *
+ * A dry run for ONE browser, in a cookie the server reads per request. It
+ * can only ADD suppression: the server's POS_DRY_RUN being on wins (the
+ * control then reads as forced on) and the sandbox forces both off, so
+ * the worst this can do is stop this iPad writing. That is why it is
+ * visible to anyone with the drawer while the target switch is not: one
+ * only ever makes the counter safer, the other decides which studio a
+ * real write lands in.
+ */
+
+const DRY_RUN_COOKIE = "pos_dry_run";
+
+function BrowserDryRun({
+  mode,
+  onChange,
+}: {
+  mode: {
+    dryRun: boolean;
+    dryRunSource: string | null;
+    target: string;
+  } | null;
+  onChange: () => void;
+}) {
+  if (mode === null) return null;
+  const forced = mode.dryRun && mode.dryRunSource === "env";
+  const sandbox = mode.target === "sandbox";
+  const on = mode.dryRunSource === "browser";
+  const set = (next: boolean) => {
+    try {
+      document.cookie = next
+        ? `${DRY_RUN_COOKIE}=1; path=/; max-age=31536000; samesite=lax`
+        : `${DRY_RUN_COOKIE}=; path=/; max-age=0; samesite=lax`;
+    } catch {
+      /* Cookies disabled: nothing changes, and the next read says so. */
+    }
+    onChange();
+  };
+  return (
+    <>
+      <div className="dev-label">dry run on this iPad</div>
+      <p className="muted">
+        {sandbox
+          ? "The sandbox never suppresses writes, here or in the server environment: that is what a sandbox is for."
+          : forced
+            ? "Forced on for the whole server by POS_DRY_RUN. Nothing this browser does can turn it off."
+            : on
+              ? "On for this browser only. Writes from this iPad are logged and suppressed; every other iPad still writes."
+              : "Off. Writes from this iPad reach Mindbody. Turning this on suppresses them for this browser only."}
+      </p>
+      <div className="dev-target-buttons">
+        <button
+          type="button"
+          className={on ? "dev-target-btn dev-target-go" : "dev-target-btn"}
+          disabled={forced || sandbox}
+          onClick={() => set(!on)}
+        >
+          {on ? "Turn off dry run here" : "Turn on dry run here"}
+        </button>
+      </div>
+    </>
   );
 }
 
