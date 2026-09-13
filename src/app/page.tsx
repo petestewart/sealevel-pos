@@ -632,6 +632,22 @@ function nearestClassId(list: ClassSummary[]): number | null {
   return best?.classId ?? list[0]?.classId ?? null;
 }
 
+/** Today's default class: the first one that started within `hoursBack`
+ *  hours (a class in progress, or the one just finished while the room
+ *  clears), else the next to start, else the last of the day. The list
+ *  is sorted by start. */
+function defaultClassId(list: ClassSummary[], hoursBack: number): number | null {
+  const now = studioMinutesNow();
+  const floor = now - hoursBack * 60;
+  const pick =
+    list.find((c) => {
+      const mins =
+        Number(c.startsAt.slice(11, 13)) * 60 + Number(c.startsAt.slice(14, 16));
+      return mins >= floor;
+    }) ?? list[list.length - 1];
+  return pick?.classId ?? null;
+}
+
 /** "3rd", "21st". Plain numeric ordinals, no lookup table to run out of. */
 function nth(n: number): string {
   const rem10 = n % 10;
@@ -1448,9 +1464,14 @@ function FrontDesk({
      * and re-runs this) applies then. */
     if (viewDate !== null) return;
     const gen = ++viewGen.current;
-    fetch(
-      `/api/roster?hoursBack=${settings.hoursBack}&hoursForward=${settings.hoursForward}`,
-    )
+    /* The WHOLE studio day, not a window around now (Pete, live, at 7am
+     * with a 10am, 5pm and 6:30pm on the schedule: "i'm only seeing one
+     * class!! there are 3 today."). The window that used to cut the list
+     * was the same one metered call as the day, and a day picked on the
+     * calendar already showed everything; today now does too. The
+     * "schedule back" setting picks the DEFAULT class instead: the first
+     * class that started within that many hours, else the next one. */
+    fetch(`/api/roster?day=1`)
       .then((r) => r.json())
       .then((d) => {
         /* A day was picked while this was on the wire: its answer wins. */
@@ -1458,16 +1479,17 @@ function FrontDesk({
         if (d.error) return setError(d.error);
         const list: ClassSummary[] = d.classes ?? [];
         setClasses(list);
-        /* The URL names the class to land on. If it is not in the
-         * classes-around-now window (an old link, a class that has
-         * scrolled out), fall back to the default quietly and correct
-         * the param, so the URL always says what the screen shows. */
+        /* The URL names the class to land on. If it is not on today's
+         * list (an old link), fall back to the default quietly and
+         * correct the param, so the URL always says what the screen
+         * shows. */
         const wanted = Number(classIdParamRef.current);
         const fromUrl =
           Number.isFinite(wanted) && classIdParamRef.current !== null
             ? (list.find((c) => c.classId === wanted) ?? null)
             : null;
-        const chosen = fromUrl?.classId ?? list[0]?.classId ?? null;
+        const chosen =
+          fromUrl?.classId ?? defaultClassId(list, settings.hoursBack);
         setActiveId(chosen);
         syncClassParam(chosen);
       })
@@ -1475,7 +1497,7 @@ function FrontDesk({
         if (viewGen.current !== gen) return;
         setError(String(e));
       });
-  }, [settings.hoursBack, settings.hoursForward, syncClassParam, viewDate]);
+  }, [settings.hoursBack, syncClassParam, viewDate]);
 
   /**
    * Every class on one studio-local day, through the existing
