@@ -49,6 +49,24 @@
   --gold-bg: #f0dcae;
   --scrim: rgba(24, 22, 21, 0.55);
   --shadow-lg: 0 16px 48px rgba(24, 22, 21, 0.28);
+
+  /* T85: the nav bar's room, not a colour, so it is defined once. Every
+   * full-height screen subtracts it and every fixed screen stops above
+   * it, so nothing the bar covers can be the last row of a scroll
+   * region. The iPad's home indicator is inside the bar, not under the
+   * content.
+   *
+   * T85 review: the room is the items' 64px PLUS the 2px rule over them
+   * plus the indicator's inset. It was 64 flat, and the bar is
+   * border-box, so the items had 62px of content box to stand 64px in
+   * and the last 2px of every one of them fell past the viewport's
+   * bottom edge: measurably under the 64px floor this project sets for a
+   * thumb in a hot room. */
+  --nav-h: 64px;
+  --nav-rule: 2px;
+  --nav-space: calc(
+    var(--nav-h) + var(--nav-rule) + env(safe-area-inset-bottom, 0px)
+  );
 }
 
 * {
@@ -91,7 +109,9 @@ button {
    * that scrolls. min-height: 0 on the list lets it shrink under the
    * pinned parts instead of growing the shell past the viewport. */
   box-sizing: border-box;
-  height: 100dvh;
+  /* T85: the viewport less the nav bar, so the roster's own scroll region
+   * ends above it rather than under it. */
+  height: calc(100dvh - var(--nav-space));
   display: flex;
   flex-direction: column;
 }
@@ -100,8 +120,9 @@ button {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  /* Room under the last row so it clears the dev pill, and so the
-   * bottom border is not the viewport's edge. */
+  /* Room under the last row so its bottom border is not the scroll
+   * region's edge. The nav bar's height is out of the shell already
+   * (T85), so this is breathing room and nothing more. */
   padding-bottom: 24px;
   /* T57 review: the list is a grid, and stretching it to the viewport
    * (flex: 1 1 auto) spread five rows over the whole height with a
@@ -437,28 +458,10 @@ button {
   background: var(--surface-2);
 }
 
-/* T70: the Buy cell, the bar's one accent fill (Roster.dc.html): it
- * navigates to the sale screen and never sells by itself. Flush-left
- * label like every wide button. */
-.class-buy {
-  flex: 0 0 auto;
-  width: 108px;
-  min-height: 76px;
-  padding: 0 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  border: 0;
-  border-radius: 0;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-size: 19px;
-  font-weight: 800;
-}
-
-.class-buy:active {
-  background: var(--accent-press);
-}
+/* T85: the header's Buy cell and its account icon are the nav bar's Buy
+ * and Profile items. The sun is the last cell in the bar now, which is
+ * where the sale header's sun sits too: one control, one place, on every
+ * screen. */
 
 /* The sun cell: light or dark for this iPad. */
 .class-theme {
@@ -1648,35 +1651,10 @@ button.chip.action:active {
  * payloads, not for the counter.
  */
 
-.dev-handle {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 20;
-  min-height: 44px;
-  padding: 8px 16px;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  background: var(--surface);
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 600;
-  box-shadow: 0 2px 12px rgb(0 0 0 / 0.25);
-}
-
-/* T39.8: with the Buy overlay open (SaleScreen puts `sale-open` on the
- * body) the pill moves off the amount at the right into the bar's empty
- * run. T51 review: it was centred while Empty cart sat at the left; with
- * Empty cart beside Pay (T51) the centre is under Empty cart's left edge
- * at 1080 once the total has four figures, and the pill (z 20) took the
- * tap. Now a fixed offset just right of Back to items (20 + 184 + the
- * bar's 12 gap), which both modes leave empty at every width. Next's own
- * dev indicator, bottom left, is not ours to move. */
-body.sale-open .dev-handle {
-  right: auto;
-  left: 232px;
-}
-
+/* T85: the pill is gone. It was a floating control that moved out of the
+ * action bar's way at one width and under it at another, and the nav
+ * bar's Dev item replaces it: the drawer's count, its failure badge and
+ * its close are in the drawer's own head now. */
 .dev-badge {
   margin-left: 8px;
   padding: 1px 8px;
@@ -1689,14 +1667,16 @@ body.sale-open .dev-handle {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  /* T85: above the nav bar, never under it: the Dev item is what closes
+   * the drawer on an iPad with no keyboard. */
+  bottom: var(--nav-space);
   z-index: 19;
   height: min(55vh, 520px);
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--line);
   background: var(--surface);
-  transform: translateY(100%);
+  transform: translateY(calc(100% + var(--nav-space)));
   transition: transform 180ms ease-out;
 }
 
@@ -1710,6 +1690,20 @@ body.sale-open .dev-handle {
   gap: 12px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--line);
+}
+
+/* The call count and the failure badge, off the pill (T85): 13px like the
+ * rest of the drawer, which is the one place under the 16px floor by
+ * decision (it is for reading payloads, not for the counter). */
+.dev-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+.dev-head .dev-close {
+  margin-left: 0;
 }
 
 .dev-head button {
@@ -2582,15 +2576,21 @@ body.sale-open .dev-handle {
 
 .sale-overlay {
   position: fixed;
-  inset: 0;
+  /* T85: not `inset: 0` -- the overlay ends where the nav bar starts, so
+   * the ticket's foot and the payment column's primary are bounded above
+   * it exactly as the roster's last row is. */
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: var(--nav-space);
   z-index: 18;
   overflow-y: auto;
   /* T39.4: a column the viewport bounds. The shell and the panes take
    * flex: 1 with min-height: 0, so each pane scrolls inside itself (the
    * grid, the rail, the cart's lines) instead of the overlay scrolling
-   * as a whole, and the action bar (T39.5) is simply the last child at
+   * as a whole, and each column's foot (T85) is simply its last child at
    * the bottom. Under 900 the folds below give the height back and the
-   * overlay scrolls with the bar stuck to its edge. */
+   * overlay scrolls, with the ticket's foot stuck to its edge. */
   display: flex;
   flex-direction: column;
   /* A scroll that hits the overlay's end must not chain into the roster
@@ -2624,8 +2624,9 @@ body.sale-open .dev-handle {
 }
 
 /* The header (T70, Buy.dc.html): 76px on the surface, a 2px rule under,
- * a row of cells split by 1px lines, each a flex cell of its own: Buy,
- * the client slot, then the sun and Back at the right edge. */
+ * a row of cells split by 1px lines, each a flex cell of its own. Since
+ * T85: the client slot, then Refresh and the sun at the right edge (the
+ * title and Back are gone, the nav bar says which screen this is). */
 .sale-top {
   display: flex;
   align-items: stretch;
@@ -2646,20 +2647,9 @@ body.sale-open .dev-handle {
   border-left: 0;
 }
 
-.sale-title {
-  margin: 0;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  padding: 0 20px;
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-}
-
-/* The client card lives in the header, beside the title (Pete, fourth
- * live test): identity, not a payment control. Its cell takes its own
- * width; the sun cell's auto margin takes the slack. */
+/* The client card lives in the header (Pete, fourth live test):
+ * identity, not a payment control. Its cell takes its own width; the
+ * sun cell's auto margin takes the slack. */
 .sale-top .sale-for {
   width: auto;
   min-width: 0;
@@ -2686,30 +2676,6 @@ body.sale-open .dev-handle {
 .sale-sun:active {
   color: var(--ink);
   background: var(--surface-2);
-}
-
-.sale-back {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 22px;
-  border: 0;
-  border-left: 1px solid var(--line);
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-  font-size: 17px;
-  font-weight: 800;
-}
-
-.sale-back:active:not(:disabled) {
-  background: var(--surface-2);
-}
-
-.sale-back:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 /* T39.2: rail, grid, cart, the layout of record (1a). The rail is 154
@@ -3590,90 +3556,24 @@ button.sale-for:disabled {
   font-weight: 400;
 }
 
-/* --- T39.5: the action bar. ------------------------------------------
- * The overlay's last child: 92px on its own ground across the full
- * width, a hairline above and --shadow lifting it off the columns, its
- * contents aligned to the shell's 1400. Sticky, so on the narrow fold
- * where the overlay scrolls it stays at the viewport's edge; in the
- * bounded layout sticky is inert. z-index 5 keeps it under every modal
- * scrim (30) in the overlay's stacking context. --- */
-.sale-bar {
-  position: sticky;
-  bottom: 0;
-  z-index: 5;
-  flex: none;
-  width: 100%;
-  /* T70 (Buy.dc.html): 80px on the surface, a 2px rule over, no shadow
-   * (only modals cast one). */
-  border-top: 2px solid var(--rule);
-  background: var(--surface);
-}
-
-.sale-bar-in {
-  display: flex;
-  align-items: stretch;
-  gap: 0;
-  height: 80px;
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 0;
-}
-
-/* Empty cart and Back to items: quiet cells, 17px/800, a 1px line at
- * the left edge; Empty cart goes to the stop pair under a finger. T38's
- * confirm stands behind Empty cart. */
-.sale-bar-empty {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  height: 100%;
-  padding: 0 22px;
-  border: 0;
-  border-left: 1px solid var(--line);
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-  font-size: 17px;
-  font-weight: 800;
-}
-
-.sale-bar-in > .sale-bar-empty:first-child {
-  border-left: 0;
-}
-
-.sale-bar-empty:active:not(:disabled) {
-  background: var(--surface-2);
-}
-
-.sale-bar-empty.sale-bar-clear {
-  padding: 0 26px;
-  color: var(--muted);
-}
-
-.sale-bar-empty.sale-bar-clear:active:not(:disabled) {
-  color: var(--stop);
-  background: var(--stop-bg);
-}
-
-.sale-bar-empty:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-/* The primary: the accent-filled segment at the bar's right, its label
- * flush left at 22px/800 with the count at 16px/600 and the tabular
- * amount. `.off` is the disabled pair (Pay on an empty cart, Due while
- * anything is owed); it stays a real button with aria-disabled so its
- * title can say why. `.done` is the --ok fill after the write. */
-.sale-bar-pay {
-  margin-left: auto;
+/* --- The two feet (T85). The action bar is gone: its controls live at
+ * the foot of the column they belong to, so a screen has exactly one
+ * primary and the nav bar owns every move between screens.
+ *
+ * The primary: the accent-filled segment at the payment column's foot,
+ * its label flush left at 22px/800 with the count at 16px/600 and the
+ * tabular amount. `.off` is the disabled pair (Pay on an empty cart, Due
+ * while anything is owed); it stays a real button with aria-disabled so
+ * its title can say why. `.done` is the --ok fill after the write. */
+.pay-primary {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 18px;
-  height: 100%;
-  min-width: 260px;
-  padding: 0 32px;
+  gap: 14px;
+  min-height: 72px;
+  min-width: 200px;
+  padding: 0 22px;
   border: 0;
   border-radius: 0;
   background: var(--accent);
@@ -3684,7 +3584,7 @@ button.sale-for:disabled {
   text-align: left;
 }
 
-.sale-bar-pay.off {
+.pay-primary.off {
   background: var(--surface-2);
   color: var(--muted);
   cursor: default;
@@ -3694,22 +3594,22 @@ button.sale-for:disabled {
  * accent with the spinner (Payment.dc.html keeps the accent fill while
  * the due is covered, busy included; the roster's chip does the same),
  * rather than dropping to the quiet "not ready" pair mid-charge. */
-.sale-bar-pay.off.busy {
+.pay-primary.off.busy {
   background: var(--accent);
   color: var(--accent-ink);
 }
 
-.sale-bar-pay.done {
+.pay-primary.done {
   background: var(--ok);
   color: var(--bg);
 }
 
-.sale-bar-pay:active:not(.off):not(.done) {
+.pay-primary:active:not(.off):not(.done) {
   background: var(--accent-press);
 }
 
 /* The spinner is the one radius the pass keeps (README, "Geometry"). */
-.sale-bar-pay .spinner {
+.pay-primary .spinner {
   width: 18px;
   height: 18px;
   border-color: currentColor;
@@ -3717,13 +3617,13 @@ button.sale-for:disabled {
   border-radius: 50%;
 }
 
-.sale-bar-count {
+.btn-count {
   font-size: 16px;
   font-weight: 600;
   opacity: 0.85;
 }
 
-.sale-bar-amt {
+.btn-amt {
   font-size: 22px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -3817,9 +3717,9 @@ button.sale-for:disabled {
 
 /* One column on a narrow screen, in DOM order: rail, grid, cart. The
  * viewport bound (T39.4) is given back here: three stacked panes cannot
- * share 768px, so the overlay scrolls as it did before, the bar (T39.5)
- * sticks to its bottom edge, and the ticket's lines take T38's cap
- * again so the totals stay near. */
+ * share 768px, so the overlay scrolls as it did before, the ticket's
+ * foot (T85, the action bar's place) sticks to its bottom edge, and the
+ * ticket's lines take T38's cap again so the totals stay near. */
 @media (max-width: 900px) {
   .sale-shell,
   .sale-panes {
@@ -3853,6 +3753,22 @@ button.sale-for:disabled {
     border-left: 0;
     border-top: 2px solid var(--rule);
   }
+
+  /* T85 review: in this fold the panes stack and the OVERLAY is what
+   * scrolls, so a foot that is simply the column's last child scrolls
+   * away with it. With eight lines in the cart at 834x1194 the Pay
+   * control -- the only way from a cart to a sale -- sat 60px below the
+   * viewport's bottom edge and had to be scrolled to. The action bar this
+   * foot replaced was `position: sticky; bottom: 0` for exactly this
+   * fold; that stickiness comes with it, pinned to the overlay's bottom,
+   * which is the nav bar's top edge. The wide layout is untouched: there
+   * the column scrolls inside itself and the foot is already at its
+   * bottom. */
+  .t-foot {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+  }
 }
 
 /* --- The payment seam (T24): live method cards, the cash keypad, the
@@ -3877,6 +3793,84 @@ button.sale-for:disabled {
 
 .sale-left > .ticket {
   flex: 1 1 auto;
+}
+
+/* T85: the cart column's foot, under the ticket and outside its scroll:
+ * Empty cart as a quiet 48px row, Pay as the column-wide primary under
+ * it, thumb-closest. Both are the column's width; the 2px rule over them
+ * is the seam the bar's used to be. */
+.t-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: none;
+  border-top: 2px solid var(--rule);
+  background: var(--surface);
+}
+
+/* On the 64px floor like every other control a teacher taps, even though
+ * it is the quiet one: the foot is 136px of the column and the ticket
+ * scrolls above it. */
+.t-foot-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.t-foot-empty:active:not(:disabled) {
+  color: var(--stop);
+  background: var(--stop-bg);
+}
+
+.t-foot-empty:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The shelf's Pay: the primary's shape, the column's width. */
+.t-foot-pay {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 14px;
+  min-height: 72px;
+  padding: 0 22px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: left;
+}
+
+.t-foot-pay.off {
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: default;
+}
+
+.t-foot-pay:active:not(.off) {
+  background: var(--accent-press);
+}
+
+/* The spinner is the one radius the pass keeps (README, "Geometry"). */
+.t-foot-pay .spinner {
+  width: 18px;
+  height: 18px;
+  border-color: currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
 }
 
 /* --- T39.6: pay mode. -------------------------------------------------
@@ -3935,12 +3929,6 @@ button.sale-for:disabled {
     min-height: auto;
     overflow: visible;
   }
-}
-
-/* The bar's primary slot: nothing of its own, its child (the panel's
- * portalled button) joins the bar's row directly. */
-.sale-bar-slot {
-  display: contents;
 }
 
 /* --- T39.7: the payment surface; T70 restyles it to Payment.dc.html:
@@ -4221,15 +4209,24 @@ button.sale-for:disabled {
   color: var(--muted);
 }
 
-/* The foot: pushed to the bottom, the quiet line left, Comp right. */
+/* The foot: pushed to the bottom, the quiet line left, then Discount,
+ * then the primary (T85). It wraps rather than squeeze the primary: on
+ * the narrow fold the quiet line takes the first row and the two controls
+ * the second. The done foot holds the charged segment alone, right. */
 .pay-foot {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   flex: none;
   margin-top: auto;
   padding-top: 0;
   border-top: 0;
+}
+
+.pay-foot-done {
+  justify-content: flex-end;
+  margin: 0 20px 16px;
 }
 
 .pay-quiet {
@@ -5516,18 +5513,6 @@ textarea.reason-note-field:disabled::placeholder {
   background: var(--surface);
 }
 
-/* Empty cart sits just left of Pay with the bar's own 12px gap, not at
- * the bar's far edge; the pay button gives up its auto margin so the two
- * do not split the slack between them. Back to items (pay mode) keeps
- * the left edge: it has no `sale-bar-clear`. */
-.sale-bar-clear {
-  margin-left: auto;
-}
-
-.sale-bar-clear ~ .sale-bar-pay {
-  margin-left: 0;
-}
-
 /* T70 -------------------------------------------------------------------
  * The sale screen's modals share one square shell (Dialogs.dc.html; the
  * README's section 5): a 2px rule around the surface, --shadow-lg, the
@@ -5826,26 +5811,6 @@ textarea.reason-note-field:disabled::placeholder {
  * line split portrait has had since T46. */
 /* T70: the bar never wraps now (its cells narrow under 860 instead), so
  * T60's portrait reordering of the counters is gone. */
-
-.staff-account {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 64px;
-  min-height: 76px;
-  padding: 0;
-  border: 0;
-  border-left: 1px solid var(--line);
-  border-radius: 0;
-  background: transparent;
-  color: var(--muted);
-}
-
-.staff-account:active {
-  background: var(--surface-2);
-  color: var(--ink);
-}
 
 .modal-scrim.staff-gate {
   background: var(--bg);
@@ -6185,11 +6150,6 @@ textarea.reason-note-field:disabled::placeholder {
     width: 96px;
   }
 
-  .class-buy {
-    width: 88px;
-    padding: 0 16px;
-  }
-
   /* With 136px the name column would ellipsize "Whitney Campbell";
    * a name a teacher cannot read is worse than a taller row, so the
    * roster's names wrap here (the search rows' rule, T17). The pass
@@ -6243,6 +6203,89 @@ textarea.reason-note-field:disabled::placeholder {
   left: 0;
   right: 0;
   z-index: 1;
+}
+
+/* T85 --- The nav bar ---------------------------------------------------
+ * Pete: "maybe a nav bar at the bottom like this screenshot. sign-in,
+ * buy, pay, profile, and dev should all be in the nav bar." One row of
+ * evenly spaced items across the full width, 64px of it plus the home
+ * indicator's inset, on the surface under a 2px rule. The current screen
+ * is --accent with a 4px accent top edge, which is the same "this one"
+ * marker the payment tiles and the rail's cells use; everything else is
+ * --ink on the surface.
+ *
+ * z-index 22: over the sale overlay (18) and the dev drawer (19), because
+ * it is the same bar on every screen and Dev is what closes the drawer;
+ * under every modal scrim (30) and the lock and sign-in gates, which
+ * cover it whole and leave it inert. */
+.nav-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 22;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  height: var(--nav-space);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-top: var(--nav-rule) solid var(--rule);
+  background: var(--surface);
+}
+
+.nav-item {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: var(--nav-h);
+  padding: 0 4px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  /* The lit item's 4px edge, transparent on the rest, so nothing shifts
+   * when the screen changes. */
+  border-top: 4px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.nav-item:first-child {
+  border-left: 0;
+}
+
+.nav-item.on {
+  border-top-color: var(--accent);
+  color: var(--accent);
+}
+
+.nav-item[aria-disabled="true"] {
+  color: var(--muted);
+}
+
+/* The lit item stays FULLY lit while it is inert (mid-charge, or the done
+ * screen under Pay): the accent edge and colour say where the teacher is,
+ * and a charge does not move that. Dimming it was tried and dropped: at
+ * any opacity that reads as "off" the label falls under 4.5:1, and a
+ * marker a teacher cannot read is worse than one that does not say
+ * "inert" twice. The title says why, and the screen itself is showing a
+ * spinner on the button that is working. */
+.nav-item.on[aria-disabled="true"] {
+  color: var(--accent);
+}
+
+.nav-item:active:not([aria-disabled="true"]) {
+  background: var(--surface-2);
+}
+
+.nav-label {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 /* T84 --- Card on file --------------------------------------------------

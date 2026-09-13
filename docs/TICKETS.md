@@ -9767,3 +9767,77 @@ product still resolves; up disabled only on the first row and down on
 the last, 44px each; no server-only module in a client chunk; page.tsx
 and SaleScreen.tsx untouched. Noted, pre-existing: a hide-list key's id
 is not length-bounded.
+
+## T85: one bottom nav bar: Sign-in, Buy, Pay, Profile, Dev
+
+Pete: "navigation is inconsistent and unclear. the screens are sign-in,
+buy, pay. the buttons are in different spots and 'back' is unclear as
+to where it's going. also, no reason the teacher profile icon shouldn't
+be available in all those. and 'Buy' doesn't need to display on the buy
+page. maybe a nav bar at the bottom like this screenshot. sign-in, buy,
+pay, profile, and dev should all be in the nav bar."
+
+### What changed
+
+- **`NavBar.tsx`**, rendered by page.tsx as the last child: fixed at the
+  bottom, full width, 64px items plus the rule and the safe-area inset,
+  over the overlay and the drawer and under every modal and both
+  gates. Sign-in, Buy, Pay, Profile, Dev (Dev only when devtools are
+  on). The current screen's item is `--accent` with a 4px accent top
+  edge and `aria-current`; Profile and Dev carry `aria-expanded`.
+- **What each does.** Sign-in shows the roster keeping the cart and
+  client. Buy opens the shelf, or returns to it from pay mode keeping
+  the draft tender. Pay runs the shelf's own Pay gate (its reason is
+  the item's title) and opens pay mode; with nobody attached it opens
+  the walk-in dialog. Profile opens the account modal from anywhere.
+  Dev toggles the drawer; Cmd+D still works. Mid-charge every item is
+  inert and Pay stays lit. The lock screen and the sign-in gate render
+  instead of the screen, so the bar is not there beneath them.
+- **Removed:** the roster header's Buy cell and account icon, the sale
+  header's Buy title and Back, the whole action bar, the dev pill (its
+  count, failure badge and close moved into the drawer's head). The sun
+  stays the last header cell with T75's Refresh beside it.
+- **The bar's non-navigation controls became column feet:** Empty cart
+  and `Pay · N · $X` at the ticket's foot, the Due / Charge / Comp
+  primary beside Discount at the payment column's foot, no longer
+  portalled: the foot is inside the payment panel, so the primary is
+  still built by the render that priced the cart (T39.6's reason
+  holds).
+- `saleMode` lifted to page.tsx; `--nav-space` keeps the shell and the
+  overlay above the bar. The design README follows.
+
+### Verified by the builder
+
+Typecheck and build. `nav.js` in both palettes at 1194x834 and
+834x1194: the lit item per screen, cart survival, Pay's reason,
+Profile from all three screens, Dev on and off, every removed control
+absent, bounding-box clearance, mid-charge inertness, the done screen,
+the lock screen. Regression copies of T67, T69, T79's UI harness and
+T81 pass. Not verified: a real iPad (the safe-area inset is 0
+headless).
+
+### Review
+
+Adversarial review in its own worktree after merging T84, the Account
+wording and T86 (one conflict in globals.css, both sides kept; the
+Account tile and the balance colours survive). Four fixes:
+
+- **Pay left the screen in the narrow fold.** Under 900px the overlay
+  scrolls, and the old action bar was sticky for exactly that; the foot
+  that replaced it was not. At 834x1194 with eight cart lines Pay sat
+  60px below the bottom edge with nothing to say so. The ticket foot is
+  sticky in that fold now.
+- **Two items claimed `aria-current`** (Profile and Dev light on top of
+  whatever screen is showing). They use `aria-expanded` instead.
+- **Every item was 62px to a thumb:** the 2px rule ate the items' own
+  pixels. The bar's space is item plus rule plus inset.
+- Two CSS comments still described the deleted bar.
+
+Reviewed and correct: the primary is built by the same render that
+computes `chargeable`, and a cart change turns it off in the same
+render; Pay's gate is live from the roster; mid-charge inertness; the
+lock screen and gate render instead of the screen; Buy from pay keeps
+the draft tender; the done screen cannot outlive its sale; tokens only,
+16px, no em dash. Found and left, for Pete: Sign-in from the payment
+step keeps the cart and client but drops the draft tender, exactly as
+the old Back did; keeping it means not unmounting the overlay.
