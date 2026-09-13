@@ -261,6 +261,7 @@ const NUMBERS: {
   max: number;
   step: number;
 }[] = [
+  { key: "searchDebounceMs", label: "Search debounce", hint: "ms", min: 0, max: 1500, step: 50 },
   { key: "minQueryLength", label: "Minimum query", hint: "letters", min: 1, max: 6, step: 1 },
   { key: "searchLimit", label: "Search results", hint: "max", min: 3, max: 50, step: 1 },
   { key: "hoursBack", label: "Schedule back", hint: "hours", min: 0, max: 12, step: 1 },
@@ -281,7 +282,7 @@ const FLAGS: { key: keyof Settings; label: string; hint: string }[] = [
   {
     key: "autoWidenSearch",
     label: "Widen a search that finds nobody in class",
-    hint: "in the attach modal, a query matching nobody in the class turns In class off and searches everyone (T52)",
+    hint: "in the attach modal, Enter on a query matching nobody in the class moves the segment to All and searches everyone (T52)",
   },
 ];
 
