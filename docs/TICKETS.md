@@ -9314,3 +9314,101 @@ unusable, expiring within two hours; `staffSessions: "postgres"` in
 drawer's settings line will show the mode once the T76 builder
 releases that file. Not exercised: a real Mindbody, two instances, a
 map entry aging past two hours.
+
+
+## T76: the Buy rail as a hierarchy; pass sub-categories by rule; shared favorites
+
+**DONE** (2026-09-13). Pete: "the left sidebar should have a hierarchy
+of subcategories": Favorites (pulling from Mindbody's favorites), Passes
+with Drop-in, Packs, Specials, Teen/Child, Buddy / Guest Passes,
+Trainings, Workshops, Fees and Unlimited, Retail with Food/Drink (general
+and teacher sub-tabs), Clothing and Accessories, and Rentals; then
+"Combine Drop-in and Class Packs to one subcategory". Teen/Child's extra
+parameters (adult required and the rest) are a later ticket; it is a
+plain sub-category here, with a named seam.
+
+### The design (decided)
+
+- **Favorites cannot come from Mindbody.** The Public API v6 has no
+  favorites endpoint (every vendored spec file searched; pricing
+  options carry only a High/Medium/Low `Priority`, products nothing).
+  Favorites are one studio-wide list in `app_settings`
+  (`favorites_<target>`), served with the catalog and written by
+  `PUT /api/favorites` (behind the device session, not devtools-gated,
+  since the counter iPad stars things; at most 60 pairs, validated).
+  A star is optimistic and reverts with a quiet line if the write
+  fails; a device's old localStorage list uploads once when the
+  database has none, and the database wins thereafter; without a
+  database the per-device list keeps working as before. Pete confirmed
+  studio-wide, not per teacher.
+- **Passes by rule, overridable.** `passGroupByRule` in
+  `src/lib/shelfconfig.ts` files every pricing option from what
+  Mindbody says about it, first match wins: name teen/child/kid/youth;
+  name guest/buddy; training in name, program or revenue category;
+  workshop/event; fee; the intro-offer flag; DropIn or Series; Unlimited;
+  else Specials. The eight fixed labels in Pete's order: Drop-in &
+  Packs, Specials, Teen/Child, Buddy / Guest Passes, Trainings,
+  Workshops, Fees, Unlimited. A T74 group assignment overrides the rule
+  and the drawer's select offers the eight labels; custom labels sort
+  after Unlimited. The catalog reader now keeps a pass's Type,
+  IsIntroOffer and Program.
+- **The rail.** Favorites, Passes, Retail, Rentals at the top, the
+  Refresh cell at the foot. Passes and Retail are sections: tapping one
+  opens it (accordion) and shows everything in it under 16px uppercase
+  kickers; tapping a 48px child shows that child alone. Rentals is
+  Towel and Mat (category -14 and the T41 name routing) relabelled.
+  Memberships (contracts) and Packages sit last under Passes, since
+  Pete did not list them and they have nowhere else to live. Food/Drink
+  carries General | Teacher sub-tabs when TEACHER-prefixed items exist.
+  Under 1040px the sections are a row and the open section's children
+  a second row of chips. The T39.2 "more" fold and the T74 chip row
+  over the Passes grid are retired.
+- **Judgement calls.** Memberships (contracts) and Packages sit last
+  under Passes. Teacher sub-tabs key on the items, not the label, so any
+  retail category with TEACHER items gets them. Starred items keep
+  catalog order. Refresh is sticky at the rail's foot.
+
+### Verified by the builder
+
+- `npm run typecheck` and `npm run build` green.
+- Node unit test: 13 of 13 (the rule over 23 names, the routed-pass
+  exclusion, the favorites validator).
+- Playwright, browser-mocked catalog, both palettes at 1194x834,
+  1024x768 and 834x1194: 96 of 96; audit clean (no text under 16px, no
+  button under 44px, no overflow).
+- Favorites against a real `next start` through the sign-in gate, with
+  no database and with a scratch Postgres: two browser contexts share
+  the stars, the one-time migration from localStorage runs once, a
+  stored empty list wins over a stale localStorage.
+- Drawer against the database server: 17 of 17. T67 exit 0, T69
+  byte-identical to the T70 baseline.
+- Not exercised: the real site's option records (Type, IsIntroOffer,
+  Program on trainings, workshops, fees) are unverified live; the rail
+  will file any of them as Specials until looked at.
+
+### Review
+
+Adversarial review in its own worktree after merging T77 and T78
+(clean). Three commits:
+
+- **The counter-reachable PUT had no size bound.** A favorite id of any
+  length validated, so a 200KB body was stored in `app_settings`. Now
+  an id is capped at 64 characters (400) and the body at 16KB, read
+  before parsing (413).
+- **A star could be lost.** Each tap PUT the whole list from its own
+  closure, so two quick taps could land out of order, and a failed
+  first PUT reverted over the second tap's stored star. Now the list is
+  mirrored in a ref, one PUT flies at a time (a tap mid-flight resends
+  once when it lands), a failure reverts to the last server-confirmed
+  list with a quiet line saying the star was undone, and a catalog
+  refresh mid-flight no longer overwrites the screen.
+- **T78 follow-up:** the drawer's settings tab shows
+  `staff sessions: <mode>` from `/api/config`.
+
+Reviewed and found correct: no Mindbody call in the diff; the route
+writes only `favorites_<target>` behind the device session; the T74
+hide list applies before grouping so a hidden starred item never
+renders; the rule order matches the brief; one tab convention in the
+rail; no hex, no em dash. Worth Pete's eye: at 1194x834 with Passes
+open its twelve children push Retail and Rentals below the fold of the
+rail.
