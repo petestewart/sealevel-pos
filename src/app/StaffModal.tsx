@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import PinModal from "./PinModal";
+
 /**
  * The staff sign-in (T49), required since T50. Pete: "seems like it's
  * optional to login. that shouldn't be the case." Every write runs
@@ -21,8 +23,16 @@ import { useCallback, useEffect, useState } from "react";
  * no scrim tap, no Escape, and the scrim is opaque so nothing shows
  * through. The signed-in face never renders under `required`; the gate
  * unmounts the moment a sign-in lands. Otherwise the modal opens from
- * the header's account icon, in its signed-in state, and closes by its
- * X, the scrim or Escape (T50 review: no big Close button).
+ * the nav bar's Profile item (T85; the header icon until then), in its
+ * signed-in state, and closes by its X, the scrim or Escape (T50
+ * review: no big Close button).
+ *
+ * T80: the signed-in face also carries the comp PIN. It asks
+ * /api/teacher whether this teacher has one and offers "Set up PIN" or
+ * "Change PIN", both opening the one PinModal box, which needs no
+ * password because this session is the proof. With no database there is
+ * nowhere to keep a PIN, and it says that instead of offering a button
+ * that could only fail.
  */
 
 /** The X that closes the signed-in account modal (T50 review, Pete's
@@ -108,8 +118,10 @@ export default function StaffModal({
   open: boolean;
   teacher: Teacher | null;
   onClose: () => void;
-  /** The session changed: signed in as someone, or signed out (null). */
-  onTeacherChange: (teacher: Teacher | null) => void;
+  /** The session changed: signed in as someone, or signed out (null).
+   *  T80: a sign-in also reports whether that teacher has a comp PIN
+   *  (null: PINs are unavailable), which is what the caller prompts on. */
+  onTeacherChange: (teacher: Teacher | null, hasPin?: boolean | null) => void;
   /** T50: the full-screen gate. Not dismissable. */
   required?: boolean;
   /** T50 review: why the gate is back, when a write was refused for a
@@ -124,6 +136,11 @@ export default function StaffModal({
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [probeBusy, setProbeBusy] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
+  /** T80: whether this teacher has a comp PIN. `undefined` until
+   *  /api/teacher answers (the row renders on nothing), null when PINs
+   *  are unavailable here. */
+  const [hasPin, setHasPin] = useState<boolean | null | undefined>(undefined);
+  const [pinOpen, setPinOpen] = useState(false);
 
   const runProbe = useCallback(async () => {
     setProbeBusy(true);
@@ -153,6 +170,28 @@ export default function StaffModal({
   useEffect(() => {
     if (open) setMsg(notice ?? null);
   }, [open, notice]);
+
+  /* T80: and whether they have a PIN, read the same way. A failed read
+   * leaves it unknown, which offers nothing rather than offering a
+   * "Set up PIN" that cannot be honoured. */
+  useEffect(() => {
+    if (!open || !teacher) {
+      setHasPin(undefined);
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/teacher")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (cancelled) return;
+        const v = body?.hasPin;
+        setHasPin(v === true || v === false || v === null ? v : undefined);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [open, teacher]);
 
   /* The probe runs whenever the modal is open on a signed-in teacher:
    * on opening, and again the moment a sign-in lands (the teacher prop
@@ -201,8 +240,12 @@ export default function StaffModal({
         return;
       }
       const t = body?.teacher as Teacher;
+      const pinKnown = body?.hasPin;
       setUsername("");
-      onTeacherChange(t);
+      onTeacherChange(
+        t,
+        pinKnown === true || pinKnown === false ? pinKnown : null,
+      );
       setMsg(`Signed in as ${t.name}.`);
     } catch (err) {
       setMsg(err instanceof Error ? err.message : String(err));
@@ -229,6 +272,7 @@ export default function StaffModal({
   if (!open) return null;
 
   return (
+    <>
     <div
       className={required ? "modal-scrim staff-gate" : "modal-scrim"}
       role="presentation"
@@ -260,6 +304,12 @@ export default function StaffModal({
               hours.
             </p>
             {msg ? <p className="reason-note">{msg}</p> : null}
+            {hasPin === null ? (
+              <p className="reason-note">
+                PINs are unavailable on this counter, so there is none to
+                set. A comp needs the database.
+              </p>
+            ) : null}
             <ProbeView
               probe={probe}
               busy={probeBusy}
@@ -267,6 +317,18 @@ export default function StaffModal({
               onRun={() => void runProbe()}
             />
             <div className="modal-actions">
+              {hasPin === true || hasPin === false ? (
+                <button
+                  className="modal-cancel"
+                  disabled={busy}
+                  onClick={() => {
+                    setMsg(null);
+                    setPinOpen(true);
+                  }}
+                >
+                  {hasPin ? "Change PIN" : "Set up PIN"}
+                </button>
+              ) : null}
               <button
                 className="modal-confirm"
                 disabled={busy}
@@ -330,6 +392,22 @@ export default function StaffModal({
         )}
       </div>
     </div>
+    {/* T80: over the account modal, since it was opened from it. */}
+    {teacher && pinOpen ? (
+      <PinModal
+        open
+        teacher={teacher}
+        mode={hasPin === true ? "change" : "set"}
+        dismissLabel="Cancel"
+        onClose={() => setPinOpen(false)}
+        onDone={() => {
+          setPinOpen(false);
+          setHasPin(true);
+          setMsg("PIN set");
+        }}
+      />
+    ) : null}
+    </>
   );
 }
 
