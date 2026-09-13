@@ -9210,3 +9210,107 @@ the pre-tax audit line; a tax-exempt pass at $230 is clean. Both
 palettes at 1194 and 834 shot: the Refresh cell is 64px, muted, at the
 rail's bottom edge, and one tap makes exactly one `refresh=1` call.
 Typecheck and build green.
+
+## T77: the account modal no longer names a teacher the server has forgotten
+
+**DONE** (2026-09-13). Pete, on the deployed app minutes after the T75
+deploy: the account modal read "Signed in: Pete Stewart" over "Nobody
+is signed in." Teacher sessions live in server memory (T50), the deploy
+restarted the server, and the page still held the teacher it had
+before. The probe's no-session 401 did not carry `staffSessionEnded`,
+which is the flag the modal reacts to, so it reported the miss and kept
+the name. The probe answers `staffSessionEnded: true` for a missing
+session now, so the modal drops the teacher and the sign-in gate comes
+back with "Nobody is signed in. Sign in again.", the same path a
+refused write takes. The write routes were never affected: they refuse
+without a session regardless of what the page believes.
+
+## T78: staff sessions survive a restart (Postgres, the token encrypted at rest)
+
+**DONE** (2026-09-13). After the T75 deploy signed every teacher out
+(T77), Pete: "sessions should survive restarts by living in the
+database like the PINs do."
+
+### The design (decided)
+
+- **A `staff_sessions` table**, migration 8, in the teacher_pins idiom:
+  the opaque session id, staff id, name, the token encrypted, issued
+  and expiry times. The in-memory map stays as the hot cache; sign-in
+  writes through (awaited, so the row exists before the browser has
+  the cookie), a map miss with a validly signed cookie reads the row,
+  decrypts it and re-caches it, sign-out and expiry delete the row,
+  and the table is swept at most once a minute in the background with
+  swept tokens revoked best effort. The two-hour limit (T64) is
+  unchanged and enforced in code on the way out as well as in SQL.
+- **The token is never stored in the clear.** `src/lib/staffcrypto.ts`:
+  HKDF-SHA256 from `POS_SESSION_SECRET` under two labels (token key,
+  cookie key), AES-256-GCM with a fresh 12-byte IV per row, stored as
+  `v1.<iv>.<ciphertext>.<tag>`; any decrypt failure reads as no session
+  and never throws. The cookie signing key derives from the same
+  secret, so a cookie from before a restart still names its row;
+  changing the secret signs everyone out, which it already did for
+  device sessions.
+- **Fallbacks, per the charter.** No `POS_SESSION_SECRET`: memory only,
+  as before (a token at rest under a per-process key would be
+  pointless). No `DATABASE_URL`, or a database that fails: memory
+  only, the session still works, one log line, never an outage.
+  `/api/config` reports the mode as `staffSessions`; the mode is
+  logged once per process. No token, key or ciphertext appears in any
+  log, response or the call log.
+- **Every call site awaits.** `requireActor`, `staffSessionFrom` and
+  `createStaffSession` are async; the eleven write routes and four
+  teacher routes changed by one line each and nothing else. What a
+  session can do, the write guard, dry run and the actor fallback are
+  untouched.
+- Docs: `.env.example`, CLAUDE.md's teacher attribution paragraph and
+  `docs/DEPLOY.md` say sessions survive a restart when the secret is
+  set. The dev drawer's settings line does not yet show the mode (the
+  drawer file was owned by the T76 builder at the time); `/api/config`
+  carries it.
+
+### Verified by the builder
+
+Typecheck and build green. A seven-case node unit test of the crypto
+(round trip, stored shape, fresh IV, wrong key and other-label key
+null, tampered ciphertext, tag, IV, an unknown version and garbage all
+null without throwing). Live against `next start` with the mock
+Mindbody and a scratch Postgres 16: the row is written with ciphertext
+and no clear token; after a server restart the same cookie names the
+teacher on `/api/teacher` and a check-in runs under the teacher's
+token (the mock's call log shows it); sign-out deletes the row and the
+mock saw the revoke; a three-hour-old row reads as no session and is
+swept with a revoke. Memory-only modes without the secret, without the
+database, and with a dead database all sign in, lose the session on
+restart, and report why. Zero token occurrences in any log. T67 and
+T69 harnesses pass.
+
+### Review
+
+A separate reviewer took the builder's branch as an attacker and an
+operator, re-ran the crypto test and the whole live sequence on its own
+build, and added the cases the brief asked for. Three fix commits, all
+in `src/lib/staffsession.ts`:
+
+- The row lookup on a map miss, and the delete on sign-out, went
+  through the database layer unbounded, and `requireActor` sits in
+  front of every check-in and sale: a black-holed database would have
+  cost the connect and query timeouts on every write until the
+  cooldown set. Both are bounded at two seconds now (the attempt runs
+  on so the cooldown still sets); measured 2.0s, 2.0s, then 8ms with a
+  black-hole listener as the database, the real row untouched.
+- A row that failed to decrypt, or carried an unparseable staff id,
+  was kept and re-read on every request for up to two hours. It is
+  deleted on that read; a flipped tag, a `v0` prefix, garbage and a
+  bad staff id each read as signed out in under 20ms with no error.
+- The once-a-minute table sweep could revoke a token the map's own
+  expiry loop had just revoked; it now waits for those deletes.
+
+On record: a session ended on one server instance stays in another
+instance's map for the rest of its two hours (Railway runs one
+instance; a follow-up before a second exists); a sign-out during a
+database outage leaves its row behind, revoked at Mindbody and
+unusable, expiring within two hours; `staffSessions: "postgres"` in
+`/api/config` states configuration, not reachability. The dev
+drawer's settings line will show the mode once the T76 builder
+releases that file. Not exercised: a real Mindbody, two instances, a
+map entry aging past two hours.

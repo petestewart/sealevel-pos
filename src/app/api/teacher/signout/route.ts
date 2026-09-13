@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
-  const session = staffSessionFrom(request);
+  const session = await staffSessionFrom(request);
   if (session) {
     await endStaffSession(session.id);
     console.log(`[staff] signed out staff=${session.staffId}`);
