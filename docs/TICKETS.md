@@ -9981,3 +9981,92 @@ the cart and inert mid-charge; X re-prices and clears the tender;
 tokens only; nothing under 16px. Left alone: the pay-mode ticket is
 read-only since T39.6, so the X and stepper live in shelf mode; the
 PIN pad keeps its own glyph.
+
+## T89: the Mindbody target switches from the drawer, for named admins; dry run per iPad
+
+Pete: "we also should make it so that it can flip between sandbox and
+prod with a setting rather than a redeploy." Told this relaxes the
+locked rail (the target stays in the server environment) and shown the
+design, he answered "go"; then "let's make that switch only visible to
+me. and yes, let's make a dry run switch that is local."
+
+### What changed
+
+- **One stored setting, `mindbody_target`**, in `app_settings`.
+  `target()` stays synchronous: it returns the loaded override, else
+  the environment. `ensureTarget()` loads it (memoised 5 seconds) at
+  the top of `mindbody()`, in the staff sign-in, and in every other
+  reader that decides by target (favorites, the catalog cache key, the
+  staff list, the PIN loader's plaintext guard). No database, or a row
+  naming a target whose credentials are missing, means the environment
+  decides, with one loud log line; a database that stops answering
+  keeps the loaded target rather than moving the counter.
+- **`PUT /api/admin/target`**: devtools-gated, behind the device
+  session and `requireActor`, and only for a staff id in
+  `POS_ADMIN_STAFF_IDS` (403 otherwise); refused unless both credential
+  sets are complete (409 naming the missing variables, names only).
+  The switch ends every staff session (tokens revoked against their
+  own site, before the row is written) and clears the catalog cache;
+  the sign-in gate says why. For two seconds after any change of the
+  effective target a WRITE is refused and recorded as
+  `target-switch`, so a multi-call route cannot send half its calls to
+  each studio. `GET /api/config` carries `targetSource` and
+  `targetAdmin`.
+- **The drawer's settings tab** shows the target block with the
+  confirm-then-switch control to admins, and a read-only line to
+  everyone else; both re-read the config on every open. The banner on
+  every iPad follows within the 30 second refetch, the gate too.
+- **Dry run on this iPad**: a `pos_dry_run` cookie (not HttpOnly,
+  SameSite Lax) set by a 64px control in the settings tab, visible to
+  anyone with the drawer. It can only add suppression: the environment
+  flag wins, the sandbox still forces dry run off, and a suppressed
+  write logs "(this browser)" with the call record saying so. The
+  banner reads "Dry run on this iPad. Nothing is written to Mindbody."
+  and `/api/config` carries `dryRunSource`.
+- CLAUDE.md's Safety section records the decision and its
+  constraints; DEPLOY.md documents `POS_ADMIN_STAFF_IDS` and the
+  optional sandbox credential set.
+
+### Verified by the builder
+
+Against `next start` with a two-site mock and a scratch Postgres:
+env-only prod reads source env; PUT sandbox with the set missing is
+409 naming the variables; with both sets it flips target, site and dry
+run, ends the session, forces a fresh catalog read against the sandbox
+key; PUT prod restores dry run; a restart with the row comes up on it;
+no database means env only; the admin gate refuses a non-admin; the
+cookie suppresses only its own browser; no secret in any log or
+response. Screenshots in both palettes.
+
+### Review
+
+Adversarial review in its own worktree, five fixes:
+
+- **Checkout mislabelled a browser suppression** as write-guard (the
+  file was T83's while T89 built); it reads `dryRunState()` now.
+- **Four target-keyed readers never loaded the override**: favorites,
+  the catalog cache key, the staff list, and the PIN verifier's guard
+  against plaintext PINs on prod all read the environment on a fresh
+  process pointed at a studio by the setting.
+- **A database blip was treated as a switch.** Every null read was
+  "no override", so a store that stopped answering moved the counter
+  to the environment target, which on the deployed service is PROD.
+  Only an answered read changes the loaded target now; a failed read
+  keeps it and warns once a minute. And a row naming a target whose
+  credentials are absent bricked every call; it is ignored with one
+  loud line.
+- **A request could be split across two studios** when the memo
+  refreshed between two calls of one route. The effective target
+  stamps a clock when it changes and writes are refused for two
+  seconds after, logged and recorded, never reported as success.
+- **Stale `targetAdmin` in the drawer** after "sign in as someone
+  else" without a remount left the switch drawn for a non-admin; both
+  panels re-read on every open.
+
+Reviewed and correct: the switch order (sessions ended, tokens revoked
+against the issuing site, then the row); every refusal path; the id
+list parsed leniently and the check on the session's id only; the
+local dry run add-only in every reader; the banner's X keyed to the
+exact line so a hidden banner returns on "Dry run on this iPad."; no
+secret in any log. Not exercised live: credentials issued for site
+-99 and a real staff token's site affinity; two real instances.

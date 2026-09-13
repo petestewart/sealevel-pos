@@ -4,12 +4,14 @@ import { cookieValue, safeEqual } from "./auth";
 import {
   boundedDb,
   dbConfigured,
+  deleteAllStaffSessions,
   deleteStaffSession,
   findStaffSession,
   insertStaffSession,
   sweepStaffSessions,
 } from "./db";
 import { revokeStaffToken, type Actor } from "./mindbody";
+import { clearTargetSwitchNotice } from "./target";
 import {
   STAFF_COOKIE_KEY_LABEL,
   STAFF_TOKEN_KEY_LABEL,
@@ -228,6 +230,9 @@ export async function createStaffSession(
   now = Date.now(),
 ): Promise<string> {
   logModeOnce();
+  /* T89: somebody has signed in, so the "the target changed, sign in
+   * again" line on the gate has done its job. */
+  clearTargetSwitchNotice();
   const p = persistence();
   sweep(now, p);
   const id = randomBytes(24).toString("base64url");
@@ -327,6 +332,46 @@ export async function endStaffSession(id: string): Promise<void> {
     await boundedDb(deleteStaffSession(id), TABLE_WAIT_MS, false);
   }
   await revokeStaffToken(s.token);
+}
+
+/**
+ * Ends EVERY session, everywhere: the Map and the table, revoking each
+ * token best effort. T89's target switch is the one caller. A staff
+ * token belongs to the site that issued it, so a counter that has just
+ * been pointed at the other studio is holding nothing usable; every
+ * teacher signs in again, which is also how Mindbody keeps naming the
+ * right person for a write.
+ *
+ * Answers how many sessions this process knew of and whether the table
+ * answered, so the route can say so rather than imply a clean sweep.
+ * Bounded like every other table touch here: a store that does not
+ * answer still leaves this process with nobody signed in.
+ */
+export async function endAllStaffSessions(): Promise<{
+  ended: number;
+  tableCleared: boolean;
+}> {
+  const p = persistence();
+  const known = [...state.sessions.values()];
+  state.sessions.clear();
+  let rows: string[] | null = null;
+  if (p.mode === "postgres") {
+    rows = await boundedDb(deleteAllStaffSessions(), TABLE_WAIT_MS, null);
+  }
+  for (const s of known) void revokeStaffToken(s.token);
+  /* Rows this process never held an entry for (written before a restart,
+   * or by another process): their tokens are revoked too, best effort. */
+  if (rows && p.mode === "postgres") {
+    const held = new Set(known.map((s) => s.token));
+    for (const enc of rows) {
+      const token = decryptStaffToken(enc, p.tokenKey);
+      if (token !== null && !held.has(token)) void revokeStaffToken(token);
+    }
+  }
+  return {
+    ended: known.length,
+    tableCleared: p.mode !== "postgres" || rows !== null,
+  };
 }
 
 /** The Actor a session acts as. */

@@ -1,6 +1,7 @@
 import { counterCategories } from "./categories";
 import { getSetting } from "./db";
 import { target } from "./mindbody";
+import { ensureTarget } from "./target";
 import {
   catalogFor,
   contractsFor,
@@ -55,6 +56,17 @@ export interface RawCatalog {
  *  keyed by site id: a process that switches target must never serve the
  *  sandbox's catalog as the studio's shelf, or vice versa. */
 let cache: { key: string; at: number; data: RawCatalog } | null = null;
+
+/**
+ * T89: drop the cached catalog outright. The key already makes a
+ * switched target a miss, so this is belt and braces rather than the
+ * mechanism -- but a target switch is exactly the moment to be certain
+ * that no item, price or id from the other studio is still in this
+ * process, and the next Buy read goes to Mindbody.
+ */
+export function clearRawCatalog(): void {
+  cache = null;
+}
 
 /**
  * T41: a pricing option whose `RevenueCategory` names a counter category
@@ -123,6 +135,11 @@ function routeProducts(products: CatalogItem[]): CatalogItem[] {
 export async function rawCatalog(
   refresh = false,
 ): Promise<{ data: RawCatalog; cached: boolean }> {
+  /* T89 review: the cache key is the target, and it is read BEFORE the
+   * four Mindbody reads below load the stored override; on a fresh
+   * process the first catalog read would otherwise be keyed by the
+   * environment's target and filled from the stored one's site. */
+  await ensureTarget();
   const key = target();
   if (
     !refresh &&
@@ -199,6 +216,8 @@ export async function currentFavorites(): Promise<{
   favorites: FavoritePair[] | null;
   favoritesSource: "db" | "none";
 }> {
+  /* T89 review: same reason as the cache key above. */
+  await ensureTarget();
   const raw = await getSetting(favoritesSettingKey(target()));
   const parsed = parseFavorites(raw);
   if (parsed.error !== null && !warnedBadFavorites) {

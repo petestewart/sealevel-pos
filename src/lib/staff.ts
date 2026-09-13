@@ -1,4 +1,5 @@
 import { mindbody, target } from "./mindbody";
+import { ensureTarget } from "./target";
 
 /**
  * Teachers: the active class instructors, for the comp dialog's "for"
@@ -107,6 +108,10 @@ async function fetchStaffRows(
 /** The teachers, cached. Throws only when there is nothing cached to
  *  serve instead. */
 export async function listTeachers(): Promise<Teacher[]> {
+  /* T89 review: the cache key is the target and it is read before the
+   * Mindbody page reads below load the stored override, so a fresh
+   * process could key one site's staff under the other's name. */
+  await ensureTarget();
   const key = target();
   if (cache && cache.key === key && Date.now() - cache.at < CACHE_TTL_MS) {
     return cache.teachers;
@@ -133,6 +138,8 @@ let staffCache: { key: string; at: number; staff: Teacher[] } | null = null;
  *  PIN (T48). `listTeachers` stays the narrower list a comp can be FOR.
  *  Same cache shape and stale-serving rule as the teachers. */
 export async function listStaff(): Promise<Teacher[]> {
+  /* T89 review: as listTeachers above. */
+  await ensureTarget();
   const key = target();
   if (staffCache && staffCache.key === key && Date.now() - staffCache.at < CACHE_TTL_MS) {
     return staffCache.staff;

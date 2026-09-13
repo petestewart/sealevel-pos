@@ -18,6 +18,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 /** What the mode banner needs, from /api/config's trimmed pre-auth shape. */
 interface LockConfig {
   dryRun: boolean;
+  /** T89: "env" or "browser", so the lock screen's banner says "on this
+   *  iPad" for a dry run this browser asked for, exactly as the
+   *  counter's does. */
+  dryRunSource: string | null;
   target: string;
   banner: string | null;
 }
@@ -44,6 +48,8 @@ export default function LockScreen() {
       .then((d) =>
         setConfig({
           dryRun: d.dryRun === true,
+          dryRunSource:
+            typeof d.dryRunSource === "string" ? d.dryRunSource : null,
           target: typeof d.target === "string" ? d.target : "sandbox",
           banner: typeof d.banner === "string" ? d.banner : null,
         }),
@@ -129,7 +135,9 @@ export default function LockScreen() {
         {config ? (
           <p className={config.dryRun ? "banner" : "banner live"}>
             {config.dryRun
-              ? "Dry run. Nothing is written to Mindbody."
+              ? config.dryRunSource === "browser"
+                ? "Dry run on this iPad. Nothing is written to Mindbody."
+                : "Dry run. Nothing is written to Mindbody."
               : "LIVE. Taps check real students in."}{" "}
             {config.target === "prod" ? "Production" : "Sandbox"} site.
           </p>

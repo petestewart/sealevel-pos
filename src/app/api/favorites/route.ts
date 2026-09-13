@@ -8,6 +8,7 @@ import {
   validateFavorites,
 } from "@/lib/favorites";
 import { target } from "@/lib/mindbody";
+import { ensureTarget } from "@/lib/target";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +57,12 @@ export async function PUT(request: Request) {
   if ("error" in result) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
+  /* T89 review: this route talks to no Mindbody endpoint, so nothing
+   * else here loads the stored target, and the row key names a studio:
+   * without this the list could be written under favorites_prod while
+   * the counter is pointed at the sandbox, mixing one studio's pricing
+   * option ids into the other's shelf. Bounded and never throws. */
+  await ensureTarget();
   const key = favoritesSettingKey(target());
   const before = parseFavorites(await getSetting(key)).favorites;
   const stored = await setSetting(key, JSON.stringify(result));

@@ -7,7 +7,7 @@ import {
   staffSessionEndedResponse,
 } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
-import { isDryRun, mindbodyHttpStatus } from "@/lib/mindbody";
+import { dryRunState, mindbodyHttpStatus } from "@/lib/mindbody";
 
 import {
   clientPaymentProfile,
@@ -188,7 +188,10 @@ export async function POST(request: Request) {
     );
   }
 
-  const suppressionKind = () => (isDryRun() ? "dry-run" : "write-guard");
+  /* T89: dry run can now be the server's or this browser's, so the label
+   * asks for the decision rather than reading POS_DRY_RUN itself. */
+  const suppressionKind = async () =>
+    (await dryRunState()).on ? "dry-run" : "write-guard";
 
   /* Step 1, always: the Test: true rehearsal. For a `test` request this
    * IS the whole job; for a real purchase it is the validation gate and
@@ -210,7 +213,7 @@ export async function POST(request: Request) {
   if (rehearsed.suppressed) {
     /* The rehearsal never left the building, so the real write would
      * not either. Nothing was charged; no total exists. */
-    return NextResponse.json({ ok: false, suppressed: suppressionKind() });
+    return NextResponse.json({ ok: false, suppressed: await suppressionKind() });
   }
   if (test) {
     return NextResponse.json({

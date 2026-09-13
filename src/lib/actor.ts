@@ -7,6 +7,7 @@ import {
   staffSessionFrom,
   type StaffSession,
 } from "./staffsession";
+import { targetSwitchNotice } from "./target";
 
 /**
  * Running a write as the signed-in teacher, with the one fallback (T49).
@@ -86,9 +87,14 @@ export async function requireActor(
   /* Async since T78: a Map miss may read the persisted row. */
   const session = await staffSessionFrom(request);
   if (session === null) {
+    /* T89: when the sessions were ended by a target switch rather than by
+     * expiry or a restart, the gate says which studio this counter is on
+     * now. Same 401 and same `reason: "staff"`, so the browser reads it
+     * exactly as it always has; only the sentence it shows changes. */
+    const notice = targetSwitchNotice();
     return {
       denied: NextResponse.json(
-        { error: "Sign in to Mindbody first.", reason: "staff" },
+        { error: notice ?? "Sign in to Mindbody first.", reason: "staff" },
         { status: 401 },
       ),
       session: null,
