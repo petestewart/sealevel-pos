@@ -1015,9 +1015,17 @@ function ShelfPanel() {
       const label = canonLabel(g.label);
       if (label.length > 0 && !all.includes(label)) all.push(label);
     }
-    const named = groupOrder
-      .map(canonLabel)
-      .filter((l, i, a) => a.indexOf(l) === i && all.includes(l));
+    /* Matched case-insensitively, as the server matches it (T86 review):
+     * a stored "my label" names the group "My Label", and resolving to
+     * the catalog's own spelling is what keeps this block, what Save
+     * writes and what the rail draws the same list. */
+    const byFold = new Map(all.map((l) => [l.toLowerCase(), l]));
+    const named: string[] = [];
+    for (const raw of groupOrder) {
+      const label = byFold.get(canonLabel(raw).toLowerCase());
+      if (label === undefined || named.includes(label)) continue;
+      named.push(label);
+    }
     return [...named, ...all.filter((l) => !named.includes(l))];
   };
 

@@ -572,14 +572,21 @@ export function applyShelfConfig<
     );
   /* T86: the configured order first, for the labels it names that have
    * something to show; every other label keeps the code order after
-   * them. */
-  const named = (config.groupOrder ?? [])
-    .map(canonicalGroupLabel)
-    .filter(
-      (label, i, all) =>
-        all.indexOf(label) === i &&
-        (fixed.includes(label) || custom.includes(label)),
-    );
+   * them. An order entry is matched the way the validator accepts one,
+   * case-insensitively (T86 review): the validator keeps "my label" for
+   * a group called "My Label", so matching it case-sensitively here
+   * would silently drop the label to the end of a shelf someone
+   * arranged by hand. The label that goes out is the catalog's own, so
+   * `rest` below still subtracts it. */
+  const orderable = new Map(
+    [...fixed, ...custom].map((label) => [label.toLowerCase(), label]),
+  );
+  const named: string[] = [];
+  for (const raw of config.groupOrder ?? []) {
+    const label = orderable.get(canonicalGroupLabel(raw).toLowerCase());
+    if (label === undefined || named.includes(label)) continue;
+    named.push(label);
+  }
   const rest = [...fixed, ...custom].filter((label) => !named.includes(label));
   return {
     products: products.filter(visible),
