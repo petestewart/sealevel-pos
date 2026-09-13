@@ -844,6 +844,26 @@ export async function deleteStaffSession(id: string): Promise<boolean> {
   }
 }
 
+/** Deletes EVERY row and answers their `token_enc` values, for the T89
+ *  target switch: a token issued by one site is useless against the
+ *  other, so switching signs everyone out and revokes what it can.
+ *  Null when the store did not answer, which the caller reports rather
+ *  than swallows: the Map is cleared either way, so nobody stays signed
+ *  in on this process. */
+export async function deleteAllStaffSessions(): Promise<string[] | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `DELETE FROM staff_sessions RETURNING token_enc`,
+    );
+    return res.rows.map((r) => String(r.token_enc));
+  } catch (err) {
+    logDbError("staff-session-clear", err);
+    return null;
+  }
+}
+
 /** Deletes every expired row and answers their `token_enc` values, so
  *  the caller can revoke the tokens with Mindbody; null when the store
  *  did not answer. */

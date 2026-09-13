@@ -57,6 +57,17 @@ export interface RawCatalog {
 let cache: { key: string; at: number; data: RawCatalog } | null = null;
 
 /**
+ * T89: drop the cached catalog outright. The key already makes a
+ * switched target a miss, so this is belt and braces rather than the
+ * mechanism -- but a target switch is exactly the moment to be certain
+ * that no item, price or id from the other studio is still in this
+ * process, and the next Buy read goes to Mindbody.
+ */
+export function clearRawCatalog(): void {
+  cache = null;
+}
+
+/**
  * T41: a pricing option whose `RevenueCategory` names a counter category
  * (categories.ts `revenueCategories`) is stamped with that category's id
  * so the shelf files it there rather than under Passes. Towel and mat
