@@ -1075,9 +1075,16 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-/* Money owed renders in the stop colour; credit and zero do not shout. */
+/* Money owed renders in the stop colour, money on account in the ok
+ * colour (Pete: "make the Balance amounts green or red depending on
+ * positive or negative"); zero does not shout. */
 .cell-bal.neg {
   color: var(--stop);
+  font-weight: 600;
+}
+
+.cell-bal.pos {
+  color: var(--ok);
   font-weight: 600;
 }
 
@@ -1870,6 +1877,25 @@ button.chip.action:active {
 
 .dev-setting button:disabled {
   opacity: 0.5;
+}
+
+/* T86: the shelf tab's sub-category order block. The up and down
+ * controls are 44px squares, the recorded exception to the 64px floor:
+ * this is the dev drawer's own density, not a teacher-facing control,
+ * and a row per sub-category at 64px would not fit the drawer. */
+
+.dev-order-row {
+  gap: 8px;
+}
+
+.dev-setting button.dev-order-move {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  padding: 0;
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1;
 }
 
 .dev-bundle-toggle {
@@ -6234,4 +6260,75 @@ textarea.reason-note-field:disabled::placeholder {
   font-weight: 800;
   line-height: 1;
   white-space: nowrap;
+}
+
+/* T84 --- Card on file --------------------------------------------------
+ * The profile's "Card on file" row and the box that adds or replaces one
+ * (Pete: "we need to add the ability to add a card on file"). Tokens
+ * only, both palettes from the variable swap; radius 0; the control at
+ * 64px like every primary target. No new tokens were needed. */
+
+/* The row's control: accent, because it is the one actionable thing in a
+ * card of facts. Full width of the value column so a thumb cannot miss
+ * it in a hot room. */
+.card-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 64px;
+  margin: 10px 0 0;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.card-btn:hover,
+.card-btn:active {
+  filter: brightness(0.94);
+}
+
+/* An expired card is reported, never hidden: the warn pair, with --bg
+ * text as every warn fill in here takes. */
+.card-expired {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 0;
+  background: var(--warn);
+  color: var(--bg);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* The box. One fixed width like the sign-up form's, and the number line
+ * always occupies its row (blank when there is nothing to say) so the
+ * box does not grow under a finger mid-typing, which T68 settled for
+ * every other dialog. */
+.modal-card {
+  width: min(560px, 100%);
+}
+
+.modal-card .nc-sub {
+  margin: 0 0 16px;
+}
+
+.modal-card .nc-error {
+  margin: 0 0 12px;
+}
+
+.card-note {
+  grid-column: 1 / -1;
+  margin: -6px 0 0;
+  min-height: 22px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Above the profile modal (31), which is above the search modal (30). */
+.modal-scrim.over-profile {
+  z-index: 32;
 }

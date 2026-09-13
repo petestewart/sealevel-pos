@@ -1426,12 +1426,12 @@ function PaymentPanel(props: {
   const creditReason = !client
     ? "Attach a client"
     : balance === null || balance <= 0
-      ? "No credit on account"
+      ? "No account balance"
       : null;
   const creditLabel =
     balance !== null && balance > 0
-      ? `Account credit (${money(balance)})`
-      : "Account credit";
+      ? `Account (${money(balance)})`
+      : "Account";
 
   /**
    * Whether Credit is OFFERED at all (Pete, fourth live test: "if there's
@@ -1652,7 +1652,7 @@ function PaymentPanel(props: {
         dueCents === 0 && tenderValid);
 
   const sourceLabel = (s: TenderSource) =>
-    s === "storedcard" ? "Card" : s === "credit" ? "Credit" : "Cash";
+    s === "storedcard" ? "Card" : s === "credit" ? "Account" : "Cash";
 
   /** One leg of a split, as the Charge button restates it. The cash leg
    *  reads "collect $X cash": the leg amount IS what is collected. */
@@ -1660,7 +1660,7 @@ function PaymentPanel(props: {
     s === "storedcard"
       ? `${money(usd)} card`
       : s === "credit"
-        ? `${money(usd)} credit`
+        ? `${money(usd)} from account`
         : `collect ${money(usd)} cash`;
 
   const soleLine = lines.length === 1 ? lines[0] : undefined;
@@ -1812,7 +1812,7 @@ function PaymentPanel(props: {
           m === "storedcard"
             ? `${money(usd)} on the stored card${card ? ` ...${card.lastFour}` : ""}`
             : m === "credit"
-              ? `${money(usd)} account credit`
+              ? `${money(usd)} from account`
               : `${money(usd)} cash`;
         const methodName = isSplit
           ? legs.map((leg) => legDesc(leg.method, leg.amount)).join(" + ")
@@ -1823,7 +1823,7 @@ function PaymentPanel(props: {
               : soleLine.source === "storedcard"
                 ? `stored card${card ? ` ...${card.lastFour}` : ""}`
                 : soleLine.source === "credit"
-                  ? "account credit"
+                  ? "account balance"
                   : "cash";
         onSold();
         /* The sale stands, so every client number this screen holds is a
@@ -1879,7 +1879,7 @@ function PaymentPanel(props: {
           detail: [
             body?.saleId ? `Sale ${body.saleId}.` : null,
             body?.creditPurchased
-              ? `Includes a ${money(body.creditPurchased)} account credit purchase (card minimum); the unspent remainder stays on their account.`
+              ? `Includes a ${money(body.creditPurchased)} account balance purchase (card minimum); the unspent remainder stays on their account.`
               : null,
           ]
             .filter(Boolean)
@@ -2427,7 +2427,7 @@ function PaymentPanel(props: {
               : /* Only for a credit source that is actually on screen: a
                    reason for an absent control explains nothing. */
                 creditVisible && creditReason !== null
-                ? `Credit: ${creditReason}`
+                ? `Account: ${creditReason}`
                 : (cardDetail ?? "")
             : "";
 
@@ -2439,7 +2439,7 @@ function PaymentPanel(props: {
     /* Credit leads when there IS credit, and is absent when there is not
        (Pete, fourth live test). */
     ...(creditVisible
-      ? [{ s: "credit" as TenderSource, label: "Credit", icon: <AccountIcon /> }]
+      ? [{ s: "credit" as TenderSource, label: "Account", icon: <AccountIcon /> }]
       : []),
     { s: "storedcard", label: "Card", icon: <CardIcon /> },
     { s: "cash", label: "Cash", icon: <CashIcon /> },
@@ -6023,7 +6023,7 @@ export default function SaleScreen(props: {
                 >
                   {attachedBalance < 0
                     ? money(attachedBalance)
-                    : `${money(attachedBalance)} credit`}
+                    : `${money(attachedBalance)} on account`}
                 </span>
               ) : null}
               <button
@@ -6082,7 +6082,7 @@ export default function SaleScreen(props: {
                 <span className="sale-for-who">
                   Attach a client
                   <span className="sale-for-hint">
-                    for stored card or account credit
+                    for stored card or account balance
                   </span>
                 </span>
               </button>

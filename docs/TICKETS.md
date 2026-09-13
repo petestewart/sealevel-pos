@@ -9631,3 +9631,139 @@ cart edit re-spreads or clears with a message; PIN before the first
 call; suppression never success; nothing else clears the discount
 wrongly; 100% still skips the tender. Route suite 69, Playwright 33 x
 4, T67 18, all green.
+
+## T84: add a card on file from the profile
+
+Pete: "we need to add the ability to add a card on file".
+
+### What changed
+
+- **The profile** shows a "Card on file" row (last four and expiry, or
+  "No card on file") with a 64px Add card / Replace card control
+  opening a fixed box: number (numeric keyboard, spaces allowed, Luhn
+  checked on both sides with a quiet line), expiry month and year
+  selects (the year cannot be past; valid through the end of the
+  month), name on card, postal code. No CVV: Mindbody's
+  `ClientCreditCard` model has none. Fields are cleared on close and on
+  save. On save the row updates from the read-back, and the sale
+  screen's stored-card tender reads the new card on its next open.
+- **`POST /api/client-card`** behind the device session and
+  `requireActor` (refused before the body is read, so a signed-out iPad
+  never sends a card), validated server-side, then
+  `/client/updateclient` through `mindbody()` with ONLY `Id`,
+  `ClientCreditCard` and `CrossRegionalUpdate: false`, under the
+  teacher's token with T49's one loud fallback; then the client is
+  re-read and the answer carries `{ lastFour, cardType, expMonth,
+  expYear }` only. Dry run and the write guard answer `suppressed` with
+  `card: null` and the box says nothing was sent.
+- **The number never persists.** `src/lib/calllog.ts` redacts
+  `CardNumber` and scrubs any 13 to 19 digit run from every string in
+  both directions BEFORE a record is stored, and from a thrown Mindbody
+  error's message, so the drawer, copy-all, the server log, the
+  suppression lines and the teacher-facing error can never carry it.
+
+### Verified by the builder
+
+Route tests in live, dry run and write guard: 401 without a teacher,
+400 on a bad Luhn and six other shape failures with nothing sent, a
+surgical payload under the teacher's token, suppression reported as
+suppression, the number absent from the response, the devlog and the
+server log. Playwright in both palettes and both orientations,
+screenshots looked at. Typecheck and build green. Not verified: no
+live or sandbox call (no `.env` in the builder's checkout). Unverified
+against real Mindbody: a card with only a postal code and no street
+address, whether a CVV is wanted, two- or four-digit year (four is
+sent), whether the sandbox takes a test PAN. The spec also suggests
+`GET /site/acceptedcardtypes` before storing a card; not done, a
+refusal surfaces in Mindbody's words.
+
+### Review
+
+Adversarial review in its own worktree, two fixes:
+
+- **A card number Mindbody echoed back was not redacted.** Redaction
+  went by key name, so it covered the number we send and missed a
+  refusal quoting it ("The credit card number 4111... is invalid"),
+  which then reached the browser's error line, the thrown Error, the
+  call log and copy-all. Now every string in both directions is
+  scrubbed of card-length digit runs before the record is stored, and
+  the thrown message too.
+- **The read-back answered for the write.** The re-read ran inside the
+  same actor block as the save, so a failed READ was attributed to the
+  write: a 403 there re-ran the whole save as the studio account (the
+  card sent to Mindbody twice for one tap), and a 401 ended the staff
+  session and said nothing was written about a card that was on file.
+  The read-back is now wrapped: the save is reported done with
+  `card: null` and the read failure logged without card detail.
+
+Reviewed and correct: the PAN absent from the response, devlog, server
+log, suppression lines and DB in all three modes; the dead-token path
+never falls back; the body carries only the three fields; validation
+never echoes the number; autocomplete attributes; tokens only, 64px,
+16px. Route tests and Playwright green after the fixes.
+
+## T86: the drawer orders the pass sub-categories and can move a retail product
+
+Pete: "can i also change the order of subcategories easily" and "why
+can't i set categories on retail items in the shelf? only passes?"
+
+### What changed
+
+- **Sub-category order.** The shelf config carries `groupOrder`, a
+  list of labels (fixed and custom, folded, at most 64, unknown labels
+  dropped on read). The rail draws Passes' children in that order for
+  the labels it names, then the rest in the code order. The drawer's
+  Shelf tab has a "sub-category order" block above the item lists,
+  one row per label the catalog has, with 44px up and down controls,
+  saved by the existing Save. Saving writes the whole order, so a
+  later change to the code order cannot silently reorder a shelf
+  someone arranged by hand.
+- **Retail product moves.** The config carries `products`, item key to
+  category id, the target one of Food/Drink, Clothing, Accessories,
+  Other or Rentals (anything else refused; the allowed ids are read off
+  `counterCategories`). Applied before the hide filter, so a moved
+  product is still hideable, and after the name routing, so an
+  override wins over a "rental" in the name. Every Product row in the
+  drawer gets a select "Mindbody's category | ...", and the placement
+  line reflects the move.
+- **Save re-reads** the list, so the placement line under an item is
+  the stored truth rather than the state before the save (the
+  builder's own harness caught "Retail > Clothing" under a tee just
+  moved to Rentals).
+- A pre-T86 config (no order, no moves) reads and round-trips
+  unchanged. No teacher-facing change beyond the order and placement
+  of cells; no new Mindbody calls; devtools-gated as before.
+
+### Verified by the builder
+
+Typecheck and build. 28 unit assertion groups (permutations, folding,
+duplicates, unknown labels dropped, a non-category id refused, pre-T86
+unchanged; order honoured, moves to Clothing and to Rentals, a moved
+product still hideable). Browser harness against `next start` and a
+scratch Postgres: reorder, save, reload persists; both product moves
+show on the rail and in the placement line; a 400 on category 27.
+Thirteen screenshots in both palettes, looked at.
+
+### Review
+
+Adversarial review in its own worktree, two fixes:
+
+- **An order entry the validator accepted was half ignored.** The
+  validator matched an order label to a custom group case-insensitively
+  and stored it; `applyShelfConfig` and the drawer matched
+  case-sensitively, so "my label" against a group "My Label" fell to
+  the end of the rail and a Save would have persisted that. Both now
+  resolve through a folded map.
+- **The drawer listed a sub-category the rail never draws.** The
+  pre-rename "Buddy / Guest Passes" folds onto Buddy/Guest in the rail's
+  code but not in the drawer's mirror, giving a ninth inert row.
+
+Reviewed and correct: the bounds (65 refused, 64 accepted; products
+over MAX_ENTRIES refused; every bad key and id shape refused; prototype
+keys inert; a 16KB body fine); a named label with nothing to show is
+skipped; a deleted group's label drops out on the next read; the
+override wins over name routing in both directions; a star on a moved
+product still resolves; up disabled only on the first row and down on
+the last, 44px each; no server-only module in a client chunk; page.tsx
+and SaleScreen.tsx untouched. Noted, pre-existing: a hide-list key's id
+is not length-bounded.

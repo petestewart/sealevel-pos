@@ -1,3 +1,4 @@
+import { cardOnFileOf, type CardOnFile } from "./clientcard";
 import { fetchPasses, type PassInfo } from "./clientcontext";
 import { mindbody } from "./mindbody";
 import { studioWall } from "./roster";
@@ -23,7 +24,8 @@ import { studioWall } from "./roster";
  *   one the roster's batched lookup verified live. The Client model
  *   (5070) carries Email, MobilePhone/HomePhone/WorkPhone, CreationDate,
  *   FirstClassDate, Id, UniqueId, Liability {IsReleased, AgreementDate},
- *   MembershipIcon, Status, RedAlert, YellowAlert, Notes.
+ *   MembershipIcon, Status, RedAlert, YellowAlert, Notes, and (T84)
+ *   ClientCreditCard, so the card on file costs no extra call.
  * - `/client/clientvisits` (1803): `request.startDate` defaults to the
  *   END date and `request.endDate` to today, so the bare call returns one
  *   day. Both are sent as studio wall-clock strings (roster.ts
@@ -77,6 +79,11 @@ export interface ClientProfile {
    *  omits reads as false, its documented default. Null when the client
    *  read failed. */
   consent: ClientConsent | null;
+  /** T84: the card on file (last four, type, expiry), from the same
+   *  /client/clients row. Null when there is none, or when the client
+   *  read failed -- `errors.client` tells the two apart. Never a card
+   *  number: Mindbody does not return one and neither does this. */
+  card: CardOnFile | null;
   /** Visits in the window: the count Mindbody reports, and the latest
    *  attended one. Null when the read failed. */
   visits: { count: number; last: ProfileVisit | null } | null;
@@ -128,6 +135,7 @@ type ClientFields = Pick<
   | "yellowAlert"
   | "notes"
   | "consent"
+  | "card"
 >;
 
 async function fetchClientFields(clientId: string): Promise<ClientFields> {
@@ -168,6 +176,7 @@ async function fetchClientFields(clientId: string): Promise<ClientFields> {
       scheduleTexts: c?.SendScheduleTexts === true,
       promotionalTexts: c?.SendPromotionalTexts === true,
     },
+    card: cardOnFileOf(c),
   };
 }
 
@@ -268,6 +277,7 @@ export async function clientProfile(
           yellowAlert: null,
           notes: null,
           consent: null,
+          card: null,
         });
   if (visits.status === "rejected") errors.visits = reason(visits.reason);
   if (passes.status === "rejected") errors.passes = reason(passes.reason);

@@ -877,6 +877,10 @@ interface ShelfAdminGroup {
 interface ShelfAdminConfig {
   hidden: string[];
   groups: ShelfAdminGroup[];
+  /** T86: the pass sub-categories in rail order. */
+  groupOrder?: string[];
+  /** T86: retail products moved to another counter category. */
+  products?: { key: string; categoryId: number }[];
 }
 
 /** T76: the rail's fixed pass sub-categories, mirrored from
@@ -898,6 +902,34 @@ const FIXED_PASS_GROUPS = [
 const isFixedLabel = (label: string) =>
   FIXED_PASS_GROUPS.some((g) => g.toLowerCase() === label.trim().toLowerCase());
 
+/** A label folded onto the fixed one it names, mirroring shelfconfig's
+ *  `canonicalGroupLabel` so the block below shows the order the rail
+ *  will draw and not a second cell of the same name. */
+const canonLabel = (label: string) => {
+  const folded = label.trim().toLowerCase();
+  /* The label that group shipped with before the T76 rename, folded here
+   * too (T86 review) because shelfconfig folds it: without this the block
+   * drew a ninth "Buddy / Guest Passes custom" row for a group the rail
+   * files under Buddy/Guest, and moving that row did nothing. */
+  if (folded === "buddy / guest passes") return "Buddy/Guest";
+  return (
+    FIXED_PASS_GROUPS.find((g) => g.toLowerCase() === folded) ?? label.trim()
+  );
+};
+
+/** T86: the counter categories a retail product may be moved to,
+ *  mirrored from src/lib/categories.ts `counterCategories` (the Retail
+ *  children and Rentals; the Passes entry carries no ids and a product
+ *  has no business there). Keyed by Mindbody's category id, which is
+ *  what the config stores. */
+const PRODUCT_CATEGORIES: { label: string; categoryId: number }[] = [
+  { label: "Food/Drink", categoryId: 36 },
+  { label: "Clothing", categoryId: 26 },
+  { label: "Accessories", categoryId: 32 },
+  { label: "Other", categoryId: 49 },
+  { label: "Rentals", categoryId: -14 },
+];
+
 const SHELF_KINDS: { type: ShelfAdminItem["type"]; heading: string }[] = [
   { type: "Service", heading: "passes" },
   { type: "Product", heading: "products" },
@@ -913,6 +945,11 @@ function ShelfPanel() {
   const [items, setItems] = useState<ShelfAdminItem[]>([]);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [groups, setGroups] = useState<ShelfAdminGroup[]>([]);
+  /* T86: the stored sub-category order, and the product moves by item
+   * key. Both are whatever the config holds; the order block below
+   * derives the EFFECTIVE order from this plus the labels that exist. */
+  const [groupOrder, setGroupOrder] = useState<string[]>([]);
+  const [moves, setMoves] = useState<Record<string, number>>({});
   const [newLabel, setNewLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [outcome, setOutcome] = useState<
@@ -934,6 +971,12 @@ function ShelfPanel() {
       const config: ShelfAdminConfig = body.config ?? { hidden: [], groups: [] };
       setHidden(new Set(config.hidden ?? []));
       setGroups((config.groups ?? []).map((g) => ({ ...g, ids: [...g.ids] })));
+      setGroupOrder([...(config.groupOrder ?? [])]);
+      setMoves(
+        Object.fromEntries(
+          (config.products ?? []).map((o) => [o.key, o.categoryId]),
+        ),
+      );
       setLoadError(null);
       setLoaded(true);
     } catch (err) {
@@ -987,6 +1030,58 @@ function ShelfPanel() {
     });
   };
 
+  /**
+   * T86: the sub-category labels in the order the rail will draw them.
+   * The candidates are the fixed eight plus every custom group label;
+   * the order is what `groupOrder` names first (folded, each once,
+   * unknown labels dropped) and then the rest in code order, exactly as
+   * applyShelfConfig computes it. One reading for the block below and
+   * for what Save sends, so what Pete sees is what gets stored.
+   */
+  const effectiveOrder = (): string[] => {
+    const all = [...FIXED_PASS_GROUPS];
+    for (const g of groups) {
+      const label = canonLabel(g.label);
+      if (label.length > 0 && !all.includes(label)) all.push(label);
+    }
+    /* Matched case-insensitively, as the server matches it (T86 review):
+     * a stored "my label" names the group "My Label", and resolving to
+     * the catalog's own spelling is what keeps this block, what Save
+     * writes and what the rail draws the same list. */
+    const byFold = new Map(all.map((l) => [l.toLowerCase(), l]));
+    const named: string[] = [];
+    for (const raw of groupOrder) {
+      const label = byFold.get(canonLabel(raw).toLowerCase());
+      if (label === undefined || named.includes(label)) continue;
+      named.push(label);
+    }
+    return [...named, ...all.filter((l) => !named.includes(l))];
+  };
+
+  /* Moving a row stores the WHOLE order, so the list is a permutation
+   * from then on and a later render cannot re-sort it. */
+  const moveLabel = (index: number, dir: -1 | 1) => {
+    const order = effectiveOrder();
+    const to = index + dir;
+    if (to < 0 || to >= order.length) return;
+    const a = order[index];
+    const b = order[to];
+    if (a === undefined || b === undefined) return;
+    order[index] = b;
+    order[to] = a;
+    setGroupOrder(order);
+  };
+
+  /* T86: a product's category override. "" is Mindbody's own category,
+   * which drops the entry rather than storing a no-op. */
+  const setMove = (key: string, value: string) =>
+    setMoves((prev) => {
+      const next = { ...prev };
+      if (value === "") delete next[key];
+      else next[key] = Number(value);
+      return next;
+    });
+
   const toggleHidden = (key: string) =>
     setHidden((prev) => {
       const next = new Set(prev);
@@ -1036,6 +1131,13 @@ function ShelfPanel() {
       const config: ShelfAdminConfig = {
         hidden: [...hidden],
         groups: groups.map((g) => ({ label: g.label.trim(), ids: g.ids })),
+        /* T86: the order as the block shows it, written out in full, and
+         * the product moves. One Save still writes the whole config. */
+        groupOrder: effectiveOrder(),
+        products: Object.entries(moves).map(([key, categoryId]) => ({
+          key,
+          categoryId,
+        })),
       };
       const res = await fetch("/api/admin/shelf", {
         method: "PUT",
@@ -1051,9 +1153,12 @@ function ShelfPanel() {
         if (body?.available === false) setAvailable(false);
         return;
       }
-      const stored: ShelfAdminConfig = body.config ?? config;
-      setHidden(new Set(stored.hidden ?? []));
-      setGroups((stored.groups ?? []).map((g) => ({ ...g, ids: [...g.ids] })));
+      /* T86: re-read rather than take the PUT's echo, because the PLACEMENT
+       * line is computed server-side over the saved config, and a stale
+       * one is worst exactly here: moving a product is a change whose
+       * only confirmation IS that line. The GET costs nothing metered
+       * (the catalog behind it is the same two-minute cache). */
+      await load();
       setOutcome({
         ok: true,
         text: "saved; the shelf shows it on the next catalog load",
@@ -1089,8 +1194,10 @@ function ShelfPanel() {
         rendering, with a console warning). Every pass is filed by rule
         into one of the rail&apos;s fixed sub-categories; a group here
         overrides that for the passes it names, under a fixed label or a
-        custom one (custom labels follow the fixed ones on the rail).
-        Ids are per site.
+        custom one. The order block below sets the order the rail draws
+        those sub-categories in, and a retail product can be moved off
+        Mindbody&apos;s own category onto another counter cell. Ids are
+        per site.
       </p>
       {!available ? (
         <p className="muted">
@@ -1156,6 +1263,39 @@ function ShelfPanel() {
         </button>
       </div>
 
+      <div className="dev-label">sub-category order</div>
+      <p className="muted">
+        The order the Passes rail draws its sub-categories in, fixed and
+        custom together. A sub-category with nothing to sell is still left
+        off the screen.
+      </p>
+      {effectiveOrder().map((label, index, order) => (
+        <div key={label} className="dev-setting dev-order-row">
+          <span className="dev-setting-label">
+            {label}
+            {isFixedLabel(label) ? null : (
+              <span className="muted"> custom</span>
+            )}
+          </span>
+          <button
+            className="dev-order-move"
+            onClick={() => moveLabel(index, -1)}
+            disabled={index === 0}
+            aria-label={`Move ${label} earlier`}
+          >
+            <span aria-hidden="true">&#8593;</span>
+          </button>
+          <button
+            className="dev-order-move"
+            onClick={() => moveLabel(index, 1)}
+            disabled={index === order.length - 1}
+            aria-label={`Move ${label} later`}
+          >
+            <span aria-hidden="true">&#8595;</span>
+          </button>
+        </div>
+      ))}
+
       {SHELF_KINDS.map(({ type, heading }) => {
         const list = byKind(type);
         if (list.length === 0) return null;
@@ -1204,6 +1344,25 @@ function ShelfPanel() {
                     )}
                   </select>
                 ) : null}
+                {type === "Product" ? (
+                  <select
+                    className="dev-text dev-shelf-group"
+                    aria-label={`Category for ${item.name}`}
+                    value={
+                      moves[item.key] === undefined
+                        ? ""
+                        : String(moves[item.key])
+                    }
+                    onChange={(e) => setMove(item.key, e.target.value)}
+                  >
+                    <option value="">Mindbody&apos;s category</option>
+                    {PRODUCT_CATEGORIES.map((c) => (
+                      <option key={c.categoryId} value={String(c.categoryId)}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
                 <label className="dev-bundle-toggle">
                   <span className="muted">hidden</span>
                   <input
@@ -1226,7 +1385,8 @@ function ShelfPanel() {
           <span className={outcome.ok ? "muted" : "dev-bad"}>{outcome.text}</span>
         ) : (
           <span className="muted">
-            One save writes the whole config: hidden items and every group.
+            One save writes the whole config: hidden items, every group,
+            the sub-category order and the product moves.
           </span>
         )}
       </div>
