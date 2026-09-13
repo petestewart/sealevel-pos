@@ -274,7 +274,7 @@ export function parseRosterAnchor(raw: string): Date | null {
 
 /**
  * Every class on the STUDIO-LOCAL day containing `anchor` (T27 round
- * three: the attach quick-pick's class dropdown needs the whole teaching
+ * three, now the calendar's picked day, T46: it needs the whole teaching
  * day, which the -2/+4h around-now window deliberately does not cover).
  * One metered call, same as the around-now window; the caller is
  * expected to cache per day.

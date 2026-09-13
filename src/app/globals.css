@@ -2063,11 +2063,10 @@ body.sale-open .dev-handle {
   width: min(760px, 100%);
 }
 
-/* --- Attach picker (T27 round three, T32, reshaped in T42) ----------
- * Attach mode only. Under the modal's search bar: the filter row (the
- * "In class" toggle, the class dropdown in the pass-dropdown idiom, and
- * the three-way segment), then ONE fixed-height scroll region of rows.
- * Tokens only, so both palettes come from :root and the dark block. */
+/* --- Attach picker (T27 round three, T32, T42, reshaped in T87) -----
+ * Attach mode only. Under the modal's search bar: the "All | Class"
+ * segment, then ONE fixed-height scroll region of rows. Tokens only, so
+ * both palettes come from :root and the dark block. */
 .attach-quick {
   display: grid;
   gap: 0;
@@ -2085,134 +2084,43 @@ body.sale-open .dev-handle {
   margin: 0 -20px;
 }
 
-/* The filter row: toggle | dropdown (about half the row) | segment. The
- * dropdown and the segment grey out TOGETHER when the toggle is off. */
-.attach-filters {
+/* T87 (Pete: "instead of a class selector and all the buttons, just use
+ * All | Class"): the segment under the search bar, two equal cells of
+ * 48px on the quiet fill, the selected one filled with the accent, the
+ * rule under it carrying the line to the rows. It replaced the filter
+ * row: the "In class" toggle, the class dropdown and the three-way
+ * All / Signed in / Not yet segment, with their CSS. */
+.attach-tabs {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 1fr 1fr;
   align-items: stretch;
   gap: 0;
+  background: var(--surface);
   border-bottom: 2px solid var(--rule);
 }
 
-.attach-filters.off .attach-class,
-.attach-filters.off .seg {
-  opacity: 0.5;
-}
-
-/* The "In class" toggle: the class-change button's shape, filled with
- * the accent while on. 64px, the tap-target floor. */
-.filter-toggle {
-  flex: 0 0 auto;
-  min-height: 60px;
-  padding: 0 20px;
-  border: 0;
-  border-radius: 0;
-  background: var(--surface);
-  color: var(--ink);
-  font-size: 16px;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.filter-toggle.on {
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-
-.filter-toggle:active {
-  opacity: 0.85;
-}
-
-.attach-class {
-  position: relative;
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-/* Native-select-shaped: the picked class with a chevron, the width of
- * its grid column so the menu below can anchor to it. */
-.attach-class-btn {
-  flex: 1;
-  min-width: 0;
-  min-height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.attach-tab {
+  min-height: 48px;
   padding: 0 16px;
   border: 0;
-  border-left: 1px solid var(--line);
-  text-align: left;
-}
-
-.attach-class-btn > svg {
-  color: var(--muted);
-}
-
-.attach-class-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.attach-class-dd {
-  left: 0;
-  right: 0;
-  min-width: 0;
-  max-width: none;
-  max-height: min(48vh, 420px);
-  overflow-y: auto;
-}
-
-/* Class options have no fact columns: check | name only. */
-.attach-class-dd .pass-opt {
-  grid-template-columns: 20px minmax(0, 1fr);
-}
-
-/* The three-way segment (All | Signed in | Not yet): one bordered pill
- * of 64px buttons, icon over a short label, exactly one filled with the
- * accent. Disabled together with the dropdown when the toggle is off. */
-.seg {
-  display: inline-flex;
-  flex: 0 0 auto;
-  border: 0;
   border-radius: 0;
-  background: var(--surface);
-  overflow: hidden;
-}
-
-.seg-btn {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  width: 108px;
-  min-height: 60px;
-  padding: 0 10px;
-  border: 0;
-  border-left: 1px solid var(--line);
   background: transparent;
   color: var(--muted);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 800;
 }
 
-.seg-btn svg {
-  width: 20px;
-  height: 20px;
+.attach-tab + .attach-tab {
+  border-left: 1px solid var(--line);
 }
 
-.seg-btn.on {
+.attach-tab.on {
   background: var(--accent);
   color: var(--accent-ink);
 }
 
-.seg-btn:disabled {
-  cursor: default;
+.attach-tab:active {
+  opacity: 0.85;
 }
 
 /* ONE scroll region of a FIXED height (T42, Pete: "the modal temporarily
