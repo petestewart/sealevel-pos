@@ -27,8 +27,11 @@ export interface Settings {
   searchDebounceMs: number;
   minQueryLength: number;
   searchLimit: number;
-  /** Hours of schedule to show either side of now. */
+  /** The default class on today's list: the first that started within
+   *  this many hours. The list itself is the whole studio day. */
   hoursBack: number;
+  /** Retired: today lists the whole day. Kept so a stored settings
+   *  object still parses. */
   hoursForward: number;
   /**
    * Flip the check-in row before Mindbody answers. Faster, and wrong at a
