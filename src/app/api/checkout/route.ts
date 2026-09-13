@@ -1158,9 +1158,13 @@ export async function POST(request: Request) {
     }
 
     if (m === "credit") {
-      /* ASSUMPTION P2: partial credit is ignored. Credit pays only when
-       * it covers the whole total; otherwise the method is refused here
-       * even if the browser thought it was fine. */
+      /* A WHOLE-SALE credit payment: this one line is the entire sale,
+       * so the balance has to cover the whole total, and it is checked
+       * here against the live read even if the browser thought it was
+       * fine. Not assumption P2, which T82 retired with rule 1 (see the
+       * header): partial credit is not ignored any more, it is a credit
+       * LEG of a split, refused above the live balance in the split's
+       * own branch. */
       if (profile.balance === null || profile.balance < total) {
         return NextResponse.json(
           {
