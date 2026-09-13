@@ -23,11 +23,20 @@ import {
   compNeedsDetail,
   compReasonLine,
   compValid,
+  DISCOUNT_PERCENT_MAX,
+  DISCOUNT_PERCENT_MIN,
+  discountCents,
+  discountPercentLabel,
+  discountRefusal,
+  isFullDiscount,
   isPinShape,
   PIN_MAX,
   PIN_MIN,
+  subtotalCents,
   type CompKind,
   type CompReason,
+  type Discount,
+  type DiscountLine,
 } from "@/lib/comp";
 
 /**
@@ -436,6 +445,11 @@ interface PricedResult {
   expectedTotal: number;
   /** T75: the shelf's pre-tax sum, the figure `disagrees` compares. */
   expectedSubtotal: number;
+  /** T79: the server's spread of the armed discount (0 without one),
+   *  and whether Mindbody's DiscountTotal disagreed with it; `disagrees`
+   *  covers that case too. */
+  expectedDiscount?: number;
+  discountDisagrees?: boolean;
   disagrees: boolean;
   /** T30: true when the cart holds a package line. The server skips the
    *  strict disagree assertion for these carts (a package row carries no
@@ -786,10 +800,14 @@ type ChargeResult =
       count: number;
       changeCents: number;
       comped: boolean;
-      /** T43: the reason the teacher gave for a comp, for the done
-       *  screen's "Comped: <reason>" line. Null on a paid sale. Since
-       *  T45 it is the kind, the detail and the teacher it was for. */
+      /** T43: the reason the teacher gave for a discount, for the done
+       *  screen's "Comped: <reason>" or "Discount $60.00 (60%): <reason>"
+       *  line. Null on an undiscounted sale. */
       compReason: CompReason | null;
+      /** T79: the discount as the server recorded it: the dollars off
+       *  the pre-tax subtotal, that subtotal, and the percent label.
+       *  Null on an undiscounted sale. */
+      discount: { amount: number; subtotal: number; percent: string } | null;
       /** T49: the amber line when the sale ran as the studio account
        *  after the signed-in teacher's token was refused; else null. */
       actorNote: string | null;
@@ -805,46 +823,53 @@ type ChargeResult =
   | { kind: "error"; message: string };
 
 
-/** T43: a comp needs a reason; T45: the reason is a KIND from comp.ts's
- *  closed list, an optional note, and for a teacher comp the teacher it
- *  was for, picked from the staff list. The dialog's draft is that
- *  shape with nothing chosen yet; compValid (shared with /api/checkout)
- *  says when it is complete, so what the dialog accepts is what the
- *  route accepts. */
+/** T43: a discount needs a reason; T45: the reason is a KIND from
+ *  comp.ts's closed list and an optional note. The dialog's draft is
+ *  that shape with nothing chosen yet; compValid (shared with
+ *  /api/checkout) says when it is complete, so what the dialog accepts
+ *  is what the route accepts. T79 dropped the Teacher kind and its
+ *  picker. */
 interface CompDraft {
   kind: CompKind | null;
   detail: string;
-  forStaffId: number | null;
-  forStaffName: string | null;
 }
-const EMPTY_COMP_DRAFT: CompDraft = {
-  kind: null,
-  detail: "",
-  forStaffId: null,
-  forStaffName: null,
-};
+const EMPTY_COMP_DRAFT: CompDraft = { kind: null, detail: "" };
 
-/** A teacher as /api/staff lists them: id and name, nothing else. */
+/** T79: the amount step's draft. `mode` is the segment (Whole sale is
+ *  percent 100 with the keys off); `entry` the digits typed since the
+ *  dialog opened, accumulating into CENTS for an amount (2-0-0-0 reads
+ *  $20.00, the T36 pad's idiom) and into whole percent for a percent. */
+type DiscountDraftMode = "amount" | "percent" | "whole";
+interface DiscountDraft {
+  mode: DiscountDraftMode;
+  entry: string;
+}
+const EMPTY_DISCOUNT_DRAFT: DiscountDraft = { mode: "amount", entry: "" };
+
+/** A teacher as /api/teacher/verify names them: id and name. */
 interface StaffChoice {
   id: number;
   name: string;
 }
 
-/** T48: an armed comp carries its reason AND who is comping: the
- *  teacher /api/teacher/verify named for the PIN typed in the dialog,
- *  and the one-shot token it signed, which the charge hands to
- *  /api/checkout. The state shape is the rule: there is no way to hold
- *  an armed comp with nobody behind it. */
-interface ArmedComp {
+/** T48/T79: an armed discount carries the discount, its reason AND who
+ *  is discounting: the teacher /api/teacher/verify named for the PIN
+ *  typed in the dialog, and the one-shot token it signed, which the
+ *  charge hands to /api/checkout. The state shape is the rule: there is
+ *  no way to hold an armed discount with nobody behind it. It lives in
+ *  SaleScreen (it is cart state: the pricing loop sends it) and the
+ *  panel reads and sets it through props. */
+interface ArmedDiscount {
+  discount: Discount;
   reason: CompReason;
   teacher: StaffChoice;
   token: string;
 }
 
-/** The comp dialog's steps (T48): the reason (T43/T45), then the PIN,
- *  then "Comping as <name>" with the Comp button; `enroll` is the side
- *  form reached from the PIN step to set or change a PIN through a
- *  Mindbody sign-in. */
+/** The discount dialog's steps (T48): the amount and reason (T43/T45/
+ *  T79), then the PIN, then "Discounting as <name>" with the button that
+ *  arms; `enroll` is the side form reached from the PIN step to set or
+ *  change a PIN through a Mindbody sign-in. */
 type CompStep = "reason" | "pin" | "ready" | "enroll";
 
 const EMPTY_ENROLL = { username: "", password: "", pin: "" };
@@ -853,33 +878,28 @@ const EMPTY_ENROLL = { username: "", password: "", pin: "" };
  *  compValid; a null kind here is a programming error, not a state. */
 function draftToReason(d: CompDraft): CompReason | null {
   if (d.kind === null) return null;
-  return {
-    kind: d.kind,
-    detail: d.detail.trim(),
-    ...(d.kind === "teacher" && d.forStaffId !== null
-      ? { forStaffId: d.forStaffId, forStaffName: d.forStaffName ?? undefined }
-      : {}),
-  };
+  return { kind: d.kind, detail: d.detail.trim() };
 }
 
-/** The teacher of the roster's current class, matched to the staff list
- *  by name: the exact full name first, then a first name that names
- *  exactly one teacher. The roster's class summary carries a display
- *  name (sometimes just a first name) rather than a staff id, so this
- *  is a guess at a default, and only ever a default: the picker shows
- *  it selected and the teacher can change it. */
-function matchClassTeacher(
-  list: readonly StaffChoice[],
-  classTeacher: string | null,
-): StaffChoice | null {
-  const wanted = (classTeacher ?? "").trim().toLowerCase();
-  if (!wanted) return null;
-  const exact = list.find((t) => t.name.trim().toLowerCase() === wanted);
-  if (exact) return exact;
-  const byFirst = list.filter(
-    (t) => t.name.trim().split(/\s+/)[0]?.toLowerCase() === wanted,
-  );
-  return byFirst.length === 1 ? (byFirst[0] as StaffChoice) : null;
+/** T79: the discount a draft describes against a cart's pre-tax subtotal
+ *  (in cents), or null while nothing valid is entered. The clamps are
+ *  parseDiscount's, so the server accepts exactly what this returns. */
+function draftToDiscount(d: DiscountDraft, subtotal: number): Discount | null {
+  if (subtotal <= 0) return null;
+  if (d.mode === "whole") return { mode: "percent", value: 100 };
+  const n = d.entry === "" ? 0 : Number(d.entry);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (d.mode === "percent") {
+    return n >= DISCOUNT_PERCENT_MIN && n <= DISCOUNT_PERCENT_MAX
+      ? { mode: "percent", value: n }
+      : null;
+  }
+  return n <= subtotal ? { mode: "amount", value: n / 100 } : null;
+}
+
+/** T79: the discount's lines, as the spread reads a cart entry. */
+function discountLines(cart: readonly CartEntry[]): DiscountLine[] {
+  return cart.map((l) => ({ price: l.item.price, quantity: l.quantity }));
 }
 
 /**
@@ -966,10 +986,12 @@ function PaymentPanel(props: {
    *  change (third live test): the cart is gone, so every tender line and
    *  any armed comp goes with it. */
   cartResetNonce: number;
-  /** T45: the teacher of the roster's current class, as the class
-   *  summary names them, for the comp dialog's picker to preselect.
-   *  Null when no class is active or the class has no teacher. */
-  classTeacher: string | null;
+  /** T79: the armed discount, SaleScreen's state (the pricing loop sends
+   *  it with the cart), read here and set through `onDiscountChange`:
+   *  the dialog arms it, a tap on the armed control, a client change,
+   *  a completed sale, leaving pay mode and an emptied cart clear it. */
+  discount: ArmedDiscount | null;
+  onDiscountChange: (next: ArmedDiscount | null) => void;
   /** T53: whether a receipt can be emailed, and where. The toggle
    *  below the tender reads it; the Charge tap sends the toggle. */
   receipt: ReceiptState;
@@ -991,7 +1013,8 @@ function PaymentPanel(props: {
     onBusyChange,
     onModalChange,
     cartResetNonce,
-    classTeacher,
+    discount: comp,
+    onDiscountChange: setComp,
     receipt,
   } = props;
 
@@ -1018,14 +1041,30 @@ function PaymentPanel(props: {
    *  reason or null, not a boolean beside a string, so no render can
    *  find comp armed with nothing written; `chargeable` still checks the
    *  text in the same render, belt and braces. */
-  const [comp, setComp] = useState<ArmedComp | null>(null);
-  const comped = comp !== null;
-  /** The reason dialog the hold opens (T43): open, and the draft the
-   *  chips, the teacher picker and the note field build. Nothing arms
-   *  until Comp in the dialog is tapped with the draft complete and,
-   *  since T48, a PIN verified. */
+  /* T79: `comp` is the armed discount (SaleScreen's state, see the
+   * props). `comped` is the 100% case, the one that reads "Comped",
+   * takes no tender and sends method comp; `discounted` is any armed
+   * discount, whose remainder is paid the ordinary way. The spread is
+   * recomputed from the CART on every render, so a line added under an
+   * armed discount re-spreads it (the amounts on screen are only ever
+   * the browser's copy; the server spreads again from the lines). */
+  const cartSubtotalCents = subtotalCents(discountLines(cart));
+  const armedCents =
+    comp === null ? 0 : discountCents(discountLines(cart), comp.discount);
+  const comped =
+    comp !== null && isFullDiscount(discountLines(cart), comp.discount);
+  const discounted = comp !== null;
+  /** The reason dialog the Discount tap opens (T43): open, the amount
+   *  draft (T79) and the reason draft the chips and the note field
+   *  build. Nothing arms until the button on the ready step is tapped
+   *  with both drafts complete and, since T48, a PIN verified. */
   const [reasonOpen, setReasonOpen] = useState(false);
   const [reasonDraft, setReasonDraft] = useState<CompDraft>(EMPTY_COMP_DRAFT);
+  const [discountDraft, setDiscountDraft] = useState<DiscountDraft>(
+    EMPTY_DISCOUNT_DRAFT,
+  );
+  const discountDraftRef = useRef(discountDraft);
+  discountDraftRef.current = discountDraft;
   const [reasonStep, setReasonStep] = useState<CompStep>("reason");
   /** T48: the PIN step. The digits typed (never sent anywhere but
    *  /api/teacher/verify, never kept once answered), the line under the
@@ -1061,89 +1100,110 @@ function PaymentPanel(props: {
       ? Math.max(0, Math.ceil((pinLockedUntil - pinNow) / 1000))
       : 0;
   const pinKeysOff = pinBusy || pinLockedFor > 0;
-  /** T45: the teacher picker's list, from /api/staff, read once the
-   *  first time the Teacher kind is chosen and kept for this panel's
-   *  life (it unmounts with the overlay). An error is shown in the
-   *  dialog and leaves the teacher kind unchargeable rather than
-   *  guessed; the next Teacher tap tries again. */
-  const [staff, setStaff] = useState<{
-    status: "idle" | "loading" | "ready" | "error";
-    list: StaffChoice[];
-  }>({ status: "idle", list: [] });
-  const staffRef = useRef(staff);
-  staffRef.current = staff;
   /** T71: the note field, focused once a kind is chosen. It is disabled
    *  until then (Pete: "greyed out until the category is chosen"), so
    *  autoFocus on open would land nowhere; the focus follows the chip
-   *  tap instead, and only for the kinds that need the note written. The
-   *  teacher picker is a native select since T71 (it was a scrolling
-   *  list of fifteen rows that hid the preselected teacher below the
-   *  fold), so nothing here scrolls a chosen row into view anymore. */
+   *  tap instead, and only for the kinds that need the note written. */
   const noteRef = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => {
     if (!reasonOpen || reasonDraft.kind === null) return;
     if (!compNeedsDetail(reasonDraft.kind)) return;
     noteRef.current?.focus();
   }, [reasonOpen, reasonDraft.kind]);
-  /** Select a teacher in the draft, keeping the kind. */
-  const pickTeacher = (t: StaffChoice | null) =>
-    setReasonDraft((d) => ({
-      ...d,
-      forStaffId: t?.id ?? null,
-      forStaffName: t?.name ?? null,
-    }));
-  /** Choose a kind. Teacher brings the picker up, preselecting the
-   *  current class's teacher when the list is here (or once it lands,
-   *  below); any other kind drops a picked teacher, since the route
-   *  refuses forStaffId beside them. */
+  /** Choose a kind. T79: no kind brings anything else up any more. */
   const chooseKind = (kind: CompKind) => {
-    setReasonDraft((d) => {
-      if (kind !== "teacher") {
-        return { ...d, kind, forStaffId: null, forStaffName: null };
-      }
-      const preset =
-        d.forStaffId !== null
-          ? null
-          : matchClassTeacher(staffRef.current.list, classTeacher);
-      return preset
-        ? { ...d, kind, forStaffId: preset.id, forStaffName: preset.name }
-        : { ...d, kind };
-    });
-    if (kind === "teacher" && staffRef.current.status !== "ready") {
-      void loadStaff();
-    }
+    setReasonDraft((d) => ({ ...d, kind }));
   };
-  const loadStaff = async () => {
-    if (staffRef.current.status === "loading") return;
-    setStaff({ status: "loading", list: [] });
-    try {
-      const res = await fetch("/api/staff");
-      const body = await res.json().catch(() => null);
-      if (!res.ok || !Array.isArray(body)) {
-        throw new Error(String(body?.error ?? `HTTP ${res.status}`));
-      }
-      const list: StaffChoice[] = body
-        .filter(
-          (t: unknown): t is StaffChoice =>
-            typeof (t as StaffChoice)?.id === "number" &&
-            typeof (t as StaffChoice)?.name === "string",
-        )
-        .map((t) => ({ id: t.id, name: t.name }));
-      setStaff({ status: "ready", list });
-      /* The list landed after the Teacher chip: preselect now, if the
-       * dialog is still on that kind with nobody chosen. */
-      const preset = matchClassTeacher(list, classTeacher);
-      if (preset) {
-        setReasonDraft((d) =>
-          d.kind === "teacher" && d.forStaffId === null
-            ? { ...d, forStaffId: preset.id, forStaffName: preset.name }
-            : d,
-        );
-      }
-    } catch {
-      setStaff({ status: "error", list: [] });
-    }
+  /* ---------------- T79: the amount step's keypad ------------------ */
+  /** The discount the drafts describe right now, against the cart's
+   *  pre-tax subtotal, or null while the entry is incomplete. */
+  const draftDiscount = draftToDiscount(discountDraft, cartSubtotalCents);
+  const draftOffCents =
+    draftDiscount === null
+      ? 0
+      : discountCents(discountLines(cart), draftDiscount);
+  const draftFull =
+    draftDiscount !== null &&
+    isFullDiscount(discountLines(cart), draftDiscount);
+  /** The segment. Switching drops the digits: an entry typed as cents
+   *  means nothing as a percent. Whole sale needs no digits. */
+  const chooseMode = (mode: DiscountDraftMode) => {
+    setDiscountDraft((d) => (d.mode === mode ? d : { mode, entry: "" }));
   };
+  /** A key on the amount step's pad (or the keyboard standing in for
+   *  it). Amount digits accumulate into cents and clamp at the subtotal
+   *  (the pad's clamp: nothing above the cap is ever held); percent
+   *  digits accumulate into a whole number and a key that would pass
+   *  100 is refused. Whole sale takes no key. */
+  const discountTap = (key: string) => {
+    const d = discountDraftRef.current;
+    if (d.mode === "whole") return;
+    let next: string;
+    if (key === "back") {
+      next = d.entry.slice(0, -1);
+    } else {
+      const raw = (d.entry + key).replace(/^0+(?=\d)/, "");
+      if (raw.length > 7) return;
+      const n = Number(raw);
+      if (d.mode === "percent") {
+        if (n > DISCOUNT_PERCENT_MAX) return;
+        next = raw;
+      } else {
+        next = String(Math.min(n, cartSubtotalCents));
+      }
+    }
+    if (next === "0") next = "";
+    setDiscountDraft({ mode: d.mode, entry: next });
+  };
+  /** A quick cell SETS the entry, as the pad's chips do: $5 / $10 / $20
+   *  for an amount (clamped at the subtotal), 10 / 25 / 50 for a
+   *  percent. */
+  const discountChip = (value: number) => {
+    const d = discountDraftRef.current;
+    if (d.mode === "whole") return;
+    const entry =
+      d.mode === "percent"
+        ? String(Math.min(DISCOUNT_PERCENT_MAX, value))
+        : String(Math.min(cartSubtotalCents, value * 100));
+    setDiscountDraft({ mode: d.mode, entry });
+  };
+  /** The figure the entry reads as, for the head: "$60.00" or "60%". */
+  const discountEntered =
+    discountDraft.mode === "whole"
+      ? "100%"
+      : discountDraft.mode === "percent"
+        ? `${discountDraft.entry === "" ? 0 : Number(discountDraft.entry)}%`
+        : money((discountDraft.entry === "" ? 0 : Number(discountDraft.entry)) / 100);
+  /** The running effect (the brief's line): "Discount $60.00, they pay
+   *  $40.00" before tax, or "Comped, they pay $0.00" at 100%. */
+  const discountEffect =
+    draftDiscount === null
+      ? cartSubtotalCents <= 0
+        ? "Nothing to discount."
+        : discountDraft.mode === "percent"
+          ? `Enter 1 to 100 percent of the ${money(cartSubtotalCents / 100)} subtotal.`
+          : `Enter up to ${money(cartSubtotalCents / 100)}, the subtotal before tax.`
+      : draftFull
+        ? `Comped, they pay ${money(0)}.`
+        : `Discount ${money(draftOffCents / 100)}, they pay ${money(
+            (cartSubtotalCents - draftOffCents) / 100,
+          )} before tax.`;
+  /* The keyboard stands in for the amount pad on the reason step, but
+   * only while the note is not focused (the note takes its own keys). */
+  useEffect(() => {
+    if (!reasonOpen || reasonStep !== "reason") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (document.activeElement === noteRef.current) return;
+      if (/^[0-9]$/.test(e.key)) discountTap(e.key);
+      else if (e.key === "Backspace") discountTap("back");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    /* discountTap reads the draft through a ref; the subtotal is the
+     * only closed-over value that can change. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reasonOpen, reasonStep, cartSubtotalCents]);
   /** Whether the pointer went down on the reason dialog's scrim, so the
    *  scrim closes on a real tap on it and not on the click a touch
    *  pointer fires when the hold that opened the dialog lifts. */
@@ -1213,7 +1273,7 @@ function PaymentPanel(props: {
   }, [clientId]);
   /* A comp is nothing to receipt (decided, T53): the toggle greys with
    * the comp armed and the body says false regardless of it. */
-  const sendEmail = receipt.why === null && wantReceipt && comp === null;
+  const sendEmail = receipt.why === null && wantReceipt && !comped;
 
   /** Close the amount modal without touching the lines, and tell
    *  SaleScreen the payment surface is closed -- otherwise a modal
@@ -1246,12 +1306,13 @@ function PaymentPanel(props: {
   const closeReason = useCallback(() => {
     setReasonOpen(false);
     setReasonDraft(EMPTY_COMP_DRAFT);
+    setDiscountDraft(EMPTY_DISCOUNT_DRAFT);
     resetCompSteps();
     onModalChange(false);
   }, [onModalChange, resetCompSteps]);
 
-  /** Blank the whole tender: every line, the amount modal, comp and its
-   *  reason dialog. Used by each of the reset paths below and by a
+  /** Blank the whole tender: every line, the amount modal, the discount
+   *  and its dialog. Used by each of the reset paths below and by a
    *  completed sale. */
   const resetTender = useCallback(() => {
     setLines([]);
@@ -1259,7 +1320,37 @@ function PaymentPanel(props: {
     setCompCleared(false);
     dismissPad();
     closeReason();
-  }, [dismissPad, closeReason]);
+  }, [dismissPad, closeReason, setComp]);
+
+  /* T79: the discount is cart state, so a change to it (armed, removed,
+   * or a different figure) moves the total under every tender line the
+   * same way a cart edit does: the lines go, and an open keypad with
+   * them. */
+  const discountKey =
+    comp === null ? "" : `${comp.discount.mode}:${comp.discount.value}`;
+  useEffect(() => {
+    setLines([]);
+    dismissPad();
+  }, [discountKey, dismissPad]);
+
+  /* T79: a cart edit under an armed discount re-spreads it (the figures
+   * are recomputed from the cart on every render), unless the cart can
+   * no longer carry it: a package line arrived, or a dollar amount now
+   * exceeds the smaller subtotal. Then the discount is dropped and the
+   * quiet line says so, since the server would refuse it anyway and a
+   * silently clamped figure is not the one the teacher entered. */
+  useEffect(() => {
+    if (comp === null || cart.length === 0) return;
+    const lines = discountLines(cart);
+    const bad =
+      discountRefusal(cart.map((l) => ({ type: l.item.type }))) !== null ||
+      (comp.discount.mode === "amount" &&
+        Math.round(comp.discount.value * 100) > subtotalCents(lines));
+    if (bad) {
+      setComp(null);
+      setCompCleared(true);
+    }
+  }, [cart, comp, setComp]);
 
   /* ANY client change -- detach, attach, or the per-row Buy button
    * switching straight from one client to another -- invalidates the
@@ -1319,11 +1410,11 @@ function PaymentPanel(props: {
     /* T43: a reason dialog left open by a hold that landed just before
      * Back to items goes the same way, with its draft. */
     closeReason();
-    if (comped) {
+    if (discounted) {
       setComp(null);
       setCompCleared(true);
     }
-  }, [visible, comped, dismissPad, closeReason]);
+  }, [visible, discounted, dismissPad, closeReason, setComp]);
 
   /* Source availability. An unavailable source renders greyed WITH the
    * reason, never hidden (PLAN 2.2: "account credit ($12) greyed out
@@ -1555,21 +1646,19 @@ function PaymentPanel(props: {
        it, and Enter there charged the tender the teacher was in the middle
        of replacing with a comp. */
     !reasonOpen &&
-    (comp !== null
-      ? /* T43: a comp charges only with its reason written. The state
-           shape already makes an armed comp carry one; this re-checks
-           the text in the SAME render that enables the button, so no
-           state slip could ever leave a reasonless comp chargeable.
-           T48: and only with a teacher and their token behind it, checked
-           the same way for the same reason. */
-        lines.length === 0 &&
-        comp.teacher.id > 0 &&
+    /* T43: a discount charges only with its reason written. The state
+       shape already makes an armed discount carry one; this re-checks
+       the text in the SAME render that enables the button, so no state
+       slip could ever leave a reasonless discount chargeable. T48: and
+       only with a teacher and their token behind it, checked the same
+       way for the same reason. */
+    (comp === null ||
+      (comp.teacher.id > 0 &&
         comp.token.length > 0 &&
-        compValid({
-          kind: comp.reason.kind,
-          detail: comp.reason.detail,
-          forStaffId: comp.reason.forStaffId ?? null,
-        })
+        compValid({ kind: comp.reason.kind, detail: comp.reason.detail }))) &&
+    (comped
+      ? /* T79: a 100% discount takes no tender; the total is $0. */
+        lines.length === 0
       : /* Due EXACTLY zero: the lines cover the server's total to the
            cent, no more and no less (cash surplus is change, not
            coverage). */
@@ -1592,10 +1681,15 @@ function PaymentPanel(props: {
    *  keypad (T39.7). */
   const cashLine = lines.find((l) => l.source === "cash");
 
+  /** T79: what a comp puts on the studio, the pre-tax subtotal (tax on
+   *  $0 is $0): the figure the Comp button and the done screen carry,
+   *  since Mindbody's discounted total is $0.00 and says nothing. */
+  const compAmount = cartSubtotalCents / 100;
+
   const chargeLabel = comped
     ? total === null
       ? "Charge"
-      : `Comp ${money(total)}`
+      : `Comp ${money(compAmount)}`
     : total === null
       ? "Charge"
       : lines.length === 2
@@ -1633,16 +1727,9 @@ function PaymentPanel(props: {
      * one, and a reason on any other method). The reason never reaches
      * Mindbody, whose checkout request has no notes field; the route
      * records it in comp_receipts and the server log. */
-    const payment = comp !== null
-      ? /* T45: the reason as data. The route re-resolves the teacher's
-           name from the staff id and ignores the name sent here. T48:
-           the token names who is comping; the route refuses a comp
-           without a valid one before any Mindbody call. */
-        {
-          method: "comp" as const,
-          compReason: comp.reason,
-          teacherToken: comp.token,
-        }
+    const tender = comped
+      ? /* T79: a 100% discount pays nothing: method comp, no tender. */
+        { method: "comp" as const }
       : legs.length === 2
         ? { split: { legs } }
         : soleLine !== undefined && legs[0] !== undefined
@@ -1653,7 +1740,20 @@ function PaymentPanel(props: {
                 : {}),
             }
           : null;
-    if (payment === null) return;
+    if (tender === null) return;
+    /* T79: the discount rides with any tender. T45: the reason as data.
+     * T48: the token names who is discounting; the route refuses a
+     * discount without a valid one before any Mindbody call. The
+     * per-line spread is NOT sent: the route recomputes it. */
+    const payment =
+      comp !== null
+        ? {
+            ...tender,
+            discount: comp.discount,
+            compReason: comp.reason,
+            teacherToken: comp.token,
+          }
+        : tender;
     const isSplit = "split" in payment;
     /* For the done block (T39.7); the cart is gone by the time it renders. */
     const itemCount = cart.reduce((n, l) => n + l.quantity, 0);
@@ -1744,13 +1844,34 @@ function PaymentPanel(props: {
          * the refetch onClientDataStale triggers be the answer. */
         setFreshBalance(null);
         onClientDataStale();
+        /* T79: the discount as the SERVER recorded it (its own spread
+         * and Mindbody's totals), never the browser's copy. */
+        const disc = body?.discount;
         setResult({
           kind: "paid",
-          total: typeof body?.total === "number" ? body.total : total,
+          total: comped
+            ? typeof disc?.subtotal === "number"
+              ? disc.subtotal
+              : compAmount
+            : typeof body?.total === "number"
+              ? body.total
+              : total,
           count: itemCount,
           changeCents: changeAtTap,
           comped,
           compReason: comp?.reason ?? null,
+          discount:
+            comp !== null && typeof disc?.amount === "number"
+              ? {
+                  amount: disc.amount,
+                  subtotal:
+                    typeof disc.subtotal === "number" ? disc.subtotal : compAmount,
+                  percent:
+                    typeof disc.percent === "string"
+                      ? disc.percent
+                      : discountPercentLabel(comp.discount, disc.amount, compAmount),
+                }
+              : null,
           actorNote: body?.actorFallback
             ? actorFallbackLine(body.actorFallback)
             : null,
@@ -1814,18 +1935,24 @@ function PaymentPanel(props: {
         body?.reason === "teacher" &&
         comp !== null
       ) {
-        /* T48: the comp token was refused (ten minutes ran out between
-         * the PIN and the tap, or a restart rotated the key). Nothing
-         * was charged and nothing is retried: comp disarms, and the
-         * dialog comes back at the PIN step with the reason kept, so the
-         * fix is the PIN again rather than the whole dialog. */
+        /* T48: the teacher token was refused (ten minutes ran out
+         * between the PIN and the tap, or a restart rotated the key).
+         * Nothing was charged and nothing is retried: the discount
+         * disarms, and the dialog comes back at the PIN step with the
+         * amount and the reason kept, so the fix is the PIN again
+         * rather than the whole dialog. */
         setComp(null);
-        setReasonDraft({
-          kind: comp.reason.kind,
-          detail: comp.reason.detail,
-          forStaffId: comp.reason.forStaffId ?? null,
-          forStaffName: comp.reason.forStaffName ?? null,
-        });
+        setReasonDraft({ kind: comp.reason.kind, detail: comp.reason.detail });
+        setDiscountDraft(
+          comp.discount.mode === "percent"
+            ? comp.discount.value === 100
+              ? { mode: "whole", entry: "" }
+              : { mode: "percent", entry: String(comp.discount.value) }
+            : {
+                mode: "amount",
+                entry: String(Math.round(comp.discount.value * 100)),
+              },
+        );
         resetCompSteps();
         setReasonStep("pin");
         setPinMsg("Your PIN check ran out. Enter it again.");
@@ -1866,8 +1993,12 @@ function PaymentPanel(props: {
         : dueCents;
     if (cents <= 0) return;
     const id = nextLineId.current++;
-    /* Adding a tender disarms comp: the sale is being paid for. */
-    setComp(null);
+    /* T79: a PARTIAL discount survives a tender -- the remainder is
+     * exactly what this line is paying, and dropping the discount here
+     * repriced the cart at full price under a line entered against the
+     * discounted total (the T79 UI run caught it). A 100% discount
+     * leaves nothing due, so the guard above already returned and no
+     * tender can reach an armed comp. */
     setCompCleared(false);
     setLines((cur) => [...cur, { id, source, cents }]);
     dismissPad();
@@ -2026,18 +2157,24 @@ function PaymentPanel(props: {
   const openComp = () => {
     if (!visible || charging) return;
     setReasonDraft(EMPTY_COMP_DRAFT);
+    setDiscountDraft(EMPTY_DISCOUNT_DRAFT);
     resetCompSteps();
     setReasonOpen(true);
     onModalChange(true);
     setCompCleared(false);
   };
   /** Next on the reason step (T48): on to the PIN. Refused, and the
-   *  dialog left on the reason, unless the draft is complete (a kind,
-   *  the teacher for a teacher comp, the note for `other`); the button
-   *  is disabled on the same test, so this guard is for a keyboard
-   *  Enter on an incomplete draft. */
+   *  dialog left on the reason, unless both drafts are complete (T79: a
+   *  valid amount or percent; a kind, and the note for trade and
+   *  other); the button is disabled on the same test, so this guard is
+   *  for a keyboard Enter on an incomplete draft. */
   const toPinStep = () => {
-    if (!compValid(reasonDraft) || charging || reasonDraft.kind === null) {
+    if (
+      !compValid(reasonDraft) ||
+      draftDiscount === null ||
+      charging ||
+      reasonDraft.kind === null
+    ) {
       return;
     }
     pinEntryRef.current = "";
@@ -2166,7 +2303,7 @@ function PaymentPanel(props: {
         setEnrollMsg(null);
         pinEntryRef.current = "";
         setPinEntry("");
-        setPinMsg(`PIN set for ${String(body.teacher.name ?? "you")}. Enter it to comp.`);
+        setPinMsg(`PIN set for ${String(body.teacher.name ?? "you")}. Enter it to go on.`);
         setReasonStep("pin");
         return;
       }
@@ -2195,24 +2332,30 @@ function PaymentPanel(props: {
       setEnrollBusy(false);
     }
   };
-  /** Comp on the ready step: arm comp WITH the reason and the verified
-   *  teacher. The button exists only on that step, so this guard is for
-   *  a stray keyboard Enter. */
+  /** Discount (or Comp) on the ready step: arm the discount WITH its
+   *  reason and the verified teacher. The button exists only on that
+   *  step, so this guard is for a stray keyboard Enter. */
   const confirmComp = () => {
     const reason = draftToReason(reasonDraft);
     if (
       reason === null ||
       !compValid(reasonDraft) ||
+      draftDiscount === null ||
       charging ||
       verified === null
     ) {
       return;
     }
-    /* Comp is the whole sale given away, so it cannot coexist with a
-     * tender: arming it clears the lines. */
+    /* The discount moves the total, so no tender line entered against
+     * the old one survives it (the discountKey effect clears them too). */
     setLines([]);
     dismissPad();
-    setComp({ reason, teacher: verified.teacher, token: verified.token });
+    setComp({
+      discount: draftDiscount,
+      reason,
+      teacher: verified.teacher,
+      token: verified.token,
+    });
     setCompCleared(false);
     clearStaleResult();
     closeReason();
@@ -2235,14 +2378,27 @@ function PaymentPanel(props: {
     /* pinTap and submitPin read refs, so the closure is never stale. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reasonOpen, reasonStep, pinLockedFor > 0]);
-  /** Tap on Comp this sale: an armed comp is unselected (the reason
-   *  goes with it; the next tap asks again), an unarmed one opens the
-   *  dialog. */
+  /** T79: why the cart cannot take a discount right now, or null: a
+   *  package line (Mindbody ignores a discount on one). Read at the tap
+   *  and shown in the quiet line rather than opening the dialog. */
+  const discountBlock = discountRefusal(
+    cart.map((l) => ({ type: l.item.type })),
+  );
+  const [discountRefused, setDiscountRefused] = useState<string | null>(null);
+  useEffect(() => {
+    if (discountBlock === null) setDiscountRefused(null);
+  }, [discountBlock]);
+  /** Tap on Discount this sale: an armed discount is removed (the
+   *  reason goes with it; the next tap asks again), an unarmed one
+   *  opens the dialog, unless the cart refuses one. */
   const compClick = () => {
-    if (comped) {
+    if (discounted) {
       setComp(null);
       clearStaleResult();
+    } else if (discountBlock !== null) {
+      setDiscountRefused(discountBlock);
     } else {
+      setDiscountRefused(null);
       openComp();
     }
   };
@@ -2250,13 +2406,26 @@ function PaymentPanel(props: {
   /* ONE shared quiet line under the tender: the first real problem with
    * what is on screen, else what is still owed, else the detail of what
    * is armed. The full reason also sits on each control's title attr. */
-  const tenderNote = comp !== null
+  const tenderNote = comp !== null && comped
     ? /* The canvas's line (0.2): the sale is on the studio, and since
          T43 the reason sits beside it so what was written is on the
          surface before Charge. */
       `Nothing to pay, on the studio. Comped: ${compReasonLine(comp.reason)}. By ${comp.teacher.name}.`
+    : comp !== null && firstLineProblem === null && (dueCents === null || dueCents <= 0 || lines.length === 0)
+      ? /* T79: a partial discount, before a tender is chosen: what is
+           off and why, then the ordinary lines take over. */
+        `Discount ${money(armedCents / 100)} (${discountPercentLabel(
+          comp.discount,
+          armedCents / 100,
+          compAmount,
+        )}): ${compReasonLine(comp.reason)}. By ${comp.teacher.name}.` +
+        (dueCents !== null && dueCents > 0 && lines.length === 0
+          ? ` ${money(dueCents / 100)} to pay.`
+          : "")
+    : discountRefused !== null
+      ? discountRefused
     : compCleared
-      ? "Comp was cleared."
+      ? "Discount was cleared."
     : firstLineProblem !== null
       ? firstLineProblem
       : dueCents !== null && dueCents > 0 && lines.length >= 2
@@ -2307,11 +2476,15 @@ function PaymentPanel(props: {
    * click guard and doCharge's own checks refuse the tap.
    */
   const primaryLabel = comped ? "Comp" : dueSettled ? "Charge" : "Due";
-  const primaryAmount = comped || dueSettled
-    ? total
-    : dueCents !== null
-      ? dueCents / 100
-      : null;
+  const primaryAmount = comped
+    ? total !== null
+      ? compAmount
+      : null
+    : dueSettled
+      ? total
+      : dueCents !== null
+        ? dueCents / 100
+        : null;
   const primaryOn = dueSettled && chargeable;
   const primaryWhy = primaryOn
     ? null
@@ -2402,13 +2575,17 @@ function PaymentPanel(props: {
                   </span>
                 ) : null}
               </p>
-              {result.comped && result.compReason ? (
-                /* T43: the reason, under the comped line, so the done
-                   screen says why the sale was on the studio. T45: the
-                   kind and the teacher on the line, the note under it. */
+              {result.compReason ? (
+                /* T43: the reason, under the charged line, so the done
+                   screen says why the sale was on the studio. T79: a
+                   partial discount names its figure and share. */
                 <>
                   <p className="pay-done-reason">
-                    Comped: {compHeadline(result.compReason)}
+                    {result.comped
+                      ? `Comped: ${compHeadline(result.compReason)}`
+                      : `Discount ${money(result.discount?.amount ?? 0)} (${
+                          result.discount?.percent ?? ""
+                        }): ${compHeadline(result.compReason)}`}
                   </p>
                   {result.compReason.detail ? (
                     <p className="pay-done-reason-detail">
@@ -2626,9 +2803,9 @@ function PaymentPanel(props: {
                   sendEmail ? "receipt-toggle on" : "receipt-toggle"
                 }
                 aria-pressed={sendEmail}
-                disabled={receipt.why !== null || comp !== null || charging}
+                disabled={receipt.why !== null || comped || charging}
                 title={
-                  comp !== null
+                  comped
                     ? "A comp sends no receipt"
                     : (receipt.why ?? "Email a receipt for this sale")
                 }
@@ -2636,7 +2813,7 @@ function PaymentPanel(props: {
               >
                 <span className="receipt-toggle-name">Email receipt</span>
                 <span className="receipt-sub">
-                  {comp !== null
+                  {comped
                     ? "Not for a comp"
                     : receipt.why !== null
                       ? receipt.why
@@ -2718,13 +2895,21 @@ function PaymentPanel(props: {
               <div className="pay-foot">
                 <p className="pay-quiet">{tenderNote || " "}</p>
                 <button
-                  className={comped ? "comp-hold on" : "comp-hold"}
+                  className={discounted ? "comp-hold on" : "comp-hold"}
                   disabled={charging}
                   onClick={compClick}
-                  aria-pressed={comped}
-                  title={comped ? "Tap to unselect" : "Comp this sale"}
+                  aria-pressed={discounted}
+                  title={
+                    discounted
+                      ? "Tap to remove the discount"
+                      : (discountBlock ?? "Discount this sale")
+                  }
                 >
-                  {comped ? "Comped. Tap to unselect." : "Comp this sale"}
+                  {comped
+                    ? "Comped. Tap to unselect."
+                    : discounted
+                      ? `Discount ${money(armedCents / 100)}. Tap to remove.`
+                      : "Discount"}
                 </button>
               </div>
               </div>
@@ -2866,14 +3051,14 @@ function PaymentPanel(props: {
         </div>
       ) : null}
 
-      {/* T43: the comp reason dialog. A tap on Comp this sale opens
-          it (T67); nothing is armed until Comp here is tapped with a reason
-          complete (T45) and a PIN verified (T48: reason, then PIN, then
-          "Comping as <name>" with the Comp button). Cancel, Escape and
-          the scrim leave comp unarmed and drop the draft and the digits.
-          It stacks like the keypad (the same scrim) and owns Escape the
-          same way. The reason never reaches Mindbody; the route keeps
-          it. */}
+      {/* T43: the discount dialog. A tap on Discount opens it (T67);
+          nothing is armed until the button on the ready step is tapped
+          with the amount (T79) and the reason complete (T45) and a PIN
+          verified (T48: amount and reason, then PIN, then "Discounting
+          as <name>"). Cancel, Escape and the scrim leave nothing armed
+          and drop the drafts and the digits. It stacks like the keypad
+          (the same scrim) and owns Escape the same way. The reason never
+          reaches Mindbody; the route keeps it. */}
       {reasonOpen ? (
         <div
           className="modal-scrim"
@@ -2905,120 +3090,163 @@ function PaymentPanel(props: {
             aria-modal="true"
             aria-label={
               reasonStep === "pin"
-                ? "Who is comping this?"
+                ? "Who is discounting this?"
                 : reasonStep === "enroll"
                   ? "Set up your PIN"
-                  : "Comp this sale"
+                  : "Discount this sale"
             }
             onClick={(e) => e.stopPropagation()}
           >
             {reasonStep === "reason" ? (
               <>
-                <p className="modal-title">Comp this sale</p>
+                <p className="modal-title">Discount this sale</p>
             <div className="pad-row">
-              <span className="pad-label">Total</span>
-              <span className="pad-amt">
-                {total !== null ? money(total) : "--"}
-              </span>
+              <span className="pad-label">Subtotal before tax</span>
+              <span className="pad-amt">{money(cartSubtotalCents / 100)}</span>
             </div>
-            {/* T45: the chips choose a KIND (Pete: "we aren't saving an
-                enum with the row"), never paste text. */}
-            <div className="pad-chips reason-chips">
-              {COMP_KINDS.map((kind) => (
-                <button
-                  key={kind}
-                  className={
-                    reasonDraft.kind === kind ? "pad-chip on" : "pad-chip"
-                  }
-                  aria-pressed={reasonDraft.kind === kind}
-                  onClick={() => chooseKind(kind)}
-                >
-                  {COMP_KIND_LABELS[kind]}
-                </button>
-              ))}
-            </div>
-            {/* T68: the body between the chips and the actions is the one
-                row that flexes, so the dialog is the same size whatever
-                chip is chosen. T71: the teacher picker is a 64px select
-                on its own line and the note fills the rest either way. */}
-            <div className="reason-body">
-            {reasonDraft.kind === "teacher" ? (
-              /* The teacher picker (T71, Pete: "via a dropdown rather than
-                 a permanently showing list"): a native select over the
-                 active teachers from /api/staff, the current class's
-                 teacher preselected. A list that could not load says so
-                 and leaves Next disabled; a name is never typed or
-                 guessed. The empty option is the prompt, not a choice:
-                 compValid needs a staff id. */
-              <>
-                <span className="reason-select-wrap">
-                <select
-                  className="reason-input reason-select"
-                  aria-label="Which teacher"
-                  value={reasonDraft.forStaffId ?? ""}
-                  disabled={staff.status !== "ready"}
-                  onChange={(e) => {
-                    const id = Number(e.target.value);
-                    pickTeacher(staff.list.find((t) => t.id === id) ?? null);
-                  }}
-                >
-                  <option value="">
-                    {staff.status === "loading"
-                      ? "Loading teachers..."
-                      : staff.status === "error"
-                        ? "Could not load teachers"
-                        : "Choose the teacher"}
-                  </option>
-                  {staff.list.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-                <Icon d="M6 9l6 6 6-6" />
-                </span>
-                {staff.status === "error" ? (
-                  <p className="reason-note">
-                    Could not load teachers. Tap Teacher to try again.
-                  </p>
-                ) : null}
-              </>
-            ) : null}
-            {/* T71: the note is greyed out and inert until a kind is
-                chosen, and the placeholder no longer says "(optional)":
-                for Trade and Other it is required (T67), for the rest
-                the empty field is the answer. */}
-            <textarea
-              ref={noteRef}
-              className="reason-input reason-note-field fill"
-              value={reasonDraft.detail}
-              maxLength={COMP_DETAIL_MAX}
-              autoComplete="off"
-              rows={1}
-              disabled={reasonDraft.kind === null}
-              placeholder={
-                reasonDraft.kind === null
-                  ? "Choose a reason first"
-                  : compNeedsDetail(reasonDraft.kind)
-                    ? reasonDraft.kind === "trade"
-                      ? "What was traded?"
-                      : "What happened?"
-                    : "Add a note"
-              }
-              aria-label="Note for the comp"
-              onChange={(e) =>
-                setReasonDraft((d) => ({ ...d, detail: e.target.value }))
-              }
-              onKeyDown={(e) => {
-                /* Enter still means Next (T43); a note is one line of
-                 * reason, not prose, so the taller field never takes a
-                 * newline. */
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  toPinStep();
+            {/* T79: the amount step. The T70 pad panel's shape inside
+                T68's one fixed box: the entry column at the left (the
+                head with the live figure, the Amount | Percent | Whole
+                sale segment, the running effect, the quick cells, the
+                reason chips and the note), the 3x4 keys at the right.
+                Nothing here moves when a segment or a chip is tapped. */}
+            <div className="reason-body discount-body">
+            <div className="pad-left discount-left">
+              <p className="pad-head discount-head">
+                <span className="pad-kicker">Discount</span>
+                <span className="pad-entered-amt">{discountEntered}</span>
+              </p>
+              <div
+                className="pad-chips discount-modes"
+                role="radiogroup"
+                aria-label="Discount as"
+              >
+                {(
+                  [
+                    ["amount", "Amount"],
+                    ["percent", "Percent"],
+                    ["whole", "Whole sale"],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    role="radio"
+                    className={
+                      discountDraft.mode === mode ? "pad-chip on" : "pad-chip"
+                    }
+                    aria-checked={discountDraft.mode === mode}
+                    onClick={() => chooseMode(mode)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p
+                className={
+                  draftDiscount === null
+                    ? "pad-change muted-note discount-effect"
+                    : "pad-change discount-effect"
                 }
-              }}
-            />
+                role="status"
+              >
+                {discountEffect}
+              </p>
+              {/* The quick cells (the pad's chips): $5 / $10 / $20 for
+                  an amount, 10% / 25% / 50% for a percent; none for
+                  Whole sale, which needs no figure. A cell SETS the
+                  entry. */}
+              <div className="pad-chips discount-quick">
+                {(discountDraft.mode === "percent"
+                  ? [10, 25, 50]
+                  : [5, 10, 20]
+                ).map((v) => (
+                  <button
+                    key={v}
+                    className="pad-chip"
+                    disabled={
+                      discountDraft.mode === "whole" || cartSubtotalCents <= 0
+                    }
+                    onClick={() => discountChip(v)}
+                  >
+                    {discountDraft.mode === "percent" ? `${v}%` : `$${v}`}
+                  </button>
+                ))}
+              </div>
+              {/* T45: the chips choose a KIND (Pete: "we aren't saving an
+                  enum with the row"), never paste text. T79: three, no
+                  Teacher. */}
+              <div className="pad-chips reason-chips">
+                {COMP_KINDS.map((kind) => (
+                  <button
+                    key={kind}
+                    className={
+                      reasonDraft.kind === kind ? "pad-chip on" : "pad-chip"
+                    }
+                    aria-pressed={reasonDraft.kind === kind}
+                    onClick={() => chooseKind(kind)}
+                  >
+                    {COMP_KIND_LABELS[kind]}
+                  </button>
+                ))}
+              </div>
+              {/* T71: the note is greyed out and inert until a kind is
+                  chosen, and the placeholder no longer says "(optional)":
+                  for Trade and Other it is required (T67), for the rest
+                  the empty field is the answer. T79: one 64px line. */}
+              <textarea
+                ref={noteRef}
+                className="reason-input reason-note-field"
+                value={reasonDraft.detail}
+                maxLength={COMP_DETAIL_MAX}
+                autoComplete="off"
+                rows={1}
+                disabled={reasonDraft.kind === null}
+                placeholder={
+                  reasonDraft.kind === null
+                    ? "Choose a reason first"
+                    : compNeedsDetail(reasonDraft.kind)
+                      ? reasonDraft.kind === "trade"
+                        ? "What was traded?"
+                        : "What happened?"
+                      : "Add a note"
+                }
+                aria-label="Note for the discount"
+                onChange={(e) =>
+                  setReasonDraft((d) => ({ ...d, detail: e.target.value }))
+                }
+                onKeyDown={(e) => {
+                  /* Enter still means Next (T43); a note is one line of
+                   * reason, not prose, so the field never takes a
+                   * newline. */
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    toPinStep();
+                  }
+                }}
+              />
+            </div>
+            <div className="pad-keys">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0"].map(
+                (k) => (
+                  <button
+                    key={k}
+                    className="pad-key"
+                    disabled={discountDraft.mode === "whole"}
+                    onClick={() => discountTap(k)}
+                  >
+                    {k}
+                  </button>
+                ),
+              )}
+              <button
+                className="pad-key del"
+                aria-label="Delete last digit"
+                disabled={discountDraft.mode === "whole"}
+                onClick={() => discountTap("back")}
+              >
+                del
+              </button>
+            </div>
             </div>
             <div className="modal-actions">
               <button className="modal-cancel" onClick={closeReason}>
@@ -3026,14 +3254,16 @@ function PaymentPanel(props: {
               </button>
               <button
                 className="modal-confirm go"
-                disabled={!compValid(reasonDraft)}
+                disabled={!compValid(reasonDraft) || draftDiscount === null}
                 title={
-                  compValid(reasonDraft)
-                    ? "Next: your PIN"
-                    : reasonDraft.kind === null
-                      ? "Choose a reason"
-                      : reasonDraft.kind === "teacher"
-                        ? "Choose the teacher"
+                  draftDiscount === null
+                    ? discountDraft.mode === "percent"
+                      ? "Enter 1 to 100 percent"
+                      : "Enter an amount"
+                    : compValid(reasonDraft)
+                      ? "Next: your PIN"
+                      : reasonDraft.kind === null
+                        ? "Choose a reason"
                         : `Write at least ${COMP_DETAIL_MIN} characters`
                 }
                 onClick={toPinStep}
@@ -3044,15 +3274,15 @@ function PaymentPanel(props: {
               </>
             ) : null}
 
-            {/* T48: the PIN step. Every comp asks, whatever POS_PIN says
-                (Pete: "comp just let me right through without entering
-                a PIN ... that's exactly what we don't want"). Six slots
-                for a 4 to 6 digit PIN, the amount pad's keys, Done once
-                four are in; a miss clears the digits and says so, the
-                lockout counts down in the same line. */}
+            {/* T48: the PIN step. Every discount asks, whatever POS_PIN
+                says (Pete: "comp just let me right through without
+                entering a PIN ... that's exactly what we don't want").
+                Six slots for a 4 to 6 digit PIN, the amount pad's keys,
+                Done once four are in; a miss clears the digits and says
+                so, the lockout counts down in the same line. */}
             {reasonStep === "pin" ? (
               <>
-                <p className="modal-title">Who is comping this?</p>
+                <p className="modal-title">Who is discounting this?</p>
                 <p className="reason-sub">Enter your PIN.</p>
                 <div
                   key={`dots-${pinShake}`}
@@ -3140,18 +3370,23 @@ function PaymentPanel(props: {
               </>
             ) : null}
 
-            {/* T48: the PIN matched. Who is comping is on the surface
-                before the button that arms it, and only Comp here arms. */}
+            {/* T48: the PIN matched. Who is discounting is on the
+                surface before the button that arms it, and only the
+                button here arms. T79: the figure is restated too. */}
             {reasonStep === "ready" && verified !== null ? (
               <>
-                <p className="modal-title">Comp this sale</p>
+                <p className="modal-title">
+                  {draftFull ? "Comp this sale" : "Discount this sale"}
+                </p>
             <div className="pad-row">
-              <span className="pad-label">Total</span>
-              <span className="pad-amt">
-                {total !== null ? money(total) : "--"}
-              </span>
+              <span className="pad-label">Subtotal before tax</span>
+              <span className="pad-amt">{money(cartSubtotalCents / 100)}</span>
             </div>
-                <p className="reason-who">Comping as {verified.teacher.name}</p>
+                <p className="reason-who">
+                  {draftFull ? "Comping" : "Discounting"} as{" "}
+                  {verified.teacher.name}
+                </p>
+                <p className="reason-note">{discountEffect}</p>
                 {(() => {
                   const r = draftToReason(reasonDraft);
                   return r ? (
@@ -3164,11 +3399,11 @@ function PaymentPanel(props: {
                   </button>
                   <button
                     className="modal-confirm go"
-                    disabled={charging}
-                    title="Comp this sale"
+                    disabled={charging || draftDiscount === null}
+                    title={draftFull ? "Comp this sale" : "Discount this sale"}
                     onClick={confirmComp}
                   >
-                    Comp
+                    {draftFull ? "Comp" : "Discount"}
                   </button>
                 </div>
               </>
@@ -3962,11 +4197,6 @@ export default function SaleScreen(props: {
    *  the overlay must not keep showing the pre-sale numbers (Pete, fourth
    *  live test). Best-effort; the sale stands whatever happens here. */
   onSaleCompleted?: (clientId: string) => void;
-  /** T45: the teacher of the roster's current class, for the comp
-   *  dialog's picker to preselect. The class summary's display name,
-   *  matched to the staff list by name in the panel; null with no
-   *  active class. */
-  classTeacher?: string | null;
   /** T49: a money write answered that the signed-in teacher's token is
    *  no longer valid; page.tsx clears the header control. */
   onStaffSessionEnded?: () => void;
@@ -3981,7 +4211,6 @@ export default function SaleScreen(props: {
     modalAbove,
     onContractPurchased,
     onSaleCompleted,
-    classTeacher = null,
     onStaffSessionEnded,
   } = props;
 
@@ -4361,6 +4590,13 @@ export default function SaleScreen(props: {
   }, [activeCat, activeChild, passKids, retailCategories]);
 
   const [cart, setCart] = useState<CartEntry[]>([]);
+  /** T79: the armed discount, cart state: the pricing loop below sends
+   *  it with the lines, and the panel arms and clears it through props.
+   *  Cleared with an emptied cart (the loop) and a completed sale (the
+   *  panel's reset). */
+  const [armedDiscount, setArmedDiscount] = useState<ArmedDiscount | null>(
+    null,
+  );
   const [priced, setPriced] = useState<PricedResult | null>(null);
   /** True from the moment the cart changes until Mindbody's answer for
    *  THAT cart lands: the debounce window counts, because the total on
@@ -4775,16 +5011,34 @@ export default function SaleScreen(props: {
     };
   }, [clientId, profileNonce]);
 
+  /* T79: the discount is priced WITH the cart (the mode and the value;
+   * the route spreads it over the lines itself), so an armed, removed
+   * or changed discount reprices like a cart edit. The key is the
+   * effect's dependency rather than the object, since the panel hands
+   * back a new object per arm. */
+  const armedDiscountKey =
+    armedDiscount === null
+      ? ""
+      : `${armedDiscount.discount.mode}:${armedDiscount.discount.value}`;
   useEffect(() => {
     const gen = ++priceGen.current;
     if (cart.length === 0) {
       setPriced(null);
       setPriceError(null);
       setPricing(false);
+      /* T79: an emptied cart has nothing to discount. */
+      setArmedDiscount(null);
       return;
     }
     setPricing(true);
     setPriceError(null);
+    const discount =
+      armedDiscountKey === ""
+        ? null
+        : {
+            mode: armedDiscountKey.split(":")[0] as Discount["mode"],
+            value: Number(armedDiscountKey.split(":")[1]),
+          };
     const timer = setTimeout(async () => {
       try {
         const res = await fetch("/api/price-cart", {
@@ -4800,6 +5054,7 @@ export default function SaleScreen(props: {
               taxRate: line.item.taxRate,
             })),
             ...(clientId ? { clientId } : {}),
+            ...(discount ? { discount } : {}),
           }),
         });
         const body = await res.json();
@@ -4815,7 +5070,7 @@ export default function SaleScreen(props: {
       }
     }, PRICE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [cart, clientId]);
+  }, [cart, clientId, armedDiscountKey]);
 
   /**
    * Escape peels one layer per press, in this order (T39.6, layout plan
@@ -5610,6 +5865,48 @@ export default function SaleScreen(props: {
    * the figures are the thing on screen and must not stand beside a
    * total the server did not give. Nothing else of the ticket's travels.
    */
+  /** The stop's first sentence, the same in the ticket and above the
+   *  figures. T79: a discount Mindbody priced differently names the two
+   *  discount figures instead of the subtotals. */
+  const disagreeText = (t: PricedResult): string =>
+    t.discountDisagrees
+      ? `The discount disagrees: ours ${money(t.expectedDiscount ?? 0)}, ` +
+        `Mindbody's ${money(t.discountTotal ?? 0)}. Do not charge; this is ` +
+        "a bug to report."
+      : `Prices disagree before tax. The shelf says ${money(
+          t.expectedSubtotal,
+        )}, Mindbody says ${
+          t.subTotal !== null ? money(t.subTotal) : "nothing"
+        }. Do not charge; this is a bug to report.`;
+  /** T79: the ticket's discount line, under Subtotal: "Comped" when the
+   *  discount takes the whole subtotal, else "Discount (60%)", with
+   *  Mindbody's DiscountTotal (which the check just proved equal to
+   *  ours) as a negative figure. Nothing without an armed discount. */
+  const discountRow = (t: PricedResult): ReactNode => {
+    if (
+      armedDiscount === null ||
+      t.discountTotal === null ||
+      t.discountTotal <= 0
+    ) {
+      return null;
+    }
+    const sub = t.subTotal ?? t.expectedSubtotal;
+    const full = t.discountTotal >= sub;
+    return (
+      <div className="t-line t-discount">
+        <span>
+          {full
+            ? "Comped"
+            : `Discount (${discountPercentLabel(
+                armedDiscount.discount,
+                t.discountTotal,
+                sub,
+              )})`}
+        </span>
+        <span className="amt">-{money(t.discountTotal)}</span>
+      </div>
+    );
+  };
   const payNotice: ReactNode =
     cart.length > 0 && !pricing && totals?.suppressed ? (
       <div className="pass-note t-suppressed">
@@ -5618,10 +5915,7 @@ export default function SaleScreen(props: {
       </div>
     ) : cart.length > 0 && !pricing && totals?.disagrees ? (
       <div className="sale-stop">
-        Prices disagree before tax. The shelf says{" "}
-        {money(totals.expectedSubtotal)}, Mindbody says{" "}
-        {totals.subTotal !== null ? money(totals.subTotal) : "nothing"}.
-        Do not charge; this is a bug to report.
+        {disagreeText(totals)}
         {auditTable}
         <button
           className="audit-recheck"
@@ -6039,7 +6333,8 @@ export default function SaleScreen(props: {
             onModalChange={setPayModalOpen}
             cartResetNonce={cartResetNonce}
             onClientDataStale={onClientDataStale}
-            classTeacher={classTeacher}
+            discount={armedDiscount}
+            onDiscountChange={setArmedDiscount}
             receipt={receipt}
           />
 
@@ -6290,12 +6585,7 @@ export default function SaleScreen(props: {
                   <>
                     {totals.disagrees ? (
                       <div className="sale-stop">
-                        Prices disagree before tax. The shelf says{" "}
-                        {money(totals.expectedSubtotal)}, Mindbody says{" "}
-                        {totals.subTotal !== null
-                          ? money(totals.subTotal)
-                          : "nothing"}
-                        . Do not charge; this is a bug to report.
+                        {disagreeText(totals)}
                         {/* T38: the per-line audit, so the stop names
                             WHICH line. A line with no Mindbody side is
                             the loudest finding: the item we sent is not
@@ -6330,6 +6620,9 @@ export default function SaleScreen(props: {
                         <span className="amt">{money(totals.subTotal)}</span>
                       </div>
                     ) : null}
+                    {/* T79: the discount, between Subtotal and tax, as
+                        Mindbody priced it. */}
+                    {discountRow(totals)}
                     {totals.taxTotal !== null ? (
                       <div className="t-line t-muted">
                         <span>{taxLabel}</span>

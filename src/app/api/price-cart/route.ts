@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
+import {
+  discountCents,
+  discountRefusal,
+  parseDiscount,
+  spreadDiscount,
+  subtotalCents,
+  type Discount,
+} from "@/lib/comp";
 
 import {
   expectedSubtotal,
@@ -13,7 +21,15 @@ import {
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/price-cart  { items: CartLine[], clientId?: string }
+ * POST /api/price-cart  { items: CartLine[], clientId?: string,
+ *                         discount?: { mode: "amount"|"percent", value } }
+ *
+ * T79: an optional whole-cart `discount`, validated here against the
+ * lines' pre-tax subtotal (parseDiscount) and refused for a cart with a
+ * package line (discountRefusal); the per-line amounts are recomputed
+ * server-side by priceCart from the validated lines and never read
+ * from the browser. The answer adds `expectedDiscount` and
+ * `discountDisagrees`, and `disagrees` covers both checks.
  *
  * Prices a cart on Mindbody's side (Test: true, LocationId 1, InStore).
  * Moves no money by construction; see priceCart. The response carries the
@@ -54,6 +70,19 @@ export async function POST(request: Request) {
     typeof payload?.clientId === "string" && payload.clientId.trim()
       ? payload.clientId.trim()
       : undefined;
+  /* T79: the discount, checked before any Mindbody call. */
+  let discount: Discount | null = null;
+  if (payload?.discount !== undefined && payload?.discount !== null) {
+    const refusal = discountRefusal(parsed.items);
+    if (refusal !== null) {
+      return NextResponse.json({ error: refusal }, { status: 400 });
+    }
+    const d = parseDiscount(payload.discount, subtotalCents(parsed.items));
+    if (typeof d === "string") {
+      return NextResponse.json({ error: d }, { status: 400 });
+    }
+    discount = d;
+  }
   /* No client attached: price as the house client when one is configured;
    * otherwise answer needsClient without touching Mindbody (the call is
    * known to fail, so firing it would cost a metered request to learn
@@ -67,8 +96,13 @@ export async function POST(request: Request) {
       discountTotal: null,
       taxTotal: null,
       grandTotal: null,
-      expectedTotal: expectedTotal(parsed.items),
+      expectedTotal: expectedTotal(
+        parsed.items,
+        discount ? spreadDiscount(parsed.items, discount) : undefined,
+      ),
       expectedSubtotal: expectedSubtotal(parsed.items),
+      expectedDiscount: discount ? discountCents(parsed.items, discount) / 100 : 0,
+      discountDisagrees: false,
       disagrees: false,
       /* Honest even here: a package's estimate is a component-sum guess
        * (see sale.ts sellablePackages), so the UI can label it. */
@@ -77,7 +111,12 @@ export async function POST(request: Request) {
     });
   }
   try {
-    const priced = await priceCart(parsed.items, effectiveClientId);
+    const priced = await priceCart(
+      parsed.items,
+      effectiveClientId,
+      null,
+      discount,
+    );
     return NextResponse.json(priced);
   } catch (err) {
     return NextResponse.json(

@@ -340,6 +340,26 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       );
     `,
   },
+  {
+    /* T79: a comp is a 100% discount, and a discount may be partial
+     * (Pete: "if it's $100 sale i should be able to comp $60 of it and
+     * they pay $40"). Three nullable, additive columns beside the
+     * existing ones: `discount_amount` is the dollars taken off the
+     * pre-tax subtotal (the server-side spread's sum), `discount_percent`
+     * the percent chosen when the teacher chose one (100 for the whole
+     * sale; null for a dollar amount), and `sale_total` what the client
+     * actually paid, Mindbody's grand total after the discount and tax.
+     * `total_cents` keeps its T43 meaning, the amount on the studio.
+     * Rows from before read null in all three. The T49 idiom: ADD
+     * COLUMN IF NOT EXISTS, so a deployed database at 8 runs only this. */
+    version: 9,
+    sql: `
+      ALTER TABLE comp_receipts
+        ADD COLUMN IF NOT EXISTS discount_amount numeric,
+        ADD COLUMN IF NOT EXISTS discount_percent numeric,
+        ADD COLUMN IF NOT EXISTS sale_total numeric;
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -468,13 +488,18 @@ export async function insertCompReceipt(receipt: {
   suppressed: boolean;
   teacherId: string | null;
   teacherName: string | null;
-  /** T45: the reason as data, beside the rendered `reason` line. */
+  /** T45: the reason as data, beside the rendered `reason` line. T79
+   *  dropped the Teacher kind and its `for_staff_*` columns from the
+   *  insert; the columns stay, null on every new row. */
   kind: string;
   detail: string | null;
-  forStaffId: string | null;
-  forStaffName: string | null;
   /** The Formula Note Mindbody filed for this comp, when one was. */
   formulaNoteId: number | null;
+  /** T79: the discount in dollars off the pre-tax subtotal, the chosen
+   *  percent (null for a dollar amount), and what the client paid. */
+  discountAmount: number;
+  discountPercent: number | null;
+  saleTotal: number;
 }): Promise<boolean> {
   try {
     const p = await ready();
@@ -482,10 +507,10 @@ export async function insertCompReceipt(receipt: {
     await p.query(
       `INSERT INTO comp_receipts
          (sale_id, client_id, total_cents, items, reason, target, suppressed,
-          teacher_id, teacher_name, kind, detail, for_staff_id,
-          for_staff_name, formula_note_id, cart_id)
+          teacher_id, teacher_name, kind, detail, formula_note_id, cart_id,
+          discount_amount, discount_percent, sale_total)
        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12,
-               $13, $14, $15)`,
+               $13, $14, $15, $16)`,
       [
         receipt.saleId,
         receipt.clientId,
@@ -498,10 +523,11 @@ export async function insertCompReceipt(receipt: {
         receipt.teacherName,
         receipt.kind,
         receipt.detail,
-        receipt.forStaffId,
-        receipt.forStaffName,
         receipt.formulaNoteId,
         receipt.cartId,
+        receipt.discountAmount,
+        receipt.discountPercent,
+        receipt.saleTotal,
       ],
     );
     return true;
