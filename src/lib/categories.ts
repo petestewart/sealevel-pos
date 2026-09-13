@@ -9,20 +9,36 @@
  * response cannot express, at no metered cost and with no way to be empty at
  * boot. See the "Categories" section of docs/design/front-desk-pos.md.
  *
- * Ordered by how often a teacher reaches for each at the counter. Everything
- * not listed here belongs behind a "more" control.
+ * Ordered as the Buy rail's children read (T76, Pete's list): the rail is
+ * a hierarchy, `Favorites | Passes | Retail | Rentals`, and each entry
+ * here names the SECTION it belongs to. Passes is its own section, its
+ * children the pass sub-categories (src/lib/shelfconfig.ts PASS_GROUPS);
+ * Retail's children are the retail entries in this order; Rentals is a
+ * leaf. Everything not listed here does not reach the counter at all
+ * (Skin/Body 27, Books 29, Jewelry 28, Music 31, Videos/Instructional 30,
+ * Other Products 49 and whatever the studio adds later); the T39.2 "more"
+ * fold that once promised them a home was retired with T76.
  *
  * Consumed by: GET /api/catalog (T22), which filters /sale/products by the
  * ids here and fills the "Passes" entry from /sale/services, minus any
  * option whose RevenueCategory routes it to a button here (T41). The sale
- * screen's rail (T23, T39.2) hides a button whose shelf is empty. Do not
+ * screen's rail (T23, T39.2, T76) hides a cell whose shelf is empty. Do not
  * wire it into Phase 1 screens.
  */
+
+/** The Buy rail's top level, in its fixed order (Favorites, which is not
+ *  a category, sits first on the screen). Passes and Retail are sections
+ *  with children; Rentals is a leaf. */
+export type CounterSection = "Passes" | "Retail" | "Rentals";
 
 /** One button on the eventual sale screen. */
 export interface CounterCategory {
   /** Label as the counter should show it, not necessarily Mindbody's name. */
   label: string;
+  /** T76: which top-level rail cell this entry lives under. The Passes
+   *  entry IS its section's header; a Retail entry is a child cell; the
+   *  Rentals entry is the leaf itself. */
+  section: CounterSection;
   /**
    * Mindbody category ids this button covers. Usually one; empty means the
    * entry is not backed by category ids at all (see `passes` below).
@@ -60,7 +76,9 @@ export interface CounterCategory {
 }
 
 /**
- * The five entries a teacher actually reaches for, most frequent first.
+ * The five entries a teacher actually reaches for, in rail order (T76).
+ * The ids and the routing facts are exactly what T41 established; only
+ * the labels, the order and the section changed.
  *
  * "Passes" has no single Mindbody category id. The design doc's live
  * category dump puts pass-like items across several Service:true categories
@@ -70,22 +88,17 @@ export interface CounterCategory {
  * /sale/products on a category id. Its `categoryIds` is deliberately empty.
  */
 export const counterCategories: readonly CounterCategory[] = [
+  { label: "Passes", section: "Passes", categoryIds: [] },
+  { label: "Food/Drink", section: "Retail", categoryIds: [36] },
+  { label: "Clothing", section: "Retail", categoryIds: [26] },
+  { label: "Accessories", section: "Retail", categoryIds: [32] },
   {
-    label: "Towel and Mat",
+    /* Mindbody's "Towel and Mat" (-14), relabelled at Pete's word (T76).
+     * The revenue-category and name handles are T41's, unchanged. */
+    label: "Rentals",
+    section: "Rentals",
     categoryIds: [-14],
     revenueCategories: ["Towel and Mat"],
     nameMatches: ["rental", "towel"],
   },
-  { label: "Food/Drink", categoryIds: [36] },
-  { label: "Passes", categoryIds: [] },
-  { label: "Accessories", categoryIds: [32] },
-  { label: "Clothing", categoryIds: [26] },
 ];
-
-/**
- * Label for the control that reveals everything else (Skin/Body 27, Books
- * 29, Jewelry 28, Music 31, Videos/Instructional 30, Other Products 49, and
- * whatever the studio adds later). What "more" shows is Phase 2's problem;
- * that the five above are NOT everything is recorded here.
- */
-export const moreLabel = "more";

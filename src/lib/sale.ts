@@ -120,6 +120,18 @@ export interface CatalogItem {
    *  single-visit option (a drop-in is Count 1). Null for products and
    *  when Mindbody omits it. */
   count: number | null;
+  /** T76, services only: the option's `Type` as the live response
+   *  carries it (DropIn | Series | Unlimited on site 471, 2026-09-13;
+   *  the vendored Service model does not list the field), for the
+   *  pass sub-category rule. Null for products and packages. */
+  serviceType: string | null;
+  /** T76, services only: `IsIntroOffer` (sale.yml, the Service model),
+   *  true for the new-student offers. Null when absent or not a pass. */
+  isIntroOffer: boolean | null;
+  /** T76, services only: the program's NAME ("Classes" live), read from
+   *  `Program.Name` or a bare `Program` string, whichever the response
+   *  carries (the spec lists only `ProgramId`). Null otherwise. */
+  program: string | null;
 }
 
 function num(v: unknown): number | null {
@@ -186,6 +198,9 @@ export async function catalogFor(
         taxExempt: secondary === TAX_EXEMPT_SECONDARY_CATEGORY_ID,
         type: "Product",
         count: null,
+        serviceType: null,
+        isIntroOffer: null,
+        program: null,
         revenueCategory: null,
       };
     })
@@ -263,6 +278,9 @@ export async function pricingOptions(): Promise<CatalogItem[]> {
         type: "Service",
         count: num(s?.Count),
         revenueCategory: str(s?.RevenueCategory),
+        serviceType: str(s?.Type),
+        isIntroOffer: typeof s?.IsIntroOffer === "boolean" ? s.IsIntroOffer : null,
+        program: str(s?.Program?.Name) ?? str(s?.Program),
       };
     })
     .filter((s: CatalogItem | null): s is CatalogItem => s !== null)
@@ -390,6 +408,9 @@ export async function sellablePackages(): Promise<CatalogItem[]> {
         taxExempt: false,
         type: "Package",
         count: null,
+        serviceType: null,
+        isIntroOffer: null,
+        program: null,
         revenueCategory: null,
       };
     })

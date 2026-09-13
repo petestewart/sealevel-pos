@@ -3319,8 +3319,12 @@ button.sale-for:disabled {
 }
 
 /* Rail entries: 64px cells, 17px/800, a line under each. Active is
- * FILLED with the accent pairing (ui-refactor 2.4; no ring); "more" is
- * muted, since it is a door, not a shelf. */
+ * FILLED with the accent pairing (ui-refactor 2.4; no ring); Refresh is
+ * muted, since it is a door, not a shelf. T76: a section header keeps
+ * the 64px cell and carries a chevron at its right edge; its children
+ * are 48px cells (the chip height; the 64px rule is for primary
+ * targets), indented, 17px/600, a line between, the active one filled
+ * like an active header. */
 .cat-chip {
   position: relative;
   flex: 0 0 auto;
@@ -3347,21 +3351,59 @@ button.sale-for:disabled {
   color: var(--accent-ink);
 }
 
-.cat-chip.more {
-  color: var(--muted);
+.cat-chip.section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* The disclosure mark: a 20px chevron pointing right, turned down when
+ * the section is open. Inherits the cell's ink, so the accent pair
+ * holds on an active header. */
+.cat-chev {
+  display: inline-flex;
+  flex: none;
+  transition: transform 120ms ease-out;
+}
+
+.cat-chip.open .cat-chev {
+  transform: rotate(90deg);
+}
+
+.cat-chip.child {
+  height: 48px;
+  padding-left: 34px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.cat-chip.child.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* The children's row break, for the row layout under 1040px only. */
+.rail-break {
+  display: none;
 }
 
 /* T75: the Refresh cell at the rail's foot, the icon-and-word idiom,
  * pushed down by the auto margin so it sits under whatever the rail
  * holds; a line above it rather than below. Busy, it keeps the muted
- * pair with the spinner in place of the icon. */
+ * pair with the spinner in place of the icon. T76: sticky at the
+ * rail's bottom edge too, so when an open section makes the rail
+ * taller than the pane and it scrolls, Refresh stays in reach. */
 .cat-chip.refresh {
+  position: sticky;
+  bottom: 0;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   margin-top: auto;
   border-top: 1px solid var(--line);
   border-bottom: 0;
+  color: var(--muted);
 }
 
 .cat-chip.refresh:disabled {
@@ -3759,10 +3801,36 @@ button.sale-for:disabled {
     border-right: 1px solid var(--line);
   }
 
-  /* T75: in the row the Refresh cell is one more chip, no rule above. */
+  /* T75: in the row the Refresh cell is one more chip, no rule above,
+   * and nothing to stick to. */
   .sale-cats .cat-chip.refresh {
+    position: static;
     margin-top: 0;
     border-top: 0;
+  }
+
+  /* T76: the top level is the row; the open section's children move to
+   * a second row of 48px chips in the T74 sub-chip idiom, after a
+   * full-width break. `order` does the moving, so the DOM stays the
+   * column's (header, then its children). */
+  .sale-cats .rail-break {
+    display: block;
+    order: 1;
+    flex: 0 0 100%;
+    height: 0;
+  }
+
+  .sale-cats .cat-chip.child {
+    order: 2;
+    height: 48px;
+    min-width: 96px;
+    margin: 8px 0 8px 8px;
+    padding: 0 18px;
+    border: 1px solid var(--line);
+  }
+
+  .sale-cats .cat-chip.child.on {
+    border-color: var(--accent);
   }
 
   .sale-right {
