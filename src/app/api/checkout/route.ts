@@ -16,16 +16,20 @@ import {
 import {
   COMP_DETAIL_MAX,
   COMP_DETAIL_MIN,
-  compHeadline,
-  compReasonLine,
+  discountPercentLabel,
+  discountRecordLine,
+  discountRefusal,
   isCompKind,
+  isFullDiscount,
+  parseDiscount,
+  subtotalCents,
   type CompReason,
+  type Discount,
   compNeedsDetail,
 } from "@/lib/comp";
 import { insertCompReceipt, type CompReceiptItem } from "@/lib/db";
 import { fileFormulaNote } from "@/lib/formulanote";
 import { isDryRun, mindbodyHttpStatus, target } from "@/lib/mindbody";
-import { listTeachers } from "@/lib/staff";
 
 import {
   CARD_MINIMUM_USD,
@@ -50,42 +54,59 @@ export const dynamic = "force-dynamic";
  *         method: "storedcard"|"credit"|"cash"|"comp",
  *         cashTendered?: number,
  *         sendEmail?: boolean,
+ *         discount?: { mode: "amount"|"percent", value: number },
  *         teacherToken?: string,
- *         compReason?: { kind, detail, forStaffId?, forStaffName? } }
+ *         compReason?: { kind, detail } }
  *         -- T53: `sendEmail` is the pay-mode "Email receipt" toggle.
- *         It is honoured only on a NAMED client's non-comp sale: an
- *         anonymous sale rides the house client, whose inbox is nobody's,
- *         and a comp is nothing to receipt. Sent to Mindbody as the
- *         checkout's `SendEmail` and the credit purchase's
- *         `SendEmailReceipt`; the answer carries `receiptRequested` and
- *         `emailReceipt` (true only when Mindbody CONFIRMED one went,
- *         which only /sale/purchaseaccountcredit reports; a cart
- *         checkout answers nothing, so it stays null and the done screen
- *         says "requested", not "emailed").
- *         -- T48: `teacherToken` is REQUIRED with method "comp" and
- *         refused beside any other method. It is the one-shot value
- *         /api/teacher/verify signed for the teacher whose PIN matched,
- *         ten minutes old at most; without a valid one the comp is 401
- *         `reason: "teacher"` before anything else is read, in every
+ *         It is honoured only on a NAMED client's sale with something
+ *         paid: an anonymous sale rides the house client, whose inbox
+ *         is nobody's, and a 100% discount is nothing to receipt. Sent
+ *         to Mindbody as the checkout's `SendEmail` and the credit
+ *         purchase's `SendEmailReceipt`; the answer carries
+ *         `receiptRequested` and `emailReceipt` (true only when Mindbody
+ *         CONFIRMED one went, which only /sale/purchaseaccountcredit
+ *         reports; a cart checkout answers nothing, so it stays null and
+ *         the done screen says "requested", not "emailed").
+ *         -- T79: `discount` is a discount on the WHOLE cart (Pete: "if
+ *         it's $100 sale i should be able to comp $60 of it and they pay
+ *         $40 ... 100% discount would be a comp in essense"). Validated
+ *         by parseDiscount against the lines' pre-tax subtotal and
+ *         refused for a cart with a package line (Mindbody ignores a
+ *         discount on a package). The per-line amounts are recomputed
+ *         SERVER-SIDE from the cart lines (sale.ts spreadDiscount) and
+ *         sent as CheckoutItemWrapper.DiscountAmount; nothing per-line
+ *         from the browser is read. A discount needs `teacherToken` and
+ *         `compReason`, both refused without one. Method "comp" is the
+ *         100% case only: the discount must cover the whole subtotal,
+ *         no tender is read, and the write goes out first with the
+ *         discount lines and NO Payments; if Mindbody refuses that with
+ *         an error naming payment, ONE retry goes out in the proven
+ *         T43 shape (no DiscountAmount, one Comp payment for the full
+ *         undiscounted total, rehearsed first), and the answer and the
+ *         record carry `discountShape: "lines" | "comp-payment"`. Any
+ *         other method (or a split) needs a discount that leaves
+ *         something to pay, and pays Mindbody's discounted total the
+ *         ordinary way.
+ *         -- T48: `teacherToken` is REQUIRED with a discount and refused
+ *         without one. It is the one-shot value /api/teacher/verify
+ *         signed for the teacher whose PIN matched, ten minutes old at
+ *         most; without a valid one the discount is 401 `reason:
+ *         "teacher"` before anything else is read, in every
  *         configuration (POS_PIN set or not), and the dialog goes back
  *         to its PIN step. The teacher on the receipt, the `[comp]` line
- *         and the Formula Note is the one the token names, never a name
+ *         and the Notes record is the one the token names, never a name
  *         from the browser.
- *         -- T43: required with method "comp", refused beside any other
- *         method or a split. Since T45 it is data rather than a string:
- *         `kind` from comp.ts's COMP_KINDS, `detail` trimmed and at most
- *         200 characters (at least 3 for `other`, else may be empty),
- *         `forStaffId` a positive integer required for `teacher` and
- *         refused for every other kind. `forStaffName` from the browser
- *         is IGNORED: the name is resolved here from the staff list by
- *         id, and an id the list does not carry is a 400. All of it is
- *         checked before any Mindbody call. None of it reaches the
- *         checkout payload, whose request has no notes field; it is
- *         recorded in comp_receipts when a database is configured and
- *         ALWAYS as one `[comp]` server log line, and after a REAL comp
- *         for a named client it is filed on the client as a Formula Note
- *         (see recordComp below). Each item may carry a `name` on a comp,
- *         for that record only; it is never forwarded.
+ *         -- T43/T45: `compReason` is data: `kind` from comp.ts's
+ *         COMP_KINDS (trade, damaged, other since T79), `detail` trimmed
+ *         and at most 200 characters (at least 3 for trade and other,
+ *         else may be empty). Checked before any Mindbody call. None of
+ *         it reaches the checkout payload, whose request has no notes
+ *         field; it is recorded in comp_receipts when a database is
+ *         configured and ALWAYS as one `[comp]` server log line, and
+ *         after a REAL discounted sale for a named client it is filed
+ *         on the client (see recordDiscount below). Each item may carry
+ *         a `name` on a discounted sale, for that record only; it is
+ *         never forwarded.
  *   or, since T28, `split` instead of `method`:
  *       { items, clientId, split: { legs: [{method, amount}, {method,
  *         amount}] } } -- exactly two legs, methods from the whitelist
@@ -131,14 +152,15 @@ export const dynamic = "force-dynamic";
  * - Every money write runs AS THE SIGNED-IN TEACHER when there is one
  *   (runAsActor), so Mindbody's sale names them. A 4xx refusal of the
  *   teacher's token retries once as the service account and the answer
- *   carries `actorFallback`; a comp NEVER falls back (a refused comp is
- *   refused, with the message). The rehearsal stays on the service
- *   account. The payload, the single flight, the rehearsal order, the
- *   suppression and the outcome wording are T24/T28/T43's exactly.
+ *   carries `actorFallback`; a 100% discount (a comp) NEVER falls back
+ *   (a refused comp is refused, with the message). The rehearsal stays
+ *   on the service account. The payload, the single flight, the
+ *   rehearsal order, the suppression and the outcome wording are
+ *   T24/T28/T43's exactly.
  * - After a REAL checkout, the numeric Sale.Id is looked up (latestSaleId,
  *   bounded at 8s) and answered as `saleId`, with the cart GUID as
  *   `cartId`; a failed or ambiguous lookup answers the GUID as `saleId`,
- *   as before. The comp receipt and the Formula Note carry the same id.
+ *   as before. The comp receipt and the Notes record carry the same id.
  */
 
 /** Is the outcome of a money write UNKNOWN after this error? Two shapes
@@ -164,14 +186,18 @@ function errMessage(err: unknown): string {
 type Method = "storedcard" | "credit" | "cash" | "comp";
 
 /* T28: the methods a split leg may use. Comp is deliberately excluded --
- * a comp is the whole sale given away, armed by its own hold gesture in
- * the UI, and half-comping through a split would dodge that gesture. */
+ * a comp is the whole sale given away, armed by its own dialog in the
+ * UI, and half-comping through a split would dodge that dialog; since
+ * T79 a partial discount is the cart's, not a leg's. */
 type SplitMethod = "storedcard" | "credit" | "cash";
 
 interface SplitLeg {
   method: SplitMethod;
   amount: number;
 }
+
+/** T79: which shape a 100% discount went out in. */
+type DiscountShape = "lines" | "comp-payment";
 
 /** Parse one untrusted split leg; a string return is the 400 reason. */
 function parseSplitLeg(raw: unknown): SplitLeg | string {
@@ -273,28 +299,73 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  /* T48: who is comping. Checked FIRST, before the client, the reason
-   * (whose teacher branch reads the staff list) and the rehearsal: a
-   * comp with nobody's PIN behind it costs no Mindbody call at all and
-   * is refused the same way with the device lock on or off. Pete's live
-   * test had a real $2 comp go through with teacher=none; this is the
-   * line that makes that impossible. */
-  const teacherTokenRaw: unknown = payload?.teacherToken;
-  if (method !== "comp" && teacherTokenRaw !== undefined) {
+
+  /* T79: the discount, checked before the token, the reason and the
+   * client, and before any Mindbody call. A package-bearing cart is
+   * refused (Mindbody ignores DiscountAmount on a package, so the sale
+   * would silently discount less than the screen said); the bounds are
+   * parseDiscount's, against the lines' own pre-tax subtotal. */
+  const discountRaw: unknown = payload?.discount;
+  let discount: Discount | null = null;
+  if (discountRaw !== undefined && discountRaw !== null) {
+    const refusal = discountRefusal(items);
+    if (refusal !== null) {
+      return NextResponse.json({ error: refusal }, { status: 400 });
+    }
+    const d = parseDiscount(discountRaw, subtotalCents(items));
+    if (typeof d === "string") {
+      return NextResponse.json({ error: d }, { status: 400 });
+    }
+    discount = d;
+  }
+  const full = discount !== null && isFullDiscount(items, discount);
+  /* Method comp IS the 100% discount: nothing else may use it, and a
+   * discount that leaves something to pay needs a tender. */
+  if (method === "comp" && !full) {
     return NextResponse.json(
-      { error: "teacherToken applies only to method comp" },
+      {
+        error:
+          discount === null
+            ? "a comp needs a discount covering the whole sale " +
+              "(discount: { mode: \"percent\", value: 100 })"
+            : "the discount leaves something to pay; choose how they are paying",
+      },
+      { status: 400 },
+    );
+  }
+  if (method !== "comp" && full) {
+    return NextResponse.json(
+      {
+        error:
+          "the discount covers the whole sale, so there is nothing to " +
+          "pay; send method comp",
+      },
+      { status: 400 },
+    );
+  }
+
+  /* T48: who is discounting. Checked FIRST, before the client, the
+   * reason and the rehearsal: a discount with nobody's PIN behind it
+   * costs no Mindbody call at all and is refused the same way with the
+   * device lock on or off. Pete's live test had a real $2 comp go
+   * through with teacher=none; this is the line that makes that
+   * impossible. T79: every discount asks, not only a 100% one. */
+  const teacherTokenRaw: unknown = payload?.teacherToken;
+  if (discount === null && teacherTokenRaw !== undefined) {
+    return NextResponse.json(
+      { error: "teacherToken applies only to a discounted sale" },
       { status: 400 },
     );
   }
   let teacher: TeacherIdentity | null = null;
-  if (method === "comp") {
+  if (discount !== null) {
     teacher =
       typeof teacherTokenRaw === "string"
         ? verifyCompToken(teacherTokenRaw)
         : null;
     if (teacher === null) {
       return NextResponse.json(
-        { error: "Enter your PIN to comp this sale.", reason: "teacher" },
+        { error: "Enter your PIN to discount this sale.", reason: "teacher" },
         { status: 401 },
       );
     }
@@ -311,15 +382,16 @@ export async function POST(request: Request) {
   }
   /* T53: the receipt decision, made once here from what the toggle said
    * and what the sale is. Never for the house client (no clientId), never
-   * for a comp; a non-boolean is false, never an error, because a receipt
-   * must not stand between a teacher and a charge. */
+   * for a 100% discount (nothing to receipt); a non-boolean is false,
+   * never an error, because a receipt must not stand between a teacher
+   * and a charge. */
   const sendEmail =
     payload?.sendEmail === true &&
     clientId !== undefined &&
     /* T53 review: the house client attached BY NAME (it is a real
      * client, so search can find it) is still nobody's inbox. */
     clientId !== houseClientId() &&
-    method !== "comp";
+    !full;
   /* Every valid split includes a client-bound leg: comp is excluded and
    * the two legs differ, so at least one is storedcard or credit. The
    * house client never rides a split. */
@@ -336,24 +408,21 @@ export async function POST(request: Request) {
    * reason the disabled Charge button gave. During guarded testing
    * POS_WRITE_CLIENT_IDS must include this id or the write guard
    * suppresses every anonymous sale; see the T24 ticket notes. */
-  /* T43: a comp needs its reason, and nothing else may carry one. The
-   * check is before the house-client substitution and the rehearsal so
-   * a reasonless comp costs no metered call. */
+  /* T43: a discount needs its reason, and nothing else may carry one.
+   * The check is before the house-client substitution and the
+   * rehearsal so a reasonless discount costs no metered call. */
   const compReasonRaw: unknown = payload?.compReason;
-  if (method !== "comp" && compReasonRaw !== undefined) {
+  if (discount === null && compReasonRaw !== undefined) {
     return NextResponse.json(
-      { error: "compReason applies only to method comp" },
+      { error: "compReason applies only to a discounted sale" },
       { status: 400 },
     );
   }
   let compReason: CompReason | null = null;
-  if (method === "comp") {
-    /* T45: the reason is data. A kind from the closed list, the detail
-     * within its bounds (required only for `other`, the one kind that
-     * says nothing by itself), and for a teacher comp a staff id that the
-     * staff list can name. The browser's `forStaffName` is not read at
-     * all: the name on the receipt is the one Mindbody's staff row
-     * carries for that id, resolved here. */
+  if (discount !== null) {
+    /* T45: the reason is data. A kind from the closed list and the
+     * detail within its bounds (required for trade and other, the kinds
+     * that say nothing by themselves). */
     const raw =
       compReasonRaw && typeof compReasonRaw === "object"
         ? (compReasonRaw as Record<string, unknown>)
@@ -362,8 +431,8 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            "a comp needs a compReason with a kind of teacher, trade, " +
-            "damaged or other",
+            "a discount needs a compReason with a kind of trade, damaged " +
+            "or other",
         },
         { status: 400 },
       );
@@ -389,67 +458,20 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            `a comp of kind ${kind} needs a detail of ${COMP_DETAIL_MIN} to ` +
+            `a discount of kind ${kind} needs a detail of ${COMP_DETAIL_MIN} to ` +
             `${COMP_DETAIL_MAX} characters`,
         },
         { status: 400 },
       );
     }
-    const forStaffRaw = raw["forStaffId"];
-    if (kind !== "teacher") {
-      if (forStaffRaw !== undefined) {
-        return NextResponse.json(
-          { error: "compReason.forStaffId applies only to kind teacher" },
-          { status: 400 },
-        );
-      }
-      compReason = { kind, detail };
-    } else {
-      if (
-        typeof forStaffRaw !== "number" ||
-        !Number.isInteger(forStaffRaw) ||
-        forStaffRaw <= 0
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "a teacher comp needs compReason.forStaffId, a positive integer",
-          },
-          { status: 400 },
-        );
-      }
-      /* The staff list is the cached read /api/staff serves; cold, it
-       * is one metered staff read, never a money call. A read
-       * that fails with nothing cached is answered as such: the comp is
-       * refused rather than filed for a name nobody could check. */
-      let teachers;
-      try {
-        teachers = await listTeachers();
-      } catch (err) {
-        return NextResponse.json(
-          {
-            error: `Could not read the staff list to name the teacher: ${errMessage(err)} Nothing was charged.`,
-            stage: "method",
-          },
-          { status: 502 },
-        );
-      }
-      const forStaff = teachers.find((t) => t.id === forStaffRaw);
-      if (!forStaff) {
-        return NextResponse.json(
-          {
-            error: `compReason.forStaffId ${forStaffRaw} is not an active teacher`,
-          },
-          { status: 400 },
-        );
-      }
-      compReason = {
-        kind,
-        detail,
-        forStaffId: forStaff.id,
-        forStaffName: forStaff.name,
-      };
+    if (raw["forStaffId"] !== undefined) {
+      /* T79: the Teacher kind is gone with its staff id. */
+      return NextResponse.json(
+        { error: "compReason.forStaffId is no longer a field" },
+        { status: 400 },
+      );
     }
+    compReason = { kind, detail };
   }
   /* The comp receipt's line list: OUR record of what was given away
    * (type, id, name, quantity, price), read off the validated items with
@@ -511,13 +533,13 @@ export async function POST(request: Request) {
     );
   }
 
-  /* T48: the comp token is SPENT here, after every check above and
+  /* T48: the teacher token is SPENT here, after every check above and
    * before the rehearsal, which is the first Mindbody call: a second
    * charge on the same token, however it got here, goes back to the PIN
    * step and costs no call. */
-  if (method === "comp" && !spendCompToken(teacherTokenRaw as string)) {
+  if (discount !== null && !spendCompToken(teacherTokenRaw as string)) {
     return NextResponse.json(
-      { error: "Enter your PIN to comp this sale.", reason: "teacher" },
+      { error: "Enter your PIN to discount this sale.", reason: "teacher" },
       { status: 401 },
     );
   }
@@ -527,12 +549,14 @@ export async function POST(request: Request) {
   /* Step 1, every path: the Test: true rehearsal, which is also where
    * the AUTHORITATIVE total comes from. The browser's number is never
    * trusted; the amount charged below is the one Mindbody just priced.
+   * T79: rehearsed WITH the discount lines the real call will carry, so
+   * the total is the discounted one and the DiscountTotal check runs.
    * For the under-$10 card path this is exactly PLAN 2.3's mitigation:
    * a cart Mindbody will not accept fails HERE, before any credit is
    * bought, and the failure costs nothing. */
   let priced;
   try {
-    priced = await rehearseCheckout(items, saleClientId);
+    priced = await rehearseCheckout(items, saleClientId, discount);
   } catch (err) {
     return NextResponse.json(
       { error: errMessage(err), stage: "rehearsal" },
@@ -548,9 +572,12 @@ export async function POST(request: Request) {
   if (priced.disagrees || priced.grandTotal === null) {
     return NextResponse.json(
       {
-        error:
-          "Totals disagree between our math and Mindbody's. Nothing was " +
-          "charged; this is a bug to report, not a state to charge from.",
+        error: priced.discountDisagrees
+          ? `The discount disagrees: ours $${priced.expectedDiscount.toFixed(2)}, ` +
+            `Mindbody's $${(priced.discountTotal ?? 0).toFixed(2)}. Nothing was ` +
+            "charged; this is a bug to report, not a state to charge from."
+          : "Totals disagree between our math and Mindbody's. Nothing was " +
+            "charged; this is a bug to report, not a state to charge from.",
         stage: "rehearsal",
       },
       { status: 409 },
@@ -588,6 +615,142 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+
+  /* ------------------------ T79: the record -------------------------
+   * T43: ALWAYS one server log line, so a discount is on record even
+   * with no database (the T29 charter: DATABASE_URL unset runs on
+   * fallbacks); the table row on top of it when there is one. Written
+   * only once the Mindbody call has resolved, with the sale id it
+   * returned, or `suppressed` for a write the guard or dry run ate.
+   * Nothing here touches the payload, the single flight or the outcome
+   * wording: the record is a side effect of an answer, never a step
+   * before one. The wording is discountRecordLine's, the one place it
+   * lives ("Discount $60.00 (60%) on $100.00, paid $40.00: Trade,
+   * massage swap. By Kim Farrell", or "Comped $100.00: ..." at 100%).
+   *
+   * `subtotal` and `discounted` are the pre-tax figures the server
+   * spread (expectedSubtotal and expectedDiscount, which the rehearsal
+   * just proved equal to Mindbody's SubTotal and DiscountTotal); `paid`
+   * is Mindbody's grand total, what the client pays. */
+  const subtotal = priced.expectedSubtotal;
+  const discounted = priced.expectedDiscount;
+  const recordLine = (paid: number): string =>
+    compReason === null || discount === null
+      ? ""
+      : discountRecordLine({
+          discount,
+          discounted,
+          subtotal,
+          paid,
+          full,
+          reason: compReason,
+          teacherName: teacher?.name ?? null,
+        });
+  /* T45: the log line's data tags, on every [comp] line. */
+  const compTags = (paid: number, shape: DiscountShape) =>
+    `reason=${JSON.stringify(recordLine(paid))} ` +
+    `kind=${compReason?.kind ?? "none"} ` +
+    `discount=${discount ? `${discount.mode}:${discount.value}` : "none"} ` +
+    `off=${discounted.toFixed(2)} paid=${paid.toFixed(2)} shape=${shape} ` +
+    teacherLogTag(teacher);
+
+  /* T45: the note on the client. Mindbody's checkout carries no notes
+   * field, but a client has Formula Notes (`POST
+   * /client/addclientformulanote`, client.yml), which is where a record
+   * of the discount belongs for the studio's own eyes; on site 471,
+   * which has them disabled, the same sentence lands as a T58-signed
+   * Notes entry (T62, src/lib/formulanote.ts). Filed only after a REAL
+   * sale (not suppressed, not refused, not ambiguous) for a NAMED
+   * client: the house client is a catch-all and a note on it names
+   * nobody. The write itself goes through mindbody() with the client
+   * id in the options, as the signed-in teacher with the ordinary
+   * fallback, bounded to FORMULA_NOTE_WAIT_MS, never throwing. It runs
+   * AFTER the outcome is decided and can never change it: the sale
+   * already happened, so a failure here is one log line and a null on
+   * the receipt. */
+  const fileDiscountNote = async (
+    saleId: string | null,
+    paid: number,
+  ): Promise<{ id: number | null; via: "formula" | "notes" | null }> => {
+    const none = { id: null, via: null };
+    if (compReason === null) return none;
+    const house = houseClientId();
+    if (clientId === undefined || (house !== null && clientId === house)) {
+      console.log(`[comp] formula-note skipped: house client`);
+      return none;
+    }
+    const note = [
+      `${recordLine(paid)}${teacher ? "." : ""}`,
+      saleId ? `Sale ${saleId}.` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const filed = await fileFormulaNote({
+      session,
+      clientId,
+      note,
+      route: "/api/checkout formula-note",
+      logTag: "[comp]",
+    });
+    return { id: filed.id, via: filed.via };
+  };
+
+  /** After any path's write resolved: the note (real sales only), the
+   *  log line and the receipt row. Answers the fields the response
+   *  carries for a discounted sale, or nothing when there is none. */
+  const recordDiscount = async (o: {
+    saleId: string | null;
+    cartId: string | null;
+    suppressed: boolean;
+    paid: number;
+    shape: DiscountShape;
+    /** The comp-payment shape comps the whole undiscounted total, tax
+     *  included; that is the amount on the studio for that shape. */
+    onStudio: number;
+  }): Promise<Record<string, unknown>> => {
+    if (discount === null || compReason === null) return {};
+    const filed = o.suppressed
+      ? { id: null, via: null }
+      : await fileDiscountNote(o.saleId, o.paid);
+    console.log(
+      `[comp] ${target()} sale=${o.suppressed ? "suppressed" : (o.saleId ?? "unknown")} ` +
+        `client=${clientId ?? "house"} total=${o.onStudio.toFixed(2)} ` +
+        compTags(o.paid, o.shape) +
+        (filed.id !== null ? ` note=${filed.id}` : ""),
+    );
+    await insertCompReceipt({
+      saleId: o.suppressed ? null : o.saleId,
+      cartId: o.suppressed ? null : o.cartId,
+      clientId: clientId ?? null,
+      totalCents: Math.round(o.onStudio * 100),
+      items: compItems,
+      reason: recordLine(o.paid),
+      target: target(),
+      suppressed: o.suppressed,
+      teacherId: teacher === null ? null : String(teacher.id),
+      teacherName: teacher?.name ?? null,
+      kind: compReason.kind,
+      detail: compReason.detail ? compReason.detail : null,
+      formulaNoteId: filed.id,
+      discountAmount: discounted,
+      discountPercent: discount.mode === "percent" ? discount.value : null,
+      saleTotal: o.paid,
+    });
+    return {
+      noteVia: filed.via,
+      discountShape: o.shape,
+      discount: {
+        mode: discount.mode,
+        value: discount.value,
+        amount: discounted,
+        subtotal,
+        percent: discountPercentLabel(discount, discounted, subtotal),
+        full,
+        reason: compReason,
+        teacher: teacher ? { id: teacher.id, name: teacher.name } : null,
+      },
+    };
+  };
 
   /* -------------------------- T28: split ---------------------------- */
   if (split !== null) {
@@ -723,17 +886,34 @@ export async function POST(request: Request) {
           [toPayment(legA), toPayment(legB)],
           actor,
           sendEmail,
+          discount,
         ),
       );
       const outcome = run.result;
       if (outcome.suppressed) {
+        const rec = await recordDiscount({
+          saleId: null,
+          cartId: null,
+          suppressed: true,
+          paid: total,
+          shape: "lines",
+          onStudio: discounted,
+        });
         return NextResponse.json({
           ok: false,
           suppressed: outcome.suppressed,
+          ...rec,
           ...actorFields(run),
         });
       }
       const ids = await saleIds(outcome.saleId);
+      const rec = await recordDiscount({
+        ...ids,
+        suppressed: false,
+        paid: total,
+        shape: "lines",
+        onStudio: discounted,
+      });
       return NextResponse.json({
         ok: true,
         method: "split",
@@ -746,12 +926,15 @@ export async function POST(request: Request) {
         ],
         receiptRequested: sendEmail,
         emailReceipt: null,
+        ...rec,
         ...actorFields(run),
       });
     } catch (err) {
       /* Same posture as the single-method catch below: only a definite
        * 4xx refusal reports "not charged"; a 5xx or dead transport is
        * honest ambiguity and invites no retry. */
+      const gone = staffSessionEndedResponse(err);
+      if (gone) return gone;
       const ambiguous = isAmbiguous(err);
       return NextResponse.json(
         {
@@ -767,169 +950,161 @@ export async function POST(request: Request) {
     }
   }
 
-  /* T43: the comp record. ALWAYS one server log line, so a comp is on
-   * record even with no database (the T29 charter: DATABASE_URL unset
-   * runs on fallbacks); the table row on top of it when there is one.
-   * Written only once the Mindbody call has resolved, with the sale id
-   * it returned, or `suppressed` for a write the guard or dry run ate.
-   * Nothing here touches the payload, the single flight or the outcome
-   * wording: the record is a side effect of an answer, never a step
-   * before one. */
-  const reasonLine = compReason === null ? "" : compReasonLine(compReason);
-  /* T45: the log line's data tags, on every [comp] line. */
-  const compTags =
-    `reason=${JSON.stringify(reasonLine)} ` +
-    `kind=${compReason?.kind ?? "none"} for=${compReason?.forStaffId ?? "none"} ` +
-    teacherLogTag(teacher);
-
-  /* T45: the Formula Note. Mindbody's checkout carries no notes field,
-   * but a client has Formula Notes: dated, staff-only entries on the
-   * profile (`POST /client/addclientformulanote`, client.yml), which is
-   * where a record of the comp belongs for the studio's own eyes. Filed
-   * only after a REAL comp (not suppressed, not refused, not ambiguous)
-   * for a NAMED client: the house client is a catch-all and a note on it
-   * names nobody. The write itself (through mindbody() with the client
-   * id in the options, as the signed-in teacher with the ordinary
-   * fallback, bounded to FORMULA_NOTE_WAIT_MS, never throwing) lives in
-   * src/lib/formulanote.ts since T59c, shared with the guest route;
-   * only the comp's wording and its preconditions are here. It runs
-   * AFTER the outcome is decided and can never change it: the sale
-   * already happened, so a failure here is one log line and a null on
-   * the receipt. */
-  const fileCompNote = async (
-    saleId: string | null,
-  ): Promise<{ id: number | null; via: "formula" | "notes" | null }> => {
-    const none = { id: null, via: null };
-    if (compReason === null) return none;
-    const house = houseClientId();
-    if (clientId === undefined || (house !== null && clientId === house)) {
-      console.log(`[comp] formula-note skipped: house client`);
-      return none;
-    }
-    const note = [
-      `Comped $${total.toFixed(2)} at the counter: ${compHeadline(compReason)}.`,
-      compReason.detail ? `Note: ${compReason.detail}.` : null,
-      teacher ? `By ${teacher.name}.` : null,
-      saleId ? `Sale ${saleId}.` : null,
-    ]
-      .filter(Boolean)
-      .join(" ");
-    /* T49: filed as the signed-in teacher too, with the ordinary
-     * fallback (the note is a record, not the comp; a permission gap
-     * here is one warn line, and the note still lands). T62: on a site
-     * without Formula Notes (471) the same sentence lands as a signed
-     * Notes entry, `via: "notes"`, and the receipt's note id is null. */
-    const filed = await fileFormulaNote({
-      session,
-      clientId,
-      note,
-      route: "/api/checkout formula-note",
-      logTag: "[comp]",
-    });
-    return { id: filed.id, via: filed.via };
-  };
-
-  const recordComp = async (outcome: {
-    saleId: string | null;
-    cartId: string | null;
-    suppressed: boolean;
-    formulaNoteId: number | null;
-  }) => {
-    console.log(
-      `[comp] ${target()} sale=${outcome.suppressed ? "suppressed" : (outcome.saleId ?? "unknown")} ` +
-        `client=${clientId ?? "house"} total=${total.toFixed(2)} ` +
-        compTags +
-        (outcome.formulaNoteId !== null ? ` note=${outcome.formulaNoteId}` : ""),
-    );
-    await insertCompReceipt({
-      saleId: outcome.suppressed ? null : outcome.saleId,
-      cartId: outcome.suppressed ? null : outcome.cartId,
-      clientId: clientId ?? null,
-      totalCents: Math.round(total * 100),
-      items: compItems,
-      reason: reasonLine,
-      target: target(),
-      suppressed: outcome.suppressed,
-      teacherId: teacher === null ? null : String(teacher.id),
-      teacherName: teacher?.name ?? null,
-      kind: compReason?.kind ?? "",
-      detail: compReason?.detail ? compReason.detail : null,
-      forStaffId:
-        compReason?.forStaffId === undefined
-          ? null
-          : String(compReason.forStaffId),
-      forStaffName: compReason?.forStaffName ?? null,
-      formulaNoteId: outcome.formulaNoteId,
-    });
-  };
-
   const m = method as Method;
   try {
-    if (m === "comp" || m === "cash") {
+    if (m === "comp") {
+      /* T79: the 100% discount. First the discount lines with NO
+       * Payments (whether Mindbody takes a $0 cart that way is
+       * unverified); if Mindbody refuses that with an error naming
+       * payment, and ONLY a definite refusal (an ambiguous outcome may
+       * already have written the sale, and is never retried), ONE
+       * retry goes out in T43's proven shape: no DiscountAmount, one
+       * Comp payment for the full undiscounted total, which a second
+       * Test: true rehearsal prices first (a read in all but name; it
+       * moves nothing). The answer says which shape Mindbody took. A
+       * comp never falls back to the service account. */
       let run;
+      let shape: DiscountShape = "lines";
+      let onStudio = discounted;
       try {
-        /* T49: a comp never falls back to the service account; cash
-         * takes the ordinary one loud fallback. */
         run = await runAsActor(
           session,
           "/api/checkout",
           (actor) =>
-            checkoutCart(
-              items,
-              saleClientId,
-              m === "cash"
-                ? { type: "Cash", amount: total }
-                : { type: "Comp", amount: total },
-              actor,
-              sendEmail,
-            ),
-          { fallback: m !== "comp" },
+            checkoutCart(items, saleClientId, [], actor, false, discount),
+          { fallback: false },
         );
-      } catch (err) {
-        /* A refused or unanswered comp records no receipt (there is no
-         * sale to receipt), but the attempt and its outcome go in the
-         * log; the error itself is answered by the catch below exactly
-         * as it always was. */
-        if (m === "comp") {
+      } catch (first) {
+        const message = errMessage(first);
+        if (isAmbiguous(first) || !/payment/i.test(message)) {
           console.log(
-            `[comp] ${target()} sale=none outcome=${isAmbiguous(err) ? "ambiguous" : "refused"} ` +
-              `client=${clientId ?? "house"} total=${total.toFixed(2)} ` +
-              compTags +
-              ` error=${JSON.stringify(errMessage(err))}`,
+            `[comp] ${target()} sale=none outcome=${isAmbiguous(first) ? "ambiguous" : "refused"} ` +
+              `client=${clientId ?? "house"} total=${discounted.toFixed(2)} ` +
+              compTags(0, "lines") +
+              ` error=${JSON.stringify(message)}`,
+          );
+          throw first;
+        }
+        console.log(
+          `[comp] ${target()} no-payment shape refused (${JSON.stringify(message)}); ` +
+            "retrying once as a Comp payment",
+        );
+        let plain;
+        try {
+          plain = await rehearseCheckout(items, saleClientId);
+        } catch (err) {
+          return NextResponse.json(
+            { error: errMessage(err), stage: "rehearsal" },
+            { status: 502 },
           );
         }
-        throw err;
+        if (plain.suppressed) {
+          return NextResponse.json({ ok: false, suppressed: suppressionKind() });
+        }
+        if (plain.disagrees || plain.grandTotal === null) {
+          return NextResponse.json(
+            {
+              error:
+                "Totals disagree between our math and Mindbody's. Nothing was " +
+                "charged; this is a bug to report, not a state to charge from.",
+              stage: "rehearsal",
+            },
+            { status: 409 },
+          );
+        }
+        shape = "comp-payment";
+        onStudio = plain.grandTotal;
+        const compTotal = plain.grandTotal;
+        try {
+          run = await runAsActor(
+            session,
+            "/api/checkout",
+            (actor) =>
+              checkoutCart(
+                items,
+                saleClientId,
+                { type: "Comp", amount: compTotal },
+                actor,
+                false,
+              ),
+            { fallback: false },
+          );
+        } catch (err) {
+          /* A refused or unanswered comp records no receipt (there is
+           * no sale to receipt), but the attempt and its outcome go in
+           * the log; the error itself is answered by the catch below
+           * exactly as it always was. */
+          console.log(
+            `[comp] ${target()} sale=none outcome=${isAmbiguous(err) ? "ambiguous" : "refused"} ` +
+              `client=${clientId ?? "house"} total=${compTotal.toFixed(2)} ` +
+              compTags(0, shape) +
+              ` error=${JSON.stringify(errMessage(err))}`,
+          );
+          throw err;
+        }
       }
       const outcome = run.result;
       const ids =
         outcome.suppressed !== null
           ? { saleId: null, cartId: null }
           : await saleIds(outcome.saleId);
-      /* T62: where the comp's record landed, additive on the answer:
-       * "formula", "notes" (the fallback on a site without Formula
-       * Notes), or null (not a comp, the house client, suppressed, or
-       * the record failed). Nothing else about the answer changes. */
-      let noteVia: "formula" | "notes" | null = null;
-      if (m === "comp") {
-        /* T45: the outcome is decided (the call resolved), so the Formula
-         * Note goes out now, for a real sale only, and its id rides on the
-         * receipt. Neither can throw; see fileCompNote. */
-        const filed =
-          outcome.suppressed !== null
-            ? { id: null, via: null }
-            : await fileCompNote(ids.saleId);
-        noteVia = filed.via;
-        await recordComp({
-          saleId: ids.saleId,
-          cartId: ids.cartId,
-          suppressed: outcome.suppressed !== null,
-          formulaNoteId: filed.id,
-        });
-      }
+      const rec = await recordDiscount({
+        ...ids,
+        suppressed: outcome.suppressed !== null,
+        paid: 0,
+        shape,
+        onStudio,
+      });
       if (outcome.suppressed) {
         return NextResponse.json({
           ok: false,
           suppressed: outcome.suppressed,
+          ...rec,
+          ...actorFields(run),
+        });
+      }
+      return NextResponse.json({
+        ok: true,
+        method: m,
+        total: 0,
+        saleId: ids.saleId,
+        cartId: ids.cartId,
+        receiptRequested: false,
+        emailReceipt: null,
+        ...rec,
+        ...actorFields(run),
+      });
+    }
+
+    if (m === "cash") {
+      /* T49: cash takes the ordinary one loud fallback. */
+      const run = await runAsActor(session, "/api/checkout", (actor) =>
+        checkoutCart(
+          items,
+          saleClientId,
+          { type: "Cash", amount: total },
+          actor,
+          sendEmail,
+          discount,
+        ),
+      );
+      const outcome = run.result;
+      const ids =
+        outcome.suppressed !== null
+          ? { saleId: null, cartId: null }
+          : await saleIds(outcome.saleId);
+      const rec = await recordDiscount({
+        ...ids,
+        suppressed: outcome.suppressed !== null,
+        paid: total,
+        shape: "lines",
+        onStudio: discounted,
+      });
+      if (outcome.suppressed) {
+        return NextResponse.json({
+          ok: false,
+          suppressed: outcome.suppressed,
+          ...rec,
           ...actorFields(run),
         });
       }
@@ -941,7 +1116,7 @@ export async function POST(request: Request) {
         cartId: ids.cartId,
         receiptRequested: sendEmail,
         emailReceipt: null,
-        noteVia,
+        ...rec,
         ...actorFields(run),
       });
     }
@@ -987,17 +1162,34 @@ export async function POST(request: Request) {
           { type: "DebitAccount", amount: total },
           actor,
           sendEmail,
+          discount,
         ),
       );
       const outcome = run.result;
       if (outcome.suppressed) {
+        const rec = await recordDiscount({
+          saleId: null,
+          cartId: null,
+          suppressed: true,
+          paid: total,
+          shape: "lines",
+          onStudio: discounted,
+        });
         return NextResponse.json({
           ok: false,
           suppressed: outcome.suppressed,
+          ...rec,
           ...actorFields(run),
         });
       }
       const ids = await saleIds(outcome.saleId);
+      const rec = await recordDiscount({
+        ...ids,
+        suppressed: false,
+        paid: total,
+        shape: "lines",
+        onStudio: discounted,
+      });
       return NextResponse.json({
         ok: true,
         method: m,
@@ -1006,6 +1198,7 @@ export async function POST(request: Request) {
         cartId: ids.cartId,
         receiptRequested: sendEmail,
         emailReceipt: null,
+        ...rec,
         ...actorFields(run),
       });
     }
@@ -1063,17 +1256,34 @@ export async function POST(request: Request) {
           { type: "StoredCard", amount: total, lastFour: card.lastFour },
           actor,
           sendEmail,
+          discount,
         ),
       );
       const outcome = run.result;
       if (outcome.suppressed) {
+        const rec = await recordDiscount({
+          saleId: null,
+          cartId: null,
+          suppressed: true,
+          paid: total,
+          shape: "lines",
+          onStudio: discounted,
+        });
         return NextResponse.json({
           ok: false,
           suppressed: outcome.suppressed,
+          ...rec,
           ...actorFields(run),
         });
       }
       const ids = await saleIds(outcome.saleId);
+      const rec = await recordDiscount({
+        ...ids,
+        suppressed: false,
+        paid: total,
+        shape: "lines",
+        onStudio: discounted,
+      });
       return NextResponse.json({
         ok: true,
         method: m,
@@ -1082,6 +1292,7 @@ export async function POST(request: Request) {
         cartId: ids.cartId,
         receiptRequested: sendEmail,
         emailReceipt: null,
+        ...rec,
         ...actorFields(run),
       });
     }
@@ -1125,9 +1336,18 @@ export async function POST(request: Request) {
       );
     }
     if (credit.suppressed) {
+      const rec = await recordDiscount({
+        saleId: null,
+        cartId: null,
+        suppressed: true,
+        paid: total,
+        shape: "lines",
+        onStudio: discounted,
+      });
       return NextResponse.json({
         ok: false,
         suppressed: credit.suppressed,
+        ...rec,
         ...actorFields(creditRun),
       });
     }
@@ -1140,6 +1360,7 @@ export async function POST(request: Request) {
           { type: "DebitAccount", amount: total },
           actor,
           sendEmail,
+          discount,
         ),
       );
       const outcome = run.result;
@@ -1153,6 +1374,13 @@ export async function POST(request: Request) {
         );
       }
       const ids = await saleIds(outcome.saleId);
+      const rec = await recordDiscount({
+        ...ids,
+        suppressed: false,
+        paid: total,
+        shape: "lines",
+        onStudio: discounted,
+      });
       /* Either write may have fallen back; one note covers both. */
       const fallback = creditRun.actorFallback ?? run.actorFallback;
       return NextResponse.json({
@@ -1166,6 +1394,7 @@ export async function POST(request: Request) {
         /* T53: the one confirmation Mindbody gives: the credit sale's
          * EmailReceipt. The cart checkout after it reports nothing. */
         emailReceipt: sendEmail ? credit.emailReceipt : null,
+        ...rec,
         ...actorFields({
           actorFallback: fallback,
           staffSessionEnded: creditRun.staffSessionEnded || run.staffSessionEnded,
