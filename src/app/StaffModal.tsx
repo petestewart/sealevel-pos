@@ -205,15 +205,19 @@ export default function StaffModal({
     }
   }, [open, teacher, runProbe]);
 
-  /* Escape closes the modal; the gate has nothing to close to. */
+  /* Escape closes the modal; the gate has nothing to close to. While
+   * the PIN box stands in for this modal (T80) it owns Escape: this
+   * component is still mounted behind it, and with both listening one
+   * Escape shut the PIN box AND the account modal it should have come
+   * back to, which Cancel and a scrim tap do not. */
   useEffect(() => {
-    if (!open || required) return;
+    if (!open || required || pinOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, required, onClose]);
+  }, [open, required, pinOpen, onClose]);
 
   const valid = username.trim().length >= 3 && password.length > 0;
 
