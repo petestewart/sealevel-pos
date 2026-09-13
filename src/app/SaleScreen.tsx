@@ -700,6 +700,16 @@ function CashIcon() {
   );
 }
 
+/** The gift card tile (T83): a card with a ribbon, so it reads as a
+ *  card at a glance and not as the stored card beside it. */
+function GiftCardIcon() {
+  return (
+    <Icon d="M12 5v14M2 10h20" size={24}>
+      <rect x="2" y="5" width="20" height="14" />
+    </Icon>
+  );
+}
+
 function AccountIcon() {
   return (
     <Icon d="M4 21c0-4 3.6-6 8-6s8 2 8 6" size={24}>
@@ -760,8 +770,58 @@ interface ReceiptState {
 
 /** A source of tender. Comp is deliberately absent: it is a whole-sale
  *  gesture with its own hold, not a tender line, and /api/checkout
- *  refuses it inside a split for the same reason. */
-type TenderSource = "storedcard" | "credit" | "cash";
+ *  refuses it inside a split for the same reason. T83 added
+ *  "giftcard", the one source whose line cannot be added by a single
+ *  tap: it needs a number and a balance read first (the gift-card
+ *  modal), and only then becomes an ordinary line. */
+type TenderSource = "storedcard" | "credit" | "cash" | "giftcard";
+
+/** Keep in sync with src/lib/giftcard.ts. Mirrored rather than
+ *  imported: that module reaches Mindbody, and nothing server-side
+ *  belongs in the browser bundle. The server validates the number
+ *  again and is the only judge that matters. */
+const GIFT_CARD_MIN = 4;
+const GIFT_CARD_MAX = 32;
+/** Digits, letters and dashes: Mindbody types a barcode id as a plain
+ *  string and documents no format. Everything else a scanner or a
+ *  keyboard can emit (spaces included) is dropped as it arrives. */
+const GIFT_CARD_STRIP = /[^0-9A-Za-z-]/g;
+
+/**
+ * T83: the gift card the tender is spending, once its number has been
+ * entered and Mindbody has answered a balance. One at a time: two gift
+ * cards would be two lines, and two lines is the maximum a checkout
+ * takes, so the second would leave no room for the change.
+ *
+ * `number` is a bearer secret and lives ONLY here, in this component's
+ * state, for as long as the tender does: it goes to /api/checkout with
+ * the charge and nowhere else. `lastFour` is the part that reaches the
+ * screen.
+ */
+interface GiftCardHeld {
+  number: string;
+  lastFour: string;
+  balanceCents: number;
+}
+
+/**
+ * The gift-card modal's draft: the number being entered, then the
+ * amount, over the same keypad. It is NOT a tender line yet -- Done on
+ * the amount step is what adds one -- so a cancelled or refused check
+ * leaves the payment exactly as it was.
+ */
+interface GiftDraft {
+  step: "number" | "amount";
+  number: string;
+  /** Mindbody's answer, in cents; null until "Check balance" returns. */
+  balanceCents: number | null;
+  checking: boolean;
+  /** Mindbody's own words for a card it would not answer for. */
+  error: string | null;
+  /** Digits typed on the amount step, in cents; empty means the
+   *  default (the smaller of the balance and what is still due). */
+  entry: string;
+}
 
 /**
  * T35: one line of the tender against the amount due. A whole sale is
@@ -1203,6 +1263,9 @@ function PaymentPanel(props: {
    *  a modal is def better than this"), so opening it moves nothing in
    *  the payment column. No OS keyboard anywhere in the payment seam. */
   const [padFor, setPadFor] = useState<number | null>(null);
+  /** T83: the gift card the tender holds, and the modal's draft. */
+  const [giftCard, setGiftCard] = useState<GiftCardHeld | null>(null);
+  const [gift, setGift] = useState<GiftDraft | null>(null);
   /** Digits typed since the modal opened, accumulating into CENTS
    *  (2-0-0-0 reads $20.00), exactly as the cash tender field did. Empty
    *  means nothing was typed, and Done then leaves the line as it was. */
@@ -1288,6 +1351,15 @@ function PaymentPanel(props: {
     onModalChange(false);
   }, [onModalChange]);
 
+  /** T83: close the gift-card modal, draft and all, reporting the close
+   *  upward exactly as dismissPad does. A gift card already IN the
+   *  payment is untouched: this closes an editor, it does not remove a
+   *  tender. */
+  const dismissGift = useCallback(() => {
+    setGift(null);
+    onModalChange(false);
+  }, [onModalChange]);
+
   /** Close the reason dialog with nothing armed and the draft gone, and
    *  report the close upward exactly as dismissPad does: the dialog owns
    *  Escape while open, so a reset that closes it must not leave
@@ -1321,8 +1393,14 @@ function PaymentPanel(props: {
     setComp(null);
     setCompCleared(false);
     dismissPad();
+    /* T83: the gift card goes with the lines. The held number outlives
+     * nothing: an effect below drops it whenever no gift card line is
+     * left, so every OTHER path that clears lines (a cart edit, a
+     * discount change, a client change) is covered without being
+     * touched. */
+    dismissGift();
     closeReason();
-  }, [dismissPad, closeReason, setComp]);
+  }, [dismissPad, dismissGift, closeReason, setComp]);
 
   /* T79: the discount is cart state, so a change to it (armed, removed,
    * or a different figure) moves the total under every tender line the
@@ -1409,6 +1487,8 @@ function PaymentPanel(props: {
   useEffect(() => {
     if (visible) return;
     dismissPad();
+    /* T83: and the gift-card modal, whose draft is not a tender. */
+    dismissGift();
     /* T43: a reason dialog left open by a hold that landed just before
      * Back to items goes the same way, with its draft. */
     closeReason();
@@ -1416,7 +1496,7 @@ function PaymentPanel(props: {
       setComp(null);
       setCompCleared(true);
     }
-  }, [visible, discounted, dismissPad, closeReason, setComp]);
+  }, [visible, discounted, dismissPad, dismissGift, closeReason, setComp]);
 
   /* Source availability. An unavailable source renders greyed WITH the
    * reason, never hidden (PLAN 2.2: "account credit ($12) greyed out
@@ -1474,6 +1554,17 @@ function PaymentPanel(props: {
         : cur,
     );
   }, [creditVisible]);
+
+  /* T83: the held gift card belongs to a LINE. Whatever removed that
+   * line -- its x, a cart edit, a discount change, a client change, a
+   * completed sale -- the number and the balance go with it, so a
+   * later gift card tap starts from the card in the teacher's hand
+   * rather than from the last one. */
+  useEffect(() => {
+    if (giftCard === null) return;
+    if (lines.some((l) => l.source === "giftcard")) return;
+    setGiftCard(null);
+  }, [lines, giftCard]);
 
   /* An amount modal whose LINE has gone must not stay open in name only.
    * Every deliberate path (removeLine, Cancel, Done, the resets)
@@ -1549,6 +1640,13 @@ function PaymentPanel(props: {
     if (source === "credit") {
       return balanceCents === null ? 0 : Math.min(room, balanceCents);
     }
+    /* T83: a gift card caps at what Mindbody says is on it, exactly as
+     * credit caps at the account balance. The server re-reads the
+     * balance and refuses more anyway; this is what keeps the keypad
+     * from ever holding a figure that would be refused. */
+    if (source === "giftcard") {
+      return giftCard === null ? 0 : Math.min(room, giftCard.balanceCents);
+    }
     return room;
   };
 
@@ -1570,6 +1668,8 @@ function PaymentPanel(props: {
     }
     if (dueCents !== null && dueCents <= 0) return "Nothing left to cover";
     if (source === "credit") return creditReason;
+    /* T83: a gift card needs no client and no card on file; what it
+     * needs is a number, which the modal asks for. */
     if (source === "storedcard") {
       if (cardReason !== null) return cardReason;
       /* T82: the under-$10 guard, not rule 1. A whole-sale card payment
@@ -1607,6 +1707,16 @@ function PaymentPanel(props: {
       if (creditReason !== null) return creditReason;
       if (balanceCents === null || balanceCents < line.cents) {
         return `Only ${money(balance ?? 0)} on account`;
+      }
+      return null;
+    }
+    if (line.source === "giftcard") {
+      /* Unreachable in normal use: the effect above drops the line with
+       * the card. Refused rather than charged on a number this render
+       * does not hold. */
+      if (giftCard === null) return "Enter the gift card again";
+      if (giftCard.balanceCents < line.cents) {
+        return `Only ${money(giftCard.balanceCents / 100)} on the gift card`;
       }
       return null;
     }
@@ -1664,7 +1774,20 @@ function PaymentPanel(props: {
         dueCents === 0 && tenderValid);
 
   const sourceLabel = (s: TenderSource) =>
-    s === "storedcard" ? "Card" : s === "credit" ? "Account" : "Cash";
+    s === "storedcard"
+      ? "Card"
+      : s === "credit"
+        ? "Account"
+        : s === "giftcard"
+          ? "Gift card"
+          : "Cash";
+
+  /** The tender row's name. A gift card wears its last four, which is
+   *  the only part of the number that ever reaches a screen (T83). */
+  const lineName = (line: TenderLine) =>
+    line.source === "giftcard" && giftCard !== null
+      ? `Gift card ...${giftCard.lastFour}`
+      : sourceLabel(line.source);
 
   /** One leg of a split, as the Charge button restates it. The cash leg
    *  reads "collect $X cash": the leg amount IS what is collected. */
@@ -1673,7 +1796,9 @@ function PaymentPanel(props: {
       ? `${money(usd)} card`
       : s === "credit"
         ? `${money(usd)} from account`
-        : `collect ${money(usd)} cash`;
+        : s === "giftcard"
+          ? `${money(usd)} gift card`
+          : `collect ${money(usd)} cash`;
 
   const soleLine = lines.length === 1 ? lines[0] : undefined;
   /** The cash line, if one is in the payment: the Cash tile reopens its
@@ -1721,6 +1846,11 @@ function PaymentPanel(props: {
     const legs = lines.map((line, i) => ({
       method: line.source,
       amount: (coverage[i] ?? 0) / 100,
+      /* T83: the gift card's number rides its own leg and nothing
+       * else's; the route refuses a number on any other method. */
+      ...(line.source === "giftcard" && giftCard !== null
+        ? { number: giftCard.number }
+        : {}),
     }));
     /* T43: a comp carries its reason (the route refuses a comp without
      * one, and a reason on any other method). The reason never reaches
@@ -1736,6 +1866,10 @@ function PaymentPanel(props: {
               method: soleLine.source,
               ...(soleLine.source === "cash"
                 ? { cashTendered: soleLine.cents / 100 }
+                : {}),
+              /* T83: the whole-sale gift card shape. */
+              ...(soleLine.source === "giftcard" && giftCard !== null
+                ? { giftCard: { number: giftCard.number } }
                 : {}),
             }
           : null;
@@ -1761,6 +1895,9 @@ function PaymentPanel(props: {
      * like the count: the lookup may refetch before the done block
      * renders. */
     const receiptEmailAtTap = sendEmail ? receipt.email : null;
+    /* T83: the last four for the done screen, captured at the tap: the
+     * held card goes with the tender the moment the sale lands. */
+    const giftLastFourAtTap = giftCard?.lastFour ?? null;
     inFlight.current = true;
     setCharging(true);
     onBusyChange(true);
@@ -1820,12 +1957,21 @@ function PaymentPanel(props: {
         /* The paid summary names how it was paid; a split names BOTH
          * legs, amounts included, so the drawer count and the statement
          * both have their line. */
+        /* T83: the gift card's last four, the server's copy for
+           preference; never the number, which this screen holds and
+           never shows. */
+        const giftFour =
+          typeof body?.giftCard?.lastFour === "string"
+            ? body.giftCard.lastFour
+            : giftLastFourAtTap;
         const legDesc = (m: TenderSource, usd: number) =>
           m === "storedcard"
             ? `${money(usd)} on the stored card${card ? ` ...${card.lastFour}` : ""}`
             : m === "credit"
               ? `${money(usd)} from account`
-              : `${money(usd)} cash`;
+              : m === "giftcard"
+                ? `${money(usd)} on the gift card${giftFour ? ` ...${giftFour}` : ""}`
+                : `${money(usd)} cash`;
         const methodName = isSplit
           ? legs.map((leg) => legDesc(leg.method, leg.amount)).join(" + ")
           : comped
@@ -1836,7 +1982,9 @@ function PaymentPanel(props: {
                 ? `stored card${card ? ` ...${card.lastFour}` : ""}`
                 : soleLine.source === "credit"
                   ? "account balance"
-                  : "cash";
+                  : soleLine.source === "giftcard"
+                    ? `gift card${giftFour ? ` ...${giftFour}` : ""}`
+                    : "cash";
         onSold();
         /* The sale stands, so every client number this screen holds is a
          * pre-sale snapshot: drop the one learned from a refusal and let
@@ -1986,6 +2134,10 @@ function PaymentPanel(props: {
   const addLine = (source: TenderSource) => {
     if (addReason(source) !== null || charging) return;
     if (dueCents === null || dueCents <= 0) return;
+    /* T83: a gift card line comes from the modal (openGift), which has
+     * the number and the balance the line needs. A bare tap could only
+     * ever make a line with no card behind it. */
+    if (source === "giftcard") return;
     const cents =
       source === "credit"
         ? Math.min(dueCents, balanceCents ?? 0)
@@ -2022,6 +2174,190 @@ function PaymentPanel(props: {
     setCompCleared(false);
     clearStaleResult();
   };
+
+  /* ------------------ T83: the gift-card modal ---------------------
+   * Pete: "Add gift card as a form of payment". A gift card is not a
+   * one-tap tender like the other three: it needs the number off the
+   * card and a balance read before an amount can mean anything, so the
+   * tile opens this modal at its number step, "Check balance" answers
+   * the balance, and only Done adds the tender line. Nothing about the
+   * money moves here: the line it adds is an ordinary line, capped by
+   * the balance, and /api/checkout re-reads that balance and refuses
+   * more whatever this screen believes. */
+
+  /** Open the modal for a new gift card. Refused for the same reasons
+   *  the tile is greyed, so a keyboard Enter cannot get past them. */
+  const openGift = () => {
+    if (addReason("giftcard") !== null || charging) return;
+    if (dueCents === null || dueCents <= 0) return;
+    setGift({
+      step: "number",
+      number: "",
+      balanceCents: null,
+      checking: false,
+      error: null,
+      entry: "",
+    });
+    dismissPad();
+    onModalChange(true);
+    setCompCleared(false);
+    clearStaleResult();
+  };
+
+  /** Whatever a scanner or a keyboard put in the field, as a barcode
+   *  id: the characters Mindbody's ids are made of, and no more than
+   *  one can hold. */
+  const setGiftNumber = (raw: string) => {
+    const number = raw.replace(GIFT_CARD_STRIP, "").slice(0, GIFT_CARD_MAX);
+    setGift((cur) => (cur === null ? cur : { ...cur, number, error: null }));
+  };
+
+  const giftNumberReady =
+    gift !== null && gift.number.length >= GIFT_CARD_MIN;
+
+  /** The most this gift card may be tendered: what is on it, and what
+   *  is still due, whichever is smaller. Pete's rule, and the cap the
+   *  keypad clamps to. */
+  const giftCapCents =
+    gift === null || gift.balanceCents === null || dueCents === null
+      ? 0
+      : Math.min(gift.balanceCents, dueCents);
+
+  /** What Done would add: what was typed, or the cap as the default. */
+  const giftDraftCents =
+    gift === null
+      ? 0
+      : gift.entry === ""
+        ? giftCapCents
+        : Math.min(parseInt(gift.entry, 10) || 0, giftCapCents);
+
+  /** "Check balance": one read through /api/gift-card, which answers
+   *  the balance and nothing else. A refusal is Mindbody's own words
+   *  and leaves the modal on the number step, since the fix is usually
+   *  a digit. */
+  const checkGiftBalance = async () => {
+    if (gift === null || !giftNumberReady || gift.checking) return;
+    const number = gift.number;
+    setGift((cur) => (cur === null ? cur : { ...cur, checking: true, error: null }));
+    try {
+      const res = await fetch(
+        `/api/gift-card?number=${encodeURIComponent(number)}`,
+      );
+      const body = await res.json().catch(() => null);
+      const balance = body?.balance;
+      if (!res.ok || typeof balance !== "number") {
+        setGift((cur) =>
+          cur === null
+            ? cur
+            : {
+                ...cur,
+                checking: false,
+                error: String(
+                  body?.error ?? `The balance check failed (HTTP ${res.status}).`,
+                ),
+              },
+        );
+        return;
+      }
+      const balanceCents = Math.round(balance * 100);
+      if (balanceCents <= 0) {
+        setGift((cur) =>
+          cur === null
+            ? cur
+            : {
+                ...cur,
+                checking: false,
+                error: "That card has nothing left on it.",
+              },
+        );
+        return;
+      }
+      setGift((cur) =>
+        cur === null || cur.number !== number
+          ? cur
+          : { ...cur, step: "amount", balanceCents, checking: false, error: null },
+      );
+    } catch {
+      setGift((cur) =>
+        cur === null
+          ? cur
+          : {
+              ...cur,
+              checking: false,
+              error: "The balance check did not answer. Try it again.",
+            },
+      );
+    }
+  };
+
+  /** A key on the gift-card modal's pad. On the number step the digits
+   *  are the barcode; on the amount step they accumulate into cents and
+   *  are clamped to the cap on every keystroke, exactly as the tender
+   *  pad clamps. */
+  const giftTap = (key: string) => {
+    if (gift === null || gift.checking) return;
+    if (gift.step === "number") {
+      if (key === "back") {
+        setGift((cur) =>
+          cur === null
+            ? cur
+            : { ...cur, number: cur.number.slice(0, -1), error: null },
+        );
+        return;
+      }
+      setGiftNumber(gift.number + key);
+      return;
+    }
+    if (key === "back") {
+      setGift((cur) =>
+        cur === null ? cur : { ...cur, entry: cur.entry.slice(0, -1) },
+      );
+      return;
+    }
+    const digits = (gift.entry + key).replace(/^0+(?=\d)/, "");
+    if (digits.length > 7) return;
+    const typed = digits === "" ? 0 : parseInt(digits, 10);
+    if (!Number.isFinite(typed)) return;
+    const clamped = Math.min(typed, giftCapCents);
+    setGift((cur) =>
+      cur === null
+        ? cur
+        : { ...cur, entry: clamped === typed ? digits : String(clamped) },
+    );
+  };
+
+  /** Done on the amount step: the card is held (its number, for the
+   *  charge, and its balance, for the cap) and its tender line is
+   *  added. The line is an ordinary tender line from here on. */
+  const applyGift = () => {
+    if (gift === null || gift.step !== "amount" || gift.balanceCents === null) {
+      return;
+    }
+    const cents = giftDraftCents;
+    if (cents <= 0) return;
+    setGiftCard({
+      number: gift.number,
+      lastFour: gift.number.slice(-4),
+      balanceCents: gift.balanceCents,
+    });
+    const id = nextLineId.current++;
+    setLines((cur) => [...cur, { id, source: "giftcard" as TenderSource, cents }]);
+    setCompCleared(false);
+    clearStaleResult();
+    dismissGift();
+  };
+
+  /* Escape closes the gift-card modal as Cancel, and never mid-check:
+   * a balance read in flight answers into a draft this press would
+   * have removed, and its setGift would then reopen nothing. */
+  useEffect(() => {
+    if (gift === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !gift.checking) dismissGift();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [gift, dismissGift]);
 
   const padIndex = lines.findIndex((l) => l.id === padFor);
   const padLine = padIndex >= 0 ? lines[padIndex] : undefined;
@@ -2471,6 +2807,11 @@ function PaymentPanel(props: {
       : []),
     { s: "storedcard", label: "Card", icon: <CardIcon /> },
     { s: "cash", label: "Cash", icon: <CashIcon /> },
+    /* T83: the fourth tile, always offered. A gift card needs no client
+       and no card on file, so there is no state in which it is unusable
+       for a reason worth greying it with; what it needs is the number,
+       which its modal asks for. */
+    { s: "giftcard", label: "Gift card", icon: <GiftCardIcon /> },
   ];
 
   /* The three figures (0.2): Due is settled once the lines cover the
@@ -2667,7 +3008,16 @@ function PaymentPanel(props: {
                   T35's reason when a source cannot add a line, never
                   hidden; Credit is absent when there is no balance (T33)
                   and wears it as a badge when there is. */}
-              <div className="pay-tiles" aria-label="Payment sources">
+              {/* T83: four tiles do not fit one row of a payment column
+                  at 834px, so the row becomes a 2x2 grid at four and
+                  stays one row at three (no credit). The tiles keep
+                  their 96px and their dividers either way. */}
+              <div
+                className={
+                  sources.length > 3 ? "pay-tiles wrap" : "pay-tiles"
+                }
+                aria-label="Payment sources"
+              >
                 {sources.map(({ s, label, icon }) => {
                   const reason = addReason(s);
                   /* Layout plan 2.7: tapping Cash when a cash line is
@@ -2707,7 +3057,12 @@ function PaymentPanel(props: {
                       onClick={() =>
                         reopen && cashLine !== undefined
                           ? openPad(cashLine.id)
-                          : addLine(s)
+                          : /* T83: the gift card asks for its number
+                               first; every other source adds its line
+                               on the tap. */
+                            s === "giftcard"
+                            ? openGift()
+                            : addLine(s)
                       }
                       title={
                         reason ??
@@ -2715,7 +3070,9 @@ function PaymentPanel(props: {
                           ? creditLabel
                           : s === "storedcard"
                             ? (cardDetail ?? "Card on file")
-                            : "Cash")
+                            : s === "giftcard"
+                              ? "Gift card: enter the number and check the balance"
+                              : "Cash")
                       }
                     >
                       <span className="pay-tile-name">
@@ -2750,7 +3107,7 @@ function PaymentPanel(props: {
                         key={line.id}
                       >
                         <span className="tender-src-name">
-                          {sourceLabel(line.source)}
+                          {lineName(line)}
                           {/* Over-tendered cash: what the line actually
                               covers, under the name (0.2). Only cash can
                               exceed its coverage; the surplus is Change. */}
@@ -2955,6 +3312,146 @@ function PaymentPanel(props: {
           The clamps are unchanged: card and credit cannot be typed or
           chipped above their cap, and cash is the only source that may
           exceed what it owes. */}
+      {/* T83: the gift-card modal. The T36 amount modal in a gift-card
+          variant: the barcode first, over the same keypad, then "Check
+          balance", then the amount with the balance as its cap. Done is
+          what adds the tender line; Cancel, Escape and the scrim leave
+          the payment exactly as it was. The number is shown (the
+          teacher is holding the card) and never leaves this component
+          except in the charge itself. */}
+      {gift !== null ? (
+        <div className="modal-scrim" role="presentation" onClick={dismissGift}>
+          <div
+            className="modal modal-amount modal-pad"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Gift card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="pad-left">
+              <p className="modal-title pad-head">
+                <span className="pad-kicker">
+                  {gift.step === "number"
+                    ? "Gift card number"
+                    : `Gift card ...${gift.number.slice(-4)}`}
+                </span>
+                <span className="pad-entered-amt">
+                  {gift.step === "number"
+                    ? gift.number === ""
+                      ? "--"
+                      : gift.number
+                    : money(giftDraftCents / 100)}
+                </span>
+              </p>
+              {gift.step === "number" ? (
+                <>
+                  {/* A gift card carries a barcode, and the studio's
+                      scanner types it like a keyboard, so this step has
+                      a real field: scan it, or type it on the pad
+                      beside it. inputMode numeric keeps an iPad's own
+                      keypad numeric if the teacher taps the field.
+                      This is the one field in the payment seam, and it
+                      is not an amount: T35's "no OS keyboard" rule is
+                      about money entry, and a scanner needs somewhere
+                      to land. */}
+                  <input
+                    className="gift-number"
+                    value={gift.number}
+                    onChange={(e) => setGiftNumber(e.target.value)}
+                    inputMode="numeric"
+                    autoComplete="off"
+                    autoFocus
+                    spellCheck={false}
+                    disabled={gift.checking}
+                    aria-label="Gift card number"
+                    placeholder="Scan or type the number"
+                  />
+                  <p
+                    className={
+                      gift.error ? "pad-change short" : "pad-change muted-note"
+                    }
+                  >
+                    {gift.error ??
+                      (giftNumberReady
+                        ? "Check the balance to set the amount."
+                        : `The number on the card, at least ${GIFT_CARD_MIN} characters.`)}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="pad-row">
+                    <span className="pad-label">On the card</span>
+                    <span className="pad-amt">
+                      {money((gift.balanceCents ?? 0) / 100)}
+                    </span>
+                  </div>
+                  <div className="pad-row">
+                    <span className="pad-label">Amount due</span>
+                    <span className="pad-amt">
+                      {dueCents !== null ? money(dueCents / 100) : "--"}
+                    </span>
+                  </div>
+                  <p className="pad-change muted-note">
+                    {`This card can cover ${money(giftCapCents / 100)} of it. Lower the amount to pay the rest another way.`}
+                  </p>
+                </>
+              )}
+            </div>
+
+            <div className="pad-keys">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0"].map(
+                (k) => (
+                  <button
+                    key={k}
+                    className="pad-key"
+                    disabled={gift.checking}
+                    onClick={() => giftTap(k)}
+                  >
+                    {k}
+                  </button>
+                ),
+              )}
+              <button
+                className="pad-key del"
+                aria-label="Delete last digit"
+                title="Delete"
+                disabled={gift.checking}
+                onClick={() => giftTap("back")}
+              >
+                <BackspaceIcon />
+              </button>
+            </div>
+
+            <div className="modal-actions">
+              {gift.step === "number" ? (
+                <button
+                  className="modal-confirm go"
+                  disabled={!giftNumberReady || gift.checking}
+                  onClick={checkGiftBalance}
+                >
+                  {gift.checking ? "Checking..." : "Check balance"}
+                </button>
+              ) : (
+                <button
+                  className="modal-confirm go"
+                  disabled={giftDraftCents <= 0}
+                  onClick={applyGift}
+                >
+                  Done
+                </button>
+              )}
+              <button
+                className="modal-cancel"
+                disabled={gift.checking}
+                onClick={dismissGift}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {padLine !== undefined ? (
         <div
           className="modal-scrim"
