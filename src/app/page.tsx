@@ -13,12 +13,21 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import DevDrawer from "./DevDrawer";
 import LockScreen from "./LockScreen";
+import NavBar, {
+  BuyIcon,
+  DevIcon,
+  PayIcon,
+  ProfileIcon,
+  SignInIcon,
+  type NavItem,
+} from "./NavBar";
 import NoteText from "./NoteText";
 import SaleScreen, {
   ModeBanner,
   attachSearchHint,
   type ModeConfig,
   type SaleClient,
+  type SaleNavState,
 } from "./SaleScreen";
 import { Hit } from "./Hit";
 import {
@@ -1259,8 +1268,28 @@ function FrontDesk({
   /** Whether the sale overlay (T23) is on screen. Pure UI state: the
    *  roster stays mounted underneath and the URL is untouched, so closing
    *  lands back exactly where the teacher was. SaleScreen itself stays
-   *  mounted across open/close, so a cart survives an accidental Back. */
+   *  mounted across open/close, so a cart survives a trip to the roster
+   *  (T85: the nav bar's Sign-in item). */
   const [saleOpen, setSaleOpen] = useState(false);
+  /** T85: which of the sale's two screens is showing. It lives here, not
+   *  in SaleScreen, because the nav bar is rendered here and Buy and Pay
+   *  are two of its items. */
+  const [saleMode, setSaleMode] = useState<"shelf" | "pay">("shelf");
+  /** T85: the sale's reading of Pay for the nav bar: why it is off, the
+   *  tap it delegates to, and whether a charge is in flight. SaleScreen
+   *  reports it whenever it changes, so the bar's Pay and the shelf's Pay
+   *  are never two opinions; the sale stays the only thing that decides
+   *  whether there is anything to pay. */
+  const [saleNav, setSaleNav] = useState<SaleNavState>({
+    payWhy: "Nothing rung up yet",
+    charging: false,
+    payTap: () => undefined,
+  });
+  /** T85: the dev drawer's pill became the bar's Dev item, so the drawer's
+   *  two facts are held here: whether /api/devlog answered at all, and
+   *  whether the drawer is open. */
+  const [devAvailable, setDevAvailable] = useState(false);
+  const [devOpen, setDevOpen] = useState(false);
   /** The client the sale is for, or null for an anonymous sale. Chosen
    *  through the search modal's attach mode; rides /api/price-cart. */
   const [saleClient, setSaleClient] = useState<SaleClient | null>(null);
@@ -2507,6 +2536,19 @@ function FrontDesk({
   );
 
   /**
+   * T85: every way into the sale goes through here. Anything anchored to
+   * a roster row (a pass dropdown, the sort menu) would otherwise paint
+   * above the overlay at a higher z-index, and the mode is set explicitly
+   * because it is this component's state now: Buy opens the shelf, the
+   * nav bar's Pay opens the payment step through `payTap`.
+   */
+  const openSale = useCallback((mode: "shelf" | "pay") => {
+    setPickerFor(null);
+    setSortMenuOpen(false);
+    setSaleMode(mode);
+    setSaleOpen(true);
+  }, []);
+  /**
    * The per-row Buy button (roster rows and normal-mode search results):
    * open the Buy overlay with THAT client already attached, from the
    * facts the row holds. Attaching writes nothing; SaleScreen's pricing
@@ -2518,14 +2560,10 @@ function FrontDesk({
   const openBuyFor = useCallback(
     (client: SaleClient) => {
       setSaleClient(client);
-      /* Same tidying as the header's Buy button: anything anchored to
-       * roster rows would otherwise paint above the overlay. */
-      setPickerFor(null);
-      setSortMenuOpen(false);
       closeSearch();
-      setSaleOpen(true);
+      openSale("shelf");
     },
-    [closeSearch],
+    [closeSearch, openSale],
   );
 
   /**
@@ -4708,6 +4746,83 @@ function FrontDesk({
     </button>
   );
 
+  /**
+   * T85: the nav bar's items. Which screen is showing is the only thing
+   * that decides what is lit; what an item does is the same function the
+   * screen's own control called, so the bar can never mean something
+   * different from the screen.
+   *
+   * Mid-charge, the two items that would leave the payment step are off
+   * with the reason, and Pay stays lit and inert: money is moving and the
+   * outcome renders on the surface it is on (the guard the sale header's
+   * Back and the bar's Back to items both had).
+   */
+  const onPay = saleOpen && saleMode === "pay";
+  const leaveWhy = saleNav.charging ? "Charging..." : null;
+  const navItems: NavItem[] = [
+    {
+      key: "signin",
+      label: "Sign-in",
+      icon: <SignInIcon />,
+      on: !saleOpen,
+      why: leaveWhy,
+      onTap: () => {
+        /* The cart and its client survive, exactly as the Back this
+         * replaces left them: closing the overlay renders nothing, it
+         * does not unmount the sale. */
+        setSaleMode("shelf");
+        setSaleOpen(false);
+      },
+    },
+    {
+      key: "buy",
+      label: "Buy",
+      icon: <BuyIcon />,
+      on: saleOpen && saleMode === "shelf",
+      why: leaveWhy,
+      onTap: () => openSale("shelf"),
+    },
+    {
+      key: "pay",
+      label: "Pay",
+      icon: <PayIcon />,
+      on: onPay,
+      /* The shelf Pay's own reason, so the two say the same thing; the
+       * tap is the shelf Pay's own handler, so T51's walk-in dialog and
+       * T53's opt-in ask here too. Opening the overlay in the same tick
+       * is what lets either dialog render. */
+      why: saleNav.payWhy,
+      onTap: () => {
+        setSaleOpen(true);
+        saleNav.payTap();
+      },
+    },
+    {
+      key: "profile",
+      label: "Profile",
+      icon: <ProfileIcon />,
+      on: staffOpen,
+      why: null,
+      onTap: () => {
+        setPickerFor(null);
+        setSortMenuOpen(false);
+        setStaffOpen(true);
+      },
+    },
+  ];
+  /* Dev only when /api/devlog answered: on the counter iPad the bar is
+   * four items, and the drawer is not reachable at all. */
+  if (devAvailable) {
+    navItems.push({
+      key: "dev",
+      label: "Dev",
+      icon: <DevIcon />,
+      on: devOpen,
+      why: null,
+      onTap: () => setDevOpen((o) => !o),
+    });
+  }
+
   return (
     <main className="shell">
       {config?.configError ? <p className="note">{config.configError}</p> : null}
@@ -4942,23 +5057,11 @@ function FrontDesk({
             </span>
           </button>
           </div>
-          {/* Opens the Buy overlay (T23; "Buy" since the second live
-              test -- the counter conversation is the student's, "I want
-              to buy a mat"). The one accent-filled cell in the bar: it
-              navigates, it never sells by itself. The roster stays
-              mounted underneath; closing lands right back. */}
-          <button
-            className="class-buy"
-            onClick={() => {
-              /* Anything anchored to roster rows (dropdowns, menus) would
-               * otherwise paint above the overlay at a higher z-index. */
-              setPickerFor(null);
-              setSortMenuOpen(false);
-              setSaleOpen(true);
-            }}
-          >
-            Buy
-          </button>
+          {/* T85: the header's Buy button is gone. It was the accent cell
+              here while the sale screen's way back was a "Back" in its own
+              header, which is exactly the inconsistency Pete named; both
+              are the nav bar's items now, in the same place on every
+              screen. "Buy" also does not need saying on the Buy screen. */}
           {/* T70: light or dark, stored for this iPad; until a teacher
               taps it the screen follows the device's own setting. */}
           <button
@@ -4969,22 +5072,10 @@ function FrontDesk({
           >
             <SunIcon />
           </button>
-          {/* T50: who Mindbody records this iPad's writes under. The
-              icon opens the account modal, which names the teacher and
-              is where sign-out lives (T61: the name left the header).
-              Somebody is always signed in here: the gate sits in front
-              of this screen otherwise. */}
-          <button
-            className="staff-account"
-            onClick={() => {
-              setPickerFor(null);
-              setSortMenuOpen(false);
-              setStaffOpen(true);
-            }}
-            aria-label={`Signed in as ${teacher.name}. Account`}
-          >
-            <PersonIcon size={24} />
-          </button>
+          {/* T85: the account icon is the nav bar's Profile item now
+              (Pete: "no reason the teacher profile icon shouldn't be
+              available in all those"). It opened the same modal from one
+              screen only; Profile opens it from all three. */}
         </header>
       ) : null}
 
@@ -7549,14 +7640,18 @@ function FrontDesk({
         </div>
       ) : null}
 
-      {/* The sale overlay (T23). ALWAYS mounted so its cart survives an
-          accidental Back and reopens where it left off; `open` is what
+      {/* The sale overlay (T23). ALWAYS mounted so its cart survives
+          leaving the screen and reopens where it left off; `open` is what
           shows it. It sits below every modal scrim, so the search modal
           in attach mode, the info view, and the dev drawer all stack
-          above it as usual. */}
+          above it as usual; the nav bar (T85) stacks ABOVE it, because it
+          is the same bar on every screen. */}
       <SaleScreen
         open={saleOpen}
         onClose={() => setSaleOpen(false)}
+        mode={saleMode}
+        onModeChange={setSaleMode}
+        onNavState={setSaleNav}
         config={config}
         client={saleClient}
         onRequestAttach={openAttachSearch}
@@ -7579,7 +7674,17 @@ function FrontDesk({
         onTeacherChange={setTeacher}
       />
 
-      <DevDrawer />
+      <DevDrawer
+        open={devOpen}
+        onOpenChange={setDevOpen}
+        onAvailableChange={setDevAvailable}
+      />
+
+      {/* T85: the one nav bar, the last child and fixed to the bottom on
+          every screen. It is rendered here rather than inside either
+          screen so that it IS the same element in all three states: the
+          roster behind the overlay, the shelf, and the payment step. */}
+      <NavBar items={navItems} />
     </main>
   );
 }

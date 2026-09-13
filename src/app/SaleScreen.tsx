@@ -647,11 +647,6 @@ function PlusIcon() {
   return <Icon d="M12 5v14M5 12h14" size={22} />;
 }
 
-/** The mockups' arrow-left, on Back and Back to items. */
-function ArrowLeftIcon() {
-  return <Icon d="M20 12H4M10 6 4 12l6 6" />;
-}
-
 /** The sun cell in the header: light becomes dark and back (theme.ts). */
 function SunIcon() {
   return (
@@ -4177,9 +4172,30 @@ function ContractDialog(props: {
   );
 }
 
+/**
+ * T85: what the nav bar's Pay item needs from the sale, reported upward
+ * whenever it changes. `payWhy` is the reason Pay cannot be entered (the
+ * item's title, aria-disabled when it is not null) and `payTap` is the
+ * shelf Pay button's own handler, gates included, so the bar and the
+ * button can never disagree about what a tap does. `charging` locks
+ * every item that would leave the pay screen.
+ */
+export interface SaleNavState {
+  payWhy: string | null;
+  charging: boolean;
+  payTap: () => void;
+}
+
 export default function SaleScreen(props: {
   open: boolean;
   onClose: () => void;
+  /** T85: which screen the nav bar is on. The mode lives in page.tsx,
+   *  because the bar is rendered there and "Buy" and "Pay" are two of
+   *  its five items; the overlay only reads it and asks for changes. */
+  mode: "shelf" | "pay";
+  onModeChange: (mode: "shelf" | "pay") => void;
+  /** T85: called whenever the nav bar's reading of Pay changes. */
+  onNavState: (state: SaleNavState) => void;
   config: ModeConfig | null;
   client: SaleClient | null;
   /** Opens the existing search modal in attach mode (page.tsx owns it). */
@@ -4204,6 +4220,9 @@ export default function SaleScreen(props: {
   const {
     open,
     onClose,
+    mode,
+    onModeChange,
+    onNavState,
     config,
     client,
     onRequestAttach,
@@ -4620,25 +4639,27 @@ export default function SaleScreen(props: {
    * pay is the payment surface across the rail and grid's width with the
    * cart column unmoved. One screen, no route, nothing unmounted: the
    * PaymentPanel is hidden rather than removed in shelf mode, so a split
-   * entered in pay mode survives Back to items. Reset to shelf on every
-   * open and on every close (Done included), so Buy never opens on the
+   * entered in pay mode survives leaving it. Reset to shelf on every open
+   * and on every close (Done included), so Buy never opens on the
    * previous sale's tender.
+   *
+   * T85: the mode is page.tsx's state, because the nav bar renders there
+   * and Buy and Pay are two of its items; these two names are the whole
+   * of what that changes inside this component.
    */
-  const [saleMode, setSaleMode] = useState<"shelf" | "pay">("shelf");
+  const saleMode = mode;
+  const setSaleMode = onModeChange;
   /** T70: the ticket's tender slot, handed to PaymentPanel (see the
    *  panel's `ticketSlot`). A callback
    *  ref into state, since the element exists only after the first
    *  commit. */
   const [ticketSlot, setTicketSlot] = useState<HTMLElement | null>(null);
-  useEffect(() => {
-    if (open) setSaleMode("shelf");
-  }, [open]);
   /** Every close goes through here so the mode resets with it. */
   const close = useCallback(() => {
     setSaleMode("shelf");
     onClose();
-  }, [onClose]);
-  const leavePay = useCallback(() => setSaleMode("shelf"), []);
+  }, [onClose, setSaleMode]);
+  const leavePay = useCallback(() => setSaleMode("shelf"), [setSaleMode]);
 
   /**
    * T51: an anonymous sale is a CHOICE, not the absence of one. Pete,
@@ -5230,7 +5251,7 @@ export default function SaleScreen(props: {
     setSelectedKey(null);
     setSaleMode("pay");
     linesRef.current?.scrollTo({ top: 0 });
-  }, []);
+  }, [setSaleMode]);
 
   /**
    * T53 review: pay mode is entered for ONE "sale for", and both gates
@@ -5522,15 +5543,75 @@ export default function SaleScreen(props: {
     return () => document.removeEventListener("pointerdown", onDown, true);
   }, [selectedKey]);
 
-  /* T39.8: the dev drawer's pill is fixed bottom-right, which is where
-     the bar's amount is. While the overlay is open the body carries a
-     class the pill's CSS reads to move into the bar's empty middle. A
-     class, not a prop: the drawer is the roster's child, not ours. */
+  const cartCount = cart.reduce((n, l) => n + l.quantity, 0);
+  /**
+   * T39.5: the shelf's Pay, the cart column's foot since T85. The
+   * amount is the SERVER's grandTotal and nothing else: while T38's
+   * estimate is on the ticket it reads `Pay` with the count and no
+   * figure, because a number on the one button that moves money must
+   * never be the browser's. `payWhy` is the reason it is disabled, or
+   * null; it is the button's title, so a greyed Pay says why when asked.
+   * Pay enters pay mode (T39.6); the charge itself is the panel's, in
+   * the payment column's foot.
+   */
+  const payWhy: string | null = charging
+    ? "Charging..."
+    : cart.length === 0
+      ? "Nothing rung up yet"
+      : pricing
+        ? "Pricing with Mindbody..."
+        : priceError
+          ? "Pricing failed; nothing to pay against"
+          : priced === null
+            ? "No total yet"
+            : priced.suppressed
+              ? "Suppressed: Mindbody did not price this cart"
+              : priced.disagrees
+                ? "Totals disagree; do not charge"
+                : priced.needsClient
+                  ? "No house client for an anonymous sale; attach a client"
+                  : priced.grandTotal === null
+                    ? "No total yet"
+                    : null;
+  const payAmount =
+    payWhy === null && priced !== null ? priced.grandTotal : null;
+  /** T51: whether Pay asks first. Nobody attached and no walk-in
+   *  declared is the one case; with the flag set (the header's Walk-in
+   *  button, or the dialog's own Continue) Pay goes straight through. */
+  const payNeedsWalkInConfirm = client === null && !walkIn;
+  /**
+   * T85: the shelf Pay's whole handler, in one place because the nav
+   * bar's Pay item taps it too. Both gates belong to the tap, not to the
+   * button: T51's walk-in dialog and T53's opt-in ask before pay mode
+   * opens, whichever control was tapped.
+   */
+  const payTap = useCallback(() => {
+    if (payWhy !== null) return;
+    if (payNeedsWalkInConfirm) {
+      setWalkInPrompt(true);
+      return;
+    }
+    if (payNeedsConsent) {
+      openConsentPrompt();
+      return;
+    }
+    enterPay();
+  }, [
+    payWhy,
+    payNeedsWalkInConfirm,
+    payNeedsConsent,
+    openConsentPrompt,
+    enterPay,
+  ]);
+  /* T85: what the nav bar needs, reported up. An effect after paint is
+   * exactly what the T39.6 portal existed to avoid for the CHARGE
+   * button, and it stays avoided: the charge is gated by `chargeable`
+   * inside the render that computed it, in the payment column's foot.
+   * This reports the nav item's enabled state and the tap it delegates
+   * to, neither of which can move money by itself. */
   useEffect(() => {
-    if (!open) return;
-    document.body.classList.add("sale-open");
-    return () => document.body.classList.remove("sale-open");
-  }, [open]);
+    onNavState({ payWhy, charging, payTap });
+  }, [onNavState, payWhy, charging, payTap]);
 
   if (!open) return null;
 
@@ -5719,7 +5800,6 @@ export default function SaleScreen(props: {
     recheckReport !== null && recheckReport.forCart === cart
       ? recheckReport
       : null;
-  const cartCount = cart.reduce((n, l) => n + l.quantity, 0);
   const inPay = saleMode === "pay";
   /** T39.4: the selection, only while its line is in the cart; T39.6:
    *  never in pay mode, where the ticket has no controls (the canvas's
@@ -5733,41 +5813,6 @@ export default function SaleScreen(props: {
    *  sent one (`/api/config`'s studioTaxRate, T38); never a literal. */
   const taxLabel =
     config?.studioTaxRate != null ? `Tax ${pct(config.studioTaxRate)}` : "Tax";
-  /**
-   * T39.5: the shelf's Pay, the cart column's foot since T85. The
-   * amount is the SERVER's grandTotal and nothing else: while T38's
-   * estimate is on the ticket it reads `Pay` with the count and no
-   * figure, because a number on the one button that moves money must
-   * never be the browser's. `payWhy` is the reason it is disabled, or
-   * null; it is the button's title, so a greyed Pay says why when asked.
-   * Pay enters pay mode (T39.6); the charge itself is the panel's, in
-   * the payment column's foot.
-   */
-  const payWhy: string | null = charging
-    ? "Charging..."
-    : cart.length === 0
-      ? "Nothing rung up yet"
-      : pricing
-        ? "Pricing with Mindbody..."
-        : priceError
-          ? "Pricing failed; nothing to pay against"
-          : priced === null
-            ? "No total yet"
-            : priced.suppressed
-              ? "Suppressed: Mindbody did not price this cart"
-              : priced.disagrees
-                ? "Totals disagree; do not charge"
-                : priced.needsClient
-                  ? "No house client for an anonymous sale; attach a client"
-                  : priced.grandTotal === null
-                    ? "No total yet"
-                    : null;
-  const payAmount =
-    payWhy === null && priced !== null ? priced.grandTotal : null;
-  /** T51: whether Pay asks first. Nobody attached and no walk-in
-   *  declared is the one case; with the flag set (the header's Walk-in
-   *  button, or the dialog's own Continue) Pay goes straight through. */
-  const payNeedsWalkInConfirm = client === null && !walkIn;
   /** T51: the Walk-in button carries the same reason Pay would, since
    *  declaring a walk-in with no house client to ride declares nothing
    *  Pay can use. The server's gate is unchanged (T41). */
@@ -5951,9 +5996,12 @@ export default function SaleScreen(props: {
         <ModeBanner config={config} />
 
         <div className="sale-top">
-          <h2 className="sale-title">Buy</h2>
+          {/* T85 (Pete: "'Buy' doesn't need to display on the buy page"):
+              the title is gone. The nav bar's lit Buy item says which
+              screen this is, from the same place on every screen, and the
+              header's width goes to who the sale is for. */}
 
-          {/* Who the sale is for, beside the title (Pete, fourth live
+          {/* Who the sale is for, first in the header (Pete, fourth live
               test): identity belongs in the header, and the payment
               column gets the real estate back. Anonymous is fine;
               attaching enables stored card and account credit, and rides
@@ -6052,11 +6100,11 @@ export default function SaleScreen(props: {
             </div>
           )}
 
-          {/* The deliberate Back works mid-pricing (the cart and its
-              in-flight answer survive: the component stays mounted) but
-              NOT mid-charge: closing would unmount the payment panel and
-              its outcome -- the split-failure warning included -- while
-              money is moving. */}
+          {/* T85: the header's Back is gone with the action bar's Back
+              to items. Both were a move between screens, and every move
+              between screens is the nav bar's now: Sign-in returns to the
+              roster (the cart survives, as Back's did), Buy returns to
+              the shelf. The mid-charge lock lives on the bar's items. */}
           {/* T70: the sun cell (Buy.dc.html), the one theme control on
               this screen; theme.ts stores the choice and sets the
               attribute the two palette blocks key on. */}
@@ -6088,18 +6136,6 @@ export default function SaleScreen(props: {
             title="Light / dark"
           >
             <SunIcon />
-          </button>
-          <button
-            className="sale-back"
-            onClick={close}
-            disabled={charging}
-            aria-label="Back to the roster"
-          >
-            {/* T39.8: the arrow 1a draws, the same glyph as the bar's
-                Back to items; the X it had read as a close, and Back is
-                a return. */}
-            <ArrowLeftIcon />
-            Back
           </button>
         </div>
 
@@ -6680,23 +6716,7 @@ export default function SaleScreen(props: {
                   className={payWhy === null ? "t-foot-pay" : "t-foot-pay off"}
                   aria-disabled={payWhy !== null}
                   title={payWhy ?? `Pay ${money(payAmount ?? 0)}`}
-                  onClick={() => {
-                    if (payWhy !== null) return;
-                    /* T51: the friction. Nobody attached and no walk-in
-                       declared opens the dialog instead of pay mode. */
-                    if (payNeedsWalkInConfirm) {
-                      setWalkInPrompt(true);
-                      return;
-                    }
-                    /* T53: a named client not yet opted in is asked first.
-                       The two dialogs are exclusive by construction: one
-                       needs no client, the other needs one. */
-                    if (payNeedsConsent) {
-                      openConsentPrompt();
-                      return;
-                    }
-                    enterPay();
-                  }}
+                  onClick={payTap}
                 >
                   <span>Pay</span>
                   {cartCount > 0 ? (
