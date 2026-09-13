@@ -30,7 +30,7 @@ import {
 } from "@/lib/comp";
 import { insertCompReceipt, type CompReceiptItem } from "@/lib/db";
 import { fileFormulaNote } from "@/lib/formulanote";
-import { isDryRun, mindbodyHttpStatus, target } from "@/lib/mindbody";
+import { dryRunState, mindbodyHttpStatus, target } from "@/lib/mindbody";
 
 import {
   CARD_MINIMUM_USD,
@@ -551,7 +551,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const suppressionKind = () => (isDryRun() ? "dry-run" : "write-guard");
+  /* T89 review: dry run can be the server's (POS_DRY_RUN) or this
+   * browser's own (the pos_dry_run cookie), so the label asks
+   * dryRunState() rather than reading the env flag. Reading isDryRun()
+   * here labelled a cookie suppression "write-guard", which names the
+   * wrong rail to whoever is looking at why a sale did not go out. */
+  const suppressionKind = async () =>
+    (await dryRunState()).on ? "dry-run" : "write-guard";
 
   /* Step 1, every path: the Test: true rehearsal, which is also where
    * the AUTHORITATIVE total comes from. The browser's number is never
@@ -574,7 +580,10 @@ export async function POST(request: Request) {
     /* The rehearsal never left the building, so the real write would not
      * either. Report suppression for the whole checkout; nothing was
      * charged and no total exists. */
-    return NextResponse.json({ ok: false, suppressed: suppressionKind() });
+    return NextResponse.json({
+      ok: false,
+      suppressed: await suppressionKind(),
+    });
   }
   if (priced.disagrees || priced.grandTotal === null) {
     return NextResponse.json(
@@ -1014,7 +1023,10 @@ export async function POST(request: Request) {
           );
         }
         if (plain.suppressed) {
-          return NextResponse.json({ ok: false, suppressed: suppressionKind() });
+          return NextResponse.json({
+            ok: false,
+            suppressed: await suppressionKind(),
+          });
         }
         if (plain.disagrees || plain.grandTotal === null) {
           return NextResponse.json(
