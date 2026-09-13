@@ -15,8 +15,9 @@
  * children the pass sub-categories (src/lib/shelfconfig.ts PASS_GROUPS);
  * Retail's children are the retail entries in this order; Rentals is a
  * leaf. Everything not listed here does not reach the counter at all
- * (Skin/Body 27, Books 29, Jewelry 28, Music 31, Videos/Instructional 30,
- * Other Products 49 and whatever the studio adds later); the T39.2 "more"
+ * (Skin/Body 27, Books 29, Jewelry 28, Music 31, Videos/Instructional 30
+ * and whatever the studio adds later; Other Products 49 joined the list
+ * for the parking pass); the T39.2 "more"
  * fold that once promised them a home was retired with T76.
  *
  * Consumed by: GET /api/catalog (T22), which filters /sale/products by the
@@ -92,6 +93,10 @@ export const counterCategories: readonly CounterCategory[] = [
   { label: "Food/Drink", section: "Retail", categoryIds: [36] },
   { label: "Clothing", section: "Retail", categoryIds: [26] },
   { label: "Accessories", section: "Retail", categoryIds: [32] },
+  /* Mindbody's "Other Products" (49): the parking pass lives there
+   * (Pete, live: "i don't see 'parking pass' for some reason. it is an
+   * item in the store" / "it's in the 'Other Products' category"). */
+  { label: "Other", section: "Retail", categoryIds: [49] },
   {
     /* Mindbody's "Towel and Mat" (-14), relabelled at Pete's word (T76).
      * The revenue-category and name handles are T41's, unchanged. */
