@@ -958,6 +958,15 @@ function FrontDesk({
    *  the X and the close: a page that lands after the query changed must
    *  not append itself to the new query's rows. */
   const searchAbort = useRef<AbortController | null>(null);
+  /** T81: the live search's pending debounce, so a submit can cancel it. */
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** T81: whether a finger is on a results list, since when, and the
+   *  page held back until it lifts. */
+  const listTapGuard = useRef<{
+    down: boolean;
+    downAt: number;
+    deferred: (() => void) | null;
+  }>({ down: false, downAt: 0, deferred: null });
   /** The sentinel at the end of the results list, as a state-held node so
    *  the IntersectionObserver effect re-arms when the list (re)mounts. */
   const [searchSentinel, setSearchSentinel] = useState<HTMLElement | null>(
@@ -1840,15 +1849,21 @@ function FrontDesk({
   );
 
   /**
-   * Search fires on SUBMIT only (Enter, or the Search button), never
-   * while typing: the debounced live search this replaces still cost a
-   * metered call per pause, and results appearing under a moving cursor
-   * were easy to mis-tap (T16). One submit, one call, and the results
-   * open in their own modal titled with the query.
+   * Search runs as the teacher types (T81, Pete: "results should start
+   * appearing after a delay and minimum characters are entered"), and
+   * on Enter or the Search button at once. T16 had moved it to submit
+   * only, for two reasons that still hold and are answered here rather
+   * than by waiting for Enter: a metered call per pause (the debounce
+   * and the minimum length, both drawer settings, and the keystroke
+   * aborting the call in flight), and results appearing under a moving
+   * finger (the modal's list keeps its top edge, and a result set that
+   * lands mid-tap waits for the finger to lift, see `listTapGuard`).
    *
-   * The minimum length applies at submit, quietly, under the input.
-   * Three letters by default, because two returns hundreds of matches
-   * that nobody scrolls, at the cost of a metered call.
+   * The minimum length applies to the live search silently (a short
+   * query shows nothing and clears what an earlier one showed) and to
+   * a submit quietly, under the input. Three letters by default,
+   * because two returns hundreds of matches that nobody scrolls, at the
+   * cost of a metered call.
    */
   /**
    * One page of the search, appended or replacing (T42). Aborts whatever
@@ -1880,6 +1895,10 @@ function FrontDesk({
         .then((r) => r.json())
         .then((d) => {
           if (ctl.signal.aborted) return;
+          /* T81: a live search opens the modal when its first page
+           * lands (an error included, or the error would show nowhere);
+           * a submitted one opened it already, and this is a no-op. */
+          if (first) setSearchOpen(true);
           if (d.error) {
             setSearchError(String(d.error));
             endPaging();
@@ -1887,19 +1906,33 @@ function FrontDesk({
           }
           const page: SearchResult[] = d.results ?? [];
           const total = typeof d.total === "number" ? d.total : null;
-          setFound((prev) => {
-            if (first) return page;
-            const seen = new Set(prev.map((p) => p.id));
-            return [...prev, ...page.filter((p) => !seen.has(p.id))];
-          });
-          if (first) setFoundFor(q);
-          const next = offset + page.length;
-          setSearchPage({
-            offset: next,
-            total,
-            done:
-              page.length < limit || (total !== null && next >= total),
-          });
+          const apply = () => {
+            if (ctl.signal.aborted) return;
+            setFound((prev) => {
+              if (first) return page;
+              const seen = new Set(prev.map((p) => p.id));
+              return [...prev, ...page.filter((p) => !seen.has(p.id))];
+            });
+            if (first) setFoundFor(q);
+            const next = offset + page.length;
+            setSearchPage({
+              offset: next,
+              total,
+              done:
+                page.length < limit || (total !== null && next >= total),
+            });
+          };
+          /* T81: never swap the rows under a finger. A page landing
+           * while a row is pressed, or within 150ms of the press, waits
+           * for the pointer to lift (or the 150ms to pass), then lands;
+           * a search that superseded it meanwhile has aborted this one,
+           * and `apply` checks. T16's complaint, answered without
+           * waiting for Enter. */
+          const tap = listTapGuard.current;
+          const since = Date.now() - tap.downAt;
+          if (tap.down) tap.deferred = apply;
+          else if (since < 150) setTimeout(apply, 150 - since);
+          else apply();
         })
         .catch((e) => {
           if (ctl.signal.aborted) return;
@@ -1936,14 +1969,17 @@ function FrontDesk({
     setSearchPage({ offset: 0, total: null, done: true });
   }, []);
 
-  /** A NEW search for `q`, page one: the state reset every submit shares,
-   *  whichever control fired it (Enter, the Search button, or the in-class
-   *  toggle going off with a query already typed). */
+  /** A NEW search for `q`, page one: the state reset every search shares,
+   *  whichever control fired it (Enter, the Search button, the in-class
+   *  toggle going off with a query already typed, or the typing itself,
+   *  T81). A submit opens the modal now; a live search (`live`) leaves
+   *  it to the first page, so nothing covers the roster until there is
+   *  something to show. */
   const startSearch = useCallback(
-    (q: string) => {
+    (q: string, live = false) => {
       setSearchMsg(null);
       setSearchTitle(q);
-      setSearchOpen(true);
+      if (!live) setSearchOpen(true);
       setSearchError(null);
       setAutoWidened(false);
       setSearchPage({ offset: 0, total: null, done: true });
@@ -1958,6 +1994,12 @@ function FrontDesk({
 
   const submitSearch = useCallback(() => {
     const q = query.trim();
+    /* T81: Enter is the live search, now. Whatever pause was pending
+     * would only fire the same call twice. */
+    if (liveTimer.current !== null) {
+      clearTimeout(liveTimer.current);
+      liveTimer.current = null;
+    }
     /* With the attach modal's in-class filter on, the query filters the
      * roster in memory as it is typed (T42), so Enter has nothing to ask
      * Mindbody for... unless it matched nobody. T52 (Pete): "if there
@@ -2045,6 +2087,78 @@ function FrontDesk({
     io.observe(searchSentinel);
     return () => io.disconnect();
   }, [searchSentinel, loadMoreResults]);
+
+  /**
+   * T81: the live search. Every change to the query (either bar, they
+   * share it) starts the debounce over; when it runs out and the query
+   * is at least the minimum length, the search fires as if submitted,
+   * except that the modal waits for the first page. A change while a
+   * call is in flight aborts that call at once: its answer would be for
+   * a query nobody is looking at. A query that drops below the minimum
+   * clears the results it had (Pete: "after a delay and minimum
+   * characters"), with the modal, if open, left open and empty for the
+   * next letters, and the bar keeping focus.
+   *
+   * Not while the attach modal's In class filter is on: the box filters
+   * the roster in memory there, and Enter alone widens it (T42, T52).
+   * Skipped when a search for exactly this query is already in flight
+   * or has landed (Enter got there first, or the last keystroke put the
+   * query back), so the same call never goes out twice.
+   */
+  useEffect(() => {
+    if (attachMode && attachInClass) return;
+    const q = query.trim();
+    if (q.length < settings.minQueryLength) {
+      if (searchTitle) stopSearch();
+      return;
+    }
+    const current = searchAbort.current;
+    if (q === searchTitle && current && !current.signal.aborted) return;
+    current?.abort();
+    liveTimer.current = setTimeout(() => {
+      liveTimer.current = null;
+      startSearch(q, true);
+    }, settings.searchDebounceMs);
+    return () => {
+      if (liveTimer.current !== null) clearTimeout(liveTimer.current);
+      liveTimer.current = null;
+    };
+  }, [
+    attachInClass,
+    attachMode,
+    query,
+    searchTitle,
+    settings.minQueryLength,
+    settings.searchDebounceMs,
+    startSearch,
+    stopSearch,
+  ]);
+
+  /** T81: the guard against rows changing under a finger. The results
+   *  lists mark a press (`onPointerDown`); the lift is watched on the
+   *  window, since a finger can leave the list before it lifts. A page
+   *  that landed during the press is held in `deferred` and applied on
+   *  the lift (see fetchSearchPage). */
+  const noteListTap = useCallback(() => {
+    listTapGuard.current.down = true;
+    listTapGuard.current.downAt = Date.now();
+  }, []);
+  useEffect(() => {
+    const lift = () => {
+      const tap = listTapGuard.current;
+      if (!tap.down) return;
+      tap.down = false;
+      const apply = tap.deferred;
+      tap.deferred = null;
+      apply?.();
+    };
+    window.addEventListener("pointerup", lift);
+    window.addEventListener("pointercancel", lift);
+    return () => {
+      window.removeEventListener("pointerup", lift);
+      window.removeEventListener("pointercancel", lift);
+    };
+  }, []);
 
   /** The X in either search bar (T42, Pete: "the search results should
    *  disappear"): the query AND the results go together. */
@@ -4937,9 +5051,10 @@ function FrontDesk({
         </header>
       ) : null}
 
-      {/* Submit-triggered search (T16): typing costs nothing, Enter or
-          the Search button fires the one metered call and opens the
-          results modal. */}
+      {/* The search bar (T16, live again in T81): typing runs the search
+          after the debounce once the query is long enough, and Enter or
+          the Search button runs it at once; the results open in their
+          own modal, whose bar shares this query. */}
       <div className="search-bar">
         <div className="search-wrap">
           <input
@@ -4956,7 +5071,7 @@ function FrontDesk({
               }
             }}
             enterKeyHint="search"
-            placeholder="Search for a walk-in (press Enter)"
+            placeholder="Search for a walk-in"
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
@@ -5649,7 +5764,7 @@ function FrontDesk({
             </div>
             {/* Attach mode opens the modal BEFORE any search exists, so
                 the search bar renders here: the same query state, the
-                same submitSearch, the same one-call-on-submit rule as the
+                same submitSearch, the same live search (T81) as the
                 page's own bar. It sits at the TOP of the modal (T32),
                 above the class picker and the rows: it is the one control
                 that is always useful, and a bar that moves down the modal
@@ -5675,8 +5790,8 @@ function FrontDesk({
                     enterKeyHint="search"
                     placeholder={
                       attachMode
-                        ? "Who is the sale for? (press Enter)"
-                        : "Search for a walk-in (press Enter)"
+                        ? "Who is the sale for?"
+                        : "Search for a walk-in"
                     }
                     autoComplete="off"
                     autoCorrect="off"
@@ -5958,7 +6073,9 @@ function FrontDesk({
                           <p className="note">{searchError}</p>
                         ) : null}
                         {rows.length > 0 ? (
-                          <ul className="roster">{rows.map(attachRowItem)}</ul>
+                          <ul className="roster" onPointerDown={noteListTap}>
+                            {rows.map(attachRowItem)}
+                          </ul>
                         ) : null}
                         {/* The paging sentinel and its quiet line: only
                             while the search says there is more. */}
@@ -6064,6 +6181,7 @@ function FrontDesk({
                    * Mindbody for page two unbidden (T42 review). */
                   key={`results-${searchTitle}`}
                   className="roster modal-roster"
+                  onPointerDown={noteListTap}
                   /* The picker is position: fixed, so scrolling the list
                      would slide its row out from under it; close it
                      instead. */
