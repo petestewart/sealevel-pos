@@ -3743,6 +3743,22 @@ button.sale-for:disabled {
     border-left: 0;
     border-top: 2px solid var(--rule);
   }
+
+  /* T85 review: in this fold the panes stack and the OVERLAY is what
+   * scrolls, so a foot that is simply the column's last child scrolls
+   * away with it. With eight lines in the cart at 834x1194 the Pay
+   * control -- the only way from a cart to a sale -- sat 60px below the
+   * viewport's bottom edge and had to be scrolled to. The action bar this
+   * foot replaced was `position: sticky; bottom: 0` for exactly this
+   * fold; that stickiness comes with it, pinned to the overlay's bottom,
+   * which is the nav bar's top edge. The wide layout is untouched: there
+   * the column scrolls inside itself and the foot is already at its
+   * bottom. */
+  .t-foot {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+  }
 }
 
 /* --- The payment seam (T24): live method cards, the cash keypad, the
