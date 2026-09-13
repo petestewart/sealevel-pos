@@ -937,18 +937,11 @@ function PaymentPanel(props: {
    */
   visible: boolean;
   /**
-   * T39.6: the bar's primary slot. In pay mode the panel renders the
-   * bar's `Due $X` / `Charge $total` button THROUGH this element (a
-   * portal), so the button and `chargeable` come out of the same render:
-   * the bar reads the gate the panel computed, never a copy reported by
-   * an effect after paint. Null until the bar has mounted.
-   */
-  barSlot: HTMLElement | null;
-  /**
    * T70: the ticket's tender slot, under its Total (Payment.dc.html).
    * The panel renders one "<Method> received $X" line per tender and the
-   * change or the shortfall through it, the same way as the bar's
-   * primary, so the ticket reads the lines this render computed.
+   * change or the shortfall through it, so the ticket reads the lines
+   * this render computed. T85 leaves this portal alone: the slot is in
+   * the ticket, which is another column.
    */
   ticketSlot: HTMLElement | null;
   /** T39.6: what SaleScreen wants said above the figures in pay mode --
@@ -1003,7 +996,6 @@ function PaymentPanel(props: {
     client,
     cardLookup,
     visible,
-    barSlot,
     ticketSlot,
     notice,
     onSold,
@@ -2467,8 +2459,9 @@ function PaymentPanel(props: {
 
   /**
    * T39.6: the bar's primary in pay mode, rendered by THIS component
-   * through the portal so it is gated by the `chargeable` of this very
-   * render. It reads `Due $X` (disabled, the prototype's label: the
+   * rendered in the panel's own foot (T85: the bar it used to be
+   * portalled into is gone), so it is gated by the `chargeable` of this
+   * very render. It reads `Due $X` (disabled, the prototype's label: the
    * disabled state turned into information) while anything is unpaid,
    * `Charge $total` once due is zero, `Comp $total` when comped, and it
    * is the one Charge control on the screen. Not `disabled` but
@@ -2499,19 +2492,19 @@ function PaymentPanel(props: {
           : firstLineProblem ?? (lines.length === 0 && !comped ? "Choose how they are paying" : "Not ready to charge");
   const primary =
     result?.kind === "paid" ? (
-      /* T70 (Payment.dc.html): after the write the bar's segment fills
-         --ok with the check and "Charged" and the amount, inert: the
-         done block above carries Done. Only a completed sale reaches
-         it; suppression is never success and never fills green. */
-      <span className="sale-bar-pay done" role="status">
+      /* T70 (Payment.dc.html): after the write the primary fills --ok
+         with the check and "Charged" and the amount, inert: the done
+         block above carries Done. Only a completed sale reaches it;
+         suppression is never success and never fills green. */
+      <span className="pay-primary done" role="status">
         <CheckIcon />
         <span>{result.comped ? "Comped" : "Charged"}</span>
-        <span className="sale-bar-amt">{money(result.total)}</span>
+        <span className="btn-amt">{money(result.total)}</span>
       </span>
     ) : (
       <button
         className={
-          (primaryOn ? "sale-bar-pay" : "sale-bar-pay off") +
+          (primaryOn ? "pay-primary" : "pay-primary off") +
           (charging ? " busy" : "")
         }
         aria-disabled={!primaryOn}
@@ -2529,14 +2522,14 @@ function PaymentPanel(props: {
             <span className="spinner" aria-label="working" />
             <span>{comped ? "Comping" : "Charging"}</span>
             {primaryAmount !== null ? (
-              <span className="sale-bar-amt">{money(primaryAmount)}</span>
+              <span className="btn-amt">{money(primaryAmount)}</span>
             ) : null}
           </>
         ) : (
           <>
             <span>{primaryLabel}</span>
             {primaryAmount !== null ? (
-              <span className="sale-bar-amt">{money(primaryAmount)}</span>
+              <span className="btn-amt">{money(primaryAmount)}</span>
             ) : null}
           </>
         )}
@@ -2886,11 +2879,14 @@ function PaymentPanel(props: {
                 </div>
               ) : null}
 
-              {/* The foot (0.2), pushed to the bottom under a hairline: the
-                  quiet line at the left, Comp at the right. Comp is
+              {/* The foot (0.2), pushed to the bottom under a hairline:
+                  the quiet line at the left, then Discount, then the
+                  primary (T85: the action bar is gone, so the one control
+                  that moves money is this column's foot, beside the
+                  control it was always read with). Discount is
                   deliberately out of the tender list, and a tap only
-                  opens the reason and PIN dialog (T67), so nobody comps
-                  a sale by grazing a control; it lives only here, in pay
+                  opens the reason and PIN dialog (T67), so nobody comps a
+                  sale by grazing a control; it lives only here, in pay
                   mode (layout plan 2.9). */}
               <div className="pay-foot">
                 <p className="pay-quiet">{tenderNote || " "}</p>
@@ -2911,10 +2907,18 @@ function PaymentPanel(props: {
                       ? `Discount ${money(armedCents / 100)}. Tap to remove.`
                       : "Discount"}
                 </button>
+                {primary}
               </div>
               </div>
             </>
           )}
+
+          {/* T85: after the write the done block is the surface, and the
+              --ok "Charged $X" segment the bar used to carry stands in a
+              foot of its own, where the primary was. */}
+          {result?.kind === "paid" ? (
+            <div className="pay-foot pay-foot-done">{primary}</div>
+          ) : null}
         </div>
 
       {/* T36: the amount modal. T35 put this keypad INLINE in the payment
@@ -3499,10 +3503,6 @@ function PaymentPanel(props: {
       ) : null}
       </div>
 
-      {/* T39.6: the bar's primary, out through the slot. Only in pay mode
-          (the slot is the shelf's Pay otherwise) and only once the bar
-          has mounted. */}
-      {visible && barSlot ? createPortal(primary, barSlot) : null}
       {/* T70: the ticket's tender lines, under its Total, through the
           ticket's slot (Payment.dc.html: "this is the counter's actual
           question and it belongs on the receipt side"). Same render as
@@ -4625,12 +4625,10 @@ export default function SaleScreen(props: {
    * previous sale's tender.
    */
   const [saleMode, setSaleMode] = useState<"shelf" | "pay">("shelf");
-  /** The bar's primary slot, handed to PaymentPanel so it can render the
-   *  pay-mode button through it (see the panel's `barSlot`). A callback
+  /** T70: the ticket's tender slot, handed to PaymentPanel (see the
+   *  panel's `ticketSlot`). A callback
    *  ref into state, since the element exists only after the first
    *  commit. */
-  const [barSlot, setBarSlot] = useState<HTMLElement | null>(null);
-  /** T70: the ticket's tender slot, the same idiom (see `ticketSlot`). */
   const [ticketSlot, setTicketSlot] = useState<HTMLElement | null>(null);
   useEffect(() => {
     if (open) setSaleMode("shelf");
@@ -5736,13 +5734,14 @@ export default function SaleScreen(props: {
   const taxLabel =
     config?.studioTaxRate != null ? `Tax ${pct(config.studioTaxRate)}` : "Tax";
   /**
-   * T39.5: the bar's primary. The amount is the SERVER's grandTotal and
-   * nothing else: while T38's estimate is on the ticket the bar reads
-   * `Pay` with the count and no figure, because a number on the one
-   * button that moves money must never be the browser's. `payWhy` is
-   * the reason it is disabled, or null; it is the button's title, so a
-   * greyed Pay says why when asked. Pay enters pay mode (T39.6); the
-   * charge itself is the panel's, rendered on the bar through the slot.
+   * T39.5: the shelf's Pay, the cart column's foot since T85. The
+   * amount is the SERVER's grandTotal and nothing else: while T38's
+   * estimate is on the ticket it reads `Pay` with the count and no
+   * figure, because a number on the one button that moves money must
+   * never be the browser's. `payWhy` is the reason it is disabled, or
+   * null; it is the button's title, so a greyed Pay says why when asked.
+   * Pay enters pay mode (T39.6); the charge itself is the panel's, in
+   * the payment column's foot.
    */
   const payWhy: string | null = charging
     ? "Charging..."
@@ -6317,7 +6316,6 @@ export default function SaleScreen(props: {
             client={client}
             cardLookup={cardLookup}
             visible={inPay}
-            barSlot={barSlot}
             ticketSlot={ticketSlot}
             notice={payNotice}
             onSold={() => {
@@ -6654,96 +6652,69 @@ export default function SaleScreen(props: {
                   </>
                 ) : null}
                 {/* T70: the tender lines' slot (Payment.dc.html). The
-                    panel fills it in pay mode through a portal, the way
-                    the bar's primary is filled; empty in shelf mode. */}
+                    panel fills it in pay mode through a portal; empty in
+                    shelf mode. */}
                 <span className="t-tender-slot" ref={setTicketSlot} />
                 </div>
               </>
             )}
               </div>
+            {/* T85: the bar's two shelf controls, now the cart column's
+                foot: Pay under Empty cart, both the width of the column,
+                outside the ticket's own scroll so neither can be scrolled
+                out of reach. In pay mode the payment column's foot
+                carries the primary instead, so this one is not rendered:
+                two Pay buttons on one screen is the ambiguity the nav bar
+                exists to end. */}
+            {inPay ? null : (
+              <div className="t-foot">
+                {/* T51's Empty cart, behind T38's confirm exactly. */}
+                <button
+                  className="t-foot-empty"
+                  disabled={cart.length === 0 || charging}
+                  onClick={() => setClearPrompt(cartCount)}
+                >
+                  Empty cart
+                </button>
+                <button
+                  className={payWhy === null ? "t-foot-pay" : "t-foot-pay off"}
+                  aria-disabled={payWhy !== null}
+                  title={payWhy ?? `Pay ${money(payAmount ?? 0)}`}
+                  onClick={() => {
+                    if (payWhy !== null) return;
+                    /* T51: the friction. Nobody attached and no walk-in
+                       declared opens the dialog instead of pay mode. */
+                    if (payNeedsWalkInConfirm) {
+                      setWalkInPrompt(true);
+                      return;
+                    }
+                    /* T53: a named client not yet opted in is asked first.
+                       The two dialogs are exclusive by construction: one
+                       needs no client, the other needs one. */
+                    if (payNeedsConsent) {
+                      openConsentPrompt();
+                      return;
+                    }
+                    enterPay();
+                  }}
+                >
+                  <span>Pay</span>
+                  {cartCount > 0 ? (
+                    <span className="btn-count">
+                      {"\u00b7"} {cartCount} {cartCount === 1 ? "item" : "items"}
+                    </span>
+                  ) : null}
+                  {payAmount !== null ? (
+                    <span className="btn-amt">
+                      {"\u00b7"} {money(payAmount)}
+                    </span>
+                  ) : pricing && cart.length > 0 ? (
+                    <span className="spinner" aria-label="pricing" />
+                  ) : null}
+                </button>
+              </div>
+            )}
           </div>
-        </div>
-      </div>
-
-      {/* T39.5: the action bar, the overlay's last child so it sits at
-          the bottom of the viewport under the columns (sticky, for the
-          narrow fold where the overlay scrolls). Empty cart just left of
-          the primary since T51 (Back to items keeps the left edge in pay
-          mode), behind T38's confirm exactly; the primary right. It
-          stacks BELOW every
-          modal scrim (the scrims are z-index 30 in the overlay's own
-          stacking context, the bar 5), so nothing on it is tappable
-          behind a dialog. */}
-      <div className="sale-bar">
-        <div className="sale-bar-in">
-          {inPay ? (
-            /* T39.6: the way back to the shelf, the same quiet control
-               Empty cart is in shelf mode. Locked mid-charge like every
-               other exit: the outcome renders on the surface. */
-            <button
-              className="sale-bar-empty"
-              disabled={charging}
-              onClick={leavePay}
-            >
-              <ArrowLeftIcon />
-              Back to items
-            </button>
-          ) : (
-            /* T51: `sale-bar-clear` moves it to sit just left of Pay
-               (Pete: "'empty cart' should be just to the left of 'Pay'
-               instead of all the way left on the screen"); Back to items
-               in pay mode keeps the left edge. Behaviour untouched. */
-            <button
-              className="sale-bar-empty sale-bar-clear"
-              disabled={cart.length === 0 || charging}
-              onClick={() => setClearPrompt(cartCount)}
-            >
-              Empty cart
-            </button>
-          )}
-          {/* T39.6: the primary's slot. In pay mode PaymentPanel renders
-              `Due $X` / `Charge $total` INTO it through a portal, so the
-              button is gated by the same render's `chargeable`; in shelf
-              mode it is empty and the shelf's Pay stands beside it. */}
-          <span className="sale-bar-slot" ref={setBarSlot} />
-          {inPay ? null : (
-            <button
-              className={payWhy === null ? "sale-bar-pay" : "sale-bar-pay off"}
-              aria-disabled={payWhy !== null}
-              title={payWhy ?? `Pay ${money(payAmount ?? 0)}`}
-              onClick={() => {
-                if (payWhy !== null) return;
-                /* T51: the friction. Nobody attached and no walk-in
-                   declared opens the dialog instead of pay mode. */
-                if (payNeedsWalkInConfirm) {
-                  setWalkInPrompt(true);
-                  return;
-                }
-                /* T53: a named client not yet opted in is asked first.
-                   The two dialogs are exclusive by construction: one
-                   needs no client, the other needs one. */
-                if (payNeedsConsent) {
-                  openConsentPrompt();
-                  return;
-                }
-                enterPay();
-              }}
-            >
-              <span>Pay</span>
-              {cartCount > 0 ? (
-                <span className="sale-bar-count">
-                  {"\u00b7"} {cartCount} {cartCount === 1 ? "item" : "items"}
-                </span>
-              ) : null}
-              {payAmount !== null ? (
-                <span className="sale-bar-amt">
-                  {"\u00b7"} {money(payAmount)}
-                </span>
-              ) : pricing && cart.length > 0 ? (
-                <span className="spinner" aria-label="pricing" />
-              ) : null}
-            </button>
-          )}
         </div>
       </div>
 

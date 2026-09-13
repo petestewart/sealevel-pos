@@ -3564,90 +3564,24 @@ button.sale-for:disabled {
   font-weight: 400;
 }
 
-/* --- T39.5: the action bar. ------------------------------------------
- * The overlay's last child: 92px on its own ground across the full
- * width, a hairline above and --shadow lifting it off the columns, its
- * contents aligned to the shell's 1400. Sticky, so on the narrow fold
- * where the overlay scrolls it stays at the viewport's edge; in the
- * bounded layout sticky is inert. z-index 5 keeps it under every modal
- * scrim (30) in the overlay's stacking context. --- */
-.sale-bar {
-  position: sticky;
-  bottom: 0;
-  z-index: 5;
-  flex: none;
-  width: 100%;
-  /* T70 (Buy.dc.html): 80px on the surface, a 2px rule over, no shadow
-   * (only modals cast one). */
-  border-top: 2px solid var(--rule);
-  background: var(--surface);
-}
-
-.sale-bar-in {
-  display: flex;
-  align-items: stretch;
-  gap: 0;
-  height: 80px;
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 0;
-}
-
-/* Empty cart and Back to items: quiet cells, 17px/800, a 1px line at
- * the left edge; Empty cart goes to the stop pair under a finger. T38's
- * confirm stands behind Empty cart. */
-.sale-bar-empty {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  height: 100%;
-  padding: 0 22px;
-  border: 0;
-  border-left: 1px solid var(--line);
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-  font-size: 17px;
-  font-weight: 800;
-}
-
-.sale-bar-in > .sale-bar-empty:first-child {
-  border-left: 0;
-}
-
-.sale-bar-empty:active:not(:disabled) {
-  background: var(--surface-2);
-}
-
-.sale-bar-empty.sale-bar-clear {
-  padding: 0 26px;
-  color: var(--muted);
-}
-
-.sale-bar-empty.sale-bar-clear:active:not(:disabled) {
-  color: var(--stop);
-  background: var(--stop-bg);
-}
-
-.sale-bar-empty:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-/* The primary: the accent-filled segment at the bar's right, its label
- * flush left at 22px/800 with the count at 16px/600 and the tabular
- * amount. `.off` is the disabled pair (Pay on an empty cart, Due while
- * anything is owed); it stays a real button with aria-disabled so its
- * title can say why. `.done` is the --ok fill after the write. */
-.sale-bar-pay {
-  margin-left: auto;
+/* --- The two feet (T85). The action bar is gone: its controls live at
+ * the foot of the column they belong to, so a screen has exactly one
+ * primary and the nav bar owns every move between screens.
+ *
+ * The primary: the accent-filled segment at the payment column's foot,
+ * its label flush left at 22px/800 with the count at 16px/600 and the
+ * tabular amount. `.off` is the disabled pair (Pay on an empty cart, Due
+ * while anything is owed); it stays a real button with aria-disabled so
+ * its title can say why. `.done` is the --ok fill after the write. */
+.pay-primary {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 18px;
-  height: 100%;
-  min-width: 260px;
-  padding: 0 32px;
+  gap: 14px;
+  min-height: 72px;
+  min-width: 200px;
+  padding: 0 22px;
   border: 0;
   border-radius: 0;
   background: var(--accent);
@@ -3658,7 +3592,7 @@ button.sale-for:disabled {
   text-align: left;
 }
 
-.sale-bar-pay.off {
+.pay-primary.off {
   background: var(--surface-2);
   color: var(--muted);
   cursor: default;
@@ -3668,22 +3602,22 @@ button.sale-for:disabled {
  * accent with the spinner (Payment.dc.html keeps the accent fill while
  * the due is covered, busy included; the roster's chip does the same),
  * rather than dropping to the quiet "not ready" pair mid-charge. */
-.sale-bar-pay.off.busy {
+.pay-primary.off.busy {
   background: var(--accent);
   color: var(--accent-ink);
 }
 
-.sale-bar-pay.done {
+.pay-primary.done {
   background: var(--ok);
   color: var(--bg);
 }
 
-.sale-bar-pay:active:not(.off):not(.done) {
+.pay-primary:active:not(.off):not(.done) {
   background: var(--accent-press);
 }
 
 /* The spinner is the one radius the pass keeps (README, "Geometry"). */
-.sale-bar-pay .spinner {
+.pay-primary .spinner {
   width: 18px;
   height: 18px;
   border-color: currentColor;
@@ -3691,13 +3625,13 @@ button.sale-for:disabled {
   border-radius: 50%;
 }
 
-.sale-bar-count {
+.btn-count {
   font-size: 16px;
   font-weight: 600;
   opacity: 0.85;
 }
 
-.sale-bar-amt {
+.btn-amt {
   font-size: 22px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -3853,6 +3787,81 @@ button.sale-for:disabled {
   flex: 1 1 auto;
 }
 
+/* T85: the cart column's foot, under the ticket and outside its scroll:
+ * Empty cart as a quiet 48px row, Pay as the column-wide primary under
+ * it, thumb-closest. Both are the column's width; the 2px rule over them
+ * is the seam the bar's used to be. */
+.t-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: none;
+  border-top: 2px solid var(--rule);
+  background: var(--surface);
+}
+
+.t-foot-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.t-foot-empty:active:not(:disabled) {
+  color: var(--stop);
+  background: var(--stop-bg);
+}
+
+.t-foot-empty:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The shelf's Pay: the primary's shape, the column's width. */
+.t-foot-pay {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 14px;
+  min-height: 72px;
+  padding: 0 22px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: left;
+}
+
+.t-foot-pay.off {
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: default;
+}
+
+.t-foot-pay:active:not(.off) {
+  background: var(--accent-press);
+}
+
+/* The spinner is the one radius the pass keeps (README, "Geometry"). */
+.t-foot-pay .spinner {
+  width: 18px;
+  height: 18px;
+  border-color: currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+}
+
 /* --- T39.6: pay mode. -------------------------------------------------
  * The panes drop to `minmax(0, 1fr) 388px`: the rail and grid are hidden,
  * the payment surface takes the middle, the cart column is the SAME
@@ -3909,12 +3918,6 @@ button.sale-for:disabled {
     min-height: auto;
     overflow: visible;
   }
-}
-
-/* The bar's primary slot: nothing of its own, its child (the panel's
- * portalled button) joins the bar's row directly. */
-.sale-bar-slot {
-  display: contents;
 }
 
 /* --- T39.7: the payment surface; T70 restyles it to Payment.dc.html:
@@ -4195,15 +4198,24 @@ button.sale-for:disabled {
   color: var(--muted);
 }
 
-/* The foot: pushed to the bottom, the quiet line left, Comp right. */
+/* The foot: pushed to the bottom, the quiet line left, then Discount,
+ * then the primary (T85). It wraps rather than squeeze the primary: on
+ * the narrow fold the quiet line takes the first row and the two controls
+ * the second. The done foot holds the charged segment alone, right. */
 .pay-foot {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   flex: none;
   margin-top: auto;
   padding-top: 0;
   border-top: 0;
+}
+
+.pay-foot-done {
+  justify-content: flex-end;
+  margin: 0 20px 16px;
 }
 
 .pay-quiet {
@@ -5488,18 +5500,6 @@ textarea.reason-note-field:disabled::placeholder {
   border-color: var(--stop);
   color: var(--stop);
   background: var(--surface);
-}
-
-/* Empty cart sits just left of Pay with the bar's own 12px gap, not at
- * the bar's far edge; the pay button gives up its auto margin so the two
- * do not split the slack between them. Back to items (pay mode) keeps
- * the left edge: it has no `sale-bar-clear`. */
-.sale-bar-clear {
-  margin-left: auto;
-}
-
-.sale-bar-clear ~ .sale-bar-pay {
-  margin-left: 0;
 }
 
 /* T70 -------------------------------------------------------------------
