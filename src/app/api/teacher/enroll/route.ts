@@ -27,6 +27,13 @@ export const dynamic = "force-dynamic";
  * guessing loop here gets five tries and thirty seconds like the doors.
  * A wrong login and an unknown login are the same 401 with the same
  * words, so the route cannot be used to list who has an account.
+ *
+ * T80: the PIN arrives twice and `confirm` must equal it (Pete: "when
+ * they create their PIN there should be an additional box to re-enter
+ * and verify the new PIN"). The form checks it too, but the form's
+ * check is a convenience and this one is the rule. It is checked before
+ * the Mindbody sign-in, so a typo in the second box does not spend a
+ * password attempt.
  */
 export async function POST(request: Request) {
   const denied = requireSession(request);
@@ -46,8 +53,9 @@ export async function POST(request: Request) {
   let username: unknown;
   let password: unknown;
   let pin: unknown;
+  let confirm: unknown;
   try {
-    ({ username, password, pin } = await request.json());
+    ({ username, password, pin, confirm } = await request.json());
   } catch {
     return NextResponse.json(
       { error: "username, password and pin are required" },
@@ -70,6 +78,12 @@ export async function POST(request: Request) {
   if (!isPinShape(pin)) {
     return NextResponse.json(
       { error: `pin must be ${PIN_MIN} to ${PIN_MAX} digits` },
+      { status: 400 },
+    );
+  }
+  if (typeof confirm !== "string" || confirm !== pin) {
+    return NextResponse.json(
+      { error: "The PINs do not match." },
       { status: 400 },
     );
   }

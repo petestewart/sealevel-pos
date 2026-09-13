@@ -7,6 +7,7 @@ import {
 } from "@/lib/auth";
 import { revokeStaffToken, signInAsStaff } from "@/lib/mindbody";
 import { listStaff } from "@/lib/staff";
+import { hasTeacherPin } from "@/lib/teacherpins";
 import {
   createStaffSession,
   endStaffSession,
@@ -33,6 +34,13 @@ export const dynamic = "force-dynamic";
  * revoked at once. A sign-in over an existing session replaces it (the
  * old token revoked): a shift change is signing in as the next teacher,
  * not signing out first.
+ *
+ * T80: the answer carries `hasPin`, so the browser can prompt a teacher
+ * with no comp PIN to choose one before they reach the roster (Pete:
+ * "when a teacher first signs in, if they have not set up a PIN they
+ * should be prompted to do so"). Null means PINs are unavailable here
+ * (no database), which prompts for nothing. It says whether a PIN
+ * exists and nothing about its value.
  */
 export async function POST(request: Request) {
   const denied = requireSession(request);
@@ -133,7 +141,7 @@ export async function POST(request: Request) {
   recordSigninSuccess();
   console.log(`[staff] signed in staff=${teacher.id}`);
   return NextResponse.json(
-    { ok: true, teacher },
+    { ok: true, teacher, hasPin: await hasTeacherPin(teacher.id) },
     { headers: { "set-cookie": staffSetCookie(cookie) } },
   );
 }
