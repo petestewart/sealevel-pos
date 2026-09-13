@@ -6355,8 +6355,12 @@ textarea.reason-note-field:disabled::placeholder {
   color: var(--accent);
 }
 
+/* An item with nothing to do is plainly grey (Pete: "when there is
+ * nothing in the cart, make Pay greyed out"): muted, and dimmed, since a
+ * control that refuses the tap need not clear the text contrast bar. */
 .nav-item[aria-disabled="true"] {
   color: var(--muted);
+  opacity: 0.55;
 }
 
 /* The lit item stays FULLY lit while it is inert (mid-charge, or the done
@@ -6368,6 +6372,7 @@ textarea.reason-note-field:disabled::placeholder {
  * spinner on the button that is working. */
 .nav-item.on[aria-disabled="true"] {
   color: var(--accent);
+  opacity: 1;
 }
 
 .nav-item:active:not([aria-disabled="true"]) {
@@ -6379,6 +6384,13 @@ textarea.reason-note-field:disabled::placeholder {
   font-weight: 800;
   line-height: 1;
   white-space: nowrap;
+}
+
+.nav-label.nav-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
 }
 
 /* T84 --- Card on file --------------------------------------------------

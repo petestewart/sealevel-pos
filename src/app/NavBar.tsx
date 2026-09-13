@@ -14,7 +14,8 @@ import type { ReactNode } from "react";
  * screens of one app, and the way between them never moves. Five evenly
  * spaced items, an icon over a 16px label, 64px tall; the current screen
  * wears --accent and a 4px accent top edge, the rest --ink on --surface.
- * Dev renders only when devtools answered, so the counter iPad sees four.
+ * Settings (the drawer) renders only when devtools answered, so the
+ * counter iPad sees four; Profile, last, carries the teacher's name.
  *
  * It carries no state of its own: page.tsx owns which screen is showing,
  * and the reasons an item is off come from the sale (SaleNavState). An
@@ -95,13 +96,24 @@ export function ProfileIcon() {
   );
 }
 
-/** A prompt in a box: the call log. */
-export function DevIcon() {
+/** A cog: the drawer, whose first tab is the settings (Pete: "change Dev
+ *  to Settings and change the icon to a cog wheel"). */
+export function SettingsIcon() {
   return (
-    <Icon
-      d="m6.5 9.5 3 3-3 3M13 16h5"
-      extra={<rect x="2.5" y="4.5" width="19" height="15" />}
-    />
+    <svg
+      viewBox="0 0 24 24"
+      width={26}
+      height={26}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+    </svg>
   );
 }
 
@@ -137,7 +149,13 @@ export default function NavBar({ items }: { items: NavItem[] }) {
           }}
         >
           {item.icon}
-          <span className="nav-label">{item.label}</span>
+          {/* The teacher's own name on Profile is a name, not a verb:
+              regular weight, and clipped rather than wrapped. */}
+          <span
+            className={item.key === "profile" ? "nav-label nav-name" : "nav-label"}
+          >
+            {item.label}
+          </span>
         </button>
       ))}
     </nav>

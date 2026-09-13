@@ -9841,3 +9841,64 @@ the draft tender; the done screen cannot outlive its sale; tokens only,
 16px, no em dash. Found and left, for Pete: Sign-in from the payment
 step keeps the cart and client but drops the draft tender, exactly as
 the old Back did; keeping it means not unmounting the overlay.
+
+## T80: a teacher without a PIN is asked to set one at sign-in; the PIN is entered twice
+
+Pete: "when a teacher first signs in, if they have not set up a PIN
+they should be prompted to do so" and "when they create their PIN
+there should be an additional box to re-enter and verify the new PIN".
+
+### What changed
+
+- **Sign-in says whether a PIN exists.** `POST /api/teacher/signin` and
+  `GET /api/teacher` carry `hasPin`: true, false, or null when PINs are
+  unavailable (no database). `hasTeacherPin` in teacherpins.ts, a
+  bounded read that never throws.
+- **The prompt.** After a sign-in with `hasPin: false` a "Set up your
+  PIN" box opens before the roster, naming the teacher, with the PIN
+  and a "Re-enter PIN" box (password fields, numeric keyboard, 64px).
+  Save is disabled until both match and pass the shape; one quiet line
+  reads "PINs do not match" while both are filled and differ. "Not
+  now" skips it for this sign-in only. Success flashes "PIN set" in
+  the banner. A null answer prompts nothing.
+- **`POST /api/teacher/pin`** `{pin, confirm}` behind the staff session
+  (the staff id comes only from the session; a body id is ignored),
+  refuses a mismatch and a bad shape before any write, a PIN another
+  teacher uses with enroll's words and naming nobody, no database with
+  503; it shares enroll's rate limiter. Because the session already
+  proves who the teacher is, no Mindbody login is asked again.
+- **The account modal** (Profile in the nav bar) gets a Set up PIN or
+  Change PIN row opening the same box; a T78-restored session can
+  change its PIN there. The box replaces the modal's content and
+  Cancel returns to it.
+- **Every PIN form takes the PIN twice**, including the older
+  enrollment form in the discount dialog, whose route now checks
+  `confirm` before the Mindbody sign-in so a mismatch costs no call.
+- No PIN, hash or lookup value in any log line, record, response or
+  client storage; the box clears on open and close.
+
+### Verified by the builder
+
+17 route checks with a scratch Postgres and 5 without a database; no
+PIN in any log or response; only `pin_hash` and `pin_lookup` in the
+table. Playwright in both palettes and both orientations: the prompt,
+the mismatch line, the single POST, Not now, hasPin true and null, the
+account modal row, a 409 refusal, the enrollment form's fourth box.
+Typecheck and build green.
+
+### Review
+
+Adversarial review in its own worktree, one fix: **Escape on the PIN
+box also closed the account modal behind it**, since the modal stays
+mounted with its own Escape listener; Cancel and the scrim returned to
+the modal but Escape destroyed it. A guard in StaffModal.
+
+Reviewed and correct: the 409 names nobody; the limiter counts here
+and is shared with enroll, with no timing leak; the staff id only from
+the session; shape and match before any write; no metered call on an
+enroll mismatch; the prompt only on a false sign-in, never on a restored
+session or a null; the nav bar not rendered behind the sign-in prompt
+and covered by the modal's scrim from the account modal; a Profile tap
+stacks no second modal; SaleScreen's diff confined to the enroll
+region; no CSS change. Not exercised live: real staff id and PIN
+pairing.

@@ -15,7 +15,7 @@ import DevDrawer from "./DevDrawer";
 import LockScreen from "./LockScreen";
 import NavBar, {
   BuyIcon,
-  DevIcon,
+  SettingsIcon,
   PayIcon,
   ProfileIcon,
   SignInIcon,
@@ -37,6 +37,7 @@ import {
   wallDate,
 } from "./ClientProfileCard";
 import StaffModal, { type Teacher } from "./StaffModal";
+import PinModal from "./PinModal";
 import NewClientModal from "./NewClientModal";
 import CardModal from "./CardModal";
 import GuestModal, {
@@ -794,6 +795,8 @@ function money(n: number): string {
 function FrontDesk({
   teacher,
   onTeacherChange,
+  initialFlash = null,
+  onInitialFlashShown,
 }: {
   /** T50: the signed-in teacher. Never null here: AuthGate renders the
    *  sign-in gate instead of this screen until someone is. */
@@ -801,6 +804,10 @@ function FrontDesk({
   /** Signed out, or the session ended (null); or signed in as someone
    *  else from the account modal. AuthGate owns the state. */
   onTeacherChange: (teacher: Teacher | null) => void;
+  /** T80: a word the gate earned before this screen existed ("PIN set"),
+   *  shown in the banner slot once the roster is up. */
+  initialFlash?: string | null;
+  onInitialFlashShown?: () => void;
 }) {
   const [classes, setClasses] = useState<ClassSummary[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -2356,6 +2363,15 @@ function FrontDesk({
     if (actorBannerTimer.current) clearTimeout(actorBannerTimer.current);
     actorBannerTimer.current = setTimeout(() => setActorBanner(null), 20_000);
   }, []);
+
+  /* T80: the PIN prompt's "PIN set" belongs in this banner, but it was
+   * answered before the roster mounted. Shown once, then cleared
+   * upstream so a later sign-in does not repeat it. */
+  useEffect(() => {
+    if (!initialFlash) return;
+    flashBanner(initialFlash);
+    onInitialFlashShown?.();
+  }, [initialFlash, flashBanner, onInitialFlashShown]);
 
   /**
    * T72: send the pending opt-in taps as one write. Runs in the
@@ -4830,31 +4846,35 @@ function FrontDesk({
         saleNav.payTap();
       },
     },
-    {
-      key: "profile",
-      label: "Profile",
-      icon: <ProfileIcon />,
-      on: staffOpen,
-      why: null,
-      onTap: () => {
-        setPickerFor(null);
-        setSortMenuOpen(false);
-        setStaffOpen(true);
-      },
-    },
   ];
-  /* Dev only when /api/devlog answered: on the counter iPad the bar is
-   * four items, and the drawer is not reachable at all. */
+  /* Settings (the dev drawer) only when /api/devlog answered: on the
+   * counter iPad the bar is four items, and the drawer is not reachable
+   * at all. It sits before Profile (Pete: "swap position of Dev and
+   * Profile"). */
   if (devAvailable) {
     navItems.push({
       key: "dev",
-      label: "Dev",
-      icon: <DevIcon />,
+      label: "Settings",
+      icon: <SettingsIcon />,
       on: devOpen,
       why: null,
       onTap: () => setDevOpen((o) => !o),
     });
   }
+  /* Profile is labelled with the signed-in teacher's own name (Pete:
+   * "Change Profile to say the currently logged in teacher's name"). */
+  navItems.push({
+    key: "profile",
+    label: teacher.name,
+    icon: <ProfileIcon />,
+    on: staffOpen,
+    why: null,
+    onTap: () => {
+      setPickerFor(null);
+      setSortMenuOpen(false);
+      setStaffOpen(true);
+    },
+  });
 
   return (
     <main className="shell">
@@ -7767,6 +7787,15 @@ function AuthGate() {
   /** T50 review: the server's line for why the gate came back after a
    *  refused write (its sign-in ended), cleared by the next sign-in. */
   const [gateNotice, setGateNotice] = useState<string | null>(null);
+  /** T80: the teacher who just signed in and has no comp PIN (Pete:
+   *  "when a teacher first signs in, if they have not set up a PIN they
+   *  should be prompted to do so"). Set from the sign-in's own answer,
+   *  so the prompt is a consequence of signing in and not of every
+   *  reload; "Not now" clears it for this sign-in only, and the next
+   *  one asks again. */
+  const [pinPrompt, setPinPrompt] = useState<Teacher | null>(null);
+  /** T80: "PIN set", for the roster's banner once it is up. */
+  const [pinFlash, setPinFlash] = useState<string | null>(null);
   /** T50 review: the mode banner is on every screen, the gate included;
    *  a teacher signing in must not wonder whether the counter is live.
    *  Read once here; FrontDesk reads its own copy as before. */
@@ -7894,15 +7923,48 @@ function AuthGate() {
           teacher={null}
           notice={gateNotice}
           onClose={() => undefined}
-          onTeacherChange={(t) => {
+          onTeacherChange={(t, hasPin) => {
             setGateNotice(null);
+            /* T80: false is "no PIN and one could be stored"; null is
+             * "PINs are unavailable here", which prompts for nothing. */
+            if (t && hasPin === false) setPinPrompt(t);
             setTeacher(t);
           }}
         />
       </>
     );
   }
-  return <FrontDesk teacher={teacher} onTeacherChange={setTeacher} />;
+  /* T80: the PIN prompt stands between the sign-in and the roster, so
+   * the teacher who will need a PIN at the first comp of the shift is
+   * asked once, while they are still at the counter and not mid-queue.
+   * It is a prompt and not a gate: "Not now" goes straight through. */
+  if (pinPrompt !== null) {
+    return (
+      <>
+        <div className="staff-gate-banner">
+          <ModeBanner config={gateConfig} />
+        </div>
+        <PinModal
+          open
+          teacher={pinPrompt}
+          mode="set"
+          onClose={() => setPinPrompt(null)}
+          onDone={() => {
+            setPinPrompt(null);
+            setPinFlash("PIN set");
+          }}
+        />
+      </>
+    );
+  }
+  return (
+    <FrontDesk
+      teacher={teacher}
+      onTeacherChange={setTeacher}
+      initialFlash={pinFlash}
+      onInitialFlashShown={() => setPinFlash(null)}
+    />
+  );
 }
 
 /**
