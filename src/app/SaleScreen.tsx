@@ -2507,7 +2507,17 @@ function PaymentPanel(props: {
           ? "Pricing with Mindbody..."
           : "No total to pay yet"
         : dueCents !== null && dueCents > 0
-          ? tenderNote || `${money(dueCents / 100)} still to pay`
+          ? /* T82 review: with nothing tendered the quiet line is not a
+               reason -- it is the card detail ("Card ...4242"), which is
+               what this title then read. The Due figure and the button's
+               own "Due $107.45" are both gone, so the ONLY place left
+               that says what is unpaid and what to do about it is this
+               title. Say both. With a line already in the tender the
+               quiet line does name the remainder or the problem, and it
+               stays the title. */
+            lines.length === 0
+            ? `${money(dueCents / 100)} still to pay. Choose how they are paying.`
+            : tenderNote || `${money(dueCents / 100)} still to pay`
           : firstLineProblem ?? (lines.length === 0 && !comped ? "Choose how they are paying" : "Not ready to charge");
   const primary =
     result?.kind === "paid" ? (
