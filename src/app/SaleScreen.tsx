@@ -1238,11 +1238,21 @@ function PaymentPanel(props: {
       ? cardLookup.balance
       : null;
   const balance = freshBalance ?? lookedUpBalance ?? client?.balance ?? null;
-  /* The attach snapshot (or a split failure's fresher report) gates the
-   * button; /api/checkout re-reads the balance server-side and never
-   * trusts this number. */
-  const balanceCoversTotal =
-    balance !== null && total !== null && balance >= total;
+  /* T82: credit is a tender like any other, so a balance that covers the
+   * total no longer refuses the card (rule 1 and assumption P2 are
+   * retired: "Credit should be an option, not forced"). This survives for
+   * the ONE card sale that would BUY credit -- a total under the $10 card
+   * minimum goes out as a $10 credit purchase plus a debit -- where
+   * credit that already covers the total must be spent instead of adding
+   * a second $10. The attach snapshot (or a split failure's fresher
+   * report) gates the button; /api/checkout re-reads the balance
+   * server-side and never trusts this number. */
+  const cardWouldBuyCredit =
+    balance !== null &&
+    total !== null &&
+    total < CARD_MINIMUM_USD &&
+    balance >= total;
+  const spendCreditFirst = `Spend the ${money(balance ?? 0)} on account: a card sale under $${CARD_MINIMUM_USD} would buy more credit`;
 
   const totalCents = total === null ? null : Math.round(total * 100);
   const balanceCents = balance === null ? null : Math.round(balance * 100);
@@ -1258,9 +1268,11 @@ function PaymentPanel(props: {
   useEffect(() => {
     setWantReceipt(true);
   }, [clientId]);
-  /* A comp is nothing to receipt (decided, T53): the toggle greys with
-   * the comp armed and the body says false regardless of it. */
-  const sendEmail = receipt.why === null && wantReceipt && !comped;
+  /* T82: a comp receipts like any other sale (Pete: "Receipts should get
+   * emailed even with comp, today it disallows it"), so the discount is
+   * not read here and the toggle is not greyed by one. What still decides
+   * is `receipt.why`: somebody to email, an address, and their opt-in. */
+  const sendEmail = receipt.why === null && wantReceipt;
 
   /** Close the amount modal without touching the lines, and tell
    *  SaleScreen the payment surface is closed -- otherwise a modal
@@ -1557,15 +1569,14 @@ function PaymentPanel(props: {
     if (source === "credit") return creditReason;
     if (source === "storedcard") {
       if (cardReason !== null) return cardReason;
-      /* Rule 1 of the $10 minimum: when credit covers the total, credit
-       * IS the method and the card is not offered. It applies to a
-       * WHOLE-sale card payment only -- adding the card as the first and
-       * therefore only line -- because a deliberate two-leg split is the
-       * opposite of the ambiguity rule 1 guards against (the T28
-       * reversal). /api/checkout takes the same reading. */
-      if (lines.length === 0 && balanceCoversTotal) {
-        return `Credit covers this (${money(balance as number)})`;
-      }
+      /* T82: the under-$10 guard, not rule 1. A whole-sale card payment
+       * (the card as the first and therefore only line) under the $10
+       * minimum buys $10 of credit on the way, which /api/checkout
+       * refuses outright when the account already holds enough; greyed
+       * with that reason beats a certain 409. A split's card leg cannot
+       * reach the credit purchase (the server refuses a leg under the
+       * minimum), so it is not asked here. */
+      if (lines.length === 0 && cardWouldBuyCredit) return spendCreditFirst;
     }
     return null;
   };
@@ -1598,11 +1609,9 @@ function PaymentPanel(props: {
     }
     if (line.source === "storedcard") {
       if (cardReason !== null) return cardReason;
-      /* Rule 1 again, for a card that has BECOME the whole sale (the
-       * other line was removed under it). */
-      if (lines.length === 1 && balanceCoversTotal) {
-        return `Credit covers this (${money(balance as number)})`;
-      }
+      /* T82's under-$10 guard again, for a card that has BECOME the whole
+       * sale (the other line was removed under it). */
+      if (lines.length === 1 && cardWouldBuyCredit) return spendCreditFirst;
       /* The $10 minimum bites on a card LEG of a split, which the server
        * refuses outright; a whole-sale card under $10 is fine, since that
        * is PLAN 2.3's credit-purchase path. */
@@ -2453,26 +2462,22 @@ function PaymentPanel(props: {
     : dueCents === 0 && lines.length > 0;
 
   /**
-   * T39.6: the bar's primary in pay mode, rendered by THIS component
-   * rendered in the panel's own foot (T85: the bar it used to be
-   * portalled into is gone), so it is gated by the `chargeable` of this
-   * very render. It reads `Due $X` (disabled, the prototype's label: the
-   * disabled state turned into information) while anything is unpaid,
-   * `Charge $total` once due is zero, `Comp $total` when comped, and it
-   * is the one Charge control on the screen. Not `disabled` but
-   * aria-disabled, like the shelf's Pay, so its title can say why; the
-   * click guard and doCharge's own checks refuse the tap.
+   * The one control that moves money, at the payment column's foot (T85:
+   * the bar it used to be portalled into is gone), so it is gated by the
+   * `chargeable` of this very render. T82: it reads "Finalize Sale" in
+   * every state, with no amount and no count (Pete: "the Charge/Comp
+   * button should always say 'Finalize Sale' ... No need for it to
+   * contain the total items and dollar amount"). The figures above and
+   * the quiet line beside it carry the numbers; a button that changed
+   * its word and its figure with the tender was three labels for one
+   * act. Not `disabled` but aria-disabled, like the shelf's Pay, so its
+   * title can say why it cannot be tapped; the click guard and
+   * doCharge's own checks refuse the tap either way. The label a screen
+   * reader and the tooltip get when it IS armed is still the full
+   * sentence (`chargeLabel`: "Charge $43.50", "Comp $107.45"), so what
+   * the tap will do is never hidden, only off the face of the button.
    */
-  const primaryLabel = comped ? "Comp" : dueSettled ? "Charge" : "Due";
-  const primaryAmount = comped
-    ? total !== null
-      ? compAmount
-      : null
-    : dueSettled
-      ? total
-      : dueCents !== null
-        ? dueCents / 100
-        : null;
+  const primaryLabel = "Finalize Sale";
   const primaryOn = dueSettled && chargeable;
   const primaryWhy = primaryOn
     ? null
@@ -2511,22 +2516,14 @@ function PaymentPanel(props: {
         }}
       >
         {charging ? (
-          /* The amount stays in the label while the write is in flight
-             (Payment.dc.html: "the amount is always in the label"). */
+          /* One word through the whole tap: the spinner says the write is
+             in flight, the label does not change under the thumb. */
           <>
             <span className="spinner" aria-label="working" />
-            <span>{comped ? "Comping" : "Charging"}</span>
-            {primaryAmount !== null ? (
-              <span className="btn-amt">{money(primaryAmount)}</span>
-            ) : null}
+            <span>{primaryLabel}</span>
           </>
         ) : (
-          <>
-            <span>{primaryLabel}</span>
-            {primaryAmount !== null ? (
-              <span className="btn-amt">{money(primaryAmount)}</span>
-            ) : null}
-          </>
+          <span>{primaryLabel}</span>
         )}
       </button>
     );
@@ -2613,29 +2610,17 @@ function PaymentPanel(props: {
             </div>
           ) : (
             <>
-              {/* The three figures (0.2): Total is the server's, Due is
-                  what the lines have not covered, Change is over-tendered
-                  cash. Due carries the most weight of the three (decided):
-                  it is the one figure a teacher checks before charging. */}
+              {/* T82: two figures, not three (Pete: "Remove the 'Due'
+                  section at the bottom right"). Total is the server's and
+                  Change is over-tendered cash, lit only when there is
+                  any. What is still unpaid is said in words by the quiet
+                  line in the foot and by Finalize Sale's title, which is
+                  where a teacher who cannot charge looks for the why. */}
               <div className="pay-figures">
                 <div className="pay-fig">
                   <span className="pay-fig-label">Total</span>
                   <span className="pay-fig-amt">
                     {total !== null ? money(total) : "--"}
-                  </span>
-                </div>
-                <div
-                  className={dueSettled ? "pay-fig due settled" : "pay-fig due"}
-                >
-                  <span className="pay-fig-label">Due</span>
-                  <span className="pay-fig-amt">
-                    {comped
-                      ? total !== null
-                        ? money(0)
-                        : "--"
-                      : dueCents !== null
-                        ? money(dueCents / 100)
-                        : "--"}
                   </span>
                 </div>
                 <div
@@ -2665,23 +2650,20 @@ function PaymentPanel(props: {
                   const reopen =
                     s === "cash" && cashLine !== undefined && reason === "Already in the payment";
                   const off = reason !== null && !reopen;
-                  /* T70: the card's note is always there and always
-                     honest (Payment.dc.html): T35's reason when there is
-                     one, else what a tap does. The stored card is a card
-                     on file, not a reader, so the note says so. */
+                  /* T82: the note carries INFORMATION or nothing. T35's
+                     reason when a tile cannot add a line stays, and so
+                     does the cash tile's "tap to change it"; the three
+                     amount notes are gone (Pete: "Remove the 'Take $230
+                     in cash' line"), with "Applies first", which was
+                     rule 1's word and is no longer true of credit. The
+                     amount a tap adds is the remaining due, which the
+                     figures and the quiet line already carry. Credit
+                     keeps its balance badge. */
                   const shown = off
                     ? reason
                     : reopen
                       ? "In the payment. Tap to change it."
-                      : s === "credit"
-                        ? /* The prototype's word for an available Credit:
-                             rule 1 makes it the first thing applied. */
-                          "Applies first"
-                        : dueCents !== null
-                          ? s === "cash"
-                            ? `Take ${money(dueCents / 100)} in cash`
-                            : `Charge ${money(dueCents / 100)} to the card on file`
-                          : null;
+                      : null;
                   /* In the payment: the selected marker (--accent-bg and
                      the 4px accent edge), whether or not the tile can
                      still take a tap. */
@@ -2784,30 +2766,43 @@ function PaymentPanel(props: {
               {/* T53: the receipt toggle (Pete: "receive an email
                   receipt"). The filter-toggle idiom, 64px, accent while
                   on; off and disabled with its reason when there is
-                  nobody to email, no address, no opt-in, or a comp. */}
+                  nobody to email, no address or no opt-in. A discount
+                  never disables it (T82).
+
+                  T82 also draws the state (Pete: "'Email reciept' should
+                  have a checkbox to the left of it to indicate when its
+                  toggled on and off in addition to the color change"):
+                  a 24px square on the rule, filled with the accent and
+                  the check when on. Drawn from tokens, not a native
+                  checkbox, because a native one cannot be coloured in
+                  both palettes and cannot be told not to take a tap of
+                  its own inside the button. It is decoration over
+                  aria-pressed, which is what a screen reader reads. */}
               <button
                 type="button"
                 className={
                   sendEmail ? "receipt-toggle on" : "receipt-toggle"
                 }
                 aria-pressed={sendEmail}
-                disabled={receipt.why !== null || comped || charging}
-                title={
-                  comped
-                    ? "A comp sends no receipt"
-                    : (receipt.why ?? "Email a receipt for this sale")
-                }
+                disabled={receipt.why !== null || charging}
+                title={receipt.why ?? "Email a receipt for this sale"}
                 onClick={() => setWantReceipt((v) => !v)}
               >
-                <span className="receipt-toggle-name">Email receipt</span>
+                <span className="receipt-toggle-name">
+                  <span
+                    className={sendEmail ? "receipt-box on" : "receipt-box"}
+                    aria-hidden="true"
+                  >
+                    {sendEmail ? <CheckIcon /> : null}
+                  </span>
+                  Email receipt
+                </span>
                 <span className="receipt-sub">
-                  {comped
-                    ? "Not for a comp"
-                    : receipt.why !== null
-                      ? receipt.why
-                      : sendEmail
-                        ? `to ${receipt.email}`
-                        : "Off"}
+                  {receipt.why !== null
+                    ? receipt.why
+                    : sendEmail
+                      ? `to ${receipt.email}`
+                      : "Off"}
                 </span>
               </button>
 
@@ -3203,10 +3198,11 @@ function PaymentPanel(props: {
                 placeholder={
                   reasonDraft.kind === null
                     ? "Choose a reason first"
-                    : compNeedsDetail(reasonDraft.kind)
-                      ? reasonDraft.kind === "trade"
-                        ? "What was traded?"
-                        : "What happened?"
+                    : reasonDraft.kind === "trade"
+                      ? /* Trade is the one reason whose note has a
+                           question to answer; every other one asks for
+                           the note in Pete's words (T82). */
+                        "What was traded?"
                       : "Add a note"
                 }
                 aria-label="Note for the discount"
@@ -6712,6 +6708,15 @@ export default function SaleScreen(props: {
                 >
                   Empty cart
                 </button>
+                {/* T82: the word only, no count and no amount (Pete, of
+                    its pay-mode twin: "No need for it to contain the
+                    total items and dollar amount"; the two controls are
+                    read as one pair and the ticket above carries both
+                    figures already). The count and the total stay in the
+                    ticket's head and totals, and the title still says
+                    the amount or why the tap is refused. The pricing
+                    spinner stays: it is the one thing the ticket cannot
+                    say in the foot's place. */}
                 <button
                   className={payWhy === null ? "t-foot-pay" : "t-foot-pay off"}
                   aria-disabled={payWhy !== null}
@@ -6719,16 +6724,7 @@ export default function SaleScreen(props: {
                   onClick={payTap}
                 >
                   <span>Pay</span>
-                  {cartCount > 0 ? (
-                    <span className="btn-count">
-                      {"\u00b7"} {cartCount} {cartCount === 1 ? "item" : "items"}
-                    </span>
-                  ) : null}
-                  {payAmount !== null ? (
-                    <span className="btn-amt">
-                      {"\u00b7"} {money(payAmount)}
-                    </span>
-                  ) : pricing && cart.length > 0 ? (
+                  {payAmount === null && pricing && cart.length > 0 ? (
                     <span className="spinner" aria-label="pricing" />
                   ) : null}
                 </button>

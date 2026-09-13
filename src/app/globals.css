@@ -5477,6 +5477,38 @@ textarea.reason-note-field:disabled::placeholder {
 
 .receipt-toggle-name {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* T82: the drawn checkbox left of the label. A 24px square on the rule,
+ * empty when off and the accent pair with the check when on, so the state
+ * reads from the mark as well as from the colour (Pete). The 22px check
+ * glyph is scaled to 18 so it sits inside the box; `flex: none` keeps the
+ * box square when the label wraps. */
+.receipt-box {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.receipt-box.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.receipt-box svg {
+  width: 18px;
+  height: 18px;
 }
 
 .receipt-sub {
