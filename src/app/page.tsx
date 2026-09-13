@@ -7569,7 +7569,6 @@ function FrontDesk({
         }
         onContractPurchased={refreshClientState}
         onSaleCompleted={refreshClientState}
-        classTeacher={activeClass?.teacher || null}
         onStaffSessionEnded={() => setTeacher(null)}
       />
 

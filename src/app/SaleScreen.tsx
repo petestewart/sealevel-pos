@@ -4197,10 +4197,6 @@ export default function SaleScreen(props: {
    *  the overlay must not keep showing the pre-sale numbers (Pete, fourth
    *  live test). Best-effort; the sale stands whatever happens here. */
   onSaleCompleted?: (clientId: string) => void;
-  /** T45 gave this to the comp dialog's teacher picker; T79 removed the
-   *  Teacher kind and the picker with it. Still accepted (page.tsx
-   *  passes it) and unused; dropping it from page.tsx is a follow-up. */
-  classTeacher?: string | null;
   /** T49: a money write answered that the signed-in teacher's token is
    *  no longer valid; page.tsx clears the header control. */
   onStaffSessionEnded?: () => void;
