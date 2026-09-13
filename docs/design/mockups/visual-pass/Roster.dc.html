@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/modernist-090c6801-0d60-4d8e-86d6-e6f9a35bf85b/styles.css">
+  <script src="_ds/modernist-090c6801-0d60-4d8e-86d6-e6f9a35bf85b/_ds_bundle.js"></script>
+  <style>
+    body { margin: 0; background: #f0efee; }
+    a { color: #166d67; } a:hover { color: #0f4f4a; }
+    @keyframes pos-spin { to { transform: rotate(360deg); } }
+    @keyframes pos-fade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+  </style>
+</helmet>
+<div style="{{ theme }}" data-screen-label="Roster">
+<div style="width: 1194px; height: 834px; box-sizing: border-box; background: var(--pos-bg); color: var(--pos-text); font-family: var(--font-body); font-size: 16px; display: flex; flex-direction: column; overflow: hidden">
+
+  <div style="flex: 0 0 auto; display: flex; align-items: stretch; gap: 2px; border-bottom: 2px solid var(--pos-rule); background: var(--pos-surface)">
+    <div style="position: relative; flex: 1 1 auto; min-width: 0">
+      <div onClick="{{ togglePicker }}" style="height: 76px; padding: 0 18px; display: flex; align-items: center; gap: 14px; cursor: pointer; background: var(--pos-surface)" style-hover="background: var(--pos-surface-2)">
+        <div style="min-width: 0">
+          <div style="font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pos-muted)">{{ classDate }}</div>
+          <div style="font-family: var(--font-heading); font-weight: 800; font-size: 22px; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ className }}</div>
+        </div>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square" style="margin-left: auto; flex: 0 0 auto; color: var(--pos-muted)"><path d="m6 9 6 6 6-6"></path></svg>
+      </div>
+      <sc-if value="{{ pickerOpen }}" hint-placeholder-val="{{ false }}">
+        <div style="position: absolute; z-index: 20; top: 78px; left: 0; right: 0; background: var(--pos-surface); border: 2px solid var(--pos-rule); box-shadow: var(--shadow-lg); animation: pos-fade 120ms ease-out">
+          <sc-for list="{{ classes }}" as="c" hint-placeholder-count="3">
+            <div onClick="{{ c.pick }}" style="display: flex; align-items: center; gap: 16px; padding: 0 18px; height: 72px; border-bottom: 1px solid var(--pos-line); cursor: pointer; background: {{ c.bg }}" style-hover="background: var(--pos-surface-2)">
+              <div style="width: 108px; flex: 0 0 auto; font-family: var(--font-heading); font-weight: 800; font-size: 18px">{{ c.time }}</div>
+              <div style="flex: 1 1 auto; min-width: 0">
+                <div style="font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ c.name }}</div>
+                <div style="color: var(--pos-muted)">{{ c.teacher }}</div>
+              </div>
+              <div style="flex: 0 0 auto; min-width: 72px; height: 30px; padding: 0 10px; display: flex; align-items: center; justify-content: center; font-weight: 600; background: {{ c.countBg }}; color: {{ c.countInk }}">{{ c.count }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+
+    <div style="flex: 0 0 auto; width: 76px; display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--pos-line); cursor: pointer" style-hover="background: var(--pos-surface-2)">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><rect x="3" y="4" width="18" height="18"></rect><path d="M3 10h18M8 2v4M16 2v4"></path></svg>
+    </div>
+
+    <div style="flex: 0 0 auto; display: flex; align-items: stretch; border-left: 1px solid var(--pos-line)">
+      <div style="width: 152px; padding: 0 16px; display: flex; flex-direction: column; justify-content: center; border-right: 1px solid var(--pos-line)">
+        <div style="font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pos-muted); white-space: nowrap">Signed up</div>
+        <div style="font-family: var(--font-heading); font-weight: 800; font-size: 26px; line-height: 1.1">{{ signedUp }}</div>
+      </div>
+      <div style="width: 152px; padding: 0 16px; display: flex; flex-direction: column; justify-content: center; border-right: 1px solid var(--pos-line)">
+        <div style="font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pos-muted); white-space: nowrap">Checked in</div>
+        <div style="font-family: var(--font-heading); font-weight: 800; font-size: 26px; line-height: 1.1; color: var(--pos-ok)">{{ checkedIn }}</div>
+      </div>
+      <div style="width: 128px; padding: 0 16px; display: flex; flex-direction: column; justify-content: center">
+        <div style="font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pos-muted); white-space: nowrap">Waitlist</div>
+        <div style="font-family: var(--font-heading); font-weight: 800; font-size: 26px; line-height: 1.1">0</div>
+      </div>
+    </div>
+
+    <a href="Buy.dc.html" style="flex: 0 0 auto; width: 108px; display: flex; align-items: center; padding: 0 20px; background: var(--pos-accent); color: var(--pos-accent-ink); font-family: var(--font-heading); font-weight: 800; font-size: 19px; text-decoration: none" style-hover="background: var(--pos-accent-press)">Buy</a>
+
+    <div onClick="{{ toggleTheme }}" title="Light / dark" style="flex: 0 0 auto; width: 64px; display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--pos-line); cursor: pointer; color: var(--pos-muted)" style-hover="color: var(--pos-text); background: var(--pos-surface-2)">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"></path></svg>
+    </div>
+    <div style="flex: 0 0 auto; width: 64px; display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--pos-line); cursor: pointer; color: var(--pos-muted)" style-hover="color: var(--pos-text); background: var(--pos-surface-2)">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"></path></svg>
+    </div>
+  </div>
+
+  <div style="flex: 0 0 auto; display: flex; align-items: stretch; border-bottom: 1px solid var(--pos-line); background: var(--pos-surface)">
+    <input placeholder="Search for a walk-in (press Enter)" style="flex: 1 1 auto; min-width: 0; height: 60px; padding: 0 18px; border: 0; outline: none; background: transparent; color: var(--pos-text); font-family: var(--font-body); font-size: 19px" />
+    <div style="flex: 0 0 auto; width: 76px; display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--pos-line); cursor: pointer" style-hover="background: var(--pos-surface-2)">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><circle cx="11" cy="11" r="7"></circle><path d="m16.5 16.5 4.5 4.5"></path></svg>
+    </div>
+  </div>
+
+  <div style="flex: 0 0 auto; display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(0, 1.4fr) 104px 132px 188px; align-items: center; gap: 16px; padding: 10px 20px; border-bottom: 2px solid var(--pos-rule); font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pos-muted)">
+    <div>Name</div>
+    <div>Payment</div>
+    <div style="text-align: right">Balance</div>
+    <div></div>
+    <div style="display: flex; justify-content: flex-end">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M7 4v16m0 0-3.5-3.5M7 20l3.5-3.5M17 20V4m0 0-3.5 3.5M17 4l3.5 3.5"></path></svg>
+    </div>
+  </div>
+
+  <div style="flex: 1 1 auto; overflow: hidden; display: flex; flex-direction: column">
+    <sc-for list="{{ rows }}" as="r" hint-placeholder-count="6">
+      <div style="display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(0, 1.4fr) 104px 132px 188px; align-items: center; gap: 16px; height: 72px; padding: 0 20px; border-bottom: 1px solid var(--pos-line); background: var(--pos-surface)">
+        <div style="display: flex; align-items: center; gap: 10px; min-width: 0">
+          <div style="min-width: 0">
+            <div style="display: flex; align-items: center; gap: 8px">
+              <span style="font-weight: 600; font-size: 19px; white-space: nowrap">{{ r.name }}</span>
+              <sc-if value="{{ r.member }}" hint-placeholder-val="{{ false }}">
+                <span style="width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; background: var(--pos-gold-bg); color: var(--pos-gold); font-size: 16px; font-weight: 800">M</span>
+              </sc-if>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" style="flex: 0 0 auto; color: var(--pos-muted); cursor: pointer"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v6M12 7.5v.01"></path></svg>
+            </div>
+            <sc-if value="{{ r.subline }}" hint-placeholder-val="{{ true }}">
+              <div style="font-size: 16px; color: {{ r.sublineInk }}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ r.subline }}</div>
+            </sc-if>
+          </div>
+        </div>
+
+        <div style="min-width: 0">
+          <div style="font-weight: 600; color: {{ r.payInk }}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ r.pay }}</div>
+          <sc-if value="{{ r.payExp }}" hint-placeholder-val="{{ true }}">
+            <div style="font-size: 16px; color: var(--pos-muted)">{{ r.payExp }}</div>
+          </sc-if>
+        </div>
+
+        <div style="text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--pos-text)">{{ r.balance }}</div>
+
+        <div>
+          <div onClick="{{ r.tap }}" style="height: 48px; padding: 0 14px; display: flex; align-items: center; gap: 8px; background: {{ r.chipBg }}; color: {{ r.chipInk }}; border: {{ r.chipBorder }}; font-family: var(--font-heading); font-weight: 800; font-size: 16px; cursor: {{ r.chipCursor }}" style-hover="filter: {{ r.chipHover }}">
+            <sc-if value="{{ r.busy }}" hint-placeholder-val="{{ false }}">
+              <span style="width: 15px; height: 15px; flex: 0 0 auto; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: pos-spin 700ms linear infinite"></span>
+            </sc-if>
+            <sc-if value="{{ r.done }}" hint-placeholder-val="{{ false }}">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square" style="flex: 0 0 auto"><path d="m4 12.5 5 5L20 6.5"></path></svg>
+            </sc-if>
+            <span style="white-space: nowrap">{{ r.chip }}</span>
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 2px">
+          <sc-if value="{{ r.done }}" hint-placeholder-val="{{ false }}">
+            <div onClick="{{ r.undo }}" title="Check out" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: var(--pos-muted); cursor: pointer" style-hover="color: var(--pos-stop); background: var(--pos-stop-bg)">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M3 8v5h5"></path><path d="M3.5 13a8.5 8.5 0 1 0 2.5-6"></path></svg>
+            </div>
+          </sc-if>
+          <div title="Remove booking" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: var(--pos-muted); cursor: pointer" style-hover="color: var(--pos-stop); background: var(--pos-stop-bg)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>
+          </div>
+          <a href="Buy.dc.html" title="Sell to this client" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: var(--pos-muted); text-decoration: none" style-hover="color: var(--pos-accent); background: var(--pos-accent-tint)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><circle cx="12" cy="12" r="9"></circle><path d="M14.8 9.6c-.8-.8-1.9-1.1-2.9-1.1-1.4 0-2.3.7-2.3 1.6 0 1 .9 1.4 2.4 1.7 1.7.3 2.9.8 2.9 2.1 0 1.2-1.1 1.9-2.6 1.9-1.2 0-2.4-.4-3.2-1.3M12 6.6v10.8"></path></svg>
+          </a>
+          <div title="Client profile" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: var(--pos-muted); cursor: pointer" style-hover="color: var(--pos-text); background: var(--pos-surface-2)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"></path></svg>
+          </div>
+          <div title="Open in Mindbody" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: var(--pos-muted); cursor: pointer" style-hover="color: var(--pos-text); background: var(--pos-surface-2)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M14 4h6v6"></path><path d="M20 4 11 13"></path><path d="M19 15v5H4V5h5"></path></svg>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="flex: 0 0 auto; display: flex; align-items: center; gap: 20px; padding: 0 20px; height: 56px; border-top: 2px solid var(--pos-rule); background: var(--pos-surface); color: var(--pos-muted); font-size: 16px">
+    <span>Tap a name to check in · tap again to undo</span>
+    <a href="Dialogs.dc.html" style="margin-left: auto; color: var(--pos-accent); font-weight: 600; text-decoration: none">Dialogs</a>
+    <a href="Buy.dc.html" style="color: var(--pos-accent); font-weight: 600; text-decoration: none">Buy</a>
+    <a href="Payment.dc.html" style="color: var(--pos-accent); font-weight: 600; text-decoration: none">Payment</a>
+  </div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1194,&quot;height&quot;:834}}">
+const LIGHT = {
+  '--pos-bg': '#f0efee', '--pos-surface': '#ffffff', '--pos-surface-2': '#f8f4f4',
+  '--pos-line': '#d7d3d3', '--pos-rule': '#201e1d', '--pos-text': '#201e1d', '--pos-muted': '#605d5d',
+  '--pos-accent': '#166d67', '--pos-accent-press': '#0f4f4a', '--pos-accent-ink': '#ffffff', '--pos-accent-tint': '#e3efee',
+  '--pos-ok': '#0f6b46', '--pos-ok-bg': '#e3f1e9', '--pos-warn': '#7a4f00', '--pos-warn-bg': '#f7ecd4',
+  '--pos-stop': '#a32020', '--pos-stop-bg': '#f8e6e6', '--pos-gold': '#6d4a05', '--pos-gold-bg': '#f0dcae'
+};
+const DARK = {
+  '--pos-bg': '#121313', '--pos-surface': '#1c1d1d', '--pos-surface-2': '#252626',
+  '--pos-line': '#3a3b3b', '--pos-rule': '#f3f2f2', '--pos-text': '#f3f2f2', '--pos-muted': '#9b9797',
+  '--pos-accent': '#3fa89f', '--pos-accent-press': '#59bdb4', '--pos-accent-ink': '#07211f', '--pos-accent-tint': '#16302e',
+  '--pos-ok': '#6cc79b', '--pos-ok-bg': '#12291f', '--pos-warn': '#e2b768', '--pos-warn-bg': '#2c2110',
+  '--pos-stop': '#e88b8b', '--pos-stop-bg': '#2e1616', '--pos-gold': '#e8cf94', '--pos-gold-bg': '#2b2410'
+};
+
+const CLASSES = [
+  { time: '6:00 AM', name: 'Hot 26 & 2 (90 min)', teacher: 'Sally Zapata', count: '12/26', date: 'Thu Sep 3 · 6:00 AM' },
+  { time: '7:00 PM', name: 'Hot 26 & 2 (60 min)', teacher: 'Kate Jarvis', count: '6/26', date: 'Thu Sep 3 · 7:00 PM' },
+  { time: '8:30 PM', name: 'Yin & Restore', teacher: 'Dan Darragh', count: '0', date: 'Thu Sep 3 · 8:30 PM' }
+];
+
+const ROWS = [
+  { id: 1, name: 'Jordan Lydia', member: true, subline: '3rd class this week', pay: 'ClassPass', payExp: 'exp 9/12/26', balance: '$7.00', state: 'ready' },
+  { id: 2, name: 'Catherine Bauer', subline: 'Waiver not signed', pay: 'ClassPass', payExp: 'exp 9/12/26', balance: '', state: 'stop' },
+  { id: 3, name: 'Chloe Miller', subline: '', pay: 'No pass', payExp: '', balance: '$8.18', state: 'unpaid' },
+  { id: 4, name: 'Van Morgen', subline: '1 visit this week', pay: 'ClassPass', payExp: 'exp 9/8/26', balance: '', state: 'ready' },
+  { id: 5, name: 'Tom Obranovich', member: true, subline: 'Checking in with Mindbody…', pay: 'Monthly Committed Membership', payExp: 'exp 9/1/26', balance: '', state: 'busy' },
+  { id: 6, name: 'Colin Dennis', subline: 'checked in 6:52 PM', pay: '10 Class Card', payExp: '9 left · exp 8/22/27', balance: '', state: 'in' }
+];
+
+class Component extends DCLogic {
+  state = { dark: false, pickerOpen: false, classIdx: 1, states: {} };
+
+  stateOf(r) { return this.state.states[r.id] || r.state; }
+
+  tap(r) {
+    const s = this.stateOf(r);
+    if (s === 'ready' || s === 'stop') {
+      this.setState(p => ({ states: { ...p.states, [r.id]: 'busy' } }));
+      setTimeout(() => this.setState(p => ({ states: { ...p.states, [r.id]: 'in' } })), 850);
+    } else if (s === 'unpaid') {
+      this.setState(p => ({ states: { ...p.states, [r.id]: 'confirm' } }));
+    } else if (s === 'confirm') {
+      this.setState(p => ({ states: { ...p.states, [r.id]: 'busy' } }));
+      setTimeout(() => this.setState(p => ({ states: { ...p.states, [r.id]: 'in' } })), 850);
+    }
+  }
+
+  chipFor(r, s) {
+    if (s === 'busy') return { chip: 'checking in', chipBg: 'var(--pos-accent)', chipInk: 'var(--pos-accent-ink)', chipBorder: '2px solid var(--pos-accent)', busy: true, cursor: 'default' };
+    if (s === 'in') return { chip: 'checked in', chipBg: 'var(--pos-ok-bg)', chipInk: 'var(--pos-ok)', chipBorder: '1px solid transparent', done: true, cursor: 'default' };
+    if (s === 'stop') return { chip: 'no waiver', chipBg: 'var(--pos-stop-bg)', chipInk: 'var(--pos-stop)', chipBorder: '2px solid var(--pos-stop)', cursor: 'pointer' };
+    if (s === 'unpaid') return { chip: 'unpaid', chipBg: 'var(--pos-warn-bg)', chipInk: 'var(--pos-warn)', chipBorder: '2px solid var(--pos-warn)', cursor: 'pointer' };
+    if (s === 'confirm') return { chip: 'check in anyway', chipBg: 'var(--pos-warn)', chipInk: '#ffffff', chipBorder: '2px solid var(--pos-warn)', cursor: 'pointer' };
+    return { chip: 'check in', chipBg: 'var(--pos-surface-2)', chipInk: 'var(--pos-text)', chipBorder: '1px solid var(--pos-line)', cursor: 'pointer' };
+  }
+
+  renderVals() {
+    const dark = this.state.dark;
+    const cls = CLASSES[this.state.classIdx];
+    const rows = ROWS.map(r => {
+      const s = this.stateOf(r);
+      const c = this.chipFor(r, s);
+      return {
+        ...r,
+        subline: s === 'confirm' ? 'No pass on file — tap again to check in unpaid' : (s === 'busy' ? 'Checking in with Mindbody…' : r.subline),
+        sublineInk: s === 'confirm' ? 'var(--pos-warn)' : 'var(--pos-muted)',
+        payInk: r.pay === 'No pass' ? 'var(--pos-warn)' : 'var(--pos-text)',
+        balInk: r.balance === '$7.00' ? 'var(--pos-text)' : 'var(--pos-text)',
+        rowBg: s === 'in' ? 'var(--pos-surface)' : 'var(--pos-surface)',
+        chip: c.chip, chipBg: c.chipBg, chipInk: c.chipInk, chipBorder: c.chipBorder,
+        chipCursor: c.cursor, chipHover: c.cursor === 'pointer' ? 'brightness(0.94)' : 'none',
+        busy: !!c.busy, done: !!c.done,
+        tap: () => this.tap(r),
+        undo: () => this.setState(p => ({ states: { ...p.states, [r.id]: 'ready' } }))
+      };
+    });
+    const checkedIn = rows.filter(r => r.done).length;
+    return {
+      theme: dark ? DARK : LIGHT,
+      toggleTheme: () => this.setState(p => ({ dark: !p.dark })),
+      togglePicker: () => this.setState(p => ({ pickerOpen: !p.pickerOpen })),
+      pickerOpen: this.state.pickerOpen,
+      classDate: cls.date.split(' · ')[0] + ' · ' + cls.time,
+      className: cls.name + ' — ' + cls.teacher,
+      classes: CLASSES.map((c, i) => ({
+        ...c,
+        bg: i === this.state.classIdx ? 'var(--pos-accent-tint)' : 'var(--pos-surface)',
+        countBg: c.count === '0' ? 'var(--pos-surface-2)' : 'var(--pos-gold-bg)',
+        countInk: c.count === '0' ? 'var(--pos-muted)' : 'var(--pos-gold)',
+        pick: () => this.setState({ classIdx: i, pickerOpen: false })
+      })),
+      signedUp: rows.length,
+      checkedIn,
+      rows
+    };
+  }
+}
+</script>
+</body>
+</html>

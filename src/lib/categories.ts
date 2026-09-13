@@ -12,9 +12,11 @@
  * Ordered by how often a teacher reaches for each at the counter. Everything
  * not listed here belongs behind a "more" control.
  *
- * Consumed by: nothing yet. This is Phase 2 groundwork; the retail catalog
- * UI (the sale screen's category buttons, filtering /sale/products) will be
- * its first consumer. Do not wire it into Phase 1 screens.
+ * Consumed by: GET /api/catalog (T22), which filters /sale/products by the
+ * ids here and fills the "Passes" entry from /sale/services, minus any
+ * option whose RevenueCategory routes it to a button here (T41). The sale
+ * screen's rail (T23, T39.2) hides a button whose shelf is empty. Do not
+ * wire it into Phase 1 screens.
  */
 
 /** One button on the eventual sale screen. */
@@ -29,6 +31,32 @@ export interface CounterCategory {
    * the `Service` flag on each record is the real discriminator.
    */
   categoryIds: number[];
+  /**
+   * T41: `RevenueCategory` names (sale.yml:5270) whose pricing options
+   * belong on this button instead of Passes. Towel and Mat (-14) is a
+   * `Service: true` category, and a service category never matches a
+   * retail product: `/sale/products?categoryIds=-14` is empty by
+   * construction, which is why Pete's first live pass found the button
+   * blank. Rentals are pricing options, and the Service model carries no
+   * category id at all (its fields are ProgramId, RevenueCategory and
+   * MembershipId; checked against the vendored spec), so the NAME is the
+   * only handle. Matched case-insensitively by /api/catalog. Unverified
+   * live: if the studio's rental options carry a different revenue
+   * category, the dev drawer's /sale/services body shows which, and the
+   * button hides itself until then (an empty category never renders).
+   */
+  revenueCategories?: string[];
+  /**
+   * Case-insensitive regular-expression sources matched against a pricing
+   * option's NAME, the second handle for the same problem. Pete's first
+   * live pass had "Towel and Mat" hidden as empty: the rental options'
+   * real revenue category was not the guessed name, and nothing in this
+   * container can read it. The studio's items (ai-manager's sales table,
+   * 2026-08-31) are "Mat Rental", "Towel Rental" and "Mat & Towel
+   * COMBO", so the names are a handle that does not depend on how the
+   * revenue category was spelled in Mindbody. Either match routes.
+   */
+  nameMatches?: string[];
 }
 
 /**
@@ -42,7 +70,12 @@ export interface CounterCategory {
  * /sale/products on a category id. Its `categoryIds` is deliberately empty.
  */
 export const counterCategories: readonly CounterCategory[] = [
-  { label: "Towel and Mat", categoryIds: [-14] },
+  {
+    label: "Towel and Mat",
+    categoryIds: [-14],
+    revenueCategories: ["Towel and Mat"],
+    nameMatches: ["rental", "towel"],
+  },
   { label: "Food/Drink", categoryIds: [36] },
   { label: "Passes", categoryIds: [] },
   { label: "Accessories", categoryIds: [32] },

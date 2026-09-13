@@ -80,7 +80,14 @@ sandbox token against production.
   is a back-office worker with a different uptime story and different users.
   The two share an API, not a codebase: `src/lib/mindbody.ts` is adapted from
   ai-manager's client and deliberately not imported from it.
-- **No database, and no client cache.** Reads go to Mindbody when needed.
+- **A small Postgres, on a charter (superseded "no database", Pete,
+  2026-08-30, T29).** It holds what Mindbody has no home for -- waiver
+  receipts, bundle config, banner text, promo entitlements -- and NEVER a
+  copy of what Mindbody has: no clients, classes, passes, prices or visits,
+  not even for speed. `DATABASE_URL` unset runs the app fully on fallbacks
+  (code bundles, Notes + log receipts, env banner); a dead database degrades
+  the same way, never an outage. Charter enforced in `src/lib/db.ts`. Still
+  no client cache: reads go to Mindbody when needed.
 - **Nothing auto-charges.** Phase 2 will move money only on an explicit tap.
 - **Sandbox and dry run are the defaults.** See above.
 - **Pricing and schedule come from the live Mindbody API**, never from a cache
@@ -125,7 +132,9 @@ one.
 
 It is recorded server-side in `src/lib/calllog.ts`, which matters: it shows
 what Mindbody actually received and returned, not what our API routes chose
-to forward. Enabled by `POS_DEVTOOLS=true` or a dev build; `/api/devlog`
+to forward. A call that ran under a signed-in teacher's token (T49) shows
+`actor=<staff id>`; the token itself is never recorded. Enabled by
+`POS_DEVTOOLS=true` or a dev build; `/api/devlog`
 404s otherwise, because the records carry client names and booking details
 and must not be reachable from the counter iPad.
 
@@ -136,7 +145,8 @@ each: search debounce, minimum query length, result limit, how many hours of
 schedule to show either side of now, whether check-in is optimistic, and
 whether an unpaid booking needs a confirming tap. They live in the browser's
 localStorage, apply immediately, and need no restart. Testing a number should
-not cost a commit.
+not cost a commit. Under them, "signed-in teacher" names who is signed in and
+runs the T49 permission probe.
 
 Anything that decides whether a write reaches Mindbody -- dry run, target,
 the write guard -- is deliberately NOT here. Those stay in the server
@@ -196,6 +206,31 @@ while `git clone` works, so clone the repo rather than fetching files.
   `LocationId: 1` and `InStore: true` so the server prices what the screen
   showed. Alternative payments (Apple Pay) support only location 98, and
   therefore only online pricing.
+- **`/client/addclientformulanote` is the dated, staff-only note on a
+  client** (the Formula Notes tab on the profile), and the right home for
+  an internal record per sale: the checkout request carries no notes
+  field, so a comp's reason is filed there afterwards (T45), through
+  `mindbody()` with the client id in the options so dry run and the
+  write guard apply. **Site 471 has Formula Notes disabled** (Pete's
+  live probe, 2026-09-04: "This site does not have formula notes
+  enabled"), so the record falls back to a T58-signed entry appended
+  to the client's `Notes` (T62, `src/lib/formulanote.ts`); the Formula
+  Note is still tried first, once per server start.
+- **`/sale/sales` filters by date, sale id and payment method, never by
+  client.** The client is matched on `Sale.ClientId` after the read
+  (`latestSaleId`, T63's `findGuestPassSale`). And **`/sale/returnsale`
+  returns a WHOLE sale by SaleId**, only a comp-paid one per the spec,
+  with no per-line return: a sale bundling a $0 Guest Pass with the
+  monthly autopay cannot have the pass alone returned. T63 reads the
+  sale first and returns it only when it is one $0 comp item (Pete's
+  rule: never a refund); otherwise the pass stays and the screen says
+  so. `PurchasedItem.Id` is the pricing option's ProductId for a
+  service, and there is no ClientServiceId on a sale line.
+- **The checkout answer carries no ClientService.** After selling a
+  pass, the purchase instance (the id `updateclientvisit` and
+  `addclienttoclass` take) comes from re-reading `/client/clientservices`
+  and matching by ProductId (T25) or by what was not there before and the
+  newest `PaymentDate` (T63).
 - **Categories live in `site.yml`, not `sale.yml`.** `GET /site/categories`
   exists; grepping only the Sale tag missed it once. `/site/liabilitywaiver`
   (the waiver's actual text) and `/site/paymenttypes` are next to it.
@@ -208,6 +243,15 @@ while `git clone` works, so clone the repo rather than fetching files.
   `Metadata`, answer it with a `Test: true` call and compare the server's
   returned total, rather than by reading. Test mode prices a cart without
   moving money, which makes this cheap.
+- **Datetimes are site-local and the offset is ignored, both ways.** Responses
+  carry naive strings ("2026-09-02T09:00:00"), and a request parameter is
+  read the same way: `StartDateTime=...08:34Z` is 8:34 studio time, not
+  UTC. Send wall-clock strings built for `America/Los_Angeles` (roster.ts
+  `studioWall`), never `toISOString()`. Sent as UTC, the class window was
+  seven hours ahead.
+- **Cancelled classes stay in `/class/classes`** with `IsCanceled: true`,
+  staff "TBA ." and zero booked. Filter them; the studio's schedule carries
+  whole mornings of cancelled placeholder slots.
 - **`/class/classvisits` puts the CLASS name in the visit's `Name` field.**
   Reading it showed every roster row as "bikram yoga". Names come from
   explicit client fields, and otherwise from the client index by id.
@@ -215,6 +259,16 @@ while `git clone` works, so clone the repo rather than fetching files.
   `BookClassesAndEventsWithoutPayment` (booking a walk-in), and for Phase 2
   `MakeSales`, `CreateRetailTickets`, `UseStoredCreditCards`,
   `AddProductsOnRetailScreen`. Plus `Desk staff` ticked on the staff profile.
+  Since T49 this applies to EACH TEACHER'S permission group too, not just
+  the service account's: a signed-in teacher's writes run under their own
+  token, and since T50 a sign-in is required, so every write route
+  refuses with 401 `reason: "staff"` when nobody is signed in rather
+  than running as the service account (`requireActor` in
+  `src/lib/actor.ts`; reads stay on the service account). A write their
+  group refuses is retried once as the service account and says so in
+  amber ("Done as the studio account: ..."), except a comp, which is
+  refused outright. `GET /api/teacher/probe` reads a signed-in teacher's
+  group and Test-prices a cart under their token.
 
 ## Conventions
 
@@ -224,14 +278,23 @@ while `git clone` works, so clone the repo rather than fetching files.
 - Sized for a hot room and a queue: nothing under 16px, tap targets at least
   64px tall.
 - **Every colour is a token, in both palettes.** `globals.css` defines the
-  palette twice, in `:root` and in the `prefers-color-scheme: dark` block, and
-  no hex belongs anywhere else in the CSS or in a component. A hardcoded colour
-  sitting next to a themed one is the bug that made the check-in chip
-  unreadable twice: the text flipped with the theme and the background did not.
-  `color-scheme: light dark` on `:root` covers what variables cannot reach
-  (input spinners, checkboxes, carets, scrollbars, focus rings), and the two
-  `themeColor` entries in `layout.tsx` must stay equal to `--bg` in the
-  matching palette.
+  palette twice, in `:root` (light) and in the `:root[data-theme="dark"]`
+  block, and no hex belongs anywhere else in the CSS or in a component. A
+  hardcoded colour sitting next to a themed one is the bug that made the
+  check-in chip unreadable twice: the text flipped with the theme and the
+  background did not. Since T70 there is no `prefers-color-scheme` query in
+  the CSS: `src/app/theme.ts` puts `data-theme` on `<html>` before first
+  paint (an inline boot script in `layout.tsx`) from the iPad's setting or
+  the sun toggle's stored choice, and each block sets its own
+  `color-scheme`, which covers what variables cannot reach (input spinners,
+  checkboxes, carets, scrollbars, focus rings). The two `themeColor`
+  entries in `layout.tsx` must stay equal to `--bg` in the matching block.
+  Token roles (docs/design/mockups/visual-pass/README.md): `--accent` means
+  actionable or selected and nothing else, `--gold` badges and counts,
+  `--stop` destructive or blocked only. Text on a `--stop` or `--warn` fill
+  is `--bg` (white fails in dark). Radius is 0 everywhere; structure is
+  drawn with `--rule` (2px) and `--line` (1px), and only modals and
+  dropdowns cast `--shadow-lg`. The font is Archivo through next/font.
 
 ## Known gaps
 
@@ -251,9 +314,27 @@ while `git clone` works, so clone the repo rather than fetching files.
   authorization but not that a charge reaches Stripe. Re-run
   `mindbody:probe-payments --live` in ai-manager against a client with a
   current card to close this.
-- **No teacher identity.** The app acts as one service account; a shared PIN
-  is stubbed in `.env.example` but not implemented. See the design doc's open
-  question 3, which needs confirming against payroll reporting.
+- **Teacher attribution is unverified live (T49).** A comp still takes
+  the teacher's own PIN in the dialog, every time (T48: stored hashed and
+  unique in `teacher_pins`, enrolled through a one-time Mindbody sign-in
+  or the devtools-gated admin route). On top of that every teacher signs
+  in with their own Mindbody login (T50: required, the full-screen gate
+  after the device lock; since T61 the header shows only the account
+  icon, and the modal behind it names them and holds sign-out), and
+  every write runs under THEIR token so Mindbody
+  names them; with nobody signed in, writes are refused (401
+  `reason: "staff"`) and the gate comes back. The token lives
+  in server memory only (`src/lib/staffsession.ts`; two hours from
+  sign-in since T64; a restart signs everyone out, and the gate
+  reappears). Verified live 2026-09-02: the API key issues tokens for
+  other staff logins, and a staff token reads its own permission group
+  and Test-prices a cart. A token Mindbody refuses as dead mid-write
+  ends the session and REFUSES that write (401 `reason: "staff"`, T50
+  review); it is never redone as the service account, and the gate
+  says so. Still unverified: what Mindbody answers for an
+  expired staff token (`isActorTokenDead` reads a 401), and that the
+  sales report actually shows the token's staff member. The probe is
+  `GET /api/teacher/probe` (the sign-in modal and the dev drawer run it).
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It

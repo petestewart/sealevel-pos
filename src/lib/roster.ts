@@ -1,4 +1,4 @@
-import { mindbody } from "./mindbody";
+import { mindbody, type Actor } from "./mindbody";
 
 /**
  * Classes and their rosters, shaped for one screen.
@@ -33,6 +33,10 @@ export interface RosterEntry {
    *  `POST /client/updateclientvisit` takes as ClientServiceId to change
    *  how the visit is paid. */
   clientServiceId: number | null;
+  /** The pricing option's own id (`Service.ProductId`, class.yml:3705),
+   *  matching CatalogItem.productId from /sale/services. What T26's
+   *  renewal prompt uses to default to the same pack again. */
+  passProductId: number | null;
   /**
    * `AccountBalance` from the batched client lookup. null when the lookup
    * failed (fail open, like waiverSigned); 0 renders as nothing.
@@ -41,6 +45,10 @@ export interface RosterEntry {
   /** Whether the client has a membership (`MembershipIcon` nonzero on the
    *  client record). null when the lookup failed. */
   member: boolean | null;
+  /** T62: whose guest this visit is, from the guest_visits table (the
+   *  roster route fills it; Mindbody's visit says "Guest Pass" and no
+   *  more). Null with no marker, no database, or a dead one. */
+  guestOf: { name: string } | null;
   paid: boolean;
   checkedIn: boolean;
   /**
@@ -99,20 +107,184 @@ export async function classesAroundNow(
 ): Promise<ClassSummary[]> {
   const start = new Date(now.getTime() - hoursBack * 60 * 60 * 1000);
   const end = new Date(now.getTime() + hoursForward * 60 * 60 * 1000);
+  return classesBetween(start, end);
+}
+
+/** One `/class/classes` window, mapped. Shared by the around-now window
+ *  and the whole-day one; always exactly one metered call. */
+async function classesBetween(
+  start: Date,
+  end: Date,
+): Promise<ClassSummary[]> {
+  /* The bounds go out as NAIVE studio wall-clock strings, never as
+   * `toISOString()` (T40). Mindbody reads the digits of a datetime as the
+   * site's local time and ignores any offset or Z, the same convention
+   * its responses use (see parseRosterAnchor). Sent as UTC, the window
+   * was seven hours ahead in PDT: at 3:34am Seattle the request read
+   * 08:34Z to 14:34Z, and Mindbody answered with the 9:00 and 9:30
+   * classes. */
   const body = await mindbody(
-    `/class/classes?StartDateTime=${encodeURIComponent(start.toISOString())}` +
-      `&EndDateTime=${encodeURIComponent(end.toISOString())}`,
+    `/class/classes?StartDateTime=${encodeURIComponent(studioWall(start))}` +
+      `&EndDateTime=${encodeURIComponent(studioWall(end))}`,
   );
-  return (body?.Classes ?? []).map(
-    (c: any): ClassSummary => ({
-      classId: c.Id,
-      name: c.ClassDescription?.Name ?? "Class",
-      teacher: c.Staff?.Name ?? "",
-      startsAt: c.StartDateTime,
-      capacity: c.MaxCapacity ?? null,
-      booked: c.TotalBooked ?? null,
-    }),
+  return (body?.Classes ?? [])
+    .filter((c: any) => c.IsCanceled !== true)
+    .map(
+      (c: any): ClassSummary => ({
+        classId: c.Id,
+        name: c.ClassDescription?.Name ?? "Class",
+        teacher: staffName(c.Staff),
+        startsAt: c.StartDateTime,
+        capacity: c.MaxCapacity ?? null,
+        booked: c.TotalBooked ?? null,
+      }),
+    )
+    /* Mindbody returns the window in no useful order (Pete's live list
+     * read 12:00, 7:00pm, 8:00am, 5:00pm). The naive local strings sort
+     * lexically as time. */
+    .sort((a: ClassSummary, b: ClassSummary) =>
+      a.startsAt < b.startsAt ? -1 : a.startsAt > b.startsAt ? 1 : 0,
+    );
+}
+
+/**
+ * A cancelled class is filtered out above (T40): Mindbody keeps it in
+ * `/class/classes` with `IsCanceled: true`, staff "TBA ." and zero booked,
+ * and its `/class/classvisits` answers with staff "Class Cancelled" (id
+ * -1). The studio's schedule carries cancelled placeholder slots (a
+ * whole morning of them on 2026-09-02), and listing those as classes a
+ * teacher could check people into is wrong twice over. When every class
+ * in the window is cancelled the screen shows its "No classes" line.
+ */
+
+/** The teacher as a person's name. Mindbody's `Staff.Name` is first and
+ *  last joined, and the studio's placeholder teacher is first name "TBA"
+ *  with last name ".", which rendered as "TBA ." on every class. Parts
+ *  with no letter or digit in them are dropped. */
+function staffName(staff: any): string {
+  const raw =
+    typeof staff?.Name === "string" && staff.Name.trim()
+      ? staff.Name
+      : `${staff?.FirstName ?? ""} ${staff?.LastName ?? ""}`;
+  return String(raw)
+    .split(/\s+/)
+    .filter((part) => /[\p{L}\p{N}]/u.test(part))
+    .join(" ");
+}
+
+/** `at` as the studio's wall clock, `YYYY-MM-DDTHH:mm:ss` with no offset:
+ *  the shape Mindbody reads correctly (see classesBetween). */
+export function studioWall(at: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: STUDIO_TZ,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(at);
+  const get = (type: string): number =>
+    Number(parts.find((p) => p.type === type)?.value ?? 0);
+  const two = (n: number): string => String(n).padStart(2, "0");
+  return (
+    `${get("year")}-${two(get("month"))}-${two(get("day"))}` +
+    /* hour12: false can render midnight as "24" in some ICU versions. */
+    `T${two(get("hour") % 24)}:${two(get("minute"))}:${two(get("second"))}`
   );
+}
+
+/**
+ * The studio's timezone. A constant in the same spirit as LocationId 1:
+ * there is one physical studio and it is in Seattle, so "the day" for
+ * schedule purposes is this timezone's day, not the server's (a container
+ * commonly runs on UTC, where a 6:20am class belongs to the previous
+ * UTC day's evening).
+ */
+const STUDIO_TZ = "America/Los_Angeles";
+
+/** Milliseconds the studio's wall clock is offset from UTC at `at`
+ *  (PDT: -25200000). Derived from Intl, the only timezone database a
+ *  container is guaranteed to carry; second precision, which is why the
+ *  anchor's own milliseconds are dropped before comparing. */
+function studioOffsetMs(at: Date): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: STUDIO_TZ,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(at);
+  const get = (type: string): number =>
+    Number(parts.find((p) => p.type === type)?.value ?? 0);
+  const wallAsUtc = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    /* hour12: false can render midnight as "24" in some ICU versions. */
+    get("hour") % 24,
+    get("minute"),
+    get("second"),
+  );
+  return wallAsUtc - (at.getTime() - (at.getTime() % 1000));
+}
+
+/**
+ * Parse a day-window anchor. Mindbody's datetimes (`startsAt` included)
+ * are NAIVE studio-local strings -- no offset, no Z -- and the one wrong
+ * reading is the default one: `new Date("...T06:20:00")` on a UTC
+ * container calls that 6:20am UTC, which is the previous studio EVENING,
+ * so the day dropdown anchored on a morning class fetched yesterday. A
+ * naive anchor is therefore read as STUDIO_TZ wall clock; one carrying
+ * an explicit offset or Z is an unambiguous instant and parses directly.
+ * Returns null when unparseable (the route falls back to now).
+ */
+export function parseRosterAnchor(raw: string): Date | null {
+  if (/(z|[+-]\d\d:?\d\d)$/i.test(raw)) {
+    const d = new Date(raw);
+    return Number.isFinite(d.getTime()) ? d : null;
+  }
+  const wall = Date.parse(`${raw}Z`);
+  if (!Number.isFinite(wall)) return null;
+  /* The wall time read as if UTC, minus the studio offset at roughly
+   * that instant, is the real instant; one refinement pass covers the
+   * hour around a DST edge. */
+  const guess = wall - studioOffsetMs(new Date(wall));
+  return new Date(wall - studioOffsetMs(new Date(guess)));
+}
+
+/**
+ * Every class on the STUDIO-LOCAL day containing `anchor` (T27 round
+ * three: the attach quick-pick's class dropdown needs the whole teaching
+ * day, which the -2/+4h around-now window deliberately does not cover).
+ * One metered call, same as the around-now window; the caller is
+ * expected to cache per day.
+ *
+ * The bounds: take the anchor's wall-clock time in the studio's
+ * timezone and subtract it, landing on studio midnight, then add 24
+ * hours. On a DST-change day that midnight can be off by an hour at the
+ * edges, which for a 6am-9pm schedule cannot drop a class.
+ */
+export async function classesForDay(anchor: Date): Promise<ClassSummary[]> {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: STUDIO_TZ,
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(anchor);
+  const get = (type: string): number =>
+    Number(parts.find((p) => p.type === type)?.value ?? 0);
+  /* hour12: false can render midnight as "24" in some ICU versions. */
+  const msIntoDay =
+    (((get("hour") % 24) * 60 + get("minute")) * 60 + get("second")) * 1000;
+  const start = new Date(anchor.getTime() - msIntoDay);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return classesBetween(start, end);
 }
 
 /**
@@ -127,6 +299,14 @@ function personName(v: any): string | null {
   const last = v.Client?.LastName ?? v.LastName ?? "";
   const joined = `${first} ${last}`.trim();
   return joined || null;
+}
+
+/** A pricing option whose session count means nothing: ClassPass (and
+ *  any other partner pass) is booked against a placeholder Mindbody never
+ *  decrements. Matched on the name, which is the only handle the visit
+ *  payload gives. Shared by the roster and the pass sweep. */
+export function sessionless(name: unknown): boolean {
+  return typeof name === "string" && /class\s*pass/i.test(name);
 }
 
 export async function rosterFor(classId: number): Promise<RosterEntry[]> {
@@ -145,16 +325,23 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
       name: personName(v) ?? "",
       visitId: typeof v.Id === "number" ? v.Id : null,
       pricingOption: service?.Name ?? v.ServiceName ?? null,
-      passRemaining: num(service?.Remaining),
-      passCount: num(service?.Count),
+      /* A ClassPass booking rides a placeholder pricing option that
+       * Mindbody never decrements, so its Remaining is always 0 and read
+       * as "0 remaining" it looks like a spent pass (Pete, live pass
+       * 2026-09-02). No session count is shown for it; the expiry stays. */
+      passRemaining: sessionless(service?.Name) ? null : num(service?.Remaining),
+      passCount: sessionless(service?.Name) ? null : num(service?.Count),
       passExpires:
         typeof service?.ExpirationDate === "string" && service.ExpirationDate
           ? service.ExpirationDate
           : null,
       clientServiceId: num(service?.Id),
+      passProductId: num(service?.ProductId),
       /** Filled by classRoster's batched client lookup. */
       balance: null,
       member: null,
+      /** Filled by the roster route from guest_visits (T62). */
+      guestOf: null,
       /**
        * Mindbody does not expose a single "is this paid" flag on a visit.
        * A visit booked against a pricing option is paid; one with no
@@ -204,7 +391,11 @@ interface ClientBrief {
    *  omitted it. */
   balance: number | null;
   /** `MembershipIcon` nonzero means the client holds a membership; 0 or
-   *  absent means none. */
+   *  absent means none. This is Mindbody's OWN flag, from the studio's
+   *  Membership setup, and it can rest on an autopay contract or on a
+   *  pricing option within its dates with no sessions left (T56, Pete's
+   *  Devin: one Drop In at 0 remaining, still an M). The M chip's modal
+   *  reads /api/membership to show what it rests on. */
   member: boolean;
 }
 
@@ -264,9 +455,20 @@ async function briefsForIds(ids: string[]): Promise<Map<string, ClientBrief>> {
   return out;
 }
 
-export async function classRoster(classId: number): Promise<ClassRoster> {
+/**
+ * `summary: false` skips the around-now `/class/classes` lookup that
+ * fills name, teacher, startsAt, capacity and booked (they come back as
+ * their defaults). T46: a class on another day is never in that window,
+ * so for it the call was a metered miss on every roster load; the page
+ * holds that day's list already and merges the roster's counts only
+ * when present.
+ */
+export async function classRoster(
+  classId: number,
+  opts: { summary?: boolean } = {},
+): Promise<ClassRoster> {
   const [classes, rawEntries] = await Promise.all([
-    classesAroundNow(),
+    opts.summary === false ? Promise.resolve([]) : classesAroundNow(),
     rosterFor(classId),
   ]);
 
@@ -367,7 +569,49 @@ export async function classRoster(classId: number): Promise<ClassRoster> {
  */
 export interface BookingResult {
   visitId: number | null;
+  /** `Visit.SignedIn` on the booking answer (class.yml, AddClientToClassVisit):
+   *  T19 saw an after-start booking come back already signed in, and the
+   *  guest flow (T59c) reads this to skip a sign-in Mindbody already
+   *  made. null when the answer did not say, or the write was suppressed. */
+  signedIn: boolean | null;
+  /** T62: the pass Mindbody actually applied, `Visit.ServiceId` and
+   *  `Visit.ServiceName` on the booking answer (class.yml,
+   *  AddClientToClassVisit: "the ID of the client's pricing option
+   *  applied to the class visit", the same purchase-instance id a class
+   *  visit's `Service.Id` carries). Pete's live probe (2026-09-04) saw
+   *  Mindbody accept a ClientServiceId and pay the visit with a
+   *  different pass without a word, so a caller that sent one must read
+   *  this back rather than assume. null when the answer omits it, or the
+   *  write was suppressed. */
+  serviceId: number | null;
+  serviceName: string | null;
   suppressed: "dry-run" | "write-guard" | null;
+}
+
+/**
+ * T62: one visit's payment as `/class/classvisits` reports it, for a
+ * caller that needs to know whose pass Mindbody put a visit on when the
+ * booking answer did not say. One metered read (the whole class's
+ * visits, the same call the roster makes); null when the visit is not
+ * on that class's list. `clientServiceId` null with a non-null answer
+ * means the visit carries no pass at all.
+ */
+export async function visitPayment(
+  classId: number,
+  visitId: number,
+): Promise<{
+  clientId: string;
+  clientServiceId: number | null;
+  pricingOption: string | null;
+} | null> {
+  const entries = await rosterFor(classId);
+  const entry = entries.find((e) => e.visitId === visitId);
+  if (!entry) return null;
+  return {
+    clientId: entry.clientId,
+    clientServiceId: entry.clientServiceId,
+    pricingOption: entry.pricingOption,
+  };
 }
 
 export async function bookClientIntoClass(opts: {
@@ -378,6 +622,8 @@ export async function bookClientIntoClass(opts: {
   /** Purchase-instance id of the pass that pays, when explicitly chosen.
    *  Omitted otherwise, and the payload is unchanged from before. */
   clientServiceId?: number;
+  /** T49: the signed-in teacher to book as, when there is one. */
+  actor?: Actor | null;
 }): Promise<BookingResult> {
   const body: Record<string, unknown> = {
     ClientId: opts.clientId,
@@ -395,11 +641,22 @@ export async function bookClientIntoClass(opts: {
     method: "POST",
     body,
     clientId: opts.clientId,
+    ...(opts.actor ? { actor: opts.actor } : {}),
   });
-  if (res?.DryRun) return { visitId: null, suppressed: "dry-run" };
-  if (res?.WriteSuppressed) return { visitId: null, suppressed: "write-guard" };
+  const none = { visitId: null, signedIn: null, serviceId: null, serviceName: null };
+  if (res?.DryRun) return { ...none, suppressed: "dry-run" };
+  if (res?.WriteSuppressed) return { ...none, suppressed: "write-guard" };
   const id = res?.Visit?.Id;
-  return { visitId: typeof id === "number" ? id : null, suppressed: null };
+  const signedIn = res?.Visit?.SignedIn;
+  const serviceId = res?.Visit?.ServiceId;
+  const serviceName = res?.Visit?.ServiceName;
+  return {
+    visitId: typeof id === "number" ? id : null,
+    signedIn: typeof signedIn === "boolean" ? signedIn : null,
+    serviceId: typeof serviceId === "number" && Number.isInteger(serviceId) ? serviceId : null,
+    serviceName: typeof serviceName === "string" && serviceName ? serviceName : null,
+    suppressed: null,
+  };
 }
 
 /**
@@ -424,11 +681,14 @@ export async function bookClientIntoClass(opts: {
 export async function removeClientFromClass(
   clientId: string,
   classId: number,
+  /** T49: the signed-in teacher to cancel as, when there is one. */
+  actor?: Actor | null,
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
   const res = await mindbody("/class/removeclientfromclass", {
     method: "POST",
     body: { ClientId: clientId, ClassId: classId, SendEmail: false },
     clientId,
+    ...(actor ? { actor } : {}),
   });
   if (res?.DryRun) return { suppressed: "dry-run" };
   if (res?.WriteSuppressed) return { suppressed: "write-guard" };
@@ -552,11 +812,14 @@ export async function setVisitService(
   /** Who the visit belongs to, for POS_WRITE_CLIENT_IDS only; never
    *  merged into the payload. */
   clientId?: string,
+  /** T49: the signed-in teacher to make the change as, when there is one. */
+  actor?: Actor | null,
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
   const res = await mindbody("/client/updateclientvisit", {
     method: "POST",
     body: { VisitId: visitId, ClientServiceId: clientServiceId },
     clientId,
+    ...(actor ? { actor } : {}),
   });
   if (res?.DryRun) return { suppressed: "dry-run" };
   if (res?.WriteSuppressed) return { suppressed: "write-guard" };
@@ -572,10 +835,20 @@ export async function setSignedIn(
    * guard would suppress every check-in whenever it is armed.
    */
   clientId?: string,
-): Promise<void> {
-  await mindbody("/client/updateclientvisit", {
-    method: "POST",
-    body: { VisitId: visitId, SignedIn: signedIn },
-    clientId,
-  });
+  /** T49: the signed-in teacher to sign the client in as, when there is
+   *  one, so Mindbody's sign-in record names them. */
+  actor?: Actor | null,
+): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
+  const res = await mindbody<{ DryRun?: boolean; WriteSuppressed?: boolean }>(
+    "/client/updateclientvisit",
+    {
+      method: "POST",
+      body: { VisitId: visitId, SignedIn: signedIn },
+      clientId,
+      ...(actor ? { actor } : {}),
+    },
+  );
+  if (res?.DryRun) return { suppressed: "dry-run" };
+  if (res?.WriteSuppressed) return { suppressed: "write-guard" };
+  return { suppressed: null };
 }

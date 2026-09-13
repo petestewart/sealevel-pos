@@ -298,8 +298,9 @@ a starting point. Copy it, do not try to share it: a published package between
 two repos for ~200 lines of HTTP is more coupling than it saves. If a third
 consumer ever appears, extract it then.
 
-Auth: Clerk if we want teacher-level attribution, or a single studio device
-session with a PIN if we do not. See open question 3.
+Auth: a studio device session with a PIN (T21). Teacher identity is asked
+for only where it matters, a comp, with a PIN of the teacher's own (T48).
+See open question 3.
 
 ## The speed argument
 
@@ -1013,12 +1014,47 @@ account is wired up and enumerate any custom payment types.
 client's first-ever purchase, about one a day. Option C is dead; options A and B
 cover the rest.
 
-**3. Teacher identity. Decided for now: one service account.** The POS acts as
-`sealevelapiuser` and records who was on shift on its own side if we ever want
-that. Mindbody will attribute every check-in and sale to the service account.
-Pete is checking whether that disturbs commission or payroll reporting; if it
-does, the fallback is per-teacher staff logins, which is why auth in Phase 1.5
-should not assume a single identity is permanent.
+**3. Teacher identity. Answered twice (Pete, 2026-09-02): T44 tried a
+shift sign-in from the last four of a teacher's phone; T48 replaced it after
+Pete's live test with a PIN per teacher, ours, asked for by a comp and by
+nothing else.** The POS still acts as `sealevelapiuser` against Mindbody;
+the teacher layer is ours. Nothing asks who is at the counter at the start
+of a shift: check-ins, bookings, pass changes and the waiver carry no
+teacher, since (Pete) "probably don't need to require a pin for everything.
+comp is something where we do." A comp asks every time, inside the comp
+dialog, after the reason and before anything is armed: "Who is comping
+this? Enter your PIN", 4 to 6 digits. The answer is a one-shot token, ten
+minutes, signed server-side for the teacher whose PIN matched, and
+`/api/checkout` refuses a comp without a valid one before its first
+Mindbody call, with the device lock on or off. That last clause is the
+point: T44's layer was optional with no `POS_PIN`, and a real $2 comp went
+to Mindbody with `teacher=none`.
+
+The PINs are stored by us, hashed with a per-row salt, indexed by a keyed
+HMAC and UNIQUE on it, so two teachers cannot hold the same PIN (a phone's
+last four could not promise that, and not everyone has a phone on file). A
+teacher sets or changes theirs from the PIN step by signing in to Mindbody
+once with their own username and password: `/usertoken/issue` with THOSE
+credentials names the staff id, which must be an active teacher, and the
+token is revoked as soon as it has been read. Someone with no Mindbody
+login gets a PIN set by staff id through the devtools-gated admin route.
+
+The payroll caveat stood until T49 (Pete: "Mindbody sign-in might be the
+right move then. today that's what they already do, and this probably
+makes observability better, assuming MB tracks who made sales, etc."). A
+teacher can now sign in with their own Mindbody login from the header,
+and every write from that iPad then runs under THEIR token (the
+`Authorization` header on that call), so Mindbody's own sale and sign-in
+records name them; the token stays in server memory, the browser holds an
+opaque cookie, and nothing requires the sign-in: with nobody signed in
+the POS still acts as `sealevelapiuser`. The comp PIN stays on top as
+friction. Each teacher's permission group now matters; a write their
+group refuses is done once as the service account with an amber line
+saying so (a comp is refused instead), and `GET /api/teacher/probe` reads
+the group and Test-prices a cart under their token. Unverified live, and
+first on the list: that a teacher's login issues a token through the
+studio's API key, and that Mindbody's reports show the token's staff
+member.
 
 **4. Wifi at the counter. Proposed answer: do not build offline.** The design
 already forbids queuing a sale. And a queued check-in is exactly the failure

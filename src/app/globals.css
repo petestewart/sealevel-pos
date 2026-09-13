@@ -10,22 +10,45 @@
    * checkboxes in the settings panel, the search field's caret and autofill
    * shading, scrollbars, and default focus rings. Without it those render
    * light on a dark screen no matter how carefully the palette below is
-   * written. */
-  color-scheme: light dark;
+   * written. Light here; the dark block below sets it to dark. */
+  color-scheme: light;
 
-  --bg: #fbfaf8;
+  /* T70: the modernist palette (docs/design/mockups/visual-pass/README.md,
+   * "Design tokens"), replacing T39.1's warm paper. Cool-warm neutrals, the
+   * studio teal-green as the one accent, and every token defined again in
+   * the dark block below with the same names. Roles:
+   *   --bg page ground; --surface rows, bars, cards; --surface-2 quiet
+   *   fills, hover, keypad keys; --line the 1px hairline between rows and
+   *   cells; --rule the strong 2px divider between regions.
+   *   --accent means actionable or selected and nothing else (--accent-press
+   *   under a finger, --accent-ink on the fill, --accent-bg the selected
+   *   surface). --ok checked in; --warn unpaid, no pass, change due; --stop
+   *   destructive or blocked only; --gold the member badge, count badges
+   *   and "1 left". --scrim the modal backdrop, --shadow-lg the one shadow
+   *   (modals and dropdowns; nothing else casts one).
+   * The T39 names (--action-bg, --bar-bg, --line-soft, --shadow, the
+   * disabled pair) are gone; nothing resolves them any more. */
+  --bg: #f0efee;
   --surface: #ffffff;
-  --line: #e3ded6;
-  --ink: #1d1b18;
-  --muted: #6d6659;
-  --ok: #0f7b4f;
-  --ok-bg: #e6f4ec;
-  --warn: #8a5a00;
-  --warn-bg: #fdf1dc;
+  --surface-2: #f8f4f4;
+  --line: #d7d3d3;
+  --rule: #201e1d;
+  --ink: #201e1d;
+  --muted: #605d5d;
+  --accent: #166d67;
+  --accent-press: #0f4f4a;
+  --accent-ink: #ffffff;
+  --accent-bg: #e3efee;
+  --ok: #0f6b46;
+  --ok-bg: #e3f1e9;
+  --warn: #7a4f00;
+  --warn-bg: #f7ecd4;
   --stop: #a32020;
-  --stop-bg: #fbe9e9;
-  --accent: #1d4ed8;
-  --action-bg: #e0d9cc;
+  --stop-bg: #f8e6e6;
+  --gold: #6d4a05;
+  --gold-bg: #f0dcae;
+  --scrim: rgba(24, 22, 21, 0.55);
+  --shadow-lg: 0 16px 48px rgba(24, 22, 21, 0.28);
 }
 
 * {
@@ -38,8 +61,11 @@ body {
   padding: 0;
   background: var(--bg);
   color: var(--ink);
-  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-    sans-serif;
+  /* T70: Archivo (400 / 600 / 800), one family for headings and body,
+   * self-hosted by next/font from layout.tsx; the system stack is the
+   * fallback while it loads. */
+  font: 16px/1.4 var(--font-archivo), -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -52,9 +78,36 @@ button {
 }
 
 .shell {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 16px;
+  /* T70: edge to edge (Roster.dc.html). The bars and rules run the whole
+   * width and the rows carry their own 20px inset; the 1400 cap and the
+   * 16px inset of T66 are gone with it. */
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  /* T55 (Pete, 2026-09-03: "it should only be the rows of students that
+   * scroll while the rest stays stationary"): the shell is the viewport's
+   * height and a column, so the banner, class bar, search and column
+   * headings stay put and the roster list below them is the one thing
+   * that scrolls. min-height: 0 on the list lets it shrink under the
+   * pinned parts instead of growing the shell past the viewport. */
+  box-sizing: border-box;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell > .roster {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* Room under the last row so it clears the dev pill, and so the
+   * bottom border is not the viewport's edge. */
+  padding-bottom: 24px;
+  /* T57 review: the list is a grid, and stretching it to the viewport
+   * (flex: 1 1 auto) spread five rows over the whole height with a
+   * gap after each. Rows stay their own height, top-aligned. */
+  grid-auto-rows: max-content;
+  align-content: start;
 }
 
 /* --- Class header ---------------------------------------------------
@@ -64,12 +117,271 @@ button {
  * three counters compacted on the right so the whole thing fits iPad
  * landscape. Wraps on narrower screens rather than clipping. */
 
+/* T70: the top bar (Roster.dc.html). 76px, on the surface, a 2px rule
+ * under it, every control a cell split from the next by a hairline.
+ * The picker takes the slack; nothing wraps, because the bar's cells
+ * are sized for the counter iPad in landscape (the 860 query below
+ * narrows them for portrait). */
 .class-header {
   display: flex;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  gap: 0;
+  min-height: 76px;
+  margin: 0;
+  border-bottom: 2px solid var(--rule);
+  background: var(--surface);
+}
+
+.class-pick {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+}
+
+/* The current class IS the button: kicker over title, chevron at the
+ * far right, no border of its own (the bar's hairlines draw it). */
+.class-pick-btn {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 76px;
+  padding: 0 18px;
+  display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 4px;
+  justify-content: space-between;
+  gap: 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.class-pick-btn:active {
+  background: var(--surface-2);
+}
+
+.class-pick-btn > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+/* The dropdown hangs off the picker cell's full width: 2px rule, the
+ * one shadow, a 120ms fade, no padding (the rows draw their own
+ * hairlines). */
+.class-pick .class-pick-dd {
+  top: calc(100% + 2px);
+  left: 0;
+  right: auto;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+}
+
+/* One 72px row per class: time in a 108px column, name over teacher,
+ * the count badge at the right. The selected class is the filled row
+ * (2.4), not a check. */
+.class-pick-dd .pass-opt {
+  grid-template-columns: 108px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 72px;
+  padding: 0 18px;
+}
+
+.class-opt-time {
+  display: flex;
+  flex-direction: column;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.class-opt-day {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.class-pick-dd .pass-opt-name {
+  font-weight: 600;
+}
+
+.class-opt-teacher {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Gold when anyone is booked; the quiet pair at zero, so the filled
+ * selected row and a busy class can never be confused (2.4). */
+.class-opt-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: var(--gold-bg);
+  color: var(--gold);
+}
+
+.class-opt-count.zero {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+/* --- Day control (T46) -----------------------------------------------
+ * Beside the class dropdown: a 64px outlined button carrying the
+ * calendar glyph, the same shell as .class-change. The glyph is the
+ * whole label on every day (T61; from T46 to T60 the chosen date sat
+ * beside it as text, and a "Viewing Fri Sep 4" line ran under the row).
+ * The accent outline says another day is showing; the date is in the
+ * button's label and tooltip. */
+.cal-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 76px;
+  min-height: 76px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.cal-btn:active {
+  background: var(--surface-2);
+}
+
+/* Another day is showing: the accent pair on the cell, since the date
+ * itself lives in the label and the roster's banner. */
+.cal-btn.viewing {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+/* A picked day with nothing on it: the message takes the class's slot. */
+.class-none {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0 18px;
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+}
+
+/* The day banner above the roster: the warn pair, both palettes, 16px.
+ * The mode banner at the top keeps its own shape. */
+.day-banner {
+  margin: 0;
+  padding: 10px 20px;
+  border-radius: 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 16px;
+  font-weight: 600;
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+/* T61 review: the "Loading Fri Sep 4..." line while a picked day loads,
+ * the day banner's geometry in the muted colour, so the list does not
+ * jump when the banner takes its place. */
+.day-loading {
+  margin: 0;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line);
+  font-size: 16px;
+}
+
+/* The calendar modal: a month grid. Seven 64px columns plus the gaps is
+ * 472px, which the modal's 24px padding wraps at 520; on a screen too
+ * narrow for that the cells shrink to the 44px icon floor. */
+.modal.modal-cal {
+  width: min(520px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+}
+
+.cal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.cal-title {
+  flex: 1;
+  margin: 0;
+  text-align: center;
+}
+
+.cal-nav {
+  flex: 0 0 auto;
+  width: 64px;
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cal-nav:active {
+  background: var(--surface-2);
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(44px, 64px));
+  justify-content: center;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.cal-wd {
+  text-align: center;
+  font-size: 16px;
+  color: var(--muted);
+  padding: 4px 0;
+}
+
+.cal-day {
+  aspect-ratio: 1;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.cal-day:active {
+  background: var(--surface-2);
+}
+
+/* Today is ringed; the chosen day is filled. Today chosen is both, and
+ * the fill wins visually while the ring stays as the outline. */
+.cal-day.today {
+  border-color: var(--accent);
+}
+
+.cal-day.sel {
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .class-current {
@@ -80,16 +392,29 @@ button {
 
 .class-when {
   font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
+  /* The date line stays one line (T61); only the title wraps. */
+  white-space: nowrap;
 }
 
+/* T61 (Pete: "the selected class should not have elipsis, it needs to
+ * fully display"): the title wraps onto a second line when the group is
+ * narrower than the name, and the button grows past 64px to hold it.
+ * It ellipsized from T46 to T60 because the row had no room to spare;
+ * T61 gives it the width the day control's date and the teacher's name
+ * used to take, and past that it wraps rather than clips. A single word
+ * longer than the line (nothing on the schedule is) breaks rather than
+ * overflows the button. */
 .class-title {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 20px;
-  font-weight: 600;
+  overflow-wrap: anywhere;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
 }
 
 /* Quiet, but a real labelled button: switching classes is deliberate and
@@ -99,15 +424,64 @@ button {
   min-height: 64px;
   padding: 0 20px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 16px;
   font-weight: 600;
 }
 
-.class-change:active {
-  background: var(--action-bg);
+.class-change:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+/* T70: the Buy cell, the bar's one accent fill (Roster.dc.html): it
+ * navigates to the sale screen and never sells by itself. Flush-left
+ * label like every wide button. */
+.class-buy {
+  flex: 0 0 auto;
+  width: 108px;
+  min-height: 76px;
+  padding: 0 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 19px;
+  font-weight: 800;
+}
+
+.class-buy:active {
+  background: var(--accent-press);
+}
+
+/* The sun cell: light or dark for this iPad. */
+.class-theme {
+  flex: 0 0 auto;
+  width: 64px;
+  min-height: 76px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.class-theme:active {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.class-change:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* Counters for the selected class: three numbers a teacher reads at arm's
@@ -115,20 +489,33 @@ button {
  * label) but never under the 64px tap floor. */
 
 .counters {
+  flex: 0 0 auto;
   display: flex;
-  gap: 8px;
-  margin-left: auto;
+  gap: 0;
+  margin-left: 0;
+  border-left: 1px solid var(--line);
 }
 
+/* 152 / 152 / 128 wide (Roster.dc.html), a hairline between, the label
+ * over the number, flush left. */
 .counter {
   position: relative;
-  min-height: 64px;
-  min-width: 96px;
-  padding: 8px 14px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
+  width: 152px;
+  min-height: 76px;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
   text-align: left;
+}
+
+.counter:last-child {
+  width: 128px;
+  border-right: 0;
 }
 
 /* The signed-up counter is a stat, not a control: same card, no pressed
@@ -138,25 +525,35 @@ button {
 }
 
 .counter:active {
-  background: var(--action-bg);
+  background: var(--surface-2);
+}
+
+/* T66: the same idea as the Buy screen's Total/Due/Change figures (a
+ * small uppercase label over a mono tabular number), at the size the
+ * counters already had. The "of 30" capacity suffix is gone (Pete:
+ * "'of 30' is not needed"); a full class still shows through the
+ * waitlist count and the row's booking-only state. */
+.counter-label {
+  display: block;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--muted);
 }
 
 .counter-num {
   display: block;
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
 }
 
-.counter-cap {
-  font-size: 16px;
-  font-weight: 400;
-  color: var(--muted);
-}
-
-.counter-label {
-  display: block;
-  font-size: 16px;
-  color: var(--muted);
+/* CHECKED IN's number is the one green figure in the bar. */
+.counter-num.ok {
+  color: var(--ok);
 }
 
 /* Roster order: ONE quiet 44px icon at the right end of the column-header
@@ -172,17 +569,18 @@ button {
 
 .sort-dd {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 10px);
   right: 0;
   z-index: 25;
-  min-width: 240px;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  min-width: 260px;
+  padding: 0;
+  border: 2px solid var(--rule);
+  border-radius: 0;
   background: var(--surface);
-  box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
+  box-shadow: var(--shadow-lg);
   display: grid;
-  gap: 2px;
+  gap: 0;
+  animation: pos-fade 120ms ease-out;
 }
 
 /* Sort options reuse the dropdown-option idiom minus the fact columns. */
@@ -195,8 +593,11 @@ button {
  * Enter"). */
 .search-bar {
   display: flex;
-  gap: 8px;
-  margin: 12px 0;
+  align-items: stretch;
+  gap: 0;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
 }
 
 .search-wrap {
@@ -207,36 +608,44 @@ button {
 
 .search-go {
   flex: 0 0 auto;
-  min-height: 64px;
-  padding: 0 24px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
+  min-height: 60px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
   color: var(--ink);
   font-size: 16px;
   font-weight: 600;
 }
 
 .search-go:active {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 /* The quiet minimum-length message under the search bar. */
 .search-quiet {
-  margin: -4px 0 12px;
+  margin: 0;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--line);
   font-size: 16px;
   color: var(--muted);
 }
 
 .search {
   width: 100%;
-  min-height: 64px;
-  padding: 0 64px 0 16px; /* room for the clear button */
-  font-size: 20px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
+  min-height: 60px;
+  padding: 0 60px 0 18px; /* room for the clear button */
+  font-size: 19px;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
   color: var(--ink);
+}
+
+.search:focus-visible {
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 /* Clears the query. Same quiet treatment as the row's check-out X; a full
@@ -246,12 +655,12 @@ button {
   right: 0;
   top: 0;
   bottom: 0;
-  width: 64px;
+  width: 60px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 12px;
+  border-radius: 0;
   background: none;
   color: var(--muted);
 }
@@ -265,18 +674,20 @@ button {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 8px;
+  gap: 0;
 }
 
+/* The counter modals' list rows: a hairline between, nothing else. */
 .row {
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
   min-height: 72px;
-  padding: 12px 16px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   background: var(--surface);
   text-align: left;
 }
@@ -302,31 +713,76 @@ button {
    * alert and notes icons into one. */
   /* The balance column (7em) fits a five-figure negative (-$12,345.67)
    * at 16px tabular figures without ellipsizing. */
-  --roster-cols: minmax(0, 2fr) 74px minmax(0, 1.8fr) 7em 208px;
+  /* Actions 328px = chip 120 + undo/trash 44 + buy 44 + profile 44 +
+   * Mindbody link 44 + four 8px gaps (the Buy bag joined the cell for
+   * the second live test, the profile icon in T42); the header's sort
+   * icon rides the same column. The chip is budgeted at what "checked
+   * in" actually renders (120px at 16px/600 with its padding), not its
+   * 104px min-width: the T39 review found the widest chip overlapping
+   * the undo control in a 260px column sized to the minimum. Every slot
+   * is always occupied (a spacer stands in for a missing control). */
+  /* Name vs payment split (Pete, 2026-09-03, "get rid of all the
+   * ellipsis in the payment column"): pass names ("New Student 2 Week
+   * Unlimited", "Monthly Committed Membership") run longer than any
+   * client name, so the payment column takes the larger share. The
+   * name column floors at 220px, which fits the studio's longest names
+   * at 20px/600 before the payment column starts giving way. */
+  /* T70 (Roster.dc.html): name | payment | balance | chip | actions.
+   * The chip's own fixed column is what keeps the tap line straight
+   * down the list; the actions cell holds four 44px squares 2px apart
+   * (undo or trash, sell, profile, Mindbody) with 6px to spare. */
+  /* T71 (Pete: "all buttons/pills in that column need to be the same
+   * standard width"): the chip column is the width of the widest label
+   * ("checking in" with its spinner, at 16px/800 Archivo plus 14px
+   * padding each side), and every chip in it is 100% of the cell, so
+   * "check in" and "checked in" are the same box. The M badge and the
+   * info icon left the name line for a fixed 78px column of their own
+   * between the name and the payment (Pete: "lined up in the same
+   * column rather than just to the right of the names"); the name
+   * column gave up the width, and the split moved to 1.6:1.9 so
+   * "Monthly Committed Membership" still sits on one line at 1194
+   * beside the guest icon (a name never runs as long as a pass). */
+  --roster-cols: minmax(0, 1.6fr) 78px minmax(0, 1.9fr) 104px 156px 188px;
 }
 
 .roster-head,
 .rrow {
   display: grid;
   grid-template-columns: var(--roster-cols);
-  gap: 12px;
+  gap: 16px;
   align-items: center;
 }
 
+/* The column heads: 16px uppercase kickers over a 2px rule. */
 .roster-head {
-  margin-top: 4px;
-  padding: 0 16px 4px;
+  margin: 0;
+  padding: 10px 20px;
+  border-bottom: 2px solid var(--rule);
   font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
+}
+
+/* T60: the roster's head row is a tap target (it scrolls the list to the
+ * top), so a double tap must not select "Name" or "Payment". The cursor
+ * stays default: it is a heading that happens to respond, not a button
+ * to hunt for. The search modal's head is not a target; it has no
+ * handler and this rule is harmless there. */
+.shell > .roster-head {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .rrow {
   /* Anchors the payment-change dropdown (see .pass-dd). */
   position: relative;
   min-height: 72px;
-  padding: 8px 16px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  padding: 0 20px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   background: var(--surface);
 }
 
@@ -337,45 +793,120 @@ button {
   transition: opacity 120ms ease-out;
 }
 
-/* The row body is deliberately NOT a tap target (T16 reversal: row-tap
- * check-in caused accidental check-ins in live use). The chip in the
- * actions cell is the one check-in/add trigger; the row keeps the
- * default cursor. */
+/* The ROSTER row body is deliberately NOT a tap target (T16 reversal:
+ * row-tap check-in caused accidental check-ins in live use). The chip in
+ * the actions cell is the one check-in trigger; the row keeps the default
+ * cursor. The search modal's rows are the exception since T42 (Pete:
+ * "tapping on the row at all should select the client", "remove the +
+ * icon and make the whole row clickable"): attaching a sale writes
+ * nothing, and a walk-in add keeps every gate it had on the "+". */
+.rrow.rrow-tap {
+  cursor: pointer;
+}
 
-/* "no waiver" pill riding a walk-in result's name line: same stop pairing
- * as the roster's blocked chip, sized to the line. Tokens, both palettes. */
-.mini-stop {
+.rrow.rrow-tap:hover,
+.rrow.rrow-tap:active {
+  background: var(--accent-bg);
+}
+
+/* The standing pill on a search row (T32, T42): where this person sits
+ * in the class in question, TEXT rather than a control, because neither
+ * attaching a sale nor reading a search result moves attendance. Checked
+ * in takes the roster chip's ok pairing so it reads the same on both
+ * screens; signed up and waitlist are deliberately quiet, being ordinary
+ * states. Tokens, both palettes. */
+.mini-in,
+.mini-signed {
   flex: 0 0 auto;
-  margin-left: 6px;
-  padding: 1px 10px;
-  border-radius: 999px;
-  background: var(--stop-bg);
-  color: var(--stop);
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 0;
   font-size: 16px;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+/* The pill's own grid column (T42, Pete: "the pills should all be lined
+ * up vertically"): a fixed column in --roster-cols rather than a flow
+ * item trailing the name, so every chip starts at the same x. */
+.cell-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+/* The email and phone line under a search result's name (T42): the
+ * studio has duplicate names, and this is how Mindbody's own search
+ * tells them apart. 14px muted, the recorded metadata exception (same
+ * standing as .pass-facts); truncates rather than wrapping the row. */
+.contact-line {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* T71: the searched text inside a result, bold and in the ink, no
+ * fill: a <mark> for the semantics (screen readers announce it), the
+ * browser's yellow highlight overridden with the tokens. In the name
+ * (600) it steps up to 800; in the muted contact line it goes to the
+ * ink at 700, which is what makes an email-only match legible. */
+.hit {
+  background: transparent;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.contact-line .hit {
+  font-weight: 700;
+}
+
+.mini-in {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.mini-signed {
+  background: var(--surface-2);
+  color: var(--muted);
 }
 
 .cell-name {
   min-width: 0;
 }
 
-/* The roster's fixed icon block between the name and the payment: two
- * slots in a set order (M | info), each the same width on every row and
- * empty when the row lacks the marker, so every marker aligns as its own
- * column down the list. 74px total = 30 + 44, and the --roster-cols
- * column must stay equal to it. One info slot since T20: the alert and
- * notes icons folded into the single info icon. */
+/* The roster's fixed icon block between the name and the payment (back
+ * in its own grid column since T71): two slots in a set order (M |
+ * info), each the same width on every row and empty when the row lacks
+ * the marker, so every marker aligns as its own column down the list.
+ * 78px total = 32 (the M button) + 2 + 44 (the info icon), and the
+ * --roster-cols column must stay equal to it. One info slot since T20:
+ * the alert and notes icons folded into the single info icon. */
 .cell-icons {
-  display: grid;
-  grid-template-columns: 30px 44px;
-  align-items: center;
-  justify-items: center;
-}
-
-.icon-slot {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cell-icons .m-slot {
+  flex: 0 0 auto;
+  width: 32px;
+}
+
+/* The M badge's button and the info icon keep their 44px height inside
+ * a name line that is only 28px tall: the negative margin lets the row
+ * stay 72px with a subline under the name. */
+.name-line .row-icon,
+.name-line .m-chip-btn {
+  height: 44px;
+  margin: -8px 0;
 }
 
 /* Gap 2px: the name-line icons cluster right after the name instead of
@@ -386,17 +917,17 @@ button {
 .name-line {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 8px;
   min-width: 0;
 }
 
 .name-text {
   min-width: 0;
-  margin-right: 6px;
+  margin-right: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 600;
 }
 
@@ -404,6 +935,10 @@ button {
  * message (in-flight, failed, gate) which outranks it. */
 .subline {
   display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 16px;
   color: var(--muted);
 }
@@ -423,14 +958,25 @@ button {
   width: 44px;
   height: 44px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   text-decoration: none;
 }
 
+/* Hover and press tints (Roster.dc.html): neutral icons go ink on the
+ * quiet fill, the sell icon takes the accent pair, undo and trash the
+ * stop pair (see .undo-btn). */
+.row-icon:hover,
 .row-icon:active {
-  background: var(--line);
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+.row-icon.sell:hover,
+.row-icon.sell:active {
+  color: var(--accent);
+  background: var(--accent-bg);
 }
 
 .row-icon:disabled {
@@ -468,6 +1014,14 @@ button {
   color: var(--accent);
 }
 
+.cell-pay .pass-toggle:hover,
+.cell-pay .pass-toggle:active,
+.guest-btn:hover,
+.guest-btn:active {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
 /* The two-line block in the payment cell: pass name over its facts. The
  * chevron sits OUTSIDE this stack (flex sibling, margin-left auto), so it
  * stays pinned right and vertically centered against both lines. */
@@ -480,9 +1034,15 @@ button {
 .pay-name {
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 16px;
+  font-weight: 600;
+  /* Wraps to a second line before it truncates (Pete, 2026-09-03): a
+   * pass name cut to "Monthly Committed Membe..." tells the teacher
+   * less than a row 20px taller does. Two lines, then the ellipsis. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 
 /* The facts sub-line under the pass name: "3 remaining, exp 3/2/27".
@@ -496,7 +1056,9 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
+  /* T70: 16px like the mockup's expiry line; the 14px exception T15
+   * recorded here is retired with the pass. */
+  font-size: 16px;
   color: var(--muted);
 }
 
@@ -512,6 +1074,7 @@ button {
  * into the row padding rather than render "...". */
 .cell-bal {
   font-size: 16px;
+  font-weight: 600;
   text-align: right;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -529,11 +1092,23 @@ button {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 2px;
 }
 
-.cell-actions .chip {
-  border: 0;
+/* The chip column: the chip is wider than "checked in" needs only by
+ * its padding, and may run into the 16px gap beside it; nothing sits
+ * there. */
+.rrow > .cell-chip {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: visible;
+}
+
+/* T71: one width for every chip in the column, whatever the label. */
+.rrow > .cell-chip > .chip {
+  width: 100%;
+  min-width: 0;
 }
 
 .act-spacer {
@@ -559,18 +1134,32 @@ button {
  * left-anchored dropdown under the payment cell could. */
 .pass-dd {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 2px);
   right: 0;
   z-index: 25;
   min-width: min(520px, 92vw);
   max-width: min(520px, 92vw);
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  padding: 0;
+  border: 2px solid var(--rule);
+  border-radius: 0;
   background: var(--surface);
-  box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
+  box-shadow: var(--shadow-lg);
   display: grid;
-  gap: 2px;
+  gap: 0;
+  animation: pos-fade 120ms ease-out;
+}
+
+@keyframes pos-fade {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pass-dd,
+  .sort-dd,
+  .modal {
+    animation: none;
+  }
 }
 
 /* The search modal's pass picker: the same dropdown, but position: fixed
@@ -600,26 +1189,34 @@ button {
   align-items: start;
   gap: 10px;
   min-height: 64px;
-  padding: 20px 12px;
+  padding: 20px 16px;
   border: 0;
-  border-radius: 8px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   background: transparent;
   color: inherit;
   text-align: left;
   font-size: 16px;
 }
 
+.pass-opt:last-child {
+  border-bottom: 0;
+}
+
+button.pass-opt:hover,
 button.pass-opt:active {
-  background: var(--action-bg);
+  background: var(--surface-2);
 }
 
 button.pass-opt:disabled {
   cursor: default;
 }
 
-/* The pass paying now: checked at the top, not an action. */
-.pass-opt.current {
-  color: var(--ok);
+/* The pass paying now, or the class showing: the FILLED row (2.4), with
+ * the check where the dropdown has a check column. */
+.pass-opt.current,
+button.pass-opt.current:hover {
+  background: var(--accent-bg);
   font-weight: 600;
 }
 
@@ -669,7 +1266,7 @@ button.pass-opt:disabled {
 
 .pass-empty {
   margin: 0;
-  padding: 8px 12px;
+  padding: 12px 16px;
   font-size: 16px;
   color: var(--muted);
 }
@@ -678,8 +1275,8 @@ button.pass-opt:disabled {
  * dressed as success: a dry-run "write" did not happen. */
 .pass-note {
   margin: 0;
-  padding: 8px 12px;
-  border-radius: 8px;
+  padding: 8px 16px;
+  border-radius: 0;
   background: var(--warn-bg);
   color: var(--warn);
   font-size: 16px;
@@ -692,7 +1289,7 @@ button.pass-opt:disabled {
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--stop-bg);
   color: var(--stop);
   font-size: 16px;
@@ -712,7 +1309,7 @@ button.pass-opt:disabled {
   display: block;
   margin: 0 0 12px;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--warn-bg);
   color: var(--warn);
   font-size: 16px;
@@ -726,6 +1323,31 @@ button.pass-opt:disabled {
   margin: 0 0 12px;
   font-size: 17px;
   white-space: pre-wrap;
+}
+
+/* T58: who wrote an entry. Pete: "put the name in a lighter/different
+ * font next to the note". One idiom everywhere a note or alert renders
+ * (the info view, the profile card, a search row's alert line does not
+ * show it at all): the name and date on the line after the entry's
+ * text, 14px muted, the recorded metadata exception, and regular
+ * weight even inside the bold red alert. Tokens only, both palettes. */
+.note-sig {
+  display: block;
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.3;
+  color: var(--muted);
+  white-space: normal;
+}
+
+/* Under the editor: the teacher is told the save carries their name,
+ * so nobody is surprised by the signature they never typed. Same 14px
+ * muted metadata line. */
+.note-signed-as {
+  margin: -8px 0 16px;
+  font-size: 14px;
+  color: var(--muted);
 }
 
 /* A section heading in the info view, with its edit pencil pinned to the
@@ -769,7 +1391,7 @@ button.pass-opt:disabled {
  * one colour means one thing everywhere. Tokens only, both palettes. */
 .detail-last {
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--warn-bg);
   color: var(--warn);
   font-weight: 700;
@@ -781,31 +1403,41 @@ button.pass-opt:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 26px;
-  min-height: 26px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--surface);
+  width: 24px;
+  height: 24px;
+  border-radius: 0;
+  background: var(--gold-bg);
+  color: var(--gold);
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 /* One width for every chip, whatever the label. The chip is the rightmost
  * thing on every row, so ragged widths make the column edge zigzag and the
  * eye has to re-find the target on each row. Wide enough for the longest
  * label ("checked in") so nothing wraps or truncates. */
+/* T70: the chip state machine (README, "Chip state machine"). 48px, square,
+ * flush-left 16px/800 label; a 1px transparent border on the quiet
+ * states so the 2px borders of the loud ones do not move the text. */
 .chip {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  gap: 8px;
   min-width: 104px;
-  min-height: 32px;
-  padding: 6px 12px;
-  border-radius: 999px;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 0;
   font-size: 16px;
-  font-weight: 600;
-  text-align: center;
+  font-weight: 800;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.chip > svg {
+  flex: 0 0 auto;
 }
 
 .chip.in {
@@ -816,21 +1448,32 @@ button.pass-opt:disabled {
 .chip.unpaid {
   background: var(--warn-bg);
   color: var(--warn);
+  border-color: var(--warn);
+  border-width: 2px;
+  padding: 0 13px;
 }
 
+/* The write is on the wire: the accent fill while it lasts, then the
+ * calm green above. Chosen in this direction (README); the spinner
+ * rides the label's ink. */
 .chip.busy {
-  background: var(--line);
-  color: var(--muted);
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  border-width: 2px;
+  padding: 0 13px;
 }
 
 /* A spinner rather than a frozen row: the wait for Mindbody is 300-900ms,
- * which is long enough to look broken if nothing moves. */
+ * which is long enough to look broken if nothing moves. The one round
+ * thing on the screen, deliberately. */
 .spinner {
   display: inline-block;
   width: 15px;
   height: 15px;
+  flex: 0 0 auto;
   vertical-align: -2px;
-  border: 2px solid var(--muted);
+  border: 2px solid currentColor;
   border-top-color: transparent;
   border-radius: 50%;
   animation: spin 700ms linear infinite;
@@ -846,7 +1489,7 @@ button.pass-opt:disabled {
 
 .chip.undo {
   background: var(--accent);
-  color: var(--surface);
+  color: var(--accent-ink);
 }
 
 /* The primary action on a row: "check in" on a paid booking, "add" on a
@@ -860,28 +1503,49 @@ button.pass-opt:disabled {
  * near-white on near-white. A hardcoded colour next to a themed one is the
  * bug, not the particular shade. */
 .chip.action {
-  background: var(--action-bg);
+  background: var(--surface-2);
   color: var(--ink);
+  border-color: var(--line);
+}
+
+button.chip.action:hover,
+button.chip.action:active {
+  background: var(--line);
 }
 
 .chip.failed {
   background: var(--stop-bg);
   color: var(--stop);
+  border-color: var(--stop);
+  border-width: 2px;
+  padding: 0 13px;
 }
 
 /* The blocked state: no released waiver on file. Same stop pairing as a
  * failure, because to a teacher mid-queue it means the same thing: this tap
  * does not check anyone in. Both halves are tokens, defined in both
  * palettes. */
+/* T46: the check-in chip on a future day. Disabled and muted, both
+ * halves tokens: it says "not yet", not "blocked" or "failed". */
+.chip.future {
+  background: var(--surface-2);
+  color: var(--muted);
+  border-color: var(--line);
+  cursor: default;
+}
+
 .chip.stop {
   background: var(--stop-bg);
   color: var(--stop);
+  border-color: var(--stop);
+  border-width: 2px;
+  padding: 0 13px;
 }
 
 .note {
   margin: 16px 0;
   padding: 12px 16px;
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--stop-bg);
   color: var(--stop);
 }
@@ -890,36 +1554,51 @@ button.pass-opt:disabled {
   color: var(--muted);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14130f;
-    --surface: #1e1c18;
-    --line: #37332c;
-    --ink: #f3efe7;
-    --muted: #a49c8c;
-    --ok: #6fd39b;
-    --ok-bg: #12301f;
-    --warn: #e8b45c;
-    --warn-bg: #33260c;
-    --stop: #f08a8a;
-    --stop-bg: #341616;
-    --accent: #7ea2ff;
-    --action-bg: #464036;
-  }
+/* The dark palette. The html element carries data-theme="dark" when the
+ * iPad's setting is dark or a teacher chose dark with the sun toggle
+ * (src/app/theme.ts sets it before first paint from layout.tsx), so this
+ * is the ONE dark block and there is no prefers-color-scheme query in the
+ * CSS. Every token above appears here with the same name. The dark accent
+ * is lightened so it clears 4.5:1 on --surface; never reuse the light
+ * accent on the dark ground. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121313;
+  --surface: #1c1d1d;
+  --surface-2: #252626;
+  --line: #3a3b3b;
+  --rule: #f3f2f2;
+  --ink: #f3f2f2;
+  --muted: #9b9797;
+  --accent: #3fa89f;
+  --accent-press: #59bdb4;
+  --accent-ink: #07211f;
+  --accent-bg: #16302e;
+  --ok: #6cc79b;
+  --ok-bg: #12291f;
+  --warn: #e2b768;
+  --warn-bg: #2c2110;
+  --stop: #e88b8b;
+  --stop-bg: #2e1616;
+  --gold: #e8cf94;
+  --gold-bg: #2b2410;
+  --scrim: rgba(24, 22, 21, 0.55);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6);
 }
 
 /* A confirming action that is not destructive: adding someone to the
  * waiting list gets the action pairing, not the stop pairing. */
 .modal-confirm.go {
-  background: var(--action-bg);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 /* Mode banner. The counter must never wonder whether a tap was real. */
 .banner {
-  margin: 0 0 12px;
-  padding: 10px 16px;
-  border-radius: 12px;
+  margin: 0;
+  padding: 10px 20px;
+  border-radius: 0;
+  font-size: 16px;
   font-weight: 600;
   background: var(--ok-bg);
   color: var(--ok);
@@ -936,11 +1615,12 @@ button.pass-opt:disabled {
  * never read as, or crowd out, the dry-run/live line. Tokens only, both
  * palettes. */
 .studio-banner {
-  margin: 0 0 12px;
-  padding: 10px 16px;
-  border: 1px solid var(--line);
+  margin: 0;
+  padding: 10px 20px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
   border-left: 6px solid var(--accent);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 17px;
@@ -960,7 +1640,7 @@ button.pass-opt:disabled {
   min-height: 44px;
   padding: 8px 16px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--muted);
   font-size: 14px;
@@ -968,10 +1648,23 @@ button.pass-opt:disabled {
   box-shadow: 0 2px 12px rgb(0 0 0 / 0.25);
 }
 
+/* T39.8: with the Buy overlay open (SaleScreen puts `sale-open` on the
+ * body) the pill moves off the amount at the right into the bar's empty
+ * run. T51 review: it was centred while Empty cart sat at the left; with
+ * Empty cart beside Pay (T51) the centre is under Empty cart's left edge
+ * at 1080 once the total has four figures, and the pill (z 20) took the
+ * tap. Now a fixed offset just right of Back to items (20 + 184 + the
+ * bar's 12 gap), which both modes leave empty at every width. Next's own
+ * dev indicator, bottom left, is not ours to move. */
+body.sale-open .dev-handle {
+  right: auto;
+  left: 232px;
+}
+
 .dev-badge {
   margin-left: 8px;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--stop-bg);
   color: var(--stop);
 }
@@ -1007,7 +1700,7 @@ button.pass-opt:disabled {
   margin-left: auto;
   padding: 4px 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   font-size: 13px;
@@ -1078,7 +1771,7 @@ button.pass-opt:disabled {
   margin-left: auto;
   padding: 3px 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   font-family: inherit;
@@ -1096,7 +1789,7 @@ button.pass-opt:disabled {
 .dev-detail pre {
   margin: 0;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--bg);
   overflow-x: auto;
   white-space: pre-wrap;
@@ -1108,7 +1801,7 @@ button.pass-opt:disabled {
 .dev-tab {
   padding: 4px 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
   font-size: 13px;
@@ -1139,13 +1832,53 @@ button.pass-opt:disabled {
   width: 90px;
   padding: 6px 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--bg);
   color: var(--ink);
   font: inherit;
 }
 
 .dev-setting input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--accent);
+}
+
+/* Bundles tab (T29): the drawer-hosted admin surface. Same density and
+ * tokens as the settings tab; nothing here is teacher-facing. */
+
+.dev-setting .dev-text,
+.dev-setting select.dev-text {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+
+.dev-setting button {
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+}
+
+.dev-setting button:disabled {
+  opacity: 0.5;
+}
+
+.dev-bundle-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dev-bundle-toggle input[type="checkbox"] {
   width: 22px;
   height: 22px;
   accent-color: var(--accent);
@@ -1167,13 +1900,15 @@ button.pass-opt:disabled {
   width: 44px;
   height: 44px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
   color: var(--muted);
 }
 
+.undo-btn:hover,
 .undo-btn:active {
-  background: var(--line);
+  color: var(--stop);
+  background: var(--stop-bg);
 }
 
 /* Confirmation dialog. */
@@ -1186,16 +1921,45 @@ button.pass-opt:disabled {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgb(0 0 0 / 0.5);
+  background: var(--scrim);
 }
 
+/* T70: the dialog shell (Dialogs.dc.html): 2px rule, the one shadow,
+ * square. The body keeps 20px of inset; the head and the action cells
+ * reach the edges with negative margins so every modal gets the
+ * pattern without restructuring its content. */
 .modal {
   width: min(460px, 100%);
-  padding: 24px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
+  padding: 18px 20px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
   background: var(--surface);
-  box-shadow: 0 12px 48px rgb(0 0 0 / 0.4);
+  box-shadow: var(--shadow-lg);
+  animation: pos-fade 140ms ease-out;
+}
+
+.modal-head {
+  margin: -18px -20px 16px;
+  padding: 16px 64px 14px 20px;
+  border-bottom: 2px solid var(--rule);
+}
+
+.modal-kicker {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.modal-kicker.stop {
+  color: var(--stop);
+}
+
+.modal-head .modal-title {
+  margin: 0;
+  padding-right: 0;
 }
 
 /* Counter modals hold a list, so they run wider than a confirmation and
@@ -1207,40 +1971,247 @@ button.pass-opt:disabled {
 /* The search-results modal: wider still, because its rows reuse the
  * roster's grid layout. The column template is a sibling of
  * --roster-cols, redefined in scope so the shared .roster-head/.rrow
- * rules pick it up unchanged. Four columns since T17 -- name | passes |
- * balance | action -- because the icon column is gone: the markers moved
- * onto the name cell's second line, which is what gives the name the
- * row's whole first line. */
+ * rules pick it up unchanged. Five columns since T42 -- name (with the
+ * contact line under it) | passes | balance | standing chip | profile
+ * icon: the "+" and the Buy bag left the row, the whole row being the
+ * add now, and the chip got its own column so the chips line up. */
 .modal-search {
-  --roster-cols: minmax(0, 2.4fr) minmax(0, 1.6fr) 7em 64px;
+  --roster-cols: minmax(0, 2.4fr) minmax(0, 1.6fr) 7em 118px 44px;
   position: relative;
   width: min(860px, 100%);
+  /* T73: one fixed box in both modes (Pete: "always be the same
+   * height"), pinned near the top like attach mode's, the search bar
+   * and the head staying put while the body scrolls. */
+  align-self: flex-start;
+  margin-top: 60px;
+  height: calc(100dvh - 84px);
+  display: flex;
+  flex-direction: column;
 }
 
-/* The "+" add button on a search-result row: the .chip.action pairing in
- * a round filled button, 52px so it stays an easy target with a queue.
- * Both halves are tokens, both palettes; the spinner replaces the plus
- * while a booking is in flight. */
-.add-btn {
+/* T73: the walk-in modal's body, the one region that scrolls. */
+.search-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.search-body > .muted,
+.search-body > .note {
+  margin: 12px 20px;
+}
+
+.search-body .new-client-actions {
   flex: 0 0 auto;
+}
+
+/* Attach mode's rows (T42) carry only the name and the standing chip:
+ * no passes, no balance, no icons ("don't need all the info here"). */
+.modal-search.attach-mode {
+  --roster-cols: minmax(0, 1fr) 118px;
+  width: min(760px, 100%);
+}
+
+/* --- Attach picker (T27 round three, T32, reshaped in T42) ----------
+ * Attach mode only. Under the modal's search bar: the filter row (the
+ * "In class" toggle, the class dropdown in the pass-dropdown idiom, and
+ * the three-way segment), then ONE fixed-height scroll region of rows.
+ * Tokens only, so both palettes come from :root and the dark block. */
+.attach-quick {
+  display: grid;
+  gap: 0;
+  margin: 0 -20px -18px;
+  min-height: 0;
+}
+
+/* The search row in the attach modal reaches the edges like the
+ * roster's. */
+.attach-mode .search-bar {
+  margin: 0 -20px;
+}
+
+.attach-mode .search-quiet {
+  margin: 0 -20px;
+}
+
+/* The filter row: toggle | dropdown (about half the row) | segment. The
+ * dropdown and the segment grey out TOGETHER when the toggle is off. */
+.attach-filters {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 0;
+  border-bottom: 2px solid var(--rule);
+}
+
+.attach-filters.off .attach-class,
+.attach-filters.off .seg {
+  opacity: 0.5;
+}
+
+/* The "In class" toggle: the class-change button's shape, filled with
+ * the accent while on. 64px, the tap-target floor. */
+.filter-toggle {
+  flex: 0 0 auto;
+  min-height: 60px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.filter-toggle.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.filter-toggle:active {
+  opacity: 0.85;
+}
+
+.attach-class {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* Native-select-shaped: the picked class with a chevron, the width of
+ * its grid column so the menu below can anchor to it. */
+.attach-class-btn {
+  flex: 1;
+  min-width: 0;
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 16px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  text-align: left;
+}
+
+.attach-class-btn > svg {
+  color: var(--muted);
+}
+
+.attach-class-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-class-dd {
+  left: 0;
+  right: 0;
+  min-width: 0;
+  max-width: none;
+  max-height: min(48vh, 420px);
+  overflow-y: auto;
+}
+
+/* Class options have no fact columns: check | name only. */
+.attach-class-dd .pass-opt {
+  grid-template-columns: 20px minmax(0, 1fr);
+}
+
+/* The three-way segment (All | Signed in | Not yet): one bordered pill
+ * of 64px buttons, icon over a short label, exactly one filled with the
+ * accent. Disabled together with the dropdown when the toggle is off. */
+.seg {
   display: inline-flex;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.seg-btn {
+  display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 52px;
-  height: 52px;
+  gap: 2px;
+  width: 108px;
+  min-height: 60px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 999px;
-  background: var(--action-bg);
-  color: var(--ink);
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 600;
 }
 
-.add-btn:active {
-  background: var(--line);
+.seg-btn svg {
+  width: 20px;
+  height: 20px;
 }
 
-.add-btn:disabled {
-  opacity: 0.6;
+.seg-btn.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.seg-btn:disabled {
   cursor: default;
+}
+
+/* ONE scroll region of a FIXED height (T42, Pete: "the modal temporarily
+ * shrinks vertically while the request is made. should stay the same size
+ * always"): about five rows, whatever the rows are doing. The modal is
+ * centred in a fixed scrim and does not scroll itself, so the region
+ * scrolls; the search bar and the filter row above it stay put. */
+.attach-rows {
+  height: min(46vh, 420px);
+  overflow-y: auto;
+  display: grid;
+  gap: 0;
+  align-content: start;
+}
+
+/* Attach rows: 68px, name | standing tag | the profile icon, a hairline
+ * between, the accent tint under a finger (Buy.dc.html). */
+.attach-mode .rrow {
+  min-height: 68px;
+}
+
+/* The previous rows stay on screen, dimmed, while a search is in flight,
+ * under the quiet "Searching..." line. */
+.attach-rows.searching .roster {
+  opacity: 0.4;
+  transition: opacity 120ms ease-out;
+}
+
+.attach-line {
+  margin: 0;
+  padding: 12px 20px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* The paging sentinel at the end of a scroll-loaded list: the observer
+ * asks for the next page as it comes into view. Tall enough to be seen,
+ * quiet, and it carries the "Loading more..." line while a page is in
+ * flight. */
+.attach-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  list-style: none;
+  font-size: 16px;
+  color: var(--muted);
 }
 
 /* The one column that can NEVER ellipsize (T17): the name owns its full
@@ -1256,81 +2227,127 @@ button.pass-opt:disabled {
   overflow-wrap: anywhere;
 }
 
-/* The markers line under the name: M chip, info icon, no-waiver chip, in
- * that fixed order (the info icon is on every result row since T20). The
- * mini-stop drops the after-the-name offset it carries on a name line. */
-.marker-line {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.marker-line .mini-stop {
-  margin-left: 0;
-}
-
-/* Room for the X so a long query's title never runs under it. */
-.modal-search .modal-title {
+/* Room for the X so a long title never runs under it: every modal
+ * carries the X now (T52), always rendered before its title, so the
+ * sibling rule covers them all and lapses with the pay dialog's X. */
+.modal-x ~ .modal-title {
   padding-right: 48px;
+}
+
+/* The client profile modal (T42): opened from a roster or search row, so
+ * it must paint ABOVE the search modal's scrim (both are .modal-scrim at
+ * 30; this one goes one up) and scroll its card rather than the screen. */
+.modal-scrim.profile-scrim {
+  z-index: 31;
+}
+
+.modal-profile {
+  width: min(640px, 100%);
+}
+
+.profile-scroll {
+  max-height: min(72vh, 720px);
+  overflow-y: auto;
 }
 
 /* The modal's close-with-no-action X: the row-icon idiom (44px circle),
  * pinned to the modal's top corner. */
 .modal-x {
   position: absolute;
-  top: 14px;
-  right: 14px;
-  color: var(--ink);
+  top: 12px;
+  right: 12px;
+  /* T70 review: the 44px icon square every quiet icon gets (README,
+   * "64px+ tap targets ... 44px for quiet ... icons"); it was 40. */
+  width: 44px;
+  height: 44px;
+  color: var(--muted);
 }
 
+/* T73: inside .search-body the list no longer scrolls itself; the
+ * body does, so the head and the messages scroll with the rows. */
 .modal-roster {
-  max-height: min(55vh, 520px);
-  overflow-y: auto;
-  margin-bottom: 20px;
+  margin-bottom: 0;
 }
 
 .modal-title {
   margin: 0 0 8px;
   font-size: 22px;
-  font-weight: 600;
+  font-weight: 800;
 }
 
 .modal p.muted {
-  margin: 0 0 20px;
+  margin: 0 0 16px;
 }
 
+/* The action cells (Dialogs.dc.html): equal, 68px, split by a hairline,
+ * reaching the modal's edges, labels flush left. One button fills the
+ * row; two split it. */
 .modal-actions {
-  display: flex;
-  gap: 12px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 0;
+  margin: 16px -20px -18px;
+  border-top: 1px solid var(--line);
 }
 
 .modal-actions button {
-  flex: 1;
-  min-height: 64px;
-  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 68px;
+  padding: 0 20px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
   font-size: 17px;
-  font-weight: 600;
+  font-weight: 800;
+  text-align: left;
+}
+
+.modal-actions button:last-child {
+  border-right: 0;
 }
 
 .modal-cancel {
-  border: 1px solid var(--line);
-  background: transparent;
+  background: var(--surface);
   color: var(--ink);
 }
 
-/* The cancel-booking dialog's middle lines: the entity (who/what pass) is
- * quiet; the consequence is the ONLY stop-coloured text in the dialog, so
- * the one loud line is the thing that happens on confirm. */
+.modal-cancel:hover:not(:disabled),
+.modal-cancel:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+/* The entity card (2.5, Dialogs.dc.html): who and what state, on the
+ * quiet fill inside a hairline; the consequence under it is the ONLY
+ * stop-coloured text in the dialog, so the one loud line is the thing
+ * that happens on confirm. */
 .modal-entity {
-  margin: 0 0 8px;
-  font-size: 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.modal-entity-name {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.modal-entity-facts {
   color: var(--muted);
 }
 
 .modal-consequence {
   margin: 0 0 16px;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--stop);
 }
@@ -1355,8 +2372,8 @@ button.pass-opt:disabled {
   margin: 0 0 16px;
   padding: 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
+  border-radius: 0;
+  background: var(--surface-2);
   color: var(--ink);
   font: inherit;
   font-size: 17px;
@@ -1385,8 +2402,8 @@ button.pass-opt:disabled {
   margin: 0 0 12px;
   padding: 14px 16px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
+  border-radius: 0;
+  background: var(--surface-2);
   color: var(--ink);
   max-height: min(46vh, 440px);
   overflow-y: auto;
@@ -1403,8 +2420,3762 @@ button.pass-opt:disabled {
   margin-right: 8px;
 }
 
+/* The destructive cell: filled with the stop colour. The label is --bg,
+ * not white: on the dark palette's stop, white fails contrast (2.47:1)
+ * while --bg clears it (7.5:1 dark, 6.6:1 light). */
 .modal-confirm {
-  border: 1px solid transparent;
+  background: var(--stop);
+  color: var(--bg);
+}
+
+.modal-confirm:hover:not(:disabled),
+.modal-confirm:active:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+/* --- Lock screen (T21) ----------------------------------------------
+ * The whole page when POS_PIN is set and no session exists. Same visual
+ * system as everything else: token colours only (both palettes come from
+ * the variable swap above), nothing under 16px, 64px keys per the payment
+ * mockup's keypad. */
+
+.lock-shell {
+  max-width: 420px;
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* The one card on the page takes the dialog shell (T70). */
+.lock-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.lock-kicker {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.lock-title {
+  margin: -8px 0 0;
+  font-size: 22px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.lock-sub {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+  text-align: left;
+}
+
+/* The masked entry: one dot per digit typed, never the digits. */
+.lock-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-2);
+}
+
+.lock-dots.shake {
+  animation: lock-shake 0.3s;
+}
+
+.lock-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+.lock-dots-empty {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+@keyframes lock-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-8px); }
+  75% { transform: translateX(8px); }
+}
+
+/* Wrong PIN / lockout line. Quiet, and it reserves its height so the
+ * keypad does not jump when it appears. */
+.lock-msg {
+  margin: 0;
+  min-height: 22px;
+  font-size: 16px;
+  color: var(--stop);
+  text-align: left;
+}
+
+.lock-msg-empty {
+  visibility: hidden;
+}
+
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-2);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.key:active:not(:disabled) {
+  background: var(--line);
+}
+
+.key:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.key.back {
+  color: var(--stop);
+}
+
+.lock-unlock {
+  min-height: 68px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 17px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.lock-unlock:active:not(:disabled) {
+  background: var(--accent-press);
+}
+
+.lock-unlock:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --- Sale screen (T23) ----------------------------------------------
+ * A full-screen overlay over the roster, per the approved payment mockup
+ * (counter-refresh panel 5): receipt ticket left, category chips and the
+ * item shelf right, the T24 payment seam below. Tokens only, both
+ * palettes come from the variable swap; the receipt body is 16px
+ * monospace, a recorded allowance (the floor is 16px, monospace is the
+ * ticket idiom, not a size cheat).
+ *
+ * z-index 18: above the page, BELOW the dev drawer (19/20) so the call
+ * log stays reachable while testing pricing, and below every modal scrim
+ * (30) so the search modal in attach mode stacks over it. */
+
+.sale-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 18;
+  overflow-y: auto;
+  /* T39.4: a column the viewport bounds. The shell and the panes take
+   * flex: 1 with min-height: 0, so each pane scrolls inside itself (the
+   * grid, the rail, the cart's lines) instead of the overlay scrolling
+   * as a whole, and the action bar (T39.5) is simply the last child at
+   * the bottom. Under 900 the folds below give the height back and the
+   * overlay scrolls with the bar stuck to its edge. */
+  display: flex;
+  flex-direction: column;
+  /* A scroll that hits the overlay's end must not chain into the roster
+   * behind it: closing the sale should land exactly where the teacher
+   * was, not where a rubber-band scrolled the page to. */
+  overscroll-behavior: contain;
+  background: var(--bg);
+}
+
+/* T39.1: 1400 wide, the roster's .shell width since T66. T70: no padding
+ * (Buy.dc.html runs edge to edge; structure is rules, not gaps). */
+.sale-shell {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The mode banner runs edge to edge inside the overlay, a line across
+ * the top, not a card. It is the same ModeBanner as the roster's, 16px,
+ * in every state; only its shape changes here. */
+.sale-shell .banner {
+  margin: 0;
+  /* 32px tall: 16px text on 5px. */
+  padding: 5px 20px;
+  border-radius: 0;
+}
+
+/* The header (T70, Buy.dc.html): 76px on the surface, a 2px rule under,
+ * a row of cells split by 1px lines, each a flex cell of its own: Buy,
+ * the client slot, then the sun and Back at the right edge. */
+.sale-top {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  height: 76px;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  border-bottom: 2px solid var(--rule);
+  background: var(--surface);
+}
+
+.sale-top > * {
+  border-left: 1px solid var(--line);
+}
+
+.sale-top > :first-child {
+  border-left: 0;
+}
+
+.sale-title {
+  margin: 0;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* The client card lives in the header, beside the title (Pete, fourth
+ * live test): identity, not a payment control. Its cell takes its own
+ * width; the sun cell's auto margin takes the slack. */
+.sale-top .sale-for {
+  width: auto;
+  min-width: 0;
+  max-width: 520px;
+  margin: 0;
+}
+
+/* The sun cell: 64 wide, the muted icon, the slack of the row before
+ * it. Back: the arrow and the word, 17px/800, in its own cell. */
+.sale-sun {
+  flex: 0 0 64px;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.sale-sun:active {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+.sale-back {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 22px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.sale-back:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.sale-back:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* T39.2: rail, grid, cart, the layout of record (1a). The rail is 154
+ * and the cart 388, the canvas's numbers; the grid takes what is left,
+ * which at 1366 is 756px, four cards of 184 exactly (T39.3). The three
+ * are placed by column, not by DOM order, so the fold below can move
+ * them without touching the markup. */
+.sale-panes {
+  display: grid;
+  /* T70 (Buy.dc.html): rail 190, ticket 320, the grid between; the
+   * rules on the rail and the ticket draw the seams, so no gap. */
+  grid-template-columns: 190px minmax(0, 1fr) 320px;
+  gap: 0;
+  /* T39.4: the panes are the rest of the viewport; the columns stretch
+   * to it and each bounds its own overflow (min-height: 0 is what lets
+   * a grid item be shorter than its content). */
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.sale-cats {
+  grid-column: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.sale-right {
+  grid-column: 2;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.sale-left {
+  grid-column: 3;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The receipt ticket (T39.4): 1a's, as tokens. A flex column filling
+ * what the cart column leaves it: the head and totals are flex: none,
+ * the lines box between them takes the rest and scrolls. Sans for
+ * words, mono only for money (.amt, .t-line, the sub-line), which is
+ * most of what makes Counter read as a receipt. min-height keeps a few
+ * rows visible if the column ever has to scroll (a long audit table
+ * under the stop); overflow-y lets the ticket itself scroll past that
+ * rather than clip the totals. */
+.ticket {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 260px;
+  overflow-y: auto;
+  /* T70: the pane draws the seam (.sale-left's 2px rule); the ticket is
+   * the surface itself, borderless. One family, tabular figures; the
+   * mono of T39 is gone with it. */
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The head line (Buy.dc.html): 52px, TICKET uppercase 16px/600 in ink,
+ * the count muted beside it, a 2px rule under. */
+.t-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  height: 52px;
+  padding: 0 18px;
+  border-bottom: 2px solid var(--rule);
+}
+
+.t-head-name {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.t-head-count {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.t-rule {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 4px 0 0;
+}
+
+/* A totals row: label and figure, muted, 6px apart (Buy.dc.html). */
+.t-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 16px;
+  line-height: 1.5;
+  padding: 3px 0;
+}
+
+.t-line .amt {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.t-line .t-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.t-line.t-muted {
+  color: var(--muted);
+}
+
+/* Total: the label at 18px/800 beside the 26px/800 figure, over a
+ * hairline (Buy.dc.html). The estimate's row keeps the muted treatment
+ * through .t-muted (T38: never a number dressed as the total). */
+.t-total {
+  align-items: baseline;
+  padding-top: 10px;
+  line-height: 1.2;
+}
+
+.t-total > span:first-child {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.t-total .amt {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.t-empty {
+  margin: 0;
+  padding: 28px 18px;
+  text-align: left;
+  color: var(--muted);
+}
+
+/* The totals block: flex: none under the lines, a 2px rule above. */
+.t-totals {
+  flex: none;
+  padding: 14px 18px;
+  border-top: 2px solid var(--rule);
+}
+
+/* Quiet guidance lines: the needs-client estimate note on the ticket and
+ * the charge-gate reason under the button. Muted, not an error. */
+.muted-note {
+  margin: 0;
+  padding: 4px 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* The spinner line while Mindbody prices the cart: the totals area IS the
+ * wait, same posture as check-in. Since T38 it sits under the browser's
+ * muted estimate rather than standing in for the totals. */
+.t-pricing {
+  margin: 0;
+  padding: 8px 0;
+  color: var(--muted);
+}
+
+/* T38: the recheck report, above the totals area. The failure form is
+ * stop-coloured; a report of changes is a quiet note like the others. */
+.t-recheck.bad {
+  color: var(--stop);
+}
+
+/* T38: the per-line audit inside the disagree stop. Data reads in ink on
+ * the stop background (both palettes pair those), and only the figures
+ * that differ take the stop colour, so the eye lands on the line that is
+ * wrong. Scrolls sideways in its own box on a narrow screen rather than
+ * widening the column. */
+.audit-wrap {
+  margin: 10px 0 0;
+  overflow-x: auto;
+}
+
+.audit {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.audit th,
+.audit td {
+  padding: 6px 10px 6px 0;
+  border-top: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.audit th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.audit-sub {
+  display: block;
+  color: var(--muted);
+}
+
+.audit-bad {
+  color: var(--stop);
+  font-weight: 700;
+}
+
+/* Recheck prices: the stop's one action, full width on the 64px floor.
+ * Bordered in the stop colour on the surface so it is unmistakably part
+ * of the stop and not a Charge. */
+.audit-recheck {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  margin: 12px 0 0;
+  border: 1px solid var(--stop);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--stop);
+  font-size: 17px;
+  font-weight: 800;
+  text-align: left;
+  padding: 0 16px;
+}
+
+.audit-recheck:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Dry-run suppression where the totals would render. Amber, never a
+ * number: no total exists. Reuses the pass-note pairing via its class. */
+.pass-note.t-suppressed {
+  font-variant-numeric: normal;
+}
+
+/* The loud pricing failure: totals disagreement or a failed call. Stop
+ * treatment, because charging against it would be the bug the design doc
+ * says never to swallow. */
+.sale-stop {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 0;
   background: var(--stop-bg);
   color: var(--stop);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* The cart lines scroll internally, so the totals and the charge button
+ * stay on screen for any cart length (second live test). T38 capped
+ * them at min(44vh, 540px) and made the clipping visible: a fade over
+ * the last row and a count of what is below. T39.4 replaces the cap
+ * with the column's own height: the wrap is the ticket's flex: 1 child
+ * and the box inside it scrolls, so it is the viewport that bounds the
+ * lines, not a vh figure. `position: relative` makes the box the rows'
+ * offsetParent, which is what the hidden-row count is measured against;
+ * the wrap's min-height keeps two rows in view if the ticket ever has
+ * to scroll as a whole. */
+.t-lines-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 104px;
+}
+
+.t-lines {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0;
+}
+
+/* The fade: the ticket's own surface over the last visible row, so the
+ * clipped edge reads as "continues" instead of "ends". Tokens only, so
+ * it is the dark surface in the dark palette. Shown only while rows are
+ * hidden below (the `more` class the measurement sets). */
+.t-lines-wrap::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 48px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms ease;
+  background: linear-gradient(to bottom, transparent, var(--surface));
+}
+
+.t-lines-wrap.more::after {
+  opacity: 1;
+}
+
+/* T38's "N more below" cue, in the head line beside the count (T39.4):
+ * the head never moves, so showing the cue never changes the box it
+ * measures, and it cannot land on the selected row's controls the way a
+ * pill over the fade did. 16px: it is read, not glanced. */
+.t-more {
+  color: var(--muted);
+  font-size: 16px;
+}
+
+/* T39.8: the separator between the cue and the count. */
+.t-head-sep {
+  margin: 0 8px;
+  color: var(--muted);
+}
+
+/* One cart line (T39.4): name and total on one line, the `n @ price`
+ * sub-line above quantity one, padded 8/10 with a 2px gap, a transparent
+ * border that the selection fills in. The whole row width is the tap
+ * target, at 44px: the recorded secondary standing (the row icons, the
+ * old steppers), not the 64px floor, because a row is a selection with
+ * an immediate visible answer and no consequence, and at 64 a seven-line
+ * cart is 460px of rows and never fits a 768px screen, which is what
+ * this ticket exists to do. Every control it reveals is 64. */
+/* T70 (Buy.dc.html): a 56px line on a 1px hairline, name left and
+ * amount right; the selected row takes the accent tint. */
+.t-row {
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  margin: 0;
+  padding: 0 18px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The selected row: the accent tint, and its controls under the line. */
+.t-row.sel {
+  background: var(--accent-bg);
+  padding-bottom: 10px;
+}
+
+.t-row .t-line {
+  align-items: center;
+  line-height: 1.3;
+  padding: 0;
+}
+
+.t-row .t-name {
+  font-weight: 400;
+}
+
+.t-row .amt {
+  font-weight: 600;
+}
+
+/* `2 @ 1.81`: muted, only above quantity one. 16px since T70. */
+.t-sub-line {
+  margin-top: 2px;
+  font-size: 16px;
+  line-height: 1.3;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The selected row's controls: minus / count / plus at 64px, square on
+ * the quiet fill, the trash pushed right in the stop colour. */
+.t-ctl {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 8px;
+  cursor: default;
+}
+
+.t-ctl-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.t-ctl-btn:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.t-ctl-btn:disabled,
+.t-ctl-remove:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.t-ctl-qty {
+  min-width: 2.4em;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* T41: a 64px square holding the trash glyph, where the word "Remove"
+ * sat (Pete: "instead of 'Remove' use a trash can icon"). Same stop
+ * outline; the name rides the aria-label and title. */
+.t-ctl-remove {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--stop);
+}
+
+.t-ctl-remove:active:not(:disabled) {
+  background: var(--stop-bg);
+}
+
+/* The "For:" affordance atop the cart: a full-width 64px quiet button
+ * when nobody is attached, a name-plus-balance line with a detach X when
+ * someone is. */
+/* The attach affordance is a REAL button: the first live test styled it
+ * as dashed receipt text and Pete did not recognize it as tappable, which
+ * orphaned the attach flow and with it stored card and credit. Solid
+ * surface, icon, verb-first label, action affordance. */
+/* T39.1: the card shape 1a draws, 60px on a bordered surface, in both
+ * states. Attached it is SALE FOR over the name, the balance pill and a
+ * 44px detach; unattached it is the same card carrying the plus, the
+ * verb and its hint, still a real button (the hint's 16px holds the
+ * floor; the label line-height is tightened so two lines sit in 60). */
+/* T70 (Buy.dc.html): a header cell. Unattached it is the "Attach a
+ * client" cell, the plus in the accent, the verb at 17px/800 and its
+ * hint under it in muted; attached it is the accent tint with SALE FOR
+ * over the name (below). */
+.sale-for {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.sale-for svg {
+  flex: 0 0 auto;
+}
+
+button.sale-for > svg {
+  color: var(--accent);
+}
+
+.sale-for-hint {
+  display: block;
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+button.sale-for:active {
+  background: var(--surface-2);
+}
+
+/* SALE FOR over the name: the kicker in the accent at 16px/600, the
+ * name at 18px/800. */
+.sale-for-who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.sale-for-label {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* Mid-charge the attach control is refused entirely (no client change
+ * while money moves); dimmed, same treatment as .row-icon:disabled. */
+button.sale-for:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.sale-for.attached {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 18px;
+  background: var(--accent-bg);
+  color: var(--ink);
+}
+
+.sale-for-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+/* The detach x: 44px (the icon idiom; the mockup's 36 is under the
+ * floor), muted, the stop colour under a finger. */
+.sale-for-clear {
+  color: var(--muted);
+}
+
+.sale-for-clear:active {
+  color: var(--stop);
+  background: transparent;
+}
+
+/* Account balance pill beside the attached name: credit in the ok pair,
+ * tabular because it is money; owed money keeps the stop pairing the
+ * roster's balance column uses. */
+.bal-chip {
+  flex: 0 0 auto;
+  padding: 5px 11px;
+  border-radius: 0;
+  background: var(--ok-bg);
+  color: var(--ok);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.bal-chip.neg {
+  background: var(--stop-bg);
+  color: var(--stop);
+  font-weight: 600;
+}
+
+/* The middle pane: the shelf, padded 18 (Buy.dc.html). */
+.sale-right {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  /* T74: the pane can now hold two rows (the pass sub-chips and the
+   * grid, or several sections). Grid rows share free space by default,
+   * which put a two-card grid halfway down the pane; anchor everything
+   * at the top. One child is drawn exactly as before, since .shelf-grid
+   * already starts its cards at the top. */
+  align-content: start;
+}
+
+/* T70 (Buy.dc.html): the rail, a 190px column on the surface with a
+ * 2px rule at its right edge, 64px cells split by 1px lines. Under 1040
+ * the media query below turns the same element back into a row. */
+.sale-cats {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-right: 2px solid var(--rule);
+  background: var(--surface);
+}
+
+/* Rail entries: 64px cells, 17px/800, a line under each. Active is
+ * FILLED with the accent pairing (ui-refactor 2.4; no ring); "more" is
+ * muted, since it is a door, not a shelf. */
+.cat-chip {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  height: 64px;
+  padding: 0 18px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.cat-chip:active {
+  background: var(--surface-2);
+}
+
+.cat-chip.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.cat-chip.more {
+  color: var(--muted);
+}
+
+/* T70 (Buy.dc.html): three columns, 12px gaps. */
+.shelf-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  /* T39.7: the grid is the pane's height (T39.4's bound); without this
+   * a short shelf stretched its one row of cards to fill it. */
+  align-content: start;
+}
+
+/* T74: the Passes shelf's sub-category chips, over the grid. The rail's
+ * quiet / filled idiom at the roster chip's 48px, flush-left, wrapping
+ * when the studio's labels outgrow one line. Absent entirely when no
+ * groups are configured. */
+.shelf-subchips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.sub-chip {
+  flex: 0 0 auto;
+  height: 48px;
+  min-width: 96px;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.sub-chip:active {
+  background: var(--surface-2);
+}
+
+.sub-chip.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* One group's cards under its kicker, when the shelf shows All. The
+ * kicker is the roster head's idiom: 16px uppercase, muted, over a
+ * 2px rule. */
+.shelf-section {
+  display: grid;
+  gap: 12px;
+}
+
+.shelf-kicker {
+  margin: 0;
+  padding: 0 0 8px;
+  border-bottom: 2px solid var(--rule);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* One sellable thing (Buy.dc.html): 104px on a 1px line, the name at
+ * the top left, the price bottom left and, when the item is in the
+ * cart, a 2px accent border and the count badge bottom right. */
+.shelf-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 104px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+
+.shelf-item:active {
+  border-color: var(--accent);
+}
+
+.shelf-item.in-cart {
+  padding: 13px 15px;
+  border: 2px solid var(--accent);
+}
+
+.shelf-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+/* The bottom row: price bottom-left, count badge bottom-right. */
+.shelf-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.shelf-price {
+  min-width: 0;
+  font-size: 18px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.shelf-amt {
+  font-weight: 400;
+}
+
+/* How many of this card the cart holds, from cart state (T39.3): the
+ * accent-filled badge, 28px tall, 16px/800, reading "x2". Absent when
+ * the item is not in the cart. */
+.shelf-count {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The subtle tax-exempt marker on a shelf item. */
+.shelf-notax {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* A shelf item plus its star: the star is a SIBLING tap target (nested
+ * buttons are invalid HTML), absolutely placed in the card's corner, so
+ * the wrapper carries the grid cell and the relative context. */
+.shelf-cell {
+  position: relative;
+  display: grid;
+}
+
+/* Room for the star so a long name never runs under it. Only the name
+ * gives way: the price row sits below the star's 44px and the count pill
+ * keeps the card's own corner (T39.3). */
+.shelf-cell .shelf-name {
+  padding-right: 34px;
+}
+
+/* The star: quiet at rest, filled with the gold token when starred
+ * (Buy.dc.html). 44px square hit area (the icon idiom), the 18px glyph
+ * centred in the card's corner. */
+.shelf-star {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+.shelf-star:active {
+  background: var(--surface-2);
+}
+
+.shelf-star.on {
+  color: var(--gold);
+  opacity: 1;
+}
+
+.shelf-star.on svg path {
+  fill: currentColor;
+}
+
+/* A bundle card on the Favorites shelf: a dashed border says "several
+ * things in one tap" without inventing a new colour, and the word
+ * "bundle" follows the name (from Slate; Pete, T39). */
+.shelf-bundle {
+  border-style: dashed;
+  border-color: var(--line);
+}
+
+.shelf-bundle-mark {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* --- T39.5: the action bar. ------------------------------------------
+ * The overlay's last child: 92px on its own ground across the full
+ * width, a hairline above and --shadow lifting it off the columns, its
+ * contents aligned to the shell's 1400. Sticky, so on the narrow fold
+ * where the overlay scrolls it stays at the viewport's edge; in the
+ * bounded layout sticky is inert. z-index 5 keeps it under every modal
+ * scrim (30) in the overlay's stacking context. --- */
+.sale-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  flex: none;
+  width: 100%;
+  /* T70 (Buy.dc.html): 80px on the surface, a 2px rule over, no shadow
+   * (only modals cast one). */
+  border-top: 2px solid var(--rule);
+  background: var(--surface);
+}
+
+.sale-bar-in {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  height: 80px;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0;
+}
+
+/* Empty cart and Back to items: quiet cells, 17px/800, a 1px line at
+ * the left edge; Empty cart goes to the stop pair under a finger. T38's
+ * confirm stands behind Empty cart. */
+.sale-bar-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+  padding: 0 22px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.sale-bar-in > .sale-bar-empty:first-child {
+  border-left: 0;
+}
+
+.sale-bar-empty:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.sale-bar-empty.sale-bar-clear {
+  padding: 0 26px;
+  color: var(--muted);
+}
+
+.sale-bar-empty.sale-bar-clear:active:not(:disabled) {
+  color: var(--stop);
+  background: var(--stop-bg);
+}
+
+.sale-bar-empty:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The primary: the accent-filled segment at the bar's right, its label
+ * flush left at 22px/800 with the count at 16px/600 and the tabular
+ * amount. `.off` is the disabled pair (Pay on an empty cart, Due while
+ * anything is owed); it stays a real button with aria-disabled so its
+ * title can say why. `.done` is the --ok fill after the write. */
+.sale-bar-pay {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 18px;
+  height: 100%;
+  min-width: 260px;
+  padding: 0 32px;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: left;
+}
+
+.sale-bar-pay.off {
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: default;
+}
+
+/* T70 review: while the write is on the wire the segment stays on the
+ * accent with the spinner (Payment.dc.html keeps the accent fill while
+ * the due is covered, busy included; the roster's chip does the same),
+ * rather than dropping to the quiet "not ready" pair mid-charge. */
+.sale-bar-pay.off.busy {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.sale-bar-pay.done {
+  background: var(--ok);
+  color: var(--bg);
+}
+
+.sale-bar-pay:active:not(.off):not(.done) {
+  background: var(--accent-press);
+}
+
+/* The spinner is the one radius the pass keeps (README, "Geometry"). */
+.sale-bar-pay .spinner {
+  width: 18px;
+  height: 18px;
+  border-color: currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+}
+
+.sale-bar-count {
+  font-size: 16px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.sale-bar-amt {
+  font-size: 22px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- The Buy overlay's folds (T39.2, T39.3). After the base rules
+ * above on purpose: same specificity, so the later declaration wins. --- */
+
+/* T39.3: under 1190 the cart narrows to 340 and the card minimum to 166
+ * so three columns hold down to 1080. The arithmetic: three cards of 184
+ * need 572 and a 388 cart leaves that only from 1182 up (1182 - 40 - 28
+ * - 154 - 388 = 572), so the query sits a little above the plan's 1180;
+ * at the 1080 floor the grid is 1080 - 40 - 28 - 154 - 340 = 518, which
+ * is three of 166 with two 10px gaps exactly. */
+@media (max-width: 1190px) {
+  .sale-panes {
+    grid-template-columns: 190px minmax(0, 1fr) 320px;
+  }
+
+  .shelf-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Under 1040 the rail folds back to the horizontal chip row above the
+ * grid (layout plan 2.1): two columns, the rail spanning the grid's, the
+ * cart riding both rows on the right. The cells keep their lines, now
+ * at their right edges, under a 2px rule. */
+@media (max-width: 1040px) {
+  .sale-panes {
+    grid-template-columns: minmax(0, 1fr) 320px;
+    /* The cart spans both rows; without this the span's height is shared
+     * out to row one and the chips float above an empty band. */
+    grid-template-rows: auto 1fr;
+  }
+
+  .sale-cats {
+    grid-column: 1;
+    grid-row: 1;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0;
+    border-right: 0;
+    border-bottom: 2px solid var(--rule);
+  }
+
+  .sale-cats .cat-chip {
+    width: auto;
+    padding: 0 20px;
+    border-bottom: 0;
+    border-right: 1px solid var(--line);
+  }
+
+  .sale-right {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .sale-left {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}
+
+/* One column on a narrow screen, in DOM order: rail, grid, cart. The
+ * viewport bound (T39.4) is given back here: three stacked panes cannot
+ * share 768px, so the overlay scrolls as it did before, the bar (T39.5)
+ * sticks to its bottom edge, and the ticket's lines take T38's cap
+ * again so the totals stay near. */
+@media (max-width: 900px) {
+  .sale-shell,
+  .sale-panes {
+    flex: none;
+    min-height: auto;
+  }
+
+  .sale-panes {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+
+  .sale-cats,
+  .sale-right,
+  .sale-left {
+    grid-column: auto;
+    grid-row: auto;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .ticket {
+    overflow: visible;
+  }
+
+  .t-lines {
+    max-height: min(44vh, 540px);
+  }
+
+  .sale-left {
+    border-left: 0;
+    border-top: 2px solid var(--rule);
+  }
+}
+
+/* --- The payment seam (T24): live method cards, the cash keypad, the
+ * charge button and the outcome panel. Card shape from the mockup,
+ * every colour a token so both palettes hold. */
+
+/* The cart column: since T39.6 the ticket alone. A flex column so the
+ * ticket is the one child that grows to the pane's height. */
+.sale-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  /* T70 (Buy.dc.html): the ticket pane, the surface with a 2px rule at
+   * its left edge. */
+  border-left: 2px solid var(--rule);
+  background: var(--surface);
+}
+
+.sale-left > * {
+  flex: none;
+}
+
+.sale-left > .ticket {
+  flex: 1 1 auto;
+}
+
+/* --- T39.6: pay mode. -------------------------------------------------
+ * The panes drop to `minmax(0, 1fr) 388px`: the rail and grid are hidden,
+ * the payment surface takes the middle, the cart column is the SAME
+ * element in the same place (layout plan 2.5). The surface pane is
+ * `hidden` in shelf mode -- hidden, not unmounted, so T35's state lives
+ * on -- and the attribute needs its own rule here because the pane's
+ * `display: flex` would otherwise beat the UA stylesheet's. */
+.sale-pay {
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.sale-pay[hidden] {
+  display: none;
+}
+
+.sale-panes.pay {
+  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-rows: none;
+}
+
+.sale-panes.pay .sale-cats,
+.sale-panes.pay .sale-right {
+  display: none;
+}
+
+.sale-panes.pay .sale-left {
+  grid-column: 2;
+  grid-row: auto;
+}
+
+/* The pay-mode ticket has no controls: rows are not selectable there. */
+.sale-panes.pay .t-row {
+  cursor: default;
+}
+
+@media (max-width: 1190px) {
+  .sale-panes.pay {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+}
+
+@media (max-width: 900px) {
+  .sale-panes.pay {
+    grid-template-columns: 1fr;
+  }
+
+  .sale-pay,
+  .sale-panes.pay .sale-left {
+    grid-column: auto;
+    min-height: auto;
+    overflow: visible;
+  }
+}
+
+/* The bar's primary slot: nothing of its own, its child (the panel's
+ * portalled button) joins the bar's row directly. */
+.sale-bar-slot {
+  display: contents;
+}
+
+/* --- T39.7: the payment surface; T70 restyles it to Payment.dc.html:
+ * the figures and the method cards run edge to edge on the surface
+ * under their rules, the body under them is padded 16/20, the foot is
+ * pushed to the bottom with margin-top: auto. --- */
+.pay-surface {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.pay-surface > .sale-stop,
+.pay-surface > .pass-note {
+  margin: 12px 20px 0;
+}
+
+.pay-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 14px;
+  min-height: 0;
+  padding: 16px 20px;
+}
+
+/* The three amount tiles (Payment.dc.html): 1px-divided on the surface,
+ * a 2px rule under, the kicker over a 34px/800 tabular figure. DUE
+ * fills the ok pair at zero; CHANGE turns --warn when non-zero. */
+.pay-figures {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  flex: none;
+  border-bottom: 2px solid var(--rule);
+  background: var(--surface);
+}
+
+.pay-fig {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 14px 20px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.pay-fig:last-child {
+  border-right: 0;
+}
+
+.pay-fig-label {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pay-fig-amt {
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pay-fig.due.settled {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.pay-fig.due.settled .pay-fig-label {
+  color: var(--ok);
+}
+
+.pay-fig.change {
+  color: var(--warn);
+}
+
+/* Method cards (Payment.dc.html): equal 96px cells 1px-divided under a
+ * 1px line, the icon beside a 20px/800 label, a 16px muted note under
+ * them that is always honest (T35's reason, or what a tap does). In the
+ * payment (.in) a card fills --accent-bg, colours its icon and label
+ * with the accent and carries the 4px accent bottom edge: the selected
+ * marker, no ring. Off (T35's refusal) dims the name and the badge;
+ * Credit's balance badge sits top-right in the ok pair. */
+.pay-tiles {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 0;
+  flex: none;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.pay-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 6px;
+  height: 96px;
+  padding: 16px 20px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-bottom: 4px solid transparent;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+
+.pay-tile:last-child {
+  border-right: 0;
+}
+
+.pay-tile.off {
+  cursor: default;
+}
+
+.pay-tile.off .pay-tile-name,
+.pay-tile.off .pay-tile-badge {
+  opacity: 0.5;
+}
+
+.pay-tile.in {
+  background: var(--accent-bg);
+  border-bottom-color: var(--accent);
+}
+
+.pay-tile.in .pay-tile-name {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.pay-tile:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.pay-tile-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.pay-tile-reason {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.pay-tile-badge {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  padding: 2px 9px;
+  border-radius: 0;
+  background: var(--ok-bg);
+  color: var(--ok);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tender rows (Payment.dc.html): 64px on a 1px line, the method at
+ * 19px/800 with the `covers $X` sub-line under an over-tendered cash
+ * line; a 160px amount cell (22px/800 tabular) that opens the keypad;
+ * a 64px x cell. A second row IS the split (T35). */
+.tender-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: none;
+}
+
+.tender-line {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+}
+
+.tender-line.bad {
+  border-color: var(--stop);
+}
+
+.tender-src-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 64px;
+  padding: 0 18px;
+  font-size: 19px;
+  font-weight: 800;
+}
+
+.tender-sub {
+  display: block;
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tender-amt {
+  flex: 0 0 160px;
+  min-height: 64px;
+  padding: 0 18px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tender-amt:active:not(:disabled),
+.tender-amt.on {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.tender-amt:disabled,
+.tender-x:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tender-x {
+  flex: 0 0 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  min-height: 64px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.tender-x:active:not(:disabled) {
+  color: var(--stop);
+  background: var(--stop-bg);
+}
+
+/* The hint under the rows. It carries a rule, so 16px. */
+.pay-hint {
+  margin: 0;
+  flex: none;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* The foot: pushed to the bottom, the quiet line left, Comp right. */
+.pay-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  margin-top: auto;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.pay-quiet {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+  /* T43 review: the comp reason rides here, and a long one with no
+   * space in it ran under the Comp button and off the surface. */
+  overflow-wrap: anywhere;
+}
+
+/* T39.7: the 768 budget, kept: the body's padding and gaps give back a
+ * few pixels so the foot never meets the bar. AFTER the base rules above
+ * on purpose: same specificity, later wins (the T39.2 lesson). */
+@media (max-width: 1190px) {
+  .pay-body {
+    padding: 12px 16px;
+    gap: 10px;
+  }
+}
+
+/* --- The amount modal, shared by every source. ------------------------
+ * T35 had this keypad INLINE in the payment column, where it pushed the
+ * receipt down the screen; Pete asked for the old cash modal back ("the
+ * old keypad design was good ... having it be a modal is def better"),
+ * so these are that modal's rules, renamed off "cash" because they now
+ * serve card and credit too. T39.7 restyles it to the canvas (0.2): 420
+ * wide, radius 20, padding 20, 10px gaps, the Entered box on the bar's
+ * ground with a 30px figure, chips as pills, 66px keys with 23px mono,
+ * Cancel outlined and Done in the accent, right-aligned. Everything on
+ * the 64px floor. */
+
+.modal-amount {
+  display: grid;
+  gap: 10px;
+  width: min(420px, 100%);
+  padding: 20px;
+  border-radius: 0;
+}
+
+.modal-amount .modal-title {
+  margin-bottom: 0;
+  font-size: 20px;
+}
+
+/* T70 (Payment.dc.html): the keypad panel's three columns inside the
+ * modal: the entry column, the 300px keys, the 96px Done. The panel's
+ * own 2px accent border, no shell rule. */
+.modal-pad {
+  width: min(760px, 100%);
+  grid-template-columns: minmax(0, 1fr) 300px 96px;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 2px solid var(--accent);
+  box-shadow: var(--shadow-lg);
+}
+
+.pad-left {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.modal-pad .modal-title.pad-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+}
+
+.pad-kicker {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pad-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 16px;
+}
+
+.pad-label {
+  color: var(--muted);
+}
+
+.pad-amt {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.pad-entered-amt {
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.pad-chips {
+  display: flex;
+  gap: 8px;
+}
+
+/* The quick cells: outlined, 800, the accent under a finger. 64 tall
+ * (the house floor; the mockup draws 52). */
+.pad-chip {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 64px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.pad-chip:active:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pad-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The keys: 3x4 on the quiet fill, 20px/800, del in the stop colour.
+ * 64 tall (the floor; the mockup draws 56). */
+.pad-keys {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  align-content: start;
+}
+
+.pad-key {
+  min-height: 64px;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.pad-key.del {
+  color: var(--stop);
+}
+
+.pad-key:active {
+  background: var(--accent-bg);
+}
+
+/* The change / short / partner line: "Change due" muted with the figure
+ * in ink at 800 (Payment.dc.html); the cap note is the quiet exception. */
+.pad-change {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pad-change-amt {
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.pad-change.short .pad-change-amt {
+  color: var(--warn);
+}
+
+.pad-change.muted-note {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* Done: the 96px accent column, full height; Cancel a quiet cell under
+ * it (the mockup has no Cancel; ours leaves the line as it was).
+ * T70 review: the shared .modal-actions became an edge-to-edge grid row
+ * (Dialogs.dc.html), which put Done and Cancel side by side in the 96px
+ * column and bled them past the pad's edge; this column is its own
+ * shape, so it sets the display, the margins and the rule itself. */
+.modal-pad .modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  border-top: 0;
+}
+
+.modal-pad .modal-actions button {
+  flex: 1 1 auto;
+  min-height: 64px;
+  padding: 0 12px;
+  border-right: 0;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.modal-pad .modal-cancel {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.modal-pad .modal-confirm.go {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.modal-pad .modal-confirm.go:active {
+  background: var(--accent-press);
+}
+
+/* Comp lives OUT of the tender list: quiet and outlined at the foot's
+ * right at 64px (Payment.dc.html; the stop colour under a finger, below
+ * in the T53 block), warn-coloured once armed so a comped sale is
+ * unmissable. */
+.comp-hold {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 64px;
+  padding: 0 22px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 800;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.comp-hold.on {
+  border: 2px solid var(--warn);
+  border-style: solid;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-weight: 800;
+}
+
+/* T43: the comp reason dialog, in the keypad modal's shape (it is a
+ * .modal-amount with the chips and the actions as the keypad draws them).
+ * The four preset chips wrap to a second row rather than shrink under a
+ * 64px target; a chosen chip takes the accent pairing, and the field is
+ * a 64px target at 18px so a hot-room thumb lands on it. The done
+ * screen's reason line sits under the charged line in the same mono. */
+.modal-reason .reason-chips {
+  flex-wrap: wrap;
+}
+
+.modal-reason .reason-chips .pad-chip {
+  flex: 1 1 40%;
+}
+
+.pad-chip.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.reason-input {
+  width: 100%;
+  min-height: 64px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.reason-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+.reason-input::placeholder {
+  color: var(--muted);
+}
+
+/* T68 (Pete: "same 'growing modal' problem several of the others have
+ * had. fix it so it's stationary size"): the reason step is one fixed
+ * box, 680 tall or 88dvh on a short screen, whatever chip is chosen.
+ * Title, total, chips and actions keep their own heights; the body
+ * row between them takes the rest. T71: the teacher picker is a 64px
+ * select on its own line, so the note (a textarea, top-aligned, no
+ * newline) fills the rest of the row with or without it. The PIN and
+ * enrollment steps keep their own shapes. */
+.modal-reason.reason-sized {
+  height: min(680px, 88dvh);
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+}
+
+.reason-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.reason-body .reason-select {
+  flex: 0 0 auto;
+}
+
+.reason-body .reason-note-field.fill {
+  flex: 1 1 auto;
+}
+
+textarea.reason-note-field {
+  padding: 18px 16px;
+  resize: none;
+  line-height: 1.3;
+  font-family: inherit;
+  overflow: hidden;
+}
+
+/* T71: the note is inert until a reason chip is chosen (Pete: "greyed
+ * out until the category is chosen"): the muted pair on the page
+ * ground, no outline, and the placeholder says why. Text on it is the
+ * muted token, which clears 4.5:1 on --bg in both palettes. */
+textarea.reason-note-field:disabled {
+  background: var(--bg);
+  border-color: var(--line);
+  color: var(--muted);
+  opacity: 1;
+}
+
+textarea.reason-note-field:disabled::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+/* T71: the teacher select. The reason-input box with the native arrow
+ * hidden and an inline chevron in the ink token over it (a native
+ * arrow cannot take a token), 48px of right padding for it, and the
+ * same 18px as the note. A disabled select (list loading or failed)
+ * reads as the disabled note above. */
+.reason-select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 64px;
+  padding-right: 48px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.reason-select:disabled {
+  background-color: var(--bg);
+  color: var(--muted);
+  opacity: 1;
+  cursor: default;
+}
+
+.reason-select-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.reason-select-wrap > svg {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--ink);
+}
+
+.reason-select-wrap > select:disabled + svg {
+  color: var(--muted);
+}
+
+.pay-done-reason {
+  margin: 0;
+  max-width: 34em;
+  overflow-wrap: anywhere;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--warn);
+}
+
+/* T45: the note under the done screen's comped line, muted, wrapping
+ * like the line above it. */
+.pay-done-reason-detail {
+  margin: 0;
+  max-width: 34em;
+  overflow-wrap: anywhere;
+  font-size: 17px;
+  color: var(--muted);
+}
+
+.reason-note {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* T48: the comp dialog's PIN and enrollment steps. The dots are the lock
+ * screen's, six fixed slots for a 4 to 6 digit PIN: an empty slot is a
+ * ring in the card's line colour, a filled one the ink dot. The keys are
+ * the amount pad's. "Set up or change your PIN" is a quiet 64px exit
+ * with no fill; "Comping as <name>" is the one loud line on the ready
+ * step. Tokens only, both palettes from the variable swap. */
+.reason-sub {
+  margin: 0;
+  font-size: 17px;
+  color: var(--muted);
+}
+
+.pin-dots {
+  min-height: 56px;
+  gap: 16px;
+}
+
+.lock-dot.empty {
+  background: transparent;
+  border: 2px solid var(--line);
+}
+
+.reason-link {
+  min-height: 64px;
+  padding: 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.reason-link:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.reason-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.reason-who {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+/* The enrollment step's inputs while the sign-in is on the wire. The
+ * comp note and the teacher select have their own disabled looks. */
+.modal-reason .reason-input:disabled:not(.reason-note-field):not(.reason-select) {
+  opacity: 0.6;
+}
+
+/* The PIN keys go quiet during the 30s lockout, so the line under the
+ * dots is not the only sign the pad has stopped listening. */
+.modal-reason .pad-key:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --- Charge outcomes. ----------------------------------------------- */
+
+/* The paid confirmation (T39.7, the canvas's done state): centred in the
+ * surface, an 88px ok-bg circle with the check, a 30px title, the charged
+ * line and the change from the drawer in 19px mono, the summary under
+ * them, and Done in the accent. Only a completed sale renders it. */
+/* T70: the done sheet, the square shell (2px rule, --shadow-lg) on the
+ * surface, flush left like everything else, in the pane's body. */
+.pay-done {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 12px;
+  margin: 20px;
+  padding: 20px;
+  border: 2px solid var(--rule);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  text-align: left;
+}
+
+.pay-done-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 0;
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.pay-done-check svg {
+  width: 32px;
+  height: 32px;
+}
+
+.pay-done-title {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.pay-done-charged {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pay-done-change {
+  display: block;
+  color: var(--warn);
+  font-weight: 800;
+}
+
+.pay-done-line {
+  margin: 0;
+  max-width: 34em;
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.pay-done-detail {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.pay-done-btn {
+  min-height: 64px;
+  margin-top: 6px;
+  padding: 0 26px;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 17px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.pay-done-btn:active {
+  background: var(--accent-press);
+}
+
+/* A dry run's suppressed outcome takes the canvas's title; still amber,
+ * still no check: suppression is never success. */
+.pay-rehearsed {
+  margin: 0 0 6px;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+/* The under-$10 split failure: stop treatment, structured, prominent.
+ * No retry affordance anywhere near it, by design. */
+.pay-split-head {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.pay-split-why {
+  margin: 0 0 6px;
+  font-weight: 400;
+}
+
+/* Dismiss buttons inside outcome blocks stay quiet and separate. */
+.pay-dismiss {
+  display: block;
+  margin-top: 8px;
+}
+
+/* --- Pay and check in (T25): the unpaid row's dialog ------------------
+ * Reuses the modal and pass-opt idioms; tokens only, both palettes come
+ * from the variable swap. Rows keep the 64px floor and 16px text. */
+
+.modal-pay {
+  width: min(560px, 100%);
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+/* T70 review: the free-entry line sits UNDER the action row here, so the
+ * row keeps its edge bleed but not the bottom pull that assumes it is
+ * the modal's last thing; the dashed button gets its 12px gap back. */
+.modal-pay .modal-actions {
+  margin-bottom: 0;
+}
+
+/* The option list scrolls past a handful so the actions never leave the
+ * screen; the dialog's rows are check | name | price. */
+.pay-opts {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 12px;
+  max-height: min(40vh, 340px);
+  overflow-y: auto;
+}
+
+.modal-pay .pass-opt {
+  grid-template-columns: 20px minmax(0, 1fr) 5.5em;
+  border: 1px solid transparent;
+}
+
+/* The chosen option: accent outline, same family as a selected method
+ * card on the sale screen. */
+.modal-pay .pass-opt.sel {
+  background: var(--accent-bg);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* The pricing spinner line, same posture as the sale ticket's. */
+.pay-price-line {
+  margin: 0 0 8px;
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+/* How the charge pays: one quiet sentence, not a chooser. */
+.pay-method-line {
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+
+.pay-cash-note {
+  margin: 0 0 16px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Free entry, the labelled exception: full width so it is findable, but
+ * dashed-quiet so it never competes with the one filled action above. */
+.pay-free {
+  width: 100%;
+  min-height: 64px;
+  margin-top: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.pay-free:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.pay-free:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* The ONE primary action, restating the amount: the sale screen's
+ * charge-button pairing, in modal-action size. */
+.modal-confirm.pay-charge {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* T26's quiet fallback line under the pass facts: the last session was
+ * just used and the renewal dialog had nothing to charge with, so the
+ * teacher sells manually. The warn token keeps it findable without
+ * shouting; tokens only, so both palettes come from the variable swap. */
+.pass-last-used {
+  font-size: 16px;
+  color: var(--warn);
+}
+
+/* --- T30: the membership (contract) dialog and its shelf cards. Every
+ * colour is a token, so both palettes come from the variable swap; all
+ * text sits on or above the 16px floor and the confirm keeps the 64px
+ * modal-action height. --- */
+
+/* A contract card on the Memberships shelf: the shared shelf-item
+ * surface with a quiet accent edge, since tapping it opens a dialog
+ * about a recurring charge rather than ringing anything up. */
+.shelf-contract {
+  border-left: 4px solid var(--accent);
+}
+
+/* The dialog runs a little wider than a confirmation: it carries the
+ * terms rows and possibly the agreement text. */
+.modal-contract {
+  width: min(560px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+}
+
+.contract-desc {
+  margin: 0 0 12px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* The terms, receipt-style label/value rows. */
+.contract-rows {
+  margin: 0 0 16px;
+  border-top: 1px solid var(--line);
+}
+
+.contract-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 17px;
+}
+
+.contract-row .amt {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+}
+
+/* The business's agreement terms, verbatim from the API, in their own
+ * scroll box so a long agreement cannot push the confirm off screen. */
+.contract-agree {
+  max-height: 160px;
+  margin: 0 0 16px;
+  padding: 12px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 16px;
+  white-space: pre-wrap;
+}
+
+/* The attach button inside the dialog's blocked note. */
+.contract-attach {
+  display: block;
+  margin-top: 10px;
+}
+
+/* The commitment button: the recurring terms ARE the label, so it wraps
+ * over multiple lines and gets the wider share of the action row. */
+.contract-confirm {
+  flex: 2;
+  padding: 10px 14px;
+  line-height: 1.3;
+  white-space: normal;
+}
+
+/* T41: the client profile card (ClientProfileCard.tsx), what the Buy
+ * header's profile icon opens. The header's client card shape
+ * (.sale-for): bordered surface, muted uppercase 14px label (the recorded
+ * metadata exception, same as .sale-for-label) over 17px values; every
+ * colour a token, nothing else under 16px. */
+.profile-card {
+  padding: 12px 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-archivo), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.profile-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-bottom: 12px;
+}
+
+.profile-label {
+  flex: 1 0 100%;
+  margin: 0;
+  /* T70: the 16px kicker, retiring the 14px exception. */
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.profile-section {
+  flex: none;
+  margin: 16px 0 6px;
+}
+
+.profile-name {
+  font-size: 20px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* The Mindbody id, mono because it is a number a teacher may read aloud. */
+.profile-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-alert {
+  /* Block, not .ctx-alert's flex: T58 puts the signature line under
+   * the text, and a flex row would sit it beside it instead. */
+  display: block;
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+}
+
+.profile-row {
+  display: contents;
+}
+
+.profile-k {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--muted);
+  padding-top: 1px;
+}
+
+.profile-v {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.profile-sub {
+  color: var(--muted);
+}
+
+.profile-missing {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* An unsigned waiver is the one fact here that gates a check-in, so it
+ * keeps the warn pair the roster's waiver chip uses. */
+.profile-unsigned {
+  padding: 2px 8px;
+  border-radius: 0;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.profile-passes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.profile-pass {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.profile-pass:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.profile-pass-name {
+  font-weight: 500;
+}
+
+.profile-pass-meta {
+  font-size: 16px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* --- Staff sign-in (T49) ---------------------------------------------
+ * The header control beside Buy, the sign-in modal, the probe list and
+ * the amber "Done as the studio account" note. Tokens only: both palettes
+ * come from the variable swap, nothing new is defined here. */
+
+.staff-btn {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-staff {
+  display: grid;
+  gap: 12px;
+}
+
+.modal-staff .modal-title {
+  margin: 0;
+}
+
+.modal-staff .modal-actions {
+  margin-top: 4px;
+}
+
+/* The fallback note: the row's subline and the done block's detail
+ * line in the warn pair, one step quieter than a failure. The banner
+ * variant is the amber pass-note with a bottom gap under the mode
+ * banner. */
+.subline.actor-note,
+.pay-done-detail.actor-note {
+  color: var(--warn);
+}
+
+.actor-banner {
+  margin: 0;
+  padding: 10px 20px;
+}
+
+.probe {
+  display: grid;
+  gap: 8px;
+}
+
+.probe-summary {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.probe-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 16px;
+}
+
+.probe-ok {
+  color: var(--ok);
+}
+
+.probe-no {
+  color: var(--stop);
+  font-weight: 600;
+}
+
+.probe-skip {
+  color: var(--muted);
+}
+
+.dev-actor {
+  flex: 0 0 auto;
+  color: var(--warn);
+}
+
+/* T51: walk-in sales are deliberate, and the Buy screen's small fixes
+ * (Pete, 2026-09-03). No new tokens: every colour below is one the two
+ * palette blocks already define. */
+
+/* The client slot with nobody attached is two buttons on one row, Attach
+ * a client and Walk-in, taking the header's slack as the single card
+ * did. The card keeps its own rules; only its outer margin moves to the
+ * row, and its 520 cap becomes the row's so the pair never crowds Back. */
+.sale-top .sale-for-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-width: 0;
+  max-width: 660px;
+  margin-right: 0;
+}
+
+.sale-top .sale-for-row .sale-for {
+  flex: 1 1 auto;
+  margin-right: 0;
+}
+
+/* Walk-in: the cell next to Attach a client (Buy.dc.html), 17px/800 on
+ * a 1px line. Off with its reason in the title when the server has no
+ * house client (T41). */
+.sale-walkin {
+  flex: 0 0 auto;
+  height: 100%;
+  padding: 0 22px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.sale-walkin:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.sale-walkin:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The declared walk-in wears the attached card's shape with "Walk-in
+ * sale" where the name goes (Payment.dc.html draws it in ink), and the
+ * X is the same detach control. */
+.sale-for.sale-for-walkin .sale-for-name {
+  color: var(--ink);
+}
+
+/* The friction dialog is the house confirm with the modal-x in its
+ * corner, which needs the modal positioned (.modal-search does the same);
+ * a little wider than the 460 confirm so "Continue as walk-in" holds one
+ * line beside "Attach a client". */
+.modal.modal-walkin {
+  position: relative;
+  width: min(540px, 100%);
+}
+
+/* T53: the opt-in gate, the walk-in dialog's frame. The client line is
+ * the name over the address; each option is a 64px row with a 26px
+ * native box in the accent (color-scheme handles the box's own
+ * chrome); the disabled option fades like a disabled action. */
+.modal.modal-consent {
+  position: relative;
+  width: min(560px, 100%);
+}
+
+.consent-who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.consent-name {
+  font-weight: 600;
+}
+
+.consent-email {
+  font-size: 16px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.consent-none {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.consent-hint {
+  margin: 0 0 12px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.consent-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.consent-opt {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 64px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.consent-opt input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.consent-opt.off {
+  color: var(--muted);
+  background: var(--surface-2);
+  border-color: transparent;
+  cursor: default;
+}
+
+.consent-error {
+  margin: 0 0 16px;
+}
+
+/* T71: the profile card's Opt-ins table. A line per kind, the Email
+ * and Text boxes in 44px label cells (the icon-square idiom, since the
+ * profile grid's rows are tighter than the gate's 64px options) with
+ * the gate's 26px box inside; a Text cell is the muted "off" look,
+ * because the API cannot set it and the line under the table says so.
+ * The head is the two channel kickers in the muted token. */
+.optins {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 72px;
+  align-items: center;
+  margin: 0 0 6px;
+}
+
+.optins-head,
+.optins-row {
+  display: contents;
+}
+
+.optins-head > span {
+  padding-bottom: 4px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--muted);
+}
+
+.optins-kind {
+  min-width: 0;
+  padding-right: 8px;
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+
+.optins-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+  width: 44px;
+  height: 44px;
+  cursor: pointer;
+}
+
+.optins-box input[type="checkbox"] {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* T73 (Pete: "show the Text column as plain check marks"): the Text
+ * cell is a mark in the ink, or nothing, never a control, since the
+ * API cannot set those flags. */
+.optins-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+  width: 44px;
+  height: 44px;
+  color: var(--ink);
+}
+
+.optins-msg {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.optins-msg.warn-text {
+  color: var(--warn);
+}
+
+.optins-msg.stop-text {
+  color: var(--stop);
+}
+
+/* T53: the receipt toggle under the tender hint: the filter-toggle
+ * idiom stretched to a row, the name left and the address or the reason
+ * right, accent while on, the disabled pair when it cannot send. */
+/* T70 (Payment.dc.html): the 64px row on the quiet fill, the name at
+ * 18px/800, the note right; on takes the accent tint and the 4px accent
+ * edge like a selected method card; off fades to 0.7. */
+.receipt-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  min-height: 64px;
+  flex: none;
+  margin-top: 0;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.receipt-toggle.on {
+  border-color: var(--line);
+  border-bottom: 4px solid var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.receipt-toggle:disabled {
+  color: var(--ink);
+  background: var(--surface-2);
+  opacity: 0.7;
+  cursor: default;
+}
+
+.receipt-toggle-name {
+  flex: 0 0 auto;
+}
+
+.receipt-sub {
+  flex: 1;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 500;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.receipt-toggle.on .receipt-sub {
+  color: var(--accent);
+}
+
+.receipt-toggle:not(.on):not(:disabled) .receipt-sub {
+  color: var(--muted);
+}
+
+/* Comp this sale rests in the dim treatment the off tender wears ("Card:
+ * Attach a client"): muted text on a faded hairline, since a comp is
+ * neither encouraged nor common (Pete). Resting look ONLY: the hold, the
+ * hint and the armed state (.comp-hold.on, warn pair, which wins on
+ * specificity) are exactly T43/T48's. */
+.comp-hold {
+  border-color: var(--line);
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.comp-hold:active:not(:disabled):not(.on) {
+  border-color: var(--stop);
+  color: var(--stop);
+  background: var(--surface);
+}
+
+/* Empty cart sits just left of Pay with the bar's own 12px gap, not at
+ * the bar's far edge; the pay button gives up its auto margin so the two
+ * do not split the slack between them. Back to items (pay mode) keeps
+ * the left edge: it has no `sale-bar-clear`. */
+.sale-bar-clear {
+  margin-left: auto;
+}
+
+.sale-bar-clear ~ .sale-bar-pay {
+  margin-left: 0;
+}
+
+/* T70 -------------------------------------------------------------------
+ * The sale screen's modals share one square shell (Dialogs.dc.html; the
+ * README's section 5): a 2px rule around the surface, --shadow-lg, the
+ * title as a head bar with a 2px rule under it, and the actions as
+ * equal 68px cells split by a 1px line with their labels flush left,
+ * the confirming one filled. The shared .modal base is the roster's;
+ * this is layered on through the sale modals' own modifier. The head
+ * and the actions bleed through the modal's 20px padding with negative
+ * margins, so the markup between them stays as it was. */
+.modal.modal-sale {
+  padding: 20px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.modal-sale > .modal-title,
+.modal-sale > .modal-title.pad-head {
+  margin: -20px -20px 16px;
+  padding: 18px 20px;
+  border-bottom: 2px solid var(--rule);
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.modal-sale .modal-x ~ .modal-title {
+  padding-right: 68px;
+}
+
+.modal-sale .modal-x {
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+}
+
+.modal-sale > .modal-actions,
+.modal-sale .reason-body ~ .modal-actions {
+  gap: 0;
+  margin: 16px -20px -20px;
+  border-top: 1px solid var(--line);
+}
+
+.modal-sale .modal-actions button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 68px;
+  padding: 0 20px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  justify-content: flex-start;
+  text-align: left;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.modal-sale .modal-actions button:first-child {
+  border-left: 0;
+}
+
+.modal-sale .modal-cancel {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.modal-sale .modal-cancel:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+/* The destructive confirm: the stop fill with --bg text (measured: the
+ * README's white fails 4.5:1 on the dark stop); the non-destructive
+ * `.go` is the accent fill. */
+.modal-sale .modal-confirm {
+  background: var(--stop);
+  color: var(--bg);
+}
+
+.modal-sale .modal-confirm:active:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+.modal-sale .modal-confirm.go {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.modal-sale .modal-confirm.go:active:not(:disabled) {
+  background: var(--accent-press);
+  filter: none;
+}
+
+/* The comp dialog keeps the keypad modal's grid (T43, T68's fixed
+ * size); the head and the actions rows are the grid's first and last
+ * tracks, so the bleed applies unchanged. Its chips and inputs sit on
+ * the surface between them. */
+.modal-sale.modal-reason .modal-actions {
+  margin-top: 0;
+}
+
+.modal-sale.modal-reason .reason-sub,
+.modal-sale.modal-reason .pad-row {
+  padding: 0;
+}
+
+/* The contract sheet's commitment button carries the recurring terms as
+ * its label, so it wraps and takes the wider share of the row. T70
+ * review: the shared row is a grid of equal tracks now, so the share is
+ * set on the row's template rather than the button's flex. */
+.modal-contract .modal-actions {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+
+.modal-sale .modal-actions .contract-confirm {
+  padding: 10px 20px;
+  line-height: 1.3;
+  white-space: normal;
+}
+
+/* The receipt side of the tender (Payment.dc.html): under Total and a
+ * hairline, one "<Method> received $X" line per tender in muted, then
+ * "Change due" in --warn at 20px/800, or "Still due" in ink. Filled by
+ * the panel through the ticket's slot in pay mode only. */
+.t-tender-slot {
+  display: block;
+}
+
+.t-tender {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.t-tender .t-change,
+.t-tender .t-still {
+  align-items: baseline;
+  font-weight: 600;
+}
+
+.t-tender .t-change {
+  color: var(--warn);
+}
+
+.t-tender .t-change .amt,
+.t-tender .t-still .amt {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+/* T52 -------------------------------------------------------------------
+ * The second live pass's check-in screen tweaks (Pete, 2026-09-03).
+ * Tokens only, both palettes; no new tokens were needed. */
+
+/* Every modal positions its own X now (.modal-x is absolute), so the
+ * modal, not the scrim, is the containing block. */
+.modal {
+  position: relative;
+}
+
+/* The class dropdown and the day control as ONE control (Pete: "the
+ * calendar icon should be butted up against the class selector"): no gap,
+ * the inner corners squared, the shared border drawn once. The group
+ * takes the row's slack the way .class-pick did on its own (T46 review),
+ * and the dropdown wrapper takes the group's. */
+.class-group {
+  flex: 1 1 0;
+  /* T70: the group takes whatever the fixed cells leave (450px at 1194,
+   * the title wrapping under that rather than ellipsizing, T61). */
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  align-items: stretch;
+}
+
+/* T65 (Pete): the dropdown's width never follows its text. The picker
+ * takes the whole group and the button fills the picker, so the
+ * dropdown and the day control together stretch to the counters at
+ * every class name, and the chevron sits at the button's right edge. */
+.class-group .class-pick {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.class-group .class-pick-btn {
+  flex: 1 1 auto;
+  width: 100%;
+  justify-content: space-between;
+}
+
+/* The calendar's month row steps in from both edges (T52 review): the X
+ * sits in the modal's corner like everywhere else, and at 24px from the
+ * edge the next-month button was under it. Symmetric, so the month name
+ * stays centred over the grid. */
+.modal-cal .cal-head {
+  padding: 0 52px;
+}
+
+/* The three counters as one card (Pete: "'signed up / checked in /
+ * waitlist' should all be one card rather than 3"): the card carries
+ * the border and radius, the segments share it, split by thin
+ * --line-soft rules. Same numbers, same labels, 64px. */
+.counters {
+  gap: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* The Search button is the glass alone (Pete: "the 'search' button can
+ * be replaced with a magnifying glass icon"): square, 64 by 64 to match
+ * the input, on both bars. */
+.search-go {
+  width: 76px;
+  min-width: 76px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The M chip as a button (Pete: "clicking on an 'M' icon should show
+ * more info about their membership"): the 44px icon idiom around the
+ * 26px chip, so the tap target is the same as the info icon's beside
+ * it. The icon column widens to two 44px slots (was 30 + 44); the
+ * roster's column template follows. */
+.m-chip-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.m-chip-btn:hover,
+.m-chip-btn:active {
+  background: var(--surface-2);
+}
+
+/* The Membership modal: the profile card's pass list, standing alone. */
+.modal-member .member-passes {
+  margin-top: 4px;
+}
+
+/* Attach rows carry the profile icon now (Pete: "the search results
+ * should have the profile icon/button"): name | chip | 44px icon. */
+.modal-search.attach-mode {
+  --roster-cols: minmax(0, 1fr) 118px 44px;
+}
+
+/* The line over the attach rows when the modal widened the search by
+ * itself: the accent, since it explains a toggle that flipped without a
+ * tap. */
+.attach-widened {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* The profile card's alerts-and-notes block: under the name, over the
+ * facts grid. */
+.profile-notes {
+  margin: 0 0 12px;
+}
+
+.profile-notes .profile-label {
+  margin-bottom: 6px;
+}
+
+.profile-notes .modal-note {
+  margin-bottom: 4px;
+}
+
+/* T50 --- Sign-in is required; the header carries the account icon -------
+ * A round 44px icon button (the icon idiom) that opens the account modal,
+ * in the slot the T49 "Sign in" button had. T50 put the teacher's name
+ * as text beside it, capped at 180px (100px under 1100 wide, T50 review);
+ * T61 (Pete: "let's get rid of 'Pete Stewart' in the header. clicking on
+ * the person icon is good enough") drops the name and its rules, and the
+ * modal behind the icon names the teacher. The gate is the staff modal's
+ * scrim made opaque: nothing of the roster shows through because nothing
+ * of the roster is rendered. Tokens only. */
+
+/* T60: the counters card precedes Buy and the account icon in the row
+ * (Pete: "swapped with each other"). Flex wraps in that order, so on a
+ * portrait iPad the counters would hold line one and the icon would
+ * dangle alone on line two. Under the width where the row stops fitting
+ * on one line -- the group's 404px floor, the 319px counters, Buy at 76,
+ * the 44px icon, three 12px gaps and 32px of page padding: 911px on
+ * paper (T61 took the name's 108px and one gap out of the T60 sum of
+ * 1019), and measured the row first holds one line at 912 with 911
+ * wrapping, so a 1024 landscape has over 100px to spare -- the counters
+ * go last again and wrap alone, right-aligned by their auto margin, the
+ * line split portrait has had since T46. */
+/* T70: the bar never wraps now (its cells narrow under 860 instead), so
+ * T60's portrait reordering of the counters is gone. */
+
+.staff-account {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  min-height: 76px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.staff-account:active {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.modal-scrim.staff-gate {
+  background: var(--bg);
+}
+
+/* T50 review: the signed-in account modal closes by its X (the
+ * search and profile modals' .modal-x). T52 gives every .modal
+ * position: relative and the title its 48px of room beside the X;
+ * these two keep this modal right until that merge and are then
+ * harmless duplicates. */
+.modal-staff {
+  position: relative;
+}
+
+.modal-staff .modal-x ~ .modal-title {
+  padding-right: 48px;
+}
+
+/* T50 review: the mode banner over the gate's opaque scrim, in the
+ * shell's own slot (16px inset, 1400 max) so it sits exactly where the
+ * roster's does. */
+.staff-gate-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 31;
+  max-width: none;
+  margin: 0;
+}
+
+.staff-gate-banner .banner {
+  margin: 0;
+}
+
+/* T56 --- The Membership modal explains the M ---------------------------
+ * Pete: "i want to understand what indicates the M status." Section
+ * labels in the info view's muted idiom, a used-up pass in --muted end
+ * to end (shown, never offered as payment), and the closing line that
+ * names Mindbody's flag. Tokens only; both palettes come from the swap. */
+.member-label {
+  margin: 12px 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* The first label sits under the name line (.modal-entity), whose own
+ * bottom margin is the gap. :first-of-type could not select it: the
+ * title and the name are paragraphs too, so the label is never first. */
+.modal-head + .member-label {
+  margin-top: 0;
+}
+
+.modal-member .member-none {
+  margin: 0 0 4px;
+  color: var(--muted);
+}
+
+.member-usedup .profile-pass-name,
+.member-usedup .profile-pass-meta {
+  color: var(--muted);
+}
+
+.member-flag {
+  margin: 16px 0 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+/* --- T59b: the new-client form ---------------------------------------
+ * Opened over the walk-in search's empty state, so its scrim sits one
+ * above the search modal's like the profile card does. Four inputs at
+ * the reason-input size (64px, 18px), first and last side by side,
+ * email and phone full width; the consent pair reuses T53's rows. The
+ * amber and stop notices are the modal-warn and note idioms. Tokens
+ * only, both palettes from the variable swap. */
+.modal-scrim.over-search {
+  z-index: 31;
+}
+.modal-new-client {
+  width: min(560px, 100%);
+}
+.modal-new-client .nc-sub {
+  margin: 0 0 16px;
+}
+.nc-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+.nc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.nc-field.wide {
+  grid-column: 1 / -1;
+}
+.nc-field .reason-input {
+  font-weight: 400;
+}
+.modal-new-client .modal-warn {
+  font-weight: 400;
+}
+.modal-new-client .nc-error {
+  margin: 0 0 12px;
+}
+/* The "New client" button under "Nobody found": a single full-width
+ * 64px action, quiet until it is the only thing to do. */
+.new-client-actions {
+  margin: 8px 0 0;
+}
+
+/* T59c -------------------------------------------------------------------
+ * The guest flow (Pete, 2026-09-03). Tokens only, both palettes; no new
+ * tokens were needed. */
+
+/* The guest modal: the search modal's shape at a narrower width, its
+ * rows name | standing chip like attach mode's. */
+.modal-guest {
+  --roster-cols: minmax(0, 1fr) 118px;
+  width: min(720px, 100%);
+  /* T62: one size in every state. Pete: the box changed size as
+   * results appeared while typing. A fixed height, the title and the
+   * search box at the top, the rows scrolling inside, and the New
+   * client button pinned at the bottom; the confirm sheet and the
+   * outcome fill the same box with their actions pinned the same way.
+   * dvh so the iPad's toolbars do not push the bottom off screen; vh
+   * first for a browser without it. */
+  height: min(640px, 84vh);
+  height: min(640px, 84dvh);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-guest .guest-rows {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  margin-bottom: 12px;
+  /* The list is a grid (.roster); given a box taller than its rows it
+   * would stretch them apart to fill it, and one result sat 100px
+   * under its label. The rows stack at the top and the space is below. */
+  align-content: start;
+}
+
+.modal-guest .new-client-actions {
+  margin: auto -20px -18px;
+  flex: 0 0 auto;
+}
+
+.modal-guest .search-bar,
+.modal-guest .search-quiet {
+  flex: 0 0 auto;
+}
+
+/* The confirm sheet and the outcome: the sentence or the lines at the
+ * top, scrolling if they ever need to, the buttons at the bottom edge
+ * where the New client button sits in the list state. */
+.modal-guest .guest-confirm {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-guest .guest-confirm .guest-outcome {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.modal-guest .guest-confirm .modal-actions {
+  margin-top: auto;
+  flex: 0 0 auto;
+}
+
+/* A group label between the rows ("In class", the search's results):
+ * a quiet line in the list, not a row. */
+.guest-rows .guest-group {
+  padding: 8px 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.guest-rows .guest-empty {
+  padding: 8px 16px;
+  font-size: 16px;
+}
+
+/* The amber line under a candidate who is allowed but worth a glance
+ * (a member themselves, already checked in, already paid): the warn
+ * ink, information rather than a gate. */
+.subline.guest-caution {
+  color: var(--warn);
+}
+
+/* The Guest action beside the pass chevron: the row-icon idiom, in the
+ * accent so it reads as an action and not as another muted marker. */
+.guest-btn {
+  color: var(--accent);
+}
+
+/* The confirm sheet's sentence and the outcome list. The sentence is
+ * the ink, not the stop colour: nothing here is destructive. */
+.guest-sentence {
+  margin: 0 0 16px;
+  font-size: 18px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.guest-outcome {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.guest-line {
+  padding: 10px 12px;
+  border-radius: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.guest-line.ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.guest-line.warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.guest-line.stop {
+  background: var(--stop-bg);
+  color: var(--stop);
+}
+
+/* T59c review: the Guest action beside the chevron took 48px from the
+ * pass name, and "Monthly Committed Membership" ellipsized at 1180
+ * (142px left; the two-line wrap needs 158). The roster's two pass
+ * icons now sit in one right-pinned group, .pay-icons, which stacks
+ * vertically when the Guest action is present (.has-guest, decided
+ * with the button in page.tsx): the name keeps the width it has with
+ * the chevron alone, the row grows to the two icons' 88px instead, and
+ * the name may take a third line before T54's ellipsis, which at
+ * 1024's 116px is what "Membership" needs. */
+.cell-pay .pay-icons {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cell-pay .pay-icons .pass-toggle {
+  margin-left: 0;
+}
+
+/* No icons, no group: an empty span would still cost the name the
+ * cell's 4px gap, which at 1024 is the difference between "Monthly
+ * Committed" on one line (158px) and an ellipsis. */
+.cell-pay .pay-icons:empty {
+  display: none;
+}
+
+.cell-pay.has-guest .pay-icons {
+  flex-direction: column;
+  gap: 0;
+}
+
+.cell-pay.has-guest .pay-name {
+  -webkit-line-clamp: 3;
+}
+
+/* Portrait (T60 review, folded in here): at 820 and 810 wide the
+ * roster's fixed columns (220 + 88 + 7em + 328, plus four 12px gaps and
+ * the row's padding) outran the row, the payment column collapsed to
+ * 0 and the head's "Payment" drew over "Balance". Under 860 the name
+ * column gives up its floor, the payment column gets a real one, the
+ * balance column is sized for a three-figure amount, and the gaps, the
+ * row padding and the chip padding each give back a few pixels so the
+ * actions cell (the chip and four 44px icons) still fits. Pass names
+ * keep T54's two-line wrap, never an ellipsis. */
+@media (max-width: 860px) {
+  :root {
+    --roster-cols: minmax(0, 2fr) 78px minmax(120px, 1.4fr) 4.5em 148px 188px;
+  }
+
+  .roster-head,
+  .rrow {
+    gap: 8px;
+  }
+
+  .roster-head {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .rrow {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .chip {
+    padding: 0 10px;
+    min-width: 96px;
+  }
+
+  /* The top bar's fixed cells give back what portrait lacks; the
+   * kickers wrap to two lines inside the 76px rather than overflow. */
+  .counter {
+    width: 108px;
+    padding: 0 12px;
+  }
+
+  .counter-label {
+    white-space: normal;
+    line-height: 1.15;
+  }
+
+  .pass-facts {
+    white-space: normal;
+  }
+
+  .counter:last-child {
+    width: 96px;
+  }
+
+  .class-buy {
+    width: 88px;
+    padding: 0 16px;
+  }
+
+  /* With 136px the name column would ellipsize "Whitney Campbell";
+   * a name a teacher cannot read is worse than a taller row, so the
+   * roster's names wrap here (the search rows' rule, T17). The pass
+   * name gets a third line for the same reason, T54's ellipsis only
+   * past that. */
+  .roster .name-text {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .pay-name {
+    -webkit-line-clamp: 3;
+  }
+
+  /* T59c review: at the 120px payment floor the stacked icons would
+   * leave the name 72px, less than "Membership"; the group wraps under
+   * the name instead, on the member's row alone. */
+  .cell-pay.has-guest {
+    flex-wrap: wrap;
+  }
+
+  .cell-pay.has-guest .pay-stack {
+    flex: 1 1 100%;
+  }
+
+  .cell-pay.has-guest .pay-icons {
+    flex-direction: row;
+  }
+}
+
+/* T70 --- The roster builder's late rules -------------------------------
+ * The banners and notes above the bar sit flush like it; the shell's
+ * own quiet lines take the row inset. */
+.shell > .note {
+  margin: 0;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.shell > p.muted {
+  margin: 0;
+  padding: 8px 20px;
+  font-size: 16px;
+}
+
+/* The lock screen's banners: the staff gate's fixed strip, so the mode
+ * line reads the same on every screen a teacher can land on. */
+.lock-banners {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
 }

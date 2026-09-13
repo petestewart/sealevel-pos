@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/modernist-090c6801-0d60-4d8e-86d6-e6f9a35bf85b/styles.css">
+  <script src="_ds/modernist-090c6801-0d60-4d8e-86d6-e6f9a35bf85b/_ds_bundle.js"></script>
+  <style>
+    body { margin: 0; background: #f0efee; }
+    a { color: #166d67; } a:hover { color: #0f4f4a; }
+    @keyframes pos-fade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+  </style>
+</helmet>
+<div style="{{ theme }}" data-screen-label="Buy">
+<div style="position: relative; width: 1194px; height: 834px; box-sizing: border-box; background: var(--pos-bg); color: var(--pos-text); font-family: var(--font-body); font-size: 16px; display: flex; flex-direction: column; overflow: hidden">
+
+  <div style="flex: 0 0 auto; height: 76px; display: flex; align-items: stretch; border-bottom: 2px solid var(--pos-rule); background: var(--pos-surface)">
+    <div style="display: flex; align-items: center; padding: 0 20px; font-family: var(--font-heading); font-weight: 800; font-size: 24px; letter-spacing: -0.02em">Buy</div>
+
+    <sc-if value="{{ noClient }}" hint-placeholder-val="{{ true }}">
+      <div onClick="{{ openAttach }}" style="display: flex; align-items: center; gap: 12px; padding: 0 20px; border-left: 1px solid var(--pos-line); cursor: pointer" style-hover="background: var(--pos-surface-2)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" style="color: var(--pos-accent)"><path d="M12 5v14M5 12h14"></path></svg>
+        <div>
+          <div style="font-family: var(--font-heading); font-weight: 800; font-size: 17px">Attach a client</div>
+          <div style="font-size: 16px; color: var(--pos-muted); white-space: nowrap">for stored card or account credit</div>
+        </div>
+      </div>
+      <div onClick="{{ walkIn }}" style="display: flex; align-items: center; padding: 0 22px; border-left: 1px solid var(--pos-line); font-family: var(--font-heading); font-weight: 800; font-size: 17px; cursor: pointer; white-space: nowrap" style-hover="background: var(--pos-surface-2)">Walk-in</div>
+    </sc-if>
+
+    <sc-if value="{{ hasClient }}" hint-placeholder-val="{{ false }}">
+      <div style="display: flex; align-items: center; gap: 16px; padding: 0 18px; border-left: 1px solid var(--pos-line); background: var(--pos-accent-tint)">
+        <div>
+          <div style="font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pos-accent)">Sale for</div>
+          <div style="font-family: var(--font-heading); font-weight: 800; font-size: 18px">{{ clientName }}</div>
+        </div>
+        <div onClick="{{ clearClient }}" style="width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--pos-muted)" style-hover="color: var(--pos-stop)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M6 6l12 12M18 6 6 18"></path></svg>
+        </div>
+      </div>
+    </sc-if>
+
+    <div style="flex: 1 1 auto"></div>
+    <div onClick="{{ toggleTheme }}" title="Light / dark" style="width: 64px; display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--pos-line); cursor: pointer; color: var(--pos-muted)" style-hover="color: var(--pos-text); background: var(--pos-surface-2)">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"></path></svg>
+    </div>
+    <a href="Roster.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 0 22px; border-left: 1px solid var(--pos-line); color: var(--pos-text); text-decoration: none; font-family: var(--font-heading); font-weight: 800; font-size: 17px" style-hover="background: var(--pos-surface-2)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M20 12H4M10 6 4 12l6 6"></path></svg>Back
+    </a>
+  </div>
+
+  <div style="flex: 1 1 auto; display: flex; min-height: 0">
+
+    <div style="flex: 0 0 190px; display: flex; flex-direction: column; border-right: 2px solid var(--pos-rule); background: var(--pos-surface)">
+      <sc-for list="{{ cats }}" as="c" hint-placeholder-count="6">
+        <div onClick="{{ c.pick }}" style="height: 64px; flex: 0 0 auto; display: flex; align-items: center; padding: 0 18px; border-bottom: 1px solid var(--pos-line); cursor: pointer; font-family: var(--font-heading); font-weight: 800; font-size: 17px; background: {{ c.bg }}; color: {{ c.ink }}" style-hover="filter: brightness(0.96)">{{ c.name }}</div>
+      </sc-for>
+    </div>
+
+    <div style="flex: 1 1 auto; min-width: 0; padding: 18px; overflow: hidden">
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-content: start">
+        <sc-for list="{{ items }}" as="it" hint-placeholder-count="6">
+          <div onClick="{{ it.add }}" style="height: 104px; box-sizing: border-box; padding: 14px 16px; border: {{ it.border }}; background: var(--pos-surface); display: flex; flex-direction: column; justify-content: space-between; cursor: pointer" style-hover="border-color: var(--pos-accent)">
+            <div style="display: flex; align-items: flex-start; gap: 8px">
+              <div style="flex: 1 1 auto; font-family: var(--font-heading); font-weight: 800; font-size: 17px; line-height: 1.2">{{ it.name }}</div>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="{{ it.starFill }}" stroke="{{ it.starStroke }}" stroke-width="2" stroke-linecap="square" style="flex: 0 0 auto"><path d="m12 4 2.5 5.2 5.5.8-4 3.9 1 5.6-5-2.9-5 2.9 1-5.6-4-3.9 5.5-.8Z"></path></svg>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between">
+              <span style="font-variant-numeric: tabular-nums; font-size: 18px; color: var(--pos-muted)">{{ it.price }}</span>
+              <sc-if value="{{ it.qty }}" hint-placeholder-val="{{ false }}">
+                <span style="min-width: 34px; height: 28px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; background: var(--pos-accent); color: var(--pos-accent-ink); font-weight: 800; font-size: 16px">{{ it.qtyLabel }}</span>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="flex: 0 0 320px; display: flex; flex-direction: column; border-left: 2px solid var(--pos-rule); background: var(--pos-surface)">
+      <div style="flex: 0 0 auto; height: 52px; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid var(--pos-rule)">
+        <span style="font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase">Ticket</span>
+        <span style="font-size: 16px; color: var(--pos-muted)">{{ itemCount }}</span>
+      </div>
+      <div style="flex: 1 1 auto; min-height: 0; overflow: hidden">
+        <sc-for list="{{ lines }}" as="l" hint-placeholder-count="2">
+          <div onClick="{{ l.remove }}" style="display: flex; align-items: center; gap: 10px; padding: 0 18px; height: 56px; border-bottom: 1px solid var(--pos-line); cursor: pointer" style-hover="background: var(--pos-stop-bg)">
+            <span style="flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ l.name }}</span>
+            <span style="flex: 0 0 auto; font-variant-numeric: tabular-nums; font-weight: 600">{{ l.amount }}</span>
+          </div>
+        </sc-for>
+        <sc-if value="{{ empty }}" hint-placeholder-val="{{ false }}">
+          <div style="padding: 28px 18px; color: var(--pos-muted); font-size: 16px">Nothing on the ticket yet. Tap an item.</div>
+        </sc-if>
+      </div>
+      <div style="flex: 0 0 auto; padding: 14px 18px; border-top: 2px solid var(--pos-rule); display: flex; flex-direction: column; gap: 6px">
+        <div style="display: flex; justify-content: space-between; color: var(--pos-muted); font-variant-numeric: tabular-nums"><span>Subtotal</span><span>{{ subtotal }}</span></div>
+        <div style="display: flex; justify-content: space-between; color: var(--pos-muted); font-variant-numeric: tabular-nums"><span>Tax 10.35%</span><span>{{ tax }}</span></div>
+        <div style="display: flex; justify-content: space-between; align-items: baseline; padding-top: 10px; margin-top: 4px; border-top: 1px solid var(--pos-line); font-variant-numeric: tabular-nums">
+          <span style="font-family: var(--font-heading); font-weight: 800; font-size: 18px">Total</span>
+          <span style="font-family: var(--font-heading); font-weight: 800; font-size: 26px">{{ total }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex: 0 0 auto; height: 80px; display: flex; align-items: stretch; border-top: 2px solid var(--pos-rule); background: var(--pos-surface)">
+    <div style="display: flex; align-items: center; padding: 0 20px; color: var(--pos-muted); font-size: 16px; font-variant-numeric: tabular-nums">API {{ apiCalls }}</div>
+    <div style="flex: 1 1 auto"></div>
+    <div onClick="{{ empties }}" style="display: flex; align-items: center; padding: 0 26px; border-left: 1px solid var(--pos-line); font-family: var(--font-heading); font-weight: 800; font-size: 17px; color: var(--pos-muted); cursor: pointer" style-hover="color: var(--pos-stop); background: var(--pos-stop-bg)">Empty cart</div>
+    <a href="Payment.dc.html" style="display: flex; align-items: center; gap: 18px; padding: 0 32px; background: var(--pos-accent); color: var(--pos-accent-ink); text-decoration: none; font-family: var(--font-heading); font-weight: 800; font-size: 22px" style-hover="background: var(--pos-accent-press)">
+      <span>Pay</span><span style="font-size: 16px; font-weight: 600; opacity: 0.85">{{ itemCount }}</span><span style="font-variant-numeric: tabular-nums">{{ total }}</span>
+    </a>
+  </div>
+
+  <sc-if value="{{ attachOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position: absolute; inset: 0; z-index: 40; background: rgba(24, 22, 21, 0.55); display: flex; align-items: flex-start; justify-content: center; padding-top: 84px">
+      <div style="width: 760px; background: var(--pos-surface); border: 2px solid var(--pos-rule); box-shadow: var(--shadow-lg); animation: pos-fade 140ms ease-out; display: flex; flex-direction: column; max-height: 680px">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-bottom: 2px solid var(--pos-rule)">
+          <div style="font-family: var(--font-heading); font-weight: 800; font-size: 22px">Attach a client to the sale</div>
+          <div onClick="{{ closeAttach }}" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--pos-muted)" style-hover="color: var(--pos-text); background: var(--pos-surface-2)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M6 6l12 12M18 6 6 18"></path></svg>
+          </div>
+        </div>
+        <div style="display: flex; align-items: stretch; border-bottom: 1px solid var(--pos-line)">
+          <input placeholder="Who is the sale for? (press Enter)" style="flex: 1 1 auto; min-width: 0; height: 60px; padding: 0 20px; border: 0; outline: none; background: transparent; color: var(--pos-text); font-family: var(--font-body); font-size: 19px" />
+          <div style="width: 68px; display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--pos-line); cursor: pointer" style-hover="background: var(--pos-surface-2)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><circle cx="11" cy="11" r="7"></circle><path d="m16.5 16.5 4.5 4.5"></path></svg>
+          </div>
+        </div>
+        <div style="display: flex; align-items: stretch; border-bottom: 2px solid var(--pos-rule)">
+          <div style="display: flex; align-items: center; padding: 0 20px; height: 60px; background: var(--pos-accent); color: var(--pos-accent-ink); font-family: var(--font-heading); font-weight: 800">In class</div>
+          <div style="flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-left: 1px solid var(--pos-line); cursor: pointer" style-hover="background: var(--pos-surface-2)">
+            <span style="flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600">6:00 AM · Hot 26 &amp; 2 (90 min) — Sally Zapata</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square" style="color: var(--pos-muted)"><path d="m6 9 6 6 6-6"></path></svg>
+          </div>
+          <sc-for list="{{ filters }}" as="f" hint-placeholder-count="3">
+            <div onClick="{{ f.pick }}" style="width: 108px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border-left: 1px solid var(--pos-line); cursor: pointer; background: {{ f.bg }}; color: {{ f.ink }}; font-size: 16px; font-weight: 600">{{ f.label }}</div>
+          </sc-for>
+        </div>
+        <div style="flex: 1 1 auto; overflow: hidden">
+          <sc-for list="{{ people }}" as="p" hint-placeholder-count="5">
+            <div onClick="{{ p.pick }}" style="display: flex; align-items: center; gap: 14px; padding: 0 20px; height: 68px; border-bottom: 1px solid var(--pos-line); cursor: pointer" style-hover="background: var(--pos-accent-tint)">
+              <span style="flex: 1 1 auto; min-width: 0; font-weight: 600; font-size: 19px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ p.name }}</span>
+              <span style="flex: 0 0 auto; height: 30px; padding: 0 12px; display: inline-flex; align-items: center; background: {{ p.tagBg }}; color: {{ p.tagInk }}; font-size: 16px; font-weight: 600">{{ p.status }}</span>
+              <div style="flex: 0 0 auto; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; color: var(--pos-muted)">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"></path></svg>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1194,&quot;height&quot;:834}}">
+const LIGHT = {
+  '--pos-bg': '#f0efee', '--pos-surface': '#ffffff', '--pos-surface-2': '#f8f4f4',
+  '--pos-line': '#d7d3d3', '--pos-rule': '#201e1d', '--pos-text': '#201e1d', '--pos-muted': '#605d5d',
+  '--pos-accent': '#166d67', '--pos-accent-press': '#0f4f4a', '--pos-accent-ink': '#ffffff', '--pos-accent-tint': '#e3efee',
+  '--pos-ok': '#0f6b46', '--pos-ok-bg': '#e3f1e9', '--pos-warn': '#7a4f00', '--pos-warn-bg': '#f7ecd4',
+  '--pos-stop': '#a32020', '--pos-stop-bg': '#f8e6e6', '--pos-gold': '#6d4a05', '--pos-gold-bg': '#f0dcae'
+};
+const DARK = {
+  '--pos-bg': '#121313', '--pos-surface': '#1c1d1d', '--pos-surface-2': '#252626',
+  '--pos-line': '#3a3b3b', '--pos-rule': '#f3f2f2', '--pos-text': '#f3f2f2', '--pos-muted': '#9b9797',
+  '--pos-accent': '#3fa89f', '--pos-accent-press': '#59bdb4', '--pos-accent-ink': '#07211f', '--pos-accent-tint': '#16302e',
+  '--pos-ok': '#6cc79b', '--pos-ok-bg': '#12291f', '--pos-warn': '#e2b768', '--pos-warn-bg': '#2c2110',
+  '--pos-stop': '#e88b8b', '--pos-stop-bg': '#2e1616', '--pos-gold': '#e8cf94', '--pos-gold-bg': '#2b2410'
+};
+
+const CATALOG = {
+  'Favorites': [
+    { name: 'Mat Rental', price: 3, tax: false, star: true },
+    { name: 'LMNT Electrolytes', price: 1.81, tax: true, star: true },
+    { name: 'Water', price: 2, tax: true, star: true },
+    { name: '10 Class Card', price: 160, tax: false, star: true }
+  ],
+  'Food/Drink': [
+    { name: 'LMNT Electrolytes', price: 1.81, tax: true, star: true },
+    { name: 'Water', price: 2, tax: true, star: true },
+    { name: 'Kombucha', price: 4.5, tax: true },
+    { name: 'Protein Bar', price: 3.25, tax: true }
+  ],
+  'Passes': [
+    { name: 'Single Class', price: 23, tax: false },
+    { name: '5 Class Card', price: 95, tax: false },
+    { name: '10 Class Card', price: 160, tax: false, star: true },
+    { name: '30 Day Unlimited', price: 145, tax: false }
+  ],
+  'Memberships': [
+    { name: 'Monthly Committed', price: 129, tax: false },
+    { name: 'Annual Paid In Full', price: 1290, tax: false },
+    { name: 'First Month Free', price: 0, tax: false }
+  ],
+  'Accessories': [
+    { name: 'Mat Rental', price: 3, tax: false, star: true },
+    { name: 'Myga Yoga Mat', price: 25, tax: true },
+    { name: 'Towel Rental', price: 2, tax: false },
+    { name: 'Cork Block', price: 18, tax: true }
+  ],
+  'Clothing': [
+    { name: 'Studio Tee', price: 28, tax: true },
+    { name: 'Tank', price: 32, tax: true },
+    { name: 'Shorts', price: 46, tax: true }
+  ]
+};
+
+const PEOPLE = [
+  { name: 'Sara Couch', status: 'signed up' },
+  { name: 'Tom Obranovich', status: 'signed up' },
+  { name: 'Roxann Roberts-Phillips', status: 'signed up' },
+  { name: 'Alison Stewart', status: 'signed up' },
+  { name: 'Pete Stewart', status: 'checked in' }
+];
+
+const money = n => '$' + n.toFixed(2);
+
+class Component extends DCLogic {
+  state = {
+    dark: false, cat: 'Accessories', attachOpen: false, filter: 'All',
+    client: null, walkin: false, api: 87,
+    cart: [{ name: 'LMNT Electrolytes', price: 1.81, tax: true, qty: 1 }, { name: 'Mat Rental', price: 3, tax: false, qty: 1 }]
+  };
+
+  add(it) {
+    this.setState(p => {
+      const cart = p.cart.map(l => ({ ...l }));
+      const found = cart.find(l => l.name === it.name);
+      if (found) found.qty += 1; else cart.push({ name: it.name, price: it.price, tax: it.tax, qty: 1 });
+      return { cart, api: p.api + 1 };
+    });
+  }
+
+  remove(name) {
+    this.setState(p => ({ cart: p.cart.filter(l => l.name !== name) }));
+  }
+
+  renderVals() {
+    const s = this.state;
+    const subtotal = s.cart.reduce((a, l) => a + l.price * l.qty, 0);
+    const tax = s.cart.reduce((a, l) => a + (l.tax ? l.price * l.qty * 0.1035 : 0), 0);
+    const count = s.cart.reduce((a, l) => a + l.qty, 0);
+    const items = (CATALOG[s.cat] || []).map(it => {
+      const line = s.cart.find(l => l.name === it.name);
+      return {
+        ...it,
+        price: money(it.price),
+        qty: !!line, qtyLabel: line ? '×' + line.qty : '',
+        border: line ? '2px solid var(--pos-accent)' : '1px solid var(--pos-line)',
+        starFill: it.star ? 'var(--pos-gold)' : 'none',
+        starStroke: it.star ? 'var(--pos-gold)' : 'var(--pos-line)',
+        add: () => this.add(it)
+      };
+    });
+    return {
+      theme: s.dark ? DARK : LIGHT,
+      toggleTheme: () => this.setState(p => ({ dark: !p.dark })),
+      cats: Object.keys(CATALOG).map(name => ({
+        name,
+        bg: name === s.cat ? 'var(--pos-accent)' : 'var(--pos-surface)',
+        ink: name === s.cat ? 'var(--pos-accent-ink)' : 'var(--pos-text)',
+        pick: () => this.setState({ cat: name })
+      })),
+      items,
+      lines: s.cart.map(l => ({
+        name: l.qty > 1 ? l.name + '  ×' + l.qty : l.name,
+        amount: money(l.price * l.qty),
+        remove: () => this.remove(l.name)
+      })),
+      empty: s.cart.length === 0,
+      itemCount: count === 1 ? '1 item' : count + ' items',
+      subtotal: money(subtotal), tax: money(tax), total: money(subtotal + tax),
+      apiCalls: s.api,
+      empties: () => this.setState({ cart: [] }),
+      noClient: !s.client && !s.walkin,
+      hasClient: !!(s.client || s.walkin),
+      clientName: s.client || 'Walk-in sale',
+      attachOpen: s.attachOpen,
+      openAttach: () => this.setState({ attachOpen: true }),
+      closeAttach: () => this.setState({ attachOpen: false }),
+      walkIn: () => this.setState({ walkin: true }),
+      clearClient: () => this.setState({ client: null, walkin: false }),
+      filters: ['All', 'Signed in', 'Not yet'].map(label => ({
+        label,
+        bg: label === s.filter ? 'var(--pos-accent)' : 'var(--pos-surface)',
+        ink: label === s.filter ? 'var(--pos-accent-ink)' : 'var(--pos-muted)',
+        pick: () => this.setState({ filter: label })
+      })),
+      people: PEOPLE.filter(p => s.filter === 'All' || (s.filter === 'Signed in' ? p.status === 'checked in' : p.status === 'signed up')).map(p => ({
+        ...p,
+        tagBg: p.status === 'checked in' ? 'var(--pos-ok-bg)' : 'var(--pos-surface-2)',
+        tagInk: p.status === 'checked in' ? 'var(--pos-ok)' : 'var(--pos-muted)',
+        pick: () => this.setState({ client: p.name, attachOpen: false, api: this.state.api + 1 })
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

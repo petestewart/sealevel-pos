@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/modernist-090c6801-0d60-4d8e-86d6-e6f9a35bf85b/styles.css">
+  <script src="_ds/modernist-090c6801-0d60-4d8e-86d6-e6f9a35bf85b/_ds_bundle.js"></script>
+  <style>
+    body { margin: 0; background: #f0efee; }
+    a { color: #166d67; } a:hover { color: #0f4f4a; }
+  </style>
+</helmet>
+<div style="{{ theme }}" data-screen-label="Dialogs">
+<div style="width: 1194px; height: 834px; box-sizing: border-box; background: var(--pos-bg); color: var(--pos-text); font-family: var(--font-body); font-size: 16px; display: flex; flex-direction: column; overflow: hidden">
+
+  <div style="flex: 0 0 auto; height: 76px; display: flex; align-items: stretch; border-bottom: 2px solid var(--pos-rule); background: var(--pos-surface)">
+    <div style="display: flex; flex-direction: column; justify-content: center; padding: 0 20px">
+      <div style="font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pos-muted)">Confirms</div>
+      <div style="font-family: var(--font-heading); font-weight: 800; font-size: 22px; letter-spacing: -0.01em">Dialogs</div>
+    </div>
+    <div style="flex: 1 1 auto"></div>
+    <div onClick="{{ toggleTheme }}" title="Light / dark" style="width: 64px; display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--pos-line); cursor: pointer; color: var(--pos-muted)" style-hover="color: var(--pos-text); background: var(--pos-surface-2)">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"></path></svg>
+    </div>
+    <a href="Roster.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 0 22px; border-left: 1px solid var(--pos-line); color: var(--pos-text); text-decoration: none; font-family: var(--font-heading); font-weight: 800; font-size: 17px" style-hover="background: var(--pos-surface-2)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M20 12H4M10 6 4 12l6 6"></path></svg>Back
+    </a>
+  </div>
+
+  <div style="flex: 1 1 auto; min-height: 0; padding: 40px; display: flex; gap: 32px; align-items: flex-start; background: var(--pos-scrim)">
+
+    <div style="flex: 1 1 0; background: var(--pos-surface); border: 2px solid var(--pos-rule); box-shadow: var(--shadow-lg)">
+      <div style="padding: 18px 20px; border-bottom: 2px solid var(--pos-rule)">
+        <div style="font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pos-muted)">Check out</div>
+        <div style="font-family: var(--font-heading); font-weight: 800; font-size: 22px">Check out Colin Dennis?</div>
+      </div>
+      <div style="padding: 18px 20px; display: flex; flex-direction: column; gap: 14px">
+        <div style="border: 1px solid var(--pos-line); background: var(--pos-surface-2); padding: 14px 16px">
+          <div style="font-family: var(--font-heading); font-weight: 800; font-size: 18px">Colin Dennis</div>
+          <div style="color: var(--pos-muted)">10 Class Card · 9 left · checked in 6:52 PM</div>
+        </div>
+        <div style="color: var(--pos-stop); font-weight: 600">Marks them as not attended.</div>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--pos-line)">
+        <div style="height: 68px; display: flex; align-items: center; padding: 0 20px; border-right: 1px solid var(--pos-line); font-family: var(--font-heading); font-weight: 800; font-size: 17px; cursor: pointer" style-hover="background: var(--pos-surface-2)">Cancel</div>
+        <div style="height: 68px; display: flex; align-items: center; padding: 0 20px; background: var(--pos-stop); color: #ffffff; font-family: var(--font-heading); font-weight: 800; font-size: 17px; cursor: pointer" style-hover="filter: brightness(0.92)">Check out</div>
+      </div>
+    </div>
+
+    <div style="flex: 1 1 0; background: var(--pos-surface); border: 2px solid var(--pos-rule); box-shadow: var(--shadow-lg)">
+      <div style="padding: 18px 20px; border-bottom: 2px solid var(--pos-rule)">
+        <div style="font-size: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pos-stop)">Red alert</div>
+        <div style="font-family: var(--font-heading); font-weight: 800; font-size: 22px">Amanda Phillips</div>
+      </div>
+      <div style="padding: 18px 20px; display: flex; flex-direction: column; gap: 14px">
+        <div style="border: 1px solid var(--pos-line); background: var(--pos-surface-2); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px">
+          <div style="color: var(--pos-muted)">Membership First month free · booked 7:00 PM Hot 26 &amp; 2</div>
+          <div style="padding: 12px 14px; background: var(--pos-stop-bg); color: var(--pos-stop); font-weight: 600">Amanda is suspended from online booking until 6/17</div>
+        </div>
+        <div style="color: var(--pos-muted)">The studio flagged this deliberately. Read it before letting them into class.</div>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--pos-line)">
+        <div style="height: 68px; display: flex; align-items: center; padding: 0 20px; border-right: 1px solid var(--pos-line); font-family: var(--font-heading); font-weight: 800; font-size: 17px; cursor: pointer" style-hover="background: var(--pos-surface-2)">Cancel</div>
+        <div style="height: 68px; display: flex; align-items: center; padding: 0 20px; background: var(--pos-stop); color: #ffffff; font-family: var(--font-heading); font-weight: 800; font-size: 17px; cursor: pointer" style-hover="filter: brightness(0.92)">I have read it, check in</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex: 0 0 auto; height: 56px; display: flex; align-items: center; gap: 20px; padding: 0 20px; border-top: 2px solid var(--pos-rule); background: var(--pos-surface); color: var(--pos-muted); font-size: 16px">
+    <span>Destructive confirms only — the unpaid case stays an inline second tap on the row.</span>
+    <a href="Roster.dc.html" style="margin-left: auto; color: var(--pos-accent); font-weight: 600; text-decoration: none">Roster</a>
+    <a href="Buy.dc.html" style="color: var(--pos-accent); font-weight: 600; text-decoration: none">Buy</a>
+    <a href="Payment.dc.html" style="color: var(--pos-accent); font-weight: 600; text-decoration: none">Payment</a>
+  </div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1194,&quot;height&quot;:834}}">
+const LIGHT = {
+  '--pos-bg': '#f0efee', '--pos-surface': '#ffffff', '--pos-surface-2': '#f8f4f4',
+  '--pos-line': '#d7d3d3', '--pos-rule': '#201e1d', '--pos-text': '#201e1d', '--pos-muted': '#605d5d',
+  '--pos-scrim': '#e2e0de',
+  '--pos-accent': '#166d67', '--pos-accent-press': '#0f4f4a', '--pos-accent-ink': '#ffffff', '--pos-accent-tint': '#e3efee',
+  '--pos-ok': '#0f6b46', '--pos-ok-bg': '#e3f1e9', '--pos-warn': '#7a4f00', '--pos-warn-bg': '#f7ecd4',
+  '--pos-stop': '#a32020', '--pos-stop-bg': '#f8e6e6'
+};
+const DARK = {
+  '--pos-bg': '#121313', '--pos-surface': '#1c1d1d', '--pos-surface-2': '#252626',
+  '--pos-line': '#3a3b3b', '--pos-rule': '#f3f2f2', '--pos-text': '#f3f2f2', '--pos-muted': '#9b9797',
+  '--pos-scrim': '#0b0c0c',
+  '--pos-accent': '#3fa89f', '--pos-accent-press': '#59bdb4', '--pos-accent-ink': '#07211f', '--pos-accent-tint': '#16302e',
+  '--pos-ok': '#6cc79b', '--pos-ok-bg': '#12291f', '--pos-warn': '#e2b768', '--pos-warn-bg': '#2c2110',
+  '--pos-stop': '#e88b8b', '--pos-stop-bg': '#2e1616'
+};
+
+class Component extends DCLogic {
+  state = { dark: false };
+  renderVals() {
+    return {
+      theme: this.state.dark ? DARK : LIGHT,
+      toggleTheme: () => this.setState(p => ({ dark: !p.dark }))
+    };
+  }
+}
+</script>
+</body>
+</html>

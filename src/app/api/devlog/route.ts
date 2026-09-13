@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { requireSession } from "@/lib/auth";
+
 import { clear, devtoolsEnabled, recent } from "@/lib/calllog";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +12,8 @@ export const dynamic = "force-dynamic";
  * reachable on the counter iPad.
  */
 export async function GET(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
   if (!devtoolsEnabled()) {
     return NextResponse.json({ error: "devtools disabled" }, { status: 404 });
   }
@@ -17,7 +21,9 @@ export async function GET(request: Request) {
   return NextResponse.json({ calls: recent(Number.isFinite(since) ? since : 0) });
 }
 
-export async function DELETE() {
+export async function DELETE(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
   if (!devtoolsEnabled()) {
     return NextResponse.json({ error: "devtools disabled" }, { status: 404 });
   }

@@ -28,7 +28,7 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 
 | # | Probe | Answers | Status |
 |---|---|---|---|
-| B1 | `POST /sale/checkoutshoppingcart` with a candidate price/discount key in item `Metadata`, `Test: true`, compare returned total | Whether the POS can set a cart price directly. If yes, the $21 SKU is unnecessary | **Not run. Do before creating anything in Mindbody** |
+| B1 | `POST /sale/checkoutshoppingcart` with a candidate price/discount key in item `Metadata`, `Test: true`, compare returned total | Whether the POS can set a cart price directly. If yes, the $21 SKU is unnecessary | **Mostly answered from the spec (2026-08-30): CheckoutItemWrapper.DiscountAmount discounts a cart line directly, so the $21 SKU is unnecessary. One Test: true probe still owed for quantity semantics and permission gating; see TICKETS.** |
 | B2 | `GET /sale/alternativepaymentmethods` with `LocationId=98` | The HTTP 400 that gates all Apple Pay scoping | Not run |
 | B3 | Re-run `mindbody:probe-payments --live` against a client with a current card | Whether a charge actually settles through Stripe. Only ever reached "card is expired" | Not run |
 | B4 | Confirm a per-client Mindbody-hosted card capture page exists and is reachable by URL | Whether Phase 3 card capture is buildable at all | Not run |
@@ -114,8 +114,8 @@ Not a feature, and the step that turns a laptop demo into something teachers
 use. **Until this is done the app must not sit at the counter**: it is an open
 endpoint against live student data.
 
-- [ ] Auth (P1 decides whether identity is per-teacher or shared)
-- [ ] Railway service, deployed
+- [x] Auth: shared device PIN (T21); teacher identity only where it matters, a comp, by the teacher's own stored PIN (T48, superseding T44's shift sign-in)
+- [ ] Railway service, deployed (steps in docs/DEPLOY.md)
 - [ ] `POS_DEVTOOLS=false`, `POS_DRY_RUN=false`, mode banner verified
 - [ ] Add to Home Screen on the studio iPad
 - [ ] **Watch a teacher work a 6pm rush.** Fix what they actually hit before

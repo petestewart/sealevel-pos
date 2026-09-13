@@ -143,6 +143,77 @@ export async function staffToken(env = mindbodyEnv()): Promise<string> {
   return token;
 }
 
+/**
+ * A staff sign-in with SOMEONE ELSE'S credentials (T48): a teacher
+ * enrolling a comp PIN proves who they are by signing in to Mindbody once,
+ * and this is that one call. Deliberately not staffToken(): the token is
+ * never cached (it is revoked below as soon as the id has been read), the
+ * body is never logged and the call is never recorded in the dev call log,
+ * because the request carries a teacher's password and the answer carries
+ * a token that could act as them. Answers the user Mindbody named, or the
+ * HTTP status it refused with; throws only on transport failure.
+ */
+export async function signInAsStaff(
+  username: string,
+  password: string,
+): Promise<
+  | {
+      ok: true;
+      token: string;
+      user: { id: number; firstName: string; lastName: string; type: string };
+    }
+  | { ok: false; status: number }
+> {
+  const env = mindbodyEnv();
+  const res = await fetch(`${env.baseUrl}/usertoken/issue`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "Api-Key": env.apiKey,
+      SiteId: env.siteId,
+    },
+    body: JSON.stringify({ Username: username, Password: password }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const body = await res.json().catch(() => ({}));
+  const token = body?.AccessToken;
+  if (!res.ok || typeof token !== "string") {
+    return { ok: false, status: res.status };
+  }
+  const user = body?.User ?? {};
+  return {
+    ok: true,
+    token,
+    user: {
+      id: typeof user.Id === "number" ? user.Id : Number(user.Id ?? NaN),
+      firstName: typeof user.FirstName === "string" ? user.FirstName : "",
+      lastName: typeof user.LastName === "string" ? user.LastName : "",
+      type: typeof user.Type === "string" ? user.Type : "",
+    },
+  };
+}
+
+/** Revokes a token signInAsStaff issued (`DELETE /usertoken/revoke`,
+ *  user-token.yml). Best effort: the enrollment is already decided by the
+ *  time this runs, and a token nobody holds expires on its own. Not
+ *  recorded in the call log, for the same reason as the issue. */
+export async function revokeStaffToken(token: string): Promise<void> {
+  const env = mindbodyEnv();
+  try {
+    await fetch(`${env.baseUrl}/usertoken/revoke`, {
+      method: "DELETE",
+      headers: {
+        "Api-Key": env.apiKey,
+        SiteId: env.siteId,
+        Authorization: token,
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    /* Expires on its own. */
+  }
+}
+
 /** Drop the current site's cached token; call when Mindbody rejects it
  *  as invalid. Other sites' tokens are untouched: a prod 401 says
  *  nothing about the sandbox's token. */
@@ -150,11 +221,29 @@ export function forgetToken(): void {
   cachedTokens.delete(mindbodyEnv().siteId);
 }
 
+/**
+ * Who a call runs as (T49). When present, the Authorization header is
+ * this teacher's token instead of the service account's, on that call
+ * only, so Mindbody attributes the write to them. `staffId` goes in the
+ * call log as `actor`; the token goes nowhere but the header.
+ */
+export interface Actor {
+  token: string;
+  staffId: number;
+  name: string;
+}
+
 export interface MindbodyCallOptions {
   method?: "GET" | "POST";
   body?: unknown;
   /** Skip the staff token. Only for endpoints that genuinely do not need it. */
   anonymous?: boolean;
+  /** Run as this signed-in teacher (T49). Dry run and the write guard
+   *  apply exactly as without one; only the header changes. A refusal
+   *  under an actor's token is NOT retried here as the service account:
+   *  that decision (once, loudly, or never for a comp) belongs to the
+   *  route, see src/lib/actor.ts. */
+  actor?: Actor;
   /**
    * The client this write is about, for the POS_WRITE_CLIENT_IDS guard,
    * when the Mindbody payload itself does not name one.
@@ -231,6 +320,68 @@ function bodyClientId(body: unknown): string | null {
   return id === undefined || id === null ? null : String(id);
 }
 
+/**
+ * The HTTP status Mindbody answered a failed call with, when the failure
+ * WAS an answer (thrown by mindbody() below), else null. Money routes need
+ * the distinction inside the 5xx range: a 4xx is a refusal that provably
+ * did not process, while a 500-class answer to a write may have processed
+ * before failing and must be reported as ambiguous, never as "nothing was
+ * charged".
+ */
+export function mindbodyHttpStatus(err: unknown): number | null {
+  const status = (err as { httpStatus?: unknown } | null)?.httpStatus;
+  return typeof status === "number" ? status : null;
+}
+
+/**
+ * Whether a failed call was Mindbody refusing the CALLER rather than the
+ * request (T49): a 401 or 403 answer, or Mindbody's "You do not have
+ * permission" wording (CLAUDE.md: that wording is what a missing cart
+ * permission gets too, and it has come back on 400-class statuses). A
+ * 4xx only: a 5xx or a dead transport says nothing about permissions,
+ * and for a money write must stay ambiguous. This is what decides
+ * whether a write under a teacher's token is retried once as the
+ * service account.
+ */
+export function isActorRefusal(err: unknown): boolean {
+  const status = mindbodyHttpStatus(err);
+  if (status === null || status >= 500) return false;
+  if (status === 401 || status === 403) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /permission/i.test(message);
+}
+
+/**
+ * Whether a refusal under a teacher's token reads as the TOKEN being
+ * dead rather than the teacher lacking a permission: a 401. The service
+ * account's own handling above takes a 401 the same way (forget the
+ * token, reissue), and Mindbody's permission refusals come back as 403
+ * with the "You do not have permission" wording, so a 401 on a token
+ * that issued fine is the token no longer being honoured (revoked,
+ * expired, the password changed). The route ends the staff session on
+ * it. What the live API says for an expired staff token is on the T49
+ * probe list; if it turns out to be a 403 with token wording, widen
+ * this, not isActorRefusal.
+ */
+export function isActorTokenDead(err: unknown): boolean {
+  return mindbodyHttpStatus(err) === 401;
+}
+
+/** Build the teacher-facing error for a non-ok Mindbody answer, tagging it
+ *  with the HTTP status for mindbodyHttpStatus(). The thrown message
+ *  reaches teacher-facing surfaces, so it carries Mindbody's human-readable
+ *  reason and nothing else; transport detail lives in the call log. */
+function mindbodyHttpError(body: unknown, status: number): Error {
+  const message =
+    (body as any)?.Error?.Message ??
+    (typeof body === "string" ? body.slice(0, 200) : "");
+  const err = new Error(
+    message || `Mindbody did not accept the request (HTTP ${status}).`,
+  );
+  (err as Error & { httpStatus: number }).httpStatus = status;
+  return err;
+}
+
 export async function mindbody<T = any>(
   path: string,
   opts: MindbodyCallOptions = {},
@@ -249,6 +400,7 @@ export async function mindbody<T = any>(
         status: null,
         ms: 0,
         outcome: "dry-run",
+        actor: null,
         requestBody: opts.body ?? null,
         responseBody: "suppressed: POS_DRY_RUN is on",
       });
@@ -267,6 +419,7 @@ export async function mindbody<T = any>(
         status: null,
         ms: 0,
         outcome: "write-guard",
+        actor: null,
         requestBody: opts.body ?? null,
         responseBody:
           `suppressed: client ${client ?? "(none named)"} is not in ` +
@@ -281,7 +434,12 @@ export async function mindbody<T = any>(
     SiteId: env.siteId,
     "content-type": "application/json",
   };
-  if (!opts.anonymous) headers["Authorization"] = await staffToken(env);
+  /* T49: a signed-in teacher's token, or the service account's. The
+   * actor's token is never cached here and never refreshed here; it is
+   * whatever the staff session holds, and a rejection of it is the
+   * route's business. */
+  if (opts.actor) headers["Authorization"] = opts.actor.token;
+  else if (!opts.anonymous) headers["Authorization"] = await staffToken(env);
 
   const started = Date.now();
   const res = await fetch(`${env.baseUrl}${path}`, {
@@ -297,6 +455,7 @@ export async function mindbody<T = any>(
     status: res.status,
     ms: Date.now() - started,
     outcome: "sent",
+    actor: opts.actor?.staffId ?? null,
     requestBody: opts.body ?? null,
     responseBody: text,
   });
@@ -311,28 +470,54 @@ export async function mindbody<T = any>(
      * A rejected token is the one failure worth retrying automatically:
      * it is invisible to the teacher and costs one extra round trip,
      * where the alternative is a check-in that mysteriously fails once.
+     *
+     * Safe for writes too, money writes included: 401 means the request
+     * was refused at the authentication gate, BEFORE any endpoint logic
+     * ran, so the first attempt provably did not process (a server that
+     * charged a card and then answered 401 does not exist). The retry is
+     * one fresh attempt with a fresh token; if IT dies in transport, the
+     * timeout/abort propagates and the money routes flag the outcome
+     * ambiguous exactly as they would for a first attempt.
      */
-    if (res.status === 401 && !opts.anonymous) {
+    if (res.status === 401 && !opts.anonymous && !opts.actor) {
       forgetToken();
       const retryHeaders = { ...headers, Authorization: await staffToken(env) };
+      const retryStarted = Date.now();
       const retry = await fetch(`${env.baseUrl}${path}`, {
         method,
         headers: retryHeaders,
         body: opts.body ? JSON.stringify(opts.body) : undefined,
         signal: AbortSignal.timeout(20_000),
       });
-      if (retry.ok) return (await retry.json()) as T;
+      /* The retry is a real call Mindbody received: it goes in the call
+       * log like any other, and its OWN status/body -- not the original
+       * 401's -- is what the caller hears about. */
+      const retryText = await retry.text();
+      record({
+        method,
+        path,
+        status: retry.status,
+        ms: Date.now() - retryStarted,
+        outcome: "sent",
+        actor: null,
+        requestBody: opts.body ?? null,
+        responseBody: retryText,
+      });
+      let retryBody: any = retryText;
+      try {
+        retryBody = JSON.parse(retryText);
+      } catch {
+        /* non-JSON; keep the text, same as the main path */
+      }
+      if (retry.ok) return retryBody as T;
+      throw mindbodyHttpError(retryBody, retry.status);
     }
     /* The thrown message reaches teacher-facing surfaces (context panel
      * lines, row messages), so it carries Mindbody's human-readable reason
      * and nothing else. The transport detail -- method, full path, status,
      * both bodies -- is already in the call log for the dev drawer; a
      * teacher must not be shown URL-encoded query strings. */
-    const message =
-      body?.Error?.Message ?? (typeof body === "string" ? body.slice(0, 200) : "");
-    throw new Error(
-      message || `Mindbody did not accept the request (HTTP ${res.status}).`,
-    );
+    throw mindbodyHttpError(body, res.status);
   }
   return body as T;
 }

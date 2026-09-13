@@ -32,8 +32,17 @@ export interface Settings {
    * rather than argued about.
    */
   optimisticCheckIn: boolean;
-  /** Require a second tap to check in a booking with no pass attached. */
+  /** Gate an unpaid booking's check-in behind the pay-and-check-in
+   *  dialog (T25). Off checks unpaid rows straight in for free, the
+   *  pre-Phase-2 behavior. */
   confirmUnpaid: boolean;
+  /** T52 (Pete): "if there are none in that class, and the 'in class'
+   *  filter is on, the 'in class' filter should turn off and the
+   *  non-filtered results should display. this can be a setting". On,
+   *  the attach modal widens a submitted query that matched nobody in
+   *  the class to everyone, one call; off, it says nobody matched and
+   *  waits. */
+  autoWidenSearch: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -43,6 +52,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hoursForward: 4,
   optimisticCheckIn: false,
   confirmUnpaid: true,
+  autoWidenSearch: true,
 };
 
 const KEY = "sealevel-pos.settings";

@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 
+import {
+  actorFields,
+  requireActor,
+  runAsActor,
+  staffSessionEndedResponse,
+} from "@/lib/actor";
+import { requireSession } from "@/lib/auth";
+
 import { recordLiabilityRelease, updateClientNotes } from "@/lib/clients";
+import { insertWaiverReceipt } from "@/lib/db";
 import { getWaiver } from "@/lib/waiver";
 
 export const dynamic = "force-dynamic";
@@ -19,16 +28,17 @@ export const dynamic = "force-dynamic";
  *    Mindbody stores no waiver content or version: (a) one structured log
  *    line with the client id, timestamp and the sha256 of the exact text
  *    served (the dialog echoes the hash from /api/waiver; it is verified
- *    against the server's own copy before the release), and (b) the
- *    same fact appended to the client's Mindbody Notes through the
- *    existing surgical notes write, so the receipt travels with the
- *    client where staff already look.
+ *    against the server's own copy before the release), (b) a row in
+ *    waiver_receipts when a database is configured (T29) -- the durable
+ *    record, with the full hash -- and (c) the same fact appended to the
+ *    client's Mindbody Notes through the existing surgical notes write,
+ *    so the receipt travels with the client where staff already look.
  *
  * The caller passes the row's current notes for the append. A stale value
  * loses at most a concurrent edit made from another surface in the same
  * moment, which is acceptable: the roster refetches notes on every load,
- * and the durable receipt store waits for the database (design doc,
- * Phase 3).
+ * and the durable record is the waiver_receipts row (or, with no
+ * database, the log line).
  *
  * A notes-append failure must NOT fail the agreement -- the release
  * already stands in Mindbody and un-standing it over a bookkeeping line
@@ -36,8 +46,22 @@ export const dynamic = "force-dynamic";
  * with the reason, and the UI surfaces a quiet warning. The structured
  * log line has already been written by then, so the receipt is never
  * wholly lost.
+ *
+ * T49: both writes run as the signed-in teacher when there is one (the
+ * schema says the release records `ReleasedBy` as the calling staff
+ * member, which is the point), with the one loud fallback on the
+ * release; the notes append reuses whichever actor the release landed
+ * under.
  */
 export async function POST(request: Request) {
+  const denied = requireSession(request);
+  if (denied) return denied;
+  /* T50: no staff session, no write. Before the body is read, so a
+   * signed-out iPad hears only the 401 and never a validation detail
+   * or a Mindbody read made on its behalf. */
+  const staff = requireActor(request);
+  if (staff.denied) return staff.denied;
+  const { session } = staff;
   try {
     const { clientId, notes, textSha256 } = await request.json();
     if (typeof clientId !== "string" || !clientId) {
@@ -79,13 +103,23 @@ export async function POST(request: Request) {
       );
     }
 
-    const release = await recordLiabilityRelease(clientId);
+    const run = await runAsActor(session, "/api/waiver-agree", (actor) =>
+      recordLiabilityRelease(clientId, actor),
+    );
+    const release = run.result;
     if (release.suppressed) {
       return NextResponse.json({
         agreed: false,
         suppressed: release.suppressed,
+        ...actorFields(run),
       });
     }
+    /* The actor the release actually landed under: the teacher, or the
+     * service account after a fallback (or a dead token). */
+    const noteActor =
+      session && run.actorFallback === null && !run.staffSessionEnded
+        ? { token: session.token, staffId: session.staffId, name: session.name }
+        : null;
 
     /* The release is real. The structured receipt line goes out first:
      * even if the Notes append below fails, the server log holds the
@@ -100,13 +134,22 @@ export async function POST(request: Request) {
       }),
     );
 
+    /* T29: the durable receipt row, with the FULL sha256 (Notes truncates
+     * to 12 chars for staff readability). Only on a real release, like
+     * everything below this point. Best effort by design: with no
+     * database, or a failed insert, the helper returns false and the
+     * behavior is exactly pre-T29 -- the log line above already holds the
+     * receipt, and the Notes append still runs. receiptNoted keeps
+     * meaning what it always meant: the Mindbody Notes copy. */
+    await insertWaiverReceipt(clientId, at, waiver.sha256);
+
     const receiptLine = `Waiver agreed at the counter ${at}, text sha256:${waiver.sha256.slice(0, 12)}`;
     const current = typeof notes === "string" ? notes : "";
     const newNotes = current ? `${current}\n${receiptLine}` : receiptLine;
     let receiptNoted = false;
     let receiptReason: string | null = null;
     try {
-      const noted = await updateClientNotes(clientId, newNotes);
+      const noted = await updateClientNotes(clientId, newNotes, noteActor);
       if (noted.suppressed) {
         /* Expected in rehearsal under the write guard; reported honestly
          * rather than as a landed note. */
@@ -125,8 +168,14 @@ export async function POST(request: Request) {
       /* The notes as written, so the row's local state can match what a
        * roster reload would show. Only meaningful when receiptNoted. */
       notes: receiptNoted ? newNotes : null,
+      ...actorFields(run),
     });
   } catch (err) {
+    /* T50 review: the teacher's token died under this write (the
+     * session is already ended, nothing ran): 401 reason "staff", so
+     * the gate comes back. */
+    const gone = staffSessionEndedResponse(err);
+    if (gone) return gone;
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },
       { status: 502 },

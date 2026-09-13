@@ -1,4 +1,4 @@
-import { mindbody } from "./mindbody";
+import { mindbody, type Actor } from "./mindbody";
 
 /**
  * Client search, straight through to Mindbody's own `searchText`.
@@ -67,6 +67,8 @@ export async function updateClientField(
   clientId: string,
   field: EditableClientField,
   value: string,
+  /** T49: the signed-in teacher to save as, when there is one. */
+  actor?: Actor | null,
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
   const res = await mindbody("/client/updateclient", {
     method: "POST",
@@ -75,6 +77,60 @@ export async function updateClientField(
       CrossRegionalUpdate: false,
     },
     clientId,
+    ...(actor ? { actor } : {}),
+  });
+  if (res?.DryRun) return { suppressed: "dry-run" };
+  if (res?.WriteSuppressed) return { suppressed: "write-guard" };
+  return { suppressed: null };
+}
+
+/**
+ * T53: the email opt-in, written from the counter (Pete: "a teacher can
+ * ask them if they want to opt in to emails and receive an email
+ * receipt"). The three EMAIL consent flags are the only ones Mindbody
+ * lets an API caller set: `SendAccountEmails`, `SendPromotionalEmails`
+ * and `SendScheduleEmails` are "editable" on ClientWithSuspensionInfo
+ * (client.yml:5286-5306), while the three text flags say "cannot be
+ * updated by developers. If included in a request, it is ignored", so
+ * they are not in this type and can never be sent.
+ *
+ * Same surgical envelope as updateClientField: the id, ONLY the flags
+ * the caller decided, `CrossRegionalUpdate: false`, nothing else, since
+ * updateclient overwrites whatever it is given. An empty `flags` is
+ * refused here rather than sent as a no-op write.
+ */
+export interface ConsentFlags {
+  SendAccountEmails?: boolean;
+  SendPromotionalEmails?: boolean;
+  SendScheduleEmails?: boolean;
+}
+
+export const CONSENT_EMAIL_FLAGS = [
+  "SendAccountEmails",
+  "SendPromotionalEmails",
+  "SendScheduleEmails",
+] as const;
+
+export async function updateClientConsent(
+  clientId: string,
+  flags: ConsentFlags,
+  actor?: Actor | null,
+): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
+  const sent: Record<string, boolean> = {};
+  for (const key of CONSENT_EMAIL_FLAGS) {
+    if (typeof flags[key] === "boolean") sent[key] = flags[key];
+  }
+  if (Object.keys(sent).length === 0) {
+    throw new Error("updateClientConsent needs at least one email flag.");
+  }
+  const res = await mindbody("/client/updateclient", {
+    method: "POST",
+    body: {
+      Client: { Id: clientId, ...sent },
+      CrossRegionalUpdate: false,
+    },
+    clientId,
+    ...(actor ? { actor } : {}),
   });
   if (res?.DryRun) return { suppressed: "dry-run" };
   if (res?.WriteSuppressed) return { suppressed: "write-guard" };
@@ -87,8 +143,30 @@ export async function updateClientField(
 export async function updateClientNotes(
   clientId: string,
   notes: string,
+  actor?: Actor | null,
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
-  return updateClientField(clientId, "Notes", notes);
+  return updateClientField(clientId, "Notes", notes, actor);
+}
+
+/**
+ * T62: the client's current `Notes`, for a server-side append. The
+ * waiver receipt takes the row's notes from the browser; the record that
+ * falls back from a Formula Note (src/lib/formulanote.ts) has no row in
+ * hand and reads them itself, one `/client/clients?clientIds=` call,
+ * because `updateclient` writes the field whole and an append must start
+ * from what is there. Empty string when the client has none; throws when
+ * the read fails or the client is not found, so the caller never writes
+ * over notes it did not see.
+ */
+export async function readClientNotes(clientId: string): Promise<string> {
+  const body = await mindbody(
+    `/client/clients?clientIds=${encodeURIComponent(clientId)}&limit=1`,
+  );
+  const row = (body?.Clients ?? []).find(
+    (c: { Id?: unknown }) => String(c?.Id ?? "") === clientId,
+  );
+  if (!row) throw new Error(`client ${clientId} not found`);
+  return typeof row.Notes === "string" ? row.Notes : "";
 }
 
 /**
@@ -119,6 +197,10 @@ export async function updateClientNotes(
  */
 export async function recordLiabilityRelease(
   clientId: string,
+  /** T49: the signed-in teacher to release as, when there is one; the
+   *  schema says `ReleasedBy` records the calling staff member, which
+   *  is exactly what a teacher's token changes. */
+  actor?: Actor | null,
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
   const res = await mindbody("/client/updateclient", {
     method: "POST",
@@ -127,6 +209,7 @@ export async function recordLiabilityRelease(
       CrossRegionalUpdate: false,
     },
     clientId,
+    ...(actor ? { actor } : {}),
   });
   if (res?.DryRun) return { suppressed: "dry-run" };
   if (res?.WriteSuppressed) return { suppressed: "write-guard" };
@@ -137,6 +220,11 @@ export interface SearchResult {
   id: string;
   name: string;
   email: string | null;
+  /** MobilePhone, else HomePhone, else WorkPhone; null when none. With
+   *  the email it is the small line under a search result's name (T42):
+   *  the studio has duplicate names, and this is how Mindbody's own
+   *  search tells them apart. */
+  phone: string | null;
   /**
    * Context carried FREE from the search: `searchText` returns full Client
    * records, so the same fields the roster's batched lookup extracts ride
@@ -163,48 +251,234 @@ export interface SearchResult {
 
 export interface SearchResponse {
   results: SearchResult[];
+  /** `PaginationResponse.TotalResults` (client.yml:6753), the size of the
+   *  whole match set, so a scrolling list knows when to stop asking.
+   *  Null when Mindbody omitted it; the caller then stops on a short
+   *  page. */
+  total: number | null;
 }
 
+/**
+ * One page of matches. `offset` is `/client/clients`' own page offset
+ * (client.yml:1392, "Page offset, defaults to 0"): the attach modal and
+ * the walk-in search load the next page as the list scrolls (T42), and
+ * every page is one metered call, so nothing here prefetches.
+ */
 export async function search(
   query: string,
   limit = 12,
+  offset = 0,
 ): Promise<SearchResponse> {
   const q = query.trim();
-  if (q.length < 2) return { results: [] };
+  if (q.length < 2) return { results: [], total: 0 };
 
   const body = await mindbody(
-    `/client/clients?searchText=${encodeURIComponent(q)}&limit=${limit}`,
+    `/client/clients?searchText=${encodeURIComponent(q)}&limit=${limit}` +
+      (offset > 0 ? `&offset=${offset}` : ""),
   );
+  const totalRaw = body?.PaginationResponse?.TotalResults;
+  const total =
+    typeof totalRaw === "number" && Number.isFinite(totalRaw) ? totalRaw : null;
   const results: SearchResult[] = [];
+  /* Pete's fifth live test: a search once rendered EVERY row as
+   * "(unnamed)" and recovered on the next search, with no way to see what
+   * came back. The rows are counted here so a repeat leaves a trace in
+   * the server log even after the dev drawer's buffer has rolled. */
+  let nameless = 0;
   for (const row of body?.Clients ?? []) {
-    if (row?.Id === null || row?.Id === undefined) continue;
-    const name = `${row.FirstName ?? ""} ${row.LastName ?? ""}`.trim();
-    results.push({
-      id: String(row.Id),
-      name: name || "(unnamed)",
-      email: row.Email ?? null,
-      waiverSigned: Boolean(row?.Liability?.IsReleased),
-      redAlert:
-        typeof row?.RedAlert === "string" && row.RedAlert.trim()
-          ? row.RedAlert.trim()
-          : null,
-      yellowAlert:
-        typeof row?.YellowAlert === "string" && row.YellowAlert.trim()
-          ? row.YellowAlert.trim()
-          : null,
-      balance:
-        typeof row?.AccountBalance === "number" &&
-        Number.isFinite(row.AccountBalance)
-          ? row.AccountBalance
-          : null,
-      member:
-        typeof row?.MembershipIcon === "number" && row.MembershipIcon !== 0,
-      notes:
-        typeof row?.Notes === "string" && row.Notes.trim()
-          ? row.Notes.trim()
-          : null,
-      mindbodyId: typeof row?.UniqueId === "number" ? row.UniqueId : null,
-    });
+    const parsed = resultOf(row);
+    if (parsed === null) continue;
+    if (!`${row.FirstName ?? ""} ${row.LastName ?? ""}`.trim()) nameless += 1;
+    results.push(parsed);
   }
-  return { results };
+  if (results.length > 0 && nameless === results.length) {
+    /* Keys only, never values: this line goes to a server log. If it ever
+     * appears, the shape Mindbody returned is the question, and the dev
+     * drawer holds the same call's raw body. */
+    const first = (body?.Clients ?? [])[0];
+    console.warn(
+      `[search] every one of ${results.length} results came back without a ` +
+        `name for query length ${q.length}; row keys: ` +
+        `${first ? Object.keys(first).join(",") : "none"}`,
+    );
+  }
+  return { results, total };
+}
+
+/** The first non-empty phone in the order Mindbody's own client page
+ *  reads them, mirroring clientprofile.ts. */
+function phoneOf(row: {
+  MobilePhone?: unknown;
+  HomePhone?: unknown;
+  WorkPhone?: unknown;
+}): string | null {
+  for (const v of [row.MobilePhone, row.HomePhone, row.WorkPhone]) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+/**
+ * One Client record as a search result. Shared by the search above and
+ * by createClient below (T59b), so a person the counter just signed up
+ * renders exactly as they will on their next search.
+ */
+function resultOf(row: any): SearchResult | null {
+  if (row?.Id === null || row?.Id === undefined) return null;
+  const name = `${row.FirstName ?? ""} ${row.LastName ?? ""}`.trim();
+  return {
+    id: String(row.Id),
+    /* An email beats "(unnamed)": a nameless row is still a person the
+     * teacher may need to pick. */
+    name:
+      name || (typeof row.Email === "string" ? row.Email : "") || "(unnamed)",
+    email: row.Email ?? null,
+    phone: phoneOf(row),
+    waiverSigned: Boolean(row?.Liability?.IsReleased),
+    redAlert:
+      typeof row?.RedAlert === "string" && row.RedAlert.trim()
+        ? row.RedAlert.trim()
+        : null,
+    yellowAlert:
+      typeof row?.YellowAlert === "string" && row.YellowAlert.trim()
+        ? row.YellowAlert.trim()
+        : null,
+    balance:
+      typeof row?.AccountBalance === "number" &&
+      Number.isFinite(row.AccountBalance)
+        ? row.AccountBalance
+        : null,
+    member:
+      typeof row?.MembershipIcon === "number" && row.MembershipIcon !== 0,
+    notes:
+      typeof row?.Notes === "string" && row.Notes.trim()
+        ? row.Notes.trim()
+        : null,
+    mindbodyId: typeof row?.UniqueId === "number" ? row.UniqueId : null,
+  };
+}
+
+/**
+ * T59b: the fields the sign-up form has, in Mindbody's own names, so the
+ * required-field read below can say which of the site's requirements the
+ * form cannot meet. `Email` and `MobilePhone` are optional on the form
+ * but present, so a site requiring them is satisfied when they are
+ * filled; the route makes them mandatory when Mindbody lists them.
+ */
+export const SIGNUP_FORM_FIELDS = [
+  "FirstName",
+  "LastName",
+  "Email",
+  "MobilePhone",
+] as const;
+
+/**
+ * `GET /client/requiredclientfields` (docs/mindbody-openapi/client.yml:2359):
+ * "the list of fields that a new client has to fill out in business
+ * mode", the exact list `AddClient` validates against under a staff
+ * token. Read once at form open (T59b). The live answer for site 471 is
+ * unknown; the call is in the dev drawer whenever the form opens. A read,
+ * on the service account like every other read.
+ *
+ * Returns the raw list and the subset the form has no input for; the
+ * form shows those as an amber line and lets the teacher continue,
+ * since a refusal from Mindbody is the authoritative answer and comes
+ * back in plain words.
+ */
+export async function requiredClientFields(): Promise<{
+  required: string[];
+  missing: string[];
+}> {
+  const body = await mindbody("/client/requiredclientfields");
+  const raw: unknown[] = Array.isArray(body?.RequiredClientFields)
+    ? body.RequiredClientFields
+    : [];
+  const required = raw
+    .filter((f): f is string => typeof f === "string" && f.trim() !== "")
+    .map((f) => f.trim());
+  const have = new Set<string>(SIGNUP_FORM_FIELDS);
+  /* Mindbody's list may say "Phone" or "MobilePhone" for the one phone
+   * field the form has; either is met by it. Anything else the form
+   * cannot answer. */
+  const missing = required.filter(
+    (f) => !have.has(f) && !/^(mobile)?phone$/i.test(f),
+  );
+  return { required, missing };
+}
+
+export interface NewClientInput {
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phone: string | null;
+  sendAccountEmails: boolean;
+  sendPromotionalEmails: boolean;
+}
+
+/**
+ * T59b: create a client at the counter. `POST /client/addclient`
+ * (docs/mindbody-openapi/client.yml:2491, `AddClientRequest` ~4709).
+ * Under the signed-in teacher's token it "respects Business Mode
+ * required fields", which is why the form reads requiredClientFields
+ * first; and since May 2020 Mindbody refuses a duplicate, defined as
+ * the same first name, last name and email.
+ *
+ * The payload is exactly the four fields Pete named ("first name, last
+ * name, email, phone. Nothing else") plus the two T53 consent flags the
+ * form asks in the same breath; both flags are sent explicitly, ticked
+ * or not, so an unticked box is a recorded no rather than Mindbody's
+ * default. Nothing else: not Active, not LiabilityRelease (the waiver
+ * dialog is the ONLY thing that sets that, T18), no address. Property
+ * names are the schema's own: FirstName, LastName, Email, MobilePhone,
+ * SendAccountEmails, SendPromotionalEmails.
+ *
+ * The write guard: there is no client id yet, and `mindbody()` finds
+ * none in the body either (it reads ClientId/ClientIds/UniqueClientId,
+ * and AddClientRequest has none), so under POS_WRITE_CLIENT_IDS the call
+ * is suppressed as "(none named)". That is the right answer: a dummy
+ * cannot be pre-listed for its own creation, so a guarded run can never
+ * create a client. Suppression is reported, never dressed as success.
+ */
+export async function createClient(
+  input: NewClientInput,
+  actor?: Actor | null,
+): Promise<{
+  suppressed: "dry-run" | "write-guard" | null;
+  /** The new client as a search result; null when suppressed. */
+  client: SearchResult | null;
+}> {
+  const res = await mindbody("/client/addclient", {
+    method: "POST",
+    body: {
+      FirstName: input.firstName,
+      LastName: input.lastName,
+      ...(input.email ? { Email: input.email } : {}),
+      ...(input.phone ? { MobilePhone: input.phone } : {}),
+      SendAccountEmails: input.sendAccountEmails,
+      SendPromotionalEmails: input.sendPromotionalEmails,
+    },
+    /* Deliberately absent: a create has no client id to name. See above. */
+    clientId: undefined,
+    ...(actor ? { actor } : {}),
+  });
+  if (res?.DryRun) return { suppressed: "dry-run", client: null };
+  if (res?.WriteSuppressed) return { suppressed: "write-guard", client: null };
+  const client = resultOf(res?.Client);
+  if (client === null) {
+    throw new Error(
+      "Mindbody answered the sign-up without a client id; search for " +
+        "the name before trying again.",
+    );
+  }
+  return { suppressed: null, client };
+}
+
+/**
+ * Whether a refused addclient was Mindbody's duplicate rule. The spec
+ * documents the rule but not the wording; the call log holds the exact
+ * message the first time it happens live, and this widens if needed.
+ */
+export function isDuplicateClientError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /duplicate|already exist|already has|already in use/i.test(message);
 }
