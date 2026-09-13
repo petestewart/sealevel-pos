@@ -11,7 +11,7 @@
  * ~400ms and the counter cannot afford that on a check-in.
  */
 
-import { record, redactRequest, scrubCardDigits } from "./calllog";
+import { record, redactRequest, scrubSecrets } from "./calllog";
 
 export interface MindbodyEnv {
   apiKey: string;
@@ -376,12 +376,14 @@ export function isActorTokenDead(err: unknown): boolean {
  *  it refused ("The credit card number 4111111111111111 is invalid."),
  *  which would put a PAN in a thrown Error, in a route's error answer and
  *  on the screen. Card-shaped digits are struck out of the reason first;
- *  the sentence still says what is wrong. */
+ *  the sentence still says what is wrong. T83: a gift card number the
+ *  same way, since a refusal for an unknown card quotes the number it
+ *  could not find and that number spends money on its own. */
 function mindbodyHttpError(body: unknown, status: number): Error {
   const raw =
     (body as any)?.Error?.Message ??
     (typeof body === "string" ? body.slice(0, 200) : "");
-  const message = typeof raw === "string" ? scrubCardDigits(raw) : "";
+  const message = typeof raw === "string" ? scrubSecrets(raw) : "";
   const err = new Error(
     message || `Mindbody did not accept the request (HTTP ${status}).`,
   );
@@ -401,7 +403,8 @@ export async function mindbody<T = any>(
       console.warn(
         /* T84: redacted, because a card save's payload would otherwise
          * print a card number into the server log. */
-        `[dry-run] suppressed ${method} ${path} ${JSON.stringify(redactRequest(opts.body ?? {}))}`,
+        /* T83: and the path, which can carry a gift card's barcode id. */
+        `[dry-run] suppressed ${method} ${scrubSecrets(path)} ${JSON.stringify(redactRequest(opts.body ?? {}))}`,
       );
       record({
         method,
@@ -419,7 +422,7 @@ export async function mindbody<T = any>(
     const client = bodyClientId(opts.body) ?? opts.clientId ?? null;
     if (allowed.size > 0 && (client === null || !allowed.has(client))) {
       console.warn(
-        `[write-guard] suppressed ${method} ${path} for client ${client ?? "(none named)"}; ` +
+        `[write-guard] suppressed ${method} ${scrubSecrets(path)} for client ${client ?? "(none named)"}; ` +
           `POS_WRITE_CLIENT_IDS allows only ${[...allowed].join(", ")}`,
       );
       record({

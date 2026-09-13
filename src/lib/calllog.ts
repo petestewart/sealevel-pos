@@ -111,10 +111,55 @@ export function scrubCardDigits(text: string): string {
   return text.replace(CARD_SHAPED, REDACTED);
 }
 
+/**
+ * T83: a GIFT CARD number, which the digit pattern above cannot be
+ * trusted to catch.
+ *
+ * A gift card is a bearer instrument -- the number alone spends the
+ * balance -- so it is a secret exactly like a PAN. But Mindbody types
+ * the barcode id as a plain string with no documented format
+ * (sale.yml:361), so it may be shorter than thirteen characters and may
+ * carry letters or dashes, which CARD_SHAPED matches none of. It is
+ * struck out by WHERE IT SITS instead:
+ *
+ * - `?barcodeId=...`, the query of GET /sale/giftcardbalance. The number
+ *   travels in the URL, and `path` is a call-log field of its own, so
+ *   the body redaction never sees it.
+ * - `"cardNumber": "..."` and `"barcodeId": "..."` inside a JSON string.
+ *   The GiftCard payment's Metadata is a STRING of JSON (the spec's
+ *   type), so the number is not an object value any key rule could
+ *   reach, and Mindbody's refusals are free text that can quote it back.
+ *
+ * The key names are Mindbody's own, in either casing.
+ */
+const GIFT_IN_QUERY = /([?&](?:barcodeId|cardNumber|giftCardBarcodeId)=)[^&\s"'\\]+/gi;
+const GIFT_IN_JSON =
+  /("(?:cardNumber|barcodeId|giftCardBarcodeId)"\s*:\s*")[^"]*"/gi;
+
+/** Gift card numbers wherever text can carry one, struck out. */
+export function scrubGiftCard(text: string): string {
+  return text
+    .replace(GIFT_IN_QUERY, `$1${REDACTED}`)
+    .replace(GIFT_IN_JSON, `$1${REDACTED}"`);
+}
+
+/** Every number-shaped secret this app's traffic can carry, in one
+ *  pass: use THIS anywhere a string is about to be recorded or thrown,
+ *  so a new endpoint carrying either kind is covered by default. */
+export function scrubSecrets(text: string): string {
+  return scrubGiftCard(scrubCardDigits(text));
+}
+
 /** Whether a TEXT body mentions a card at all, so that the 99% of
  *  records that do not are passed through untouched. */
 const CARD_KEY_IN_TEXT =
   /"(ClientCreditCard|CardNumber|CVV|CVC|CardCode|SecurityCode)"/i;
+
+/** T83: keys whose VALUE is a gift card number, wherever they appear as
+ *  an object key. Unlike SECRET_KEY this does not mark its object as a
+ *  card object: the gift card balance answer is `{ BarcodeId,
+ *  RemainingBalance }`, and the balance is the diagnostic half of it. */
+const GIFT_KEY = /^(BarcodeId|GiftCardBarcodeId|cardNumber)$/i;
 
 /** What survives from a card object, per direction. */
 const REQUEST_CARD_KEEP = ["LastFour"];
@@ -132,9 +177,14 @@ function redactCard(
   keep: string[],
   key: string | null = null,
 ): unknown {
-  /* A string value anywhere: struck out if it is shaped like a number.
-   * The key it sits under is deliberately not consulted. */
-  if (typeof value === "string") return scrubCardDigits(value);
+  /* A string value anywhere: struck out if it is shaped like a number,
+   * or if it carries a gift card number in a query or in JSON. The key
+   * it sits under is deliberately not consulted -- except that a key
+   * NAMING a gift card number strikes the whole value (below), since a
+   * bare barcode id looks like nothing in particular. */
+  if (typeof value === "string") {
+    return key !== null && GIFT_KEY.test(key) ? REDACTED : scrubSecrets(value);
+  }
   /* The key rides into an array, so a card object inside one is still
    * recognised as a card object. */
   if (Array.isArray(value)) return value.map((v) => redactCard(v, keep, key));
@@ -143,14 +193,15 @@ function redactCard(
   if (isCardObject(key, obj)) {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(obj)) {
-      if (SECRET_KEY.test(k)) out[k] = REDACTED;
+      if (SECRET_KEY.test(k) || GIFT_KEY.test(k)) out[k] = REDACTED;
       else if (keep.includes(k)) out[k] = v;
     }
     return out;
   }
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
-    out[k] = SECRET_KEY.test(k) ? REDACTED : redactCard(v, keep, k);
+    out[k] =
+      SECRET_KEY.test(k) || GIFT_KEY.test(k) ? REDACTED : redactCard(v, keep, k);
   }
   return out;
 }
@@ -166,11 +217,11 @@ export function redactBody(value: unknown, keep = RESPONSE_CARD_KEEP): unknown {
      * reflow every roster read in the drawer and eat into the clip limit
      * for nothing. It still goes through the digit scrub, which changes
      * nothing at all unless a number is sitting in it. */
-    if (!CARD_KEY_IN_TEXT.test(value)) return scrubCardDigits(value);
+    if (!CARD_KEY_IN_TEXT.test(value)) return scrubSecrets(value);
     try {
       return JSON.stringify(redactCard(JSON.parse(value), keep), null, 2);
     } catch {
-      return scrubCardDigits(
+      return scrubSecrets(
         value.replace(
           /("(?:CardNumber|CVV|CVC|CardCode|SecurityCode)"\s*:\s*)"[^"]*"/gi,
           `$1"${REDACTED}"`,
@@ -208,6 +259,10 @@ export function record(entry: CallInput): void {
     ...entry,
     id: state.nextId++,
     at: new Date().toISOString(),
+    /* T83: the PATH is a secret too when it carries a gift card's
+     * barcode id in its query. The record still shows which endpoint
+     * was called and that a number went with it. */
+    path: scrubSecrets(entry.path),
     /* T84: never the card number, in either direction. */
     requestBody: clip(redactBody(entry.requestBody, REQUEST_CARD_KEEP)),
     responseBody: clip(redactBody(entry.responseBody, RESPONSE_CARD_KEEP)),
