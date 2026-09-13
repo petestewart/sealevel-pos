@@ -239,7 +239,7 @@ export const PASS_GROUPS = [
   "Drop-in & Packs",
   "Specials",
   "Teen/Child",
-  "Buddy / Guest Passes",
+  "Buddy/Guest",
   "Trainings",
   "Workshops",
   "Fees",
@@ -278,7 +278,7 @@ export function passGroupByRule(service: PassRuleInput): PassGroupLabel {
     "\n",
   );
   if (/teen|child|kid|youth/i.test(name)) return "Teen/Child";
-  if (/guest|buddy/i.test(name)) return "Buddy / Guest Passes";
+  if (/guest|buddy/i.test(name)) return "Buddy/Guest";
   if (/training/i.test(anywhere)) return "Trainings";
   if (/workshop|event/i.test(anywhere)) return "Workshops";
   if (/\bfee\b|fees/i.test(anywhere)) return "Fees";
@@ -302,6 +302,9 @@ export interface PassGroupSeam {
  *  cell; a label naming no fixed group is a custom label, kept as is. */
 export function canonicalGroupLabel(label: string): string {
   const folded = label.trim().toLowerCase();
+  /* The label this group shipped with under T76, so an override stored
+   * before the rename still lands on the fixed cell. */
+  if (folded === "buddy / guest passes") return "Buddy/Guest";
   return PASS_GROUPS.find((g) => g.toLowerCase() === folded) ?? label.trim();
 }
 
