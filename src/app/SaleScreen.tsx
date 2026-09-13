@@ -632,17 +632,6 @@ function MinusIcon() {
   return <Icon d="M5 12h14" />;
 }
 
-/** Trash can, the roster's glyph at the stepper's scale: the cart's
- *  Remove is an icon since T41. */
-function TrashIcon() {
-  return (
-    <Icon
-      d="M4 6.5h16M9.5 6.5V4h5v2.5M6.5 6.5 7.5 20h9l1-13.5M10 10.5v6M14 10.5v6"
-      size={22}
-    />
-  );
-}
-
 function PlusIcon() {
   return <Icon d="M12 5v14M5 12h14" size={22} />;
 }
@@ -4792,7 +4781,6 @@ export default function SaleScreen(props: {
    *  switch already stands either way. */
   const emptyCart = useCallback(() => {
     setCart([]);
-    setSelectedKey(null);
     setPriced(null);
     setPriceError(null);
     setCartResetNonce((n) => n + 1);
@@ -5137,21 +5125,14 @@ export default function SaleScreen(props: {
     close,
   ]);
 
-  /**
-   * T39.4: which cart line is showing its controls. One line at most,
-   * selected by a tap on the row, and it is what buys back the column's
-   * height: the per-row stepper on every line is gone, so a seven-line
-   * cart fits where four used to. Nothing is selected until a row is
-   * tapped: T39.4 had a shelf tap select the line it touched (the
-   * prototype did), and Pete's first live pass read that as a row whose
-   * buttons never went away ("there is always a row that has those
-   * buttons visible", T41). A shelf tap now leaves the selection alone;
-   * removing a line or emptying the cart clears it. Derived against the
-   * cart below, so a key that leaves the cart by any path (recheck
-   * dropping a line, a sale clearing it) can never point at a row that
-   * is not there.
+  /* T82: select-to-reveal is gone, and with it the selected row, the
+   * tap-outside deselect and the scroll-the-reveal-into-view effect.
+   * Every line carries its own stepper and its own X (Pete: "Have an X
+   * next to an item to easily cancel it", "Add + and - ... on the item
+   * that you click"), which is what T39.4 had before the controls were
+   * hidden to buy column height; the 44px icon squares are what buys it
+   * back, at two thirds of the 64px stepper's height.
    */
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   const addItem = useCallback((item: ShelfItem) => {
     const key = `${item.type}-${item.id}`;
@@ -5173,8 +5154,6 @@ export default function SaleScreen(props: {
    *  but a saved sequence of taps: the cart, the pricing loop and the
    *  charge path never know bundles exist. */
   const addBundle = useCallback((bundle: ResolvedBundle) => {
-    /* T41: like addItem, a bundle changes no selection; only a row tap
-       reveals a row's controls. */
     setCart((lines) => {
       const next = [...lines];
       for (const { item, quantity } of bundle.items) {
@@ -5215,13 +5194,7 @@ export default function SaleScreen(props: {
   }, []);
 
   const removeLine = useCallback((key: string) => {
-    setSelectedKey(null);
     setCart((lines) => lines.filter((l) => l.key !== key));
-  }, []);
-
-  /** T39.4: the row tap. The selected row again, or nothing, deselects. */
-  const toggleSelected = useCallback((key: string) => {
-    setSelectedKey((cur) => (cur === key ? null : key));
   }, []);
 
   /**
@@ -5238,13 +5211,12 @@ export default function SaleScreen(props: {
    * T51 lifted this out of the Pay button so the walk-in dialog can
    * enter pay mode too; a hook, so it sits above the `!open` return.
    * Into pay mode: the rail and grid give way to the payment surface,
-   * the cart stays put, and the selection goes (the pay-mode ticket has
-   * no controls). The lines box may be scrolled to the row the last tap
-   * selected; with no selection to show, start the ticket from its first
-   * row, and T38's cue counts the rest.
+   * the cart stays put, and the ticket's rows lose their controls (the
+   * pay-mode ticket is read-only; the way to a cart edit is Back to
+   * items). The ticket starts from its first row, and T38's cue counts
+   * the rest.
    */
   const enterPay = useCallback(() => {
-    setSelectedKey(null);
     setSaleMode("pay");
     linesRef.current?.scrollTo({ top: 0 });
   }, [setSaleMode]);
@@ -5480,15 +5452,12 @@ export default function SaleScreen(props: {
     measureLines();
     window.addEventListener("resize", measureLines);
     /* T39.4: the lines box is no longer a fixed vh cap but whatever the
-       column leaves it, which moves when a row reveals its controls or
-       the totals area changes shape (estimate to server rows, a stop
-       appearing). A ResizeObserver on the box itself catches every one
-       of those without listing them; the cart dependency stays for the
-       row count changing inside an unchanged box, and the selection is
-       a dependency too (review): in a bounded ticket the box does not
-       move when a row reveals its controls, the rows under it do, and
-       the observer never fired, so "2 more below" stood while three
-       were hidden. */
+       column leaves it, which moves when the totals area changes shape
+       (estimate to server rows, a stop appearing). A ResizeObserver on
+       the box itself catches every one of those without listing them;
+       the cart dependency stays for the row count changing inside an
+       unchanged box. T82: no row reveals anything any more, so the
+       selection is no longer a dependency. */
     const el = linesRef.current;
     const ro =
       el && typeof ResizeObserver !== "undefined"
@@ -5499,45 +5468,7 @@ export default function SaleScreen(props: {
       window.removeEventListener("resize", measureLines);
       ro?.disconnect();
     };
-  }, [cart, selectedKey, open, measureLines]);
-
-  /* Review: the selected row is the one showing its controls, so it has
-     to be in the box. A tap on a visible row can push its own controls
-     under the edge, and the reveal was then invisible (T39.4 also had a
-     shelf tap select a row below the fold; T41 ended that, and the
-     scroll stays for the row tap). Only the lines box scrolls, and only
-     as far as it must: never the column or the overlay, so under 900 a
-     tap cannot yank the shelf away. The scroll event re-measures the
-     cue. */
-  useEffect(() => {
-    const box = linesRef.current;
-    const rowEl = box?.querySelector<HTMLElement>(".t-row.sel");
-    if (!box || !rowEl) return;
-    const top = rowEl.offsetTop;
-    const bottom = top + rowEl.offsetHeight;
-    if (bottom > box.scrollTop + box.clientHeight) {
-      box.scrollTop = bottom - box.clientHeight;
-    }
-    if (top < box.scrollTop) box.scrollTop = top;
-  }, [selectedKey]);
-
-  /* T42 live pass (Pete): "tapping outside the row should re-hide them".
-     A tap that lands anywhere but on a ticket row puts the controls
-     away, so the reveal reads as a momentary tool and not a mode. The
-     listener exists only while a row is selected, runs on pointerdown so
-     the deselect and whatever the tap does (a shelf add, Pay) land in
-     the same gesture, and leaves the selected row's own controls alone
-     because they are inside `.t-row`. */
-  useEffect(() => {
-    if (selectedKey === null) return;
-    const onDown = (e: PointerEvent) => {
-      const el = e.target instanceof Element ? e.target : null;
-      if (el?.closest(".t-row")) return;
-      setSelectedKey(null);
-    };
-    document.addEventListener("pointerdown", onDown, true);
-    return () => document.removeEventListener("pointerdown", onDown, true);
-  }, [selectedKey]);
+  }, [cart, open, measureLines]);
 
   const cartCount = cart.reduce((n, l) => n + l.quantity, 0);
   /**
@@ -5670,11 +5601,12 @@ export default function SaleScreen(props: {
    *  moved, so a sectioned Passes shelf and a plain one draw the same
    *  thing. */
   const shelfCard = (item: ShelfItem) => {
-    const starred = favSet.has(itemKey(item.type, item.id));
-    const count = inCart.get(itemKey(item.type, item.id)) ?? 0;
+    const key = itemKey(item.type, item.id);
+    const starred = favSet.has(key);
+    const count = inCart.get(key) ?? 0;
     return (
       <div
-        className="shelf-cell"
+        className={count > 0 ? "shelf-cell has-qty" : "shelf-cell"}
         key={`${item.type}-${item.id}`}
       >
         <button
@@ -5719,6 +5651,45 @@ export default function SaleScreen(props: {
             ) : null}
           </span>
         </button>
+        {/* T82: the quantity on the item itself (Pete: "Add + and - ...
+            So a user can adjust quanityt in the cart or on the item
+            itself"), the ticket's stepper along the card's bottom edge
+            and only for a card the cart holds. Siblings of the add
+            button, never inside it: nested buttons are invalid HTML and
+            double-fire. The card's body still adds one, so the strip is
+            the only way DOWN, and minus stops at one; removing the line
+            is the ticket's X. */}
+        {count > 0 ? (
+          <div className="shelf-qty">
+            <button
+              className="shelf-qty-btn"
+              disabled={count <= 1 || charging}
+              aria-label={`One fewer ${item.name}`}
+              title={`One fewer ${item.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                bumpQuantity(key, -1);
+              }}
+            >
+              <MinusIcon />
+            </button>
+            <span className="shelf-qty-n" aria-live="polite">
+              {count}
+            </span>
+            <button
+              className="shelf-qty-btn"
+              disabled={count >= MAX_LINE_QUANTITY || charging}
+              aria-label={`One more ${item.name}`}
+              title={`One more ${item.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                bumpQuantity(key, 1);
+              }}
+            >
+              <PlusIcon />
+            </button>
+          </div>
+        ) : null}
         {/* Its own tap target beside (not inside) the add
             button: nested buttons are invalid HTML and
             double-fire. stopPropagation belt-and-braces. */}
@@ -5797,14 +5768,6 @@ export default function SaleScreen(props: {
       ? recheckReport
       : null;
   const inPay = saleMode === "pay";
-  /** T39.4: the selection, only while its line is in the cart; T39.6:
-   *  never in pay mode, where the ticket has no controls (the canvas's
-   *  pay-mode ticket is read-only, and the way to a cart edit is Back to
-   *  items). */
-  const selected =
-    !inPay && selectedKey !== null && cart.some((l) => l.key === selectedKey)
-      ? selectedKey
-      : null;
   /** T39.4: the tax row's label carries the rate only when the server
    *  sent one (`/api/config`'s studioTaxRate, T38); never a literal. */
   const taxLabel =
@@ -6425,34 +6388,17 @@ export default function SaleScreen(props: {
                   className={hiddenBelow > 0 ? "t-lines-wrap more" : "t-lines-wrap"}
                 >
                 <div className="t-lines" ref={linesRef} onScroll={measureLines}>
-                {cart.map((line) => {
-                  const sel = line.key === selected;
-                  return (
-                    /* T39.4: select to reveal. The row is the tap target
-                       (a div with the button role: a <button> may not
-                       contain the buttons the controls are), and only
-                       the selected row shows minus / count / plus and
-                       Remove. The controls stop propagation so a tap on
-                       plus does not also deselect the row. */
-                    <div
-                      className={sel ? "t-row sel" : "t-row"}
-                      key={line.key}
-                      role={inPay ? undefined : "button"}
-                      tabIndex={inPay ? undefined : 0}
-                      aria-pressed={inPay ? undefined : sel}
-                      aria-label={`${line.item.name}, ${line.quantity} at ${money(line.item.price)}${sel ? ", selected" : ""}`}
-                      onClick={inPay ? undefined : () => toggleSelected(line.key)}
-                      onKeyDown={
-                        inPay
-                          ? undefined
-                          : (e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                toggleSelected(line.key);
-                              }
-                            }
-                      }
-                    >
+                {cart.map((line) => (
+                  /* T82: every line carries its controls. The row is not
+                     a tap target at all any more (it was a div with the
+                     button role, because a <button> may not contain the
+                     buttons the controls are), so nothing bubbles and
+                     nothing needs stopping: the stepper changes the
+                     quantity and the X removes the line, each on its own
+                     44px square. In pay mode the row is read-only, as it
+                     has been since T39.6. */
+                  <div className="t-row" key={line.key}>
+                    <div className="t-row-main">
                       <div className="t-line">
                         <span className="t-name">{line.item.name}</span>
                         <span className="amt">
@@ -6469,19 +6415,13 @@ export default function SaleScreen(props: {
                           {line.quantity} @ {line.item.price.toFixed(2)}
                         </div>
                       ) : null}
-                      {sel ? (
-                        <div
-                          className="t-ctl"
-                          onClick={(e) => e.stopPropagation()}
-                          /* Keys too (review): Enter on the focused plus
-                             bubbled to the row's handler, which deselected
-                             the row instead of counting one more. */
-                          onKeyDown={(e) => e.stopPropagation()}
-                        >
+                      {inPay ? null : (
+                        <div className="t-ctl">
                           <button
                             className="t-ctl-btn"
                             disabled={line.quantity <= 1 || charging}
                             aria-label={`One fewer ${line.item.name}`}
+                            title={`One fewer ${line.item.name}`}
                             onClick={() => bumpQuantity(line.key, -1)}
                           >
                             <MinusIcon />
@@ -6493,28 +6433,34 @@ export default function SaleScreen(props: {
                             className="t-ctl-btn"
                             disabled={line.quantity >= MAX_LINE_QUANTITY || charging}
                             aria-label={`One more ${line.item.name}`}
+                            title={`One more ${line.item.name}`}
                             onClick={() => bumpQuantity(line.key, 1)}
                           >
                             <PlusIcon />
                           </button>
-                          {/* T41 (Pete): a trash can, not the word. Same
-                              64px height as the steppers, square, the
-                              stop outline the word had; the label and
-                              tooltip carry the item's name. */}
-                          <button
-                            className="t-ctl-remove"
-                            disabled={charging}
-                            aria-label={`Remove ${line.item.name} from the sale`}
-                            title={`Remove ${line.item.name}`}
-                            onClick={() => removeLine(line.key)}
-                          >
-                            <TrashIcon />
-                          </button>
                         </div>
-                      ) : null}
+                      )}
                     </div>
-                  );
-                })}
+                    {/* Pete: "Have an X next to an item to easily cancel
+                        it." One tap, no confirm: an X that asked twice is
+                        not easy, the line is one tap to put back, and
+                        Empty cart keeps the confirm because it destroys
+                        the whole ticket. The tender clears with any cart
+                        change and a discount re-spreads (T79), both
+                        through the existing effects. */}
+                    {inPay ? null : (
+                      <button
+                        className="t-x"
+                        disabled={charging}
+                        aria-label={`Remove ${line.item.name} from the sale`}
+                        title={`Remove ${line.item.name}`}
+                        onClick={() => removeLine(line.key)}
+                      >
+                        <CloseIcon />
+                      </button>
+                    )}
+                  </div>
+                ))}
                 </div>
                 </div>
 

@@ -3009,25 +3009,55 @@ button.chip.action:active {
  * this ticket exists to do. Every control it reveals is 64. */
 /* T70 (Buy.dc.html): a 56px line on a 1px hairline, name left and
  * amount right; the selected row takes the accent tint. */
+/* T82: the row is a main column plus the X square at its right edge. It
+ * is no longer tappable itself (select-to-reveal is gone), so it carries
+ * no cursor and no tint: the controls inside it are the tap targets. */
 .t-row {
   min-height: 56px;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
+  align-items: center;
+  gap: 8px;
   margin: 0;
-  padding: 0 18px;
+  padding: 6px 12px 6px 18px;
   border: 0;
   border-bottom: 1px solid var(--line);
   border-radius: 0;
-  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
 }
 
-/* The selected row: the accent tint, and its controls under the line. */
-.t-row.sel {
-  background: var(--accent-bg);
-  padding-bottom: 10px;
+.t-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* The line's own X (Pete: "Have an X next to an item to easily cancel
+ * it"): the 44px icon square, the stop colour the removed trash carried,
+ * quiet at rest so a ticket of six is not six red marks. */
+.t-x {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--stop);
+}
+
+.t-x:active:not(:disabled) {
+  background: var(--stop-bg);
+}
+
+.t-x:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .t-row .t-line {
@@ -3053,13 +3083,15 @@ button.chip.action:active {
   font-variant-numeric: tabular-nums;
 }
 
-/* The selected row's controls: minus / count / plus at 64px, square on
- * the quiet fill, the trash pushed right in the stop colour. */
+/* T82: every line's stepper, minus / count / plus on the 44px icon
+ * square rather than T41's 64px. Every line carries one now, so the 64px
+ * stepper would have cost a third of the ticket's height; 44 is the
+ * recorded icon-square exception and the count sits between the two. */
 .t-ctl {
   display: flex;
   align-items: center;
   gap: 2px;
-  margin-top: 8px;
+  margin-top: 6px;
   cursor: default;
 }
 
@@ -3068,8 +3100,8 @@ button.chip.action:active {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 64px;
-  height: 64px;
+  width: 44px;
+  height: 44px;
   border: 1px solid var(--line);
   border-radius: 0;
   background: var(--surface);
@@ -3080,8 +3112,7 @@ button.chip.action:active {
   background: var(--surface-2);
 }
 
-.t-ctl-btn:disabled,
-.t-ctl-remove:disabled {
+.t-ctl-btn:disabled {
   opacity: 0.4;
   cursor: default;
 }
@@ -3092,28 +3123,6 @@ button.chip.action:active {
   font-size: 20px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
-}
-
-/* T41: a 64px square holding the trash glyph, where the word "Remove"
- * sat (Pete: "instead of 'Remove' use a trash can icon"). Same stop
- * outline; the name rides the aria-label and title. */
-.t-ctl-remove {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-left: auto;
-  width: 64px;
-  height: 64px;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  background: var(--surface);
-  color: var(--stop);
-}
-
-.t-ctl-remove:active:not(:disabled) {
-  background: var(--stop-bg);
 }
 
 /* The "For:" affordance atop the cart: a full-width 64px quiet button
@@ -3497,10 +3506,61 @@ button.sale-for:disabled {
 
 /* A shelf item plus its star: the star is a SIBLING tap target (nested
  * buttons are invalid HTML), absolutely placed in the card's corner, so
- * the wrapper carries the grid cell and the relative context. */
+ * the wrapper carries the grid cell and the relative context. T82: an
+ * in-cart card has a second row under the button for its stepper, which
+ * is a sibling for the same reason. */
 .shelf-cell {
   position: relative;
   display: grid;
+}
+
+.shelf-cell.has-qty {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+/* The quantity strip along an in-cart card's bottom edge (Pete: "So a
+ * user can adjust quanityt in the cart or on the item itself"): 48px, the
+ * card's own accent border continued, minus and plus at either end of the
+ * count. Tapping the card's body above it still adds one. */
+.shelf-qty {
+  display: flex;
+  align-items: stretch;
+  height: 48px;
+  border: 2px solid var(--accent);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.shelf-qty-btn {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.shelf-qty-btn:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.shelf-qty-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.shelf-qty-n {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.2em;
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Room for the star so a long name never runs under it. Only the name
@@ -3905,11 +3965,6 @@ button.sale-for:disabled {
 .sale-panes.pay .sale-left {
   grid-column: 2;
   grid-row: auto;
-}
-
-/* The pay-mode ticket has no controls: rows are not selectable there. */
-.sale-panes.pay .t-row {
-  cursor: default;
 }
 
 @media (max-width: 1190px) {
