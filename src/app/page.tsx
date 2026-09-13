@@ -4330,10 +4330,14 @@ function FrontDesk({
   const payBalance = payProfile?.balance ?? payDialog?.entry.balance ?? null;
   const payCard = payProfile?.card ?? null;
   /* T24's method rules, applied without a chooser: when credit covers
-   * the total, credit IS the method (rule 1; /api/checkout refuses the
-   * card server-side too); otherwise a live card on file. No cash here:
-   * this dialog is one primary action, and a cash sale has a whole
-   * screen. */
+   * the total, credit IS the method here; otherwise a live card on
+   * file. No cash here: this dialog is one primary action, and a cash
+   * sale has a whole screen. T82 retired rule 1, so the server no
+   * longer refuses a card that credit could have covered (the store's
+   * pay screen offers the choice Pete asked for). This dialog's
+   * preference for credit is now ITS OWN, not the server's: it has no
+   * tender chooser to offer, and spending a balance before a card is
+   * the right default for a one-tap sale. */
   const payCreditCovers =
     payBalance !== null && payTotal !== null && payBalance >= payTotal;
   const payMethod: "credit" | "storedcard" | null = payCreditCovers
@@ -4488,9 +4492,10 @@ function FrontDesk({
         }
         /* A definite refusal: nothing was charged, nothing else
          * happened, and saying so is what makes a retry safe. A refusal
-         * that names the live balance (rule 1: "credit covers this")
-         * refreshes the method gate, T24's freshBalance move, so the
-         * retry runs on credit instead of failing identically. */
+         * that names the live balance (a credit line over it, or since
+         * T82 an under-$10 card sale on an account that already holds
+         * credit) refreshes the method gate, T24's freshBalance move, so
+         * the retry runs on credit instead of failing identically. */
         if (typeof chargeBody?.creditBalance === "number") {
           setPayProfile((prof) =>
             prof ? { ...prof, balance: chargeBody.creditBalance } : prof,
@@ -7526,9 +7531,10 @@ function FrontDesk({
             ) : null}
 
             {/* How it gets paid, derived from T24's rules: credit when it
-                covers the total (rule 1: the card is not offered then),
-                otherwise the stored card. A missing method renders its
-                reason rather than disappearing. */}
+                covers the total (this dialog's own preference since T82
+                retired rule 1, see payMethod), otherwise the stored
+                card. A missing method renders its reason rather than
+                disappearing. */}
             <p className="pay-method-line">
               {payMethod === "credit"
                 ? `Pays with account balance (${

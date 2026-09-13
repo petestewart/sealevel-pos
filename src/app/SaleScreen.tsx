@@ -632,13 +632,16 @@ function MinusIcon() {
   return <Icon d="M5 12h14" />;
 }
 
-/** Trash can, the roster's glyph at the stepper's scale: the cart's
- *  Remove is an icon since T41. */
-function TrashIcon() {
+/** T82 (Pete): "in the number pad entry for amounts (discount, cash)
+ *  change 'del' to a delete icon (backspace with X)". The house Icon at
+ *  24: the tab pointing left at the entry it deletes from, with the X
+ *  inside it. The key keeps its size and its stop colour; the word it
+ *  replaces rides the aria-label. */
+function BackspaceIcon() {
   return (
     <Icon
-      d="M4 6.5h16M9.5 6.5V4h5v2.5M6.5 6.5 7.5 20h9l1-13.5M10 10.5v6M14 10.5v6"
-      size={22}
+      d="M9.5 5H20a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H9.5L3 12l6.5-7zM12.5 9.5l5 5M17.5 9.5l-5 5"
+      size={24}
     />
   );
 }
@@ -1238,11 +1241,21 @@ function PaymentPanel(props: {
       ? cardLookup.balance
       : null;
   const balance = freshBalance ?? lookedUpBalance ?? client?.balance ?? null;
-  /* The attach snapshot (or a split failure's fresher report) gates the
-   * button; /api/checkout re-reads the balance server-side and never
-   * trusts this number. */
-  const balanceCoversTotal =
-    balance !== null && total !== null && balance >= total;
+  /* T82: credit is a tender like any other, so a balance that covers the
+   * total no longer refuses the card (rule 1 and assumption P2 are
+   * retired: "Credit should be an option, not forced"). This survives for
+   * the ONE card sale that would BUY credit -- a total under the $10 card
+   * minimum goes out as a $10 credit purchase plus a debit -- where
+   * credit that already covers the total must be spent instead of adding
+   * a second $10. The attach snapshot (or a split failure's fresher
+   * report) gates the button; /api/checkout re-reads the balance
+   * server-side and never trusts this number. */
+  const cardWouldBuyCredit =
+    balance !== null &&
+    total !== null &&
+    total < CARD_MINIMUM_USD &&
+    balance >= total;
+  const spendCreditFirst = `Spend the ${money(balance ?? 0)} on account: a card sale under $${CARD_MINIMUM_USD} would buy more credit`;
 
   const totalCents = total === null ? null : Math.round(total * 100);
   const balanceCents = balance === null ? null : Math.round(balance * 100);
@@ -1258,9 +1271,11 @@ function PaymentPanel(props: {
   useEffect(() => {
     setWantReceipt(true);
   }, [clientId]);
-  /* A comp is nothing to receipt (decided, T53): the toggle greys with
-   * the comp armed and the body says false regardless of it. */
-  const sendEmail = receipt.why === null && wantReceipt && !comped;
+  /* T82: a comp receipts like any other sale (Pete: "Receipts should get
+   * emailed even with comp, today it disallows it"), so the discount is
+   * not read here and the toggle is not greyed by one. What still decides
+   * is `receipt.why`: somebody to email, an address, and their opt-in. */
+  const sendEmail = receipt.why === null && wantReceipt;
 
   /** Close the amount modal without touching the lines, and tell
    *  SaleScreen the payment surface is closed -- otherwise a modal
@@ -1557,15 +1572,14 @@ function PaymentPanel(props: {
     if (source === "credit") return creditReason;
     if (source === "storedcard") {
       if (cardReason !== null) return cardReason;
-      /* Rule 1 of the $10 minimum: when credit covers the total, credit
-       * IS the method and the card is not offered. It applies to a
-       * WHOLE-sale card payment only -- adding the card as the first and
-       * therefore only line -- because a deliberate two-leg split is the
-       * opposite of the ambiguity rule 1 guards against (the T28
-       * reversal). /api/checkout takes the same reading. */
-      if (lines.length === 0 && balanceCoversTotal) {
-        return `Credit covers this (${money(balance as number)})`;
-      }
+      /* T82: the under-$10 guard, not rule 1. A whole-sale card payment
+       * (the card as the first and therefore only line) under the $10
+       * minimum buys $10 of credit on the way, which /api/checkout
+       * refuses outright when the account already holds enough; greyed
+       * with that reason beats a certain 409. A split's card leg cannot
+       * reach the credit purchase (the server refuses a leg under the
+       * minimum), so it is not asked here. */
+      if (lines.length === 0 && cardWouldBuyCredit) return spendCreditFirst;
     }
     return null;
   };
@@ -1598,11 +1612,9 @@ function PaymentPanel(props: {
     }
     if (line.source === "storedcard") {
       if (cardReason !== null) return cardReason;
-      /* Rule 1 again, for a card that has BECOME the whole sale (the
-       * other line was removed under it). */
-      if (lines.length === 1 && balanceCoversTotal) {
-        return `Credit covers this (${money(balance as number)})`;
-      }
+      /* T82's under-$10 guard again, for a card that has BECOME the whole
+       * sale (the other line was removed under it). */
+      if (lines.length === 1 && cardWouldBuyCredit) return spendCreditFirst;
       /* The $10 minimum bites on a card LEG of a split, which the server
        * refuses outright; a whole-sale card under $10 is fine, since that
        * is PLAN 2.3's credit-purchase path. */
@@ -2469,26 +2481,22 @@ function PaymentPanel(props: {
     : dueCents === 0 && lines.length > 0;
 
   /**
-   * T39.6: the bar's primary in pay mode, rendered by THIS component
-   * rendered in the panel's own foot (T85: the bar it used to be
-   * portalled into is gone), so it is gated by the `chargeable` of this
-   * very render. It reads `Due $X` (disabled, the prototype's label: the
-   * disabled state turned into information) while anything is unpaid,
-   * `Charge $total` once due is zero, `Comp $total` when comped, and it
-   * is the one Charge control on the screen. Not `disabled` but
-   * aria-disabled, like the shelf's Pay, so its title can say why; the
-   * click guard and doCharge's own checks refuse the tap.
+   * The one control that moves money, at the payment column's foot (T85:
+   * the bar it used to be portalled into is gone), so it is gated by the
+   * `chargeable` of this very render. T82: it reads "Finalize Sale" in
+   * every state, with no amount and no count (Pete: "the Charge/Comp
+   * button should always say 'Finalize Sale' ... No need for it to
+   * contain the total items and dollar amount"). The figures above and
+   * the quiet line beside it carry the numbers; a button that changed
+   * its word and its figure with the tender was three labels for one
+   * act. Not `disabled` but aria-disabled, like the shelf's Pay, so its
+   * title can say why it cannot be tapped; the click guard and
+   * doCharge's own checks refuse the tap either way. The label a screen
+   * reader and the tooltip get when it IS armed is still the full
+   * sentence (`chargeLabel`: "Charge $43.50", "Comp $107.45"), so what
+   * the tap will do is never hidden, only off the face of the button.
    */
-  const primaryLabel = comped ? "Comp" : dueSettled ? "Charge" : "Due";
-  const primaryAmount = comped
-    ? total !== null
-      ? compAmount
-      : null
-    : dueSettled
-      ? total
-      : dueCents !== null
-        ? dueCents / 100
-        : null;
+  const primaryLabel = "Finalize Sale";
   const primaryOn = dueSettled && chargeable;
   const primaryWhy = primaryOn
     ? null
@@ -2499,7 +2507,17 @@ function PaymentPanel(props: {
           ? "Pricing with Mindbody..."
           : "No total to pay yet"
         : dueCents !== null && dueCents > 0
-          ? tenderNote || `${money(dueCents / 100)} still to pay`
+          ? /* T82 review: with nothing tendered the quiet line is not a
+               reason -- it is the card detail ("Card ...4242"), which is
+               what this title then read. The Due figure and the button's
+               own "Due $107.45" are both gone, so the ONLY place left
+               that says what is unpaid and what to do about it is this
+               title. Say both. With a line already in the tender the
+               quiet line does name the remainder or the problem, and it
+               stays the title. */
+            lines.length === 0
+            ? `${money(dueCents / 100)} still to pay. Choose how they are paying.`
+            : tenderNote || `${money(dueCents / 100)} still to pay`
           : firstLineProblem ?? (lines.length === 0 && !comped ? "Choose how they are paying" : "Not ready to charge");
   const primary =
     result?.kind === "paid" ? (
@@ -2527,22 +2545,14 @@ function PaymentPanel(props: {
         }}
       >
         {charging ? (
-          /* The amount stays in the label while the write is in flight
-             (Payment.dc.html: "the amount is always in the label"). */
+          /* One word through the whole tap: the spinner says the write is
+             in flight, the label does not change under the thumb. */
           <>
             <span className="spinner" aria-label="working" />
-            <span>{comped ? "Comping" : "Charging"}</span>
-            {primaryAmount !== null ? (
-              <span className="btn-amt">{money(primaryAmount)}</span>
-            ) : null}
+            <span>{primaryLabel}</span>
           </>
         ) : (
-          <>
-            <span>{primaryLabel}</span>
-            {primaryAmount !== null ? (
-              <span className="btn-amt">{money(primaryAmount)}</span>
-            ) : null}
-          </>
+          <span>{primaryLabel}</span>
         )}
       </button>
     );
@@ -2629,29 +2639,17 @@ function PaymentPanel(props: {
             </div>
           ) : (
             <>
-              {/* The three figures (0.2): Total is the server's, Due is
-                  what the lines have not covered, Change is over-tendered
-                  cash. Due carries the most weight of the three (decided):
-                  it is the one figure a teacher checks before charging. */}
+              {/* T82: two figures, not three (Pete: "Remove the 'Due'
+                  section at the bottom right"). Total is the server's and
+                  Change is over-tendered cash, lit only when there is
+                  any. What is still unpaid is said in words by the quiet
+                  line in the foot and by Finalize Sale's title, which is
+                  where a teacher who cannot charge looks for the why. */}
               <div className="pay-figures">
                 <div className="pay-fig">
                   <span className="pay-fig-label">Total</span>
                   <span className="pay-fig-amt">
                     {total !== null ? money(total) : "--"}
-                  </span>
-                </div>
-                <div
-                  className={dueSettled ? "pay-fig due settled" : "pay-fig due"}
-                >
-                  <span className="pay-fig-label">Due</span>
-                  <span className="pay-fig-amt">
-                    {comped
-                      ? total !== null
-                        ? money(0)
-                        : "--"
-                      : dueCents !== null
-                        ? money(dueCents / 100)
-                        : "--"}
                   </span>
                 </div>
                 <div
@@ -2681,23 +2679,20 @@ function PaymentPanel(props: {
                   const reopen =
                     s === "cash" && cashLine !== undefined && reason === "Already in the payment";
                   const off = reason !== null && !reopen;
-                  /* T70: the card's note is always there and always
-                     honest (Payment.dc.html): T35's reason when there is
-                     one, else what a tap does. The stored card is a card
-                     on file, not a reader, so the note says so. */
+                  /* T82: the note carries INFORMATION or nothing. T35's
+                     reason when a tile cannot add a line stays, and so
+                     does the cash tile's "tap to change it"; the three
+                     amount notes are gone (Pete: "Remove the 'Take $230
+                     in cash' line"), with "Applies first", which was
+                     rule 1's word and is no longer true of credit. The
+                     amount a tap adds is the remaining due, which the
+                     figures and the quiet line already carry. Credit
+                     keeps its balance badge. */
                   const shown = off
                     ? reason
                     : reopen
                       ? "In the payment. Tap to change it."
-                      : s === "credit"
-                        ? /* The prototype's word for an available Credit:
-                             rule 1 makes it the first thing applied. */
-                          "Applies first"
-                        : dueCents !== null
-                          ? s === "cash"
-                            ? `Take ${money(dueCents / 100)} in cash`
-                            : `Charge ${money(dueCents / 100)} to the card on file`
-                          : null;
+                      : null;
                   /* In the payment: the selected marker (--accent-bg and
                      the 4px accent edge), whether or not the tile can
                      still take a tap. */
@@ -2800,30 +2795,43 @@ function PaymentPanel(props: {
               {/* T53: the receipt toggle (Pete: "receive an email
                   receipt"). The filter-toggle idiom, 64px, accent while
                   on; off and disabled with its reason when there is
-                  nobody to email, no address, no opt-in, or a comp. */}
+                  nobody to email, no address or no opt-in. A discount
+                  never disables it (T82).
+
+                  T82 also draws the state (Pete: "'Email reciept' should
+                  have a checkbox to the left of it to indicate when its
+                  toggled on and off in addition to the color change"):
+                  a 24px square on the rule, filled with the accent and
+                  the check when on. Drawn from tokens, not a native
+                  checkbox, because a native one cannot be coloured in
+                  both palettes and cannot be told not to take a tap of
+                  its own inside the button. It is decoration over
+                  aria-pressed, which is what a screen reader reads. */}
               <button
                 type="button"
                 className={
                   sendEmail ? "receipt-toggle on" : "receipt-toggle"
                 }
                 aria-pressed={sendEmail}
-                disabled={receipt.why !== null || comped || charging}
-                title={
-                  comped
-                    ? "A comp sends no receipt"
-                    : (receipt.why ?? "Email a receipt for this sale")
-                }
+                disabled={receipt.why !== null || charging}
+                title={receipt.why ?? "Email a receipt for this sale"}
                 onClick={() => setWantReceipt((v) => !v)}
               >
-                <span className="receipt-toggle-name">Email receipt</span>
+                <span className="receipt-toggle-name">
+                  <span
+                    className={sendEmail ? "receipt-box on" : "receipt-box"}
+                    aria-hidden="true"
+                  >
+                    {sendEmail ? <CheckIcon /> : null}
+                  </span>
+                  Email receipt
+                </span>
                 <span className="receipt-sub">
-                  {comped
-                    ? "Not for a comp"
-                    : receipt.why !== null
-                      ? receipt.why
-                      : sendEmail
-                        ? `to ${receipt.email}`
-                        : "Off"}
+                  {receipt.why !== null
+                    ? receipt.why
+                    : sendEmail
+                      ? `to ${receipt.email}`
+                      : "Off"}
                 </span>
               </button>
 
@@ -3048,9 +3056,10 @@ function PaymentPanel(props: {
               <button
                 className="pad-key del"
                 aria-label="Delete last digit"
+                title="Delete"
                 onClick={() => padTap("back")}
               >
-                del
+                <BackspaceIcon />
               </button>
             </div>
 
@@ -3219,10 +3228,11 @@ function PaymentPanel(props: {
                 placeholder={
                   reasonDraft.kind === null
                     ? "Choose a reason first"
-                    : compNeedsDetail(reasonDraft.kind)
-                      ? reasonDraft.kind === "trade"
-                        ? "What was traded?"
-                        : "What happened?"
+                    : reasonDraft.kind === "trade"
+                      ? /* Trade is the one reason whose note has a
+                           question to answer; every other one asks for
+                           the note in Pete's words (T82). */
+                        "What was traded?"
                       : "Add a note"
                 }
                 aria-label="Note for the discount"
@@ -3256,10 +3266,11 @@ function PaymentPanel(props: {
               <button
                 className="pad-key del"
                 aria-label="Delete last digit"
+                title="Delete"
                 disabled={discountDraft.mode === "whole"}
                 onClick={() => discountTap("back")}
               >
-                del
+                <BackspaceIcon />
               </button>
             </div>
             </div>
@@ -4836,7 +4847,6 @@ export default function SaleScreen(props: {
    *  switch already stands either way. */
   const emptyCart = useCallback(() => {
     setCart([]);
-    setSelectedKey(null);
     setPriced(null);
     setPriceError(null);
     setCartResetNonce((n) => n + 1);
@@ -5181,21 +5191,14 @@ export default function SaleScreen(props: {
     close,
   ]);
 
-  /**
-   * T39.4: which cart line is showing its controls. One line at most,
-   * selected by a tap on the row, and it is what buys back the column's
-   * height: the per-row stepper on every line is gone, so a seven-line
-   * cart fits where four used to. Nothing is selected until a row is
-   * tapped: T39.4 had a shelf tap select the line it touched (the
-   * prototype did), and Pete's first live pass read that as a row whose
-   * buttons never went away ("there is always a row that has those
-   * buttons visible", T41). A shelf tap now leaves the selection alone;
-   * removing a line or emptying the cart clears it. Derived against the
-   * cart below, so a key that leaves the cart by any path (recheck
-   * dropping a line, a sale clearing it) can never point at a row that
-   * is not there.
+  /* T82: select-to-reveal is gone, and with it the selected row, the
+   * tap-outside deselect and the scroll-the-reveal-into-view effect.
+   * Every line carries its own stepper and its own X (Pete: "Have an X
+   * next to an item to easily cancel it", "Add + and - ... on the item
+   * that you click"), which is what T39.4 had before the controls were
+   * hidden to buy column height; the 44px icon squares are what buys it
+   * back, at two thirds of the 64px stepper's height.
    */
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   const addItem = useCallback((item: ShelfItem) => {
     const key = `${item.type}-${item.id}`;
@@ -5217,8 +5220,6 @@ export default function SaleScreen(props: {
    *  but a saved sequence of taps: the cart, the pricing loop and the
    *  charge path never know bundles exist. */
   const addBundle = useCallback((bundle: ResolvedBundle) => {
-    /* T41: like addItem, a bundle changes no selection; only a row tap
-       reveals a row's controls. */
     setCart((lines) => {
       const next = [...lines];
       for (const { item, quantity } of bundle.items) {
@@ -5259,13 +5260,7 @@ export default function SaleScreen(props: {
   }, []);
 
   const removeLine = useCallback((key: string) => {
-    setSelectedKey(null);
     setCart((lines) => lines.filter((l) => l.key !== key));
-  }, []);
-
-  /** T39.4: the row tap. The selected row again, or nothing, deselects. */
-  const toggleSelected = useCallback((key: string) => {
-    setSelectedKey((cur) => (cur === key ? null : key));
   }, []);
 
   /**
@@ -5282,13 +5277,12 @@ export default function SaleScreen(props: {
    * T51 lifted this out of the Pay button so the walk-in dialog can
    * enter pay mode too; a hook, so it sits above the `!open` return.
    * Into pay mode: the rail and grid give way to the payment surface,
-   * the cart stays put, and the selection goes (the pay-mode ticket has
-   * no controls). The lines box may be scrolled to the row the last tap
-   * selected; with no selection to show, start the ticket from its first
-   * row, and T38's cue counts the rest.
+   * the cart stays put, and the ticket's rows lose their controls (the
+   * pay-mode ticket is read-only; the way to a cart edit is Back to
+   * items). The ticket starts from its first row, and T38's cue counts
+   * the rest.
    */
   const enterPay = useCallback(() => {
-    setSelectedKey(null);
     setSaleMode("pay");
     linesRef.current?.scrollTo({ top: 0 });
   }, [setSaleMode]);
@@ -5524,15 +5518,12 @@ export default function SaleScreen(props: {
     measureLines();
     window.addEventListener("resize", measureLines);
     /* T39.4: the lines box is no longer a fixed vh cap but whatever the
-       column leaves it, which moves when a row reveals its controls or
-       the totals area changes shape (estimate to server rows, a stop
-       appearing). A ResizeObserver on the box itself catches every one
-       of those without listing them; the cart dependency stays for the
-       row count changing inside an unchanged box, and the selection is
-       a dependency too (review): in a bounded ticket the box does not
-       move when a row reveals its controls, the rows under it do, and
-       the observer never fired, so "2 more below" stood while three
-       were hidden. */
+       column leaves it, which moves when the totals area changes shape
+       (estimate to server rows, a stop appearing). A ResizeObserver on
+       the box itself catches every one of those without listing them;
+       the cart dependency stays for the row count changing inside an
+       unchanged box. T82: no row reveals anything any more, so the
+       selection is no longer a dependency. */
     const el = linesRef.current;
     const ro =
       el && typeof ResizeObserver !== "undefined"
@@ -5543,53 +5534,16 @@ export default function SaleScreen(props: {
       window.removeEventListener("resize", measureLines);
       ro?.disconnect();
     };
-  }, [cart, selectedKey, open, measureLines]);
-
-  /* Review: the selected row is the one showing its controls, so it has
-     to be in the box. A tap on a visible row can push its own controls
-     under the edge, and the reveal was then invisible (T39.4 also had a
-     shelf tap select a row below the fold; T41 ended that, and the
-     scroll stays for the row tap). Only the lines box scrolls, and only
-     as far as it must: never the column or the overlay, so under 900 a
-     tap cannot yank the shelf away. The scroll event re-measures the
-     cue. */
-  useEffect(() => {
-    const box = linesRef.current;
-    const rowEl = box?.querySelector<HTMLElement>(".t-row.sel");
-    if (!box || !rowEl) return;
-    const top = rowEl.offsetTop;
-    const bottom = top + rowEl.offsetHeight;
-    if (bottom > box.scrollTop + box.clientHeight) {
-      box.scrollTop = bottom - box.clientHeight;
-    }
-    if (top < box.scrollTop) box.scrollTop = top;
-  }, [selectedKey]);
-
-  /* T42 live pass (Pete): "tapping outside the row should re-hide them".
-     A tap that lands anywhere but on a ticket row puts the controls
-     away, so the reveal reads as a momentary tool and not a mode. The
-     listener exists only while a row is selected, runs on pointerdown so
-     the deselect and whatever the tap does (a shelf add, Pay) land in
-     the same gesture, and leaves the selected row's own controls alone
-     because they are inside `.t-row`. */
-  useEffect(() => {
-    if (selectedKey === null) return;
-    const onDown = (e: PointerEvent) => {
-      const el = e.target instanceof Element ? e.target : null;
-      if (el?.closest(".t-row")) return;
-      setSelectedKey(null);
-    };
-    document.addEventListener("pointerdown", onDown, true);
-    return () => document.removeEventListener("pointerdown", onDown, true);
-  }, [selectedKey]);
+  }, [cart, open, measureLines]);
 
   const cartCount = cart.reduce((n, l) => n + l.quantity, 0);
   /**
-   * T39.5: the shelf's Pay, the cart column's foot since T85. The
-   * amount is the SERVER's grandTotal and nothing else: while T38's
-   * estimate is on the ticket it reads `Pay` with the count and no
-   * figure, because a number on the one button that moves money must
-   * never be the browser's. `payWhy` is the reason it is disabled, or
+   * T39.5: the shelf's Pay, the cart column's foot since T85. Since T82
+   * the button's face is the word alone and the amount is in its title,
+   * where it is still the SERVER's grandTotal and nothing else: while
+   * T38's estimate is on the ticket there is no figure to give, because
+   * a number on the one button that moves money must never be the
+   * browser's. `payWhy` is the reason it is disabled, or
    * null; it is the button's title, so a greyed Pay says why when asked.
    * Pay enters pay mode (T39.6); the charge itself is the panel's, in
    * the payment column's foot.
@@ -5714,11 +5668,12 @@ export default function SaleScreen(props: {
    *  moved, so a sectioned Passes shelf and a plain one draw the same
    *  thing. */
   const shelfCard = (item: ShelfItem) => {
-    const starred = favSet.has(itemKey(item.type, item.id));
-    const count = inCart.get(itemKey(item.type, item.id)) ?? 0;
+    const key = itemKey(item.type, item.id);
+    const starred = favSet.has(key);
+    const count = inCart.get(key) ?? 0;
     return (
       <div
-        className="shelf-cell"
+        className={count > 0 ? "shelf-cell has-qty" : "shelf-cell"}
         key={`${item.type}-${item.id}`}
       >
         <button
@@ -5763,6 +5718,45 @@ export default function SaleScreen(props: {
             ) : null}
           </span>
         </button>
+        {/* T82: the quantity on the item itself (Pete: "Add + and - ...
+            So a user can adjust quanityt in the cart or on the item
+            itself"), the ticket's stepper along the card's bottom edge
+            and only for a card the cart holds. Siblings of the add
+            button, never inside it: nested buttons are invalid HTML and
+            double-fire. The card's body still adds one, so the strip is
+            the only way DOWN, and minus stops at one; removing the line
+            is the ticket's X. */}
+        {count > 0 ? (
+          <div className="shelf-qty">
+            <button
+              className="shelf-qty-btn"
+              disabled={count <= 1 || charging}
+              aria-label={`One fewer ${item.name}`}
+              title={`One fewer ${item.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                bumpQuantity(key, -1);
+              }}
+            >
+              <MinusIcon />
+            </button>
+            <span className="shelf-qty-n" aria-live="polite">
+              {count}
+            </span>
+            <button
+              className="shelf-qty-btn"
+              disabled={count >= MAX_LINE_QUANTITY || charging}
+              aria-label={`One more ${item.name}`}
+              title={`One more ${item.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                bumpQuantity(key, 1);
+              }}
+            >
+              <PlusIcon />
+            </button>
+          </div>
+        ) : null}
         {/* Its own tap target beside (not inside) the add
             button: nested buttons are invalid HTML and
             double-fire. stopPropagation belt-and-braces. */}
@@ -5841,14 +5835,6 @@ export default function SaleScreen(props: {
       ? recheckReport
       : null;
   const inPay = saleMode === "pay";
-  /** T39.4: the selection, only while its line is in the cart; T39.6:
-   *  never in pay mode, where the ticket has no controls (the canvas's
-   *  pay-mode ticket is read-only, and the way to a cart edit is Back to
-   *  items). */
-  const selected =
-    !inPay && selectedKey !== null && cart.some((l) => l.key === selectedKey)
-      ? selectedKey
-      : null;
   /** T39.4: the tax row's label carries the rate only when the server
    *  sent one (`/api/config`'s studioTaxRate, T38); never a literal. */
   const taxLabel =
@@ -6469,34 +6455,17 @@ export default function SaleScreen(props: {
                   className={hiddenBelow > 0 ? "t-lines-wrap more" : "t-lines-wrap"}
                 >
                 <div className="t-lines" ref={linesRef} onScroll={measureLines}>
-                {cart.map((line) => {
-                  const sel = line.key === selected;
-                  return (
-                    /* T39.4: select to reveal. The row is the tap target
-                       (a div with the button role: a <button> may not
-                       contain the buttons the controls are), and only
-                       the selected row shows minus / count / plus and
-                       Remove. The controls stop propagation so a tap on
-                       plus does not also deselect the row. */
-                    <div
-                      className={sel ? "t-row sel" : "t-row"}
-                      key={line.key}
-                      role={inPay ? undefined : "button"}
-                      tabIndex={inPay ? undefined : 0}
-                      aria-pressed={inPay ? undefined : sel}
-                      aria-label={`${line.item.name}, ${line.quantity} at ${money(line.item.price)}${sel ? ", selected" : ""}`}
-                      onClick={inPay ? undefined : () => toggleSelected(line.key)}
-                      onKeyDown={
-                        inPay
-                          ? undefined
-                          : (e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                toggleSelected(line.key);
-                              }
-                            }
-                      }
-                    >
+                {cart.map((line) => (
+                  /* T82: every line carries its controls. The row is not
+                     a tap target at all any more (it was a div with the
+                     button role, because a <button> may not contain the
+                     buttons the controls are), so nothing bubbles and
+                     nothing needs stopping: the stepper changes the
+                     quantity and the X removes the line, each on its own
+                     44px square. In pay mode the row is read-only, as it
+                     has been since T39.6. */
+                  <div className="t-row" key={line.key}>
+                    <div className="t-row-main">
                       <div className="t-line">
                         <span className="t-name">{line.item.name}</span>
                         <span className="amt">
@@ -6513,19 +6482,13 @@ export default function SaleScreen(props: {
                           {line.quantity} @ {line.item.price.toFixed(2)}
                         </div>
                       ) : null}
-                      {sel ? (
-                        <div
-                          className="t-ctl"
-                          onClick={(e) => e.stopPropagation()}
-                          /* Keys too (review): Enter on the focused plus
-                             bubbled to the row's handler, which deselected
-                             the row instead of counting one more. */
-                          onKeyDown={(e) => e.stopPropagation()}
-                        >
+                      {inPay ? null : (
+                        <div className="t-ctl">
                           <button
                             className="t-ctl-btn"
                             disabled={line.quantity <= 1 || charging}
                             aria-label={`One fewer ${line.item.name}`}
+                            title={`One fewer ${line.item.name}`}
                             onClick={() => bumpQuantity(line.key, -1)}
                           >
                             <MinusIcon />
@@ -6537,28 +6500,34 @@ export default function SaleScreen(props: {
                             className="t-ctl-btn"
                             disabled={line.quantity >= MAX_LINE_QUANTITY || charging}
                             aria-label={`One more ${line.item.name}`}
+                            title={`One more ${line.item.name}`}
                             onClick={() => bumpQuantity(line.key, 1)}
                           >
                             <PlusIcon />
                           </button>
-                          {/* T41 (Pete): a trash can, not the word. Same
-                              64px height as the steppers, square, the
-                              stop outline the word had; the label and
-                              tooltip carry the item's name. */}
-                          <button
-                            className="t-ctl-remove"
-                            disabled={charging}
-                            aria-label={`Remove ${line.item.name} from the sale`}
-                            title={`Remove ${line.item.name}`}
-                            onClick={() => removeLine(line.key)}
-                          >
-                            <TrashIcon />
-                          </button>
                         </div>
-                      ) : null}
+                      )}
                     </div>
-                  );
-                })}
+                    {/* Pete: "Have an X next to an item to easily cancel
+                        it." One tap, no confirm: an X that asked twice is
+                        not easy, the line is one tap to put back, and
+                        Empty cart keeps the confirm because it destroys
+                        the whole ticket. The tender clears with any cart
+                        change and a discount re-spreads (T79), both
+                        through the existing effects. */}
+                    {inPay ? null : (
+                      <button
+                        className="t-x"
+                        disabled={charging}
+                        aria-label={`Remove ${line.item.name} from the sale`}
+                        title={`Remove ${line.item.name}`}
+                        onClick={() => removeLine(line.key)}
+                      >
+                        <CloseIcon />
+                      </button>
+                    )}
+                  </div>
+                ))}
                 </div>
                 </div>
 
@@ -6752,6 +6721,15 @@ export default function SaleScreen(props: {
                 >
                   Empty cart
                 </button>
+                {/* T82: the word only, no count and no amount (Pete, of
+                    its pay-mode twin: "No need for it to contain the
+                    total items and dollar amount"; the two controls are
+                    read as one pair and the ticket above carries both
+                    figures already). The count and the total stay in the
+                    ticket's head and totals, and the title still says
+                    the amount or why the tap is refused. The pricing
+                    spinner stays: it is the one thing the ticket cannot
+                    say in the foot's place. */}
                 <button
                   className={payWhy === null ? "t-foot-pay" : "t-foot-pay off"}
                   aria-disabled={payWhy !== null}
@@ -6759,16 +6737,7 @@ export default function SaleScreen(props: {
                   onClick={payTap}
                 >
                   <span>Pay</span>
-                  {cartCount > 0 ? (
-                    <span className="btn-count">
-                      {"\u00b7"} {cartCount} {cartCount === 1 ? "item" : "items"}
-                    </span>
-                  ) : null}
-                  {payAmount !== null ? (
-                    <span className="btn-amt">
-                      {"\u00b7"} {money(payAmount)}
-                    </span>
-                  ) : pricing && cart.length > 0 ? (
+                  {payAmount === null && pricing && cart.length > 0 ? (
                     <span className="spinner" aria-label="pricing" />
                   ) : null}
                 </button>
