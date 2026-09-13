@@ -1925,6 +1925,73 @@ button.chip.action:active {
   font-size: 12px;
 }
 
+/* T89: the Mindbody target block, at the top of the settings tab. The
+ * only control in this drawer that changes where a write goes, so it is
+ * the only one built at the counter's own size: 64px tall, like every
+ * teacher-facing control, rather than the drawer's dense 44px. The
+ * confirm for production is --stop (destructive or blocked only) with
+ * --bg text, since white fails in dark. */
+
+.dev-target-now {
+  margin: 0;
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.dev-target-error {
+  margin: 0;
+  font-size: 16px;
+  color: var(--stop);
+}
+
+.dev-target-question {
+  margin: 0;
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.dev-target-ask {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 2px solid var(--rule);
+  background: var(--bg);
+}
+
+.dev-target-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dev-settings .dev-target-btn {
+  min-height: 64px;
+  padding: 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+}
+
+.dev-settings .dev-target-btn:disabled {
+  opacity: 0.5;
+  color: var(--muted);
+}
+
+.dev-settings .dev-target-go {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.dev-settings .dev-target-go.stop {
+  border-color: var(--stop);
+  background: var(--stop);
+  color: var(--bg);
+}
+
 /* The quiet 44px icon in the actions cell: the trash on a booking that is
  * not checked in. (It was the check-out arrow too until T81; check-out is
  * now a tap on the checked-in chip, behind the same confirm.) */

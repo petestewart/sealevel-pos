@@ -47,11 +47,16 @@ export default function DevDrawer({
   open,
   onOpenChange,
   onAvailableChange,
+  onTargetSwitched,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** True once /api/devlog answers, false while it 404s. */
   onAvailableChange: (available: boolean) => void;
+  /** T89: the counter was just pointed at the other studio. The page
+   *  re-reads /api/config for the banner and sends everyone back to the
+   *  sign-in gate, since every staff session has just ended. */
+  onTargetSwitched: (next: string, notice: string) => void;
 }) {
   const [available, setAvailable] = useState(false);
   const [calls, setCalls] = useState<CallRecord[]>([]);
@@ -230,7 +235,11 @@ export default function DevDrawer({
 
         <div className="dev-body">
           {tab === "settings" ? (
-            <SettingsPanel settings={settings} set={set} />
+            <SettingsPanel
+              settings={settings}
+              set={set}
+              onTargetSwitched={onTargetSwitched}
+            />
           ) : tab === "bundles" ? (
             <BundlesPanel />
           ) : tab === "shelf" ? (
@@ -318,9 +327,11 @@ const FLAGS: { key: keyof Settings; label: string; hint: string }[] = [
 function SettingsPanel({
   settings,
   set,
+  onTargetSwitched,
 }: {
   settings: Settings;
   set: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+  onTargetSwitched: (next: string, notice: string) => void;
 }) {
   /* T29: the one quiet line saying which store is behind the DB features.
    * "none" is full fallback mode and is normal for local work. */
@@ -347,9 +358,10 @@ function SettingsPanel({
   }, []);
   return (
     <div className="dev-settings">
+      <TargetPanel onSwitched={onTargetSwitched} />
       <p className="muted">
-        Stored in this browser. Applies immediately, no restart. Dry run,
-        target and the write guard are server settings and deliberately not
+        The rest is stored in this browser. Applies immediately, no restart.
+        Dry run and the write guard are server settings and deliberately not
         here.
       </p>
       {storage !== null ? (
@@ -402,6 +414,196 @@ function SettingsPanel({
       <ThemeSetting />
       <TeacherPanel />
     </div>
+  );
+}
+
+/* --- Mindbody target (T89) --------------------------------------------
+ *
+ * The one setting in this tab that is NOT stored in the browser: which
+ * studio the counter talks to, stored server-side in app_settings and
+ * switched through PUT /api/admin/target, which is gated by the device
+ * session, the devtools flag, a signed-in teacher and both credential
+ * sets being present in the server environment.
+ *
+ * Pete asked for it ("flip between sandbox and prod with a setting
+ * rather than a redeploy") and, told this relaxes the rail that kept
+ * write-reaching decisions out of the drawer, said "go". Dry run and the
+ * write guard did NOT come with it, and the block says so in a line:
+ * switching to prod lands in dry run unless the deployment turned it
+ * off, which is the whole point of keeping them in the environment.
+ */
+
+interface TargetInfo {
+  target: string;
+  targetSource: string;
+  siteId: string | null;
+  dryRun: boolean;
+  configured: boolean;
+  available: boolean;
+  targets: { target: string; siteId: string | null; missing: string[] }[];
+}
+
+const studioWord = (t: string) => (t === "prod" ? "Production" : "Sandbox");
+
+function TargetPanel({
+  onSwitched,
+}: {
+  onSwitched: (next: string, notice: string) => void;
+}) {
+  const [info, setInfo] = useState<TargetInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  /** The target the confirm is asking about, or null for no question. */
+  const [asking, setAsking] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/target");
+      if (!res.ok) {
+        setLoaded(true);
+        return;
+      }
+      setInfo((await res.json()) as TargetInfo);
+    } catch {
+      /* The block stays quiet; the banner still says where we are. */
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const other =
+    info === null ? null : info.target === "prod" ? "sandbox" : "prod";
+  const otherReady =
+    info === null || other === null
+      ? null
+      : (info.targets.find((t) => t.target === other) ?? null);
+  const missing = otherReady?.missing ?? [];
+
+  const switchTo = async (next: string) => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/target", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target: next }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || body?.switched !== true) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        if (body?.target) setInfo(body as TargetInfo);
+        return;
+      }
+      setInfo(body as TargetInfo);
+      setAsking(null);
+      setDone(
+        `Switched to ${studioWord(next).toLowerCase()} site ${body.siteId ?? "?"}. ` +
+          "Every teacher signs in again.",
+      );
+      onSwitched(
+        next,
+        `The studio target changed to ${next}. Sign in again.`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!loaded) return <p className="muted">Loading the target.</p>;
+  if (info === null) {
+    return (
+      <p className="muted">
+        The target cannot be read here. The banner above still names it.
+      </p>
+    );
+  }
+
+  return (
+    <>
+      <div className="dev-label">mindbody target</div>
+      <p className="dev-target-now">
+        {studioWord(info.target)} site {info.siteId ?? "not configured"}.{" "}
+        {info.targetSource === "setting"
+          ? "Stored setting."
+          : "From MINDBODY_TARGET in the server environment."}
+      </p>
+      <p className="muted">
+        Dry run is {info.dryRun ? "on" : "off"}. Dry run and the write guard
+        stay in the server environment and this switch cannot change them, so
+        a switch to production still writes nothing until POS_DRY_RUN=false is
+        deployed.
+      </p>
+      {!info.configured || !info.available ? (
+        <p className="muted">
+          {info.configured
+            ? "The database is configured but not answering, so the target cannot be switched here; MINDBODY_TARGET in the server environment decides."
+            : "No database configured (DATABASE_URL unset), so MINDBODY_TARGET in the server environment decides and the target cannot be switched here."}
+        </p>
+      ) : missing.length > 0 && other !== null ? (
+        <p className="muted">
+          Cannot switch to {other}: the server environment is missing{" "}
+          {missing.join(", ")}.
+        </p>
+      ) : null}
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      {other !== null && asking === other ? (
+        <div className="dev-target-ask">
+          <p className="dev-target-question">
+            Switch this counter to {other.toUpperCase()}? Every teacher signs
+            in again.
+          </p>
+          <div className="dev-target-buttons">
+            <button
+              type="button"
+              className="dev-target-btn"
+              disabled={busy}
+              onClick={() => setAsking(null)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className={
+                other === "prod"
+                  ? "dev-target-btn dev-target-go stop"
+                  : "dev-target-btn dev-target-go"
+              }
+              disabled={busy}
+              onClick={() => void switchTo(other)}
+            >
+              {busy ? "Switching" : `Yes, switch to ${other}`}
+            </button>
+          </div>
+        </div>
+      ) : other !== null ? (
+        <div className="dev-target-buttons">
+          <button
+            type="button"
+            className="dev-target-btn"
+            disabled={
+              busy || missing.length > 0 || !info.configured || !info.available
+            }
+            onClick={() => {
+              setError(null);
+              setDone(null);
+              setAsking(other);
+            }}
+          >
+            Switch to {other}
+          </button>
+        </div>
+      ) : null}
+    </>
   );
 }
 
