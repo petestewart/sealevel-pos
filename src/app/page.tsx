@@ -7905,19 +7905,27 @@ function AuthGate() {
     };
   }, [phase]);
 
+  /* T89: read whenever the gate could be showing (so a sign-out after a
+   * target switch does not leave the gate's banner naming the studio the
+   * counter just left) and every 30 seconds after that, which is how an
+   * iPad sitting on the gate learns about a switch made elsewhere. */
   useEffect(() => {
     if (phase !== "open") return;
     let cancelled = false;
-    fetch("/api/config")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((body) => {
-        if (!cancelled) setGateConfig(body ?? null);
-      })
-      .catch(() => undefined);
+    const read = () =>
+      fetch("/api/config")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body) => {
+          if (!cancelled && body) setGateConfig(body);
+        })
+        .catch(() => undefined);
+    void read();
+    const timer = setInterval(read, 30_000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, [phase]);
+  }, [phase, teacher]);
 
   /* The one shared chokepoint for "a data fetch answered 401": wrap
    * window.fetch while the app is open. Every call site (FrontDesk, the
