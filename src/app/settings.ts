@@ -9,10 +9,10 @@ import { useCallback, useEffect, useState } from "react";
  * These are the numbers that have already been wrong once each: the
  * minimum query length let "de" match 209 people, and check-in was
  * optimistic when it should have waited. Each was a constant, a commit and
- * a redeploy to test. Now they are dials. (The search debounce used to be
- * one of them; it retired with the live search itself when search became
- * submit-triggered, T16. A stored value for it merges harmlessly and is
- * ignored.)
+ * a redeploy to test. Now they are dials. (The search debounce retired
+ * with the live search when search became submit-triggered, T16, and is
+ * back with it in T81: results appear as the teacher types, after this
+ * pause, once the query is long enough.)
  *
  * Deliberately client-side only. Anything that decides whether a write
  * reaches Mindbody -- dry run, target, the write guard -- stays in the
@@ -21,6 +21,10 @@ import { useCallback, useEffect, useState } from "react";
  */
 
 export interface Settings {
+  /** T81: the pause after the last keystroke before a live search fires.
+   *  350ms was the number CLAUDE.md's speed section settled on: at 120ms
+   *  typing "dennis" fired four calls in 220ms. */
+  searchDebounceMs: number;
   minQueryLength: number;
   searchLimit: number;
   /** Hours of schedule to show either side of now. */
@@ -46,6 +50,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  searchDebounceMs: 350,
   minQueryLength: 3,
   searchLimit: 12,
   hoursBack: 2,
