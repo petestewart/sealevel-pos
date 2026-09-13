@@ -929,7 +929,12 @@ export type CheckoutPayment =
   | { type: "StoredCard"; amount: number; lastFour: string }
   | { type: "DebitAccount"; amount: number }
   | { type: "Cash"; amount: number }
-  | { type: "Comp"; amount: number };
+  | { type: "Comp"; amount: number }
+  /** T83: a gift card, spent by its barcode id. The number is a bearer
+   *  secret: it is built into the payload here and exists nowhere else
+   *  -- not in a log line, not in a response, not in the call log,
+   *  where calllog.ts strikes it out of the Metadata string. */
+  | { type: "GiftCard"; amount: number; cardNumber: string };
 
 /**
  * CASING: the spec's Metadata key list spells everything lowercase
@@ -942,6 +947,25 @@ export type CheckoutPayment =
  * KEYS is the first thing to try.
  */
 function paymentPayload(p: CheckoutPayment): Record<string, unknown> {
+  /* T83: the ONE entry whose Metadata goes out as a STRING of JSON with
+   * lowercase keys, which is what the spec types Metadata as
+   * (sale.yml:3932, `type: string`) and what Mindbody's own gift card
+   * documentation lists for this type (keys `amount`, `cardNumber`; that
+   * page needs a login, so it is hearsay this file cannot verify). Every
+   * other type here sends a PascalCase OBJECT, because that is the shape
+   * the one live checkout known to have passed used, and changing a
+   * proven shape on a hunch is not a trade worth making. If Mindbody
+   * refuses a GiftCard payment for a metadata it cannot read, the first
+   * thing to try is the other shape -- an object, `{ Amount, CardNumber
+   * }` -- and NOT an automatic retry: a refused payment type is a clean
+   * nothing-charged failure, and a money call must never quietly try
+   * itself again in a different shape. */
+  if (p.type === "GiftCard") {
+    return {
+      Type: "GiftCard",
+      Metadata: JSON.stringify({ amount: p.amount, cardNumber: p.cardNumber }),
+    };
+  }
   const metadata: Record<string, unknown> =
     p.type === "StoredCard"
       ? { Amount: p.amount, LastFour: p.lastFour }

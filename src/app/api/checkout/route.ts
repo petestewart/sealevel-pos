@@ -29,6 +29,11 @@ import {
   compNeedsDetail,
 } from "@/lib/comp";
 import { insertCompReceipt, type CompReceiptItem } from "@/lib/db";
+import {
+  giftCardBalance,
+  giftCardLastFour,
+  parseGiftCardNumber,
+} from "@/lib/giftcard";
 import { fileFormulaNote } from "@/lib/formulanote";
 import { isDryRun, mindbodyHttpStatus, target } from "@/lib/mindbody";
 
@@ -52,7 +57,8 @@ export const dynamic = "force-dynamic";
  * an explicit Charge tap; nothing in this app auto-charges.
  *
  * Body: { items: CartLine[], clientId?: string,
- *         method: "storedcard"|"credit"|"cash"|"comp",
+ *         method: "storedcard"|"credit"|"cash"|"giftcard"|"comp",
+ *         giftCard?: { number },
  *         cashTendered?: number,
  *         sendEmail?: boolean,
  *         discount?: { mode: "amount"|"percent", value: number },
@@ -111,10 +117,20 @@ export const dynamic = "force-dynamic";
  *         on the client (see recordDiscount below). Each item may carry
  *         a `name` on a discounted sale, for that record only; it is
  *         never forwarded.
+ *         -- T83: `method: "giftcard"` spends a gift card, and needs
+ *         `giftCard: { number }`, the barcode id off the card. The
+ *         balance is re-read here (`GET /sale/giftcardbalance`) and an
+ *         amount above it is refused 409 with the balance named and
+ *         nothing written; the number goes out only inside the
+ *         `GiftCard` Payments entry and appears in NO log line, note,
+ *         receipt row or response, which carry the last four alone. A
+ *         gift card needs no client, like cash: an anonymous sale rides
+ *         the house client.
  *   or, since T28, `split` instead of `method`:
  *       { items, clientId, split: { legs: [{method, amount}, {method,
  *         amount}] } } -- exactly two legs, methods from the whitelist
- *         minus comp, amounts in whole cents that sum EXACTLY to the
+ *         minus comp (T83: a `giftcard` leg carries its own `number`
+ *         and is balance-checked exactly as the whole-sale case is), amounts in whole cents that sum EXACTLY to the
  *         rehearsed server total, charged as two Payments entries in ONE
  *         checkoutshoppingcart call (no two-write seam; a refusal
  *         refuses the whole sale). The card minimum applies to the card
@@ -191,17 +207,21 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-type Method = "storedcard" | "credit" | "cash" | "comp";
+type Method = "storedcard" | "credit" | "cash" | "giftcard" | "comp";
 
 /* T28: the methods a split leg may use. Comp is deliberately excluded --
  * a comp is the whole sale given away, armed by its own dialog in the
  * UI, and half-comping through a split would dodge that dialog; since
  * T79 a partial discount is the cart's, not a leg's. */
-type SplitMethod = "storedcard" | "credit" | "cash";
+type SplitMethod = "storedcard" | "credit" | "cash" | "giftcard";
 
 interface SplitLeg {
   method: SplitMethod;
   amount: number;
+  /** T83: a gift card leg's barcode id. Present for that method and
+   *  refused on every other, so a number can never ride a leg that
+   *  would not spend it. */
+  giftCardNumber?: string;
 }
 
 /** T79: which shape a 100% discount went out in. */
@@ -210,8 +230,25 @@ type DiscountShape = "lines" | "comp-payment";
 /** Parse one untrusted split leg; a string return is the 400 reason. */
 function parseSplitLeg(raw: unknown): SplitLeg | string {
   const method = (raw as { method?: unknown })?.method;
-  if (method !== "storedcard" && method !== "credit" && method !== "cash") {
-    return "each split leg's method must be storedcard, credit or cash";
+  if (
+    method !== "storedcard" &&
+    method !== "credit" &&
+    method !== "cash" &&
+    method !== "giftcard"
+  ) {
+    return "each split leg's method must be storedcard, credit, cash or giftcard";
+  }
+  /* T83: the gift card's number belongs to its own leg, and nowhere
+   * else. A number on a cash leg is a mistake, not something to
+   * ignore. */
+  const numberRaw = (raw as { number?: unknown })?.number;
+  let giftCardNumber: string | undefined;
+  if (method === "giftcard") {
+    const parsed = parseGiftCardNumber(numberRaw);
+    if (typeof parsed === "string") return parsed;
+    giftCardNumber = parsed.number;
+  } else if (numberRaw !== undefined) {
+    return "only a giftcard leg carries a number";
   }
   const amount = (raw as { amount?: unknown })?.amount;
   if (
@@ -233,7 +270,11 @@ function parseSplitLeg(raw: unknown): SplitLeg | string {
    * Payments entry sent to Mindbody -- must carry the validated cent
    * amount, never the raw float it arrived as (10.000000001 passes the
    * epsilon but is not a tender anyone typed). */
-  return { method, amount: cents / 100 };
+  return {
+    method,
+    amount: cents / 100,
+    ...(giftCardNumber === undefined ? {} : { giftCardNumber }),
+  };
 }
 
 export async function POST(request: Request) {
@@ -300,10 +341,31 @@ export async function POST(request: Request) {
     method !== "storedcard" &&
     method !== "credit" &&
     method !== "cash" &&
+    method !== "giftcard" &&
     method !== "comp"
   ) {
     return NextResponse.json(
-      { error: "method must be storedcard, credit, cash or comp" },
+      { error: "method must be storedcard, credit, cash, giftcard or comp" },
+      { status: 400 },
+    );
+  }
+
+  /* T83: the gift card's number on the single-method shape, validated
+   * before anything else is read. It is a bearer secret: from here it
+   * reaches the Payments entry and nothing else, and only
+   * giftCardLastFour() of it is ever answered. */
+  const giftCardRaw: unknown = (payload?.giftCard as { number?: unknown })
+    ?.number;
+  let giftCardNumber: string | null = null;
+  if (method === "giftcard") {
+    const parsed = parseGiftCardNumber(giftCardRaw);
+    if (typeof parsed === "string") {
+      return NextResponse.json({ error: parsed }, { status: 400 });
+    }
+    giftCardNumber = parsed.number;
+  } else if (payload?.giftCard !== undefined) {
+    return NextResponse.json(
+      { error: "giftCard applies only to method giftcard" },
       { status: 400 },
     );
   }
@@ -399,12 +461,20 @@ export async function POST(request: Request) {
     /* T53 review: the house client attached BY NAME (it is a real
      * client, so search can find it) is still nobody's inbox. */
     clientId !== houseClientId();
-  /* Every valid split includes a client-bound leg: comp is excluded and
-   * the two legs differ, so at least one is storedcard or credit. The
-   * house client never rides a split. */
-  if (split !== null && !clientId) {
+  /* A client-bound leg needs the client it is bound to. T83 made this
+   * conditional: cash and a gift card are both bearer tenders, so
+   * "gift card $40 plus $9 cash" is a walk-in sale with nobody
+   * attached, and it rides the house client exactly as a whole-sale
+   * cash payment does. A storedcard or credit leg still refuses
+   * without a client, before any Mindbody call. */
+  const boundLeg =
+    split === null
+      ? null
+      : (split.find((l) => l.method === "storedcard" || l.method === "credit") ??
+        null);
+  if (boundLeg !== null && !clientId) {
     return NextResponse.json(
-      { error: "a split sale needs a client attached" },
+      { error: `a ${boundLeg.method} leg needs a client attached to the sale` },
       { status: 400 },
     );
   }
@@ -552,6 +622,58 @@ export async function POST(request: Request) {
   }
 
   const suppressionKind = () => (isDryRun() ? "dry-run" : "write-guard");
+
+  /**
+   * T83: what Mindbody says is on the gift card RIGHT NOW, and the
+   * refusal when the tender asks for more than that. The browser's
+   * "Check balance" answer is never the basis for the money decision,
+   * for the same reason the card and the credit balance are re-read
+   * here: it may be minutes old, and the same card may have been spent
+   * at the counter in between. A READ, so a failure here charged
+   * nothing. Answers null when the amount is good, else the response to
+   * send.
+   */
+  const giftCardRefusal = async (
+    number: string,
+    amount: number,
+    part: string,
+  ): Promise<NextResponse | null> => {
+    let balance: number;
+    try {
+      balance = await giftCardBalance(number);
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error: `Could not read the gift card: ${errMessage(err)} Nothing was charged.`,
+          stage: "method",
+        },
+        { status: 502 },
+      );
+    }
+    if (balance <= 0) {
+      return NextResponse.json(
+        {
+          error: "That gift card has nothing left on it. Nothing was charged.",
+          stage: "method",
+          giftCardBalance: balance,
+        },
+        { status: 409 },
+      );
+    }
+    if (roundToCents(amount) > roundToCents(balance)) {
+      return NextResponse.json(
+        {
+          error:
+            `The gift card has ${balance.toFixed(2)} on it, which does not ` +
+            `cover the ${amount.toFixed(2)} ${part}. Nothing was charged.`,
+          stage: "method",
+          giftCardBalance: balance,
+        },
+        { status: 409 },
+      );
+    }
+    return null;
+  };
 
   /* Step 1, every path: the Test: true rehearsal, which is also where
    * the AUTHORITATIVE total comes from. The browser's number is never
@@ -786,33 +908,40 @@ export async function POST(request: Request) {
     /* Both methods pass their T24 availability checks server-side, on a
      * profile read at charge time -- the browser's snapshot is never the
      * basis for a money decision. A failure here is a failed READ;
-     * nothing has been charged. */
-    let profile;
-    try {
-      profile = await clientPaymentProfile(clientId as string);
-    } catch (err) {
-      return NextResponse.json(
-        {
-          error: `Could not read the client's payment profile: ${errMessage(err)} Nothing was charged.`,
-          stage: "method",
-        },
-        { status: 502 },
-      );
+     * nothing has been charged. T83: read only when a leg is bound to
+     * the client, since a cash-and-gift-card split may have no client
+     * at all; the checks below each require it and are the only readers
+     * of it. */
+    let profile: Awaited<ReturnType<typeof clientPaymentProfile>> | null = null;
+    if (boundLeg !== null) {
+      try {
+        profile = await clientPaymentProfile(clientId as string);
+      } catch (err) {
+        return NextResponse.json(
+          {
+            error: `Could not read the client's payment profile: ${errMessage(err)} Nothing was charged.`,
+            stage: "method",
+          },
+          { status: 502 },
+        );
+      }
     }
 
     const creditLeg =
       legA.method === "credit" ? legA : legB.method === "credit" ? legB : null;
     if (creditLeg !== null) {
-      if (profile.balance === null || profile.balance < creditLeg.amount) {
+      /* A credit leg is a bound leg, so the profile above was read. */
+      const balance = profile?.balance ?? null;
+      if (balance === null || balance < creditLeg.amount) {
         return NextResponse.json(
           {
             error:
-              profile.balance === null
+              balance === null
                 ? "Mindbody reports no account balance for this client."
-                : `Account credit is ${profile.balance.toFixed(2)}, which ` +
+                : `Account credit is ${balance.toFixed(2)}, which ` +
                   `does not cover the ${creditLeg.amount.toFixed(2)} credit leg.`,
             stage: "method",
-            creditBalance: profile.balance,
+            creditBalance: balance,
           },
           { status: 409 },
         );
@@ -826,16 +955,18 @@ export async function POST(request: Request) {
           ? legB
           : null;
     if (cardLeg !== null) {
-      if (!profile.card) {
+      /* A card leg is a bound leg, so the profile above was read. */
+      const onFile = profile?.card ?? null;
+      if (!onFile) {
         return NextResponse.json(
           { error: "No card on file for this client.", stage: "method" },
           { status: 409 },
         );
       }
-      if (profile.card.expired) {
+      if (onFile.expired) {
         return NextResponse.json(
           {
-            error: `The card on file (ending ${profile.card.lastFour}) is expired.`,
+            error: `The card on file (ending ${onFile.lastFour}) is expired.`,
             stage: "method",
           },
           { status: 409 },
@@ -863,16 +994,39 @@ export async function POST(request: Request) {
       }
     }
 
+    /* T83: the gift card leg, checked against the live balance the same
+     * way the credit leg is checked against the account. */
+    const giftLeg =
+      legA.method === "giftcard"
+        ? legA
+        : legB.method === "giftcard"
+          ? legB
+          : null;
+    if (giftLeg !== null) {
+      const refused = await giftCardRefusal(
+        giftLeg.giftCardNumber as string,
+        giftLeg.amount,
+        "gift card part",
+      );
+      if (refused) return refused;
+    }
+
     const toPayment = (leg: SplitLeg): CheckoutPayment =>
       leg.method === "storedcard"
         ? {
             type: "StoredCard",
             amount: leg.amount,
-            lastFour: (profile.card as { lastFour: string }).lastFour,
+            lastFour: (profile?.card as { lastFour: string }).lastFour,
           }
         : leg.method === "credit"
           ? { type: "DebitAccount", amount: leg.amount }
-          : { type: "Cash", amount: leg.amount };
+          : leg.method === "giftcard"
+            ? {
+                type: "GiftCard",
+                amount: leg.amount,
+                cardNumber: leg.giftCardNumber as string,
+              }
+            : { type: "Cash", amount: leg.amount };
 
     try {
       /* ONE checkoutshoppingcart call carrying both Payments entries in
@@ -881,7 +1035,10 @@ export async function POST(request: Request) {
       const run = await runAsActor(session, "/api/checkout", (actor) =>
         checkoutCart(
           items,
-          clientId,
+          /* T83: the house client when nobody is attached, exactly as
+           * every other anonymous sale. Identical to `clientId`
+           * whenever there is one. */
+          saleClientId,
           [toPayment(legA), toPayment(legB)],
           actor,
           sendEmail,
@@ -923,6 +1080,14 @@ export async function POST(request: Request) {
           { method: legA.method, amount: legA.amount },
           { method: legB.method, amount: legB.amount },
         ],
+        /* T83: the last four, never the number. */
+        ...(giftLeg === null
+          ? {}
+          : {
+              giftCard: {
+                lastFour: giftCardLastFour(giftLeg.giftCardNumber as string),
+              },
+            }),
         receiptRequested: sendEmail,
         emailReceipt: null,
         ...rec,
@@ -1133,6 +1298,60 @@ export async function POST(request: Request) {
         total,
         saleId: ids.saleId,
         cartId: ids.cartId,
+        receiptRequested: sendEmail,
+        emailReceipt: null,
+        ...rec,
+        ...actorFields(run),
+      });
+    }
+
+    if (m === "giftcard") {
+      /* T83: a whole sale on one gift card. Like cash it needs no
+       * client (an anonymous sale rides the house client) and takes the
+       * ordinary one loud fallback; unlike cash it is checked against a
+       * live balance first, because the card can be short. */
+      const number = giftCardNumber as string;
+      const refused = await giftCardRefusal(number, total, "total");
+      if (refused) return refused;
+      const run = await runAsActor(session, "/api/checkout", (actor) =>
+        checkoutCart(
+          items,
+          saleClientId,
+          { type: "GiftCard", amount: total, cardNumber: number },
+          actor,
+          sendEmail,
+          discount,
+        ),
+      );
+      const outcome = run.result;
+      const ids =
+        outcome.suppressed !== null
+          ? { saleId: null, cartId: null }
+          : await saleIds(outcome.saleId);
+      const rec = await recordDiscount({
+        ...ids,
+        suppressed: outcome.suppressed !== null,
+        paid: total,
+        shape: "lines",
+        onStudio: discounted,
+      });
+      if (outcome.suppressed) {
+        return NextResponse.json({
+          ok: false,
+          suppressed: outcome.suppressed,
+          ...rec,
+          ...actorFields(run),
+        });
+      }
+      return NextResponse.json({
+        ok: true,
+        method: m,
+        total,
+        saleId: ids.saleId,
+        cartId: ids.cartId,
+        /* The last four, which is all the done screen and the record
+         * ever see of the number. */
+        giftCard: { lastFour: giftCardLastFour(number) },
         receiptRequested: sendEmail,
         emailReceipt: null,
         ...rec,
