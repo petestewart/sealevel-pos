@@ -30,6 +30,12 @@
  * screen showed. Mindbody's total is the total; ours is only an assertion.
  */
 
+import {
+  discountCents,
+  isFullDiscount,
+  spreadDiscount,
+  type Discount,
+} from "./comp";
 import { mindbody, type Actor } from "./mindbody";
 import { studioWall } from "./roster";
 
@@ -503,16 +509,22 @@ export function roundToCents(amount: number): number {
  * change THIS model to match the observed one; never widen totalsDisagree
  * into a tolerance.
  */
-export function expectedTotal(items: readonly CartLine[]): number {
+export function expectedTotal(
+  items: readonly CartLine[],
+  /** T79: the per-line discount in CENTS (spreadDiscount), when the cart
+   *  carries one; the estimate taxes each line's discounted price. */
+  discount?: readonly number[],
+): number {
   let total = 0;
-  for (const line of items) {
-    const extended = line.price * line.quantity;
+  items.forEach((line, i) => {
+    const extended =
+      line.price * line.quantity - (discount?.[i] ?? 0) / 100;
     /* The exempt category still contributes untaxed; otherwise the
      * line's own rate, falling back to Fremont's 10.35% (STUDIO_TAX_RATE)
      * ONLY when the catalog carried no rate for this line. */
     const rate = line.taxExempt ? 0 : (line.taxRate ?? STUDIO_TAX_RATE);
-    total += extended * (1 + rate);
-  }
+    total += Math.max(0, extended) * (1 + rate);
+  });
   return roundToCents(total);
 }
 
@@ -569,6 +581,14 @@ export interface PricedCart {
   expectedTotal: number;
   /** T75: the shelf's pre-tax sum, what `disagrees` compares. */
   expectedSubtotal: number;
+  /** T79: the server-side spread's sum in dollars (0 with no discount),
+   *  what `discountDisagrees` compares to Mindbody's DiscountTotal. */
+  expectedDiscount: number;
+  /** T79: totalsDisagree(expectedDiscount, DiscountTotal), strict to the
+   *  cent, only when a discount was sent. Folded into `disagrees` too,
+   *  so every existing guard on that flag holds; this one says which
+   *  figure the stop should name. */
+  discountDisagrees: boolean;
   /** totalsDisagree(expectedSubtotal, Mindbody's pre-tax figure): its
    *  SubTotal, or GrandTotal less TaxTotal when SubTotal is absent.
    *  False while suppressed, false when Mindbody sent no pre-tax figure
@@ -659,14 +679,28 @@ function assertCartLines(items: readonly CartLine[], caller: string): void {
 
 /** The CheckoutShoppingCartRequest Items array (sale.yml:5636), per
  *  CheckoutItemWrapper (3613) wrapping CheckoutItem (4967). */
-function cartItemsPayload(items: readonly CartLine[]): unknown[] {
-  return items.map((line) => ({
-    Item: {
-      Type: line.type,
-      Metadata: { Id: line.metadataId },
-    },
-    Quantity: line.quantity,
-  }));
+/** T79: `discount` is the per-line discount in CENTS (spreadDiscount),
+ *  sent as CheckoutItemWrapper.DiscountAmount (sale.yml:3624, "the
+ *  amount the item is discounted", in dollars) on each line that has
+ *  one. Whether Mindbody reads it per line or per unit is not stated;
+ *  it is sent per LINE (the extended price's share), and the strict
+ *  DiscountTotal check in priceCart is what catches the other reading
+ *  as a stop rather than a wrong charge. */
+function cartItemsPayload(
+  items: readonly CartLine[],
+  discount?: readonly number[],
+): unknown[] {
+  return items.map((line, i) => {
+    const off = discount?.[i] ?? 0;
+    return {
+      Item: {
+        Type: line.type,
+        Metadata: { Id: line.metadataId },
+      },
+      Quantity: line.quantity,
+      ...(off > 0 ? { DiscountAmount: off / 100 } : {}),
+    };
+  });
 }
 
 export async function priceCart(
@@ -676,10 +710,16 @@ export async function priceCart(
    *  passes one (to prove MakeSales under the teacher's own token); the
    *  checkout rehearsal stays on the service account. */
   actor?: Actor | null,
+  /** T79: the whole-cart discount, validated by the route
+   *  (parseDiscount); spread over the lines HERE, never taken from the
+   *  browser, and sent as DiscountAmount per line. */
+  discount?: Discount | null,
 ): Promise<PricedCart> {
   assertCartLines(items, "priceCart");
-  const expected = expectedTotal(items);
+  const spread = discount ? spreadDiscount(items, discount) : undefined;
+  const expected = expectedTotal(items, spread);
   const expectedSub = expectedSubtotal(items);
+  const expectedDisc = discount ? discountCents(items, discount) / 100 : 0;
   /* T30: a package line has no tax basis of its own (see PricedCart
    * .packagePricing), so the strict assertion is skipped for the whole
    * cart. NOTE for the sandbox probe: the Comp stub's Amount below is
@@ -690,7 +730,7 @@ export async function priceCart(
    * tells us whether that rule bites; it is on the T30 probe list. */
   const packagePricing = items.some((line) => line.type === "Package");
   const baseBody: Record<string, unknown> = {
-    Items: cartItemsPayload(items),
+    Items: cartItemsPayload(items, spread),
     ...(clientId ? { ClientId: clientId } : {}),
     Test: true,
     LocationId: STUDIO_LOCATION_ID,
@@ -763,6 +803,8 @@ export async function priceCart(
       grandTotal: null,
       expectedTotal: expected,
       expectedSubtotal: expectedSub,
+      expectedDiscount: expectedDisc,
+      discountDisagrees: false,
       disagrees: false,
       packagePricing,
       usedPaymentStub,
@@ -784,23 +826,36 @@ export async function priceCart(
    * grand total less its tax. Neither present, nothing to assert. */
   const theirSubtotal =
     subTotal ?? (taxTotal !== null ? roundToCents(grandTotal - taxTotal) : null);
-  const disagrees =
+  const subDisagrees =
     packagePricing || theirSubtotal === null
       ? false
       : totalsDisagree(expectedSub, theirSubtotal);
+  const discountTotal = num(cart?.DiscountTotal);
+  /* T79: with a discount sent, Mindbody's DiscountTotal must be our
+   * spread's sum to the cent (a missing DiscountTotal reads as 0, so a
+   * discount Mindbody dropped is a stop, never a full-price charge that
+   * the screen said was discounted). The same strictness as the
+   * subtotal: never a tolerance. No discount sent, nothing asserted. */
+  const discountDisagrees =
+    discount !== undefined && discount !== null
+      ? totalsDisagree(expectedDisc, discountTotal ?? 0)
+      : false;
+  const disagrees = subDisagrees || discountDisagrees;
   return {
     suppressed: false,
     subTotal,
-    discountTotal: num(cart?.DiscountTotal),
+    discountTotal,
     taxTotal,
     grandTotal,
     expectedTotal: expected,
     expectedSubtotal: expectedSub,
+    expectedDiscount: expectedDisc,
     ...(disagrees ? { lineAudit: auditLines(items, cart) } : {}),
     /* The T30 carve-out: a package-bearing cart is excluded from the
      * strict assertion (no tax basis for a package line); every other
      * cart keeps it verbatim. */
     disagrees,
+    discountDisagrees,
     packagePricing,
     usedPaymentStub,
   };
@@ -942,12 +997,25 @@ export async function checkoutCart(
    *  what it is told and nothing here reads back whether a receipt
    *  went, because the checkout response has no field for it. */
   sendEmail = false,
+  /** T79: the whole-cart discount, spread here and sent as
+   *  DiscountAmount per line. With a discount that covers the whole
+   *  pre-tax subtotal, and ONLY then, `payment` may be an empty array:
+   *  the no-Payments shape /api/checkout tries first for a 100%
+   *  discount before falling back to the proven Comp payment. */
+  discount?: Discount | null,
 ): Promise<CheckoutOutcome> {
   assertCartLines(items, "checkoutCart");
+  const spread = discount ? spreadDiscount(items, discount) : undefined;
   const payments: readonly CheckoutPayment[] = Array.isArray(payment)
     ? payment
     : [payment as CheckoutPayment];
-  if (payments.length < 1 || payments.length > 2) {
+  const full = discount ? isFullDiscount(items, discount) : false;
+  if (payments.length === 0 && !full) {
+    throw new Error(
+      "checkoutCart needs a payment unless the discount covers the whole sale.",
+    );
+  }
+  if (payments.length > 2) {
     throw new Error("checkoutCart takes one or two payment entries.");
   }
   for (const p of payments) {
@@ -958,8 +1026,11 @@ export async function checkoutCart(
   const res = await mindbody("/sale/checkoutshoppingcart", {
     method: "POST",
     body: {
-      Items: cartItemsPayload(items),
-      Payments: payments.map(paymentPayload),
+      Items: cartItemsPayload(items, spread),
+      /* T79: the no-Payments shape carries no Payments key at all. */
+      ...(payments.length > 0
+        ? { Payments: payments.map(paymentPayload) }
+        : {}),
       ...(clientId ? { ClientId: clientId } : {}),
       Test: false,
       LocationId: STUDIO_LOCATION_ID,
@@ -1001,8 +1072,10 @@ export async function checkoutCart(
 export async function rehearseCheckout(
   items: readonly CartLine[],
   clientId?: string,
+  /** T79: rehearsed WITH the discount the real call will carry. */
+  discount?: Discount | null,
 ): Promise<PricedCart> {
-  return priceCart(items, clientId);
+  return priceCart(items, clientId, null, discount);
 }
 
 /** Outcome of buying account credit; same suppression posture. */

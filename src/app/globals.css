@@ -4464,10 +4464,10 @@ button.sale-for:disabled {
   font-weight: 800;
 }
 
-/* T43: the comp reason dialog, in the keypad modal's shape (it is a
+/* T43: the discount dialog, in the keypad modal's shape (it is a
  * .modal-amount with the chips and the actions as the keypad draws them).
- * The four preset chips wrap to a second row rather than shrink under a
- * 64px target; a chosen chip takes the accent pairing, and the field is
+ * T79: three reason chips (Trade, Damaged item, Other) in one row of
+ * 64px targets; a chosen chip takes the accent pairing, and the field is
  * a 64px target at 18px so a hot-room thumb lands on it. The done
  * screen's reason line sits under the charged line in the same mono. */
 .modal-reason .reason-chips {
@@ -4475,7 +4475,7 @@ button.sale-for:disabled {
 }
 
 .modal-reason .reason-chips .pad-chip {
-  flex: 1 1 40%;
+  flex: 1 1 0;
 }
 
 .pad-chip.on {
@@ -4507,15 +4507,17 @@ button.sale-for:disabled {
 
 /* T68 (Pete: "same 'growing modal' problem several of the others have
  * had. fix it so it's stationary size"): the reason step is one fixed
- * box, 680 tall or 88dvh on a short screen, whatever chip is chosen.
- * Title, total, chips and actions keep their own heights; the body
- * row between them takes the rest. T71: the teacher picker is a 64px
- * select on its own line, so the note (a textarea, top-aligned, no
- * newline) fills the rest of the row with or without it. The PIN and
- * enrollment steps keep their own shapes. */
+ * box, 680 tall or 88dvh on a short screen, whatever chip or segment
+ * is chosen. Title, subtotal and actions keep their own heights; the
+ * body row between them takes the rest. T79: the body is the T70 pad
+ * panel's two columns (the entry column, the 300px keys), so the box
+ * is the pad's 760 wide and the keypad, the chips and the one-line
+ * note all fit inside 680 tall in both orientations. The PIN and
+ * enrollment steps keep their own 420 shapes. */
 .modal-reason.reason-sized {
+  width: min(760px, 100%);
   height: min(680px, 88dvh);
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
 .reason-body {
@@ -4525,12 +4527,47 @@ button.sale-for:disabled {
   min-height: 0;
 }
 
-.reason-body .reason-select {
-  flex: 0 0 auto;
+/* T79: the amount step's body. The entry column takes what the keys
+ * leave; the keys are the pad's 300px, top-aligned. */
+.reason-body.discount-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 16px;
+  align-items: start;
 }
 
-.reason-body .reason-note-field.fill {
-  flex: 1 1 auto;
+.discount-left {
+  gap: 10px;
+}
+
+/* The head: the kicker and the live figure on one baseline, as the
+ * pad's head (.pad-head lives on .modal-pad's title there; here it is
+ * a plain row so the dialog's title row stays the T70 head bar). */
+.discount-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  min-height: 36px;
+}
+
+/* The segment (Amount | Percent | Whole sale) and the quick cells:
+ * equal 64px cells, the chosen segment in the accent pairing (.pad-chip.on). */
+.discount-modes .pad-chip,
+.discount-quick .pad-chip {
+  flex: 1 1 0;
+}
+
+/* The running effect: muted while nothing valid is entered (the
+ * prompt), ink once it reads as a discount. */
+.discount-effect {
+  min-height: 24px;
+}
+
+.pad-change.discount-effect:not(.muted-note) {
+  color: var(--ink);
+  font-weight: 600;
 }
 
 textarea.reason-note-field {
@@ -4539,6 +4576,13 @@ textarea.reason-note-field {
   line-height: 1.3;
   font-family: inherit;
   overflow: hidden;
+}
+
+/* T79: the ticket's discount line under Subtotal, the amount in the
+ * stop tone's text on the ordinary surface (a figure taken off, not a
+ * destructive control; the tone marks it as money the studio gave). */
+.t-line.t-discount {
+  color: var(--stop);
 }
 
 /* T71: the note is inert until a reason chip is chosen (Pete: "greyed
@@ -4555,47 +4599,6 @@ textarea.reason-note-field:disabled {
 textarea.reason-note-field:disabled::placeholder {
   color: var(--muted);
   opacity: 0.7;
-}
-
-/* T71: the teacher select. The reason-input box with the native arrow
- * hidden and an inline chevron in the ink token over it (a native
- * arrow cannot take a token), 48px of right padding for it, and the
- * same 18px as the note. A disabled select (list loading or failed)
- * reads as the disabled note above. */
-.reason-select {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 100%;
-  height: 64px;
-  padding-right: 48px;
-  font-family: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.reason-select:disabled {
-  background-color: var(--bg);
-  color: var(--muted);
-  opacity: 1;
-  cursor: default;
-}
-
-.reason-select-wrap {
-  position: relative;
-  flex: 0 0 auto;
-}
-
-.reason-select-wrap > svg {
-  position: absolute;
-  right: 16px;
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
-  color: var(--ink);
-}
-
-.reason-select-wrap > select:disabled + svg {
-  color: var(--muted);
 }
 
 .pay-done-reason {
@@ -4673,8 +4676,8 @@ textarea.reason-note-field:disabled::placeholder {
 }
 
 /* The enrollment step's inputs while the sign-in is on the wire. The
- * comp note and the teacher select have their own disabled looks. */
-.modal-reason .reason-input:disabled:not(.reason-note-field):not(.reason-select) {
+ * discount note has its own disabled look. */
+.modal-reason .reason-input:disabled:not(.reason-note-field) {
   opacity: 0.6;
 }
 
