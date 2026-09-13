@@ -958,6 +958,12 @@ function FrontDesk({
    *  the X and the close: a page that lands after the query changed must
    *  not append itself to the new query's rows. */
   const searchAbort = useRef<AbortController | null>(null);
+  /** T81 review: whether the call behind `searchAbort` is still out.
+   *  The live search aborts only a call in flight; aborting a landed one
+   *  marked the rows on screen stale, and a query typed away from and
+   *  back to inside the debounce went out again, a metered call for
+   *  rows already showing. */
+  const searchInFlight = useRef(false);
   /** T81: the live search's pending debounce, so a submit can cancel it. */
   const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** T81: whether a finger is on a results list, since when, and the
@@ -1878,6 +1884,7 @@ function FrontDesk({
       searchAbort.current?.abort();
       const ctl = new AbortController();
       searchAbort.current = ctl;
+      searchInFlight.current = true;
       const first = offset === 0;
       /* A first page also clears the next-page flag: the page it just
        * aborted returns early from its finally and would otherwise leave
@@ -1941,6 +1948,7 @@ function FrontDesk({
         })
         .finally(() => {
           if (ctl.signal.aborted) return;
+          searchInFlight.current = false;
           if (first) setSearching(false);
           else setSearchMore(false);
         });
@@ -1961,6 +1969,7 @@ function FrontDesk({
   const stopSearch = useCallback(() => {
     searchAbort.current?.abort();
     searchAbort.current = null;
+    searchInFlight.current = false;
     setSearching(false);
     setSearchMore(false);
     setFound([]);
@@ -2114,7 +2123,7 @@ function FrontDesk({
     }
     const current = searchAbort.current;
     if (q === searchTitle && current && !current.signal.aborted) return;
-    current?.abort();
+    if (searchInFlight.current) current?.abort();
     liveTimer.current = setTimeout(() => {
       liveTimer.current = null;
       startSearch(q, true);
