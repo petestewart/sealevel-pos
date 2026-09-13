@@ -59,10 +59,12 @@ export const dynamic = "force-dynamic";
  *         teacherToken?: string,
  *         compReason?: { kind, detail } }
  *         -- T53: `sendEmail` is the pay-mode "Email receipt" toggle.
- *         It is honoured only on a NAMED client's sale with something
- *         paid: an anonymous sale rides the house client, whose inbox
- *         is nobody's, and a 100% discount is nothing to receipt. Sent
- *         to Mindbody as the checkout's `SendEmail` and the credit
+ *         It is honoured only on a NAMED client's sale: an anonymous
+ *         sale rides the house client, whose inbox is nobody's. T82:
+ *         a comped sale receipts exactly like a paid one (Pete:
+ *         "Receipts should get emailed even with comp, today it
+ *         disallows it"), so nothing about the discount is read here.
+ *         Sent to Mindbody as the checkout's `SendEmail` and the credit
  *         purchase's `SendEmailReceipt`; the answer carries
  *         `receiptRequested` and `emailReceipt` (true only when Mindbody
  *         CONFIRMED one went, which only /sale/purchaseaccountcredit
@@ -116,22 +118,26 @@ export const dynamic = "force-dynamic";
  *         rehearsed server total, charged as two Payments entries in ONE
  *         checkoutshoppingcart call (no two-write seam; a refusal
  *         refuses the whole sale). The card minimum applies to the card
- *         LEG; rule 1 (credit-covers-total refuses the card) does not
- *         apply to a deliberate split (the recorded P2 reversal).
+ *         LEG.
  *
  * Executes PLAN 2.3's table EXACTLY, and never collapses the card paths
  * (the design doc: routing every card sale through purchaseaccountcredit
  * would record a $150 membership as a credit purchase plus redemption and
  * wreck the reporting Pete reads):
  *
- * - credit covers it   -> one checkout on DebitAccount
+ * - credit, chosen     -> one checkout on DebitAccount
  * - card, total >= $10 -> one checkout on StoredCard
  * - card, total < $10  -> Test: true rehearsal, purchaseaccountcredit for
  *                         $10 on the card, checkout on DebitAccount
  *
- * Recorded ASSUMPTIONS (T24; Pete may reverse): P2, partial credit is
- * ignored -- credit is only offered when it covers the whole total; P4,
- * the $10 minimum is measured against the charged, after-tax total.
+ * Recorded ASSUMPTIONS (T24; Pete may reverse): P4, the $10 minimum is
+ * measured against the charged, after-tax total. T82 retires P2 and
+ * rule 1 both (Pete: "Credit should be an option, not forced. If the
+ * client has credit, they can choose to not use it and pay with cash or
+ * card, etc"): credit is a tender like the others, never applied
+ * automatically and never required, so a cash or card sale is NOT
+ * refused because credit could have covered it. A credit line is still
+ * refused above the live balance.
  *
  * The response never lies about an outcome:
  * - 200 { ok: true, ... }            the sale completed, saleId attached.
@@ -383,17 +389,16 @@ export async function POST(request: Request) {
     );
   }
   /* T53: the receipt decision, made once here from what the toggle said
-   * and what the sale is. Never for the house client (no clientId), never
-   * for a 100% discount (nothing to receipt); a non-boolean is false,
-   * never an error, because a receipt must not stand between a teacher
-   * and a charge. */
+   * and who the sale is for. Never for the house client (no clientId); a
+   * non-boolean is false, never an error, because a receipt must not
+   * stand between a teacher and a charge. T82: a comp receipts too, so
+   * the discount is not read here at all. */
   const sendEmail =
     payload?.sendEmail === true &&
     clientId !== undefined &&
     /* T53 review: the house client attached BY NAME (it is a real
      * client, so search can find it) is still nobody's inbox. */
-    clientId !== houseClientId() &&
-    !full;
+    clientId !== houseClientId();
   /* Every valid split includes a client-bound leg: comp is excluded and
    * the two legs differ, so at least one is storedcard or credit. The
    * house client never rides a split. */
@@ -856,14 +861,6 @@ export async function POST(request: Request) {
           { status: 409 },
         );
       }
-      /* Rule 1 of the $10 minimum ("credit covers the total -> credit IS
-       * the method, the card is refused") deliberately does NOT apply to
-       * a split. T28 records the reversal: rule 1 and assumption P2
-       * guarded against AMBIGUITY -- a teacher who never chose between
-       * credit and card -- and a deliberate two-leg split is the
-       * opposite of that ambiguity. Applying it here would also make
-       * credit+card splits impossible for exactly the clients who hold
-       * credit. */
     }
 
     const toPayment = (leg: SplitLeg): CheckoutPayment =>
@@ -973,7 +970,7 @@ export async function POST(request: Request) {
           session,
           "/api/checkout",
           (actor) =>
-            checkoutCart(items, saleClientId, [], actor, false, discount),
+            checkoutCart(items, saleClientId, [], actor, sendEmail, discount),
           { fallback: false },
         );
       } catch (first) {
@@ -1043,7 +1040,7 @@ export async function POST(request: Request) {
                 saleClientId,
                 { type: "Comp", amount: compTotal },
                 actor,
-                false,
+                sendEmail,
               ),
             { fallback: false },
           );
@@ -1087,7 +1084,11 @@ export async function POST(request: Request) {
         total: 0,
         saleId: ids.saleId,
         cartId: ids.cartId,
-        receiptRequested: false,
+        /* T82: a comp receipts like any sale (Pete: "Receipts should get
+         * emailed even with comp, today it disallows it"). The cart
+         * checkout confirms nothing either way, so emailReceipt stays
+         * null and the done screen says "requested". */
+        receiptRequested: sendEmail,
         emailReceipt: null,
         ...rec,
         ...actorFields(run),
@@ -1239,27 +1240,14 @@ export async function POST(request: Request) {
       );
     }
 
-    /* Rule 1 of the $10 minimum (design doc: "not a default the teacher
-     * can talk themselves out of"): when account credit covers the total,
-     * credit IS the method and the card is not offered. Enforced here,
-     * not just greyed in the UI, because this is also what makes the
-     * under-$10 split failure un-re-runnable: after the $10 credit
-     * purchase, the balance covers any sub-$10 total, so a second card
-     * attempt -- and its second credit purchase -- is refused with the
-     * balance that must be spent instead. */
-    if (profile.balance !== null && profile.balance >= total) {
-      return NextResponse.json(
-        {
-          error:
-            `Account credit is ${profile.balance.toFixed(2)} and covers the ` +
-            `${total.toFixed(2)} total. Credit is the method for this sale; ` +
-            "the card is not offered when credit covers it. Nothing was charged.",
-          stage: "method",
-          creditBalance: profile.balance,
-        },
-        { status: 409 },
-      );
-    }
+    /* T82: rule 1 is gone. It refused this card because account credit
+     * could have covered the total, which made credit compulsory for
+     * anyone holding any; Pete: "Credit should be an option, not
+     * forced." A card sale for a client with credit is now an ordinary
+     * card sale. Nothing else about the card path changes: the card is
+     * still re-read here, still refused when expired or absent, and a
+     * credit LINE is still refused above the live balance in its own
+     * branch. */
 
     /* ASSUMPTION P4: the $10 floor is measured against the charged,
      * after-tax total -- the minimum is a card-processing floor, so the
@@ -1313,6 +1301,33 @@ export async function POST(request: Request) {
         ...rec,
         ...actorFields(run),
       });
+    }
+
+    /* T82: the ONE piece of rule 1 that survives it, and it is not rule
+     * 1: this path BUYS $10 of account credit on the card, so credit
+     * that already covers the total must be spent instead of buying
+     * more. Rule 1 refused every card sale a balance could have covered
+     * and so made credit compulsory (retired above); this refuses only
+     * the sale whose card charge would add a second $10 of credit beside
+     * the first. It is also what keeps the seam below un-re-runnable:
+     * after a credit purchase that went through and a checkout that did
+     * not, the balance covers any sub-$10 total, and a second tap must
+     * not buy a second $10. A card sale at $10 or more never reaches
+     * here and is never refused for holding credit. */
+    if (profile.balance !== null && profile.balance >= total) {
+      return NextResponse.json(
+        {
+          error:
+            `This ${total.toFixed(2)} sale is under the ` +
+            `$${CARD_MINIMUM_USD} card minimum, so paying it by card would ` +
+            `buy another $${CARD_MINIMUM_USD} of account credit. There is ` +
+            `already ${profile.balance.toFixed(2)} on the account: spend ` +
+            "that instead. Nothing was charged.",
+          stage: "method",
+          creditBalance: profile.balance,
+        },
+        { status: 409 },
+      );
     }
 
     /* Card path two, total under $10: the rehearsal already passed above,
