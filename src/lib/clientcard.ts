@@ -215,6 +215,17 @@ export async function cardOnFileFor(
  *
  * Suppression is reported, never dressed as success: under dry run or the
  * write guard there is no re-read and no card, because nothing was saved.
+ *
+ * The read-back CANNOT be allowed to fail the save (T84 review). It is a
+ * second call, on the service account, after the card is already on file,
+ * and letting its failure out of here made the write answer for it: a 403
+ * on the read reached runAsActor as a refusal of the TEACHER and sent the
+ * whole save again (two updateclient calls, seen in the harness), and a
+ * 401 on the read ended the teacher's session and told them "Nothing was
+ * written" about a card that was. So a failed read-back returns `card:
+ * null` with the save still reported as done; the caller says Mindbody
+ * took the card but did not show one back, which is exactly what
+ * happened.
  */
 export async function saveClientCard(
   clientId: string,
@@ -246,5 +257,16 @@ export async function saveClientCard(
   });
   if (res?.DryRun) return { suppressed: "dry-run", card: null };
   if (res?.WriteSuppressed) return { suppressed: "write-guard", card: null };
-  return { suppressed: null, card: await cardOnFileFor(clientId, now) };
+  /* The card is on file from here on, whatever the read-back does. */
+  try {
+    return { suppressed: null, card: await cardOnFileFor(clientId, now) };
+  } catch (err) {
+    /* No card detail in this line: it is the read that failed, and the
+     * exchange is in the call log with the number redacted. */
+    console.warn(
+      `[card] saved for client ${clientId}, but reading it back failed: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { suppressed: null, card: null };
+  }
 }
