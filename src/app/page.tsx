@@ -6237,8 +6237,17 @@ function FrontDesk({
                   /* Keyed by the query so a new search remounts the list
                    * at the top: the old scroll position carried over, and
                    * a list opening already scrolled to its sentinel asked
-                   * Mindbody for page two unbidden (T42 review). */
-                  key={`results-${searchTitle}`}
+                   * Mindbody for page two unbidden (T42 review).
+                   * T81 review: the query these ROWS are for
+                   * (`foundFor`), not the one being typed. Keyed on
+                   * searchTitle the list remounted the moment the live
+                   * search fired, 300-900ms before its answer: the
+                   * rows were the same names in brand new nodes, so the
+                   * list jumped to the top and a press in progress was
+                   * broken (a pointerdown on a node that no longer
+                   * exists never becomes a click) in exactly the window
+                   * the tap guard exists to protect. */
+                  key={`results-${foundFor}`}
                   className="roster modal-roster"
                   onPointerDown={noteListTap}
                   /* The picker is position: fixed, so scrolling the list
