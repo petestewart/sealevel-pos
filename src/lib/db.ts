@@ -315,6 +315,31 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       );
     `,
   },
+  {
+    /* T78: staff sessions, so a deploy restart does not sign every
+     * teacher out (T77 was the symptom). The session is OURS: the
+     * pairing of a browser's opaque cookie id with the teacher it is
+     * signed in as, which Mindbody has no home for. `staff_id` and
+     * `name` are the handle and the label as it read, like
+     * teacher_pins. `token_enc` is the teacher's Mindbody token
+     * ENCRYPTED under a key derived from POS_SESSION_SECRET
+     * (src/lib/staffcrypto.ts); the clear token is never in a row, and
+     * without the secret no row is written at all. `expires_at` is
+     * issued_at plus the two hours of T64; an expired row reads as no
+     * session and is swept. Rows are deleted on sign-out and expiry,
+     * since a dead session is nothing anyone needs back. */
+    version: 8,
+    sql: `
+      CREATE TABLE IF NOT EXISTS staff_sessions (
+        id          text PRIMARY KEY,
+        staff_id    text NOT NULL,
+        name        text NOT NULL,
+        token_enc   text NOT NULL,
+        issued_at   timestamptz NOT NULL,
+        expires_at  timestamptz NOT NULL
+      );
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -692,6 +717,105 @@ export async function listTeacherPins(): Promise<TeacherPinRow[] | null> {
   }
 }
 
+/* --- Staff sessions (T78) -------------------------------------------- */
+
+/** One persisted staff session. `tokenEnc` is ciphertext; the caller
+ *  (src/lib/staffsession.ts) holds the key and never this file. */
+export interface StaffSessionRow {
+  id: string;
+  staffId: string;
+  name: string;
+  tokenEnc: string;
+  issuedAt: Date;
+  expiresAt: Date;
+}
+
+/** Writes a fresh session's row. Returns whether it landed; false is
+ *  "this session lives in memory only until it ends", never a failure
+ *  of the sign-in. */
+export async function insertStaffSession(row: StaffSessionRow): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `INSERT INTO staff_sessions
+         (id, staff_id, name, token_enc, issued_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (id) DO NOTHING`,
+      [row.id, row.staffId, row.name, row.tokenEnc, row.issuedAt, row.expiresAt],
+    );
+    return true;
+  } catch (err) {
+    logDbError("staff-session-insert", err);
+    return false;
+  }
+}
+
+/** The row an id names, when it is still inside its two hours; null
+ *  when missing, expired, or the store did not answer (the caller
+ *  cannot tell which, and treats every null as "no session"). */
+export async function findStaffSession(
+  id: string,
+  now = new Date(),
+): Promise<StaffSessionRow | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT id, staff_id, name, token_enc, issued_at, expires_at
+       FROM staff_sessions WHERE id = $1 AND expires_at > $2`,
+      [id, now],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      id: String(r.id),
+      staffId: String(r.staff_id),
+      name: String(r.name),
+      tokenEnc: String(r.token_enc),
+      issuedAt: r.issued_at as Date,
+      expiresAt: r.expires_at as Date,
+    };
+  } catch (err) {
+    logDbError("staff-session-read", err);
+    return null;
+  }
+}
+
+/** Drops one session's row (sign-out, a dead token, expiry). Returns
+ *  whether the store answered; a row already gone is still true. */
+export async function deleteStaffSession(id: string): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(`DELETE FROM staff_sessions WHERE id = $1`, [id]);
+    return true;
+  } catch (err) {
+    logDbError("staff-session-delete", err);
+    return false;
+  }
+}
+
+/** Deletes every expired row and answers their `token_enc` values, so
+ *  the caller can revoke the tokens with Mindbody; null when the store
+ *  did not answer. */
+export async function sweepStaffSessions(
+  now = new Date(),
+): Promise<string[] | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `DELETE FROM staff_sessions WHERE expires_at <= $1 RETURNING token_enc`,
+      [now],
+    );
+    return res.rows.map((r) => String(r.token_enc));
+  } catch (err) {
+    logDbError("staff-session-sweep", err);
+    return null;
+  }
+}
+
 /* --- Bundles --------------------------------------------------------- */
 
 /** A bundles row as the admin surface sees it. `lines` is stored jsonb
@@ -805,9 +929,11 @@ export async function createBundle(
 }
 
 /**
- * Edit / enable / disable by id. There is deliberately no DELETE anywhere
- * in this file: disable is the safe verb, and a disabled bundle keeps its
- * name and lines for the day it is wanted back.
+ * Edit / enable / disable by id. There is deliberately no DELETE on
+ * bundles: disable is the safe verb, and a disabled bundle keeps its
+ * name and lines for the day it is wanted back. (Settings and staff
+ * sessions delete, because a cleared banner and an ended sign-in are
+ * nothing anyone needs back.)
  */
 export async function updateBundle(
   id: number,
