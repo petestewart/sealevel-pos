@@ -594,8 +594,28 @@ function CloseIcon() {
   return <Icon d="M6 6l12 12M18 6 6 18" />;
 }
 
+/** Two arcs with arrowheads (the common "refresh" glyph), round caps so
+ *  the arrowheads read cleanly at 22px; the square-capped house Icon
+ *  drew this one badly (Pete: "the icon you're using is poor quality"). */
 function RefreshIcon() {
-  return <Icon size={18} d="M3 8v5h5M3.5 13a8.5 8.5 0 1 0 2.5-6" />;
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={22}
+      height={22}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+      <path d="M8 16H3v5" />
+    </svg>
+  );
 }
 
 /** T76: the section header's disclosure mark, pointing right when the
@@ -4511,14 +4531,15 @@ export default function SaleScreen(props: {
         : [],
     [catalog],
   );
+  /** The Rentals cell renders whenever the catalog names the category,
+   *  empty or not (Pete: "Rentals was supposed to be a main category as
+   *  well"): a main category that hides itself when nothing routes to
+   *  it looked like a missing one. Empty, its shelf says so. */
   const rentalsCategory = useMemo(
     () =>
       catalog
-        ? (catalog.categories.find(
-            (c) =>
-              sectionOf(c) === RENTALS_SECTION &&
-              categoryShelf(catalog, c).length > 0,
-          ) ?? null)
+        ? (catalog.categories.find((c) => sectionOf(c) === RENTALS_SECTION) ??
+          null)
         : null,
     [catalog],
   );
@@ -6040,6 +6061,26 @@ export default function SaleScreen(props: {
           {/* T70: the sun cell (Buy.dc.html), the one theme control on
               this screen; theme.ts stores the choice and sets the
               attribute the two palette blocks key on. */}
+          {/* T75 (Pete: "add a refresh"; then "Refresh should not take
+              up a slot. put a small refresh icon at the top right"): a
+              64px icon cell in the header, left of the sun. It refetches
+              the catalog past the server cache, the same recheckPrices
+              the disagree stop uses, so cart lines are rebuilt from the
+              fresh shelf too. */}
+          <button
+            className="sale-sun sale-refresh"
+            type="button"
+            disabled={rechecking}
+            onClick={() => void recheckPrices()}
+            aria-label="Refresh the catalog from Mindbody"
+            title="Refresh the catalog from Mindbody"
+          >
+            {rechecking ? (
+              <span className="spinner" aria-label="working" />
+            ) : (
+              <RefreshIcon />
+            )}
+          </button>
           <button
             className="sale-sun"
             type="button"
@@ -6139,29 +6180,6 @@ export default function SaleScreen(props: {
               {/* The line break before the children's row under 1040px;
                   nothing in the column layout. */}
               <span className="rail-break" aria-hidden="true" />
-              {/* T75 (Pete: a product that existed for months did not
-                  show, then did; "add a refresh"): the rail's last cell
-                  refetches the catalog past the server cache, the same
-                  recheckPrices the disagree stop uses, so cart lines are
-                  rebuilt from the fresh shelf too. Muted: a door, not a
-                  shelf. Pinned to the rail's bottom by CSS. */}
-              <button
-                className={rechecking ? "cat-chip refresh busy" : "cat-chip refresh"}
-                disabled={rechecking}
-                onClick={() => void recheckPrices()}
-                aria-label="Refresh the catalog from Mindbody"
-                title="Refresh the catalog from Mindbody"
-              >
-                {rechecking ? (
-                  <>
-                    <span className="spinner" aria-label="working" /> Refreshing
-                  </>
-                ) : (
-                  <>
-                    <RefreshIcon /> Refresh
-                  </>
-                )}
-              </button>
             </nav>
           ) : null}
 
@@ -6216,7 +6234,9 @@ export default function SaleScreen(props: {
                   <p className="muted">
                     {onFavorites
                       ? "Star items on any shelf, and configure bundles in src/lib/bundles.ts."
-                      : "Nothing sellable in this category."}
+                      : activeCat === RENTALS_SECTION
+                        ? "No rental came back from Mindbody. A rental is a pricing option or product named with Rental or Towel, or in the Towel and Mat category."
+                        : "Nothing sellable in this category."}
                   </p>
                 ) : (
                   <>

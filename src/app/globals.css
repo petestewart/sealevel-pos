@@ -1824,6 +1824,13 @@ body.sale-open .dev-handle {
   gap: 12px;
 }
 
+/* The shelf tab's placement line under an item's name (where the
+ * counter files it as saved). */
+.dev-shelf-where {
+  display: block;
+  font-size: 16px;
+}
+
 .dev-setting-label {
   flex: 1;
 }
@@ -1966,6 +1973,38 @@ body.sale-open .dev-handle {
  * scroll the list rather than the screen. */
 .modal-list {
   width: min(600px, 100%);
+}
+
+/* Every dialog stays inside the screen: nothing taller than the
+ * viewport less the scrim's padding, and what does not fit scrolls
+ * inside the box (Pete, live, the Checked in list running off the
+ * bottom of a 12-person class: "all popups must be statically sized").
+ * A dialog with its own height (search, guest, the counter list) keeps
+ * it; this is the floor under every other one. */
+.modal {
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+}
+
+/* The counter lists (Checked in, Waiting list): one fixed box like the
+ * search modal, the head pinned and the list scrolling under it, so the
+ * box is the same size for a class of 3 and a class of 30. */
+.modal-counter {
+  display: flex;
+  flex-direction: column;
+  height: min(720px, calc(100dvh - 48px));
+  overflow: hidden;
+}
+
+.modal-counter .modal-head {
+  flex: 0 0 auto;
+}
+
+.modal-counter .modal-roster,
+.modal-counter > p.muted {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* The search-results modal: wider still, because its rows reuse the
@@ -3375,7 +3414,7 @@ button.sale-for:disabled {
   height: 48px;
   padding-left: 34px;
   font-size: 17px;
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .cat-chip.child.on {
@@ -3388,25 +3427,18 @@ button.sale-for:disabled {
   display: none;
 }
 
-/* T75: the Refresh cell at the rail's foot, the icon-and-word idiom,
- * pushed down by the auto margin so it sits under whatever the rail
- * holds; a line above it rather than below. Busy, it keeps the muted
- * pair with the spinner in place of the icon. T76: sticky at the
- * rail's bottom edge too, so when an open section makes the rail
- * taller than the pane and it scrolls, Refresh stays in reach. */
-.cat-chip.refresh {
-  position: sticky;
-  bottom: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: auto;
-  border-top: 1px solid var(--line);
-  border-bottom: 0;
-  color: var(--muted);
+/* T75: Refresh is a header icon cell (Pete: "should not take up a
+ * slot"), the sun's idiom; it takes the auto margin that pushes both
+ * to the right. */
+.sale-refresh {
+  margin-left: auto;
 }
 
-.cat-chip.refresh:disabled {
+.sale-refresh + .sale-sun {
+  margin-left: 0;
+}
+
+.sale-refresh:disabled {
   opacity: 1;
 }
 
@@ -3803,11 +3835,6 @@ button.sale-for:disabled {
 
   /* T75: in the row the Refresh cell is one more chip, no rule above,
    * and nothing to stick to. */
-  .sale-cats .cat-chip.refresh {
-    position: static;
-    margin-top: 0;
-    border-top: 0;
-  }
 
   /* T76: the top level is the row; the open section's children move to
    * a second row of 48px chips in the T74 sub-chip idiom, after a
