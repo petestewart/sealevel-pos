@@ -6590,10 +6590,11 @@ export default function SaleScreen(props: {
                         </span>
                       </div>
                     </div>
-                    <p className="t-pricing">
-                      <span className="spinner" aria-label="working" /> Pricing
-                      with Mindbody...
-                    </p>
+                    {/* No spinner while Mindbody prices (Pete: "they are
+                        supposed to be optimistically added and then
+                        handled async"): the lines and the Estimated
+                        total above are the answer until the server's
+                        figures replace them. */}
                   </>
                 ) : priceError ? (
                   <div className="sale-stop">
@@ -6737,9 +6738,6 @@ export default function SaleScreen(props: {
                   onClick={payTap}
                 >
                   <span>Pay</span>
-                  {payAmount === null && pricing && cart.length > 0 ? (
-                    <span className="spinner" aria-label="pricing" />
-                  ) : null}
                 </button>
               </div>
             )}
