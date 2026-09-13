@@ -35,7 +35,7 @@ import GuestModal, {
 } from "./GuestModal";
 import { isGuestPass, usableGuestPass } from "@/lib/guestpass";
 import { actorFallbackLine } from "./actornote";
-import { useSettings } from "./settings";
+import { DEFAULT_SETTINGS, useSettings } from "./settings";
 import { toggleTheme, watchSystemTheme } from "./theme";
 import type { ClientProfile } from "@/lib/clientprofile";
 import { stripSignatures } from "@/lib/notesig";
@@ -2122,7 +2122,17 @@ function FrontDesk({
   useEffect(() => {
     if (attachMode && attachInClass) return;
     const q = query.trim();
-    if (q.length < settings.minQueryLength) {
+    /* T81 review: the drawer's number field reads 0 while it is being
+     * retyped, and an older stored blob can hold anything, so the
+     * minimum is at least one letter (an empty box searched Mindbody
+     * for "" and opened the modal on load) and a debounce that is not
+     * a number is the default (it fired on every keystroke). */
+    const minLength = Math.max(1, Number(settings.minQueryLength) || 1);
+    const debounceMs =
+      Number.isFinite(settings.searchDebounceMs) && settings.searchDebounceMs >= 0
+        ? settings.searchDebounceMs
+        : DEFAULT_SETTINGS.searchDebounceMs;
+    if (q.length < minLength) {
       if (searchTitle) stopSearch();
       return;
     }
@@ -2132,7 +2142,7 @@ function FrontDesk({
     liveTimer.current = setTimeout(() => {
       liveTimer.current = null;
       startSearch(q, true);
-    }, settings.searchDebounceMs);
+    }, debounceMs);
     return () => {
       if (liveTimer.current !== null) clearTimeout(liveTimer.current);
       liveTimer.current = null;
