@@ -276,6 +276,12 @@ export default function CardModal({
               }}
             />
           </label>
+          {/* Under the number it is about. Always present, blank when
+              there is nothing to say, so the box cannot grow under a
+              finger mid-typing (T68's rule for every other dialog). */}
+          <p className="card-note" role="status">
+            {numberNote ?? ""}
+          </p>
           <label className="nc-field">
             <span>Expiry month</span>
             <select
@@ -351,12 +357,6 @@ export default function CardModal({
             />
           </label>
         </div>
-        {/* Always present, blank when there is nothing to say: the box
-            must not grow under a finger mid-typing (T68's rule for every
-            other dialog). */}
-        <p className="card-note" role="status">
-          {numberNote ?? ""}
-        </p>
         {suppressedNote ? (
           <p className="modal-warn" role="status">
             {suppressedNote}

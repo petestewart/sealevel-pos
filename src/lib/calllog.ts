@@ -84,6 +84,11 @@ const REDACTED = "<redacted>";
  *  so that a field added later cannot slip through unredacted. */
 const SECRET_KEY = /^(CardNumber|CVV|CVC|CardCode|SecurityCode)$/i;
 
+/** Whether a TEXT body mentions a card at all, so that the 99% of
+ *  records that do not are passed through untouched. */
+const CARD_KEY_IN_TEXT =
+  /"(ClientCreditCard|CardNumber|CVV|CVC|CardCode|SecurityCode)"/i;
+
 /** What survives from a card object, per direction. */
 const REQUEST_CARD_KEEP = ["LastFour"];
 const RESPONSE_CARD_KEEP = ["LastFour", "CardType", "ExpMonth", "ExpYear"];
@@ -124,6 +129,11 @@ function redactCard(
  *  struck out of the text itself. */
 export function redactBody(value: unknown, keep = RESPONSE_CARD_KEEP): unknown {
   if (typeof value === "string") {
+    /* Every other record is left exactly as it arrived: a response with
+     * no card field in it is not worth parsing and re-printing, which
+     * would reflow every roster read in the drawer and eat into the
+     * clip limit for nothing. */
+    if (!CARD_KEY_IN_TEXT.test(value)) return value;
     try {
       return JSON.stringify(redactCard(JSON.parse(value), keep), null, 2);
     } catch {
