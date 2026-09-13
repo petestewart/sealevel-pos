@@ -3335,13 +3335,15 @@ function PaymentPanel(props: {
                     ? "Gift card number"
                     : `Gift card ...${gift.number.slice(-4)}`}
                 </span>
-                <span className="pad-entered-amt">
-                  {gift.step === "number"
-                    ? gift.number === ""
-                      ? "--"
-                      : gift.number
-                    : money(giftDraftCents / 100)}
-                </span>
+                {/* The head's big figure is the AMOUNT, and there is no
+                    amount yet on the number step: the number itself is
+                    in the field below, at a length this slot cannot
+                    hold (a 16-digit barcode ran off it). */}
+                {gift.step === "amount" ? (
+                  <span className="pad-entered-amt">
+                    {money(giftDraftCents / 100)}
+                  </span>
+                ) : null}
               </p>
               {gift.step === "number" ? (
                 <>
@@ -3368,7 +3370,9 @@ function PaymentPanel(props: {
                   />
                   <p
                     className={
-                      gift.error ? "pad-change short" : "pad-change muted-note"
+                      gift.error
+                        ? "pad-change gift-bad"
+                        : "pad-change muted-note"
                     }
                   >
                     {gift.error ??

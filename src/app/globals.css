@@ -4516,6 +4516,15 @@ button.sale-for:disabled {
   color: var(--warn);
 }
 
+/* T83: the gift-card modal's refusal line. A card Mindbody would not
+ * answer for is a blocked action, so it reads in --stop rather than in
+ * the muted grey the rest of this line uses; the number it refused is
+ * never repeated. */
+.pad-change.gift-bad {
+  color: var(--stop);
+  font-weight: 600;
+}
+
 .pad-change.muted-note {
   font-size: 16px;
   font-weight: 400;
