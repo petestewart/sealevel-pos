@@ -9631,3 +9631,73 @@ cart edit re-spreads or clears with a message; PIN before the first
 call; suppression never success; nothing else clears the discount
 wrongly; 100% still skips the tender. Route suite 69, Playwright 33 x
 4, T67 18, all green.
+
+## T84: add a card on file from the profile
+
+Pete: "we need to add the ability to add a card on file".
+
+### What changed
+
+- **The profile** shows a "Card on file" row (last four and expiry, or
+  "No card on file") with a 64px Add card / Replace card control
+  opening a fixed box: number (numeric keyboard, spaces allowed, Luhn
+  checked on both sides with a quiet line), expiry month and year
+  selects (the year cannot be past; valid through the end of the
+  month), name on card, postal code. No CVV: Mindbody's
+  `ClientCreditCard` model has none. Fields are cleared on close and on
+  save. On save the row updates from the read-back, and the sale
+  screen's stored-card tender reads the new card on its next open.
+- **`POST /api/client-card`** behind the device session and
+  `requireActor` (refused before the body is read, so a signed-out iPad
+  never sends a card), validated server-side, then
+  `/client/updateclient` through `mindbody()` with ONLY `Id`,
+  `ClientCreditCard` and `CrossRegionalUpdate: false`, under the
+  teacher's token with T49's one loud fallback; then the client is
+  re-read and the answer carries `{ lastFour, cardType, expMonth,
+  expYear }` only. Dry run and the write guard answer `suppressed` with
+  `card: null` and the box says nothing was sent.
+- **The number never persists.** `src/lib/calllog.ts` redacts
+  `CardNumber` and scrubs any 13 to 19 digit run from every string in
+  both directions BEFORE a record is stored, and from a thrown Mindbody
+  error's message, so the drawer, copy-all, the server log, the
+  suppression lines and the teacher-facing error can never carry it.
+
+### Verified by the builder
+
+Route tests in live, dry run and write guard: 401 without a teacher,
+400 on a bad Luhn and six other shape failures with nothing sent, a
+surgical payload under the teacher's token, suppression reported as
+suppression, the number absent from the response, the devlog and the
+server log. Playwright in both palettes and both orientations,
+screenshots looked at. Typecheck and build green. Not verified: no
+live or sandbox call (no `.env` in the builder's checkout). Unverified
+against real Mindbody: a card with only a postal code and no street
+address, whether a CVV is wanted, two- or four-digit year (four is
+sent), whether the sandbox takes a test PAN. The spec also suggests
+`GET /site/acceptedcardtypes` before storing a card; not done, a
+refusal surfaces in Mindbody's words.
+
+### Review
+
+Adversarial review in its own worktree, two fixes:
+
+- **A card number Mindbody echoed back was not redacted.** Redaction
+  went by key name, so it covered the number we send and missed a
+  refusal quoting it ("The credit card number 4111... is invalid"),
+  which then reached the browser's error line, the thrown Error, the
+  call log and copy-all. Now every string in both directions is
+  scrubbed of card-length digit runs before the record is stored, and
+  the thrown message too.
+- **The read-back answered for the write.** The re-read ran inside the
+  same actor block as the save, so a failed READ was attributed to the
+  write: a 403 there re-ran the whole save as the studio account (the
+  card sent to Mindbody twice for one tap), and a 401 ended the staff
+  session and said nothing was written about a card that was on file.
+  The read-back is now wrapped: the save is reported done with
+  `card: null` and the read failure logged without card detail.
+
+Reviewed and correct: the PAN absent from the response, devlog, server
+log, suppression lines and DB in all three modes; the dead-token path
+never falls back; the body carries only the three fields; validation
+never echoes the number; autocomplete attributes; tokens only, 64px,
+16px. Route tests and Playwright green after the fixes.

@@ -6218,3 +6218,74 @@ textarea.reason-note-field:disabled::placeholder {
   right: 0;
   z-index: 1;
 }
+
+/* T84 --- Card on file --------------------------------------------------
+ * The profile's "Card on file" row and the box that adds or replaces one
+ * (Pete: "we need to add the ability to add a card on file"). Tokens
+ * only, both palettes from the variable swap; radius 0; the control at
+ * 64px like every primary target. No new tokens were needed. */
+
+/* The row's control: accent, because it is the one actionable thing in a
+ * card of facts. Full width of the value column so a thumb cannot miss
+ * it in a hot room. */
+.card-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 64px;
+  margin: 10px 0 0;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.card-btn:hover,
+.card-btn:active {
+  filter: brightness(0.94);
+}
+
+/* An expired card is reported, never hidden: the warn pair, with --bg
+ * text as every warn fill in here takes. */
+.card-expired {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 0;
+  background: var(--warn);
+  color: var(--bg);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* The box. One fixed width like the sign-up form's, and the number line
+ * always occupies its row (blank when there is nothing to say) so the
+ * box does not grow under a finger mid-typing, which T68 settled for
+ * every other dialog. */
+.modal-card {
+  width: min(560px, 100%);
+}
+
+.modal-card .nc-sub {
+  margin: 0 0 16px;
+}
+
+.modal-card .nc-error {
+  margin: 0 0 12px;
+}
+
+.card-note {
+  grid-column: 1 / -1;
+  margin: -6px 0 0;
+  min-height: 22px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Above the profile modal (31), which is above the search modal (30). */
+.modal-scrim.over-profile {
+  z-index: 32;
+}

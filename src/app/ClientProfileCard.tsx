@@ -199,12 +199,20 @@ export function ClientProfileCard({
   error,
   onOptIn,
   optInMsg = null,
+  onCard,
+  cardMsg = null,
 }: {
   profile: ClientProfile | null;
   loading: boolean;
   error: string | null;
   /** T71: an email opt-in tapped; absent, the boxes are read-only. */
   onOptIn?: (kind: OptInKind, value: boolean) => void;
+  /** T84: add or replace the card on file; absent, the row only reads
+   *  what Mindbody holds. */
+  onCard?: () => void;
+  /** The last card save's outcome when it was not a plain success: a
+   *  suppression, a fallback to the studio account, or a refusal. */
+  cardMsg?: { text: string; tone: "warn" | "stop" } | null;
   /** The last write's outcome when it was not a plain success: a
    *  suppression, a fallback to the studio account, or a refusal. */
   optInMsg?: { text: string; tone: "warn" | "stop" } | null;
@@ -354,6 +362,53 @@ export function ClientProfileCard({
         </Row>
         <Row label="Status">
           {statusLine || <Missing why={errors.client} />}
+        </Row>
+        {/* T84 (Pete: "we need to add the ability to add a card on
+            file"): what Mindbody holds, which is the type, the last four
+            and the expiry and never a number, plus the 64px control that
+            adds a card or replaces it. The card rides the same
+            /client/clients read as every field above, so this line costs
+            no extra call. */}
+        <Row label="Card on file">
+          {errors.client ? (
+            <Missing why={errors.client} />
+          ) : (
+            <>
+              {profile.card ? (
+                <>
+                  {profile.card.cardType ?? "Card"} ...{profile.card.lastFour}
+                  {profile.card.expMonth && profile.card.expYear ? (
+                    <span className="profile-sub">
+                      {" "}
+                      expires {profile.card.expMonth}/{profile.card.expYear}
+                    </span>
+                  ) : null}
+                  {profile.card.expired ? (
+                    <span className="card-expired">expired</span>
+                  ) : null}
+                </>
+              ) : (
+                <span className="profile-missing">No card on file</span>
+              )}
+              {onCard ? (
+                <button className="card-btn" onClick={onCard}>
+                  {profile.card ? "Replace card" : "Add card"}
+                </button>
+              ) : null}
+              {cardMsg ? (
+                <p
+                  className={
+                    cardMsg.tone === "stop"
+                      ? "optins-msg stop-text"
+                      : "optins-msg warn-text"
+                  }
+                  role="status"
+                >
+                  {cardMsg.text}
+                </p>
+              ) : null}
+            </>
+          )}
         </Row>
       </div>
 
