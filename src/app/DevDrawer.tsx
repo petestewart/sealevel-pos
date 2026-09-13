@@ -844,6 +844,25 @@ interface ShelfAdminConfig {
   groups: ShelfAdminGroup[];
 }
 
+/** T76: the rail's fixed pass sub-categories, mirrored from
+ *  src/lib/shelfconfig.ts PASS_GROUPS (re-declared for the same reason
+ *  as the shapes above). The select offers these first: choosing one
+ *  for a pass files it there over the rule, through a group of that
+ *  label, created on the spot when none exists yet. */
+const FIXED_PASS_GROUPS = [
+  "Drop-in & Packs",
+  "Specials",
+  "Teen/Child",
+  "Buddy / Guest Passes",
+  "Trainings",
+  "Workshops",
+  "Fees",
+  "Unlimited",
+];
+
+const isFixedLabel = (label: string) =>
+  FIXED_PASS_GROUPS.some((g) => g.toLowerCase() === label.trim().toLowerCase());
+
 const SHELF_KINDS: { type: ShelfAdminItem["type"]; heading: string }[] = [
   { type: "Service", heading: "passes" },
   { type: "Product", heading: "products" },
@@ -900,10 +919,28 @@ function ShelfPanel() {
     return index < 0 ? "" : String(index);
   };
 
-  const setGroupOf = (id: string | number, index: string) => {
+  /* T76: a fixed label is offered whether or not a group of that name
+   * exists yet; picking one creates the group when it must. The value
+   * "fixed:<label>" names it; an existing group of that label (any
+   * case) is reused, so the two options never diverge. */
+  const setGroupOf = (id: string | number, value: string) => {
     const key = String(id);
-    setGroups((prev) =>
-      prev.map((g, i) => ({
+    setGroups((prev) => {
+      let index = value;
+      let next = prev;
+      if (value.startsWith("fixed:")) {
+        const label = value.slice("fixed:".length);
+        const found = prev.findIndex(
+          (g) => g.label.trim().toLowerCase() === label.toLowerCase(),
+        );
+        if (found < 0) {
+          next = [...prev, { label, ids: [] }];
+          index = String(next.length - 1);
+        } else {
+          index = String(found);
+        }
+      }
+      return next.map((g, i) => ({
         ...g,
         ids:
           String(i) === index
@@ -911,8 +948,8 @@ function ShelfPanel() {
               ? g.ids
               : [...g.ids, key]
             : g.ids.filter((x) => x !== key),
-      })),
-    );
+      }));
+    });
   };
 
   const toggleHidden = (key: string) =>
@@ -1014,8 +1051,11 @@ function ShelfPanel() {
       <p className="muted">
         What the Buy screen may sell, and how the Passes shelf is split.
         Hidden items never reach the shelf (a bundle line naming one stops
-        rendering, with a console warning); pass groups become sub-chips
-        over the Passes shelf, in this order. Ids are per site.
+        rendering, with a console warning). Every pass is filed by rule
+        into one of the rail&apos;s fixed sub-categories; a group here
+        overrides that for the passes it names, under a fixed label or a
+        custom one (custom labels follow the fixed ones on the rail).
+        Ids are per site.
       </p>
       {!available ? (
         <p className="muted">
@@ -1027,7 +1067,7 @@ function ShelfPanel() {
 
       <div className="dev-label">pass groups</div>
       {groups.length === 0 ? (
-        <p className="muted">No groups: the Passes shelf is one grid.</p>
+        <p className="muted">No groups: every pass is filed by rule.</p>
       ) : (
         groups.map((g, index) => (
           <div key={index} className="dev-setting">
@@ -1100,12 +1140,27 @@ function ShelfPanel() {
                     value={groupOf(item.id)}
                     onChange={(e) => setGroupOf(item.id, e.target.value)}
                   >
-                    <option value="">None</option>
-                    {groups.map((g, i) => (
-                      <option key={i} value={String(i)}>
-                        {g.label || `(group ${i + 1})`}
-                      </option>
-                    ))}
+                    <option value="">By rule</option>
+                    {FIXED_PASS_GROUPS.map((label) => {
+                      const i = groups.findIndex(
+                        (g) => g.label.trim().toLowerCase() === label.toLowerCase(),
+                      );
+                      return (
+                        <option
+                          key={`fixed:${label}`}
+                          value={i < 0 ? `fixed:${label}` : String(i)}
+                        >
+                          {label}
+                        </option>
+                      );
+                    })}
+                    {groups.map((g, i) =>
+                      isFixedLabel(g.label) ? null : (
+                        <option key={i} value={String(i)}>
+                          {g.label || `(group ${i + 1})`}
+                        </option>
+                      ),
+                    )}
                   </select>
                 ) : null}
                 <label className="dev-bundle-toggle">

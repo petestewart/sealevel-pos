@@ -7,10 +7,14 @@
  *
  * The config is a hide list and a grouping, nothing else: which catalog
  * items never reach the shelf, and which pass sub-category each pricing
- * option files under. It is exactly what the T29 charter admits into the
- * database (Mindbody has no home for either), and it holds NO copy of
- * the catalog: only keys and ids, resolved against the live catalog at
- * response time. A key that no longer matches anything is harmless.
+ * option files under. Since T76 the grouping is an OVERRIDE: every pass
+ * is filed by rule (`passGroupByRule`, from its name and option fields)
+ * into one of the fixed PASS_GROUPS, and a T74 group moves the passes
+ * it names, to a fixed label or a custom one. It is exactly what the
+ * T29 charter admits into the database (Mindbody has no home for
+ * either), and it holds NO copy of the catalog: only keys and ids,
+ * resolved against the live catalog at response time. A key that no
+ * longer matches anything is harmless.
  *
  * This module is pure and dependency-free on purpose: the catalog route,
  * the admin route and a plain node test share one rule, and the dev
@@ -222,27 +226,118 @@ export function parseShelfConfig(
   return { config: result, stored: true, error: null };
 }
 
+/**
+ * T76: the Passes rail's fixed sub-categories, in rail order. Pete's list
+ * ("Drop-in / Packs / Specials (new student, etc) / Teen/Child / Buddy
+ * Pass / Guest Passes / Trainings / Workshops / Fees / Unlimited
+ * Passes"), with Drop-in and Packs combined at his word and Buddy and
+ * Guest passes on one cell. Each shows only when it has a visible pass.
+ * Memberships (T30 contracts) and Packages (T30 packages) sit after
+ * these on the screen; they are not pass groups and never appear here.
+ */
+export const PASS_GROUPS = [
+  "Drop-in & Packs",
+  "Specials",
+  "Teen/Child",
+  "Buddy / Guest Passes",
+  "Trainings",
+  "Workshops",
+  "Fees",
+  "Unlimited",
+] as const;
+
+export type PassGroupLabel = (typeof PASS_GROUPS)[number];
+
+/** The fields the rule reads off a pricing option: what /sale/services
+ *  returns on site 471 (live, 2026-09-13) beyond the name. `Type` is
+ *  DropIn | Series | Unlimited there; `Program` and `RevenueCategory`
+ *  are names ("Classes"). Any of them may be missing. */
+export interface PassRuleInput {
+  name: string;
+  serviceType?: string | null;
+  isIntroOffer?: boolean | null;
+  program?: string | null;
+  revenueCategory?: string | null;
+}
+
+/**
+ * T76: which fixed sub-category a pricing option files under when no
+ * T74 group names it. First match wins, in this order: a name saying
+ * teen, child, kid or youth; a name saying guest or buddy; training
+ * anywhere in the name, program or revenue category; workshop or event
+ * likewise; fee likewise; an intro offer; Type DropIn or Series;
+ * Type Unlimited; and anything else is a Special, which is where an
+ * option nobody can classify is least likely to be missed.
+ *
+ * "Teen/Child - add requirements" is open with Pete; the group is a
+ * plain sub-category here (see `PassGroupSeam`).
+ */
+export function passGroupByRule(service: PassRuleInput): PassGroupLabel {
+  const name = service.name;
+  const anywhere = [name, service.program ?? "", service.revenueCategory ?? ""].join(
+    "\n",
+  );
+  if (/teen|child|kid|youth/i.test(name)) return "Teen/Child";
+  if (/guest|buddy/i.test(name)) return "Buddy / Guest Passes";
+  if (/training/i.test(anywhere)) return "Trainings";
+  if (/workshop|event/i.test(anywhere)) return "Workshops";
+  if (/\bfee\b|fees/i.test(anywhere)) return "Fees";
+  if (service.isIntroOffer === true) return "Specials";
+  const type = (service.serviceType ?? "").trim().toLowerCase();
+  if (type === "dropin" || type === "series") return "Drop-in & Packs";
+  if (type === "unlimited") return "Unlimited";
+  return "Specials";
+}
+
+/** The seam for Pete's "Teen/Child - add requirements", unused until he
+ *  says what the requirement is (a waiver? a guardian on file? an age
+ *  field?). A pass group may one day carry one; nothing reads it. */
+export interface PassGroupSeam {
+  label: PassGroupLabel;
+  requirement?: string;
+}
+
+/** A configured group label folded onto the fixed one it names, so a
+ *  stored "specials" (any case) is the rail's Specials and not a second
+ *  cell; a label naming no fixed group is a custom label, kept as is. */
+export function canonicalGroupLabel(label: string): string {
+  const folded = label.trim().toLowerCase();
+  return PASS_GROUPS.find((g) => g.toLowerCase() === folded) ?? label.trim();
+}
+
 /** The least a shelf item needs to be filtered: its type and id. */
 export interface Keyed {
   type: "Product" | "Service" | "Package";
   id: string | number;
 }
 
-export interface ShelfInput<P extends Keyed, S extends Keyed, C extends { id: number }> {
+/** What a pass needs beyond its key for the rule: its name and the
+ *  option fields, and `categoryId` so a pass T41 routed off the Passes
+ *  shelf (a rental) takes no group. */
+export interface PassKeyed extends Keyed, PassRuleInput {
+  categoryId?: number | null;
+}
+
+export interface ShelfInput<P extends Keyed, S extends PassKeyed, C extends { id: number }> {
   products: P[];
   passes: S[];
   packages: P[];
   contracts: C[];
 }
 
-export interface ShelfOutput<P extends Keyed, S extends Keyed, C extends { id: number }> {
+export interface ShelfOutput<P extends Keyed, S extends PassKeyed, C extends { id: number }> {
   products: P[];
-  /** Every pass gains `group`: its sub-category label, or null. */
+  /** Every pass gains `group`: its sub-category label. Since T76 a pass
+   *  on the Passes shelf always has one (a T74 group's label when the
+   *  config names it, else the rule's); null only for a pass T41 routed
+   *  to another shelf, where sub-categories do not apply. */
   passes: (S & { group: string | null })[];
   packages: P[];
   contracts: C[];
-  /** Group labels in rail order, only those with at least one visible
-   *  pass, so the screen never draws an empty chip. */
+  /** Group labels in rail order: the fixed PASS_GROUPS first, then any
+   *  custom T74 label in config order, only those with at least one
+   *  visible pass on the Passes shelf, so the screen never draws an
+   *  empty cell. */
   passGroups: string[];
 }
 
@@ -254,22 +349,38 @@ export interface ShelfOutput<P extends Keyed, S extends Keyed, C extends { id: n
  */
 export function applyShelfConfig<
   P extends Keyed,
-  S extends Keyed,
+  S extends PassKeyed,
   C extends { id: number },
 >(catalog: ShelfInput<P, S, C>, config: ShelfConfig): ShelfOutput<P, S, C> {
   const hidden = new Set(config.hidden);
   const visible = (item: Keyed) => !hidden.has(itemKey(item.type, item.id));
+  /* T74's groups are the override: a pass a group names goes there,
+   * under the fixed label when the group's label names one. */
   const groupOf = new Map<string, string>();
   for (const g of config.groups) {
+    const label = canonicalGroupLabel(g.label);
     for (const id of g.ids) {
-      if (!groupOf.has(id)) groupOf.set(id, g.label);
+      if (!groupOf.has(id)) groupOf.set(id, label);
     }
   }
+  const onPassesShelf = (p: PassKeyed) =>
+    p.categoryId === undefined || p.categoryId === null;
   const passes = catalog.passes.filter(visible).map((p) => ({
     ...p,
-    group: groupOf.get(String(p.id)) ?? null,
+    group: onPassesShelf(p)
+      ? (groupOf.get(String(p.id)) ?? passGroupByRule(p))
+      : null,
   }));
-  const present = new Set(passes.map((p) => p.group));
+  const present = new Set(passes.filter(onPassesShelf).map((p) => p.group));
+  const fixed: string[] = PASS_GROUPS.filter((label) => present.has(label));
+  const custom = config.groups
+    .map((g) => canonicalGroupLabel(g.label))
+    .filter(
+      (label, i, all) =>
+        present.has(label) &&
+        !fixed.includes(label) &&
+        all.indexOf(label) === i,
+    );
   return {
     products: catalog.products.filter(visible),
     passes,
@@ -277,8 +388,6 @@ export function applyShelfConfig<
     contracts: catalog.contracts.filter(
       (c) => !hidden.has(itemKey("Contract", c.id)),
     ),
-    passGroups: config.groups
-      .map((g) => g.label)
-      .filter((label) => present.has(label)),
+    passGroups: [...fixed, ...custom],
   };
 }
