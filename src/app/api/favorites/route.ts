@@ -11,6 +11,10 @@ import { target } from "@/lib/mindbody";
 
 export const dynamic = "force-dynamic";
 
+/** Sixty pairs of a type and a short id is under 4KB; a body past this
+ *  is not a favorites list and is refused unread. */
+const MAX_BODY_BYTES = 16 * 1024;
+
 /**
  * PUT /api/favorites (T76): the whole shared list, replaced.
  *
@@ -36,7 +40,11 @@ export async function PUT(request: Request) {
   if (denied) return denied;
   let body: unknown;
   try {
-    body = await request.json();
+    const text = await request.text();
+    if (text.length > MAX_BODY_BYTES) {
+      return NextResponse.json({ error: "body too large" }, { status: 413 });
+    }
+    body = JSON.parse(text);
   } catch {
     return NextResponse.json({ error: "body must be JSON" }, { status: 400 });
   }

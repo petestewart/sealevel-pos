@@ -30,6 +30,10 @@ const PAIR_TYPES: readonly FavoritePair["type"][] = [
 /** More stars than a shelf can hold is a fault, not a list. */
 export const MAX_FAVORITES = 60;
 
+/** An id is a product's barcode string or a pass's number; anything
+ *  longer than this is not one, and the row must not hold it. */
+export const MAX_FAVORITE_ID = 64;
+
 /** The app_settings key, PER TARGET, for the reason the localStorage
  *  key was: sandbox stars must never render on the studio's shelf. */
 export function favoritesSettingKey(target: string): string {
@@ -71,6 +75,9 @@ export function validateFavorites(
           : "";
     if (cleanId.length === 0) {
       return { error: "every favorite needs a non-empty id" };
+    }
+    if (cleanId.length > MAX_FAVORITE_ID) {
+      return { error: `a favorite id is at most ${MAX_FAVORITE_ID} characters` };
     }
     const key = `${type}:${cleanId}`;
     if (seen.has(key)) continue;
