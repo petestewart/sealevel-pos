@@ -3025,6 +3025,11 @@ button.chip.action:active {
   justify-content: center;
 }
 
+/* The tapped line, its controls shown: the selected fill. */
+.t-row.sel {
+  background: var(--accent-bg);
+}
+
 /* The line's own X (Pete: "Have an X next to an item to easily cancel
  * it"): the 44px icon square, the stop colour the removed trash carried,
  * quiet at rest so a ticket of six is not six red marks. */
@@ -3541,6 +3546,11 @@ button.sale-for:disabled {
 .shelf-qty-btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* The strip's X: the stop colour, as the ticket's X. */
+.shelf-qty-x {
+  color: var(--stop);
 }
 
 .shelf-qty-n {
