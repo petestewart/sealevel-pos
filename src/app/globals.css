@@ -1968,6 +1968,38 @@ body.sale-open .dev-handle {
   width: min(600px, 100%);
 }
 
+/* Every dialog stays inside the screen: nothing taller than the
+ * viewport less the scrim's padding, and what does not fit scrolls
+ * inside the box (Pete, live, the Checked in list running off the
+ * bottom of a 12-person class: "all popups must be statically sized").
+ * A dialog with its own height (search, guest, the counter list) keeps
+ * it; this is the floor under every other one. */
+.modal {
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+}
+
+/* The counter lists (Checked in, Waiting list): one fixed box like the
+ * search modal, the head pinned and the list scrolling under it, so the
+ * box is the same size for a class of 3 and a class of 30. */
+.modal-counter {
+  display: flex;
+  flex-direction: column;
+  height: min(720px, calc(100dvh - 48px));
+  overflow: hidden;
+}
+
+.modal-counter .modal-head {
+  flex: 0 0 auto;
+}
+
+.modal-counter .modal-roster,
+.modal-counter > p.muted {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* The search-results modal: wider still, because its rows reuse the
  * roster's grid layout. The column template is a sibling of
  * --roster-cols, redefined in scope so the shared .roster-head/.rrow
