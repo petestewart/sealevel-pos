@@ -1986,12 +1986,14 @@ function FrontDesk({
      * should turn off and the non-filtered results should display."
      * Counted against the whole roster of the class the sign-in screen
      * has selected, which since T87 is the only roster the modal shows.
-     * An empty roster cannot say nobody matched, so it is left alone.
-     * The segment visibly moves to All, and the line over the rows says
-     * why. */
+     * An EMPTY roster widens too (T87 review): nobody booked is nobody
+     * matched, and it is the one case where the Class cell has nothing
+     * of its own to offer, so an Enter that did nothing there left the
+     * teacher with no way forward and no line saying why. The segment
+     * visibly moves to All, and the line over the rows says why. */
     if (attachMode && attachTab === "class") {
       setSearchMsg(null);
-      if (!settings.autoWidenSearch || !q || entries.length === 0) return;
+      if (!settings.autoWidenSearch || !q) return;
       const lq = q.toLowerCase();
       if (entries.some((en) => en.name.toLowerCase().includes(lq))) return;
       if (q.length < settings.minQueryLength) {
