@@ -867,7 +867,7 @@ interface ArmedDiscount {
  *  change a PIN through a Mindbody sign-in. */
 type CompStep = "reason" | "pin" | "ready" | "enroll";
 
-const EMPTY_ENROLL = { username: "", password: "", pin: "" };
+const EMPTY_ENROLL = { username: "", password: "", pin: "", confirm: "" };
 
 /** The reason a complete draft describes. The caller has checked
  *  compValid; a null kind here is a programming error, not a state. */
@@ -2262,10 +2262,19 @@ function PaymentPanel(props: {
     setEnrollMsg(null);
     setReasonStep("pin");
   };
+  /** T80 (Pete: "there should be an additional box to re-enter and
+   *  verify the new PIN"): the second box must match, here and at the
+   *  route. The quiet line shows only once both boxes hold something,
+   *  so it does not accuse a half-typed PIN. */
+  const enrollMismatch =
+    enroll.pin.length > 0 &&
+    enroll.confirm.length > 0 &&
+    enroll.pin !== enroll.confirm;
   const enrollValid =
     enroll.username.trim().length >= 3 &&
     enroll.password.length > 0 &&
-    isPinShape(enroll.pin);
+    isPinShape(enroll.pin) &&
+    enroll.confirm === enroll.pin;
   /** Save PIN: one post to /api/teacher/enroll with the Mindbody login
    *  and the chosen PIN. Success returns to the PIN step with the name
    *  Mindbody gave; the password is dropped either way. */
@@ -2282,6 +2291,7 @@ function PaymentPanel(props: {
           username: sent.username.trim(),
           password: sent.password,
           pin: sent.pin,
+          confirm: sent.confirm,
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -2295,8 +2305,14 @@ function PaymentPanel(props: {
         return;
       }
       /* A taken PIN (409) was a good sign-in: keep the password so the
-       * fix is another PIN. Any other refusal drops it. */
-      if (res.status !== 409) setEnroll((e) => ({ ...e, password: "" }));
+       * fix is another PIN, and clear both PIN boxes so the fix is
+       * typing a new one twice (T80). Any other refusal drops the
+       * password instead. */
+      if (res.status === 409) {
+        setEnroll((e) => ({ ...e, pin: "", confirm: "" }));
+      } else {
+        setEnroll((e) => ({ ...e, password: "" }));
+      }
       if (res.status === 429) {
         const secs = Number(body?.retryAfterSeconds ?? 30);
         setEnrollMsg({
@@ -3461,10 +3477,34 @@ function PaymentPanel(props: {
                       pin: e.target.value.replace(/\D/g, "").slice(0, PIN_MAX),
                     }))
                   }
+                />
+                {/* T80: the same PIN again, so a typo cannot become the
+                    PIN a teacher then cannot guess back. */}
+                <input
+                  className="reason-input"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  maxLength={PIN_MAX}
+                  placeholder="Re-enter PIN"
+                  aria-label="Re-enter PIN"
+                  value={enroll.confirm}
+                  disabled={enrollBusy}
+                  onChange={(e) =>
+                    setEnroll((v) => ({
+                      ...v,
+                      confirm: e.target.value
+                        .replace(/\D/g, "")
+                        .slice(0, PIN_MAX),
+                    }))
+                  }
                   onKeyDown={(e) => {
                     if (e.key === "Enter") void submitEnroll();
                   }}
                 />
+                {enrollMismatch ? (
+                  <p className="reason-note">PINs do not match</p>
+                ) : null}
                 {enrollMsg ? (
                   <p className={enrollMsg.ok ? "reason-note" : "lock-msg"}>
                     {enrollMsg.text}
@@ -3484,7 +3524,7 @@ function PaymentPanel(props: {
                     title={
                       enrollValid
                         ? "Check the sign-in and save the PIN"
-                        : "Fill in the sign-in and a PIN"
+                        : "Fill in the sign-in and the same PIN twice"
                     }
                     onClick={() => void submitEnroll()}
                   >
