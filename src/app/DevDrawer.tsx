@@ -48,6 +48,7 @@ export default function DevDrawer({
   onOpenChange,
   onAvailableChange,
   onTargetSwitched,
+  onConfigChanged,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -57,6 +58,11 @@ export default function DevDrawer({
    *  re-reads /api/config for the banner and sends everyone back to the
    *  sign-in gate, since every staff session has just ended. */
   onTargetSwitched: (next: string, notice: string) => void;
+  /** T89: something in /api/config changed from in here (this browser's
+   *  own dry run), so the page re-reads it rather than waiting for its
+   *  30 second tick. The mode banner is the whole reason: it must never
+   *  say LIVE while this iPad is suppressing its writes. */
+  onConfigChanged: () => void;
 }) {
   const [available, setAvailable] = useState(false);
   const [calls, setCalls] = useState<CallRecord[]>([]);
@@ -239,6 +245,7 @@ export default function DevDrawer({
               settings={settings}
               set={set}
               onTargetSwitched={onTargetSwitched}
+              onConfigChanged={onConfigChanged}
             />
           ) : tab === "bundles" ? (
             <BundlesPanel />
@@ -328,10 +335,12 @@ function SettingsPanel({
   settings,
   set,
   onTargetSwitched,
+  onConfigChanged,
 }: {
   settings: Settings;
   set: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
   onTargetSwitched: (next: string, notice: string) => void;
+  onConfigChanged: () => void;
 }) {
   /* T29: the one quiet line saying which store is behind the DB features.
    * "none" is full fallback mode and is normal for local work. */
@@ -390,7 +399,13 @@ function SettingsPanel({
           </p>
         </>
       ) : null}
-      <BrowserDryRun mode={mode} onChange={readMode} />
+      <BrowserDryRun
+        mode={mode}
+        onChange={() => {
+          readMode();
+          onConfigChanged();
+        }}
+      />
       <p className="muted">
         The rest is stored in this browser. Applies immediately, no restart.
         The server's own dry run and the write guard stay in the server

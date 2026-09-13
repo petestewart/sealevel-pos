@@ -7839,6 +7839,7 @@ function FrontDesk({
           readConfig();
           setTeacher(null, notice);
         }}
+        onConfigChanged={readConfig}
       />
 
       {/* T85: the one nav bar, the last child and fixed to the bottom on
