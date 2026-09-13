@@ -29,6 +29,7 @@ import {
 } from "./ClientProfileCard";
 import StaffModal, { type Teacher } from "./StaffModal";
 import NewClientModal from "./NewClientModal";
+import CardModal from "./CardModal";
 import GuestModal, {
   type ClassStanding,
   type GuestPick,
@@ -37,6 +38,7 @@ import { isGuestPass, usableGuestPass } from "@/lib/guestpass";
 import { actorFallbackLine } from "./actornote";
 import { DEFAULT_SETTINGS, useSettings } from "./settings";
 import { toggleTheme, watchSystemTheme } from "./theme";
+import type { CardOnFile } from "@/lib/clientcard";
 import type { ClientProfile } from "@/lib/clientprofile";
 import { stripSignatures } from "@/lib/notesig";
 
@@ -2255,6 +2257,13 @@ function FrontDesk({
     text: string;
     tone: "warn" | "stop";
   } | null>(null);
+  /** T84: the card box over the profile, and the line under the profile's
+   *  "Card on file" row when the last save did not plainly land. */
+  const [cardOpen, setCardOpen] = useState(false);
+  const [cardMsg, setCardMsg] = useState<{
+    text: string;
+    tone: "warn" | "stop";
+  } | null>(null);
   /**
    * T72 (Pete: "every click holds everything up while the request is
    * made. can we make this update happen in the background? and
@@ -2286,6 +2295,8 @@ function FrontDesk({
     setProfileView({ clientId, name });
     setProfileState({ profile: null, loading: true, error: null });
     setOptInMsg(null);
+    setCardMsg(null);
+    setCardOpen(false);
     fetch(`/api/client-profile?clientId=${encodeURIComponent(clientId)}`)
       .then(async (r) => {
         const body = await r.json();
@@ -2414,6 +2425,8 @@ function FrontDesk({
     profileGen.current += 1;
     setProfileView(null);
     setOptInMsg(null);
+    setCardMsg(null);
+    setCardOpen(false);
     /* T72: the taps go out now rather than after the idle delay. */
     void flushOptIn();
   }, [flushOptIn]);
@@ -2468,16 +2481,36 @@ function FrontDesk({
     [profileView, profileState.profile, flushOptIn],
   );
 
+  /**
+   * T84: the card Mindbody holds after a save. The profile's card line is
+   * patched in place from the answer -- which is a read-back, not an echo
+   * of the form -- so the row shows what is on file without a second
+   * /api/client-profile (three metered reads). Everywhere else that needs
+   * the card reads it live when it opens: the pay dialog and the sale
+   * screen both fetch /api/stored-card on attach, so the next tender sees
+   * this card without being told.
+   */
+  const cardSaved = useCallback((card: CardOnFile, note: string | null) => {
+    setCardOpen(false);
+    setCardMsg(note ? { text: note, tone: "warn" } : null);
+    setProfileState((st) =>
+      st.profile ? { ...st, profile: { ...st.profile, card } } : st,
+    );
+    if (note) flashBanner(note);
+  }, [flashBanner]);
+
   /** Escape closes the profile modal. It stacks above the search modal,
    *  whose own Escape handler stands down while this is open. */
   useEffect(() => {
     if (!profileView) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeProfile();
+      /* T84: the card box handles its own Escape, in capture, and closes
+       * only itself. */
+      if (e.key === "Escape" && !cardOpen) closeProfile();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [profileView, closeProfile]);
+  }, [profileView, closeProfile, cardOpen]);
 
   /** Escape closes the Membership modal (T52). It opens from a roster
    *  row only, so no other layer's handler needs to stand down for it. */
@@ -6383,10 +6416,27 @@ function FrontDesk({
                 error={profileState.error}
                 onOptIn={saveOptIn}
                 optInMsg={optInMsg}
+                onCard={() => {
+                  setCardMsg(null);
+                  setCardOpen(true);
+                }}
+                cardMsg={cardMsg}
               />
             </div>
           </div>
         </div>
+      ) : null}
+
+      {/* T84: the card box, over the profile modal it was opened from.
+          Mounted only while open, so nothing typed into it outlives it. */}
+      {profileView && cardOpen && profileState.profile ? (
+        <CardModal
+          clientId={profileState.profile.clientId}
+          name={profileView.name}
+          current={profileState.profile.card}
+          onClose={() => setCardOpen(false)}
+          onSaved={cardSaved}
+        />
       ) : null}
 
       {/* The Membership modal (T52): what the roster's M chip opens.
