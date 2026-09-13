@@ -4022,6 +4022,21 @@ export default function SaleScreen(props: {
    *  serves a stored list or a PUT reports it stored. A ref, so the
    *  localStorage load below can never overwrite a served list. */
   const favSource = useRef<"local" | "db">("local");
+  /** The list as the screen shows it, mirrored in a ref so a PUT sends
+   *  the latest taps and not the list of the closure it was queued
+   *  from; the last list the server confirmed (or served), which is
+   *  what a failed PUT reverts to; and the single flight: a star while
+   *  a PUT is out marks the list dirty, and the flight sends the whole
+   *  list once more when it lands, so two PUTs never race each other
+   *  and a later star is never lost to an earlier answer. */
+  const favLatest = useRef<FavPair[]>([]);
+  const favConfirmed = useRef<FavPair[]>([]);
+  const favFlying = useRef(false);
+  const favDirty = useRef(false);
+  const showFavorites = useCallback((list: FavPair[]) => {
+    favLatest.current = list;
+    setFavorites(list);
+  }, []);
   /** T76: the quiet line under a star that could not be saved (the PUT
    *  failed and the tap was undone). Cleared by the next tap or by a
    *  rail change. */
@@ -4032,13 +4047,16 @@ export default function SaleScreen(props: {
 
   useEffect(() => {
     if (favKey === null || favSource.current === "db") return;
+    let list: FavPair[] = [];
     try {
       const raw = window.localStorage.getItem(favKey);
-      setFavorites(readFavPairs(raw ? JSON.parse(raw) : []));
+      list = readFavPairs(raw ? JSON.parse(raw) : []);
     } catch {
-      setFavorites([]);
+      list = [];
     }
-  }, [favKey]);
+    favConfirmed.current = list;
+    showFavorites(list);
+  }, [favKey, showFavorites]);
 
   /** The catalog landing (the first load, a recheck, Refresh) sets the
    *  shelf AND, when the payload carries a stored list, the favorites,
@@ -4046,78 +4064,111 @@ export default function SaleScreen(props: {
    *  content on the same render, instead of choosing Passes a tick
    *  before the shared stars arrive (which a trailing effect did, seen
    *  on a fresh device in the T76 harness). A served list wins over the
-   *  device's own: it is what every other iPad sees. */
-  const landCatalog = useCallback((fresh: CatalogState) => {
-    if (fresh.favorites) {
-      favSource.current = "db";
-      setFavorites(fresh.favorites);
-    }
-    setCatalog(fresh);
-  }, []);
+   *  device's own: it is what every other iPad sees. Not while a PUT is
+   *  in flight, though: the list on its way out is newer than the one
+   *  the catalog read a moment ago. */
+  const landCatalog = useCallback(
+    (fresh: CatalogState) => {
+      if (fresh.favorites) {
+        favSource.current = "db";
+        if (!favFlying.current) {
+          favConfirmed.current = fresh.favorites;
+          showFavorites(fresh.favorites);
+        }
+      }
+      setCatalog(fresh);
+    },
+    [showFavorites],
+  );
 
   const favSet = useMemo(
     () => new Set(favorites.map((f) => itemKey(f.type, f.id))),
     [favorites],
   );
 
-  const toggleFavorite = useCallback(
-    (item: ShelfItem) => {
-      const key = itemKey(item.type, item.id);
-      const prev = favorites;
-      const next = prev.some((f) => itemKey(f.type, f.id) === key)
-        ? prev.filter((f) => itemKey(f.type, f.id) !== key)
-        : [...prev, { type: item.type, id: item.id }];
-      const persist = (list: FavPair[]) => {
-        if (favKey === null) return;
-        try {
-          window.localStorage.setItem(favKey, JSON.stringify(list));
-        } catch {
-          /* Not persistable here; the star still works for this visit. */
-        }
-      };
-      /* Optimistic on screen and in the device's own store (the no-database
-       * path is exactly the pre-T76 behaviour), then the whole list to the
-       * shared one. A migration is the first PUT from a device whose list
-       * came from localStorage while the table had none. */
-      setFavNotice(null);
-      setFavorites(next);
-      persist(next);
-      const migrating = favSource.current === "local" && prev.length > 0;
-      void (async () => {
+  const persistFavorites = useCallback(
+    (list: FavPair[]) => {
+      if (favKey === null) return;
+      try {
+        window.localStorage.setItem(favKey, JSON.stringify(list));
+      } catch {
+        /* Not persistable here; the star still works for this visit. */
+      }
+    },
+    [favKey],
+  );
+
+  /** The whole list to the shared one, one PUT at a time. A migration
+   *  is the first PUT from a device whose list came from localStorage
+   *  while the table had none. A failure undoes every tap since the
+   *  last confirmed list, quietly: the shared list is the truth, and a
+   *  star that only this iPad can see would mislead the next one. */
+  const pushFavorites = useCallback(async () => {
+    if (favFlying.current) {
+      favDirty.current = true;
+      return;
+    }
+    favFlying.current = true;
+    try {
+      do {
+        favDirty.current = false;
+        const sent = favLatest.current;
+        const migrating =
+          favSource.current === "local" && favConfirmed.current.length > 0;
         try {
           const r = await fetch("/api/favorites", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              favorites: next.map((f) => ({ type: f.type, id: String(f.id) })),
+              favorites: sent.map((f) => ({ type: f.type, id: String(f.id) })),
             }),
           });
           const body = await r.json().catch(() => null);
           if (!r.ok || body?.ok !== true) {
             throw new Error(body?.error ?? `HTTP ${r.status}`);
           }
+          favConfirmed.current = sent;
           if (body.stored === true) {
             favSource.current = "db";
             if (body.migrated === true || migrating) {
               console.info(
-                `[favorites] this device's list of ${next.length} is now the shared favorites`,
+                `[favorites] this device's list of ${sent.length} is now the shared favorites`,
               );
             }
           }
         } catch (err) {
-          /* Undone, quietly: the shared list is the truth, and a star
-           * that only this iPad can see would mislead the next one. */
-          setFavorites(prev);
-          persist(prev);
+          const back = favConfirmed.current;
+          favDirty.current = false;
+          showFavorites(back);
+          persistFavorites(back);
           setFavNotice(
             `The star was not saved to the shared favorites and was undone (${
               err instanceof Error ? err.message : String(err)
             }).`,
           );
         }
-      })();
+      } while (favDirty.current);
+    } finally {
+      favFlying.current = false;
+    }
+  }, [persistFavorites, showFavorites]);
+
+  const toggleFavorite = useCallback(
+    (item: ShelfItem) => {
+      const key = itemKey(item.type, item.id);
+      const prev = favLatest.current;
+      const next = prev.some((f) => itemKey(f.type, f.id) === key)
+        ? prev.filter((f) => itemKey(f.type, f.id) !== key)
+        : [...prev, { type: item.type, id: item.id }];
+      /* Optimistic on screen and in the device's own store (the
+       * no-database path is exactly the pre-T76 behaviour), then the
+       * whole list to the shared one. */
+      setFavNotice(null);
+      showFavorites(next);
+      persistFavorites(next);
+      void pushFavorites();
     },
-    [favKey, favorites],
+    [persistFavorites, pushFavorites, showFavorites],
   );
 
   /** Every sellable thing the catalog loaded, for star lookup and bundle
