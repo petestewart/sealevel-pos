@@ -5191,13 +5191,9 @@ export default function SaleScreen(props: {
     close,
   ]);
 
-  /* T82: select-to-reveal is gone, and with it the selected row, the
-   * tap-outside deselect and the scroll-the-reveal-into-view effect.
-   * Every line carries its own stepper and its own X (Pete: "Have an X
-   * next to an item to easily cancel it", "Add + and - ... on the item
-   * that you click"), which is what T39.4 had before the controls were
-   * hidden to buy column height; the 44px icon squares are what buys it
-   * back, at two thirds of the 64px stepper's height.
+  /* T82 gave every line its own stepper and X; Pete then asked for them
+   * only on the line tapped (`revealedKey`, below), which is T39.4's
+   * select-to-reveal again with the 44px icon squares.
    */
 
   const addItem = useCallback((item: ShelfItem) => {
@@ -5259,7 +5255,13 @@ export default function SaleScreen(props: {
     );
   }, []);
 
+  /* Select-to-reveal, back (Pete, live, on every line wearing its
+   * controls: "the items on the right should only show the +/1/X
+   * buttons when i click on one to make it show"). One line at a time;
+   * the same tap again puts them away; a removed line clears it. */
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const removeLine = useCallback((key: string) => {
+    setRevealedKey((k) => (k === key ? null : k));
     setCart((lines) => lines.filter((l) => l.key !== key));
   }, []);
 
@@ -5754,6 +5756,20 @@ export default function SaleScreen(props: {
               }}
             >
               <PlusIcon />
+            </button>
+            {/* Pete: "the individual cards should also have a X to
+                remove the item from the cart." */}
+            <button
+              className="shelf-qty-btn shelf-qty-x"
+              disabled={charging}
+              aria-label={`Remove ${item.name} from the sale`}
+              title={`Remove ${item.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                removeLine(key);
+              }}
+            >
+              <CloseIcon />
             </button>
           </div>
         ) : null}
@@ -6464,8 +6480,31 @@ export default function SaleScreen(props: {
                      quantity and the X removes the line, each on its own
                      44px square. In pay mode the row is read-only, as it
                      has been since T39.6. */
-                  <div className="t-row" key={line.key}>
-                    <div className="t-row-main">
+                  <div
+                    className={
+                      revealedKey === line.key && !inPay ? "t-row sel" : "t-row"
+                    }
+                    key={line.key}
+                  >
+                    <div
+                      className="t-row-main"
+                      role={inPay ? undefined : "button"}
+                      tabIndex={inPay ? undefined : 0}
+                      aria-expanded={inPay ? undefined : revealedKey === line.key}
+                      aria-label={inPay ? undefined : `${line.item.name}, tap for quantity and remove`}
+                      onClick={() =>
+                        inPay
+                          ? undefined
+                          : setRevealedKey((k) => (k === line.key ? null : line.key))
+                      }
+                      onKeyDown={(e) => {
+                        if (inPay) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setRevealedKey((k) => (k === line.key ? null : line.key));
+                        }
+                      }}
+                    >
                       <div className="t-line">
                         <span className="t-name">{line.item.name}</span>
                         <span className="amt">
@@ -6482,8 +6521,8 @@ export default function SaleScreen(props: {
                           {line.quantity} @ {line.item.price.toFixed(2)}
                         </div>
                       ) : null}
-                      {inPay ? null : (
-                        <div className="t-ctl">
+                      {inPay || revealedKey !== line.key ? null : (
+                        <div className="t-ctl" onClick={(e) => e.stopPropagation()}>
                           <button
                             className="t-ctl-btn"
                             disabled={line.quantity <= 1 || charging}
@@ -6515,7 +6554,7 @@ export default function SaleScreen(props: {
                         the whole ticket. The tender clears with any cart
                         change and a discount re-spreads (T79), both
                         through the existing effects. */}
-                    {inPay ? null : (
+                    {inPay || revealedKey !== line.key ? null : (
                       <button
                         className="t-x"
                         disabled={charging}
