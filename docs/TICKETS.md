@@ -9412,3 +9412,74 @@ renders; the rule order matches the brief; one tab convention in the
 rail; no hex, no em dash. Worth Pete's eye: at 1194x834 with Passes
 open its twelve children push Retail and Rentals below the fold of the
 rail.
+
+## T81: search results as you type; the calendar left of the class; tap "Checked in" to check out
+
+Pete, on the live build: "when entering text for a search, results
+should start appearing after a delay and minumum characters are
+entered", "the calendar icon should be to the left of the class
+selector", and "the check-out icon is confusing. it probably doesn't
+need to be there. clicking checked in should bring up the checkout
+popup."
+
+### What changed
+
+- **Live search.** T16 had moved search to submit only. Typing now
+  searches after the debounce (a drawer setting again,
+  `searchDebounceMs`, default 350, which T16 had retired) once the query
+  reaches the minimum length (default 3); each keystroke aborts the
+  call in flight; Enter fires at once and once; a query under the
+  minimum clears the results and the modal reads "Search for a
+  walk-in / Type at least 3 letters." instead of a "Results for" title
+  with nothing behind it. The modal opens on the first result set,
+  never on the keystroke. A tap guard holds a result page that lands
+  mid-press until the finger lifts (or 150ms after the press), so rows
+  do not change under a tap, T16's complaint. CLAUDE.md's metered-call
+  argument holds: "dennis" typed at 120ms per key costs one call.
+- **Calendar left.** The header's calendar button leads the class
+  group; its hairline moved to its right edge. Same in the 860px query.
+- **Tap the chip to check out.** The counter-clockwise arrow is gone.
+  The "Checked in" chip is a button (keyboard reachable, "Check out
+  <name>" label, "Tap to check out" title) opening the existing "Check
+  out <name>?" confirm; inert while the row is working. The trash on a
+  not-checked-in row stays; a spacer keeps the Buy column. The T71
+  chip widths are unchanged.
+
+### Verified by the builder
+
+Playwright against the mock Mindbody, both palettes at 1194x834 and
+834x1194: "de" fires nothing; "den" fires exactly one call after the
+debounce; quick typing fires one call per pause and an aborted answer
+never renders; Enter fires at once; the modal's bar retypes; the
+calendar's box sits left of the picker in both orientations; the chip
+tap opens the confirm and confirming sends `updateclientvisit
+{SignedIn: false}`. T71 and T73 harness copies pass. Typecheck and
+build green. Not verified: real iPad touch for the tap guard.
+
+### Review
+
+Adversarial review in its own worktree, five fix commits in two passes
+(the first pass was cut short by an interruption; the second picked up
+its commits and checked them):
+
+- **A query typed away from and back to was searched twice**, and the
+  abort only applies to a call actually in flight.
+- **A live search that could not reach the server showed nothing.** It
+  now opens the modal with the error under the bar, and retyping
+  retries.
+- **The two settings are clamped** (a minimum length of 0 searched the
+  empty box on load; a non-numeric stored debounce falls back to 350).
+- **A press whose lift never arrived froze search for the session.** A
+  touch takes implicit pointer capture, so a lift whose target left the
+  document never reached the window and every later result set stayed
+  parked. A 1500ms watchdog releases the hold through the same path.
+- **The results list remounted when a search fired, not when its rows
+  changed**, killing a press in progress in exactly the window the
+  guard exists for. It is keyed by the query the rows are for.
+
+Reviewed and correct: stale answers never render; the modal does not
+open on a keystroke; Enter while a debounce is pending gives one call;
+the chip's keyboard and aria; the calendar at both widths; tokens only;
+nothing under 16px or 44px. Pre-existing and left alone: Escape does not
+close the check-out confirm; the working chip keeps its check-in label
+while a check-out is in flight.
