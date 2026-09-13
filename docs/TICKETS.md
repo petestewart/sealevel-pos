@@ -9701,3 +9701,69 @@ log, suppression lines and DB in all three modes; the dead-token path
 never falls back; the body carries only the three fields; validation
 never echoes the number; autocomplete attributes; tokens only, 64px,
 16px. Route tests and Playwright green after the fixes.
+
+## T86: the drawer orders the pass sub-categories and can move a retail product
+
+Pete: "can i also change the order of subcategories easily" and "why
+can't i set categories on retail items in the shelf? only passes?"
+
+### What changed
+
+- **Sub-category order.** The shelf config carries `groupOrder`, a
+  list of labels (fixed and custom, folded, at most 64, unknown labels
+  dropped on read). The rail draws Passes' children in that order for
+  the labels it names, then the rest in the code order. The drawer's
+  Shelf tab has a "sub-category order" block above the item lists,
+  one row per label the catalog has, with 44px up and down controls,
+  saved by the existing Save. Saving writes the whole order, so a
+  later change to the code order cannot silently reorder a shelf
+  someone arranged by hand.
+- **Retail product moves.** The config carries `products`, item key to
+  category id, the target one of Food/Drink, Clothing, Accessories,
+  Other or Rentals (anything else refused; the allowed ids are read off
+  `counterCategories`). Applied before the hide filter, so a moved
+  product is still hideable, and after the name routing, so an
+  override wins over a "rental" in the name. Every Product row in the
+  drawer gets a select "Mindbody's category | ...", and the placement
+  line reflects the move.
+- **Save re-reads** the list, so the placement line under an item is
+  the stored truth rather than the state before the save (the
+  builder's own harness caught "Retail > Clothing" under a tee just
+  moved to Rentals).
+- A pre-T86 config (no order, no moves) reads and round-trips
+  unchanged. No teacher-facing change beyond the order and placement
+  of cells; no new Mindbody calls; devtools-gated as before.
+
+### Verified by the builder
+
+Typecheck and build. 28 unit assertion groups (permutations, folding,
+duplicates, unknown labels dropped, a non-category id refused, pre-T86
+unchanged; order honoured, moves to Clothing and to Rentals, a moved
+product still hideable). Browser harness against `next start` and a
+scratch Postgres: reorder, save, reload persists; both product moves
+show on the rail and in the placement line; a 400 on category 27.
+Thirteen screenshots in both palettes, looked at.
+
+### Review
+
+Adversarial review in its own worktree, two fixes:
+
+- **An order entry the validator accepted was half ignored.** The
+  validator matched an order label to a custom group case-insensitively
+  and stored it; `applyShelfConfig` and the drawer matched
+  case-sensitively, so "my label" against a group "My Label" fell to
+  the end of the rail and a Save would have persisted that. Both now
+  resolve through a folded map.
+- **The drawer listed a sub-category the rail never draws.** The
+  pre-rename "Buddy / Guest Passes" folds onto Buddy/Guest in the rail's
+  code but not in the drawer's mirror, giving a ninth inert row.
+
+Reviewed and correct: the bounds (65 refused, 64 accepted; products
+over MAX_ENTRIES refused; every bad key and id shape refused; prototype
+keys inert; a 16KB body fine); a named label with nothing to show is
+skipped; a deleted group's label drops out on the next read; the
+override wins over name routing in both directions; a star on a moved
+product still resolves; up disabled only on the first row and down on
+the last, 44px each; no server-only module in a client chunk; page.tsx
+and SaleScreen.tsx untouched. Noted, pre-existing: a hide-list key's id
+is not length-bounded.
