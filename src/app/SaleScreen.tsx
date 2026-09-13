@@ -5293,6 +5293,22 @@ export default function SaleScreen(props: {
    * buttons when i click on one to make it show"). One line at a time;
    * the same tap again puts them away; a removed line clears it. */
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  /* A tap anywhere outside the revealed row puts its controls away
+   * (Pete: "if i click anywhere else on the screen, the +/-/X buttons
+   * should disappear"). pointerdown on the document, so a tap that
+   * lands on a shelf card both adds the item and hides the controls;
+   * the row itself (its controls included) is excluded so the stepper
+   * keeps working. */
+  useEffect(() => {
+    if (revealedKey === null) return;
+    const away = (e: PointerEvent) => {
+      const el = e.target instanceof Element ? e.target : null;
+      if (el && el.closest(".t-row.sel")) return;
+      setRevealedKey(null);
+    };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  }, [revealedKey]);
   const removeLine = useCallback((key: string) => {
     setRevealedKey((k) => (k === key ? null : k));
     setCart((lines) => lines.filter((l) => l.key !== key));
