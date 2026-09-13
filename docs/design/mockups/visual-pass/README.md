@@ -124,6 +124,42 @@ Numbers that align in a column (balances, prices, amounts) all use
   reads `Pay · 2 items · $5.00` left-aligned in its own bar segment.
 - Spacing: 4 / 8 / 12 / 16 / 20 / 24px. Horizontal screen padding 20px.
 
+## The nav bar (T85, supersedes the per-screen navigation below)
+
+Pete, on the counter build: "navigation is inconsistent and unclear. the screens are
+sign-in, buy, pay. the buttons are in different spots and 'back' is unclear as to where
+it's going. also, no reason the teacher profile icon shouldn't be available in all
+those. and 'Buy' doesn't need to display on the buy page. maybe a nav bar at the bottom
+... sign-in, buy, pay, profile, and dev should all be in the nav bar."
+
+One bar, the same element on every screen, fixed to the bottom across the full width:
+64px plus `env(safe-area-inset-bottom)`, on `--surface` under a `2px solid var(--rule)`.
+Items are evenly spaced, each a 26px icon over a 16px/800 label, split by 1px lines:
+
+| Item | Goes to | Off when |
+| --- | --- | --- |
+| **Sign-in** | the roster; the cart and its client survive | mid-charge |
+| **Buy** | the shelf (from the roster, or back from the payment step) | mid-charge |
+| **Pay** | the payment step, through the shelf Pay's own gates | nothing to pay, and it names the reason |
+| **Profile** | the signed-in teacher's account modal, from any screen | never |
+| **Dev** | toggles the call-log drawer; absent unless devtools answered | never |
+
+The current screen's item is `--accent` with a **4px accent top edge** (the same "this
+one" marker the payment tiles and the rail's cells use); the rest are `--ink` on the
+surface. An item that cannot be tapped is `aria-disabled` with the reason as its title,
+never hidden and never silent. Mid-charge the two items that would leave the payment
+step are off and **Pay stays lit and inert**: money is moving and the outcome renders on
+the surface it is on. The bar is z-index 22, over the sale overlay and the dev drawer
+and under every modal scrim, the lock screen and the sign-in gate.
+
+What it replaced: the roster header's accent `Buy` cell and its account icon, the Buy
+screen's `Buy` wordmark and its `Back`, the action bar's `Back to items`, and the dev
+drawer's floating pill. The action bar is gone with them, and its two remaining controls
+are feet of the column they belong to: `Empty cart` over the accent `Pay · 2 items ·
+$5.00` at the foot of the ticket pane (outside the ticket's own scroll), and the
+`Due` / `Charge` / `Comp` primary at the foot of the payment pane beside `Discount`.
+The sun stays where it was, the last cell of the header, on every screen.
+
 ## Screens
 
 ### 1. Roster — `Roster.dc.html`
@@ -141,8 +177,9 @@ Replaces the current counter screen (`src/app/page.tsx`, `.classbar` / `.sortbar
    - *Calendar* icon cell, 76px wide (lucide `calendar`).
    - *Three stat cells* — 152 / 152 / 128px, each 1px-divided: uppercase kicker +
      26px/800 number. CHECKED IN's number is `--ok`.
-   - *Buy* — 108px accent-filled cell, label flush left, 19px/800. Navigates to Buy.
-   - *Theme toggle* and *staff* icon cells, 64px each.
+   - *Theme toggle* icon cell, 64px, the last cell. (The accent `Buy` cell and the
+     staff icon that used to follow the stats are the nav bar's Buy and Profile items
+     since T85.)
 2. **Class dropdown** (absolute, under the picker, `2px solid var(--rule)`,
    `--shadow-lg`, 120ms fade-in): one 72px row per class — time (108px, 18px/800), name +
    teacher, and a count badge right (gold pair; neutral when 0). The selected class row
@@ -193,14 +230,16 @@ subline (`No pass on file — tap again to check in unpaid`) — not a modal. Pe
 
 ### 2. Buy — `Buy.dc.html`
 
-New (Phase 2). Frame 1194×834. Three panes under a 76px header, over an 80px action bar.
+New (Phase 2). Frame 1194×834. Three panes under a 76px header, over the nav bar.
 
-- **Header**: `Buy` wordmark (24px/800); then either
+- **Header**: since T85 no `Buy` wordmark (the lit nav item says which screen this is);
+  then either
   - *no client yet*: `+ Attach a client / for stored card or account credit` cell (plus
     icon in `--accent`, title 17px/800, sub 16px `--muted`) and a `Walk-in` cell; or
   - *client attached*: an `--accent-bg` cell with kicker `SALE FOR` in `--accent`, the
     name at 18px/800, and an `×` to detach.
-  - Right: theme toggle, `Back` (arrow-left, → Roster).
+  - Right: the refresh icon cell (T75), then the theme toggle. No `Back` since T85:
+    Sign-in on the nav bar is the way to the roster.
 - **Category rail, 190px**, `border-right: 2px solid var(--rule)`. Six 64px cells:
   Favorites, Food/Drink, Passes, Memberships, Accessories, Clothing. Active cell is
   **filled `--accent`** with `--accent-ink` (per §2.4 — filled active, not a ring).
@@ -215,9 +254,10 @@ New (Phase 2). Frame 1194×834. Three panes under a 76px header, over an 80px ac
     (hover tints `--stop-bg`). Empty state: `Nothing on the ticket yet. Tap an item.`
   - Totals block above a 2px rule: Subtotal, `Tax 10.35%`, then Total (18px/800 label,
     26px/800 amount).
-- **Action bar, 80px**: `API n` counter left (`--muted`, keep the real call-log value),
-  then `Empty cart` (quiet, hover → `--stop`), then the accent-filled
-  `Pay · 2 items · $5.00`.
+- **Ticket pane foot** (T85, was the 80px action bar): `Empty cart` (quiet, 64px, press
+  → `--stop`) over the accent-filled `Pay · 2 items · $5.00` (72px), both the pane's
+  width and outside the ticket's scroll. The `API n` counter is in the dev drawer's own
+  head now.
 
 **Tax rule (important, matches the review screenshots):** tax is charged per line, not on
 the whole subtotal — retail is taxable, rentals/passes/memberships are not. Hence
@@ -243,8 +283,8 @@ max-height 680px.
 
 New (Phase 2), the §2.9 two-pane shape. Left pane + the same 320px ticket.
 
-- **Header**: `Buy` + `SALE FOR / Walk-in sale` (`--accent-bg`) with `×`; theme toggle;
-  `Back`.
+- **Header**: `SALE FOR / Walk-in sale` (`--accent-bg`) with `×`; refresh; theme
+  toggle. (No `Buy`, no `Back` since T85.)
 - **Amount tiles**: three equal cells, 1px-divided, over a 2px rule — TOTAL, DUE, CHANGE.
   Kicker 16px/600 uppercase, amount 34px/800 tabular. When DUE reaches zero its cell
   fills `--ok-bg` with `--ok` text; CHANGE turns `--warn` when non-zero.
@@ -272,10 +312,12 @@ New (Phase 2), the §2.9 two-pane shape. Left pane + the same 320px ticket.
   `<Method> received $X` line per tender in `--muted`, then **`Change due $15.00`** in
   `--warn` (20px/800 amount) when the tender exceeds the total, or `Still due` when it
   falls short. This is the counter's actual question and it belongs on the receipt side.
-- **Action bar**: `Back to items`, `API n`, then the charge button — `--surface-2` /
-  `--muted` and inert while anything is still due; accent-filled `Charge $5.00` once
-  covered; spinner + `Charging` during the write; `--ok` fill + check glyph + `Charged`
-  after. The amount is always in the label.
+- **Payment pane foot** (T85, was the action bar): the quiet line, then `Discount`,
+  then the primary — `--surface-2` / `--muted` and inert while anything is still due;
+  accent-filled `Charge $5.00` once covered; spinner + `Charging` during the write;
+  `--ok` fill + check glyph + `Charged` after, in a foot of its own under the done
+  block. The amount is always in the label. `Back to items` is gone: the nav bar's Buy
+  item is the way back to the shelf.
 
 ### 5. Dialogs — `Dialogs.dc.html`
 

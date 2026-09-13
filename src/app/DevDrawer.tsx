@@ -37,9 +37,23 @@ function statusClass(call: CallRecord): string {
   return call.status >= 400 ? "dev-bad" : "dev-good";
 }
 
-export default function DevDrawer() {
+/**
+ * T85: the drawer's pill is gone and the nav bar's Dev item takes its
+ * place, so whether the drawer is open and whether devtools answered at
+ * all are page.tsx's: the bar needs both to render the item and light it.
+ * Cmd+D stays here, with the keydown that has always been the drawer's.
+ */
+export default function DevDrawer({
+  open,
+  onOpenChange,
+  onAvailableChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** True once /api/devlog answers, false while it 404s. */
+  onAvailableChange: (available: boolean) => void;
+}) {
   const [available, setAvailable] = useState(false);
-  const [open, setOpen] = useState(false);
   const [calls, setCalls] = useState<CallRecord[]>([]);
   const [expanded, setExpanded] = useState<number | null>(null);
   /** Which call id was just copied, for the momentary "copied" label. */
@@ -60,6 +74,11 @@ export default function DevDrawer() {
       setAvailable(false);
     }
   }, []);
+
+  /* T85: the nav bar renders its Dev item off this. */
+  useEffect(() => {
+    onAvailableChange(available);
+  }, [available, onAvailableChange]);
 
   useEffect(() => {
     void poll();
@@ -89,12 +108,12 @@ export default function DevDrawer() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d") {
         e.preventDefault();
-        setOpen((o) => !o);
+        onOpenChange(!open);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [available]);
+  }, [available, open, onOpenChange]);
 
   /**
    * navigator.clipboard needs a secure context, which http://<lan-ip>:3000
@@ -140,15 +159,6 @@ export default function DevDrawer() {
 
   return (
     <>
-      <button
-        className="dev-handle"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-      >
-        {open ? "close" : "API"} {calls.length}
-        {failures > 0 ? <span className="dev-badge">{failures}</span> : null}
-      </button>
-
       <section className={open ? "dev-drawer open" : "dev-drawer"}>
         <header className="dev-head">
           <button
@@ -196,6 +206,18 @@ export default function DevDrawer() {
           ) : tab === "settings" ? (
             <button onClick={reset}>reset to defaults</button>
           ) : null}
+          {/* T85: the pill carried the call count, the failure badge and
+              the only close; the nav bar's Dev item is a label and not a
+              readout, so all three live in the head now. The count is
+              live whether the drawer is open or not (Pete, fifth live
+              test: a stale count reads as "nothing is being recorded"). */}
+          <span className="dev-count">
+            API {calls.length}
+            {failures > 0 ? <span className="dev-badge">{failures}</span> : null}
+          </span>
+          <button className="dev-close" onClick={() => onOpenChange(false)}>
+            close
+          </button>
         </header>
 
         <div className="dev-body">
