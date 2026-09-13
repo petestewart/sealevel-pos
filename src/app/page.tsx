@@ -2197,17 +2197,24 @@ function FrontDesk({
    */
   const openAttachSearch = useCallback(() => {
     setAttachMode(true);
+    /* T87 review: drop the previous search WHOLE, not just its rows. The
+     * box is cleared here, so a live search still in the air (T81 leaves
+     * the modal closed until its first page, so one can be) is for a
+     * query nobody can see: unaborted, its answer lands as attach rows
+     * under an empty box, and until then `searching` dims the Class rows
+     * behind a "Searching Mindbody..." line on the one segment that
+     * never calls Mindbody. It also leaves `searchPage.done` false, and
+     * with it the paging sentinel, which would page the old query. */
+    stopSearch();
     setSearchMsg(null);
     setSearchError(null);
-    setSearchTitle("");
-    setFound([]);
     setQuery("");
     setSearchOpen(true);
     setAutoWidened(false);
     setAttachTab(
       activeIdRef.current !== null && entries.length > 0 ? "class" : "all",
     );
-  }, [entries.length]);
+  }, [entries.length, stopSearch]);
 
   /**
    * Tapping a segment cell (T87). To Class: whatever search was up is
