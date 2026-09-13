@@ -863,7 +863,7 @@ const FIXED_PASS_GROUPS = [
   "Drop-in & Packs",
   "Specials",
   "Teen/Child",
-  "Buddy / Guest Passes",
+  "Buddy/Guest",
   "Trainings",
   "Workshops",
   "Fees",

@@ -92,6 +92,30 @@ function routeServices(passes: CatalogItem[]): CatalogItem[] {
 }
 
 /**
+ * Pete, on the live rail (T76 follow-up): "Rentals was supposed to be a
+ * main category as well." A retail PRODUCT whose name matches a
+ * `nameMatches` handle (a "Mat Rental" filed under Accessories, say)
+ * moves to that category too, so a rental lands on the Rentals cell
+ * whichever kind of item Mindbody makes it. Products carry no revenue
+ * category, so the name is the only handle.
+ */
+function routeProducts(products: CatalogItem[]): CatalogItem[] {
+  const byPattern: { re: RegExp; id: number }[] = [];
+  for (const c of counterCategories) {
+    const id = c.categoryIds[0];
+    if (id === undefined) continue;
+    for (const source of c.nameMatches ?? []) {
+      byPattern.push({ re: new RegExp(source, "i"), id });
+    }
+  }
+  if (byPattern.length === 0) return products;
+  return products.map((p) => {
+    const routed = byPattern.find(({ re }) => re.test(p.name))?.id;
+    return routed === undefined ? p : { ...p, categoryId: routed };
+  });
+}
+
+/**
  * The raw catalog, from the cache when it is fresh for the current target,
  * else from the four Mindbody reads. Throws on a failed read, and a
  * failure is never cached: the next request retries Mindbody.
@@ -117,7 +141,7 @@ export async function rawCatalog(
   ]);
   const data: RawCatalog = {
     categories: counterCategories,
-    products,
+    products: routeProducts(products),
     passes: routeServices(passes),
     packages,
     contracts,

@@ -4282,14 +4282,15 @@ export default function SaleScreen(props: {
         : [],
     [catalog],
   );
+  /** The Rentals cell renders whenever the catalog names the category,
+   *  empty or not (Pete: "Rentals was supposed to be a main category as
+   *  well"): a main category that hides itself when nothing routes to
+   *  it looked like a missing one. Empty, its shelf says so. */
   const rentalsCategory = useMemo(
     () =>
       catalog
-        ? (catalog.categories.find(
-            (c) =>
-              sectionOf(c) === RENTALS_SECTION &&
-              categoryShelf(catalog, c).length > 0,
-          ) ?? null)
+        ? (catalog.categories.find((c) => sectionOf(c) === RENTALS_SECTION) ??
+          null)
         : null,
     [catalog],
   );
@@ -5922,7 +5923,9 @@ export default function SaleScreen(props: {
                   <p className="muted">
                     {onFavorites
                       ? "Star items on any shelf, and configure bundles in src/lib/bundles.ts."
-                      : "Nothing sellable in this category."}
+                      : activeCat === RENTALS_SECTION
+                        ? "No rental came back from Mindbody. A rental is a pricing option or product named with Rental or Towel, or in the Towel and Mat category."
+                        : "Nothing sellable in this category."}
                   </p>
                 ) : (
                   <>
