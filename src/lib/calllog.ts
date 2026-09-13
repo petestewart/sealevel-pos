@@ -84,6 +84,33 @@ const REDACTED = "<redacted>";
  *  so that a field added later cannot slip through unredacted. */
 const SECRET_KEY = /^(CardNumber|CVV|CVC|CardCode|SecurityCode)$/i;
 
+/**
+ * A card number sitting where no card key names it: 13 to 19 digits,
+ * optionally grouped by single spaces or dashes, not part of a longer run.
+ *
+ * Redacting by key name alone was not enough (T84 review). Mindbody's
+ * refusals are free text and one of them names the card it refused --
+ * "The credit card number 4111111111111111 is invalid." -- so the number
+ * comes BACK under `Error.Message`, a key no card rule would look at, and
+ * from there into this buffer and the drawer's copy-all. Anything shaped
+ * like a card number is struck out on sight, in both directions,
+ * whatever key it is under.
+ *
+ * The trade is deliberate: a 13-to-19-digit id in some other field is
+ * struck out too. Nothing in this app's traffic has one (client, visit
+ * and sale ids are nine digits or fewer, and dates and times carry
+ * separators this pattern does not cross), and a lost id in a dev log is
+ * worth far less than a card number that came to rest in one.
+ */
+const CARD_SHAPED = /(?<!\d)\d(?:[ -]?\d){12,18}(?!\d)/g;
+
+/** Any card-shaped run of digits in free text, struck out. */
+export function scrubCardDigits(text: string): string {
+  /* replace() with a global pattern resets lastIndex itself, so the
+   * shared regex is safe to reuse here; a test() first would not be. */
+  return text.replace(CARD_SHAPED, REDACTED);
+}
+
 /** Whether a TEXT body mentions a card at all, so that the 99% of
  *  records that do not are passed through untouched. */
 const CARD_KEY_IN_TEXT =
@@ -105,7 +132,12 @@ function redactCard(
   keep: string[],
   key: string | null = null,
 ): unknown {
-  if (Array.isArray(value)) return value.map((v) => redactCard(v, keep));
+  /* A string value anywhere: struck out if it is shaped like a number.
+   * The key it sits under is deliberately not consulted. */
+  if (typeof value === "string") return scrubCardDigits(value);
+  /* The key rides into an array, so a card object inside one is still
+   * recognised as a card object. */
+  if (Array.isArray(value)) return value.map((v) => redactCard(v, keep, key));
   if (!value || typeof value !== "object") return value;
   const obj = value as Record<string, unknown>;
   if (isCardObject(key, obj)) {
@@ -129,17 +161,20 @@ function redactCard(
  *  struck out of the text itself. */
 export function redactBody(value: unknown, keep = RESPONSE_CARD_KEEP): unknown {
   if (typeof value === "string") {
-    /* Every other record is left exactly as it arrived: a response with
-     * no card field in it is not worth parsing and re-printing, which
-     * would reflow every roster read in the drawer and eat into the
-     * clip limit for nothing. */
-    if (!CARD_KEY_IN_TEXT.test(value)) return value;
+    /* Every other record keeps its own formatting: a response with no
+     * card field in it is not worth parsing and re-printing, which would
+     * reflow every roster read in the drawer and eat into the clip limit
+     * for nothing. It still goes through the digit scrub, which changes
+     * nothing at all unless a number is sitting in it. */
+    if (!CARD_KEY_IN_TEXT.test(value)) return scrubCardDigits(value);
     try {
       return JSON.stringify(redactCard(JSON.parse(value), keep), null, 2);
     } catch {
-      return value.replace(
-        /("(?:CardNumber|CVV|CVC|CardCode|SecurityCode)"\s*:\s*)"[^"]*"/gi,
-        `$1"${REDACTED}"`,
+      return scrubCardDigits(
+        value.replace(
+          /("(?:CardNumber|CVV|CVC|CardCode|SecurityCode)"\s*:\s*)"[^"]*"/gi,
+          `$1"${REDACTED}"`,
+        ),
       );
     }
   }

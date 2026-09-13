@@ -11,7 +11,7 @@
  * ~400ms and the counter cannot afford that on a check-in.
  */
 
-import { record, redactRequest } from "./calllog";
+import { record, redactRequest, scrubCardDigits } from "./calllog";
 
 export interface MindbodyEnv {
   apiKey: string;
@@ -370,11 +370,18 @@ export function isActorTokenDead(err: unknown): boolean {
 /** Build the teacher-facing error for a non-ok Mindbody answer, tagging it
  *  with the HTTP status for mindbodyHttpStatus(). The thrown message
  *  reaches teacher-facing surfaces, so it carries Mindbody's human-readable
- *  reason and nothing else; transport detail lives in the call log. */
+ *  reason and nothing else; transport detail lives in the call log.
+ *
+ *  T84 review: Mindbody's reason is free text and it can quote the card
+ *  it refused ("The credit card number 4111111111111111 is invalid."),
+ *  which would put a PAN in a thrown Error, in a route's error answer and
+ *  on the screen. Card-shaped digits are struck out of the reason first;
+ *  the sentence still says what is wrong. */
 function mindbodyHttpError(body: unknown, status: number): Error {
-  const message =
+  const raw =
     (body as any)?.Error?.Message ??
     (typeof body === "string" ? body.slice(0, 200) : "");
+  const message = typeof raw === "string" ? scrubCardDigits(raw) : "";
   const err = new Error(
     message || `Mindbody did not accept the request (HTTP ${status}).`,
   );
