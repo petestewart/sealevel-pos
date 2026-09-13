@@ -4728,9 +4728,9 @@ function FrontDesk({
     );
   };
 
-  /* T46: the calendar control beside the class dropdown. A 64px outlined
-     button in the header's own idiom, the glyph alone on every day
-     (T61; the date was text beside it from T46). Rendered from a const so the
+  /* T46: the calendar control beside the class dropdown, LEFT of it since
+     T81. A 76px cell in the header's own idiom, the glyph alone on every
+     day (T61; the date was text beside it from T46). Rendered from a const so the
      header without a class (a picked day with nothing on it) can still
      carry it: the button that got a teacher onto another day must never
      vanish with that day's empty schedule. */
@@ -4818,6 +4818,7 @@ function FrontDesk({
           reload. */}
       {classes.length === 0 && !error ? (
         <header className="class-header">
+          {calendarButton}
           <p className="muted class-none">
             {viewDate && !viewLoading
               ? viewError
@@ -4825,7 +4826,6 @@ function FrontDesk({
                 : `No classes on ${dayKeyLabel(viewDate)}.`
               : "No classes in the next few hours."}
           </p>
-          {calendarButton}
         </header>
       ) : null}
 
@@ -4855,8 +4855,11 @@ function FrontDesk({
               for the class in front of you. */}
           {/* T52 (Pete): "the calendar icon should be butted up against
               the class selector". One group, the dropdown and the day
-              control sharing an edge, like an input with an addon. */}
+              control sharing an edge, like an input with an addon. T81
+              (Pete): "the calendar icon should be to the left of the
+              class selector", so the day control leads the group. */}
           <div className="class-group">
+          {calendarButton}
           <div className="class-pick">
             <button
               className="class-pick-btn"
@@ -4954,7 +4957,6 @@ function FrontDesk({
               </>
             ) : null}
           </div>
-          {calendarButton}
           </div>
           {/* T60 (Pete): "the position of signed up/checked in/waitlist
               and Buy/TeacherName/personicon should be swapped with each

@@ -254,7 +254,9 @@ button {
   min-height: 76px;
   padding: 0;
   border: 0;
-  border-left: 1px solid var(--line);
+  /* T81: the day control leads the group (Pete: "to the left of the
+   * class selector"), so its hairline is on the right. */
+  border-right: 1px solid var(--line);
   border-radius: 0;
   background: transparent;
   color: var(--ink);
