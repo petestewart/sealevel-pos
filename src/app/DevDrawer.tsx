@@ -883,10 +883,17 @@ const isFixedLabel = (label: string) =>
 /** A label folded onto the fixed one it names, mirroring shelfconfig's
  *  `canonicalGroupLabel` so the block below shows the order the rail
  *  will draw and not a second cell of the same name. */
-const canonLabel = (label: string) =>
-  FIXED_PASS_GROUPS.find(
-    (g) => g.toLowerCase() === label.trim().toLowerCase(),
-  ) ?? label.trim();
+const canonLabel = (label: string) => {
+  const folded = label.trim().toLowerCase();
+  /* The label that group shipped with before the T76 rename, folded here
+   * too (T86 review) because shelfconfig folds it: without this the block
+   * drew a ninth "Buddy / Guest Passes custom" row for a group the rail
+   * files under Buddy/Guest, and moving that row did nothing. */
+  if (folded === "buddy / guest passes") return "Buddy/Guest";
+  return (
+    FIXED_PASS_GROUPS.find((g) => g.toLowerCase() === folded) ?? label.trim()
+  );
+};
 
 /** T86: the counter categories a retail product may be moved to,
  *  mirrored from src/lib/categories.ts `counterCategories` (the Retail
