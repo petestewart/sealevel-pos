@@ -13,6 +13,7 @@ import {
 import {
   applyShelfConfig,
   itemKey,
+  productCategoryOverrides,
   SHELF_SETTING_KEY,
   validateShelfConfig,
   type ShelfItemType,
@@ -69,6 +70,11 @@ export async function GET(request: Request) {
       dbAvailable(),
     ]);
     const shelf = applyShelfConfig(data, config);
+    /* T86: a product the config moved is listed under its NEW category,
+     * so the placement line answers "where will this land" rather than
+     * "where does Mindbody file it". One reading of the overrides for the
+     * shelf and for this line. */
+    const moved = productCategoryOverrides(config);
     const shown = new Set<string>([
       ...shelf.products.map((p) => itemKey("Product", p.id)),
       ...shelf.passes.map((p) => itemKey("Service", p.id)),
@@ -105,7 +111,15 @@ export async function GET(request: Request) {
       return { type, id, key, name, price, placement };
     };
     const items: ShelfAdminItem[] = [
-      ...data.products.map((p) => item("Product", p.id, p.name, p.price, p.categoryId)),
+      ...data.products.map((p) =>
+        item(
+          "Product",
+          p.id,
+          p.name,
+          p.price,
+          moved.get(itemKey("Product", p.id)) ?? p.categoryId,
+        ),
+      ),
       ...data.passes.map((p) => item("Service", p.id, p.name, p.price, p.categoryId)),
       ...data.packages.map((p) => item("Package", p.id, p.name, p.price, null)),
       /* A contract's headline is its recurring charge (what the shelf
