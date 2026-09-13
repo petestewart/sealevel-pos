@@ -2578,9 +2578,9 @@ button.chip.action:active {
   /* T39.4: a column the viewport bounds. The shell and the panes take
    * flex: 1 with min-height: 0, so each pane scrolls inside itself (the
    * grid, the rail, the cart's lines) instead of the overlay scrolling
-   * as a whole, and the action bar (T39.5) is simply the last child at
+   * as a whole, and each column's foot (T85) is simply its last child at
    * the bottom. Under 900 the folds below give the height back and the
-   * overlay scrolls with the bar stuck to its edge. */
+   * overlay scrolls, with the ticket's foot stuck to its edge. */
   display: flex;
   flex-direction: column;
   /* A scroll that hits the overlay's end must not chain into the roster
@@ -3707,9 +3707,9 @@ button.sale-for:disabled {
 
 /* One column on a narrow screen, in DOM order: rail, grid, cart. The
  * viewport bound (T39.4) is given back here: three stacked panes cannot
- * share 768px, so the overlay scrolls as it did before, the bar (T39.5)
- * sticks to its bottom edge, and the ticket's lines take T38's cap
- * again so the totals stay near. */
+ * share 768px, so the overlay scrolls as it did before, the ticket's
+ * foot (T85, the action bar's place) sticks to its bottom edge, and the
+ * ticket's lines take T38's cap again so the totals stay near. */
 @media (max-width: 900px) {
   .sale-shell,
   .sale-panes {
