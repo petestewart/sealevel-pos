@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 
 import { cookieValue, safeEqual } from "./auth";
 import {
+  boundedDb,
   dbConfigured,
   deleteStaffSession,
   findStaffSession,
@@ -87,6 +88,14 @@ const COOKIE_PREFIX = "s1";
  *  as their entries expire; this catches the ones written before a
  *  restart. */
 const TABLE_SWEEP_EVERY_MS = 60 * 1000;
+/** How long a lookup or an end waits for the TABLE (T78 review). A Map
+ *  hit never touches it; a miss does, and requireActor sits on every
+ *  write route, so a black-holed database (the T62 review measured 5s
+ *  for the connect timeout alone, once per 30s cooldown) must not hold
+ *  a check-in for that. Past this the row reads as absent (a sign-in
+ *  again, which then lives in memory) and the attempt runs on, so a
+ *  slow store still sets the cooldown and a slow delete still lands. */
+const TABLE_WAIT_MS = 2_000;
 
 interface StaffState {
   sessions: Map<string, StaffSession>;
@@ -266,7 +275,11 @@ export async function staffSessionFrom(
   const hit = state.sessions.get(id);
   if (hit) return hit;
   if (p.mode !== "postgres") return null;
-  const row = await findStaffSession(id, new Date(now));
+  const row = await boundedDb(
+    findStaffSession(id, new Date(now)),
+    TABLE_WAIT_MS,
+    null,
+  );
   if (!row) return null;
   const issuedAt = row.issuedAt.getTime();
   if (now - issuedAt >= STAFF_TTL_MS) return null;
@@ -293,7 +306,9 @@ export async function endStaffSession(id: string): Promise<void> {
   const s = state.sessions.get(id);
   if (!s) return;
   state.sessions.delete(id);
-  if (persistence().mode === "postgres") await deleteStaffSession(id);
+  if (persistence().mode === "postgres") {
+    await boundedDb(deleteStaffSession(id), TABLE_WAIT_MS, false);
+  }
   await revokeStaffToken(s.token);
 }
 
