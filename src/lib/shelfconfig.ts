@@ -22,10 +22,15 @@
  * Both are optional, so a config stored before T86 reads exactly as it
  * did.
  *
- * This module is pure and dependency-free on purpose: the catalog route,
- * the admin route and a plain node test share one rule, and the dev
- * drawer re-declares the shape it needs (the codebase's convention for
- * keeping server modules out of the client bundle).
+ * This module is pure on purpose: the catalog route, the admin route and
+ * a plain node test share one rule, and the dev drawer re-declares the
+ * shape it needs (the codebase's convention for keeping server modules
+ * out of the client bundle). Its one import, T86's, is categories.ts,
+ * which is pure data with no imports of its own: the category ids a
+ * product may be moved to are read off `counterCategories` rather than
+ * repeated here, since a second copy would drift the day a Retail child
+ * is added. Nothing else may be imported: a server module here would end
+ * that.
  */
 
 import { counterCategories } from "./categories";
