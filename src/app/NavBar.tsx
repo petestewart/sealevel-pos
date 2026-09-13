@@ -105,6 +105,12 @@ export function DevIcon() {
   );
 }
 
+/** Three of the five items ARE the screen; the other two open something
+ *  over it. Only a screen can be the current one. */
+function isScreen(key: NavItem["key"]): boolean {
+  return key === "signin" || key === "buy" || key === "pay";
+}
+
 export default function NavBar({ items }: { items: NavItem[] }) {
   return (
     <nav className="nav-bar" aria-label="Screens">
@@ -116,7 +122,14 @@ export default function NavBar({ items }: { items: NavItem[] }) {
              say why when a teacher asks it, and the tap guard below is
              what refuses the tap. */
           aria-disabled={item.why !== null}
-          aria-current={item.on ? "page" : undefined}
+          /* T85 review: aria-current says which SCREEN is showing, and
+             there is exactly one. Profile and Dev open a modal and a
+             drawer over whatever screen the teacher is on, so lighting
+             them (which the accent rightly does) must not announce a
+             second current page; they report open/shut instead. */
+          aria-current={isScreen(item.key) && item.on ? "page" : undefined}
+          aria-expanded={isScreen(item.key) ? undefined : item.on}
+          aria-haspopup={item.key === "profile" ? "dialog" : undefined}
           title={item.why ?? undefined}
           onClick={() => {
             if (item.why !== null) return;
