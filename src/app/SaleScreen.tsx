@@ -5538,11 +5538,12 @@ export default function SaleScreen(props: {
 
   const cartCount = cart.reduce((n, l) => n + l.quantity, 0);
   /**
-   * T39.5: the shelf's Pay, the cart column's foot since T85. The
-   * amount is the SERVER's grandTotal and nothing else: while T38's
-   * estimate is on the ticket it reads `Pay` with the count and no
-   * figure, because a number on the one button that moves money must
-   * never be the browser's. `payWhy` is the reason it is disabled, or
+   * T39.5: the shelf's Pay, the cart column's foot since T85. Since T82
+   * the button's face is the word alone and the amount is in its title,
+   * where it is still the SERVER's grandTotal and nothing else: while
+   * T38's estimate is on the ticket there is no figure to give, because
+   * a number on the one button that moves money must never be the
+   * browser's. `payWhy` is the reason it is disabled, or
    * null; it is the button's title, so a greyed Pay says why when asked.
    * Pay enters pay mode (T39.6); the charge itself is the panel's, in
    * the payment column's foot.
