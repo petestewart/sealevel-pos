@@ -188,22 +188,30 @@ function sign(id: string): string {
  *  before a restart that no Map entry stands for; their tokens are
  *  revoked as well, best effort. */
 function sweep(now: number, p: Persistence): void {
+  const deletes: Promise<boolean>[] = [];
   for (const [id, s] of state.sessions) {
     if (now - s.issuedAt >= STAFF_TTL_MS) {
       state.sessions.delete(id);
       void revokeStaffToken(s.token);
-      if (p.mode === "postgres") void deleteStaffSession(id);
+      if (p.mode === "postgres") deletes.push(deleteStaffSession(id));
     }
   }
   if (p.mode !== "postgres") return;
   if (now - state.lastTableSweep < TABLE_SWEEP_EVERY_MS) return;
   state.lastTableSweep = now;
-  void sweepStaffSessions(new Date(now)).then((encs) => {
-    for (const enc of encs ?? []) {
-      const token = decryptStaffToken(enc, p.tokenKey);
-      if (token !== null) void revokeStaffToken(token);
-    }
-  });
+  /* After the Map loop's deletes have settled (T78 review): run at the
+   * same time, the table's DELETE RETURNING could hand back a row the
+   * loop had just revoked, and revoke it twice. Each swept token is
+   * revoked once. */
+  const tokenKey = p.tokenKey;
+  void Promise.allSettled(deletes)
+    .then(() => sweepStaffSessions(new Date(now)))
+    .then((encs) => {
+      for (const enc of encs ?? []) {
+        const token = decryptStaffToken(enc, tokenKey);
+        if (token !== null) void revokeStaffToken(token);
+      }
+    });
 }
 
 /* --- The session ----------------------------------------------------- */
