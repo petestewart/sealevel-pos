@@ -9902,3 +9902,82 @@ and covered by the modal's scrim from the account modal; a Profile tap
 stacks no second modal; SaleScreen's diff confined to the enroll
 region; no CSS change. Not exercised live: real staff id and PIN
 pairing.
+
+## T82: the Pay screen reworked: Finalize Sale, X per line, quantity on the item, optional credit, no Due, receipts on a comp
+
+Pete's batch: "the Charge/Comp button should always say 'Finalize
+Sale' and move to where the 'Comp this sale' button is/was. The 'Pay'
+button should also be there. No need for it to contain the total items
+and dollar amount." "In the receipt list, Have an X next to an item to
+easily cancel it." "'Email receipt' should have a checkbox to the left
+of it." "Receipts should get emailed even with comp, today it disallows
+it." "Remove the 'Take $230 in cash' line." "Add + and - (and trash?)
+on the item that you click." "Credit should be an option, not forced."
+"Remove the 'Due' section at the bottom right." "'What happened?'
+should be replaced with 'Add a note'." And later: "in the number pad
+entry for amounts (discount, cash) change 'del' to a delete icon
+(backspace with X)".
+
+### What changed
+
+- **Finalize Sale**, one wording in every state and no amount, in the
+  payment column's foot beside Discount (T85 put it there); Pay at the
+  ticket's foot reads the word alone. What is owed lives in the titles
+  and the quiet line.
+- **No Due figure.** Total and Change remain; the tile notes ("Take $X
+  in cash", "Charge $X to the card on file", "Applies first") are gone;
+  T35's reasons stay.
+- **Credit is a tender, not a rule.** T28's rule 1 (credit covers the
+  total so credit IS the method) and assumption P2 are retired on the
+  screen and in the route: a cash or card tender with credit on the
+  account is accepted; a credit line above the live re-read balance is
+  still refused; the lines must still sum to Mindbody's total. One
+  narrow guard stays: a card tender under $10 when the account already
+  covers the total is refused, since that path buys account credit and
+  would buy a second $10 the client already holds.
+- **Receipts on a comp.** The route no longer skips the email for a
+  comp; the toggle is enabled under a 100% discount and disabled only
+  when there is nobody to email. It carries a drawn 24px checkbox in
+  tokens.
+- **The ticket** gets a 44px X on every line and a minus / plus
+  stepper (floor 1, cap 99); an in-cart shelf card carries a 48px
+  stepper strip, a sibling of the add button so a tap never adds twice.
+  The select-to-reveal quantity editor is gone.
+- **"Add a note"** replaces "What happened?". Both amount keypads
+  delete with a backspace-and-X glyph at 24px on the unchanged 64px
+  key. The design README follows.
+
+### Verified by the builder
+
+Typecheck and build. Route suite 29 checks: cash and card accepted with
+credit on the account, credit over balance refused whole-sale and per
+leg, comp plus receipt sends SendEmail true in both 100% shapes, the
+house client gets none, the split sum enforced. Playwright in both
+palettes and both orientations for its own harness, T79's copy, T85's
+nav harness and T67's dialog harness.
+
+### Review
+
+Adversarial review in its own worktree, four fixes:
+
+- **An inert Finalize Sale said "Card ...4242" instead of why.** With
+  nothing tendered the title fell through to the card detail, and this
+  ticket had just removed the amount from the button and the Due tile,
+  so nothing left said what was owed. Now "$107.45 still to pay. Choose
+  how they are paying."
+- **Two figures in a three-column grid** left a blank third that read
+  as a tile that failed to render; the grid is two columns, dead rules
+  dropped.
+- Comments in the route and the pass dialog still said the server
+  enforces rule 1; corrected.
+- README's Due line names the title too.
+
+Reviewed and correct: the under-$10 guard and its screen mirror agree
+in every probed state and cash is always offered so it cannot dead-end
+a sale; no leg reordering anywhere; the split sends both payments in
+the teacher's order; one cent off is a 409 with nothing charged;
+receipts in both shapes; Finalize Sale gated by the render that priced
+the cart and inert mid-charge; X re-prices and clears the tender;
+tokens only; nothing under 16px. Left alone: the pay-mode ticket is
+read-only since T39.6, so the X and stepper live in shelf mode; the
+PIN pad keeps its own glyph.
