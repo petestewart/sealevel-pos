@@ -9483,3 +9483,60 @@ the chip's keyboard and aria; the calendar at both widths; tokens only;
 nothing under 16px or 44px. Pre-existing and left alone: Escape does not
 close the check-out confirm; the working chip keeps its check-in label
 while a check-out is in flight.
+
+## T87: the attach modal is All | Class
+
+Pete, on the live build: "the 'Attach a client to the sale' popup
+needs improvements: instead of a class selector and all the buttons,
+just use All | Class. the class will always be the class selected in
+the signin screen".
+
+### What changed
+
+- **One segment under the search bar**, two 48px cells, a radiogroup.
+  **Class** is the roster of the class selected on the sign-in screen,
+  everyone booked, alphabetical by last name, with the checked in /
+  signed up chip, filtered in memory by whatever is typed with no
+  minimum length and no Mindbody call. **All** is T81's live search,
+  with the standing chip on anyone also on that roster.
+- **Default** chosen once when the modal opens: Class when a class is
+  selected and somebody is booked, All otherwise. Typed text survives a
+  switch. T52's widen stays: Enter on Class with nobody matching moves
+  the segment to All, searches, and says "Nobody in class matched.
+  Showing everyone."
+- **Removed**: the "In class" toggle, the class dropdown, the three-way
+  segment (everyone / signed in / not yet), the roster fetch for a
+  class other than the selected one, and the CSS only they used. The
+  calendar's day-classes cache stays; the calendar reads it.
+
+### Verified by the builder
+
+Playwright against the mock, both palettes at 1194x834 and 834x1194:
+27 checks. Opens on Class with no search call; typing filters in
+memory; All searches live; text survives a switch; the row tap
+attaches; All by default on an empty roster; none of the old controls
+in the DOM. T81 and T73 harness copies pass unchanged. Typecheck and
+build green.
+
+### Review
+
+Adversarial review in its own worktree, two fixes (and the builder's
+two commit messages rewritten to the project's attribution trailer):
+
+- **Enter on a Class cell with nobody booked did nothing.** The early
+  return added for the empty roster also swallowed the widen, so a
+  typed name plus Enter fired no search and moved no segment. It
+  widens again.
+- **Opening the modal cleared the box but not the search behind it.**
+  Since T81 a live search can be in flight with the modal closed;
+  tapping Attach then showed "Searching Mindbody..." over the Class
+  rows and landed stale rows for a query no longer in the box. Opening
+  now stops the search.
+
+Reviewed and correct: rows are computed from the live roster, so a
+check-in landing under the open modal updates them; one call per pause
+on All; the removed state is gone from src; radiogroup aria with Tab,
+Enter and Space; tokens only, 48px, 16px. Flagged for later: when the
+modal opens while the first roster load is still in flight the roster
+reads as empty and the default is All; in attach mode T73's fixed box
+leaves dead space under the rows region.
