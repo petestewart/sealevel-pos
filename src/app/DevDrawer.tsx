@@ -1116,15 +1116,12 @@ function ShelfPanel() {
         if (body?.available === false) setAvailable(false);
         return;
       }
-      const stored: ShelfAdminConfig = body.config ?? config;
-      setHidden(new Set(stored.hidden ?? []));
-      setGroups((stored.groups ?? []).map((g) => ({ ...g, ids: [...g.ids] })));
-      setGroupOrder([...(stored.groupOrder ?? [])]);
-      setMoves(
-        Object.fromEntries(
-          (stored.products ?? []).map((o) => [o.key, o.categoryId]),
-        ),
-      );
+      /* T86: re-read rather than take the PUT's echo, because the PLACEMENT
+       * line is computed server-side over the saved config, and a stale
+       * one is worst exactly here: moving a product is a change whose
+       * only confirmation IS that line. The GET costs nothing metered
+       * (the catalog behind it is the same two-minute cache). */
+      await load();
       setOutcome({
         ok: true,
         text: "saved; the shelf shows it on the next catalog load",
