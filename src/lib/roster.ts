@@ -123,12 +123,27 @@ async function classesBetween(
    * was seven hours ahead in PDT: at 3:34am Seattle the request read
    * 08:34Z to 14:34Z, and Mindbody answered with the 9:00 and 9:30
    * classes. */
+  const wallStart = studioWall(start);
+  const wallEnd = studioWall(end);
   const body = await mindbody(
-    `/class/classes?StartDateTime=${encodeURIComponent(studioWall(start))}` +
-      `&EndDateTime=${encodeURIComponent(studioWall(end))}`,
+    `/class/classes?StartDateTime=${encodeURIComponent(wallStart)}` +
+      `&EndDateTime=${encodeURIComponent(wallEnd)}`,
   );
   return (body?.Classes ?? [])
     .filter((c: any) => c.IsCanceled !== true)
+    /* Clip to the window we asked for. A day pick (classesForDay) sends
+     * midnight to the next midnight, and Mindbody answered with the
+     * NEXT day's classes as well (Pete, live: "when i select sunday on
+     * the calendar it goes to a monday class"; the day list then held
+     * Monday too, and the nearest-by-time pick took a Monday class).
+     * The naive local strings compare lexically as instants, so a
+     * class is kept only when its start is inside [start, end). */
+    .filter(
+      (c: any) =>
+        typeof c.StartDateTime === "string" &&
+        c.StartDateTime >= wallStart &&
+        c.StartDateTime < wallEnd,
+    )
     .map(
       (c: any): ClassSummary => ({
         classId: c.Id,
