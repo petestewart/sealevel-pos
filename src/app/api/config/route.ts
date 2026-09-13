@@ -4,13 +4,13 @@ import { authRequired, isAuthenticated } from "@/lib/auth";
 import { BANNER_SETTING_KEY, getSetting, storageMode } from "@/lib/db";
 import {
   allowedWriteClientIds,
-  isDryRun,
+  dryRunState,
   mindbodyEnv,
   target,
 } from "@/lib/mindbody";
 import { STUDIO_TAX_RATE, houseClientId } from "@/lib/sale";
-import { staffSessionStorage } from "@/lib/staffsession";
-import { ensureTarget, targetSource } from "@/lib/target";
+import { staffSessionFrom, staffSessionStorage } from "@/lib/staffsession";
+import { ensureTarget, isTargetAdmin, targetSource } from "@/lib/target";
 
 export const dynamic = "force-dynamic";
 
@@ -45,12 +45,18 @@ export async function GET(request: Request) {
    * before target() is called. Bounded and never throws; with no
    * database it is a no-op and the environment answers, as before. */
   await ensureTarget();
+  /* T89: dry run is now per request, since a browser can ask for its own
+   * on top of the server's. */
+  const dry = await dryRunState();
   const bannerOnly = authRequired() && !isAuthenticated(request);
   if (bannerOnly) {
     /* The lock screen shows the same banner the counter does, database
      * copy included; storage mode, like siteId, waits for a session. */
     return NextResponse.json({
-      dryRun: isDryRun(),
+      dryRun: dry.on,
+      /* The lock screen's banner says "on this iPad" for a browser dry
+       * run too: it is the same banner and the same question. */
+      dryRunSource: dry.source,
       target: target(),
       siteId: null,
       configError: null,
@@ -66,8 +72,15 @@ export async function GET(request: Request) {
   } catch (err) {
     configError = err instanceof Error ? err.message : String(err);
   }
+  /* T89: whether the teacher signed in on THIS browser may switch the
+   * target (POS_ADMIN_STAFF_IDS). A boolean, never the list: it decides
+   * whether the drawer draws the switch at all, and /api/admin/target
+   * refuses anyone else regardless. */
+  const session = await staffSessionFrom(request);
   return NextResponse.json({
-    dryRun: isDryRun(),
+    dryRun: dry.on,
+    dryRunSource: dry.source,
+    targetAdmin: isTargetAdmin(session?.staffId ?? null),
     target: target(),
     siteId,
     configError,

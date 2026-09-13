@@ -165,3 +165,30 @@ export function targetSwitchNotice(now = Date.now()): string | null {
 export function clearTargetSwitchNotice(): void {
   state.notice = null;
 }
+
+/**
+ * Who may switch the target (Pete, after the design: only named admin
+ * staff, and for everybody else the switch does not exist).
+ *
+ * `POS_ADMIN_STAFF_IDS` is a comma-separated list of Mindbody staff ids,
+ * in the server environment where a browser cannot reach it. EMPTY MEANS
+ * NOBODY: an unset variable is not "everyone is an admin", because the
+ * one thing worse than a switch nobody can reach is a switch every
+ * teacher can. The drawer hides the block for anyone not on the list and
+ * the route refuses them, so the guard is not the hiding.
+ */
+export function adminStaffIds(): Set<string> {
+  return new Set(
+    (process.env["POS_ADMIN_STAFF_IDS"] ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+}
+
+/** Whether a staff id may switch the target. False for null (nobody
+ *  signed in) and false when the list is empty. */
+export function isTargetAdmin(staffId: number | string | null): boolean {
+  if (staffId === null) return false;
+  return adminStaffIds().has(String(staffId));
+}

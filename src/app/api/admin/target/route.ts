@@ -6,14 +6,19 @@ import { devtoolsEnabled } from "@/lib/calllog";
 import { clearRawCatalog } from "@/lib/catalog";
 import { dbAvailable, dbConfigured, storageMode } from "@/lib/db";
 import {
-  isDryRun,
+  dryRunState,
   missingCredentials,
   siteIdFor,
   target,
   type Target,
 } from "@/lib/mindbody";
 import { endAllStaffSessions } from "@/lib/staffsession";
-import { ensureTarget, setTargetOverride, targetSource } from "@/lib/target";
+import {
+  ensureTarget,
+  isTargetAdmin,
+  setTargetOverride,
+  targetSource,
+} from "@/lib/target";
 
 export const dynamic = "force-dynamic";
 
@@ -22,22 +27,29 @@ export const dynamic = "force-dynamic";
  * redeploy. Pete asked for it and, told that it relaxes the rail keeping
  * write-reaching decisions out of the drawer, said "go".
  *
- * What guards it, all four at once:
+ * What guards it, all of these at once:
  *
  * - the device session (requireSession), like every admin route here;
  * - the devtools gate, so this 404s on a counter iPad exactly as
  *   /api/devlog does. A teacher cannot reach it at all;
  * - a signed-in teacher (requireActor), so the switch is somebody's, and
  *   logged as `[target] prod -> sandbox by staff=<id>`;
+ * - that teacher being a NAMED ADMIN (`POS_ADMIN_STAFF_IDS`, Pete: only
+ *   named admin staff, and for everybody else the switch does not
+ *   exist). Empty means nobody. Both verbs require it, so a teacher can
+ *   neither switch the target nor read which variables the other studio
+ *   is missing; the drawer hides the block for them as well, but the
+ *   refusal here is the guard;
  * - BOTH credential sets present in the server environment. A switch to
  *   a target whose variables are missing is refused with 409 and the
  *   NAMES of what to set, never a value.
  *
- * What it deliberately does NOT touch: dry run and the write guard. They
- * stay in the server environment, so switching to prod lands in dry run
- * unless POS_DRY_RUN=false was deployed, and the write guard still
- * suppresses writes for anyone not on its list. A panel that could turn
- * dry run off would defeat the point of dry run.
+ * What it deliberately does NOT touch: the server's dry run and the write
+ * guard. They stay in the server environment, so switching to prod lands
+ * in dry run unless POS_DRY_RUN=false was deployed, and the write guard
+ * still suppresses writes for anyone not on its list. A panel that could
+ * turn dry run off would defeat the point of dry run; the drawer's other
+ * T89 control can only turn one ON, for one browser.
  *
  * Switching ends every staff session (a token belongs to the site that
  * issued it) and clears the cached catalog, so nothing from the other
@@ -62,11 +74,13 @@ const TARGETS: Target[] = ["sandbox", "prod"];
 async function state() {
   await ensureTarget();
   const current = target();
+  const dry = await dryRunState();
   return {
     target: current,
     targetSource: targetSource(),
     siteId: siteIdFor(current),
-    dryRun: isDryRun(),
+    dryRun: dry.on,
+    dryRunSource: dry.source,
     storage: storageMode(),
     configured: dbConfigured(),
     available: await dbAvailable(),
@@ -78,19 +92,41 @@ async function state() {
   };
 }
 
+/** The signed-in teacher, refused unless they are a named admin. */
+async function requireAdmin(
+  request: Request,
+): Promise<
+  | { denied: NextResponse; staffId: null }
+  | { denied: null; staffId: number }
+> {
+  const actor = await requireActor(request);
+  if (actor.denied) return { denied: actor.denied, staffId: null };
+  if (!isTargetAdmin(actor.session.staffId)) {
+    return {
+      denied: NextResponse.json({ error: "Not an admin" }, { status: 403 }),
+      staffId: null,
+    };
+  }
+  return { denied: null, staffId: actor.session.staffId };
+}
+
 export async function GET(request: Request) {
   const denied = gate(request);
   if (denied) return denied;
+  const admin = await requireAdmin(request);
+  if (admin.denied) return admin.denied;
   return NextResponse.json(await state());
 }
 
 export async function PUT(request: Request) {
   const denied = gate(request);
   if (denied) return denied;
-  /* A switch is somebody's: the 401 here is the same `reason: "staff"`
-   * every write route answers, so the browser shows the sign-in gate. */
-  const actor = await requireActor(request);
-  if (actor.denied) return actor.denied;
+  /* A switch is somebody's, and that somebody has to be a named admin:
+   * the 401 is the same `reason: "staff"` every write route answers, so
+   * the browser shows the sign-in gate; the 403 is a teacher who is
+   * signed in and simply does not do this. */
+  const admin = await requireAdmin(request);
+  if (admin.denied) return admin.denied;
 
   let next: unknown;
   try {
@@ -163,7 +199,7 @@ export async function PUT(request: Request) {
   clearRawCatalog();
   /* The one log line, and no token or credential in it. */
   console.log(
-    `[target] ${current} -> ${next} by staff=${actor.session.staffId} ` +
+    `[target] ${current} -> ${next} by staff=${admin.staffId} ` +
       `(sessions ended: ${sessions.ended}${sessions.tableCleared ? "" : ", table did not answer"})`,
   );
   return NextResponse.json({
