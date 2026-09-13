@@ -5747,7 +5747,9 @@ function FrontDesk({
             aria-label={
               attachMode
                 ? "Attach a client to the sale"
-                : `Search results for ${searchTitle}`
+                : searchTitle
+                  ? `Search results for ${searchTitle}`
+                  : "Search for a walk-in"
             }
             onClick={(e) => e.stopPropagation()}
           >
@@ -5763,7 +5765,9 @@ function FrontDesk({
               <p className="modal-title">
                 {attachMode
                   ? "Attach a client to the sale"
-                  : `Results for "${searchTitle}"`}
+                  : searchTitle
+                    ? `Results for "${searchTitle}"`
+                    : "Search for a walk-in"}
               </p>
             </div>
             {/* Attach mode opens the modal BEFORE any search exists, so
@@ -6125,7 +6129,16 @@ function FrontDesk({
             {searchError ? (
               <p className="note">{searchError}</p>
             ) : null}
-            {!searching && !searchError && shownResults.length === 0 ? (
+            {/* T81: the modal open with no search behind it, the query
+                back under the minimum (or the bar's X pressed): the
+                hint, not "Nobody found" and a New client button for a
+                name nobody has finished typing. */}
+            {!searching && !searchTitle ? (
+              <p className="muted">
+                Type at least {settings.minQueryLength} letters.
+              </p>
+            ) : null}
+            {!searching && !searchError && searchTitle && shownResults.length === 0 ? (
               <>
                 <p className="muted">
                   Nobody found. Check the spelling, or try fewer letters.
