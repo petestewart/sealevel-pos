@@ -66,9 +66,13 @@ load. A proper admin surface outside the drawer is recorded future work.
 
 ## Redeploying
 
-Railway redeploys on every push to the chosen branch. A restart signs
-every teacher out (staff tokens live in server memory) and the gate
-comes back; the device PIN session survives.
+Railway redeploys on every push to the chosen branch. Since T78 a
+restart keeps every teacher signed in: staff sessions live in the
+`staff_sessions` table with the Mindbody token encrypted under
+`POS_SESSION_SECRET`, so a sign-in made before the deploy still names
+its teacher after it. With that secret or `DATABASE_URL` unset they
+live in server memory only, and a restart signs everyone out and the
+gate comes back. The device PIN session survives either way.
 
 ## Still unverified live
 

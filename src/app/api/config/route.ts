@@ -9,6 +9,7 @@ import {
   target,
 } from "@/lib/mindbody";
 import { STUDIO_TAX_RATE, houseClientId } from "@/lib/sale";
+import { staffSessionStorage } from "@/lib/staffsession";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +71,11 @@ export async function GET(request: Request) {
      * mode and is normal for local work; the dev drawer's settings tab
      * shows this as one quiet line. Nothing teacher-facing changes. */
     storage: storageMode(),
+    /* T78: where staff sessions live. "postgres" means a sign-in
+     * survives a server restart; "memory (no POS_SESSION_SECRET)" or
+     * "memory (no DATABASE_URL)" means a restart signs everyone out,
+     * as before T78. Nothing teacher-facing changes. */
+    staffSessions: staffSessionStorage(),
     /* T38: the studio's fallback tax rate, MIRRORED from the server
      * constant so the sale screen's while-pricing estimate can tax a
      * line the catalog carried no rate for the same way expectedTotal

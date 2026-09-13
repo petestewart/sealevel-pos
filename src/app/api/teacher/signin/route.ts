@@ -125,11 +125,11 @@ export async function POST(request: Request) {
   /* A session already here is replaced: its token is revoked so nothing
    * keeps acting as the previous teacher from a cookie that is about to
    * be overwritten. */
-  const previous = staffSessionFrom(request);
+  const previous = await staffSessionFrom(request);
   if (previous) await endStaffSession(previous.id);
 
   const teacher = { id: staff.id, name: staff.name };
-  const cookie = createStaffSession(teacher, signIn.token);
+  const cookie = await createStaffSession(teacher, signIn.token);
   recordSigninSuccess();
   console.log(`[staff] signed in staff=${teacher.id}`);
   return NextResponse.json(
