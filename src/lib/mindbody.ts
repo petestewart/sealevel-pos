@@ -14,7 +14,7 @@
 import { cookies } from "next/headers";
 
 import { record, redactRequest, scrubCardDigits } from "./calllog";
-import { ensureTarget, targetOverride } from "./target";
+import { ensureTarget, targetOverride, targetSettling } from "./target";
 
 export interface MindbodyEnv {
   apiKey: string;
@@ -555,6 +555,34 @@ export async function mindbody<T = any>(
           `POS_WRITE_CLIENT_IDS (${[...allowed].join(", ")})`,
       });
       return { WriteSuppressed: true } as T;
+    }
+    /* T89 review: the target moved a moment ago, so this write is not
+     * sent at all. A route makes several calls and the override can be
+     * refreshed between two of them (this process's own switch, or one
+     * read from the row after another process made it); a sale whose
+     * rehearsal priced one studio must never post to the other. Refused
+     * rather than suppressed: nothing is pretended to have worked. */
+    const settling = targetSettling();
+    if (settling > 0) {
+      console.warn(
+        `[target] refused ${method} ${path}: the studio target just changed, ` +
+          `settling for ${settling}ms. Sign in again and retry.`,
+      );
+      record({
+        method,
+        path,
+        status: null,
+        ms: 0,
+        outcome: "target-switch",
+        actor: null,
+        requestBody: opts.body ?? null,
+        responseBody:
+          "refused: the studio target just changed; this write was not sent",
+      });
+      throw new Error(
+        "The studio target just changed, so this write was not sent. " +
+          "Sign in again and try it once more.",
+      );
     }
   }
 

@@ -67,6 +67,9 @@ interface TargetState {
   reading: Promise<void> | null;
   /** T89: what the sign-in gate says after a switch, and until when. */
   notice: { text: string; until: number } | null;
+  /** T89 review: when the effective target last CHANGED in this process,
+   *  0 for never. Writes are refused for SETTLE_MS after it. */
+  changedAt: number;
 }
 
 /* On globalThis like the call log and the staff sessions: a dev recompile
@@ -77,6 +80,7 @@ const state: TargetState = (G.__posTarget ??= {
   loadedAt: 0,
   reading: null,
   notice: null,
+  changedAt: 0,
 });
 
 function parseTarget(raw: string | null): Target | null {
@@ -106,7 +110,7 @@ export function targetSource(): "env" | "setting" {
 export async function ensureTarget(now = Date.now()): Promise<void> {
   if (!dbConfigured()) {
     /* No database, no override, ever. Cheapest and most honest path. */
-    state.override = null;
+    apply(null);
     return;
   }
   if (state.reading) return state.reading;
@@ -135,7 +139,7 @@ export async function ensureTarget(now = Date.now()): Promise<void> {
     /* An answered read is the truth: no row, or a row that says anything
      * but sandbox or prod, means the environment decides -- the T29
      * fallback rule, and the only way back off a stored target. */
-    state.override = usableTarget(parseTarget(answer.value));
+    apply(usableTarget(parseTarget(answer.value)));
   })().catch(() => undefined);
   state.reading = read.finally(() => {
     state.reading = null;
@@ -193,6 +197,54 @@ function usableTarget(stored: Target | null): Target | null {
 }
 
 /**
+ * How long a write is refused after the effective target changes, in this
+ * process or in another one whose switch this process just read.
+ *
+ * T89 review, the one hole the five-second memo leaves: a route makes
+ * several Mindbody calls, and the memo can refresh BETWEEN two of them.
+ * /api/checkout reads the client's services from one studio and could
+ * then have posted the sale to the other -- half a request to each site,
+ * with a real card at the end of it. Pinning the target per request would
+ * need a request-scoped store that target()'s synchronous callers (
+ * isDryRun, the catalog key, the staff cache, the PIN guard) cannot
+ * reach, so the cheap and honest answer is the other one: for a moment
+ * after the target moves, a write does not go out at all. It is refused,
+ * loudly, and the teacher retries on a counter that is wholly on one
+ * site.
+ *
+ * The cost is nothing in practice. A switch ends every staff session, and
+ * every write route needs a signed-in teacher, so the writes this window
+ * catches are exactly the ones already in flight from before the switch.
+ * Reads are left alone: a read against the new site shows the wrong
+ * studio's data for an instant, which the banner is there to explain, and
+ * refusing them would blank the screen for no gain.
+ */
+const SETTLE_MS = 2_000;
+
+/** Sets the loaded override, stamping the clock when it really moved. */
+function apply(next: Target | null): void {
+  const before = state.override;
+  state.override = next;
+  if (effective(before) !== effective(next)) state.changedAt = Date.now();
+}
+
+/** What target() would answer for a given override. */
+function effective(override: Target | null): Target {
+  if (override !== null) return override;
+  return process.env["MINDBODY_TARGET"] === "prod" ? "prod" : "sandbox";
+}
+
+/**
+ * Milliseconds a write must still wait because the target just moved, 0
+ * when it did not. Read by mindbody() for writes only.
+ */
+export function targetSettling(now = Date.now()): number {
+  if (state.changedAt === 0) return 0;
+  const left = state.changedAt + SETTLE_MS - now;
+  return left > 0 ? left : 0;
+}
+
+/**
  * Writes the row and the memory together, and records the notice the
  * sign-in gate shows. False means the store refused it, in which case
  * nothing changed: the caller must not report a switch.
@@ -200,7 +252,7 @@ function usableTarget(stored: Target | null): Target | null {
 export async function setTargetOverride(next: Target): Promise<boolean> {
   const wrote = await setSetting(TARGET_SETTING_KEY, next);
   if (!wrote) return false;
-  state.override = next;
+  apply(next);
   state.loadedAt = Date.now();
   state.notice = {
     text: `The studio target changed to ${next}. Sign in again.`,

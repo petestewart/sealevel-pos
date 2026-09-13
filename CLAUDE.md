@@ -73,7 +73,9 @@ devtools gate, a signed-in teacher, that teacher's staff id in
 `POS_ADMIN_STAFF_IDS` (admin-only, empty means nobody), and both credential
 sets present in the environment, which it refuses by variable NAME.
 Switching ends every staff session (a token belongs to the site that issued
-it) and clears the catalog cache. **Dry run and the write guard did not
+it), clears the catalog cache, and refuses every write for two seconds
+afterwards, so a route that already read one studio cannot post to the
+other half way through (`targetSettling`). **Dry run and the write guard did not
 move**: they stay in the server environment, so a switch to prod still
 writes nothing until `POS_DRY_RUN=false` is deployed.
 
