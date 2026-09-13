@@ -21,17 +21,20 @@
  * every Mindbody call goes through mindbody(), so a switch made on one
  * iPad (or in another server process) is picked up within five seconds
  * without a request ever waiting on the database twice. Nothing here
- * throws: no database, no row, an unreadable row or a store that does
- * not answer all mean "the environment decides", which is exactly the
- * pre-T89 behaviour.
+ * throws. No database, no row and a row that names neither studio all
+ * mean "the environment decides", which is exactly the pre-T89
+ * behaviour; a store that does not ANSWER is different and keeps what is
+ * loaded, because "the database is down" is not a switch (see
+ * ensureTarget), and a stored target whose credentials this environment
+ * does not carry is ignored with a loud line (see usableTarget).
  *
  * The override is one string in app_settings, which the T29 charter
  * admits: Mindbody has no home for "which Mindbody is this counter
  * talking to".
  */
 
-import { dbConfigured, getSetting, setSetting } from "./db";
-import type { Target } from "./mindbody";
+import { dbConfigured, readSetting, setSetting } from "./db";
+import { missingCredentials, type Target } from "./mindbody";
 
 /** The app_settings key. */
 export const TARGET_SETTING_KEY = "mindbody_target";
@@ -93,10 +96,12 @@ export function targetSource(): "env" | "setting" {
 
 /**
  * Loads the row into memory, at most once every REFRESH_MS and at most
- * once at a time. Never throws and never rejects: every failure leaves
- * the override as it was, so a database that stops answering does not
- * flip a live counter back to the environment's target mid-shift, and one
- * that was never configured leaves the environment in charge.
+ * once at a time. Never throws and never rejects: a store that does not
+ * answer (no pool, an error, or slower than READ_WAIT_MS) leaves the
+ * override as it was, so a database that stops answering cannot flip a
+ * live counter to the environment's target mid-shift, and one that was
+ * never configured leaves the environment in charge. Only a read the
+ * store ANSWERED changes anything.
  */
 export async function ensureTarget(now = Date.now()): Promise<void> {
   if (!dbConfigured()) {
@@ -107,26 +112,84 @@ export async function ensureTarget(now = Date.now()): Promise<void> {
   if (state.reading) return state.reading;
   if (now - state.loadedAt < REFRESH_MS) return;
   const read = (async () => {
-    const raw = await Promise.race([
-      getSetting(TARGET_SETTING_KEY),
-      new Promise<null>((resolve) =>
-        setTimeout(() => resolve(null), READ_WAIT_MS),
+    const answer = await Promise.race([
+      readSetting(TARGET_SETTING_KEY),
+      new Promise<{ answered: false; value: null }>((resolve) =>
+        setTimeout(() => resolve({ answered: false, value: null }), READ_WAIT_MS),
       ),
-    ]).catch(() => null);
-    /* A null is "unset, unavailable or too slow" and getSetting cannot
-     * tell those apart either, so every null reads as "no override" and
-     * the environment decides -- the T29 fallback rule, applied here in
-     * the safe direction: the environment's own default is sandbox, so a
-     * database that stops answering can only ever move this counter
-     * AWAY from the real studio, never towards it. A row that says
-     * anything but sandbox or prod is no override either. */
-    state.override = parseTarget(raw);
+    ]).catch(() => ({ answered: false as const, value: null }));
+    /* The row is retried on the next call either way, so the clock is
+     * stamped before anything else: a store that has stopped answering
+     * must cost one bounded wait every REFRESH_MS and not one per call. */
     state.loadedAt = Date.now();
+    if (!answer.answered) {
+      /* T89 review: a read that did not ANSWER is not "no override".
+       * Treating it as one flips the counter to whatever MINDBODY_TARGET
+       * names, and on the deployed service that is prod: a database blip
+       * would have moved a counter deliberately switched to the sandbox
+       * onto the real studio, mid-shift, with the banner following it
+       * rather than warning about it. Keep what is loaded and say so. */
+      if (state.override !== null) warnUnread(state.override);
+      return;
+    }
+    /* An answered read is the truth: no row, or a row that says anything
+     * but sandbox or prod, means the environment decides -- the T29
+     * fallback rule, and the only way back off a stored target. */
+    state.override = usableTarget(parseTarget(answer.value));
   })().catch(() => undefined);
   state.reading = read.finally(() => {
     state.reading = null;
   });
   return state.reading;
+}
+
+/* Complained about at most once a minute: a counter whose database has
+ * gone quiet must say so in the log without filling it. */
+let warnedUnreadAt = 0;
+
+function warnUnread(keeping: Target): void {
+  const now = Date.now();
+  if (now - warnedUnreadAt < 60_000) return;
+  warnedUnreadAt = now;
+  console.warn(
+    `[target] the stored target could not be read; staying on ${keeping}. ` +
+      "The environment's MINDBODY_TARGET is NOT taking over: a store that " +
+      "does not answer is not a switch.",
+  );
+}
+
+/* Likewise for a stored target the environment cannot serve. */
+let warnedUnusable: Target | null = null;
+
+/**
+ * T89 review: a stored target whose credential set is not in this
+ * environment (the row says prod on a deployment that only carries the
+ * sandbox variables, or a sandbox row after the sandbox key was removed)
+ * is ignored, loudly, and the environment decides. Honouring it instead
+ * makes every Mindbody call throw "Mindbody is not configured for
+ * target", which is a counter that cannot check anyone in at all; and
+ * the other direction -- quietly running the environment's target -- is
+ * what the log line is for. Names only, never a value.
+ */
+function usableTarget(stored: Target | null): Target | null {
+  if (stored === null) {
+    warnedUnusable = null;
+    return null;
+  }
+  const missing = missingCredentials(stored);
+  if (missing.length === 0) {
+    warnedUnusable = null;
+    return stored;
+  }
+  if (warnedUnusable !== stored) {
+    warnedUnusable = stored;
+    console.error(
+      `[target] the stored target "${stored}" is IGNORED: the server ` +
+        `environment is missing ${missing.join(", ")}. MINDBODY_TARGET ` +
+        "decides until they are set.",
+    );
+  }
+  return null;
 }
 
 /**

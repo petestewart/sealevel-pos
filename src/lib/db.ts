@@ -1088,18 +1088,35 @@ export async function dbAvailable(): Promise<boolean> {
 /** Null when unset OR unavailable; the caller cannot and should not tell
  *  the difference, because both mean "use the env fallback". */
 export async function getSetting(key: string): Promise<string | null> {
+  return (await readSetting(key)).value;
+}
+
+/**
+ * The same read, with the one thing `getSetting` throws away: whether the
+ * store ANSWERED. T89's target is the one setting where the difference
+ * matters, because "no row" and "the store is down" have opposite safe
+ * answers there: forgetting a stored sandbox on a deployment whose
+ * environment names the studio would point a counter at the real studio
+ * without anyone asking. Every other setting keeps the simpler rule.
+ */
+export async function readSetting(
+  key: string,
+): Promise<{ answered: boolean; value: string | null }> {
   try {
     const p = await ready();
-    if (!p) return null;
+    if (!p) return { answered: false, value: null };
     const res = await p.query(
       "SELECT value FROM app_settings WHERE key = $1",
       [key],
     );
     const value = res.rows[0]?.value;
-    return typeof value === "string" && value.length > 0 ? value : null;
+    return {
+      answered: true,
+      value: typeof value === "string" && value.length > 0 ? value : null,
+    };
   } catch (err) {
     logDbError("settings-read", err);
-    return null;
+    return { answered: false, value: null };
   }
 }
 

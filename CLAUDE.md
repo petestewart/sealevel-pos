@@ -63,7 +63,11 @@ prod with a setting rather than a redeploy", and, told this relaxes the rail
 below: "go"). One `app_settings` row, `mindbody_target`, wins over
 `MINDBODY_TARGET` when present; `src/lib/target.ts` loads it into memory at
 the top of every `mindbody()` call, so `target()` stays synchronous, and no
-database, no row or a store that does not answer all mean the environment
+database, no row or a row naming neither studio all mean the environment
+decides. A store that does not ANSWER is not a switch: the loaded target
+stays and the log says so, because a blip must not move a counter onto the
+studio `MINDBODY_TARGET` names. A stored target whose credential set is
+missing from the environment is ignored, loudly, and the environment
 decides. `PUT /api/admin/target` requires ALL of: the device session, the
 devtools gate, a signed-in teacher, that teacher's staff id in
 `POS_ADMIN_STAFF_IDS` (admin-only, empty means nobody), and both credential
