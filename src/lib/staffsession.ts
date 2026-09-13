@@ -284,9 +284,18 @@ export async function staffSessionFrom(
   const issuedAt = row.issuedAt.getTime();
   if (now - issuedAt >= STAFF_TTL_MS) return null;
   const token = decryptStaffToken(row.tokenEnc, p.tokenKey);
-  if (token === null) return null;
   const staffId = Number(row.staffId);
-  if (!Number.isInteger(staffId) || staffId <= 0) return null;
+  if (token === null || !Number.isInteger(staffId) || staffId <= 0) {
+    /* A row this key cannot read, or one naming no staff member, is
+     * nothing anyone can sign in from (the cookie verified, so the key
+     * is the one that wrote it; the row is damaged). Left alone it
+     * would be re-read on every request until it expired (T78
+     * review); dropped, the next lookup is a plain miss. Its token
+     * cannot be revoked, since it cannot be read; it expires on
+     * Mindbody's side. */
+    void deleteStaffSession(id);
+    return null;
+  }
   const session: StaffSession = {
     id,
     staffId,
