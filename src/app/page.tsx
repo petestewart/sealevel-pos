@@ -406,9 +406,9 @@ function SearchIcon() {
   );
 }
 
-/** Counter-clockwise arrow: check-out is undoing a check-in, and the icon
- *  says so. Quiet and unlabelled: the deliberate action on the row,
- *  separate from the check-in gesture. */
+/** Counter-clockwise arrow: "not checked in" in the attach modal's
+ *  segment control (T42). It was the roster's check-out button until T81,
+ *  when the checked-in chip itself became the way out. */
 function UndoIcon() {
   return <Icon d="M3 8v5h5M3.5 13a8.5 8.5 0 1 0 2.5-6" />;
 }
@@ -5516,7 +5516,24 @@ function FrontDesk({
                     beside it holds. */}
                 <span className="cell-chip">
                   {entry.checkedIn && !working ? (
-                    <span className={chipClass}>{chipLabel}</span>
+                    /* T81 (Pete: "clicking checked in should bring up the
+                       checkout popup"): the chip itself opens the
+                       check-out confirm, and the arrow that did is gone.
+                       Same chip to look at (it is a state, not a
+                       control), the title saying what a tap does. It
+                       renders on EVERY checked-in row, waiver state
+                       included (audited for T15): the waiver gate lives
+                       in tapCheckIn and applies to check-IN only, and a
+                       no-waiver client checked in by mistake must be
+                       sign-out-able, or the mistake is permanent. */
+                    <button
+                      className={chipClass}
+                      onClick={() => setCheckingOut(entry)}
+                      aria-label={`Check out ${entry.name}`}
+                      title="Tap to check out"
+                    >
+                      {chipLabel}
+                    </button>
                   ) : (
                     <button
                       /* T46: on a future day the chip is a closed door,
@@ -5535,28 +5552,13 @@ function FrontDesk({
                   )}
                 </span>
                 <div className="cell-actions">
-                  {/* The undo renders on EVERY checked-in row, waiver state
-                      included (audited for T15): the waiver gate lives in
-                      tapCheckIn, which returns early for checked-in rows, so it
-                      applies to check-IN only. A no-waiver client checked in
-                      by mistake must be sign-out-able, or the mistake is
-                      permanent. */}
-                  {entry.checkedIn && !working ? (
-                    <button
-                      className="undo-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setCheckingOut(entry);
-                      }}
-                      aria-label={`Check out ${entry.name}`}
-                      title={`Check out ${entry.name}`}
-                    >
-                      <UndoIcon />
-                    </button>
-                  ) : !entry.checkedIn && !working ? (
-                    /* Not checked in: the quiet trash sits where the undo
-                       would, and cancels the BOOKING (behind a confirm)
-                       rather than a sign-in. */
+                  {/* Since T81 a checked-in row's check-out is the chip
+                      itself; this slot holds the trash on a row that is
+                      not checked in, and a spacer otherwise, so the Buy
+                      bag keeps its column. */}
+                  {!entry.checkedIn && !working ? (
+                    /* Not checked in: the quiet trash cancels the BOOKING
+                       (behind a confirm) rather than a sign-in. */
                     <button
                       className="undo-btn"
                       onClick={(e) => {

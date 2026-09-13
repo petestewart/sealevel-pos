@@ -1447,6 +1447,13 @@ button.pass-opt.current:hover {
   color: var(--ok);
 }
 
+/* T81: the checked-in chip is a button (a tap opens the check-out
+ * confirm) but reads as the state it names, not as a control: the same
+ * pair at rest, the ink for a border while pressed so the tap is seen. */
+button.chip.in:active {
+  border-color: var(--ok);
+}
+
 .chip.unpaid {
   background: var(--warn-bg);
   color: var(--warn);
@@ -1891,8 +1898,9 @@ body.sale-open .dev-handle {
   font-size: 12px;
 }
 
-/* Check-out: deliberately quieter than the check-in chip, and a separate
- * target, so reversing a check-in is never the same gesture that made it. */
+/* The quiet 44px icon in the actions cell: the trash on a booking that is
+ * not checked in. (It was the check-out arrow too until T81; check-out is
+ * now a tap on the checked-in chip, behind the same confirm.) */
 
 .undo-btn {
   flex: 0 0 auto;
