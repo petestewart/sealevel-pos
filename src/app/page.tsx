@@ -772,6 +772,15 @@ function fakeUnlimited(count: number | null, remaining: number | null): boolean 
   );
 }
 
+/** A single-visit pass (Count 1: a Drop In) has nothing to count: this
+ *  booking IS the visit, so Mindbody reads it as 0 remaining the moment
+ *  it is attached, and "0 remaining" beside a pass that is about to be
+ *  used is a scare (Pete, 2026-09-14: "Drop in should never say '0
+ *  remaining'"). Applies wherever a pass renders its count. */
+function singleVisit(count: number | null): boolean {
+  return count === 1;
+}
+
 /**
  * The right-aligned fact columns shared by every pass-dropdown row (the
  * roster's payment change and the search modal's pass picker), so "4 left"
@@ -782,7 +791,9 @@ function passLeftCol(p: {
   remaining: number | null;
   count: number | null;
 }): string {
-  return !fakeUnlimited(p.count, p.remaining) && p.remaining !== null
+  return !fakeUnlimited(p.count, p.remaining) &&
+    !singleVisit(p.count) &&
+    p.remaining !== null
     ? `${p.remaining} left`
     : "";
 }
@@ -819,7 +830,9 @@ function PassFactsLine(props: {
   expires: string | null;
 }) {
   const showRemaining =
-    !fakeUnlimited(props.count, props.remaining) && props.remaining !== null;
+    !fakeUnlimited(props.count, props.remaining) &&
+    !singleVisit(props.count) &&
+    props.remaining !== null;
   const exp = props.expires ? `exp ${slashDate(props.expires)}` : null;
   if (!showRemaining && !exp) return null;
   return (
