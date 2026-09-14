@@ -450,8 +450,14 @@ export async function POST(request: Request) {
   if (discount !== null) {
     teacher =
       typeof teacherTokenRaw === "string"
-        ? verifyCompToken(teacherTokenRaw)
+        ? verifyCompToken(teacherTokenRaw, "comp")
         : null;
+    /* T94 review: and it must be THIS teacher's. /api/teacher/verify
+     * only ever mints a token for the signed-in teacher, so a token
+     * naming somebody else is one carried across a sign-out inside its
+     * ten minutes: the name on the record would not be the name behind
+     * the tap. */
+    if (teacher !== null && teacher.id !== session.staffId) teacher = null;
     if (teacher === null) {
       return NextResponse.json(
         { error: "Enter your PIN to discount this sale.", reason: "teacher" },
@@ -484,12 +490,41 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  /* T94 review: T90 refuses an account payment outright on a ticket
+   * holding a line for another client, and no PIN moves that: the
+   * balance belongs to the payer and v6 has no per-item payer. Refused
+   * HERE, before the token is spent, so a refusal nothing could have
+   * satisfied does not cost a teacher their one-shot authorization. */
+  const payerRaw =
+    typeof payload?.clientId === "string" ? payload.clientId.trim() : "";
+  if (
+    overdraftTokenRaw !== undefined &&
+    items.some((line) => line.forClientId && line.forClientId !== payerRaw)
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "The account balance pays only for the client on the sale. Take " +
+          "cash, a card at the reader, or a gift card for lines bought " +
+          "for someone else. Nothing was charged.",
+        stage: "method",
+      },
+      { status: 409 },
+    );
+  }
   let overdraftTeacher: TeacherIdentity | null = null;
   if (overdraftTokenRaw !== undefined) {
     overdraftTeacher =
       typeof overdraftTokenRaw === "string"
-        ? verifyCompToken(overdraftTokenRaw)
+        ? verifyCompToken(overdraftTokenRaw, "overdraft")
         : null;
+    /* Its own purpose, signed in: a PIN typed to discount a sale is not
+     * a PIN typed to overdraw an account, and separate request fields
+     * are no separation while one token answers for both. And this
+     * teacher's, for the reason the discount token's check gives. */
+    if (overdraftTeacher !== null && overdraftTeacher.id !== session.staffId) {
+      overdraftTeacher = null;
+    }
     if (overdraftTeacher === null) {
       return NextResponse.json(
         {
@@ -1439,10 +1474,17 @@ export async function POST(request: Request) {
         `teacher=${overdraft.teacher.id}`,
     );
     let via: "formula" | "notes" | null = null;
-    if (!suppressed && clientId !== undefined) {
+    const house = houseClientId();
+    const onHouse = clientId !== undefined && house !== null && clientId === house;
+    if (onHouse) console.log(`[overdraft] note skipped: house client`);
+    if (!suppressed && clientId !== undefined && !onHouse) {
+      /* T94 review: an account can already be negative when it is
+       * charged again, and "$-5.00" is not how money reads. */
+      const usd = (n: number) =>
+        `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
       const note =
-        `Account charged $${overdraft.charged.toFixed(2)} against a ` +
-        `$${overdraft.balance.toFixed(2)} balance, authorized by ` +
+        `Account charged ${usd(overdraft.charged)} against a ` +
+        `${usd(overdraft.balance)} balance, authorized by ` +
         `${overdraft.teacher.name || `staff ${overdraft.teacher.id}`}.` +
         (saleId ? ` Sale ${saleId}.` : "");
       const filed = await fileFormulaNote({

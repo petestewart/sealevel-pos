@@ -10623,3 +10623,82 @@ is worse than a refusal.
   settling the sale, two taps sending one request with the token, Cancel
   and a retyped amount dropping the authorization). `npm run typecheck`
   and `npm run build` clean.
+
+### Review
+
+Five findings, all fixed on the branch; the design and the money rails
+held everywhere else.
+
+1. **The one-shot token had no purpose, so a discount's token authorized
+   an overdraft and an overdraft's token authorized a discount.** Two
+   request fields (`teacherToken`, `overdraftToken`) are not a separation
+   while one value fits both: `/api/teacher/verify` minted one kind of
+   token and `verifyCompToken` accepted it for anything. A teacher who
+   typed their PIN to take $5 off a sale had, without knowing it, also
+   authorized charging that account past its balance. The purpose is now
+   SIGNED INTO the token (`c2.<purpose>.<staff id>.<name>.<issued at>`,
+   the prefix moved so any token minted before this change fails closed),
+   the verify route takes `purpose` ("comp" by default, so every caller
+   before T94 is unchanged) and each reader names the one purpose it will
+   accept. The sale screen asks for "overdraft".
+2. **A token was not bound to the teacher whose session presented it.**
+   Verify only ever mints for the signed-in teacher, but inside its ten
+   minutes a token outlives a sign-out: teacher A could enter their PIN,
+   hand the iPad over, and B's tap would charge under A's authorization
+   with A's name on the record. Both tokens (the discount's too) are now
+   refused unless they name the teacher in the session making the
+   request.
+3. **T90's refusal spent the PIN.** An account payment is refused
+   outright on a ticket holding a line bought for another client, and no
+   PIN can move that (the balance belongs to the payer; v6 has no
+   per-item payer). That refusal sits after the token is spent, so a
+   teacher lost their one-shot authorization to a 409 nothing could have
+   satisfied. Refused now before the spend, with the same sentence, and
+   the token survives it. On the screen, T90's reason stands FIRST in
+   Account's reason line (the merge conflict this ticket had to resolve),
+   so the tile is greyed with it, the Finalize gate refuses it before the
+   overdraft is consulted, and there is no PIN pad to reach.
+4. **A spent authorization was held after a failed charge.** The route
+   spends the token before its first Mindbody call, so once the request
+   has been answered at all the authorization is gone. The screen kept
+   it: a second Finalize tap rode a dead token into a 401 no tap could
+   clear (the 401-reason-teacher recovery path is the discount dialog's
+   and needs `comp !== null`), and after an ambiguous answer the row
+   still read as authorized. It is dropped once the route has answered,
+   whatever the answer; the line keeps its figure, so the tender refuses
+   it with "Only $X on account" and the modal offers the PIN again.
+5. Smaller: the amount modal could reopen on the PIN step, since
+   `openPad` did not reset it (unreachable today, because every path to
+   `openPad` goes through a closed modal, and one line cheaper than
+   relying on that); an overdraft note was filed on the house client,
+   which the discount note deliberately skips; and a starting balance
+   below zero read as "$-5.00" in the note.
+
+Checked and sound as built: the token is spent after every validation
+and before the rehearsal, so no Mindbody call can run twice on one PIN
+and a replay costs nothing; it is never logged, never in the response,
+never in the DOM and never in the note (the UI run asserts the document
+holds no copy of it); the charged figure is the rehearsed server total
+and the shortfall is the route's own arithmetic on the profile it
+re-read, so a stale token with a bigger cart charges what Mindbody
+priced and nothing the browser said; a $0, a null (Mindbody reports
+none) and a NEGATIVE balance all refuse without a token and charge the
+whole total with one; the note is filed only after the charge resolved
+and only on a real sale, and suppression answers `ok: false` with the
+mode, never "charged"; the red button appears only while the account
+cannot reach the due; two Finalize taps send one request.
+
+Re-verified after merging T90: route tests A to G plus the review's H
+(neither purpose substitutes for the other, and an unknown purpose is
+400), I (a recipient line refuses the account with a token, charges
+nothing, and does not spend it), J (one teacher's token on another
+teacher's session is refused) and K (zero, null and negative balances),
+55 assertions; the UI run in both palettes at 1194x834 and 834x1194,
+including that the PIN is asked for with the overdraft purpose.
+`npm run typecheck` and `npm run build` clean.
+
+Left alone, deliberately: the disabled "Done" on the PIN step trips the
+contrast audit in dark (2.97), which is what every disabled
+`modal-confirm` does and not this ticket's to change. Still unproved,
+as the build notes say: whether Mindbody accepts a `DebitAccount` above
+the balance. Everything here is against the mock.

@@ -2432,6 +2432,15 @@ function PaymentPanel(props: {
       inFlight.current = false;
       setCharging(false);
       onBusyChange(false);
+      /* T94 review: the route spends the one-shot token before its first
+         Mindbody call, so once this request has been answered at all the
+         authorization is gone whatever the outcome. Holding it would let
+         a second Finalize tap ride a dead token into a 401 nobody can
+         clear, or read as still-authorized after an ambiguous answer.
+         The line keeps its figure, so the tender refuses it with "Only
+         $X on account" and the modal offers the PIN again, which is the
+         right price for trying twice (T48). */
+      if ("overdraftToken" in overdraftField) setOverdraft(null);
     }
   };
 
@@ -2489,6 +2498,13 @@ function PaymentPanel(props: {
   const openPad = (id: number) => {
     setPadFor(id);
     setEntry("");
+    /* T94 review: the modal always opens on its keypad. The PIN step
+       belongs to one trip through it, and a step left standing would put
+       a PIN pad in front of the next amount somebody taps. */
+    setOdStep("off");
+    odEntryRef.current = "";
+    setOdEntry("");
+    setOdMsg(null);
     onModalChange(true);
     setCompCleared(false);
     clearStaleResult();
@@ -2864,7 +2880,9 @@ function PaymentPanel(props: {
       const res = await fetch("/api/teacher/verify", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ pin: digits }),
+        /* T94 review: what this PIN authorizes, signed into the token.
+           A discount's token cannot stand in for it, nor it for one. */
+        body: JSON.stringify({ pin: digits, purpose: "overdraft" }),
       });
       const body = await res.json().catch(() => ({}));
       odEntryRef.current = "";
