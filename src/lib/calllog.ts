@@ -80,9 +80,13 @@ const state: CallLogState = (G.__posCallLog ??= { entries: [], nextId: 1 });
 const REDACTED = "<redacted>";
 
 /** Keys whose value is a secret in its own right, wherever they appear.
- *  CVV is not in Mindbody's ClientCreditCard model at all; it is listed
- *  so that a field added later cannot slip through unredacted. */
-const SECRET_KEY = /^(CardNumber|CVV|CVC|CardCode|SecurityCode)$/i;
+ *  T84 covered the card on file (`CardNumber`) and listed CVV against the
+ *  day a field turned up, since Mindbody's ClientCreditCard model has
+ *  none. T93 is that day: a typed card charged for one sale sends
+ *  `CreditCardNumber` and `CVV` in the CreditCard payment's Metadata
+ *  (sale.yml:2867), so both are named here, in either casing. */
+const SECRET_KEY =
+  /^(CardNumber|CreditCardNumber|CVV|CVC|CardCode|SecurityCode)$/i;
 
 /**
  * A card number sitting where no card key names it: 13 to 19 digits,
@@ -151,17 +155,44 @@ export function scrubGiftCard(text: string): string {
     .replace(GIFT_IN_ESCAPED_JSON, `$1${REDACTED}$2`);
 }
 
+/**
+ * T93: a CVV quoted in FREE TEXT, which is how Mindbody hands one back
+ * ("The card was declined. (card 4111..., cvv 737)").
+ *
+ * A CVV is three or four digits, so it cannot be matched by shape: every
+ * amount, id and year in a message looks like one, and striking those
+ * would mangle the diagnostics this buffer exists for. It is matched by
+ * CONTEXT instead -- the words that can introduce one, then a few
+ * non-alphanumerics, then the digits -- which needs no knowledge of the
+ * value and so covers a refusal as well as a request.
+ */
+/* T93 review: the gap between the word and the digits is anything that is
+ * NOT a digit, up to twenty characters, not just punctuation and space.
+ * The punctuation-only form missed the phrasing a processor is most
+ * likely to use -- "The security code you entered, 737, was wrong." --
+ * and a CVV then reached the route's answer and the dev call log. Over-
+ * redaction is bounded to text that names a CVV within twenty characters,
+ * which is the one place a number must not survive. Not covered, and
+ * recorded rather than guessed at: a CVV quoted BEFORE the word ("737 is
+ * not a valid security code"), which no observed refusal does. */
+const CVV_IN_TEXT =
+  /((?:cvv|cvc|security\s*code|card\s*code)[^0-9]{0,20}?)\d{3,4}(?!\d)/gi;
+
+export function scrubCvv(text: string): string {
+  return text.replace(CVV_IN_TEXT, `$1${REDACTED}`);
+}
+
 /** Every number-shaped secret this app's traffic can carry, in one
  *  pass: use THIS anywhere a string is about to be recorded or thrown,
  *  so a new endpoint carrying either kind is covered by default. */
 export function scrubSecrets(text: string): string {
-  return scrubGiftCard(scrubCardDigits(text));
+  return scrubCvv(scrubGiftCard(scrubCardDigits(text)));
 }
 
 /** Whether a TEXT body mentions a card at all, so that the 99% of
  *  records that do not are passed through untouched. */
 const CARD_KEY_IN_TEXT =
-  /"(ClientCreditCard|CardNumber|CVV|CVC|CardCode|SecurityCode)"/i;
+  /"(ClientCreditCard|CardNumber|CreditCardNumber|CVV|CVC|CardCode|SecurityCode)"/i;
 
 /** T83: keys whose VALUE is a gift card number, wherever they appear as
  *  an object key. Unlike SECRET_KEY this does not mark its object as a
@@ -169,8 +200,13 @@ const CARD_KEY_IN_TEXT =
  *  RemainingBalance }`, and the balance is the diagnostic half of it. */
 const GIFT_KEY = /^(BarcodeId|GiftCardBarcodeId|cardNumber)$/i;
 
-/** What survives from a card object, per direction. */
-const REQUEST_CARD_KEEP = ["LastFour"];
+/** What survives from a card object, per direction. T93 added the four
+ *  non-secret fields a CreditCard payment's Metadata carries besides the
+ *  number and the CVV: without Amount in the request keep-list a typed
+ *  card charge would record no figure at all, and the amount is the whole
+ *  point of the record. None of them is a secret, and the expiry is what
+ *  a refused card is diagnosed from. */
+const REQUEST_CARD_KEEP = ["LastFour", "Amount", "ExpMonth", "ExpYear"];
 const RESPONSE_CARD_KEEP = ["LastFour", "CardType", "ExpMonth", "ExpYear"];
 
 function isCardObject(key: string | null, value: Record<string, unknown>): boolean {
@@ -231,7 +267,7 @@ export function redactBody(value: unknown, keep = RESPONSE_CARD_KEEP): unknown {
     } catch {
       return scrubSecrets(
         value.replace(
-          /("(?:CardNumber|CVV|CVC|CardCode|SecurityCode)"\s*:\s*)"[^"]*"/gi,
+          /("(?:CardNumber|CreditCardNumber|CVV|CVC|CardCode|SecurityCode)"\s*:\s*)"[^"]*"/gi,
           `$1"${REDACTED}"`,
         ),
       );
@@ -288,7 +324,7 @@ function knownSecrets(entry: CallInput): string[] {
       }
     }
     for (const m of text.matchAll(
-      /\\?"(?:cardNumber|barcodeId|giftCardBarcodeId)\\?"\s*:\s*\\?"([^"\\]*)/gi,
+      /\\?"(?:cardNumber|creditCardNumber|barcodeId|giftCardBarcodeId)\\?"\s*:\s*\\?"([^"\\]*)/gi,
     )) {
       found.add(m[1] ?? "");
     }
@@ -305,7 +341,14 @@ function knownSecrets(entry: CallInput): string[] {
       /* a body that will not stringify carries nothing to lift */
     }
   }
-  /* Three characters is the floor: shorter is not a number anyone could
+  /* T93: the CVV is deliberately NOT lifted here. It is three or four
+   * digits, and striking every occurrence of "123" out of a record would
+   * mangle amounts and ids for a value no processor echoes back; the key
+   * rule above already redacts it in the request, which is the only place
+   * this app puts one. The typed card NUMBER is lifted (the key list
+   * above), on top of the card-shaped digit rule.
+   *
+   * Three characters is the floor: shorter is not a number anyone could
    * spend, and striking it would redact ordinary words. */
   return [...found].filter((n) => n.length >= 3);
 }

@@ -1,3 +1,4 @@
+import { cardDigits, cardExpired, luhnOk } from "./cardrules";
 import { mindbody, type Actor } from "./mindbody";
 
 /**
@@ -38,34 +39,13 @@ export interface CardOnFile {
   /** True when the expiry has passed, or cannot be read. Same rule as
    *  the stored-card tender's (src/lib/sale.ts cardExpired): a card we
    *  cannot date counts as expired, because it must not be presented as
-   *  chargeable. Repeated rather than imported: sale.ts does not export
-   *  it, and sale.ts is not this ticket's file to change. */
+   *  chargeable. T93 moved the test itself into src/lib/cardrules.ts, so
+   *  the modal, this module and the typed card all ask the one rule. */
   expired: boolean;
 }
 
 function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
-}
-
-/** Is an ExpMonth/ExpYear pair in the past? Unparseable counts as past. */
-export function cardExpired(
-  expMonth: string | null,
-  expYear: string | null,
-  now = new Date(),
-): boolean {
-  const month = Number(expMonth);
-  const year = Number(expYear);
-  if (
-    !Number.isInteger(month) ||
-    month < 1 ||
-    month > 12 ||
-    !Number.isInteger(year) ||
-    year < 2000
-  ) {
-    return true;
-  }
-  /* Valid through the last moment of the expiry month. */
-  return now.getTime() >= new Date(year, month, 1).getTime();
 }
 
 /** The `ClientCreditCard` on a `/client/clients` row, as the counter may
@@ -87,6 +67,11 @@ export function cardOnFileOf(row: unknown, now = new Date()): CardOnFile | null 
   };
 }
 
+/* T93: luhnOk, cardDigits and cardExpired moved to src/lib/cardrules.ts,
+ * a pure module the browser can import too, and are re-exported here so
+ * every T84 caller keeps its import. */
+export { cardDigits, cardExpired, luhnOk };
+
 /** The card the teacher typed. `number` is digits only by the time it
  *  gets here; the browser's spaces are stripped on both sides. */
 export interface CardInput {
@@ -95,31 +80,6 @@ export interface CardInput {
   expYear: string;
   cardHolder: string;
   postalCode: string;
-}
-
-/** The Luhn check digit. Client-side it turns a typo into a quiet line
- *  instead of a round trip; server-side it is enforced again, because a
- *  browser's validation is not a rule. */
-export function luhnOk(digits: string): boolean {
-  if (!/^\d+$/.test(digits)) return false;
-  let sum = 0;
-  let double = false;
-  for (let i = digits.length - 1; i >= 0; i -= 1) {
-    let d = digits.charCodeAt(i) - 48;
-    if (double) {
-      d *= 2;
-      if (d > 9) d -= 9;
-    }
-    sum += d;
-    double = !double;
-  }
-  return sum % 10 === 0;
-}
-
-/** Spaces, dashes and non-breaking spaces out; nothing else changed, so
- *  a letter in the box still fails the digits test below. */
-export function cardDigits(value: string): string {
-  return value.replace(/[\s -]/g, "");
 }
 
 /** A card number's length range, wide enough for every network Mindbody

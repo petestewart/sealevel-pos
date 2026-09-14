@@ -787,6 +787,30 @@ On current planning that lands in Phase 3, alongside the waiver flow.
   API paths that store a card both take the raw number, so honoring this rule
   is exactly what makes a Mindbody-hosted capture surface mandatory rather than
   merely preferable.
+
+  **Relaxed at the counter, at Pete's explicit ask, 2026-09-14 (T84, T93).**
+  T84 added a card on file typed at the desk ("we need to add the ability to
+  add a card on file"), and T93 the same card typed to pay for one sale ("this
+  will open a credit card manual entry modal ... If it is a walk in sale, they
+  can just use it for the sale"). So a number, an expiry and, for a charge, a
+  CVV do now pass through one modal and one request. What still holds, and is
+  the whole of what was traded:
+
+  - The number and the CVV live in that modal's React state and in the one
+    request they are sent in. Nothing else: never our database (the db charter
+    forbids a copy of Mindbody's data anyway), never localStorage or
+    sessionStorage, never the URL, never a server log line, never a route
+    answer, which carries the last four at most.
+  - The dev call log redacts them in BOTH directions, by key
+    (`CardNumber`, `CreditCardNumber`, `CVV`), by shape (any 13-to-19-digit
+    run in free text, which is how a refusal quotes a number back) and by
+    context (a CVV named in a sentence). Only the last four, the expiry and
+    the amount survive.
+  - Mindbody remains the only place a card is stored, through
+    `/client/updateclient`. T93's "and keep on file" runs that AFTER the
+    charge succeeds, so a refused charge stores nothing.
+  - We still never build a capture surface of our own beyond this one form,
+    and nothing here is a step toward holding card data.
 - **Metered calls have a shape.** Per-client detail (services, purchases,
   visits, balances) is fetched on row open, never per roster. Waitlist is
   fetched only when a class is at capacity. These are not micro-optimizations,
