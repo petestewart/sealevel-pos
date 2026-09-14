@@ -7559,31 +7559,34 @@ export default function SaleScreen(props: {
                             <PlusIcon />
                           </button>
                           {/* The recipient control: text, not a filled
-                              button, and it opens the SAME live search
-                              the attach modal uses ("Who is this for?").
-                              Re-tapping opens it again with the row that
-                              clears it. */}
+                              button. With nobody yet it opens the SAME
+                              live search the attach modal uses ("Who is
+                              this for?"). With a recipient the line
+                              already names them, so the control reads
+                              "Remove client" and clears it in place
+                              (Pete, 2026-09-14: "This shouldn't show the
+                              client's name twice. It should have a
+                              Remove client button."). */}
                           <button
                             className={line.forClient ? "t-for on" : "t-for"}
                             disabled={charging}
                             aria-label={
                               line.forClient
-                                ? `Bought for ${line.forClient.name}. Change who this is for`
+                                ? `Remove ${line.forClient.name} from ${line.item.name}; it goes back to the sale's client`
                                 : `Buy ${line.item.name} for another client`
                             }
                             title={
                               line.forClient
-                                ? `Bought for ${line.forClient.name}`
+                                ? "Remove client"
                                 : "Buy this for another client"
                             }
                             onClick={() =>
-                              onRequestRecipient?.(
-                                line.key,
-                                line.forClient ? true : false,
-                              )
+                              line.forClient
+                                ? setLineRecipient(line.key, null)
+                                : onRequestRecipient?.(line.key, false)
                             }
                           >
-                            {line.forClient ? line.forClient.name : "Other Client"}
+                            {line.forClient ? "Remove client" : "Other Client"}
                           </button>
                         </div>
                       )}
