@@ -6990,11 +6990,15 @@ export default function SaleScreen(props: {
    *  the pending check-in being earned, not the ticket being changed. */
   const pendingSold = useRef(false);
   useEffect(() => {
-    if (pendingNonce === null) {
-      pendingRung.current = null;
-      pendingSeen.current = null;
-      pendingSold.current = false;
-    }
+    /* T88 review: reset on EVERY nonce change, not only on the way back
+       to null. `pendingSold` is set by any completed sale, pending or
+       not, and a plain Buy sale between two check-ins used to leave it
+       true with the nonce already null: the next pending check-in then
+       had its drop detection switched off for good, so taking the pass
+       back out of the ticket said nothing. */
+    pendingRung.current = null;
+    pendingSeen.current = null;
+    pendingSold.current = false;
   }, [pendingNonce]);
   useEffect(() => {
     if (!pendingCheckIn || catalog === null) return;

@@ -4919,6 +4919,12 @@ function FrontDesk({
     (payCard === null || payCard.expired);
   const payBuyOffer =
     payNoTender &&
+    /* T88 review: and a SETTLED price. Until the pricing loop answers,
+     * credit that covers the total still reads as no tender, and the
+     * offer would send a teacher to buy for cash what the balance on
+     * the account would have paid. A suppressed or refused price has
+     * settled, and still earns the offer. */
+    !payPricing &&
     payStage === null &&
     !payMoneyMoved &&
     paySelected !== null &&
@@ -4982,7 +4988,10 @@ function FrontDesk({
     setPendingResult(null);
     flashBanner(
       reason === "left"
-        ? `Not checked in: ${pending.clientName} was not sold the pass.`
+        ? /* T88 review: what is certain here is that nobody was checked
+             in, not that nothing was sold: a sale that failed part way
+             through (T90's partial) can leave the pass bought. */
+          `Not checked in: ${pending.clientName} stays unpaid. If the pass was sold, attach it with the payment chevron.`
         : "Not checked in: the sale was changed.",
     );
   };
@@ -4997,7 +5006,13 @@ function FrontDesk({
    */
   const finishPendingCheckIn = async (sales: readonly SoldSale[]) => {
     const pending = pendingRef.current;
-    if (!pending || pendingFlight.current) return;
+    if (pendingFlight.current) return;
+    if (!pending) {
+      /* T88 review: nothing was waiting on this sale, so the LAST
+       * check-in's outcome must not ride along on its done screen. */
+      setPendingResult(null);
+      return;
+    }
     const sold = sales.find(
       (sale) =>
         sale.clientId === pending.clientId &&
