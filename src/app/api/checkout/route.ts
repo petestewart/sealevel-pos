@@ -700,7 +700,8 @@ export async function POST(request: Request) {
    * nothing is retried, rolled back or refunded, and when cart two fails
    * after cart one charged the answer names both.
    * ================================================================== */
-  const groups = groupByRecipient(items);
+  /* T90 review: a line "for" the client paying is that client's own. */
+  const groups = groupByRecipient(items, saleClientId);
   if (groups.length > 1 || groups[0]?.forClientId != null) {
     /* Display names for the wording only. They arrive beside the items
      * (like T43's `name`), are never forwarded to Mindbody, and no
@@ -804,9 +805,22 @@ export async function POST(request: Request) {
         );
       }
       if (cartPriced.suppressed) {
+        /* T90 review: one suppressed cart suppresses the whole ticket,
+         * BEFORE any of them is charged. Dry run suppresses every cart
+         * anyway; the write guard judges each by its own client id, so
+         * the listed cart could have gone out alone, and deliberately
+         * does not: a ticket the teacher rang up as one sale must not
+         * half exist because a test rail let one client through. The
+         * sentence names the cart that stopped it, since otherwise
+         * nothing on screen says which. */
+        const kind = await suppressionKind();
         return NextResponse.json({
           ok: false,
-          suppressed: await suppressionKind(),
+          suppressed: kind,
+          summary:
+            `Nothing was sent to Mindbody (${kind}). The cart for ` +
+            `${nameOfGroup(group)} was suppressed, and a ticket holding a ` +
+            "line for another client goes out whole or not at all.",
         });
       }
       if (cartPriced.disagrees || cartPriced.grandTotal === null) {

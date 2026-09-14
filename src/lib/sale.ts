@@ -602,13 +602,25 @@ export interface CartGroup {
  * balance could ever pay, and the route charges it first), then each
  * other client in the order their first line appears, so the sequence a
  * partial failure reports matches the order the teacher rang up.
+ *
+ * `payerId` folds a line bought "for" the client who is paying back into
+ * their own cart. The screen does that too (picking the attached client
+ * clears the line's recipient), but the rule belongs here as well: the
+ * same client in two carts would be two Mindbody sales for one person
+ * and, worse, would turn off their own card on file for no reason. T90
+ * review: reachable without the screen, and once attached late by
+ * anybody who bypasses it.
  */
-export function groupByRecipient(items: readonly CartLine[]): CartGroup[] {
+export function groupByRecipient(
+  items: readonly CartLine[],
+  payerId?: string | null,
+): CartGroup[] {
   const groups: CartGroup[] = [];
   const at = new Map<string, CartGroup>();
   const own: CartGroup = { forClientId: null, items: [] };
   for (const line of items) {
-    const id = line.forClientId ?? null;
+    const raw = line.forClientId ?? null;
+    const id = raw !== null && payerId && raw === payerId ? null : raw;
     if (id === null) {
       own.items.push(line);
       continue;

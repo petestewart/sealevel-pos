@@ -122,7 +122,7 @@ export async function POST(request: Request) {
    * priced once per recipient and the answer carries the sum plus each
    * cart's own figures. The paying client's cart is first. A ticket with
    * no other-client line takes exactly the single call it always did. */
-  const groups = groupByRecipient(parsed.items);
+  const groups = groupByRecipient(parsed.items, effectiveClientId);
   const perGroupDiscount =
     discount === null
       ? groups.map(() => null)
