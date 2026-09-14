@@ -38,6 +38,7 @@ import {
 } from "./comp";
 import { mindbody, type Actor } from "./mindbody";
 import { studioWall } from "./roster";
+import type { TypedCard } from "./typedcard";
 
 /** The one physical location ("Fremont neighborhood, Seattle"). 98 is the
  *  reserved online store. A constant, not a choice; see CLAUDE.md. */
@@ -1048,7 +1049,12 @@ export type CheckoutPayment =
    *  secret: it is built into the payload here and exists nowhere else
    *  -- not in a log line, not in a response, not in the call log,
    *  where calllog.ts strikes it out of the Metadata string. */
-  | { type: "GiftCard"; amount: number; cardNumber: string };
+  | { type: "GiftCard"; amount: number; cardNumber: string }
+  /** T93: a card TYPED at the counter for this one sale. The whole card
+   *  is a secret and lives in this payload only; calllog.ts strikes
+   *  CreditCardNumber and CVV in both directions, and nothing here or
+   *  above it ever returns more than the last four. */
+  | { type: "CreditCard"; amount: number; card: TypedCard };
 
 /**
  * CASING: the spec's Metadata key list spells everything lowercase
@@ -1078,6 +1084,34 @@ function paymentPayload(p: CheckoutPayment): Record<string, unknown> {
     return {
       Type: "GiftCard",
       Metadata: JSON.stringify({ amount: p.amount, cardNumber: p.cardNumber }),
+    };
+  }
+  /* T93: the typed card. The keys are CreditCardInfo's spelling
+   * (sale.yml:2867) inside the PascalCase object shape every other type
+   * here uses; the spec's own key LIST for this payment type is the
+   * lowercase set (sale.yml:3934), which is the by-hand thing to try if
+   * this is refused and never an automatic retry. SaveInfo is what asks
+   * Mindbody to keep the card on the cart's client, and it goes out only
+   * for an ATTACHED client (the route refuses `keep` on a house-client
+   * cart); T93 stores through T84's /client/updateclient path AFTER a
+   * successful charge instead, so `keep` never reaches this payload. The
+   * three optional billing lines are omitted rather than sent blank. */
+  if (p.type === "CreditCard") {
+    const c = p.card;
+    return {
+      Type: "CreditCard",
+      Metadata: {
+        Amount: p.amount,
+        CreditCardNumber: c.number,
+        ExpMonth: c.expMonth,
+        ExpYear: c.expYear,
+        CVV: c.cvv,
+        BillingName: c.billingName,
+        BillingPostalCode: c.postalCode,
+        ...(c.address ? { BillingAddress: c.address } : {}),
+        ...(c.city ? { BillingCity: c.city } : {}),
+        ...(c.state ? { BillingState: c.state } : {}),
+      },
     };
   }
   const metadata: Record<string, unknown> =

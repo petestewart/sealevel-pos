@@ -40,6 +40,13 @@ import { fileFormulaNote } from "@/lib/formulanote";
 import { dryRunState, mindbodyHttpStatus, target } from "@/lib/mindbody";
 
 import {
+  parseTypedCard,
+  typedCardLastFour,
+  type TypedCard,
+} from "@/lib/typedcard";
+import { saveClientCard } from "@/lib/clientcard";
+
+import {
   CARD_MINIMUM_USD,
   checkoutCart,
   clientPaymentProfile,
@@ -62,8 +69,10 @@ export const dynamic = "force-dynamic";
  * an explicit Charge tap; nothing in this app auto-charges.
  *
  * Body: { items: CartLine[], clientId?: string,
- *         method: "storedcard"|"credit"|"cash"|"giftcard"|"comp",
+ *         method: "storedcard"|"typedcard"|"credit"|"cash"|"giftcard"|"comp",
  *         giftCard?: { number },
+ *         typedCard?: { number, expMonth, expYear, cvv, billingName,
+ *                       postalCode, address?, city?, state?, keep? },
  *         cashTendered?: number,
  *         sendEmail?: boolean,
  *         discount?: { mode: "amount"|"percent", value: number },
@@ -145,11 +154,33 @@ export const dynamic = "force-dynamic";
  *         whether Mindbody itself accepts a DebitAccount above the
  *         balance is an OPEN QUESTION for a live probe, and its refusal
  *         is a plain refusal, never retried in another shape.
+ *         -- T93: `method: "typedcard"` charges a card TYPED at the
+ *         counter (Pete: "this will open a credit card manual entry
+ *         modal ... If it is a walk in sale, they can just use it for
+ *         the sale"), as a `CreditCard` Payments entry. It needs
+ *         `typedCard`, validated here by parseTypedCard (Luhn, expiry
+ *         not past, CVV, name, postal code) exactly as the modal
+ *         validated it, because a browser's checks are a courtesy and
+ *         not a rule. Like cash and a gift card it needs no client; a
+ *         walk-in sale rides the house client. `typedCard.keep` asks
+ *         for the card to be kept on file and is REFUSED without an
+ *         attached client (a card on the house client belongs to
+ *         nobody); when it is asked for, the store runs AFTER a
+ *         successful charge, through T84's /api/client-card path
+ *         (saveClientCard), so a refused charge stores nothing and a
+ *         stored card never precedes a charge. Its outcome is reported
+ *         separately as `cardKept` / `cardKeptError`: a store that
+ *         failed after a charge that succeeded is said so in words and
+ *         never hidden. The number and the CVV go out only inside the
+ *         CreditCard payment and appear in NO log line, note, receipt
+ *         row or response: those carry `typedCard: { lastFour }` and
+ *         nothing more.
  *   or, since T28, `split` instead of `method`:
  *       { items, clientId, split: { legs: [{method, amount}, {method,
  *         amount}] } } -- exactly two legs, methods from the whitelist
  *         minus comp (T83: a `giftcard` leg carries its own `number`
- *         and is balance-checked exactly as the whole-sale case is), amounts in whole cents that sum EXACTLY to the
+ *         and is balance-checked exactly as the whole-sale case is;
+ *         T93: a `typedcard` leg carries its own `typedCard`), amounts in whole cents that sum EXACTLY to the
  *         rehearsed server total, charged as two Payments entries in ONE
  *         checkoutshoppingcart call (no two-write seam; a refusal
  *         refuses the whole sale). The card minimum applies to the card
@@ -226,13 +257,20 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-type Method = "storedcard" | "credit" | "cash" | "giftcard" | "comp";
+type Method =
+  | "storedcard"
+  /** T93: a card typed at the counter for this sale. */
+  | "typedcard"
+  | "credit"
+  | "cash"
+  | "giftcard"
+  | "comp";
 
 /* T28: the methods a split leg may use. Comp is deliberately excluded --
  * a comp is the whole sale given away, armed by its own dialog in the
  * UI, and half-comping through a split would dodge that dialog; since
  * T79 a partial discount is the cart's, not a leg's. */
-type SplitMethod = "storedcard" | "credit" | "cash" | "giftcard";
+type SplitMethod = "storedcard" | "typedcard" | "credit" | "cash" | "giftcard";
 
 interface SplitLeg {
   method: SplitMethod;
@@ -241,6 +279,9 @@ interface SplitLeg {
    *  refused on every other, so a number can never ride a leg that
    *  would not spend it. */
   giftCardNumber?: string;
+  /** T93: a typed card leg's card. Present for that method and refused
+   *  on every other, for the same reason a gift card number is. */
+  typedCard?: TypedCard;
 }
 
 /** T79: which shape a 100% discount went out in. */
@@ -251,11 +292,15 @@ function parseSplitLeg(raw: unknown): SplitLeg | string {
   const method = (raw as { method?: unknown })?.method;
   if (
     method !== "storedcard" &&
+    method !== "typedcard" &&
     method !== "credit" &&
     method !== "cash" &&
     method !== "giftcard"
   ) {
-    return "each split leg's method must be storedcard, credit, cash or giftcard";
+    return (
+      "each split leg's method must be storedcard, typedcard, credit, " +
+      "cash or giftcard"
+    );
   }
   /* T83: the gift card's number belongs to its own leg, and nowhere
    * else. A number on a cash leg is a mistake, not something to
@@ -268,6 +313,16 @@ function parseSplitLeg(raw: unknown): SplitLeg | string {
     giftCardNumber = parsed.number;
   } else if (numberRaw !== undefined) {
     return "only a giftcard leg carries a number";
+  }
+  /* T93: the typed card belongs to its own leg, and nowhere else. */
+  const typedRaw = (raw as { typedCard?: unknown })?.typedCard;
+  let typedCard: TypedCard | undefined;
+  if (method === "typedcard") {
+    const parsed = parseTypedCard(typedRaw);
+    if (parsed.card === null) return parsed.error;
+    typedCard = parsed.card;
+  } else if (typedRaw !== undefined) {
+    return "only a typedcard leg carries a typedCard";
   }
   const amount = (raw as { amount?: unknown })?.amount;
   if (
@@ -293,6 +348,7 @@ function parseSplitLeg(raw: unknown): SplitLeg | string {
     method,
     amount: cents / 100,
     ...(giftCardNumber === undefined ? {} : { giftCardNumber }),
+    ...(typedCard === undefined ? {} : { typedCard }),
   };
 }
 
@@ -358,13 +414,18 @@ export async function POST(request: Request) {
   if (
     split === null &&
     method !== "storedcard" &&
+    method !== "typedcard" &&
     method !== "credit" &&
     method !== "cash" &&
     method !== "giftcard" &&
     method !== "comp"
   ) {
     return NextResponse.json(
-      { error: "method must be storedcard, credit, cash, giftcard or comp" },
+      {
+        error:
+          "method must be storedcard, typedcard, credit, cash, giftcard " +
+          "or comp",
+      },
       { status: 400 },
     );
   }
@@ -385,6 +446,24 @@ export async function POST(request: Request) {
   } else if (payload?.giftCard !== undefined) {
     return NextResponse.json(
       { error: "giftCard applies only to method giftcard" },
+      { status: 400 },
+    );
+  }
+
+  /* T93: the typed card on the single-method shape, validated by the same
+   * rule the modal greys its button with. Refused on every other method:
+   * a card riding a request that would not charge it is a mistake, not
+   * something to ignore. */
+  let typedCard: TypedCard | null = null;
+  if (method === "typedcard") {
+    const parsed = parseTypedCard(payload?.typedCard);
+    if (parsed.card === null) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
+    }
+    typedCard = parsed.card;
+  } else if (payload?.typedCard !== undefined) {
+    return NextResponse.json(
+      { error: "typedCard applies only to method typedcard" },
       { status: 400 },
     );
   }
@@ -573,6 +652,30 @@ export async function POST(request: Request) {
       { error: `a ${boundLeg.method} leg needs a client attached to the sale` },
       { status: 400 },
     );
+  }
+  /* T93: the typed card, on the single shape or on a leg. */
+  const typedLeg =
+    split === null ? null : (split.find((l) => l.method === "typedcard") ?? null);
+  const typed = typedCard ?? typedLeg?.typedCard ?? null;
+  /* "and keep on file" needs somebody to keep it FOR. A walk-in sale
+   * rides the house client, which is a catch-all record shared by every
+   * anonymous sale, so a card kept on it belongs to nobody and would be
+   * offered as "the card on file" to the next walk-in. Refused before any
+   * Mindbody call, never silently downgraded to a charge-only: the
+   * teacher chose "keep", and a request that cannot honour that must say
+   * so rather than do half of it. */
+  if (typed?.keep === true) {
+    const house = houseClientId();
+    if (!clientId || (house !== null && clientId === house)) {
+      return NextResponse.json(
+        {
+          error:
+            "Keeping a card on file needs a client attached to the sale. " +
+            "Attach them, or use the card once. Nothing was charged.",
+        },
+        { status: 400 },
+      );
+    }
   }
   /* Mindbody requires a client on EVERY sale, pricing included (confirmed
    * live 2026-08-30). An anonymous cash/comp sale rides the configured
@@ -793,8 +896,73 @@ export async function POST(request: Request) {
     return null;
   };
 
-  /* ==================================================================
-   * T90: lines bought for another client.
+  /**
+   * T93: "and keep on file", AFTER a charge that stood.
+   *
+   * The checkout's own `saveInfo` key would store the card in the same
+   * call, but T84 already has a proven store path -- one
+   * `/client/updateclient` carrying ClientCreditCard, the same validation
+   * and a read-back so the answer is Mindbody's card and not an echo --
+   * and using it means the charge is settled BEFORE anything is stored:
+   * a refused charge stores nothing, and a stored card never precedes a
+   * charge. The order is the point.
+   *
+   * The cost is that the store can fail on its own after a charge that
+   * succeeded, and that is reported rather than hidden: `cardKept: false`
+   * with `cardKeptError` in words, which the screen renders as "Charged.
+   * The card was not kept on file: ...". This can NEVER change the sale's
+   * outcome: it throws nothing, and a dead staff token here is reported
+   * as a store that failed, not as a sale that did not happen (the sale
+   * did happen).
+   *
+   * Called only on a real success. `keep` was refused above for a
+   * house-client cart, so clientId is a named client here.
+   */
+  const keepTypedCard = async (
+    card: TypedCard,
+  ): Promise<Record<string, unknown>> => {
+    if (!card.keep || !clientId) return {};
+    try {
+      const run = await runAsActor(session, "/api/checkout keep-card", (actor) =>
+        saveClientCard(
+          clientId,
+          {
+            number: card.number,
+            expMonth: card.expMonth,
+            expYear: card.expYear,
+            cardHolder: card.billingName,
+            postalCode: card.postalCode,
+          },
+          actor,
+        ),
+      );
+      if (run.result.suppressed) {
+        return {
+          cardKept: false,
+          cardKeptError:
+            run.result.suppressed === "dry-run"
+              ? "dry run is on, so nothing was sent to Mindbody."
+              : "the write guard allows only the clients listed in " +
+                "POS_WRITE_CLIENT_IDS.",
+        };
+      }
+      /* A failed read-back is not a failed save (T84 review): the card is
+       * on file either way, so this is reported as kept. */
+      return {
+        cardKept: true,
+        cardKeptLastFour: run.result.card?.lastFour ?? null,
+      };
+    } catch (err) {
+      /* No card detail in this line: the exchange is in the call log with
+       * the number redacted. */
+      console.warn(
+        `[card] charged, but keeping the typed card on client ${clientId} ` +
+          `failed: ${errMessage(err)}`,
+      );
+      return { cardKept: false, cardKeptError: errMessage(err) };
+    }
+  };
+  /* ===========================================================   * T90: lines bought for another client.
    *
    * Pete: "a client can purchase something for another client (like a
    * membership, pass, etc.) that option needs to exist in the app." One
@@ -879,6 +1047,15 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
+    /* T93 x T90 review (Pete, 2026-09-14: "Allow two charges."): a typed
+     * card DOES pay a ticket holding a line for another client. This
+     * branch is one Mindbody cart per recipient, so the card is charged
+     * once per cart, each for that cart's own rehearsed total, in the
+     * T90 order (the payer's cart first). The per-cart floor is checked
+     * below, once every cart has been priced and before any is charged,
+     * and a second charge refused or ambiguous after the first stood is
+     * reported as exactly that by the loop's existing wording: never
+     * retried, never refunded. */
 
     const perCart =
       discount === null
@@ -999,6 +1176,29 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    /* T93 review: the $10 floor is a card-processing floor and each cart
+     * is its OWN authorization on the same card, so it applies per cart,
+     * not to the ticket. Checked here, after every cart has been priced
+     * and before any has been charged, so a ticket holding a cart under
+     * the floor costs nothing; the sentence names the cart, since
+     * otherwise nothing on screen says which one stopped it. */
+    if (method === "typedcard") {
+      const under = rehearsed.find((c) => c.total < CARD_MINIMUM_USD);
+      if (under !== undefined) {
+        return NextResponse.json(
+          {
+            error:
+              `The cart for ${nameOfGroup(under.group)} is ` +
+              `${under.total.toFixed(2)}, under the $${CARD_MINIMUM_USD} ` +
+              "card minimum, and a typed card is charged once per cart. " +
+              "Take cash or a gift card for this ticket, or sell that " +
+              "line on its own. Nothing was charged.",
+            stage: "method",
+          },
+          { status: 409 },
+        );
+      }
+    }
     /* T83's gift card does not care whose cart it pays, so it pays all of
      * them: ONE live balance read against the whole ticket (a read, so a
      * refusal here charged nothing), and then each cart's own share. */
@@ -1055,7 +1255,16 @@ export async function POST(request: Request) {
                         amount: cart.total,
                         cardNumber: giftCardNumber as string,
                       }
-                    : { type: "Cash", amount: cart.total },
+                    : method === "typedcard"
+                      ? {
+                          /* T93 review: this cart's own authorization on
+                           * the card, for the total Mindbody just
+                           * rehearsed for it. */
+                          type: "CreditCard",
+                          amount: cart.total,
+                          card: typedCard as TypedCard,
+                        }
+                      : { type: "Cash", amount: cart.total },
                   actor,
                   sendEmail,
                   cart.discount,
@@ -1179,6 +1388,27 @@ export async function POST(request: Request) {
     }
     if (gone) return gone;
 
+    /* T93 review: "keep on file" stores the card ONCE, on the attached
+     * client, after that client's own cart has gone through; a recipient
+     * never gets the card, and a ticket whose carts all failed stores
+     * nothing. `keep` was refused above without an attached client, so
+     * there is somebody to keep it for. A ticket made entirely of lines
+     * for other people has no payer cart at all, and then the first cart
+     * that stood is what the store waits on: the card was used, and the
+     * teacher asked for it to be kept. */
+    let typedKeep: Record<string, unknown> = {};
+    const typedFour =
+      method === "typedcard" && typedCard !== null
+        ? { typedCard: { lastFour: typedCardLastFour(typedCard.number) } }
+        : {};
+    if (method === "typedcard" && typedCard?.keep === true) {
+      const payerCart = sales.find((sale) => sale.forClientId === null);
+      const waitOn = payerCart ?? sales[0];
+      if (waitOn !== undefined && waitOn.suppressed === null) {
+        typedKeep = await keepTypedCard(typedCard);
+      }
+    }
+
     const landed = sales.filter((sale) => sale.suppressed === null);
     const suppressedSales = sales.filter((sale) => sale.suppressed !== null);
     const said = (list: typeof sales): string =>
@@ -1212,6 +1442,8 @@ export async function POST(request: Request) {
           partial: landed.length > 0,
           sales,
           total: ticketTotal,
+          ...typedFour,
+          ...typedKeep,
           ...(sessionEnded ? { staffSessionEnded: true } : {}),
         },
         { status: 502 },
@@ -1240,6 +1472,8 @@ export async function POST(request: Request) {
         summary: `${soldLine} ${suppressedLine}`.trim(),
         sales,
         total: ticketTotal,
+        ...typedFour,
+        ...typedKeep,
         ...actorFields({
           actorFallback: fallbackNote,
           staffSessionEnded: sessionEnded,
@@ -1259,6 +1493,8 @@ export async function POST(request: Request) {
       ...(method === "giftcard"
         ? { giftCard: { lastFour: giftCardLastFour(giftCardNumber as string) } }
         : {}),
+      ...typedFour,
+      ...typedKeep,
       receiptRequested: sendEmail,
       emailReceipt: null,
       ...(discount !== null && compReason !== null
@@ -1707,6 +1943,23 @@ export async function POST(request: Request) {
       if (refused) return refused;
     }
 
+    /* T93: the $10 floor is a CARD-PROCESSING floor, so it applies to a
+     * typed card leg exactly as it does to a stored one. There is no
+     * credit-purchase path here to top it up (that one needs a client and
+     * a stored card), so this is a plain refusal with nothing charged. */
+    if (typedLeg !== null && typedLeg.amount < CARD_MINIMUM_USD) {
+      return NextResponse.json(
+        {
+          error:
+            `The card leg is ${typedLeg.amount.toFixed(2)}, under the ` +
+            `$${CARD_MINIMUM_USD} card minimum. Make the card leg at ` +
+            `least $${CARD_MINIMUM_USD}, or use one method. Nothing was charged.`,
+          stage: "method",
+        },
+        { status: 409 },
+      );
+    }
+
     const toPayment = (leg: SplitLeg): CheckoutPayment =>
       leg.method === "storedcard"
         ? {
@@ -1714,15 +1967,21 @@ export async function POST(request: Request) {
             amount: leg.amount,
             lastFour: (profile?.card as { lastFour: string }).lastFour,
           }
-        : leg.method === "credit"
-          ? { type: "DebitAccount", amount: leg.amount }
-          : leg.method === "giftcard"
-            ? {
-                type: "GiftCard",
-                amount: leg.amount,
-                cardNumber: leg.giftCardNumber as string,
-              }
-            : { type: "Cash", amount: leg.amount };
+        : leg.method === "typedcard"
+          ? {
+              type: "CreditCard",
+              amount: leg.amount,
+              card: leg.typedCard as TypedCard,
+            }
+          : leg.method === "credit"
+            ? { type: "DebitAccount", amount: leg.amount }
+            : leg.method === "giftcard"
+              ? {
+                  type: "GiftCard",
+                  amount: leg.amount,
+                  cardNumber: leg.giftCardNumber as string,
+                }
+              : { type: "Cash", amount: leg.amount };
 
     try {
       /* ONE checkoutshoppingcart call carrying both Payments entries in
@@ -1785,6 +2044,18 @@ export async function POST(request: Request) {
               giftCard: {
                 lastFour: giftCardLastFour(giftLeg.giftCardNumber as string),
               },
+            }),
+        /* T93: the same rule for a typed card leg, and the keep outcome
+         * reported separately from the charge. */
+        ...(typedLeg === null
+          ? {}
+          : {
+              typedCard: {
+                lastFour: typedCardLastFour(
+                  (typedLeg.typedCard as TypedCard).number,
+                ),
+              },
+              ...(await keepTypedCard(typedLeg.typedCard as TypedCard)),
             }),
         receiptRequested: sendEmail,
         emailReceipt: null,
@@ -2000,6 +2271,76 @@ export async function POST(request: Request) {
         total,
         saleId: ids.saleId,
         cartId: ids.cartId,
+        receiptRequested: sendEmail,
+        emailReceipt: null,
+        ...rec,
+        ...actorFields(run),
+      });
+    }
+
+    if (m === "typedcard") {
+      /* T93: a whole sale on a card typed at the counter. Like cash and a
+       * gift card it needs no client (a walk-in rides the house client);
+       * unlike the stored card there is no credit-purchase path under the
+       * $10 floor, so a total under it is refused plainly. The $10 floor
+       * is the studio's card-processing floor and does not care whose
+       * card it is. */
+      const card = typedCard as TypedCard;
+      if (total < CARD_MINIMUM_USD) {
+        return NextResponse.json(
+          {
+            error:
+              `The total is ${total.toFixed(2)}, under the ` +
+              `$${CARD_MINIMUM_USD} card minimum. Take it in cash, or on ` +
+              "the card on file. Nothing was charged.",
+            stage: "method",
+          },
+          { status: 409 },
+        );
+      }
+      const run = await runAsActor(session, "/api/checkout", (actor) =>
+        checkoutCart(
+          items,
+          saleClientId,
+          { type: "CreditCard", amount: total, card },
+          actor,
+          sendEmail,
+          discount,
+        ),
+      );
+      const outcome = run.result;
+      const ids =
+        outcome.suppressed !== null
+          ? { saleId: null, cartId: null }
+          : await saleIds(outcome.saleId);
+      const rec = await recordDiscount({
+        ...ids,
+        suppressed: outcome.suppressed !== null,
+        paid: total,
+        shape: "lines",
+        onStudio: discounted,
+      });
+      if (outcome.suppressed) {
+        /* Suppression is never success, so nothing is kept on file
+         * either: the charge did not happen. */
+        return NextResponse.json({
+          ok: false,
+          suppressed: outcome.suppressed,
+          ...rec,
+          ...actorFields(run),
+        });
+      }
+      return NextResponse.json({
+        ok: true,
+        method: m,
+        total,
+        saleId: ids.saleId,
+        cartId: ids.cartId,
+        /* The last four, which is all the done screen and any record ever
+         * see of the number. */
+        typedCard: { lastFour: typedCardLastFour(card.number) },
+        /* T93: the store runs only now, after the charge stood. */
+        ...(await keepTypedCard(card)),
         receiptRequested: sendEmail,
         emailReceipt: null,
         ...rec,

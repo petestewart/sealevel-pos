@@ -10702,3 +10702,271 @@ contrast audit in dark (2.97), which is what every disabled
 `modal-confirm` does and not this ticket's to change. Still unproved,
 as the build notes say: whether Mindbody accepts a `DebitAccount` above
 the balance. Everything here is against the mock.
+## T93. A card typed at Pay: for this sale, or stored on the client (Pete, 2026-09-14)
+
+Pete, on the Pay screen:
+
+> On the Pay screen, the Card button should have a number keypad icon on
+> its right. this will open a credit card manual entry modal (same as the
+> 'Replace card on file' modal). if there is a client currently selected,
+> they can add or replace this as a stored card, or just use it
+> temporarily. If it is a walk in sale, they can just use it for the sale
+> (be sure all required fields are visible for this feature, if there are
+> any additional ones not currently captured in the form).
+>
+> Also, if a client is currently selected who does not have a stored
+> card, there should be text in the Card button that indicates there is
+> no stored card.
+
+### The design
+
+**The Card tile** keeps its meaning and gains a 44px keypad square at its
+right edge: a SIBLING button in the same cell, never nested inside the
+tile (a button inside a button is not a control). The tile body still
+means the stored card and greys with its reason; the keypad is live in
+every state the tile is not, because "no card on file" and "no client at
+all" are exactly when a card is handed across the counter. With an
+attached client and no stored card the tile reads "Card" with the reason
+line "No card on file", which is what Pete asked for and which the
+existing `cardReason` already said.
+
+**The modal** is T84's CardModal in a second mode ("same as the 'Replace
+card on file' modal", so it is the same component): title "Card for this
+sale", the four T84 fields PLUS the CVV, which the spec lists for a
+charge and which T84 omitted because Mindbody's `ClientCreditCard` model
+has none. Street address, city and state are optional, behind one
+"Billing address" disclosure, since the studio's processor may want them
+and nobody should have to type an address to take a payment. For an
+attached client there is a 64px two-cell choice, "Use once" or "Use and
+keep on file" ("Use and replace on file" when one is already there); on a
+walk-in cart there is no choice, because a card kept on the house client
+would belong to nobody.
+
+The box is ONE size in every state: the fields region is a fixed-height
+scroll area, so opening the disclosure does not grow the dialog under a
+finger (T68's rule).
+
+**The primary is "Use this card" and it CHARGES NOTHING.** It hands the
+card up to the payment surface as the tender line "Card (typed) ending
+1234", exactly as the gift card modal hands up its number (T83): held in
+`SaleScreen` state alone, dropped whenever the line is removed, the cart
+changes, the client changes, the discount changes, or the sale completes
+(one effect, the same one shape as the gift card's). Leaving pay mode
+dismisses the MODAL but keeps the line and the card, which is T39.6's
+rule (the panel stays mounted so the tender survives Back to items) and
+what T83's gift card number already does. Finalize Sale is still
+the one tap that moves money, single flight, and a typed card can be one
+leg of a split with cash or a gift card.
+
+**The $10 floor** applies to a typed card, whole sale or leg. It is a
+card-processing floor and does not care whose card it is; unlike the
+stored card there is no credit-purchase path under it (that needs a
+client and a card on file), so it is a plain refusal with nothing
+charged, greyed in the browser with the same words.
+
+**A ticket holding a line for another client (T90) takes a typed card**,
+decided by Pete on 2026-09-14: "Allow two charges." That branch is one
+Mindbody cart PER RECIPIENT, so the card is authorized once per cart, for
+that cart's own rehearsed total, in the T90 order (the payer's cart
+first). What follows from it:
+
+- **Every cart is rehearsed before any is charged**, as T90 already does,
+  so a cart Mindbody will not price costs nothing.
+- **The $10 floor is per CART**, since each cart is its own
+  authorization. A ticket with a cart under it is refused before any
+  charge, in words naming the cart, and the browser says the same thing
+  under the tender line rather than waiting for the tap.
+- **The teacher is told how many times the card will be charged, and for
+  what, before Finalize**: a line under the tender reading "This card
+  will be charged 2 times: $230.00 for Pete Stewart, $28.00 for Alison
+  Reed." The amounts are Mindbody's, cart by cart, from
+  `/api/price-cart`'s `carts` block; a cart it has not priced leaves the
+  figures out rather than guessing.
+- **Honest partial results, T90's own wording.** A second charge refused
+  or ambiguous after the first stood says exactly that, names both, and is
+  never retried and never refunded.
+- **"Keep on file" stores the card once**, after the attached client's own
+  cart has gone through, on that client alone. A recipient never gets the
+  card.
+
+### The Mindbody mechanism
+
+A `CreditCard` entry in `checkoutshoppingcart`'s Payments array. The
+spec's key list for that type (`sale.yml:3934`) is lowercase (amount,
+creditCardNumber, expMonth, expYear, cvv, billingName, billingAddress,
+billingCity, billingState, billingPostalCode, saveInfo, cardId); the
+`CreditCardInfo` model (`sale.yml:2867`) spells them PascalCase. What
+ships is the PascalCase OBJECT shape `paymentPayload` already uses for
+StoredCard, the one shape a live checkout is known to have passed with,
+with the keys as `CreditCardInfo` spells them.
+
+`saveInfo` is NOT sent. "And keep on file" goes through T84's proven
+store instead (one `/client/updateclient` with `ClientCreditCard`, then a
+read-back), and it runs AFTER the charge succeeds: a refused charge
+stores nothing, and a stored card never precedes a charge. The order is
+the point. The cost is that the store can fail on its own after a charge
+that stood, and that is reported rather than hidden: `cardKept: false`
+with `cardKeptError`, rendered as "The card was not kept on file: ...".
+
+### Secrecy
+
+The number and the CVV live in the modal's state and in the one request.
+`src/lib/calllog.ts` now names `CreditCardNumber` beside `CardNumber` in
+its secret-key rule (CVV was already listed, against exactly this day),
+adds `creditCardNumber` to the literals `record()` lifts out of a call's
+own request and strikes out of everything it records, and adds a
+CONTEXT rule for a CVV quoted in free text: a CVV is three or four
+digits, so it cannot be matched by shape without mangling every amount
+and id in a message, but "cvv 737" in a refusal can be matched by the
+word in front of it. `Amount`, `ExpMonth` and `ExpYear` were added to the
+request keep-list, because a payment record with the amount struck out
+diagnoses nothing.
+
+### Open questions, all pending a live probe
+
+- **The payment metadata's casing.** PascalCase object is what ships. If
+  Mindbody refuses it, the by-hand thing to try is the spec's lowercase
+  key set, possibly as a JSON string like the gift card's. Never an
+  automatic retry: a money call must not quietly send itself again in a
+  different shape.
+- **Whether the CVV is wanted at all.** The spec lists `cvv`/`CVV` for
+  this payment type, so it is asked for and sent. If the processor does
+  not want it, the field comes out.
+- **Whether the billing postal code is required.** The checkout RESPONSE
+  carries `IsBillingPostalCodeRequired` (`sale.yml:5721`), which says the
+  site's answer is only knowable from a real call. It is required by this
+  form either way, since T84 already asks for it.
+- **Whether the street address, city and state are wanted.** Optional and
+  hidden until then; sent only when filled, never blank.
+- **Whether `saveInfo` would have worked.** Deliberately untried: the T84
+  path is proven and orders the store after the charge.
+- **`GET /sale/acceptedcardtypes`** (`sale.yml:22`) is not called. The
+  form does not ask which network a card is on, and Mindbody refuses a
+  card type the site does not take in words.
+
+### Build notes
+
+- `src/lib/cardrules.ts` is new: Luhn, the expiry test and the digit
+  strip, as a PURE module. They were in `clientcard.ts` (which imports
+  `mindbody()`, so the browser cannot have it) and copied by hand into
+  CardModal; T93 needs them in a third place, so there is now one copy
+  and `clientcard.ts` re-exports them.
+- `src/lib/typedcard.ts` is new: the `TypedCard` type and
+  `parseTypedCard`, the one validator the modal greys its button with and
+  the route refuses by.
+- Touched: `CardModal.tsx` (the second mode), `SaleScreen.tsx` (the
+  keypad square, the `typedcard` tender source, the held card, the
+  charge), `src/app/api/checkout/route.ts` (the method, the leg, the
+  keep), `src/lib/sale.ts` (the `CreditCard` payment),
+  `src/lib/calllog.ts` (the redaction), `globals.css` (tokens only, both
+  palettes).
+- **T90 (a line bought for another client) took a typed card in the
+  review pass**, after Pete's "Allow two charges" (2026-09-14). As built
+  first, the route refused it 409 and the keypad greyed: one cart per
+  recipient meant one authorization per cart, and that was a decision
+  about two authorizations rather than a bug. It is now allowed, with the
+  per-cart floor, the count said in words before the tap, and the keep
+  landing once on the attached client. See the Review subsection.
+- Deliberately NOT done: no swipe or reader path (`EncryptedTrackData`
+  and `TrackData` exist in the spec and are a different ticket); no
+  `cardId` (that is the stored card, which has its own tender); a typed
+  card and a stored card cannot both be in one payment, greyed with
+  "Already paying by card", since two card charges in one sale is
+  nothing anybody asked for.
+- Verified on the ticket's harness (mock Mindbody on :4593, `next start`
+  on :3093): the exact Metadata keys on the wire; the store after the
+  charge and never before; keep refused for a walk-in and for the house
+  client; a refused charge storing nothing; a store that failed after a
+  charge that stood reported in words; the $10 floor; suppression as
+  suppression; two synchronous taps on Finalize sending one request; and
+  the leak grep (the number and the CVV absent from the call log in both
+  directions including a refusal that quotes both back, from every route
+  answer, from the server log, from the document, from localStorage,
+  from sessionStorage and from the URL). Both palettes, both
+  orientations.
+
+### Review
+
+Adversarial pass on `t93-typed-card`, merged with `feature/phase-2` at
+the roster pass-count commit. `npm run typecheck` and `npm run build`
+clean, the builder's harness (mock on :4593, `next start` on :3093) green
+after every change, plus the review's own probes.
+
+**Changed in review.**
+
+1. **Pete's decision, 2026-09-14: "Allow two charges."** A typed card was
+   refused on a T90 ticket; it now pays one authorization per recipient
+   cart. See the design section for what follows: the per-cart $10 floor
+   refused before any charge and named in the browser too, the sentence
+   under the tender line saying how many times the card will be charged
+   and for what (Mindbody's per-cart figures, never an estimate), T90's
+   existing honest-partial wording, and "keep on file" storing the card
+   once, after the attached client's own cart stood. Proved on the
+   harness: two carts, two `CreditCard` payments of $230.00 and $28.00 in
+   ONE request, the payer's cart first; the second cart 500ing leaves one
+   charge, reports both and still keeps the card once; the floor refusal
+   with nothing charged; suppression suppressing the whole ticket and
+   keeping nothing. Proved in a browser, both palettes and both
+   orientations: the keypad live on such a ticket, the sentence exact, one
+   tap charging twice, and no number or CVV in the document, storage or
+   URL.
+2. **A CVV quoted in free text leaked.** The context rule allowed only
+   punctuation and space between the word and the digits, so "The
+   security code you entered, 737, was wrong." went through: the CVV
+   reached the route's 502 answer, which the screen shows, and the dev
+   call log's response record. The gap is now any run of non-digits up to
+   twenty characters. Residual, recorded rather than guessed at: a CVV
+   quoted BEFORE the word ("737 is not a valid security code"), which no
+   observed refusal does; a CVV alone is not spendable, and the number
+   beside it is struck out by shape, by key and by literal.
+3. **The worktree's `node_modules` symlink was committed** (`.gitignore`
+   said `node_modules/`, and a symlink is not a directory). Untracked,
+   and the pattern now covers both.
+4. **A wording correction.** The card was documented as dropped when pay
+   mode is left. It is not, and should not be: T39.6 keeps the panel
+   mounted so the tender survives Back to items, and T83's gift card
+   number is held across it the same way. Proved: the line and the card
+   survive Back to items with no PAN in the document, and a cart change
+   or a client change drops both.
+
+**Checked and sound, no change.**
+
+- The secret, every surface the brief names: absent from the call log in
+  both directions (key rule, the card-shaped digit rule, and the literal
+  lifted out of the request, which is what covers a refusal quoting a
+  number no shape rule would match), from `/api/devlog` and copy-all, from
+  every route answer including each validation 400 (none echoes the field
+  value), from `cardKeptError` after a store that failed, from the server
+  log, the done screen, the receipt request, the T84 store call (no CVV
+  reaches it) and every T90 per-recipient answer. A 15-digit Amex, a
+  19-digit number, spaces and dashes all charge and report the right last
+  four; a past expiry, a two-digit CVV, a bad Luhn, a bad postal code and
+  a short number are each a 400 with nothing written.
+- Money: single flight on Finalize (two synchronous taps, one request);
+  the $10 floor whole-sale, per leg and now per cart; a typed leg plus
+  cash summing to the cent in ONE call with the card on its own leg; the
+  keep store only after a real success, never after suppression, a 5xx or
+  a refusal; a store failure reported with the sale standing; keep refused
+  by curl for a walk-in and for a house-client cart; the Metadata keys
+  exactly `CreditCardInfo`'s spelling; no `SaveInfo`. T94 is not on this
+  branch, so its overdraft token has nothing to meet here.
+- The modal: one size in every state and both orientations, fields cleared
+  on cancel, on use and on a client change, Escape peeling the modal alone
+  and leaving pay mode standing, the keypad a 44px sibling button and not
+  nested, the choice defaulting to "Use once", "No card on file" on the
+  tile.
+- UI rules: tokens only in both palettes (no hex added), radius 0, the
+  16px floor, 64px primaries, no em dashes.
+
+**Not verified, and unverifiable here.** Everything the ticket's open
+questions list: the payment metadata's casing, whether the CVV, the postal
+code or the billing address are wanted, and whether a live processor
+accepts this payment at all. A typed card has never been charged against
+Mindbody.
+
+**Noted, not changed.** A stored card leg and a typed card leg in one
+split are refused in the browser ("Already paying by card") but accepted
+by `/api/checkout` past it. Both legs are floor-checked and both ride ONE
+`checkoutshoppingcart` call, so there is no seam and the legs still sum to
+the rehearsed total; it is a browser rule the route does not duplicate,
+not a money hole.

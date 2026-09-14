@@ -3,40 +3,80 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { actorFallbackLine } from "./actornote";
+import { luhnOk } from "@/lib/cardrules";
 import type { CardOnFile } from "@/lib/clientcard";
+import { parseTypedCard, type TypedCard } from "@/lib/typedcard";
 
 /**
  * T84: the card on file, typed at the counter (Pete: "we need to add the
  * ability to add a card on file"). Opened from the profile card's "Card on
  * file" row, over the profile modal.
  *
- * The T61 idiom: one fixed box, the X, the scrim, Escape, one Cancel/Save
- * pair at the modal-actions height. Save is single flight and stays
- * disabled until the fields check out, so a typo costs a quiet line rather
- * than a round trip; the server checks the same rules again, because a
+ * T93: the same box, in a second mode, for a card typed to pay for THIS
+ * sale (Pete: "the Card button should have a number keypad icon on its
+ * right. this will open a credit card manual entry modal (same as the
+ * 'Replace card on file' modal)"). One component, because it is one form
+ * and Pete asked for the same one:
+ *
+ * - mode "file" (the default, T84): Save card, straight to
+ *   /api/client-card, which writes the card on the client.
+ * - mode "sale" (T93): "Use this card", which CHARGES NOTHING. It hands
+ *   the card up to the payment surface as a tender line, and the charge
+ *   happens on Finalize Sale with every other tender, single flight. The
+ *   extra field is the CVV (the spec lists it for a CreditCard payment;
+ *   T84 has none because Mindbody's ClientCreditCard model has none), the
+ *   three optional billing lines sit behind one disclosure, and for an
+ *   attached client there is the two-cell choice between using the card
+ *   once and keeping it on file as well.
+ *
+ * The T61 idiom: one fixed box, the X, the scrim, Escape, one
+ * Cancel/primary pair at the modal-actions height. The primary stays
+ * disabled until the fields check out (by the SAME validator the route
+ * enforces, src/lib/typedcard.ts), so a typo costs a quiet line rather
+ * than a round trip; the server checks the rules again, because a
  * browser's validation is not a rule.
  *
- * There is no CVV field: Mindbody's ClientCreditCard model does not have
- * one (client.yml:7365). If Mindbody turns out to want one, it refuses in
- * words and the field is added then, never stored.
- *
- * The number lives in this component's state and in the one request, and
- * nowhere else: no draft is kept, nothing is written to localStorage, and
- * the fields are cleared on every exit. The call log redacts what the
- * server sent (src/lib/calllog.ts).
+ * The number and the CVV live in this component's state and in the one
+ * request, and nowhere else: no draft is kept, nothing is written to
+ * localStorage or sessionStorage, nothing reaches the URL, and the fields
+ * are cleared on every exit. The call log redacts what the server sent
+ * (src/lib/calllog.ts strikes CardNumber, CreditCardNumber and CVV in
+ * both directions). The CVV is never sent to /api/client-card: Mindbody
+ * has nowhere to keep one.
  */
 
-interface Props {
-  clientId: string;
+interface Common {
   /** Who it is for, for the modal's head. */
   name: string;
+  onClose: () => void;
+}
+
+interface FileProps extends Common {
+  mode?: "file";
+  clientId: string;
   /** The card on file now, so the box can say what is being replaced. */
   current: CardOnFile | null;
-  onClose: () => void;
   /** The card Mindbody holds after the save, and the amber line when the
    *  write ran as the studio account (T49's one loud fallback). */
   onSaved: (card: CardOnFile, note: string | null) => void;
 }
+
+interface SaleProps extends Common {
+  mode: "sale";
+  /** The card on file now, if any: "keep on file" is "replace on file"
+   *  when one is already there. Only the last four is read, so the
+   *  payment surface's own lookup shape fits with no conversion. */
+  current: { lastFour: string } | null;
+  /** Null on a walk-in cart: there is nobody to keep a card for, so the
+   *  choice is not offered and the card is used once. */
+  clientId: string | null;
+  /** What this card is about to be tendered for, for the head's line. */
+  amount: string;
+  /** Hand the card up to the payment surface. It charges nothing. */
+  onUse: (card: TypedCard, lastFour: string) => void;
+}
+
+type Props = FileProps | SaleProps;
 
 function CloseIcon() {
   return (
@@ -53,25 +93,6 @@ function CloseIcon() {
       <path d="M6 6l12 12M18 6L6 18" />
     </svg>
   );
-}
-
-/** The Luhn check digit, the same rule the server enforces
- *  (src/lib/clientcard.ts luhnOk). Repeated rather than imported so the
- *  browser bundle does not pull a module that calls mindbody(). */
-function luhnOk(digits: string): boolean {
-  if (!/^\d+$/.test(digits)) return false;
-  let sum = 0;
-  let double = false;
-  for (let i = digits.length - 1; i >= 0; i -= 1) {
-    let d = digits.charCodeAt(i) - 48;
-    if (double) {
-      d *= 2;
-      if (d > 9) d -= 9;
-    }
-    sum += d;
-    double = !double;
-  }
-  return sum % 10 === 0;
 }
 
 const MIN_DIGITS = 13;
@@ -92,18 +113,24 @@ const MONTHS = [
   "12",
 ];
 
-export default function CardModal({
-  clientId,
-  name,
-  current,
-  onClose,
-  onSaved,
-}: Props) {
+export default function CardModal(props: Props) {
+  const { name, current, onClose } = props;
+  const sale = props.mode === "sale";
   const [number, setNumber] = useState("");
   const [month, setMonth] = useState("");
   const [year, setYear] = useState("");
   const [holder, setHolder] = useState("");
   const [postal, setPostal] = useState("");
+  /** T93, sale mode only. Never stored, never sent to /api/client-card. */
+  const [cvv, setCvv] = useState("");
+  const [address, setAddress] = useState("");
+  const [city, setCity] = useState("");
+  const [region, setRegion] = useState("");
+  /** The "Billing address" disclosure. The box does not change size when
+   *  it opens: the fields region is one fixed height that scrolls. */
+  const [billingOpen, setBillingOpen] = useState(false);
+  /** T93: "and keep on file", offered only for an attached client. */
+  const [keep, setKeep] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suppressedNote, setSuppressedNote] = useState<string | null>(null);
@@ -111,13 +138,17 @@ export default function CardModal({
 
   /* Everything typed goes when the box goes. Unmounting would do it on
    * its own; doing it here as well means a future caller that keeps the
-   * modal mounted cannot leave a card number in React state. */
+   * modal mounted cannot leave a card number, or a CVV, in React state. */
   const leave = useCallback(() => {
     setNumber("");
     setMonth("");
     setYear("");
     setHolder("");
     setPostal("");
+    setCvv("");
+    setAddress("");
+    setCity("");
+    setRegion("");
     setError(null);
     onClose();
   }, [onClose]);
@@ -129,7 +160,7 @@ export default function CardModal({
         leave();
       }
     };
-    /* Capture, so the profile modal underneath does not also close. */
+    /* Capture, so the surface underneath does not also close. */
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [busy, leave]);
@@ -157,11 +188,52 @@ export default function CardModal({
     year !== "" &&
     new Date(Number(year), Number(month), 1).getTime() > Date.now();
   const postalOk = /^[A-Za-z0-9][A-Za-z0-9 -]{2,11}$/.test(postal.trim());
+  const cvvOk = /^\d{3,4}$/.test(cvv.trim());
   const ready =
-    numberOk && expiryOk && holder.trim() !== "" && postalOk && !busy;
+    numberOk &&
+    expiryOk &&
+    holder.trim() !== "" &&
+    postalOk &&
+    (!sale || cvvOk) &&
+    !busy;
 
+  /** T93: the validated card, or null. The SAME function /api/checkout
+   *  refuses by, so the form cannot accept what the route would not. */
+  const typedCard = (): TypedCard | null => {
+    const parsed = parseTypedCard({
+      number: digits,
+      expMonth: month,
+      expYear: year,
+      cvv: cvv.trim(),
+      billingName: holder.trim(),
+      postalCode: postal.trim(),
+      address: address.trim(),
+      city: city.trim(),
+      state: region.trim(),
+      keep,
+    });
+    if (parsed.card === null) {
+      setError(parsed.error);
+      return null;
+    }
+    return parsed.card;
+  };
+
+  /** Sale mode's primary. It charges NOTHING: the card goes up to the
+   *  payment surface as a tender line, and Finalize Sale is the one tap
+   *  that moves money. */
+  function use() {
+    if (!ready || props.mode !== "sale") return;
+    const card = typedCard();
+    if (card === null) return;
+    props.onUse(card, card.number.slice(-4));
+    /* The parent closes the box; clear what was typed either way. */
+    leave();
+  }
+
+  /** File mode's primary (T84, unchanged): straight to /api/client-card. */
   async function save() {
-    if (inFlight.current || !ready) return;
+    if (inFlight.current || !ready || props.mode === "sale") return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
@@ -171,7 +243,7 @@ export default function CardModal({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          clientId,
+          clientId: props.clientId,
           number: digits,
           expMonth: month,
           expYear: year,
@@ -207,7 +279,7 @@ export default function CardModal({
         );
         return;
       }
-      onSaved(
+      props.onSaved(
         card,
         body.actorFallback ? actorFallbackLine(body.actorFallback) : null,
       );
@@ -223,6 +295,18 @@ export default function CardModal({
     }
   }
 
+  const submit = () => (sale ? use() : void save());
+
+  const title = sale
+    ? "Card for this sale"
+    : current
+      ? "Replace card on file"
+      : "Add card on file";
+  /** The choice's second cell: keeping a card where one already sits is
+   *  replacing it, and it must say so. */
+  const keepLabel = current ? "Use and replace on file" : "Use and keep on file";
+  const canKeep = props.mode === "sale" && props.clientId !== null;
+
   return (
     <div
       className="modal-scrim over-profile"
@@ -232,10 +316,10 @@ export default function CardModal({
       }}
     >
       <div
-        className="modal modal-card"
+        className={sale ? "modal modal-card modal-card-sale" : "modal modal-card"}
         role="dialog"
         aria-modal="true"
-        aria-label={current ? "Replace card on file" : "Add card on file"}
+        aria-label={title}
       >
         <button
           className="row-icon modal-x"
@@ -247,15 +331,20 @@ export default function CardModal({
         </button>
         <div className="modal-head">
           <p className="modal-kicker">{name}</p>
-          <p className="modal-title">
-            {current ? "Replace card on file" : "Add card on file"}
-          </p>
+          <p className="modal-title">{title}</p>
         </div>
         <p className="reason-sub nc-sub">
-          {current
-            ? `Replaces the card ending ${current.lastFour}. Mindbody keeps the card; this app never stores it.`
-            : "Mindbody keeps the card; this app never stores it."}
+          {sale
+            ? `${(props as SaleProps).amount} on this card. Nothing is charged until you finalize the sale; this app never stores the card.`
+            : current
+              ? `Replaces the card ending ${current.lastFour}. Mindbody keeps the card; this app never stores it.`
+              : "Mindbody keeps the card; this app never stores it."}
         </p>
+        {/* One fixed-height region, so the box is the same size whether
+            the billing disclosure is open or shut (T68's rule: a dialog
+            must not grow under a finger). In file mode it is not a
+            scroll region at all: the four fields always fit. */}
+        <div className={sale ? "card-body" : undefined}>
         <div className="nc-fields">
           <label className="nc-field wide">
             <span>Card number</span>
@@ -337,7 +426,7 @@ export default function CardModal({
               }}
             />
           </label>
-          <label className="nc-field wide">
+          <label className={sale ? "nc-field" : "nc-field wide"}>
             <span>Postal code</span>
             <input
               className="reason-input"
@@ -352,10 +441,131 @@ export default function CardModal({
                 setError(null);
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void save();
+                if (e.key === "Enter") submit();
               }}
             />
           </label>
+          {/* T93: the CVV, beside the postal code. Required for a charge
+              (the spec lists it for a CreditCard payment), and it goes
+              nowhere but that one payment: never to /api/client-card,
+              never into a card on file, cleared with the rest. */}
+          {sale ? (
+            <label className="nc-field">
+              <span>Security code</span>
+              <input
+                className="reason-input"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                maxLength={4}
+                value={cvv}
+                disabled={busy}
+                onChange={(e) => {
+                  setCvv(e.target.value.replace(/\D/g, "").slice(0, 4));
+                  setError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submit();
+                }}
+              />
+            </label>
+          ) : null}
+        </div>
+        {/* The three optional billing lines, behind one disclosure: the
+            studio's processor may want them, and the spec has fields for
+            them, but nobody should have to type a street address to take
+            a payment. Empty means "not given" and the payment omits the
+            key rather than sending a blank. */}
+        {sale ? (
+          <>
+            <button
+              className="card-disclose"
+              type="button"
+              aria-expanded={billingOpen}
+              disabled={busy}
+              onClick={() => setBillingOpen((o) => !o)}
+            >
+              {billingOpen ? "Hide billing address" : "Billing address"}
+              <span className="card-disclose-note">optional</span>
+            </button>
+            {billingOpen ? (
+              <div className="nc-fields">
+                <label className="nc-field wide">
+                  <span>Street address</span>
+                  <input
+                    className="reason-input"
+                    type="text"
+                    autoComplete="billing street-address"
+                    value={address}
+                    disabled={busy}
+                    onChange={(e) => setAddress(e.target.value)}
+                  />
+                </label>
+                <label className="nc-field">
+                  <span>City</span>
+                  <input
+                    className="reason-input"
+                    type="text"
+                    autoComplete="billing address-level2"
+                    value={city}
+                    disabled={busy}
+                    onChange={(e) => setCity(e.target.value)}
+                  />
+                </label>
+                <label className="nc-field">
+                  <span>State</span>
+                  <input
+                    className="reason-input"
+                    type="text"
+                    autoComplete="billing address-level1"
+                    value={region}
+                    disabled={busy}
+                    onChange={(e) => setRegion(e.target.value)}
+                  />
+                </label>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+        {/* T93: with a client attached the teacher chooses whether the
+            card is also kept on file (Pete: "they can add or replace this
+            as a stored card, or just use it temporarily"). On a walk-in
+            cart there is nobody to keep it for, so there is no choice and
+            the card is used once: /api/checkout refuses `keep` on a
+            house-client cart. */}
+        {canKeep ? (
+          <div className="card-keep">
+            <p className="card-keep-label">This card</p>
+            <div className="pad-chips">
+              <button
+                className={keep ? "pad-chip" : "pad-chip on"}
+                type="button"
+                disabled={busy}
+                aria-pressed={!keep}
+                onClick={() => setKeep(false)}
+              >
+                Use once
+              </button>
+              <button
+                className={keep ? "pad-chip on" : "pad-chip"}
+                type="button"
+                disabled={busy}
+                aria-pressed={keep}
+                onClick={() => setKeep(true)}
+              >
+                {keepLabel}
+              </button>
+            </div>
+            <p className="card-note" role="status">
+              {keep
+                ? "Kept on file only after the sale goes through."
+                : ""}
+            </p>
+          </div>
+        ) : null}
         </div>
         {suppressedNote ? (
           <p className="modal-warn" role="status">
@@ -374,12 +584,14 @@ export default function CardModal({
           <button
             className="modal-confirm go"
             disabled={!ready}
-            onClick={() => void save()}
+            onClick={submit}
           >
             {busy ? (
               <>
                 <span className="spinner" aria-label="working" /> Saving
               </>
+            ) : sale ? (
+              "Use this card"
             ) : (
               "Save card"
             )}
