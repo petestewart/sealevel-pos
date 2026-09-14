@@ -6635,8 +6635,7 @@ textarea.reason-note-field:disabled::placeholder {
  * once the ticket holds a pass. Tokens only, both palettes; no new tokens
  * were needed. */
 
-/* The sign-in bar's cell: the bar's full height (the bar is 60px of input
- * plus its rule, and the magnifier's 76px square sits beside it), icon
+/* The sign-in bar's cell: the bar's full height, icon
  * plus label in the accent so it reads as the one action on the bar that
  * is not the search itself, on the bar surface rather than a filled
  * primary: searching is still the primary thing this bar does. */
@@ -6646,7 +6645,10 @@ textarea.reason-note-field:disabled::placeholder {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  min-height: 60px;
+  /* 64px, the floor for a primary tap target: it is the tallest cell, so
+   * the bar and the magnifier beside it come up to 64 with it (they were
+   * 60, under the floor). */
+  min-height: 64px;
   padding: 0 20px;
   border: 0;
   border-left: 1px solid var(--line);
