@@ -1276,6 +1276,33 @@ function PaymentPanel(props: {
     teacher: StaffChoice;
     token: string;
   } | null>(null);
+  /**
+   * T94: an AUTHORIZED account overdraft (Pete: "Accounts should be able
+   * to be charged even if there is insufficient balance ... This will
+   * require the teacher's PIN to authorize"). It belongs to one credit
+   * line and to one amount: the line's id, the cents the PIN authorized,
+   * the balance it was authorized against, who authorized it, and the
+   * one-shot token /api/checkout checks. Anything that moves that line
+   * or that amount drops the whole thing (the effect below), so a
+   * negative balance is never charged on a figure nobody authorized.
+   */
+  const [overdraft, setOverdraft] = useState<{
+    lineId: number;
+    cents: number;
+    balanceCents: number;
+    token: string;
+    teacherName: string;
+  } | null>(null);
+  /** The amount modal's own PIN step: "off" is the keypad, "pin" is the
+   *  PIN pad in its place. Its digits never leave this component except
+   *  to /api/teacher/verify. */
+  const [odStep, setOdStep] = useState<"off" | "pin">("off");
+  const [odEntry, setOdEntry] = useState("");
+  const odEntryRef = useRef("");
+  const [odMsg, setOdMsg] = useState<string | null>(null);
+  const [odBusy, setOdBusy] = useState(false);
+  const odBusyRef = useRef(false);
+
   /** T48: the enrollment form's fields and outcome. The password lives
    *  in this state only until the post answers. */
   const [enroll, setEnroll] = useState(EMPTY_ENROLL);
@@ -1510,6 +1537,14 @@ function PaymentPanel(props: {
   const dismissPad = useCallback(() => {
     setPadFor(null);
     setEntry("");
+    /* T94: the modal's PIN step is the modal's, so it closes with it and
+     * its digits go. An authorized overdraft is NOT dropped here: Done
+     * closes this modal too, and the authorization belongs to the line
+     * (the effect below drops it with the line or the figure). */
+    setOdStep("off");
+    odEntryRef.current = "";
+    setOdEntry("");
+    setOdMsg(null);
     onModalChange(false);
   }, [onModalChange]);
 
@@ -1682,32 +1717,44 @@ function PaymentPanel(props: {
    * balance covers the whole total is no longer a blocker: a credit line
    * clamps to min(balance, due) and a second line pays the rest, which is
    * the T28 reversal of assumption P2 (partial credit) made ordinary. */
+  /* T94 (Pete: "This means Account is always an option as a payment
+   * method"): a zero or missing balance is no longer a reason. The
+   * account can be charged past its balance with a teacher's PIN, so the
+   * only thing Account still needs is somebody to charge. T90's refusal
+   * stays FIRST and is not something a PIN can move: a line bought for
+   * another client cannot be paid from this one's account at all, so
+   * there is no overdraft to authorize there either. */
   const creditReason = otherClientWhy
     ? otherClientWhy
     : !client
       ? "Attach a client"
-      : balance === null || balance <= 0
-        ? "No account balance"
-        : null;
+      : null;
   const creditLabel =
     balance !== null && balance > 0
       ? `Account (${money(balance)})`
       : "Account";
+  /** T94: the tile's quiet line when there is nothing on the account.
+   *  Not a refusal: the tile works, and the modal is where the overdraft
+   *  is authorized. */
+  const creditNote =
+    balance !== null && balance > 0 ? null : "No balance";
 
   /**
-   * Whether Credit is OFFERED at all (Pete, fourth live test: "if there's
-   * no balance, it shouldn't be a visible option"). Most sales are to
-   * people with no account credit, and a permanently greyed button is
-   * noise on the one row that has to be read at a glance.
+   * Whether Account is OFFERED at all. T33 hid it with no balance (Pete,
+   * fourth live test: "if there's no balance, it shouldn't be a visible
+   * option"); T94 reverses that for the attached case, in his words
+   * ("Account is always an option as a payment method"), because an
+   * empty account can now be charged with a PIN. With nobody attached
+   * there is no account to charge, so the tile stays off with "Attach a
+   * client" rather than absent, which is T35's rule for every other
+   * source.
    *
-   * The one exception is the split-failure seam: a $10 credit purchase
-   * certainly went through, and if the balance read that follows it
-   * failed, the number here is null. Hiding the honest retry (spend the
-   * credit that now exists) is the worst outcome on that screen, so the
-   * source stays while that warning is up.
+   * The split-failure seam keeps it up with no client too: a $10 credit
+   * purchase certainly went through, and if the balance read that
+   * followed it failed, hiding the honest retry is the worst outcome on
+   * that screen.
    */
-  const creditVisible =
-    (balance !== null && balance > 0) || result?.kind === "split";
+  const creditVisible = Boolean(client) || result?.kind === "split";
 
   /* A source that is no longer on screen must not stay in the tender:
    * credit can vanish under the teacher (the post-sale profile refetch
@@ -1720,6 +1767,19 @@ function PaymentPanel(props: {
         : cur,
     );
   }, [creditVisible]);
+
+  /* T94: an authorized overdraft belongs to a LINE and to an AMOUNT.
+   * Whatever removed that line or changed that figure -- its x, Cancel,
+   * a second trip through the keypad, a cart edit, a client change, a
+   * discount, a completed sale -- takes the authorization and its token
+   * with it, so the next charge is either inside the balance or asks for
+   * the PIN again. */
+  useEffect(() => {
+    if (overdraft === null) return;
+    const line = lines.find((l) => l.id === overdraft.lineId);
+    if (line !== undefined && line.cents === overdraft.cents) return;
+    setOverdraft(null);
+  }, [lines, overdraft]);
 
   /* T83: the held gift card belongs to a LINE. Whatever removed that
    * line -- its x, a cart edit, a discount change, a client change, a
@@ -1804,6 +1864,11 @@ function PaymentPanel(props: {
     if (totalCents === null) return 0;
     const room = Math.max(0, totalCents - (lines.length === 2 ? 1 : 0));
     if (source === "credit") {
+      /* T94: an authorized overdraft is exactly the cap being lifted. The
+       * PIN was entered against the whole remaining due, so the account
+       * caps at the total like the card does and the balance stops
+       * deciding. Without one the balance is still the ceiling. */
+      if (overdraft !== null) return room;
       return balanceCents === null ? 0 : Math.min(room, balanceCents);
     }
     /* T83: a gift card caps at what Mindbody says is on it, exactly as
@@ -1879,6 +1944,17 @@ function PaymentPanel(props: {
     if (covered <= 0) return "Enter an amount";
     if (line.source === "credit") {
       if (creditReason !== null) return creditReason;
+      /* T94: an overdraft authorized for THIS line at THIS amount is what
+       * lets the balance be exceeded. The id and the cents are both
+       * checked, so a figure changed after the PIN is refused here and
+       * the effect below has already dropped the token anyway. */
+      if (
+        overdraft !== null &&
+        overdraft.lineId === line.id &&
+        overdraft.cents === line.cents
+      ) {
+        return null;
+      }
       if (balanceCents === null || balanceCents < line.cents) {
         return `Only ${money(balance ?? 0)} on account`;
       }
@@ -1978,6 +2054,11 @@ function PaymentPanel(props: {
   /** The cash line, if one is in the payment: the Cash tile reopens its
    *  keypad (T39.7). */
   const cashLine = lines.find((l) => l.source === "cash");
+  /** T94: the account line, if one is in the payment. The Account tile
+   *  reopens its keypad, which is Pete's second way into the overdraft
+   *  ("by clicking the Account button again after all its credit is
+   *  used"). */
+  const creditLine = lines.find((l) => l.source === "credit");
 
   /** T79: what a comp puts on the studio, the pre-tax subtotal (tax on
    *  $0 is $0): the figure the Comp button and the done screen carry,
@@ -2052,15 +2133,29 @@ function PaymentPanel(props: {
      * T48: the token names who is discounting; the route refuses a
      * discount without a valid one before any Mindbody call. The
      * per-line spread is NOT sent: the route recomputes it. */
+    /* T94: an authorized overdraft rides as its OWN token, beside a
+     * discount's rather than instead of it: each is one-shot and spent
+     * once by the route, and one token cannot answer for two
+     * authorizations. Sent only when the account line is still the
+     * figure that was authorized; the route re-reads the balance and
+     * refuses the charge outright without a valid token. */
+    const overdraftField =
+      overdraft !== null &&
+      creditLine !== undefined &&
+      overdraft.lineId === creditLine.id &&
+      overdraft.cents === creditLine.cents
+        ? { overdraftToken: overdraft.token }
+        : {};
     const payment =
       comp !== null
         ? {
             ...tender,
+            ...overdraftField,
             discount: comp.discount,
             compReason: comp.reason,
             teacherToken: comp.token,
           }
-        : tender;
+        : { ...tender, ...overdraftField };
     const isSplit = "split" in payment;
     /* For the done block (T39.7); the cart is gone by the time it renders. */
     const itemCount = cart.reduce((n, l) => n + l.quantity, 0);
@@ -2353,6 +2448,15 @@ function PaymentPanel(props: {
       inFlight.current = false;
       setCharging(false);
       onBusyChange(false);
+      /* T94 review: the route spends the one-shot token before its first
+         Mindbody call, so once this request has been answered at all the
+         authorization is gone whatever the outcome. Holding it would let
+         a second Finalize tap ride a dead token into a 401 nobody can
+         clear, or read as still-authorized after an ambiguous answer.
+         The line keeps its figure, so the tender refuses it with "Only
+         $X on account" and the modal offers the PIN again, which is the
+         right price for trying twice (T48). */
+      if ("overdraftToken" in overdraftField) setOverdraft(null);
     }
   };
 
@@ -2375,7 +2479,13 @@ function PaymentPanel(props: {
       source === "credit"
         ? Math.min(dueCents, balanceCents ?? 0)
         : dueCents;
-    if (cents <= 0) return;
+    /* T94: an account with nothing on it still takes a line, at $0.00,
+     * and the keypad opens on it straight away: that modal is where the
+     * overdraft is authorized, and a tile that did nothing at all was
+     * the old "no balance, no option" behaviour Pete reversed. Every
+     * other source still needs something to cover. */
+    const emptyAccount = source === "credit" && cents === 0;
+    if (cents <= 0 && !emptyAccount) return;
     const id = nextLineId.current++;
     /* T79: a PARTIAL discount survives a tender -- the remainder is
      * exactly what this line is paying, and dropping the discount here
@@ -2385,7 +2495,8 @@ function PaymentPanel(props: {
      * tender can reach an armed comp. */
     setCompCleared(false);
     setLines((cur) => [...cur, { id, source, cents }]);
-    dismissPad();
+    if (emptyAccount) openPad(id);
+    else dismissPad();
     clearStaleResult();
   };
 
@@ -2403,6 +2514,13 @@ function PaymentPanel(props: {
   const openPad = (id: number) => {
     setPadFor(id);
     setEntry("");
+    /* T94 review: the modal always opens on its keypad. The PIN step
+       belongs to one trip through it, and a step left standing would put
+       a PIN pad in front of the next amount somebody taps. */
+    setOdStep("off");
+    odEntryRef.current = "";
+    setOdEntry("");
+    setOdMsg(null);
     onModalChange(true);
     setCompCleared(false);
     clearStaleResult();
@@ -2698,6 +2816,159 @@ function PaymentPanel(props: {
     }
     dismissPad();
   };
+
+  /* ------------- T94: the overdraft and its PIN step ---------------
+   * Pete: "there should be red button in the lower left that says Charge
+   * Full Amount with black text underneath it saying 'This will result in
+   * a negative account balance'. This will require the teacher's PIN to
+   * authorize."
+   *
+   * The button only appears where it is TRUE: the account cannot cover
+   * what is still due, either because the balance ran out under the cap
+   * or because there is nothing on it at all. It authorizes one figure,
+   * the whole remaining due, and holds the one-shot token beside the
+   * line; nothing about the money happens here, and /api/checkout
+   * re-reads the balance and computes the shortfall itself. */
+
+  /** Whether this modal may offer the overdraft: an account line, a due
+   *  to settle, and a balance that does not reach it. */
+  const overdraftOffered =
+    padLine !== undefined &&
+    padLine.source === "credit" &&
+    padDueCents !== null &&
+    padDueCents > 0 &&
+    overdraft === null &&
+    (balanceCents ?? 0) < padDueCents;
+
+  /** What the overdraft leaves on the account, in cents and negative:
+   *  the authorized amount less the balance it was authorized against. */
+  const overdraftAfterCents =
+    overdraft === null ? null : overdraft.balanceCents - overdraft.cents;
+
+  const startOverdraftPin = () => {
+    if (!overdraftOffered || charging) return;
+    odEntryRef.current = "";
+    setOdEntry("");
+    setOdMsg(null);
+    setOdStep("pin");
+  };
+
+  const cancelOverdraftPin = () => {
+    if (odBusyRef.current) return;
+    odEntryRef.current = "";
+    setOdEntry("");
+    setOdMsg(null);
+    setOdStep("off");
+  };
+
+  /** One key on the modal's PIN pad. The last digit IS Done once the
+   *  teacher's PIN length is known, exactly as the discount pad does. */
+  const overdraftTap = (key: string) => {
+    if (odBusyRef.current || pinLockedFor > 0) return;
+    setOdMsg(null);
+    const cur = odEntryRef.current;
+    const next =
+      key === "back"
+        ? cur.slice(0, -1)
+        : cur.length >= PIN_MAX
+          ? cur
+          : cur + key;
+    odEntryRef.current = next;
+    setOdEntry(next);
+    if (key !== "back" && pinLength !== null && next.length === pinLength) {
+      void submitOverdraftPin();
+    }
+  };
+
+  /** The PIN, once: a match sets the account line to the whole remaining
+   *  due, holds the token beside it and closes the modal; a miss says so
+   *  and stays on the pad. The digits are never kept. */
+  const submitOverdraftPin = async () => {
+    const digits = odEntryRef.current;
+    const line = padLine;
+    const full = padDueCents;
+    if (odBusyRef.current || pinLockedFor > 0 || !isPinShape(digits)) return;
+    if (line === undefined || full === null || full <= 0) return;
+    odBusyRef.current = true;
+    setOdBusy(true);
+    setOdMsg(null);
+    try {
+      const res = await fetch("/api/teacher/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        /* T94 review: what this PIN authorizes, signed into the token.
+           A discount's token cannot stand in for it, nor it for one. */
+        body: JSON.stringify({ pin: digits, purpose: "overdraft" }),
+      });
+      const body = await res.json().catch(() => ({}));
+      odEntryRef.current = "";
+      setOdEntry("");
+      if (
+        res.ok &&
+        body?.ok === true &&
+        typeof body?.token === "string" &&
+        body.token.length > 0
+      ) {
+        setOverdraft({
+          lineId: line.id,
+          cents: full,
+          balanceCents: balanceCents ?? 0,
+          token: body.token,
+          teacherName: String(body?.teacher?.name ?? ""),
+        });
+        setLines((cur) =>
+          cur.map((l) => (l.id === line.id ? { ...l, cents: full } : l)),
+        );
+        clearStaleResult();
+        dismissPad();
+        return;
+      }
+      if (res.status === 429) {
+        const secs = Number(body?.retryAfterSeconds ?? 30);
+        setPinLockedUntil(
+          Date.now() + (Number.isFinite(secs) ? secs : 30) * 1000,
+        );
+        setPinNow(Date.now());
+        setOdMsg(null);
+      } else {
+        setOdMsg(String(body?.error ?? "That PIN was not accepted."));
+      }
+    } catch {
+      odEntryRef.current = "";
+      setOdEntry("");
+      setOdMsg("The PIN check did not answer. Try it again.");
+    } finally {
+      odBusyRef.current = false;
+      setOdBusy(false);
+    }
+  };
+
+  /* The signed-in teacher's PIN length for THIS pad too, so the last
+   * digit submits itself here as it does on the discount pad. */
+  useEffect(() => {
+    if (odStep !== "pin") return;
+    let live = true;
+    fetch("/api/teacher")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => {
+        if (!live) return;
+        const n = b?.pinLength;
+        setPinLength(
+          typeof n === "number" &&
+            Number.isInteger(n) &&
+            n >= PIN_MIN &&
+            n <= PIN_MAX
+            ? n
+            : null,
+        );
+      })
+      .catch(() => {
+        if (live) setPinLength(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [odStep]);
 
   /* Escape closes the amount modal, and closes it as CANCEL (never
    * mid-charge). SaleScreen skips its own overlay-close for the same
@@ -3292,8 +3563,17 @@ function PaymentPanel(props: {
                      one tap from the surface. Card and Credit keep T35's
                      refusal with its reason: their amount is a clamp,
                      and the keypad is a tap away on the line itself. */
+                  /* T94: Account reopens its keypad the same way, which
+                     is Pete's second door into the overdraft ("by
+                     clicking the Account button again after all its
+                     credit is used"). */
                   const reopen =
-                    s === "cash" && cashLine !== undefined && reason === "Already in the payment";
+                    (s === "cash" &&
+                      cashLine !== undefined &&
+                      reason === "Already in the payment") ||
+                    (s === "credit" &&
+                      creditLine !== undefined &&
+                      reason === "Already in the payment");
                   const off = reason !== null && !reopen;
                   /* T82: the note carries INFORMATION or nothing. T35's
                      reason when a tile cannot add a line stays, and so
@@ -3308,7 +3588,12 @@ function PaymentPanel(props: {
                     ? reason
                     : reopen
                       ? "In the payment. Tap to change it."
-                      : null;
+                      : /* T94: an empty account says so and stays
+                           usable; the modal is where the overdraft is
+                           authorized. */
+                        s === "credit"
+                        ? creditNote
+                        : null;
                   /* In the payment: the selected marker (--accent-bg and
                      the 4px accent edge), whether or not the tile can
                      still take a tap. */
@@ -3321,8 +3606,10 @@ function PaymentPanel(props: {
                       }
                       disabled={off || charging}
                       onClick={() =>
-                        reopen && cashLine !== undefined
+                        reopen && s === "cash" && cashLine !== undefined
                           ? openPad(cashLine.id)
+                          : reopen && s === "credit" && creditLine !== undefined
+                            ? openPad(creditLine.id)
                           : /* T83: the gift card asks for its number
                                first; every other source adds its line
                                on the tap. */
@@ -3380,6 +3667,20 @@ function PaymentPanel(props: {
                           {line.cents > covers ? (
                             <span className="tender-sub">
                               covers {money(covers / 100)}
+                            </span>
+                          ) : null}
+                          {/* T94: an authorized overdraft is never
+                              silent. What it leaves on the account, and
+                              whose PIN allowed it. */}
+                          {overdraft !== null &&
+                          overdraft.lineId === line.id &&
+                          overdraftAfterCents !== null ? (
+                            <span className="tender-sub warn-sub">
+                              balance after -
+                              {money(Math.abs(overdraftAfterCents) / 100)}
+                              {overdraft.teacherName
+                                ? `, by ${overdraft.teacherName}`
+                                : ""}
                             </span>
                           ) : null}
                         </span>
@@ -3749,6 +4050,45 @@ function PaymentPanel(props: {
                 the T36 modal (Pete: "having it be a modal is def
                 better"), with the panel's 2px accent border. */}
             <div className="pad-left">
+            {/* T94: the PIN step takes the left half and nothing else,
+                so the box does not resize under the finger that opened
+                it. The keys and the two action cells below serve
+                whichever step is showing. */}
+            {odStep === "pin" ? (
+              <>
+                <p className="modal-title pad-head">
+                  <span className="pad-kicker">Authorize</span>
+                </p>
+                <p className="pad-change muted-note">
+                  Teacher PIN to authorize a negative balance.
+                </p>
+                <div
+                  className="lock-dots pin-dots"
+                  aria-label={`${odEntry.length} digits entered`}
+                >
+                  {Array.from({ length: PIN_MAX }).map((_, i) => (
+                    <span
+                      key={i}
+                      className={
+                        i < odEntry.length ? "lock-dot" : "lock-dot empty"
+                      }
+                    />
+                  ))}
+                </div>
+                {pinLockedFor > 0 ? (
+                  <p className="lock-msg">
+                    Too many attempts. Try again in {pinLockedFor}s.
+                  </p>
+                ) : odMsg ? (
+                  <p className="lock-msg">{odMsg}</p>
+                ) : (
+                  <p className="lock-msg lock-msg-empty" aria-hidden="true">
+                    &nbsp;
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
             <p className="modal-title pad-head">
               <span className="pad-kicker">
                 {padLine.source === "cash"
@@ -3796,7 +4136,36 @@ function PaymentPanel(props: {
                 tender the OTHER line absorbs the difference, so the
                 modal says what that line becomes rather than calling a
                 deliberate part-payment "short". */}
-            {padPartnerCents !== null && padPartner !== undefined ? (
+            {/* T94, Pete's words: the red cell at the lower left, with
+                the plain sentence under it. Only where it is true: the
+                account cannot reach what is still due. It asks for the
+                PIN, it does not authorize by itself. */}
+            {overdraftOffered ? (
+              <>
+                <button
+                  className="pad-overdraft"
+                  disabled={charging}
+                  onClick={startOverdraftPin}
+                >
+                  Charge full amount
+                </button>
+                <p className="pad-overdraft-note">
+                  This will result in a negative account balance.
+                </p>
+              </>
+            ) : null}
+
+            {overdraft !== null &&
+            padLine !== undefined &&
+            overdraft.lineId === padLine.id &&
+            overdraftAfterCents !== null ? (
+              <p className="pad-change balance-after">
+                Balance after:{" "}
+                <span className="pad-change-amt">
+                  -{money(Math.abs(overdraftAfterCents) / 100)}
+                </span>
+              </p>
+            ) : padPartnerCents !== null && padPartner !== undefined ? (
               <p className="pad-change muted-note">
                 The {sourceLabel(padPartner.source).toLowerCase()} part
                 becomes {money(padPartnerCents / 100)}.
@@ -3818,12 +4187,26 @@ function PaymentPanel(props: {
                   : "Cash may be more than the due; the change shows here."}
               </p>
             )}
+              </>
+            )}
             </div>
 
             <div className="pad-keys">
-              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0"].map(
-                (k) => (
-                  <button key={k} className="pad-key" onClick={() => padTap(k)}>
+              {(odStep === "pin"
+                ? ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0"]
+                : ["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0"]
+              ).map((k, i) =>
+                k === "" ? (
+                  <span key={`gap-${i}`} aria-hidden="true" />
+                ) : (
+                  <button
+                    key={k}
+                    className="pad-key"
+                    disabled={odStep === "pin" && (odBusy || pinLockedFor > 0)}
+                    onClick={() =>
+                      odStep === "pin" ? overdraftTap(k) : padTap(k)
+                    }
+                  >
                     {k}
                   </button>
                 ),
@@ -3832,19 +4215,50 @@ function PaymentPanel(props: {
                 className="pad-key del"
                 aria-label="Delete last digit"
                 title="Delete"
-                onClick={() => padTap("back")}
+                disabled={odStep === "pin" && (odBusy || pinLockedFor > 0)}
+                onClick={() =>
+                  odStep === "pin" ? overdraftTap("back") : padTap("back")
+                }
               >
                 <BackspaceIcon />
               </button>
             </div>
 
             <div className="modal-actions">
-              <button className="modal-confirm go" onClick={applyPad}>
-                Done
-              </button>
-              <button className="modal-cancel" onClick={dismissPad}>
-                Cancel
-              </button>
+              {odStep === "pin" ? (
+                <>
+                  <button
+                    className="modal-confirm go"
+                    disabled={
+                      odBusy || pinLockedFor > 0 || odEntry.length < PIN_MIN
+                    }
+                    title={
+                      odEntry.length < PIN_MIN
+                        ? `Enter ${PIN_MIN} to ${PIN_MAX} digits`
+                        : "Check this PIN"
+                    }
+                    onClick={() => void submitOverdraftPin()}
+                  >
+                    {odBusy ? "Checking..." : "Done"}
+                  </button>
+                  <button
+                    className="modal-cancel"
+                    disabled={odBusy}
+                    onClick={cancelOverdraftPin}
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="modal-confirm go" onClick={applyPad}>
+                    Done
+                  </button>
+                  <button className="modal-cancel" onClick={dismissPad}>
+                    Cancel
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -7715,31 +8129,34 @@ export default function SaleScreen(props: {
                             <PlusIcon />
                           </button>
                           {/* The recipient control: text, not a filled
-                              button, and it opens the SAME live search
-                              the attach modal uses ("Who is this for?").
-                              Re-tapping opens it again with the row that
-                              clears it. */}
+                              button. With nobody yet it opens the SAME
+                              live search the attach modal uses ("Who is
+                              this for?"). With a recipient the line
+                              already names them, so the control reads
+                              "Remove client" and clears it in place
+                              (Pete, 2026-09-14: "This shouldn't show the
+                              client's name twice. It should have a
+                              Remove client button."). */}
                           <button
                             className={line.forClient ? "t-for on" : "t-for"}
                             disabled={charging}
                             aria-label={
                               line.forClient
-                                ? `Bought for ${line.forClient.name}. Change who this is for`
+                                ? `Remove ${line.forClient.name} from ${line.item.name}; it goes back to the sale's client`
                                 : `Buy ${line.item.name} for another client`
                             }
                             title={
                               line.forClient
-                                ? `Bought for ${line.forClient.name}`
+                                ? "Remove client"
                                 : "Buy this for another client"
                             }
                             onClick={() =>
-                              onRequestRecipient?.(
-                                line.key,
-                                line.forClient ? true : false,
-                              )
+                              line.forClient
+                                ? setLineRecipient(line.key, null)
+                                : onRequestRecipient?.(line.key, false)
                             }
                           >
-                            {line.forClient ? line.forClient.name : "Other Client"}
+                            {line.forClient ? "Remove client" : "Other Client"}
                           </button>
                         </div>
                       )}

@@ -327,6 +327,16 @@ export function sessionless(name: unknown): boolean {
 export async function rosterFor(classId: number): Promise<RosterEntry[]> {
   const body = await mindbody(`/class/classvisits?ClassId=${classId}`);
   const visits = body?.Class?.Visits ?? body?.Visits ?? [];
+  /* Mindbody's Remaining on a visit's pass is the count AFTER this visit
+   * took its session: the booking consumed it. Pete (2026-09-14): "the
+   * amount should be how many they have remaining BEFORE using one for
+   * the class they're signed up for ... you would never see 0 remaining
+   * in this list because you can't pay for a class with a zero-remaining
+   * pass". So the roster carries Remaining + 1: the pass as the student
+   * thinks of it walking in. A fake-unlimited count (99999) is left
+   * alone; nothing reads it as a number. */
+  const beforeThisVisit = (remaining: number | null): number | null =>
+    remaining === null || remaining >= 100 ? remaining : remaining + 1;
   return visits.map((v: any): RosterEntry => {
     /* The visit embeds the full pass (`Service`, a ClientService). Its
      * Name is the same pricing option ServiceName carries, but the object
@@ -344,7 +354,9 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
        * Mindbody never decrements, so its Remaining is always 0 and read
        * as "0 remaining" it looks like a spent pass (Pete, live pass
        * 2026-09-02). No session count is shown for it; the expiry stays. */
-      passRemaining: sessionless(service?.Name) ? null : num(service?.Remaining),
+      passRemaining: sessionless(service?.Name)
+        ? null
+        : beforeThisVisit(num(service?.Remaining)),
       passCount: sessionless(service?.Name) ? null : num(service?.Count),
       passExpires:
         typeof service?.ExpirationDate === "string" && service.ExpirationDate

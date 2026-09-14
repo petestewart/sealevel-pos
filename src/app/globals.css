@@ -4678,6 +4678,51 @@ button.sale-for:disabled {
   color: var(--warn);
 }
 
+/* T94: the authorized overdraft's figure, in --warn: a negative balance
+ * is not a blocked action (--stop) and not an ordinary one either. Used
+ * in the amount modal and on the tender row's second line. */
+.pad-change.balance-after,
+.pad-change.balance-after .pad-change-amt,
+.tender-sub.warn-sub {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* T94, Pete: "there should be red button in the lower left that says
+ * Charge Full Amount with black text underneath it saying 'This will
+ * result in a negative account balance'". The --stop fill is the token
+ * for destructive, and the label on it is --bg, not white, for the same
+ * contrast reason .modal-confirm carries. The sentence under it is plain
+ * ink at the 16px floor, which is Pete's "black text". */
+.pad-overdraft {
+  min-height: 64px;
+  margin-top: auto;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 0;
+  background: var(--stop);
+  color: var(--bg);
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.pad-overdraft:active:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+.pad-overdraft:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pad-overdraft-note {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.3;
+  color: var(--ink);
+}
+
 /* T83: the gift-card modal's refusal line. A card Mindbody would not
  * answer for is a blocked action, so it reads in --stop rather than in
  * the muted grey the rest of this line uses; the number it refused is
