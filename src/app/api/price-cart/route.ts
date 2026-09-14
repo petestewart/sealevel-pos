@@ -14,11 +14,15 @@ import {
 import {
   expectedSubtotal,
   expectedTotal,
+  groupByRecipient,
   houseClientId,
   parseCartLines,
   plainRefusal,
   priceCart,
+  roundToCents,
+  splitDiscount,
   type CartLine,
+  type PricedCart,
 } from "@/lib/sale";
 
 export const dynamic = "force-dynamic";
@@ -113,14 +117,93 @@ export async function POST(request: Request) {
       usedPaymentStub: false,
     });
   }
+  /* T90: a line bought for another client is its own cart under THAT
+   * client's id (see groupByRecipient), so a ticket holding one is
+   * priced once per recipient and the answer carries the sum plus each
+   * cart's own figures. The paying client's cart is first. A ticket with
+   * no other-client line takes exactly the single call it always did. */
+  const groups = groupByRecipient(parsed.items, effectiveClientId);
+  const perGroupDiscount =
+    discount === null
+      ? groups.map(() => null)
+      : splitDiscount(parsed.items, discount, groups);
   try {
-    const priced = await priceCart(
-      parsed.items,
-      effectiveClientId,
-      null,
-      discount,
-    );
-    return NextResponse.json(priced);
+    if (groups.length === 1 && groups[0]?.forClientId == null) {
+      const priced = await priceCart(
+        parsed.items,
+        effectiveClientId,
+        null,
+        discount,
+      );
+      return NextResponse.json(priced);
+    }
+    const carts: {
+      forClientId: string | null;
+      clientId: string;
+      priced: PricedCart;
+    }[] = [];
+    for (const [i, group] of groups.entries()) {
+      const cartClientId = group.forClientId ?? effectiveClientId;
+      carts.push({
+        forClientId: group.forClientId,
+        clientId: cartClientId,
+        priced: await priceCart(
+          group.items,
+          cartClientId,
+          null,
+          perGroupDiscount[i] ?? null,
+        ),
+      });
+    }
+    /* The screen's total is the sum of MINDBODY's grand totals, never a
+     * browser number and never a local estimate standing in for one: one
+     * cart Mindbody could not price (or a suppressed write) makes the
+     * whole ticket's total absent, exactly as a single cart's does. */
+    const sum = (pick: (c: PricedCart) => number | null): number | null => {
+      let total = 0;
+      for (const c of carts) {
+        const v = pick(c.priced);
+        if (v === null) return null;
+        total += v;
+      }
+      return roundToCents(total);
+    };
+    const audits = carts.flatMap((c) => c.priced.lineAudit ?? []);
+    return NextResponse.json({
+      suppressed: carts.some((c) => c.priced.suppressed),
+      subTotal: sum((c) => c.subTotal),
+      discountTotal: sum((c) => c.discountTotal),
+      taxTotal: sum((c) => c.taxTotal),
+      grandTotal: sum((c) => c.grandTotal),
+      expectedTotal: roundToCents(
+        carts.reduce((n, c) => n + c.priced.expectedTotal, 0),
+      ),
+      expectedSubtotal: roundToCents(
+        carts.reduce((n, c) => n + c.priced.expectedSubtotal, 0),
+      ),
+      expectedDiscount: roundToCents(
+        carts.reduce((n, c) => n + c.priced.expectedDiscount, 0),
+      ),
+      /* Any cart disagreeing stops the whole ticket: the carts are one
+       * sale to the teacher, and a stop on part of it is a stop. */
+      discountDisagrees: carts.some((c) => c.priced.discountDisagrees),
+      disagrees: carts.some((c) => c.priced.disagrees),
+      packagePricing: carts.some((c) => c.priced.packagePricing),
+      usedPaymentStub: carts.every((c) => c.priced.usedPaymentStub),
+      ...(audits.length > 0 ? { lineAudit: audits } : {}),
+      /* What the screen needs to name each cart: whose it is and what
+       * Mindbody priced it at. */
+      carts: carts.map((c) => ({
+        forClientId: c.forClientId,
+        clientId: c.clientId,
+        grandTotal: c.priced.grandTotal,
+        subTotal: c.priced.subTotal,
+        expectedSubtotal: c.priced.expectedSubtotal,
+        expectedDiscount: c.priced.expectedDiscount,
+        suppressed: c.priced.suppressed,
+        disagrees: c.priced.disagrees,
+      })),
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     /* A 4xx is Mindbody refusing the CART, not failing (Pete, 2026-09-14,

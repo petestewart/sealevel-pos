@@ -1401,6 +1401,25 @@ function FrontDesk({
    *  de-duplication) steps aside. */
   const [attachMode, setAttachMode] = useState(false);
   /**
+   * T90: the attach modal, open to pick who ONE ticket line is for
+   * rather than who the sale is for (Pete: "when Other Client is
+   * selected, the search box appears"). The same modal, the same live
+   * search and the same Class | All segment; only the title, the row
+   * action and the clear row differ. `clear` says the line already has a
+   * recipient, so the row that takes it off is offered.
+   */
+  const [recipientFor, setRecipientFor] = useState<{
+    lineKey: string;
+    clear: boolean;
+  } | null>(null);
+  /** T90: the picked recipient, handed to SaleScreen (which owns the
+   *  cart). The nonce makes a repeat of the same pick arrive. */
+  const [recipientPick, setRecipientPick] = useState<{
+    nonce: number;
+    lineKey: string;
+    client: { id: string; name: string } | null;
+  } | null>(null);
+  /**
    * Attach-mode furniture (T27 round three, reshaped in T87): the person
    * a sale is for is usually standing in the class already on screen, so
    * the attach modal leads with that class's roster as tappable rows
@@ -2354,6 +2373,7 @@ function FrontDesk({
     stopSearch();
     setAutoWidened(false);
     setAttachMode(false);
+    setRecipientFor(null);
   }, [stopSearch]);
 
   /**
@@ -2370,6 +2390,19 @@ function FrontDesk({
    * segment after this but the teacher's own tap, or a query nobody in
    * class matches, on Enter or on the live debounce (T52).
    */
+  /**
+   * T90: the same opener, for one line's recipient. Everything about the
+   * modal is openAttachSearch's; what changes is `recipientFor`, which
+   * the row action and the title read.
+   */
+  const openRecipientSearch = useCallback(
+    (lineKey: string, hasRecipient: boolean) => {
+      setRecipientFor({ lineKey, clear: hasRecipient });
+      openAttachSearchRef.current?.();
+    },
+    [],
+  );
+
   const openAttachSearch = useCallback(() => {
     setAttachMode(true);
     /* T87 review: drop the previous search WHOLE, not just its rows. The
@@ -2391,6 +2424,11 @@ function FrontDesk({
       activeIdRef.current !== null && entries.length > 0 ? "class" : "all",
     );
   }, [entries.length, stopSearch]);
+  /* openRecipientSearch is declared above it (it is passed down in the
+     same block as the rest of the sale's props) and calls it through a
+     ref so neither has to be declared twice. */
+  const openAttachSearchRef = useRef<(() => void) | null>(null);
+  openAttachSearchRef.current = openAttachSearch;
 
   /**
    * Tapping a segment cell (T87). To Class: whatever search was up is
@@ -2713,6 +2751,17 @@ function FrontDesk({
    *  quick-pick's RosterEntry rows and the search results share it. */
   const attachSaleClient = useCallback(
     (client: { id: string; name: string; balance: number | null }) => {
+      /* T90: in recipient mode a tap puts the LINE on that client, and
+         who the sale is for does not move. */
+      if (recipientFor !== null) {
+        setRecipientPick((prev) => ({
+          nonce: (prev?.nonce ?? 0) + 1,
+          lineKey: recipientFor.lineKey,
+          client: { id: client.id, name: client.name },
+        }));
+        closeSearch();
+        return;
+      }
       setSaleClient({
         id: client.id,
         name: client.name,
@@ -2720,8 +2769,19 @@ function FrontDesk({
       });
       closeSearch();
     },
-    [closeSearch],
+    [closeSearch, recipientFor],
   );
+  /** T90: the clear row at the top of the recipient modal: the line comes
+   *  back to whoever is paying. */
+  const clearLineRecipient = useCallback(() => {
+    if (recipientFor === null) return;
+    setRecipientPick((prev) => ({
+      nonce: (prev?.nonce ?? 0) + 1,
+      lineKey: recipientFor.lineKey,
+      client: null,
+    }));
+    closeSearch();
+  }, [closeSearch, recipientFor]);
 
   /**
    * T85: every way into the sale goes through here. Anything anchored to
@@ -4831,7 +4891,13 @@ function FrontDesk({
           className="rrow rrow-tap"
           role="button"
           tabIndex={0}
-          aria-label={`Attach ${client.name}`}
+          /* T90 review: in recipient mode the row does not attach
+             anybody to the sale, so it must not say it does. */
+          aria-label={
+            recipientFor !== null
+              ? `Buy this for ${client.name}`
+              : `Attach ${client.name}`
+          }
           onClick={() => attachSaleClient(client)}
           onKeyDown={(e) => {
             if (e.target !== e.currentTarget) return;
@@ -6012,7 +6078,9 @@ function FrontDesk({
             role="dialog"
             aria-modal="true"
             aria-label={
-              attachMode
+              recipientFor !== null
+                ? "Who is this item for?"
+                : attachMode
                 ? "Attach a client to the sale"
                 : searchTitle
                   ? `Search results for ${searchTitle}`
@@ -6030,7 +6098,9 @@ function FrontDesk({
             <div className="modal-head">
               <p className="modal-kicker">{attachMode ? "Sale" : "Walk-in"}</p>
               <p className="modal-title">
-                {attachMode
+                {recipientFor !== null
+                  ? "Who is this for?"
+                  : attachMode
                   ? "Attach a client to the sale"
                   : searchTitle
                     ? `Results for "${searchTitle}"`
@@ -6065,9 +6135,11 @@ function FrontDesk({
                     }}
                     enterKeyHint="search"
                     placeholder={
-                      attachMode
-                        ? "Who is the sale for?"
-                        : "Search for a walk-in"
+                      recipientFor !== null
+                        ? "Who is this item for?"
+                        : attachMode
+                          ? "Who is the sale for?"
+                          : "Search for a walk-in"
                     }
                     autoComplete="off"
                     autoCorrect="off"
@@ -6149,6 +6221,21 @@ function FrontDesk({
                           : null;
                   return (
                     <div className="attach-quick">
+                      {/* T90: re-opening the modal on a line that already
+                          has a recipient offers the row that takes it
+                          off. It names who pays, since that is where the
+                          line goes back to. */}
+                      {recipientFor?.clear ? (
+                        <button
+                          type="button"
+                          className="attach-clear"
+                          onClick={clearLineRecipient}
+                        >
+                          {saleClient
+                            ? `For ${saleClient.name} (this client)`
+                            : "For whoever is paying"}
+                        </button>
+                      ) : null}
                       {/* T87 (Pete: "instead of a class selector and all
                           the buttons, just use All | Class"): two cells,
                           the selected one filled with the accent. No
@@ -7929,6 +8016,8 @@ function FrontDesk({
         }
         clientNote={saleClientNote}
         onClientNoteRead={readSaleClientNote}
+        onRequestRecipient={openRecipientSearch}
+        recipientPick={recipientPick}
         onDetachClient={() => {
           setSaleClient(null);
           setSaleClientNote(null);

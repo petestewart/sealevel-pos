@@ -481,12 +481,42 @@ function categoryShelf(
   return [...catalog.products.filter(wanted), ...catalog.passes.filter(wanted)];
 }
 
-/** One rung-up line. Keyed by type+id so re-tapping an item bumps its
- *  quantity instead of adding a duplicate line. */
+/**
+ * One rung-up line. Keyed by type+id AND recipient (cartKey below), so
+ * re-tapping an item bumps its quantity instead of adding a duplicate
+ * line, and the same item bought for two different people is two lines.
+ */
 interface CartEntry {
   key: string;
   item: ShelfItem;
   quantity: number;
+  /**
+   * T90 (Pete: "another client can be selected and the pass is
+   * attributed to them"): who this line is FOR, when it is not the
+   * client paying. Null for the ordinary line. The ticket reads
+   * "Drop In (Alison Stewart)", and the charge sends the line with its
+   * `forClientId` so /api/checkout files it as its own Mindbody sale
+   * under that client (one ClientId per cart; see src/lib/sale.ts
+   * groupByRecipient).
+   */
+  forClient?: SaleRecipient | null;
+}
+
+/** T90: a line's recipient, as the search modal picked them. */
+export interface SaleRecipient {
+  id: string;
+  name: string;
+}
+
+/** The cart key: the item's identity, plus whose line it is. */
+function cartKey(item: ShelfItem, forClientId: string | null): string {
+  return `${itemKey(item.type, item.id)}:${forClientId ?? "self"}`;
+}
+
+/** How the ticket, the pay screen, the done screen and the receipt lines
+ *  all name a line: "Drop In", or "Drop In (Alison Stewart)". */
+function lineLabel(line: CartEntry): string {
+  return line.forClient ? `${line.item.name} (${line.forClient.name})` : line.item.name;
 }
 
 /** Mirrors src/lib/sale.ts PricedCart, as /api/price-cart returns it. */
@@ -945,7 +975,11 @@ type ChargeResult =
        *  null when no receipt was requested. */
       receiptLine: string | null;
     }
-  | { kind: "suppressed"; mode: string }
+  /* T90: `summary` is the route's own sentence for a ticket where some
+     carts went out and some were suppressed (the write guard judges each
+     cart by its own client id). Null on the ordinary whole-ticket
+     suppression. */
+  | { kind: "suppressed"; mode: string; summary?: string | null }
   | { kind: "split"; message: string; mindbody: string }
   | { kind: "ambiguous"; message: string }
   | { kind: "error"; message: string };
@@ -1025,6 +1059,23 @@ function draftToDiscount(d: DiscountDraft, subtotal: number): Discount | null {
   return n <= subtotal ? { mode: "amount", value: n / 100 } : null;
 }
 
+/**
+ * T90: one Mindbody sale this charge made. A ticket with no line for
+ * another client makes exactly one; a ticket with lines for two other
+ * people makes three, the paying client's first. Reported up through
+ * `onSold` so a caller can act on what each client just bought (T88).
+ */
+export interface SoldSale {
+  /** The client the sale was filed under: the recipient, or the payer. */
+  clientId: string | null;
+  /** The recipient, or null when the line was the payer's own. */
+  forClientId: string | null;
+  saleId: string | null;
+  /** Every line's metadataId, as the cart sent them. */
+  productIds: string[];
+  total: number;
+}
+
 /** T79: the discount's lines, as the spread reads a cart entry. */
 function discountLines(cart: readonly CartEntry[]): DiscountLine[] {
   return cart.map((l) => ({ price: l.item.price, quantity: l.quantity }));
@@ -1077,8 +1128,9 @@ function PaymentPanel(props: {
    *  so the figures never stand next to a total they contradict. The
    *  ticket keeps its own copy. */
   notice: ReactNode;
-  /** Clear the cart: the sale is recorded on Mindbody's side. */
-  onSold: () => void;
+  /** Clear the cart: the sale is recorded on Mindbody's side. T90: with
+   *  every sale it made, one per recipient (T88 will read it). */
+  onSold: (sales: readonly SoldSale[]) => void;
   /** The paid receipt's Done: close the overlay back to the roster. */
   onDone: () => void;
   /** T49: a charge answered that the signed-in teacher's Mindbody token
@@ -1401,6 +1453,24 @@ function PaymentPanel(props: {
 
   const clientId = client?.id ?? null;
 
+  /**
+   * T90: whether any line is bought for somebody else. Two things turn
+   * on it: the card on file and the account balance are the PAYING
+   * client's and a recipient's cart cannot draw on them (v6 has no
+   * per-item payer and PayerClientId needs a stored "Pays for"
+   * relationship, T63), so both tiles are greyed with the reason in
+   * words; and the charge sends each line's recipient so the route can
+   * file one Mindbody sale per person. Never attempted and then read
+   * back from the error: a refusal is not proof it would have charged
+   * nothing.
+   */
+  const hasOtherClient = cart.some((line) => line.forClient);
+  const otherClientWhy = hasOtherClient
+    ? `The card on file pays only for ${
+        client ? client.name : "the client on the sale"
+      }. Take cash, a card at the reader, or a gift card for lines bought for someone else.`
+    : null;
+
   /** T53: the "Email receipt" toggle. On by default whenever a receipt
    *  CAN go (the reason below is null), so the ordinary opted-in sale
    *  needs no tap; reset per client, since a choice made for one person
@@ -1577,7 +1647,9 @@ function PaymentPanel(props: {
   /* Source availability. An unavailable source renders greyed WITH the
    * reason, never hidden (PLAN 2.2: "account credit ($12) greyed out
    * beats a failure"). */
-  const cardReason = !client
+  const cardReason = otherClientWhy
+    ? otherClientWhy
+    : !client
     ? "Attach a client"
     : cardLookup?.loading
       ? "Checking for a card..."
@@ -1594,11 +1666,13 @@ function PaymentPanel(props: {
    * balance covers the whole total is no longer a blocker: a credit line
    * clamps to min(balance, due) and a second line pays the rest, which is
    * the T28 reversal of assumption P2 (partial credit) made ordinary. */
-  const creditReason = !client
-    ? "Attach a client"
-    : balance === null || balance <= 0
-      ? "No account balance"
-      : null;
+  const creditReason = otherClientWhy
+    ? otherClientWhy
+    : !client
+      ? "Attach a client"
+      : balance === null || balance <= 0
+        ? "No account balance"
+        : null;
   const creditLabel =
     balance !== null && balance > 0
       ? `Account (${money(balance)})`
@@ -1734,6 +1808,14 @@ function PaymentPanel(props: {
     /* Two lines is the maximum because /api/checkout accepts one method
      * or exactly two legs. Greyed WITH that reason, never hidden. */
     if (lines.length >= 2) return "Two parts is the maximum";
+    /* T90 review: a split cannot pay a ticket holding a line for
+     * another client, and the route refuses one (a split's two legs sum
+     * to ONE total, and there is no matrix of legs against carts). The
+     * tile says so instead of letting a teacher build a tender that is
+     * certain to be refused at the tap. */
+    if (hasOtherClient && lines.length >= 1) {
+      return "One tender only while a line is for another client";
+    }
     /* T38: while the ticket shows the browser's estimate the sources
      * stay greyed with the reason. A tender line pre-fills from the due,
      * and the due is null until Mindbody's number lands; a line taken
@@ -1991,11 +2073,23 @@ function PaymentPanel(props: {
             taxExempt: line.item.taxExempt,
             taxRate: line.item.taxRate,
             /* T43: on a comp only, the item's name rides along for the
-             * comp receipt's record of what was given away. The route
-             * never forwards it; Mindbody's cart takes ids. */
-            ...(comp !== null ? { name: line.item.name } : {}),
+             * comp receipt's record of what was given away. T90 sends it
+             * on any ticket holding a line for another client too: the
+             * route's partial-outcome sentence names the item and the
+             * person. Never forwarded; Mindbody's cart takes ids. */
+            ...(comp !== null || hasOtherClient ? { name: line.item.name } : {}),
+            /* T90: this line's own Mindbody sale, under this client. */
+            ...(line.forClient
+              ? {
+                  forClientId: line.forClient.id,
+                  forClientName: line.forClient.name,
+                }
+              : {}),
           })),
           ...(clientId ? { clientId } : {}),
+          /* T90: display only, for the route's per-cart sentence; every
+             decision there is made on the id. */
+          ...(hasOtherClient && client ? { clientName: client.name } : {}),
           ...payment,
           /* T53: the toggle, as this render read it. The route ignores
            * it for the house client and for a comp anyway. */
@@ -2061,7 +2155,32 @@ function PaymentPanel(props: {
                   : soleLine.source === "giftcard"
                     ? `gift card${giftFour ? ` ...${giftFour}` : ""}`
                     : "cash";
-        onSold();
+        /* T90: the sales the route made, in the order it made them.
+           One cart answers as it always did, so the fallback below is
+           that one sale built from what this tap sent. */
+        const soldSales: SoldSale[] = Array.isArray(body?.sales)
+          ? body.sales.map((sale: any) => ({
+              clientId:
+                typeof sale?.clientId === "string" ? sale.clientId : null,
+              forClientId:
+                typeof sale?.forClientId === "string" ? sale.forClientId : null,
+              saleId: typeof sale?.saleId === "string" ? sale.saleId : null,
+              productIds: Array.isArray(sale?.productIds)
+                ? sale.productIds.map((id: unknown) => String(id))
+                : [],
+              total: typeof sale?.total === "number" ? sale.total : 0,
+            }))
+          : [
+              {
+                clientId,
+                forClientId: null,
+                saleId:
+                  typeof body?.saleId === "string" ? body.saleId : null,
+                productIds: cart.map((line) => String(line.item.id)),
+                total: typeof body?.total === "number" ? body.total : 0,
+              },
+            ];
+        onSold(soldSales);
         /* The sale stands, so every client number this screen holds is a
          * pre-sale snapshot: drop the one learned from a refusal and let
          * the refetch onClientDataStale triggers be the answer. */
@@ -2113,7 +2232,21 @@ function PaymentPanel(props: {
             client ? ` for ${client.name}` : ""
           }.`,
           detail: [
-            body?.saleId ? `Sale ${body.saleId}.` : null,
+            /* T90: a ticket that became more than one Mindbody sale
+               lists every one of them, with whose it was; a single-sale
+               ticket reads exactly as it always did. */
+            Array.isArray(body?.sales) && body.sales.length > 1
+              ? body.sales
+                  .map(
+                    (sale: any) =>
+                      `Sale ${sale?.saleId ?? "unknown"} for ${
+                        sale?.name ?? "the client on the sale"
+                      }.`,
+                  )
+                  .join(" ")
+              : body?.saleId
+                ? `Sale ${body.saleId}.`
+                : null,
             body?.creditPurchased
               ? `Includes a ${money(body.creditPurchased)} account balance purchase (card minimum); the unspent remainder stays on their account.`
               : null,
@@ -2124,7 +2257,15 @@ function PaymentPanel(props: {
         /* The sale is over: the tender goes with it. */
         resetTender();
       } else if (res.ok && body?.suppressed) {
-        setResult({ kind: "suppressed", mode: String(body.suppressed) });
+        /* T90: the write guard judges each cart by its own client id, so
+           part of a ticket can go out while the rest is suppressed. The
+           route's own sentence says which, and it is shown rather than
+           the bare mode. */
+        setResult({
+          kind: "suppressed",
+          mode: String(body.suppressed),
+          summary: typeof body?.summary === "string" ? body.summary : null,
+        });
       } else if (body?.stage === "checkout-after-credit") {
         /* THE seam, rendered verbatim and prominent: the credit exists,
          * the sale does not, and the credit step must not run again. The
@@ -3318,10 +3459,18 @@ function PaymentPanel(props: {
                   {result.mode === "dry-run" ? (
                     <p className="pay-rehearsed">Sale rehearsed</p>
                   ) : null}
-                  {result.mode === "dry-run"
-                    ? "Dry run: nothing was charged."
-                    : "Write guard: nothing was charged."}{" "}
-                  The write was suppressed on the server; the cart is untouched.
+                  {result.summary
+                    ? /* T90: part of the ticket went out and part did
+                         not. The route's sentence names which, and it
+                         replaces the whole-ticket wording, which would
+                         be a lie here. */
+                      result.summary
+                    : result.mode === "dry-run"
+                      ? "Dry run: nothing was charged."
+                      : "Write guard: nothing was charged."}{" "}
+                  {result.summary
+                    ? "Nothing was retried; the cart is untouched."
+                    : "The write was suppressed on the server; the cart is untouched."}
                   <button
                     className="class-change pay-dismiss"
                     onClick={() => setResult(null)}
@@ -4871,6 +5020,23 @@ export default function SaleScreen(props: {
   clientNote: string | null;
   onClientNoteRead: () => void;
   onDetachClient: () => void;
+  /**
+   * T90: open that SAME modal to pick who ONE line is for ("Who is this
+   * for?"). `hasRecipient` tells page.tsx to offer the row that clears
+   * it. The pick comes back through `recipientPick`; the cart is this
+   * component's, so nothing about who is attached moves.
+   */
+  onRequestRecipient?: (lineKey: string, hasRecipient: boolean) => void;
+  /**
+   * T90: the answer to the last onRequestRecipient. `nonce` is what makes
+   * a repeat pick of the same person on the same line arrive; a null
+   * `client` is the clear row. Applied once and then left alone.
+   */
+  recipientPick?: {
+    nonce: number;
+    lineKey: string;
+    client: SaleRecipient | null;
+  } | null;
   /** True while a modal (search, info view) is stacked above the overlay,
    *  so Escape peels that layer instead of closing the sale. */
   modalAbove: boolean;
@@ -4900,6 +5066,8 @@ export default function SaleScreen(props: {
     clientNote,
     onClientNoteRead,
     onDetachClient,
+    onRequestRecipient,
+    recipientPick,
     modalAbove,
     onContractPurchased,
     onSaleCompleted,
@@ -5579,7 +5747,9 @@ export default function SaleScreen(props: {
       const dropped: string[] = [];
       const rebuilt: CartEntry[] = [];
       for (const line of cartRef.current) {
-        const item = byKey.get(line.key);
+        /* T90: the cart key carries the recipient now, so the catalog is
+           asked for the ITEM's identity. */
+        const item = byKey.get(itemKey(line.item.type, line.item.id));
         if (!item) {
           dropped.push(line.item.name);
           continue;
@@ -5757,6 +5927,9 @@ export default function SaleScreen(props: {
               price: line.item.price,
               taxExempt: line.item.taxExempt,
               taxRate: line.item.taxRate,
+              /* T90: the route prices one cart per recipient and answers
+                 the sum of Mindbody's grand totals. */
+              ...(line.forClient ? { forClientId: line.forClient.id } : {}),
             })),
             ...(clientId ? { clientId } : {}),
             ...(discount ? { discount } : {}),
@@ -5773,15 +5946,26 @@ export default function SaleScreen(props: {
              * left through this same effect; the notice names each one
              * with Mindbody's reason. Not a priceError: the ticket that
              * remains is fine. */
-            const keys = new Set(refused.map((r) => `${r.type}-${r.metadataId}`));
-            const gone = cart.filter((l) => keys.has(l.key));
-            setCart((lines) => lines.filter((l) => !keys.has(l.key)));
-            setRevealedKey((k) => (k !== null && keys.has(k) ? null : k));
+            /* T90 review: the cart key carries the recipient now, so a
+             * refusal (which names the ITEM) is matched on the item's
+             * own key. Compared against l.key it matched nothing: the
+             * refused line stayed in the cart, the notice named nobody
+             * and the ticket sat with no total. */
+            const keys = new Set(
+              refused.map((r) => itemKey(r.type, r.metadataId)),
+            );
+            const of = (l: CartEntry) => itemKey(l.item.type, l.item.id);
+            const gone = cart.filter((l) => keys.has(of(l)));
+            const goneKeys = new Set(gone.map((l) => l.key));
+            setCart((lines) => lines.filter((l) => !keys.has(of(l))));
+            setRevealedKey((k) => (k !== null && goneKeys.has(k) ? null : k));
             setCartNotice(
               gone
                 .map((l) => {
-                  const r = refused.find((x) => `${x.type}-${x.metadataId}` === l.key);
-                  return `${l.item.name} was removed from the sale: ${r?.reason ?? "Mindbody did not accept it."}`;
+                  const r = refused.find(
+                    (x) => itemKey(x.type, x.metadataId) === itemKey(l.item.type, l.item.id),
+                  );
+                  return `${lineLabel(l)} was removed from the sale: ${r?.reason ?? "Mindbody did not accept it."}`;
                 })
                 .join(" "),
             );
@@ -5858,7 +6042,10 @@ export default function SaleScreen(props: {
    */
 
   const addItem = useCallback((item: ShelfItem) => {
-    const key = `${item.type}-${item.id}`;
+    /* T90: a shelf tap always bumps the SELF line, never a line bought
+       for somebody else: "re-tapping the shelf item bumps the self
+       line". The other client's line is reached through its own row. */
+    const key = cartKey(item, null);
     setCartNotice(null);
     setCart((lines) => {
       const have = lines.find((l) => l.key === key);
@@ -5881,7 +6068,7 @@ export default function SaleScreen(props: {
     setCart((lines) => {
       const next = [...lines];
       for (const { item, quantity } of bundle.items) {
-        const key = `${item.type}-${item.id}`;
+        const key = cartKey(item, null);
         const idx = next.findIndex((l) => l.key === key);
         const have = idx >= 0 ? next[idx] : undefined;
         if (have) {
@@ -5942,6 +6129,73 @@ export default function SaleScreen(props: {
     setRevealedKey((k) => (k === key ? null : k));
     setCart((lines) => lines.filter((l) => l.key !== key));
   }, []);
+
+  /**
+   * T90: put a line on somebody else's account, or take it off theirs.
+   * The recipient is never the client paying (picking them is how the
+   * line comes back to the payer), and the line is re-keyed, so the same
+   * item for two people is two lines; a re-key that collides with a line
+   * that already exists merges the quantities instead of holding two
+   * rows Mindbody would price as one.
+   */
+  const setLineRecipient = useCallback(
+    (key: string, next: SaleRecipient | null) => {
+      setCart((lines) => {
+        const at = lines.findIndex((l) => l.key === key);
+        const line = at < 0 ? undefined : lines[at];
+        if (!line) return lines;
+        const recipient =
+          next !== null && next.id !== (client?.id ?? null) ? next : null;
+        const nextKey = cartKey(line.item, recipient?.id ?? null);
+        if (nextKey === line.key) return lines;
+        const rest = lines.filter((l) => l.key !== key);
+        const existing = rest.findIndex((l) => l.key === nextKey);
+        const merge = existing < 0 ? undefined : rest[existing];
+        if (merge) {
+          const merged = [...rest];
+          merged[existing] = {
+            ...merge,
+            quantity: Math.min(
+              merge.quantity + line.quantity,
+              MAX_LINE_QUANTITY,
+            ),
+          };
+          setRevealedKey(nextKey);
+          return merged;
+        }
+        const moved: CartEntry = {
+          ...line,
+          key: nextKey,
+          forClient: recipient,
+        };
+        const out = [...lines];
+        out[at] = moved;
+        setRevealedKey(nextKey);
+        return out;
+      });
+    },
+    [client],
+  );
+  /* A line cannot be "for" the person paying. Attaching somebody who is
+     already a line's recipient (attaching when nobody was attached keeps
+     the cart, so this is reachable) brings that line back to the payer,
+     rather than leaving a second cart addressed to the same client. */
+  useEffect(() => {
+    const id = client?.id ?? null;
+    if (id === null) return;
+    for (const line of cartRef.current) {
+      if (line.forClient?.id === id) setLineRecipient(line.key, null);
+    }
+  }, [client, setLineRecipient]);
+  /* The pick, applied once per nonce. An effect rather than a callback
+     because the modal that made it belongs to page.tsx. */
+  const pickApplied = useRef<number | null>(null);
+  useEffect(() => {
+    if (!recipientPick) return;
+    if (pickApplied.current === recipientPick.nonce) return;
+    pickApplied.current = recipientPick.nonce;
+    setLineRecipient(recipientPick.lineKey, recipientPick.client);
+  }, [recipientPick, setLineRecipient]);
 
   /**
    * T38: how many receipt rows are clipped below the scroll box. Pete:
@@ -6571,7 +6825,7 @@ export default function SaleScreen(props: {
           <tbody>
             {totals.lineAudit.map((a, i) => {
               const ours = cart.find(
-                (l) => l.key === itemKey(a.type, a.metadataId),
+                (l) => itemKey(l.item.type, l.item.id) === itemKey(a.type, a.metadataId),
               );
               const unmatched =
                 a.theirPrice === null &&
@@ -7234,7 +7488,18 @@ export default function SaleScreen(props: {
                       }}
                     >
                       <div className="t-line">
-                        <span className="t-name">{line.item.name}</span>
+                        {/* T90 (Pete: "Item says client's name : Drop In
+                            (Alison Stewart)"), and "the price should be
+                            further to the right in the line item,
+                            hopefully that makes room for the name": the
+                            X slot at the row's right edge is gone, so
+                            the figure is flush right and the name column
+                            takes the rest, ellipsized with its full text
+                            on the title. The name is the item's weight,
+                            never bold. */}
+                        <span className="t-name" title={lineLabel(line)}>
+                          {lineLabel(line)}
+                        </span>
                         <span className="amt">
                           {money(line.item.price * line.quantity)}
                         </span>
@@ -7251,14 +7516,35 @@ export default function SaleScreen(props: {
                       ) : null}
                       {inPay || revealedKey !== line.key ? null : (
                         <div className="t-ctl" onClick={(e) => e.stopPropagation()}>
+                          {/* T90 (Pete: "instead of - 1 + X, the options
+                              are - 1 + Other Client. a - when there is a
+                              1 is an X and removes the item"): one
+                              control fewer, and the minus IS the remove
+                              at quantity one. The glyph changes with it,
+                              so nothing says "one fewer" while it means
+                              "gone". */}
                           <button
-                            className="t-ctl-btn"
-                            disabled={line.quantity <= 1 || charging}
-                            aria-label={`One fewer ${line.item.name}`}
-                            title={`One fewer ${line.item.name}`}
-                            onClick={() => bumpQuantity(line.key, -1)}
+                            className={
+                              line.quantity <= 1 ? "t-ctl-btn t-ctl-x" : "t-ctl-btn"
+                            }
+                            disabled={charging}
+                            aria-label={
+                              line.quantity <= 1
+                                ? `Remove ${lineLabel(line)}`
+                                : `One fewer ${line.item.name}`
+                            }
+                            title={
+                              line.quantity <= 1
+                                ? `Remove ${lineLabel(line)}`
+                                : `One fewer ${line.item.name}`
+                            }
+                            onClick={() =>
+                              line.quantity <= 1
+                                ? removeLine(line.key)
+                                : bumpQuantity(line.key, -1)
+                            }
                           >
-                            <MinusIcon />
+                            {line.quantity <= 1 ? <CloseIcon /> : <MinusIcon />}
                           </button>
                           <span className="t-ctl-qty" aria-live="polite">
                             {line.quantity}
@@ -7272,27 +7558,43 @@ export default function SaleScreen(props: {
                           >
                             <PlusIcon />
                           </button>
+                          {/* The recipient control: text, not a filled
+                              button, and it opens the SAME live search
+                              the attach modal uses ("Who is this for?").
+                              Re-tapping opens it again with the row that
+                              clears it. */}
+                          <button
+                            className={line.forClient ? "t-for on" : "t-for"}
+                            disabled={charging}
+                            aria-label={
+                              line.forClient
+                                ? `Bought for ${line.forClient.name}. Change who this is for`
+                                : `Buy ${line.item.name} for another client`
+                            }
+                            title={
+                              line.forClient
+                                ? `Bought for ${line.forClient.name}`
+                                : "Buy this for another client"
+                            }
+                            onClick={() =>
+                              onRequestRecipient?.(
+                                line.key,
+                                line.forClient ? true : false,
+                              )
+                            }
+                          >
+                            {line.forClient ? line.forClient.name : "Other Client"}
+                          </button>
                         </div>
                       )}
                     </div>
-                    {/* Pete: "Have an X next to an item to easily cancel
-                        it." One tap, no confirm: an X that asked twice is
-                        not easy, the line is one tap to put back, and
-                        Empty cart keeps the confirm because it destroys
-                        the whole ticket. The tender clears with any cart
-                        change and a discount re-spreads (T79), both
-                        through the existing effects. */}
-                    {inPay || revealedKey !== line.key ? null : (
-                      <button
-                        className="t-x"
-                        disabled={charging}
-                        aria-label={`Remove ${line.item.name} from the sale`}
-                        title={`Remove ${line.item.name}`}
-                        onClick={() => removeLine(line.key)}
-                      >
-                        <CloseIcon />
-                      </button>
-                    )}
+                    {/* T82's own X square is gone (T90): removing is
+                        the minus at quantity one, which is one control
+                        fewer on the row and the slot the price needed to
+                        sit further right. One tap, no confirm, as it was:
+                        the line is one tap to put back, and Empty cart
+                        keeps the confirm because it destroys the whole
+                        ticket. */}
                   </div>
                 ))}
                 </div>
