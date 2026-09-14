@@ -820,9 +820,10 @@ function entityFacts(entry: RosterEntry): string {
  * The pass facts as ONE sub-line under the pass name, everywhere a pass
  * renders two-line (roster payment cell, walk-in summaries): "3 remaining,
  * exp 3/2/27"; a fake-unlimited pass shows only the expiry; nothing known,
- * no line. "1 remaining" keeps the warn pill: it is the renewal
- * conversation that happens now or never, so it stays loud even in a
- * sub-line.
+ * no line. "1 remaining" keeps the warn pill: since the count is the
+ * pass BEFORE this visit (roster.ts beforeThisVisit, 2026-09-14), 1
+ * means this class uses the last session, the renewal conversation
+ * that happens now or never, so it stays loud even in a sub-line.
  */
 function PassFactsLine(props: {
   remaining: number | null;
@@ -3380,7 +3381,10 @@ function FrontDesk({
       /* T26: a real pass down to its last session. The check-in itself
        * runs exactly as normal -- they still have the session, and the
        * tap must not get slower -- and only a SUCCESSFUL write chains
-       * the renewal offer, which never blocks or undoes anything. */
+       * the renewal offer, which never blocks or undoes anything. Since
+       * 2026-09-14 passRemaining counts BEFORE this visit (roster.ts
+       * beforeThisVisit), so 1 means this class is the last one on the
+       * pass: the renewal conversation that happens now or never. */
       const lastSession =
         entry.paid &&
         entry.passRemaining === 1 &&
