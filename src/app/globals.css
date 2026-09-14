@@ -5596,7 +5596,13 @@ textarea.reason-note-field:disabled::placeholder {
  * corner, which needs the modal positioned (.modal-search does the same);
  * a little wider than the 460 confirm so "Continue as walk-in" holds one
  * line beside "Attach a client". */
-.modal.modal-walkin {
+/* T92 shares it for the pass-owner ask and the refused detach, which want
+ * exactly this frame at exactly this fixed width ("all popups must be
+ * statically sized"), so the two 68px options below the copy do not move
+ * with the item's name. Neither has a colour of its own: the frame, the
+ * title rule and both action faces are .modal-sale's. */
+.modal.modal-walkin,
+.modal.modal-passowner {
   position: relative;
   width: min(540px, 100%);
 }

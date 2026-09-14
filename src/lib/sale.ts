@@ -638,6 +638,38 @@ export function groupByRecipient(
 }
 
 /**
+ * T92 (Pete: "A walk-in should not be able to buy passes, only retail
+ * items. if they want to buy a pass for another client, that is allowed.
+ * if they want to buy for themselves they must register a mindbody
+ * account"): a pass has to land on somebody's Mindbody account, and the
+ * house client is not that somebody. So on a cart with NO attached
+ * client, a Service or a Package line must carry a T90 recipient; a
+ * Product line may ride the house client as it always has. Returns the
+ * refusal in words, or null when the ticket is sound.
+ *
+ * `clientId` is the ATTACHED client only, never the house client
+ * substituted for an anonymous cart: falling back to the house client
+ * for a pass is exactly what this refuses, because the pass would be
+ * sold onto a walk-in placeholder account nobody can use.
+ */
+export function passWithoutOwner(
+  items: readonly CartLine[],
+  clientId?: string | null,
+): string | null {
+  if (clientId) return null;
+  const orphan = items.find(
+    (line) =>
+      (line.type === "Service" || line.type === "Package") &&
+      !(line.forClientId ?? null),
+  );
+  if (!orphan) return null;
+  return (
+    "A pass on a walk-in sale needs a client. Attach a client, register " +
+    "a new one, or buy the pass for another client. Nothing was charged."
+  );
+}
+
+/**
  * The armed discount, divided between the groups so the parts sum to the
  * whole to the CENT. The whole ticket's spread is computed once
  * (spreadDiscount, the same function each cart's own spread then runs),
