@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   actorFields,
+  type ActorFallback,
   endedStaffSession,
   requireActor,
   runAsActor,
@@ -17,6 +18,7 @@ import {
 import {
   COMP_DETAIL_MAX,
   COMP_DETAIL_MIN,
+  discountCents,
   discountPercentLabel,
   discountRecordLine,
   discountRefusal,
@@ -41,12 +43,15 @@ import {
   CARD_MINIMUM_USD,
   checkoutCart,
   clientPaymentProfile,
+  groupByRecipient,
   houseClientId,
   latestSaleId,
   parseCartLines,
   purchaseCredit,
   rehearseCheckout,
   roundToCents,
+  splitDiscount,
+  type CartLine,
   type CheckoutPayment,
 } from "@/lib/sale";
 
@@ -680,6 +685,500 @@ export async function POST(request: Request) {
     }
     return null;
   };
+
+  /* ==================================================================
+   * T90: lines bought for another client.
+   *
+   * Pete: "a client can purchase something for another client (like a
+   * membership, pass, etc.) that option needs to exist in the app." One
+   * ClientId per Mindbody cart and no per-item recipient, so this ticket
+   * is one sale PER recipient, run SEQUENTIALLY (the paying client's
+   * cart first) in this one request: one tap, one flight, and each cart
+   * rehearsed before any of them is charged.
+   *
+   * Honest partial results are the whole point of the block below:
+   * nothing is retried, rolled back or refunded, and when cart two fails
+   * after cart one charged the answer names both.
+   * ================================================================== */
+  /* T90 review: a line "for" the client paying is that client's own. */
+  const groups = groupByRecipient(items, saleClientId);
+  if (groups.length > 1 || groups[0]?.forClientId != null) {
+    /* Display names for the wording only. They arrive beside the items
+     * (like T43's `name`), are never forwarded to Mindbody, and no
+     * decision is made on them: the carts are addressed by id. */
+    const rawItems: unknown[] = Array.isArray(payload?.items)
+      ? payload.items
+      : [];
+    const indexOf = new Map<CartLine, number>();
+    items.forEach((line, i) => indexOf.set(line, i));
+    const trimmed = (v: unknown): string | null =>
+      typeof v === "string" && v.trim() ? v.trim().slice(0, 120) : null;
+    const nameOfLine = (line: CartLine): string => {
+      const raw = rawItems[indexOf.get(line) ?? -1] as
+        | Record<string, unknown>
+        | undefined;
+      return trimmed(raw?.["name"]) ?? `${line.type} ${line.metadataId}`;
+    };
+    const nameOfGroup = (group: (typeof groups)[number]): string => {
+      if (group.forClientId === null) {
+        /* The payer's own name when the browser sent it, for the same
+         * reason the recipients' names ride along: the sentence a
+         * teacher reads should name people. Display only. */
+        const named = trimmed(payload?.clientName);
+        if (named) return named;
+        return clientId ? "the client on the sale" : "the walk-in account";
+      }
+      for (const line of group.items) {
+        const raw = rawItems[indexOf.get(line) ?? -1] as
+          | Record<string, unknown>
+          | undefined;
+        const named = trimmed(raw?.["forClientName"]);
+        if (named) return named;
+      }
+      return `client ${group.forClientId}`;
+    };
+    const itemsOf = (group: (typeof groups)[number]): string =>
+      group.items.map(nameOfLine).join(", ");
+
+    /* A split cannot be spread over carts: its two legs sum to ONE
+     * total, and there is no matrix of legs against recipients here.
+     * Refused in words rather than guessed at. */
+    if (split !== null) {
+      return NextResponse.json(
+        {
+          error:
+            "A split payment cannot pay for a line bought for another " +
+            "client. Take one tender for the whole ticket, or sell the " +
+            "other client's line on its own. Nothing was charged.",
+          stage: "method",
+        },
+        { status: 409 },
+      );
+    }
+    /* The card on file and the account balance belong to the client
+     * paying, and a recipient's cart cannot draw on them: v6 has no
+     * per-item payer, and PayerClientId needs a stored "Pays for"
+     * relationship (T63). Never attempted, so no refusal has to be read
+     * as proof it charged nothing. */
+    if (method === "storedcard" || method === "credit") {
+      return NextResponse.json(
+        {
+          error:
+            "The card on file pays only for the client on the sale. Take " +
+            "cash, a card at the reader, or a gift card for lines bought " +
+            "for someone else. Nothing was charged.",
+          stage: "method",
+        },
+        { status: 409 },
+      );
+    }
+
+    const perCart =
+      discount === null
+        ? groups.map(() => null)
+        : splitDiscount(items, discount, groups);
+
+    /* Every cart is rehearsed BEFORE any is charged, so a cart Mindbody
+     * will not price stops the whole ticket with nothing spent. */
+    const rehearsed: {
+      group: (typeof groups)[number];
+      clientId: string;
+      discount: Discount | null;
+      total: number;
+      subtotal: number;
+      discounted: number;
+    }[] = [];
+    for (const [i, group] of groups.entries()) {
+      const cartClientId = group.forClientId ?? saleClientId;
+      const cartDiscount = perCart[i] ?? null;
+      let cartPriced;
+      try {
+        cartPriced = await rehearseCheckout(
+          group.items,
+          cartClientId,
+          cartDiscount,
+        );
+      } catch (err) {
+        return NextResponse.json(
+          { error: errMessage(err), stage: "rehearsal" },
+          { status: 502 },
+        );
+      }
+      if (cartPriced.suppressed) {
+        /* T90 review: one suppressed cart suppresses the whole ticket,
+         * BEFORE any of them is charged. Dry run suppresses every cart
+         * anyway; the write guard judges each by its own client id, so
+         * the listed cart could have gone out alone, and deliberately
+         * does not: a ticket the teacher rang up as one sale must not
+         * half exist because a test rail let one client through. The
+         * sentence names the cart that stopped it, since otherwise
+         * nothing on screen says which. */
+        const kind = await suppressionKind();
+        return NextResponse.json({
+          ok: false,
+          suppressed: kind,
+          summary:
+            `Nothing was sent to Mindbody (${kind}). The cart for ` +
+            `${nameOfGroup(group)} was suppressed, and a ticket holding a ` +
+            "line for another client goes out whole or not at all.",
+        });
+      }
+      if (cartPriced.disagrees || cartPriced.grandTotal === null) {
+        return NextResponse.json(
+          {
+            error:
+              `${nameOfGroup(group)}: ` +
+              (cartPriced.discountDisagrees
+                ? `the discount disagrees: ours $${cartPriced.expectedDiscount.toFixed(2)}, ` +
+                  `Mindbody's $${(cartPriced.discountTotal ?? 0).toFixed(2)}. `
+                : "totals disagree between our math and Mindbody's. ") +
+              "Nothing was charged; this is a bug to report, not a state " +
+              "to charge from.",
+            stage: "rehearsal",
+          },
+          { status: 409 },
+        );
+      }
+      rehearsed.push({
+        group,
+        clientId: cartClientId,
+        discount: cartDiscount,
+        total: cartPriced.grandTotal,
+        subtotal: cartPriced.expectedSubtotal,
+        discounted: cartPriced.expectedDiscount,
+      });
+    }
+    /* The armed discount must arrive at Mindbody whole: the carts' own
+     * discounts, as Mindbody just priced them, have to sum to the cent
+     * to the figure the teacher armed, or nothing goes out. */
+    if (discount !== null) {
+      const armedCents = discountCents(items, discount);
+      const sumCents = rehearsed.reduce(
+        (n, c) => n + Math.round(c.discounted * 100),
+        0,
+      );
+      if (sumCents !== armedCents) {
+        return NextResponse.json(
+          {
+            error:
+              `The discount splits to $${(sumCents / 100).toFixed(2)} across ` +
+              `the carts but was armed at $${(armedCents / 100).toFixed(2)}. ` +
+              "Nothing was charged; this is a bug to report, not a state " +
+              "to charge from.",
+            stage: "rehearsal",
+          },
+          { status: 409 },
+        );
+      }
+    }
+    const ticketTotal = roundToCents(
+      rehearsed.reduce((n, c) => n + c.total, 0),
+    );
+    /* The whole ticket's pre-tax figures, as the carts were just priced:
+     * what the answer's `discount` block reports. */
+    const ticketSubtotal = roundToCents(
+      rehearsed.reduce((n, c) => n + c.subtotal, 0),
+    );
+    const ticketDiscounted = roundToCents(
+      rehearsed.reduce((n, c) => n + c.discounted, 0),
+    );
+    if (
+      typeof cashTendered === "number" &&
+      method === "cash" &&
+      cashTendered < ticketTotal
+    ) {
+      return NextResponse.json(
+        { error: "Tendered cash is less than the total." },
+        { status: 400 },
+      );
+    }
+    /* T83's gift card does not care whose cart it pays, so it pays all of
+     * them: ONE live balance read against the whole ticket (a read, so a
+     * refusal here charged nothing), and then each cart's own share. */
+    if (method === "giftcard") {
+      const refusedCard = await giftCardRefusal(
+        giftCardNumber as string,
+        ticketTotal,
+        "total",
+      );
+      if (refusedCard) return refusedCard;
+    }
+
+    /** One cart's outcome, in the order the carts ran. */
+    const sales: {
+      forClientId: string | null;
+      clientId: string;
+      name: string;
+      items: string;
+      productIds: string[];
+      total: number;
+      saleId: string | null;
+      cartId: string | null;
+      suppressed: string | null;
+    }[] = [];
+    let failure: { name: string; message: string; ambiguous: boolean } | null =
+      null;
+    let fallbackNote: ActorFallback | null = null;
+    let sessionEnded = false;
+    let gone: Response | null = null;
+
+    for (const cart of rehearsed) {
+      const startedAt = new Date();
+      const isComp = method === "comp";
+      try {
+        const run = await runAsActor(
+          session,
+          "/api/checkout",
+          (actor) =>
+            isComp
+              ? checkoutCart(
+                  cart.group.items,
+                  cart.clientId,
+                  [],
+                  actor,
+                  sendEmail,
+                  cart.discount,
+                )
+              : checkoutCart(
+                  cart.group.items,
+                  cart.clientId,
+                  method === "giftcard"
+                    ? {
+                        type: "GiftCard",
+                        amount: cart.total,
+                        cardNumber: giftCardNumber as string,
+                      }
+                    : { type: "Cash", amount: cart.total },
+                  actor,
+                  sendEmail,
+                  cart.discount,
+                ),
+          /* A comp is never redone as the studio account (T49). */
+          isComp ? { fallback: false } : undefined,
+        );
+        const outcome = run.result;
+        if (run.actorFallback) fallbackNote = run.actorFallback;
+        if (run.staffSessionEnded) sessionEnded = true;
+        const ids =
+          outcome.suppressed !== null
+            ? { saleId: null, cartId: null }
+            : await (async () => {
+                const numeric = await latestSaleId(cart.clientId, startedAt);
+                return {
+                  saleId:
+                    numeric === null ? outcome.saleId : String(numeric),
+                  cartId: outcome.saleId,
+                };
+              })();
+        sales.push({
+          forClientId: cart.group.forClientId,
+          clientId: cart.clientId,
+          name: nameOfGroup(cart.group),
+          items: itemsOf(cart.group),
+          productIds: cart.group.items.map((l) => String(l.metadataId)),
+          total: isComp ? 0 : cart.total,
+          saleId: ids.saleId,
+          cartId: ids.cartId,
+          suppressed: outcome.suppressed,
+        });
+        /* T79's record, per cart: each cart IS a sale, so each one's
+         * discount is filed on its own client with its own figures. */
+        if (discount !== null && compReason !== null) {
+          const paid = isComp ? 0 : cart.total;
+          const line = discountRecordLine({
+            discount,
+            discounted: cart.discounted,
+            subtotal: cart.subtotal,
+            paid,
+            full,
+            reason: compReason,
+            teacherName: teacher?.name ?? null,
+          });
+          const suppressedHere = outcome.suppressed !== null;
+          let noteId: number | null = null;
+          const house = houseClientId();
+          if (
+            !suppressedHere &&
+            cart.clientId !== house
+          ) {
+            const filed = await fileFormulaNote({
+              session,
+              clientId: cart.clientId,
+              note: [
+                `${line}${teacher ? "." : ""}`,
+                ids.saleId ? `Sale ${ids.saleId}.` : null,
+              ]
+                .filter(Boolean)
+                .join(" "),
+              route: "/api/checkout formula-note",
+              logTag: "[comp]",
+            });
+            noteId = filed.id;
+          }
+          console.log(
+            `[comp] ${target()} sale=${suppressedHere ? "suppressed" : (ids.saleId ?? "unknown")} ` +
+              `client=${cart.clientId} total=${cart.discounted.toFixed(2)} ` +
+              `reason=${JSON.stringify(line)} kind=${compReason.kind} ` +
+              `discount=${discount.mode}:${discount.value} ` +
+              `off=${cart.discounted.toFixed(2)} paid=${paid.toFixed(2)} ` +
+              `shape=lines for=${cart.group.forClientId ?? "self"} ` +
+              teacherLogTag(teacher) +
+              (noteId !== null ? ` note=${noteId}` : ""),
+          );
+          await insertCompReceipt({
+            saleId: suppressedHere ? null : ids.saleId,
+            cartId: suppressedHere ? null : ids.cartId,
+            clientId: cart.clientId,
+            totalCents: Math.round(cart.discounted * 100),
+            items: cart.group.items.map((l) => ({
+              type: l.type,
+              id: String(l.metadataId),
+              name: nameOfLine(l),
+              quantity: l.quantity,
+              price: l.price,
+            })),
+            reason: line,
+            target: target(),
+            suppressed: suppressedHere,
+            teacherId: teacher === null ? null : String(teacher.id),
+            teacherName: teacher?.name ?? null,
+            kind: compReason.kind,
+            detail: compReason.detail ? compReason.detail : null,
+            formulaNoteId: noteId,
+            discountAmount: cart.discounted,
+            discountPercent: discount.mode === "percent" ? discount.value : null,
+            saleTotal: paid,
+          });
+        }
+      } catch (err) {
+        const ended = staffSessionEndedResponse(err);
+        if (ended && sales.length === 0) {
+          gone = ended;
+          break;
+        }
+        failure = {
+          name: nameOfGroup(cart.group),
+          message: isAmbiguous(err)
+            ? "it did not answer, so it MAY have gone through. Check the " +
+              "dev drawer or Mindbody before charging again"
+            : errMessage(err),
+          ambiguous: isAmbiguous(err),
+        };
+        /* Nothing after a failure runs: no retry, no roll back, no
+         * refund, and no later cart charged on the strength of a broken
+         * one. */
+        break;
+      }
+    }
+    if (gone) return gone;
+
+    const landed = sales.filter((sale) => sale.suppressed === null);
+    const suppressedSales = sales.filter((sale) => sale.suppressed !== null);
+    const said = (list: typeof sales): string =>
+      list
+        .map((sale) => `${sale.items} for ${sale.name}`)
+        .join("; ");
+    const soldLine = landed.length > 0 ? `Sold ${said(landed)}.` : "";
+    const suppressedLine =
+      suppressedSales.length > 0
+        ? `${said(suppressedSales)} was not sent to Mindbody ` +
+          `(${suppressedSales[0]?.suppressed}).`
+        : "";
+
+    if (failure !== null) {
+      const notSold = rehearsed
+        .slice(sales.length)
+        .map((c) => `${itemsOf(c.group)} for ${nameOfGroup(c.group)}`)
+        .join("; ");
+      return NextResponse.json(
+        {
+          error: [
+            soldLine,
+            suppressedLine,
+            `${notSold} was NOT sold: ${failure.message}.`,
+            "Nothing was retried or refunded.",
+          ]
+            .filter(Boolean)
+            .join(" "),
+          stage: "checkout",
+          ambiguous: failure.ambiguous,
+          partial: landed.length > 0,
+          sales,
+          total: ticketTotal,
+          ...(sessionEnded ? { staffSessionEnded: true } : {}),
+        },
+        { status: 502 },
+      );
+    }
+    if (landed.length === 0) {
+      /* Every cart suppressed: the ordinary suppressed answer, which the
+       * screen renders amber and never as a sale. */
+      return NextResponse.json({
+        ok: false,
+        suppressed: sales[0]?.suppressed ?? (await suppressionKind()),
+        sales,
+        ...actorFields({
+          actorFallback: fallbackNote,
+          staffSessionEnded: sessionEnded,
+        }),
+      });
+    }
+    if (suppressedSales.length > 0) {
+      /* Mixed, and the write guard judges each cart by its own client
+       * id, so this is reachable: some carts went out and some did not.
+       * Never reported as done. */
+      return NextResponse.json({
+        ok: false,
+        suppressed: suppressedSales[0]?.suppressed,
+        summary: `${soldLine} ${suppressedLine}`.trim(),
+        sales,
+        total: ticketTotal,
+        ...actorFields({
+          actorFallback: fallbackNote,
+          staffSessionEnded: sessionEnded,
+        }),
+      });
+    }
+    return NextResponse.json({
+      ok: true,
+      method: method as Method,
+      total: method === "comp" ? 0 : ticketTotal,
+      /* The ticket's own sale ids, one per recipient; `saleId` stays the
+       * first cart's so every existing reader keeps working. */
+      saleId: sales[0]?.saleId ?? null,
+      cartId: sales[0]?.cartId ?? null,
+      sales,
+      carts: sales.length,
+      ...(method === "giftcard"
+        ? { giftCard: { lastFour: giftCardLastFour(giftCardNumber as string) } }
+        : {}),
+      receiptRequested: sendEmail,
+      emailReceipt: null,
+      ...(discount !== null && compReason !== null
+        ? {
+            discountShape: "lines",
+            discount: {
+              mode: discount.mode,
+              value: discount.value,
+              amount: ticketDiscounted,
+              subtotal: ticketSubtotal,
+              percent: discountPercentLabel(
+                discount,
+                ticketDiscounted,
+                ticketSubtotal,
+              ),
+              full,
+              reason: compReason,
+              teacher: teacher ? { id: teacher.id, name: teacher.name } : null,
+            },
+          }
+        : {}),
+      ...actorFields({
+        actorFallback: fallbackNote,
+        staffSessionEnded: sessionEnded,
+      }),
+    });
+  }
 
   /* Step 1, every path: the Test: true rehearsal, which is also where
    * the AUTHORITATIVE total comes from. The browser's number is never
