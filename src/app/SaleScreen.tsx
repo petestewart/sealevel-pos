@@ -552,6 +552,13 @@ interface PricedResult {
   /** T38: present only when `disagrees` is true; one entry per cart
    *  line, both sides' pricing. Diagnostic, never charged. */
   lineAudit?: LineAudit[];
+  /** T90: one entry per Mindbody cart when the ticket holds a line for
+   *  another client, the payer's first, each with the total MINDBODY
+   *  priced for it. Absent for an ordinary one-cart ticket. Read by T93's
+   *  typed card, which is authorized once per cart and has to say so
+   *  before the tap. Never a browser estimate: a cart Mindbody could not
+   *  price carries a null grandTotal and the sentence says so. */
+  carts?: { forClientId: string | null; grandTotal: number | null }[];
 }
 
 /** Mirrors src/lib/sale.ts LineAudit. Built server-side only for a
@@ -1908,14 +1915,12 @@ function PaymentPanel(props: {
     }
     if (dueCents !== null && dueCents <= 0) return "Nothing left to cover";
     if (source === "credit") return creditReason;
-    /* T93 x T90: a ticket holding a line for another client is one
-     * Mindbody sale PER RECIPIENT, so a typed card would be authorized
-     * once per cart for one tap on one card. /api/checkout refuses it;
-     * the keypad greys with the reason rather than letting a teacher
-     * type a card into a certain refusal. */
-    if (source === "typedcard" && hasOtherClient) {
-      return "A typed card pays for one sale; this ticket is more than one";
-    }
+    /* T93 review (Pete, 2026-09-14: "Allow two charges."): a ticket
+     * holding a line for another client is one Mindbody sale PER
+     * RECIPIENT, and a typed card pays every one of them, authorized once
+     * per cart. It is NOT greyed here; the line under the tender says how
+     * many times the card will be charged and for what, and /api/checkout
+     * refuses before any charge if a cart is under the $10 floor. */
     /* T93: one card leg at a time. A stored card and a typed card in the
      * same payment would be two card charges in one sale, which nobody
      * asked for and which the $10-per-leg floor makes worse; greyed WITH
@@ -1988,6 +1993,23 @@ function PaymentPanel(props: {
       if (covered < CARD_MINIMUM_USD * 100) {
         return `A card payment is under the $${CARD_MINIMUM_USD} card minimum`;
       }
+      /* T93 review: on a T90 ticket the card is authorized once per
+       * Mindbody cart, so the floor is each CART's. /api/checkout refuses
+       * before any charge; this says so first, with Mindbody's own figure
+       * for the cart that is short. */
+      const shortCart = (priced?.carts ?? []).find(
+        (c) => c.grandTotal !== null && c.grandTotal * 100 < CARD_MINIMUM_USD * 100,
+      );
+      if (shortCart !== undefined) {
+        const who =
+          shortCart.forClientId === null
+            ? client
+              ? client.name
+              : "this sale"
+            : (cart.find((l) => l.forClient?.id === shortCart.forClientId)
+                ?.forClient?.name ?? "another client");
+        return `The cart for ${who} is ${money(shortCart.grandTotal ?? 0)}, under the $${CARD_MINIMUM_USD} card minimum`;
+      }
       return null;
     }
     if (line.source === "storedcard") {
@@ -2007,6 +2029,42 @@ function PaymentPanel(props: {
   };
 
   const lineReasons = lines.map((line, i) => lineReason(line, i));
+
+  /**
+   * T93 review (Pete, 2026-09-14: "Allow two charges." and "the tender
+   * line ... says plainly how many times the card will be charged and for
+   * what"): a typed card on a ticket holding a line for another client is
+   * one authorization PER Mindbody cart, so the sentence names the count
+   * and every cart's own amount before the tap that charges them.
+   *
+   * The amounts are MINDBODY's, cart by cart, from /api/price-cart: never
+   * a browser estimate, because this sentence is what a teacher reads a
+   * card holder their total from. A cart Mindbody has not priced yet
+   * leaves the figures out rather than guessing at them.
+   */
+  const typedCharges = ((): { count: number; words: string } | null => {
+    if (!lines.some((l) => l.source === "typedcard")) return null;
+    const carts = priced?.carts;
+    if (!carts || carts.length < 2) return null;
+    const nameFor = (forClientId: string | null): string => {
+      if (forClientId === null) return client ? client.name : "this sale";
+      const found = cart.find((l) => l.forClient?.id === forClientId);
+      return found?.forClient?.name ?? "another client";
+    };
+    if (carts.some((c) => c.grandTotal === null)) {
+      return {
+        count: carts.length,
+        words: `This card will be charged ${carts.length} times, once for each person on this ticket.`,
+      };
+    }
+    const parts = carts.map(
+      (c) => `${money(c.grandTotal ?? 0)} for ${nameFor(c.forClientId)}`,
+    );
+    return {
+      count: carts.length,
+      words: `This card will be charged ${carts.length} times: ${parts.join(", ")}.`,
+    };
+  })();
   const firstLineProblem = lineReasons.find((r) => r !== null) ?? null;
 
   const tenderValid =
@@ -3622,6 +3680,16 @@ function PaymentPanel(props: {
                     );
                   })}
                 </div>
+              ) : null}
+
+              {/* T93 review: one typed card, one authorization per cart.
+                  Said in words under the tender line it belongs to, before
+                  the tap that charges them (Pete: "Allow two charges").
+                  Tokens only, 16px. */}
+              {typedCharges !== null ? (
+                <p className="tender-note" role="status">
+                  {typedCharges.words}
+                </p>
               ) : null}
 
               <p className="pay-hint">

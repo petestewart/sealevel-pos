@@ -10585,6 +10585,31 @@ stored card there is no credit-purchase path under it (that needs a
 client and a card on file), so it is a plain refusal with nothing
 charged, greyed in the browser with the same words.
 
+**A ticket holding a line for another client (T90) takes a typed card**,
+decided by Pete on 2026-09-14: "Allow two charges." That branch is one
+Mindbody cart PER RECIPIENT, so the card is authorized once per cart, for
+that cart's own rehearsed total, in the T90 order (the payer's cart
+first). What follows from it:
+
+- **Every cart is rehearsed before any is charged**, as T90 already does,
+  so a cart Mindbody will not price costs nothing.
+- **The $10 floor is per CART**, since each cart is its own
+  authorization. A ticket with a cart under it is refused before any
+  charge, in words naming the cart, and the browser says the same thing
+  under the tender line rather than waiting for the tap.
+- **The teacher is told how many times the card will be charged, and for
+  what, before Finalize**: a line under the tender reading "This card
+  will be charged 2 times: $230.00 for Pete Stewart, $28.00 for Alison
+  Reed." The amounts are Mindbody's, cart by cart, from
+  `/api/price-cart`'s `carts` block; a cart it has not priced leaves the
+  figures out rather than guessing.
+- **Honest partial results, T90's own wording.** A second charge refused
+  or ambiguous after the first stood says exactly that, names both, and is
+  never retried and never refunded.
+- **"Keep on file" stores the card once**, after the attached client's own
+  cart has gone through, on that client alone. A recipient never gets the
+  card.
+
 ### The Mindbody mechanism
 
 A `CreditCard` entry in `checkoutshoppingcart`'s Payments array. The
@@ -10656,14 +10681,13 @@ diagnoses nothing.
   keep), `src/lib/sale.ts` (the `CreditCard` payment),
   `src/lib/calllog.ts` (the redaction), `globals.css` (tokens only, both
   palettes).
-- **T90 (a line bought for another client) refuses a typed card**, in
-  words, with nothing tried. That branch charges one Mindbody cart PER
-  RECIPIENT, so a typed card would be authorized once per cart for one
-  tap on one card, each under its own $10 floor, and a second
-  authorization that failed after the first stood is a seam nobody has
-  agreed to. The route answers 409 and the keypad greys with the reason,
-  so no teacher types a card into a certain refusal. If Pete wants it,
-  it is a decision about two authorizations, not a bug.
+- **T90 (a line bought for another client) took a typed card in the
+  review pass**, after Pete's "Allow two charges" (2026-09-14). As built
+  first, the route refused it 409 and the keypad greyed: one cart per
+  recipient meant one authorization per cart, and that was a decision
+  about two authorizations rather than a bug. It is now allowed, with the
+  per-cart floor, the count said in words before the tap, and the keep
+  landing once on the attached client. See the Review subsection.
 - Deliberately NOT done: no swipe or reader path (`EncryptedTrackData`
   and `TrackData` exist in the spec and are a different ticket); no
   `cardId` (that is the stored card, which has its own tender); a typed

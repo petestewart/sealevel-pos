@@ -6858,3 +6858,16 @@ textarea.reason-note-field:disabled::placeholder {
   font-weight: 600;
   color: var(--muted);
 }
+
+/* T93 review: how many times one typed card will be charged, and for
+ * whom (Pete, 2026-09-14: "Allow two charges", and the tender line must
+ * say it plainly). Under the tender rows, above the hint: the ordinary
+ * quiet line at the 16px floor, in the ink rather than the muted grey,
+ * because it is a figure a teacher reads out loud and not an aside. */
+.tender-note {
+  margin: 0 0 4px;
+  flex: none;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}

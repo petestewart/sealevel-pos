@@ -941,27 +941,15 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
-    /* T93 x T90: a typed card is refused here too, and for a reason of
-     * its own rather than the one above. This branch charges ONE
-     * Mindbody cart PER RECIPIENT, so a typed card would be authorized
-     * twice for one tap on one card, each leg under its own $10 floor,
-     * and a second authorization that failed after the first stood is a
-     * seam nobody has agreed to. Refused in words, with nothing tried,
-     * rather than silently sent as the Cash payment this loop would
-     * otherwise fall through to. */
-    if (method === "typedcard") {
-      return NextResponse.json(
-        {
-          error:
-            "A typed card pays for one sale, and a line bought for " +
-            "another client is a second sale. Take cash or a gift card, " +
-            "or sell the other client's line on its own. Nothing was " +
-            "charged.",
-          stage: "method",
-        },
-        { status: 409 },
-      );
-    }
+    /* T93 x T90 review (Pete, 2026-09-14: "Allow two charges."): a typed
+     * card DOES pay a ticket holding a line for another client. This
+     * branch is one Mindbody cart per recipient, so the card is charged
+     * once per cart, each for that cart's own rehearsed total, in the
+     * T90 order (the payer's cart first). The per-cart floor is checked
+     * below, once every cart has been priced and before any is charged,
+     * and a second charge refused or ambiguous after the first stood is
+     * reported as exactly that by the loop's existing wording: never
+     * retried, never refunded. */
 
     const perCart =
       discount === null
@@ -1082,6 +1070,29 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    /* T93 review: the $10 floor is a card-processing floor and each cart
+     * is its OWN authorization on the same card, so it applies per cart,
+     * not to the ticket. Checked here, after every cart has been priced
+     * and before any has been charged, so a ticket holding a cart under
+     * the floor costs nothing; the sentence names the cart, since
+     * otherwise nothing on screen says which one stopped it. */
+    if (method === "typedcard") {
+      const under = rehearsed.find((c) => c.total < CARD_MINIMUM_USD);
+      if (under !== undefined) {
+        return NextResponse.json(
+          {
+            error:
+              `The cart for ${nameOfGroup(under.group)} is ` +
+              `${under.total.toFixed(2)}, under the $${CARD_MINIMUM_USD} ` +
+              "card minimum, and a typed card is charged once per cart. " +
+              "Take cash or a gift card for this ticket, or sell that " +
+              "line on its own. Nothing was charged.",
+            stage: "method",
+          },
+          { status: 409 },
+        );
+      }
+    }
     /* T83's gift card does not care whose cart it pays, so it pays all of
      * them: ONE live balance read against the whole ticket (a read, so a
      * refusal here charged nothing), and then each cart's own share. */
@@ -1138,7 +1149,16 @@ export async function POST(request: Request) {
                         amount: cart.total,
                         cardNumber: giftCardNumber as string,
                       }
-                    : { type: "Cash", amount: cart.total },
+                    : method === "typedcard"
+                      ? {
+                          /* T93 review: this cart's own authorization on
+                           * the card, for the total Mindbody just
+                           * rehearsed for it. */
+                          type: "CreditCard",
+                          amount: cart.total,
+                          card: typedCard as TypedCard,
+                        }
+                      : { type: "Cash", amount: cart.total },
                   actor,
                   sendEmail,
                   cart.discount,
@@ -1262,6 +1282,27 @@ export async function POST(request: Request) {
     }
     if (gone) return gone;
 
+    /* T93 review: "keep on file" stores the card ONCE, on the attached
+     * client, after that client's own cart has gone through; a recipient
+     * never gets the card, and a ticket whose carts all failed stores
+     * nothing. `keep` was refused above without an attached client, so
+     * there is somebody to keep it for. A ticket made entirely of lines
+     * for other people has no payer cart at all, and then the first cart
+     * that stood is what the store waits on: the card was used, and the
+     * teacher asked for it to be kept. */
+    let typedKeep: Record<string, unknown> = {};
+    const typedFour =
+      method === "typedcard" && typedCard !== null
+        ? { typedCard: { lastFour: typedCardLastFour(typedCard.number) } }
+        : {};
+    if (method === "typedcard" && typedCard?.keep === true) {
+      const payerCart = sales.find((sale) => sale.forClientId === null);
+      const waitOn = payerCart ?? sales[0];
+      if (waitOn !== undefined && waitOn.suppressed === null) {
+        typedKeep = await keepTypedCard(typedCard);
+      }
+    }
+
     const landed = sales.filter((sale) => sale.suppressed === null);
     const suppressedSales = sales.filter((sale) => sale.suppressed !== null);
     const said = (list: typeof sales): string =>
@@ -1295,6 +1336,8 @@ export async function POST(request: Request) {
           partial: landed.length > 0,
           sales,
           total: ticketTotal,
+          ...typedFour,
+          ...typedKeep,
           ...(sessionEnded ? { staffSessionEnded: true } : {}),
         },
         { status: 502 },
@@ -1323,6 +1366,8 @@ export async function POST(request: Request) {
         summary: `${soldLine} ${suppressedLine}`.trim(),
         sales,
         total: ticketTotal,
+        ...typedFour,
+        ...typedKeep,
         ...actorFields({
           actorFallback: fallbackNote,
           staffSessionEnded: sessionEnded,
@@ -1342,6 +1387,8 @@ export async function POST(request: Request) {
       ...(method === "giftcard"
         ? { giftCard: { lastFour: giftCardLastFour(giftCardNumber as string) } }
         : {}),
+      ...typedFour,
+      ...typedKeep,
       receiptRequested: sendEmail,
       emailReceipt: null,
       ...(discount !== null && compReason !== null
