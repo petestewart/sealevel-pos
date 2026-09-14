@@ -450,6 +450,19 @@ export interface CartLine {
    *  for expectedTotal only. Never sent. Null when Mindbody omitted it,
    *  in which case expectedTotal falls back to STUDIO_TAX_RATE. */
   taxRate: number | null;
+  /**
+   * T90 (Pete: "a client can purchase something for another client
+   * (like a membership, pass, etc.)"): the client this ONE line is
+   * bought for, when it is not the client paying. Mindbody's
+   * checkoutshoppingcart carries ONE ClientId for the whole cart and no
+   * per-item recipient, and PayerClientId needs a stored "Pays for"
+   * relationship (sale.yml:5663, which T63 established is not usable at
+   * a counter), so a ticket with lines for other people is checked out
+   * as one cart PER recipient (groupByRecipient below), each addressed
+   * with that recipient's id so the pass lands on their account. Null
+   * or absent means the line is the paying client's own.
+   */
+  forClientId?: string | null;
 }
 
 /**
@@ -564,6 +577,92 @@ export function expectedSubtotal(items: readonly CartLine[]): number {
   let total = 0;
   for (const line of items) total += line.price * line.quantity;
   return roundToCents(total);
+}
+
+/* =====================================================================
+ * T90: one ticket, one cart per recipient.
+ *
+ * v6 checkoutshoppingcart takes ONE ClientId (sale.yml:5654) and no
+ * per-item recipient, so a line bought for somebody else cannot ride the
+ * payer's cart: it is its own cart, addressed with the recipient's id,
+ * which is how Mindbody's own web app files a "Drop In (For: ALISON
+ * STEWART)" line. The screen still shows one ticket and one total; the
+ * route runs the carts sequentially and reports each one's outcome.
+ * =================================================================== */
+
+/** One recipient's share of a ticket, in the ticket's line order. */
+export interface CartGroup {
+  /** The recipient, or null for the paying client's own lines. */
+  forClientId: string | null;
+  items: CartLine[];
+}
+
+/**
+ * Split a ticket into one group per recipient. The paying client's own
+ * lines come FIRST (that is the only cart a stored card or an account
+ * balance could ever pay, and the route charges it first), then each
+ * other client in the order their first line appears, so the sequence a
+ * partial failure reports matches the order the teacher rang up.
+ *
+ * `payerId` folds a line bought "for" the client who is paying back into
+ * their own cart. The screen does that too (picking the attached client
+ * clears the line's recipient), but the rule belongs here as well: the
+ * same client in two carts would be two Mindbody sales for one person
+ * and, worse, would turn off their own card on file for no reason. T90
+ * review: reachable without the screen, and once attached late by
+ * anybody who bypasses it.
+ */
+export function groupByRecipient(
+  items: readonly CartLine[],
+  payerId?: string | null,
+): CartGroup[] {
+  const groups: CartGroup[] = [];
+  const at = new Map<string, CartGroup>();
+  const own: CartGroup = { forClientId: null, items: [] };
+  for (const line of items) {
+    const raw = line.forClientId ?? null;
+    const id = raw !== null && payerId && raw === payerId ? null : raw;
+    if (id === null) {
+      own.items.push(line);
+      continue;
+    }
+    let group = at.get(id);
+    if (!group) {
+      group = { forClientId: id, items: [] };
+      at.set(id, group);
+      groups.push(group);
+    }
+    group.items.push(line);
+  }
+  return own.items.length > 0 ? [own, ...groups] : groups;
+}
+
+/**
+ * The armed discount, divided between the groups so the parts sum to the
+ * whole to the CENT. The whole ticket's spread is computed once
+ * (spreadDiscount, the same function each cart's own spread then runs),
+ * each group takes the sum of its lines' cents, and that sum rides as an
+ * `amount` discount for that cart: re-spread inside the cart it sums back
+ * to exactly the cents handed to it, because a proportional share can
+ * never exceed its own line. A group whose share rounds to nothing gets
+ * no discount at all rather than a zero one.
+ *
+ * The caller still checks each cart's expected discount against
+ * Mindbody's DiscountTotal, and the sum of the carts against the armed
+ * figure, before any money moves.
+ */
+export function splitDiscount(
+  items: readonly CartLine[],
+  discount: Discount,
+  groups: readonly CartGroup[],
+): (Discount | null)[] {
+  const spread = spreadDiscount(items, discount);
+  const cents = new Map<CartLine, number>();
+  items.forEach((line, i) => cents.set(line, spread[i] ?? 0));
+  return groups.map((group) => {
+    const sum = group.items.reduce((n, line) => n + (cents.get(line) ?? 0), 0);
+    return sum > 0 ? { mode: "amount" as const, value: sum / 100 } : null;
+  });
 }
 
 /**
@@ -1386,6 +1485,21 @@ export function parseCartLines(
           "price (non-negative number)",
       };
     }
+    /* T90: the line's recipient, when it is somebody other than the
+     * client paying. A string id or nothing; never an object, and never
+     * trusted for more than grouping (the carts below are addressed
+     * with it, and Mindbody refuses an id that is not a client). */
+    const forRaw = entry?.forClientId;
+    if (
+      forRaw !== undefined &&
+      forRaw !== null &&
+      (typeof forRaw !== "string" || !forRaw.trim())
+    ) {
+      return {
+        items: null,
+        error: "forClientId, when present, must be a non-empty client id",
+      };
+    }
     items.push({
       type,
       metadataId,
@@ -1393,6 +1507,7 @@ export function parseCartLines(
       price,
       taxExempt: entry?.taxExempt === true,
       taxRate: typeof taxRate === "number" ? taxRate : null,
+      ...(typeof forRaw === "string" ? { forClientId: forRaw.trim() } : {}),
     });
   }
   return { items, error: null };
