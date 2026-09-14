@@ -1072,6 +1072,12 @@ function FrontDesk({
    *  alone, or the cell would bounce back to All on the next debounce.
    *  Any other query widens as usual. */
   const heldOnClass = useRef<string | null>(null);
+  /** T91 review: a query the APP put in the box, not a teacher: the name
+   *  of a client just created with the box empty. The live search must
+   *  not spend a metered Mindbody call on it, and its first page would
+   *  replace the row the create just put in the list. Cleared as soon as
+   *  the box is typed in, so the same name typed by hand still searches. */
+  const liveSeeded = useRef<string | null>(null);
   /** The client profile modal (T42): who it is about, and the read. The
    *  fetch fires on OPEN, not on the icon's render, since the profile is
    *  three metered reads; `profileGen` drops an answer that lands after
@@ -1370,6 +1376,11 @@ function FrontDesk({
    *  down to SaleScreen's note slot, because that is where the teacher is
    *  looking; cleared when the sale screen says it has been read. */
   const [saleClientNote, setSaleClientNote] = useState<string | null>(null);
+  /** T91 review: stable, because the sale screen's 20 second life for the
+   *  note keys on this function: a new one every render (the config poll
+   *  re-renders this component on its own) restarted the timer and the
+   *  note could sit there indefinitely. */
+  const readSaleClientNote = useCallback(() => setSaleClientNote(null), []);
   /** True while the search modal is open as the sale's attach picker
    *  (T23): same modal, same submit-triggered search, same row format,
    *  but the row action selects the client instead of booking, and the
@@ -2217,6 +2228,8 @@ function FrontDesk({
    */
   useEffect(() => {
     const q = query.trim();
+    /* T91 review: the box was seeded with a new client's name, not typed. */
+    if (q !== "" && q === liveSeeded.current) return;
     const onClass = attachMode && attachTab === "class";
     if (onClass) {
       if (!settings.autoWidenSearch || !q) return;
@@ -5254,6 +5267,7 @@ function FrontDesk({
             className="search"
             value={query}
             onChange={(e) => {
+              liveSeeded.current = null;
               setQuery(e.target.value);
               setSearchMsg(null);
             }}
@@ -5965,6 +5979,7 @@ function FrontDesk({
              * with an empty box reads as a query of nothing and clears the
              * results on the next tick. */
             if (!query.trim()) {
+              liveSeeded.current = client.name;
               setQuery(client.name);
               setSearchTitle(client.name);
             }
@@ -6025,6 +6040,7 @@ function FrontDesk({
                     className="search"
                     value={query}
                     onChange={(e) => {
+                      liveSeeded.current = null;
                       setQuery(e.target.value);
                       setSearchMsg(null);
                     }}
@@ -7899,7 +7915,7 @@ function FrontDesk({
           setNewClient({ first: "", last: "", for: "sale" })
         }
         clientNote={saleClientNote}
-        onClientNoteRead={() => setSaleClientNote(null)}
+        onClientNoteRead={readSaleClientNote}
         onDetachClient={() => {
           setSaleClient(null);
           setSaleClientNote(null);
