@@ -10171,3 +10171,142 @@ Two ways the number escaped, both fixed:
 
 Also moved: a `.gift-number` CSS block had been inserted between the
 "The keys" comment and the `.pad-keys` rule it describes.
+
+
+## T91. New client, reachable from the sign-in page and the Buy screen (Pete, 2026-09-14)
+
+Pete: "There should be a New client feature. This will allow a new
+student to be registered in Mindbody by filling fields out. It can be
+accessed with a New Client button in the sign-in page, to the right of
+the magnifying glass. Or it can be accessed in the buy app with a New
+Client button to the right of the Walk-in button. It also will be a
+dynamic option if a pass is added to a Walk-in cart. Next to the Attach
+a client button will be a New client button."
+
+Nothing new is being built here: T59b's form, its route and every rule
+it carries stay exactly as they are. This ticket is three doors onto
+it, and where the person who comes through each one lands.
+
+### The design
+
+- **The sign-in bar.** A "New client" cell to the RIGHT of the
+  magnifier, the bar's own height, icon plus label in the accent on the
+  bar surface rather than a filled primary: searching is still the
+  primary thing this bar does. It prefills from the box by T59b's rule
+  (two words, no digits or @), which is now one function, `namePrefill`,
+  so the two sign-in entries cannot drift apart.
+- **Where they land from there.** As a walk-in result, which is what
+  "search" has always done, so they can be booked or checked in at once.
+  The form can now be opened with an EMPTY box and with the results
+  modal shut, so the created person's name is put in the box and the
+  modal opened on them. The box, not the title, because the live search
+  (T81) keys on the box: a title over an empty box reads as a query of
+  nothing and clears the row on the next tick.
+- **The Buy header.** A third cell in the `sale-for-row`, to the right
+  of Walk-in, the same cell idiom as the two beside it. On create the
+  new client is ATTACHED to the sale, as an attach-modal row tap
+  attaches, and attaching already clears the walk-in flag. page.tsx
+  owns the form as it owns the attach modal, so it stacks above the
+  sale overlay with no new z-index.
+- **The dynamic entry.** Once the ticket holds a Service or a Package,
+  the walk-in card grows a "New client" cell beside its X. A walk-in
+  buying a pass has to become somebody for the pass to have an owner,
+  which is the ramp T92 needs; a retail-only walk-in cart gets nothing,
+  because a bottle of water needs no client. Creating from there
+  attaches and keeps the cart.
+- **The amber note.** A create that fell back to the service account
+  reports the same line the roster shows, in the ticket's own note slot,
+  for twenty seconds. Suppression is not that line: a suppressed create
+  never reaches `onCreated`, and says so in the form, because a row for
+  a person who does not exist is the lie dry run exists to prevent.
+- **Mid-charge** every entry is disabled, the same lock detach and
+  attach carry: no client change while money is moving.
+- Portrait fits three cells at 768 by dropping the hint under "Attach a
+  client", never the verb.
+
+### Build notes
+
+Built: `namePrefill` and the sign-in bar's cell in `src/app/page.tsx`,
+the `"sale"` target on the `newClient` state and its attach branch, the
+`onRequestNewClient` / `clientNote` / `onClientNoteRead` props and the
+two cells in `src/app/SaleScreen.tsx` (with `hasPassLine` reading the
+cart's own line types), and the CSS in `globals.css` (tokens only, both
+palettes; no new tokens, the Buy cells reuse `.sale-walkin` whole).
+`/api/client-create`, the form, the required-fields read, the duplicate
+answer, the suppression rules and the write guard are untouched.
+
+Verified: typecheck and build green; Playwright against `next start` and
+a mocked Mindbody on 3091/4591, both palettes, landscape 1194 and
+portrait 768. Each of the three entries opens the form and creates
+through `/api/client-create` exactly once (three POSTs, three
+`addclient` bodies of the same five fields); the sign-in entry prefills
+"Jane Doe" and lands her as the walk-in result, and with an empty box
+lands "Zed Quill" the same way; the Buy entry attaches "Ann Ray" with no
+walk-in card left; the dynamic entry is absent for an empty and for a
+retail-only walk-in cart, present once the 10 Class Pack is added, sits
+before the X at 74px, and attaches "Bo Ray" with both cart lines intact.
+The fallback note reads "Done as the studio account: ..." in the warn
+pair in the ticket's note slot, with the client still attached. Portrait
+holds three cells on one line each with the hint dropped.
+
+Not done, and why: nothing was verified against live Mindbody, so the
+real `requiredclientfields` list for site 471 is still unknown (T59b's
+gap, unchanged). The suppressed-create path was not re-exercised here
+because T59b owns it and it never reaches these three entries.
+
+### Review
+
+Three fixes, all small, and the rest held.
+
+- **The seeded box meant a search it should not have.** Creating from
+  the sign-in bar with an EMPTY box puts the new person's name in the
+  box so the results modal has something to key on, and the live search
+  (T81) keys on the box too: it fired a metered `/client/clients` call
+  for a name nobody typed (counted at the mock: `Zed Quill` arrived as a
+  search), and that page then replaced the row the create had just put
+  in the list. The mock returning the same person hid the second half.
+  A ref now holds the one query the app seeded, the live effect skips
+  exactly it, and typing in either search box clears it, so the same
+  name typed by hand still searches. The created row stays the tappable
+  `rrow-tap` ("Add Zed Quill to this class") it was.
+- **The amber note's twenty seconds restarted on every parent render.**
+  `onClientNoteRead` was a fresh arrow each render and the sale screen's
+  timer effect depends on it; page.tsx re-renders on its own (the
+  `/api/config` poll), so the note could outlive its life. It is a
+  `useCallback` now.
+- **The sign-in cell was 60px**, under the floor. It is the tallest
+  thing on that bar, so at 64 the bar and the magnifier beside it come
+  up to 64 with it, which is where both should have been. 65 with the
+  bar's rule, one line, 17px, accent in both palettes, radius 0.
+
+Held, in the browser against the mock: two synchronous taps on Create
+send ONE `POST /api/client-create` and one `addclient`. With
+`POS_DRY_RUN=true`, and again with `POS_WRITE_CLIENT_IDS` set to
+somebody else, both entries report the suppression in the form, the form
+stays open, Mindbody sees no `addclient`, no walk-in result appears, the
+search box is untouched, nothing is attached and the walk-in card is
+still there with its cart. A refused create (duplicate) does the same
+and attaches nothing. A create the teacher's own group refuses and the
+service account carries reads "Done as the studio account: ..." in the
+ticket's note slot, in its own div above the cart notice, so a money
+message cannot be overwritten. From the dynamic cell the cart lines and
+quantities survive, the walk-in flag clears, and the price loop fires
+exactly one re-price for the new client (the payment column goes from
+"Attach a client" to the client's own card state). Escape peels the form
+and leaves the Buy overlay open. Portrait 768 still holds three cells on
+one line with the hint dropped.
+
+Two things could not be exercised, both recorded rather than changed.
+`needsClient` cannot coexist with a walk-in cart: with no house client
+the Walk-in cell is disabled (T41), so that state is unreachable from
+the dynamic entry, and the re-price was proven by the call and the
+payment column instead. And the mid-charge lock is code only
+(`disabled={charging}` on both Buy cells, the lock Attach and detach
+carry); no charge was held open to tap through.
+
+One thing to know, which is the design working as drawn, not a bug: on
+the sign-in page a query of three letters opens the results modal over
+the bar, so the bar's cell (and its prefill) is reachable with the modal
+shut, while with results up the door is the modal's own "New client",
+which shows in the "Nobody found" state. Worth a look the first time
+somebody searches a name that matches the wrong person.
