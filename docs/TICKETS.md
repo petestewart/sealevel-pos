@@ -10919,3 +10919,66 @@ inactive label, all of which predate this ticket.
    if it is a 200 with no balance rather than a 404, the check will
    refuse every sale and the classifier in
    `giftcardsale.ts` is the one place to fix.
+
+### Review
+
+Re-ran the builder's harness (`scratchpad/t95`, mock 4596, `next start`
+3096) plus route and browser probes of my own. Three things were wrong.
+
+1. **A partly sold ticket could be sold again.** With one card sold and
+   the second refused, the route answers `partial: true` and the screen
+   cleared the tender and said so, which is T90's posture. But the
+   ticket still held both cards, so re-tapping a tender and Finalize
+   Sale charged the whole ticket a second time: in the browser, two real
+   purchases became four, and the first card, already a live balance in
+   Mindbody, was sold twice. A gift card cannot be un-sold (Pete's rule:
+   never a refund), so Finalize Sale is now REFUSED on a ticket that was
+   partly sold (`partialLock`), with the reason on the button, until the
+   ticket is emptied. Empty cart and the client-change dialog clear the
+   latch, which is the honest way on: ring up only what is still owed.
+   The same latch covers T90's several-carts partial, which had the same
+   hole.
+2. **The failure sentence dropped a card.** When the CART half failed,
+   no card had been attempted, but the "was not attempted" list was
+   sliced from `sold.length + 1` and so left out the first card: a
+   teacher reading "the $100.00 gift card was not attempted" would have
+   assumed the $50.00 one went through. It now counts what was actually
+   sent (`cardsAttempted`), and names every untried card.
+3. **An id could repeat inside one ticket.** Each id is checked against
+   Mindbody, but two cards on the same ticket are not cards yet, so a
+   repeated draw would read FREE both times and the second purchase
+   would RELOAD the first card. `freshGiftCardId(taken)` now draws clear
+   of the ids this ticket has already claimed.
+
+Also added: the rehearsal compares Mindbody's `AmountPaid` with the
+product's SalePrice, as it already did `Value` with CardValue. The
+payment sent per card is the cached product's price, so a price that
+moved between the list read and the sale would have charged one figure
+while Mindbody booked another; it is now refused before anything is
+charged, with the same "nothing was charged" wording.
+
+Checked and found sound: one Finalize tap is one request; every purchase
+is rehearsed with `Test: true` before any real call and `Test: false` goes
+out exactly once per card (ten cards: ten rehearsals, then ten charges);
+a 4xx, a 5xx and a dead socket on the second card each leave exactly the
+first sold, reported, with no third call; the balance read never treats a
+200-with-balance as free (a site answering every read with a balance
+refuses after three tries, nothing sent), and a 200 with no balance
+refuses too; each card's share is the product's SalePrice and the shares
+sum to the tender, with a card priced below its value charged its price;
+a walk-in with no `POS_HOUSE_CLIENT_ID` is refused before any call; the
+write guard suppresses the whole ticket and answers `suppressed`, never a
+sale; the barcode id reaches the done screen and the receipt and nowhere
+else (the call log strikes it out of the request, out of Mindbody's
+answer and out of the balance read's query, and the server log carries
+value, price, sale and client but never the id); the gift card line goes
+with Empty cart and the client change; the stepper makes N cards with N
+distinct ids; the cell is absent with the rest of the Retail shelf intact
+when the product read fails; the amount box is the same 760x306 whichever
+message it is showing, presets 64px, tokens only, no em dashes, in both
+palettes and both orientations.
+
+Left alone deliberately: the two-minute product cache means a checkout
+inside that window prices cards from the cached list rather than a fresh
+read. That is the catalog's own posture, and the rehearsal is what
+catches a drifted value or price, now on both figures.

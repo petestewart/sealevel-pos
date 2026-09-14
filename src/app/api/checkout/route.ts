@@ -1055,7 +1055,13 @@ export async function POST(request: Request) {
      * loudly rather than risk reloading a card someone is holding. */
     const ids: string[] = [];
     try {
-      for (let i = 0; i < units.length; i++) ids.push(await freshGiftCardId());
+      /* T95 review: each id is drawn clear of the ones this ticket has
+       * already claimed as well as of Mindbody's own cards. An id
+       * repeated inside one ticket would read FREE (it is not a card
+       * yet) and the second purchase would RELOAD the first card. */
+      for (let i = 0; i < units.length; i++) {
+        ids.push(await freshGiftCardId(ids));
+      }
     } catch (err) {
       return NextResponse.json(
         { error: `${errMessage(err)} Nothing was charged.`, stage: "method" },
@@ -1101,6 +1107,26 @@ export async function POST(request: Request) {
        * about to hand over a card worth something else. A MISSING value
        * is not a disagreement: the field is optional in the answer, and
        * inventing a refusal for an absent field is not this route's job. */
+      /* T95 review: and what Mindbody says it COSTS. The payment sent
+       * with each purchase is the cached product's SalePrice, so a price
+       * that has moved since the list was read would charge the customer
+       * one figure while Mindbody books another. Absent is not a
+       * disagreement, for the reason the value check gives. */
+      if (
+        trial.amountPaid !== null &&
+        roundToCents(trial.amountPaid) !== unit.salePrice
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              `Mindbody charges ${trial.amountPaid.toFixed(2)} for that gift ` +
+              `card, not the ${unit.salePrice.toFixed(2)} on the ticket. ` +
+              "Nothing was charged; tap Recheck prices and try again.",
+            stage: "rehearsal",
+          },
+          { status: 409 },
+        );
+      }
       if (
         trial.value !== null &&
         roundToCents(trial.value) !== unit.cardValue
@@ -1184,9 +1210,14 @@ export async function POST(request: Request) {
       }
     }
 
+    /** T95 review: how many cards were actually sent to Mindbody, which
+     *  is what the "was not attempted" list is measured from. Zero when
+     *  the cart half failed first. */
+    let cardsAttempted = 0;
     if (failure === null && suppressedKind === null) {
       for (const [i, unit] of units.entries()) {
         const id = ids[i] as string;
+        cardsAttempted += 1;
         try {
           const run = await runAsActor(session, "/api/checkout", (actor) =>
             purchaseGiftCard({
@@ -1261,8 +1292,13 @@ export async function POST(request: Request) {
     ];
 
     if (failure !== null) {
+      /* T95 review: what was never attempted. A CARD failed at index
+       * sold.length, so everything after it is untried; a CART failure
+       * happened before any card, so every card is untried. Slicing from
+       * `sold.length + 1` in both cases silently dropped the first card
+       * from the sentence when the cart was the thing that broke. */
       const notDone = units
-        .slice(sold.length + 1)
+        .slice(cardsAttempted)
         .map((u) => `the ${u.cardValue.toFixed(2)} gift card`);
       return NextResponse.json(
         {

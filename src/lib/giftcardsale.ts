@@ -214,11 +214,20 @@ const ID_TRIES = 3;
 /**
  * An id no gift card on this site has. Nothing has been written when this
  * returns, and nothing has been written when it throws.
+ *
+ * T95 review: `taken` are ids this ticket has already claimed but not yet
+ * sold. Mindbody cannot know about them (they are not cards yet), so the
+ * balance read would call a repeat FREE, and the second purchase would
+ * RELOAD the first card instead of selling a new one. A ticket of ten
+ * cards is ten draws from the same billion, so the odds are absurd and
+ * the check is one comparison.
  */
-export async function freshGiftCardId(): Promise<string> {
+export async function freshGiftCardId(
+  taken: readonly string[] = [],
+): Promise<string> {
   for (let i = 0; i < ID_TRIES; i++) {
     const id = newGiftCardId();
-    if ((await giftCardIdState(id)) === "free") return id;
+    if (!taken.includes(id) && (await giftCardIdState(id)) === "free") return id;
     /* The id is NOT logged: it is a bearer secret, and the next one will
      * be along in a moment. The count is the diagnostic. */
     console.warn(

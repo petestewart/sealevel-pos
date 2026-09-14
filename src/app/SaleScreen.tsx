@@ -1529,6 +1529,19 @@ function PaymentPanel(props: {
   const [entry, setEntry] = useState("");
   const [charging, setCharging] = useState(false);
   const [result, setResult] = useState<ChargeResult | null>(null);
+  /**
+   * T95 review: the latch on a ticket that was PARTLY sold. The route's
+   * sentence says which half landed; the ticket still holds every line,
+   * including the gift cards that are now real cards in Mindbody with
+   * real balances. Clearing the tender is not enough on its own: a
+   * teacher who re-tenders and taps Finalize again sells those cards a
+   * second time, and a gift card cannot be un-sold (Pete's rule: never a
+   * refund). So Finalize is refused outright until the ticket is emptied,
+   * which is the only honest way on: start again with what is still
+   * owed. Cleared by the cartResetNonce effect below, which is Empty cart
+   * and the client-change dialog.
+   */
+  const [partialLock, setPartialLock] = useState<string | null>(null);
   /** T39.6: leaving pay mode with comp armed clears it (never armed while
    *  invisible), and the surface says so ONCE on return, in the quiet
    *  line, until the next tender gesture. */
@@ -1760,6 +1773,9 @@ function PaymentPanel(props: {
   useEffect(() => {
     if (cartResetNonce === 0) return;
     resetTender();
+    /* T95 review: and the partial latch goes with the ticket it was
+     * about. A new ticket is the honest way on from a partial sale. */
+    setPartialLock(null);
   }, [cartResetNonce, resetTender]);
 
   /* PaymentPanel unmounts when the overlay closes; an amount modal that
@@ -2127,6 +2143,8 @@ function PaymentPanel(props: {
 
   const chargeable =
     cart.length > 0 &&
+    /* T95 review: never again on a ticket that was partly sold. */
+    partialLock === null &&
     !pricing &&
     total !== null &&
     !charging &&
@@ -2561,6 +2579,10 @@ function PaymentPanel(props: {
          * was on it, and nothing is retried, rolled back or refunded. */
         resetTender();
         onClientDataStale();
+        setPartialLock(
+          "Part of this ticket was sold. Empty the ticket and ring up " +
+            "only what is still owed; this ticket cannot be charged again.",
+        );
         setResult({
           kind: "partial",
           message: String(
@@ -3551,6 +3573,8 @@ function PaymentPanel(props: {
     ? null
     : charging
       ? "Charging..."
+      : partialLock !== null
+        ? partialLock
       : total === null
         ? pricing
           ? "Pricing with Mindbody..."
@@ -4004,9 +4028,9 @@ function PaymentPanel(props: {
                 <div className="sale-stop pay-split" role="alert">
                   <p className="pay-split-head">{result.message}</p>
                   <p className="pay-split-why">
-                    Do not tap Finalize Sale again for the part that sold.
                     Check the dev drawer or Mindbody before charging
-                    anything else.
+                    anything else. Finalize Sale is refused on this ticket
+                    now: empty it and ring up only what is still owed.
                   </p>
                   <button
                     className="class-change pay-dismiss"
