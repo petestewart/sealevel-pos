@@ -10171,3 +10171,101 @@ Two ways the number escaped, both fixed:
 
 Also moved: a `.gift-number` CSS block had been inserted between the
 "The keys" comment and the `.pad-keys` rule it describes.
+
+## T94. The account can be charged past its balance, with the teacher's PIN (Pete, 2026-09-14)
+
+Pete, with a screenshot of the Account amount keypad ("ACCOUNT AMOUNT
+$10.00 / Amount due $12.00 / Short $2.00"):
+
+> "Accounts should be able to be charged even if there is insufficient
+> balance. This means Account is always an option as a payment method.
+>
+> On this screen, there should be red button in the lower left that says
+> Charge Full Amount with black text underneath it saying 'This will
+> result in a negative account balance'. This will require the teacher's
+> PIN to authorize. They can enter this screen by clicking on the $
+> amount for the Account line or by clicking the Account button again
+> after all its credit is used."
+
+### The design
+
+1. **Account is always offered with a client attached.** T33 hid the
+   tile with no balance (Pete's fourth live test: "if there's no
+   balance, it shouldn't be a visible option"); an empty account can now
+   be charged, so the tile is there, on, with the quiet line "No
+   balance" instead of a badge. With nobody attached it is greyed with
+   "Attach a client", which is T35's rule for every other source. The
+   effect that strips a credit line no longer fires on a zero balance;
+   a client change still clears the whole tender as it always did.
+2. **Two doors into the modal**: the Account line's amount, as before,
+   and the Account tile again while its line is in the payment (which
+   used to be inert, "Already in the payment"). An account with nothing
+   on it adds a $0.00 line on the first tap and opens the keypad on it
+   straight away, since that modal is where the authorization happens.
+3. **The modal** keeps its keypad, Done and Cancel. While the account
+   cannot reach what is still due, a 64px `--stop` filled "Charge full
+   amount" sits at the left column's foot (label in `--bg`, per the
+   token rule) with "This will result in a negative account balance."
+   under it in `--fg`. It opens the PIN pad IN PLACE of the left half,
+   the box not resizing: "Teacher PIN to authorize a negative balance",
+   the keys and the two action cells serving it, auto submitting at the
+   teacher's PIN length through `/api/teacher/verify`. A wrong PIN says
+   so and stays. A match sets the account line to the WHOLE remaining
+   due, holds the one-shot token beside it and closes the modal; the
+   row then reads "balance after -$18.00, by Pete Stewart" in `--warn`.
+   Cancel, a retyped amount, a cart edit, a client change or a
+   completed sale drops the authorization and its token.
+4. **The server** (`/api/checkout`): `overdraftToken` is the only thing
+   that lets a credit charge exceed the live balance, on the whole-sale
+   path and on a split's credit leg alike. Without it the 409 stands,
+   word for word as before. It is verified with the same
+   `verifyCompToken` the discount token uses and spent once
+   (`spendCompToken`) before the first Mindbody call, so a replay costs
+   nothing and no token is ever good for two checkouts. The shortfall is
+   the ROUTE's arithmetic on the profile the route re-read; the
+   browser's balance decides nothing. The overdraft is logged
+   (`[overdraft] ... charged= balance= short= teacher=<staff id>`, never
+   the token) and filed on the client after the charge resolved, through
+   T45's note path with T62's Notes fallback: "Account charged $28.00
+   against a $10.00 balance, authorized by Pete Stewart. Sale 777001."
+   A suppressed sale files nothing and says so.
+
+Its own field rather than reusing `teacherToken`: a discounted sale can
+also overdraw the account, and one one-shot token cannot answer for two
+authorizations. A token sent beside anything that is not an account
+charge is refused 400 rather than ignored, since a PIN spent on nothing
+is worse than a refusal.
+
+### Build notes
+
+- `src/app/SaleScreen.tsx`: `creditReason`, `creditNote`,
+  `creditVisible`, the overdraft state and its drop effect, the cap and
+  the line check lifting for an authorized line, the tile's second door,
+  the modal's red button, its PIN step and `submitOverdraftPin`, and
+  `overdraftToken` on the request.
+- `src/app/api/checkout/route.ts`: the token, `overdraft`, the two
+  balance checks, `recordOverdraft`.
+- `src/app/globals.css`: `.pad-overdraft`, `.pad-overdraft-note`,
+  `.pad-change.balance-after`, `.tender-sub.warn-sub`, tokens only.
+- The money invariants are untouched: an explicit fresh tap, single
+  flight, the server's rehearsal authoritative, suppression reported as
+  suppression, no auto-retry, 5xx and a dead socket ambiguous.
+- **OPEN QUESTION, for a live probe**: whether Mindbody itself accepts a
+  `DebitAccount` payment above the account's balance. The payment shape
+  is unchanged and nothing about it is negotiated here; if Mindbody
+  refuses, that is a plain refusal with nothing else written, and it is
+  never retried in another shape. Until that probe is run, this feature
+  is proved only against the mock.
+- Verified on the ticket's harness (mock Mindbody on :4594, `next start`
+  on :3094, scratch `t94/`): route tests A to G (no token 409 with the
+  balance named and nothing written; a garbage token 401 before any
+  Mindbody call; a real token charges one DebitAccount for the whole
+  total, reports the shortfall and files the note; the same token again
+  401 with nothing charged; a token beside a cash sale 400; a credit
+  LEG of a split the same; inside the balance no token needed and
+  nothing recorded), and the UI in both palettes at 1194x834 and
+  834x1194 (the zero-balance tile, both doors, the red button only while
+  short and its 64px `--stop`/`--bg`, a wrong PIN staying, the right one
+  settling the sale, two taps sending one request with the token, Cancel
+  and a retyped amount dropping the authorization). `npm run typecheck`
+  and `npm run build` clean.
