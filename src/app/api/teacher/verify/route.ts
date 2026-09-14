@@ -6,6 +6,7 @@ import {
   recordVerifySuccess,
   requireSession,
 } from "@/lib/auth";
+import { requireActor } from "@/lib/actor";
 import { isPinShape, PIN_MAX, PIN_MIN, verifyTeacherPin } from "@/lib/teacherpins";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +28,11 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
+  /* The PIN confirms the SIGNED-IN teacher (PINs are not unique since
+   * migration 11), so a discount with nobody signed in is refused here
+   * as every write is: 401 reason staff, and the gate comes back. */
+  const actor = await requireActor(request);
+  if (actor.denied) return actor.denied;
 
   /* Claim before the first await, as /api/login does. */
   const lockedFor = claimVerifyAttempt();
@@ -53,8 +59,21 @@ export async function POST(request: Request) {
     );
   }
 
-  const check = await verifyTeacherPin(pin);
+  const check = await verifyTeacherPin(pin, {
+    id: actor.session.staffId,
+    name: actor.session.name,
+  });
   if (!check.ok) {
+    if (check.reason === "nopin") {
+      return NextResponse.json(
+        {
+          error: "You have no PIN yet. Set one up first.",
+          reason: "teacher",
+          noPin: true,
+        },
+        { status: 401 },
+      );
+    }
     if (check.reason === "unavailable") {
       return NextResponse.json(
         {
@@ -65,15 +84,9 @@ export async function POST(request: Request) {
         { status: 503 },
       );
     }
-    if (check.reason === "staff") {
-      return NextResponse.json(
-        { error: "Could not read the staff list from Mindbody." },
-        { status: 502 },
-      );
-    }
     /* Counted by the claim above. */
     return NextResponse.json(
-      { error: "That PIN does not match any teacher.", reason: "teacher" },
+      { error: "That is not your PIN.", reason: "teacher" },
       { status: 401 },
     );
   }
