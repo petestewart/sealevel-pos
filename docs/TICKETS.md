@@ -10525,3 +10525,110 @@ Left alone, with the reason:
 - The mixed "some carts went out, some were suppressed" answer and its
   screen wording are unreachable while suppression stops the whole ticket
   at the rehearsal. Kept as the defence for the day that changes.
+
+## T92. A walk-in buys retail only; a pass needs an account or a recipient (Pete, 2026-09-14)
+
+Pete: "A walk-in should not be able to buy passes, only retail items. if
+they want to buy a pass for another client, that is allowed. if they want
+to buy for themselves they must register a mindbody account. when this is
+attempted, a popup should appear with an option to pay for another client
+or create a new client"
+
+### The rule
+
+A cart with NO attached client (walk-in, declared or not) may hold
+Product lines freely: a bottle of water lands on the house client and
+always has (T41). A Service or a Package may not, because both are
+pricing options and land on a PERSON, and the house client is a
+placeholder nobody can use. So such a line must carry a T90 `forClient`,
+and a pass with neither a recipient nor an attached client never reaches
+Pay and never reaches Mindbody. A contract was already client-only.
+
+### The design
+
+1. **The moment.** Tapping a pass on the shelf with nobody attached opens
+   a statically sized modal (T52's idiom: X, scrim, Escape, and the
+   walk-in dialog's frame), "Who is this pass for?", one line of copy:
+   "A walk-in cannot buy a pass for themselves. Passes go on a Mindbody
+   account." Two options: **Another client** opens the T90 recipient
+   search and the line lands with `forClient` set; **New client** opens
+   T91's form and, on create, the new person is attached and the line
+   lands as theirs. Cancel adds nothing. The pass is NOT rung up first
+   and removed later: nothing enters the cart until it has a home, so a
+   teacher never reads a ticket holding something nobody bought.
+   A BUNDLE carrying a pass asks the same question and waits WHOLE: its
+   retail lines would otherwise land without the pass the teacher tapped
+   for.
+2. **Attaching later.** Detaching a client from a ticket that holds
+   passes of their OWN is refused, with the lines named and one way out
+   ("Keep the client"). A retail-only ticket detaches as it always did,
+   and so does one whose only passes are for other people: those lines
+   never depended on who is paying.
+3. **Pay and the server.** Pay's reason line carries the impossible state
+   as belt and braces ("A pass on a walk-in sale needs a client"), and
+   `/api/price-cart` and `/api/checkout` both refuse a Service or Package
+   line with neither a cart client nor a `forClientId`, in words, before
+   any Mindbody call: `passWithoutOwner` in `src/lib/sale.ts` reads the
+   ATTACHED client only, so the house client can never stand in for a
+   pass's owner. The house client remains exactly what T41 made it, for
+   retail.
+4. T51's "Walk-in" declaration is unchanged for retail, and T91's three
+   New client doors are untouched.
+
+### Build notes
+
+Built: `passWithoutOwner` (`src/lib/sale.ts`) and its two call sites in
+`/api/price-cart` and `/api/checkout`; in `src/app/SaleScreen.tsx`
+`isPassItem`, one `addLines` adder behind the shelf tap, the bundle tap
+and both answers, the `passPrompt` modal with `heldPass` /
+`heldForNewClient` carrying the items across page.tsx's own modals, the
+`PENDING_PASS_KEY` branch in the T90 `recipientPick` effect (a pick for
+items that are not in the cart yet), the detach refusal, the Pay reason,
+and both dialogs added to the overlay's Escape ladder; one width rule,
+`.modal-passowner`, in `globals.css` (no new tokens, no colour of its
+own: the frame and both faces are `.modal-sale`'s).
+
+Verified with the harness in scratchpad/t92 (`next start` on :3092
+against a Mindbody mock on :4592, nothing stubbed in the browser but the
+dev log), all green:
+
+- UI (`ui.mjs`), light and dark, 1194x834 and 834x1194: retail on a
+  walk-in cart rings up with no modal; a pass tap opens the modal, whose
+  copy, two 68px options, 17px text, radius 0 and fixed 540px were
+  measured off the DOM; the X and Escape each add nothing and leave the
+  Buy screen open; "Another client" lands "Drop In (Alison Reed)" beside
+  the walk-in's water and checks out as TWO carts, the water under the
+  house client and the pass under 100041277, with both sales named on the
+  done screen; "New client" creates Cy Nash with exactly one `addclient`,
+  attaches her and puts the pass on the ticket for her; detaching her is
+  then refused by name and she stays attached; with the pass removed and
+  a bottle of water in its place the same detach goes through.
+- Server (`api.mjs`), through a signed-in page so the device and staff
+  sessions are real: price-cart refuses a Service and a Package with no
+  owner, in words, at the cost of zero Mindbody calls; retail on the same
+  anonymous cart still prices; a pass WITH a recipient still prices as
+  its own cart; a pass with a client attached prices as it always did;
+  checkout refuses the ticket with `stage: "method"` and writes nothing;
+  and a retail-only walk-in sale still checks out on the house client.
+- `npm run typecheck` and `npm run build` clean.
+
+Deliberately not done, and what to know:
+
+- **Nothing was checked against live Mindbody.** The rule is ours, not
+  Mindbody's: Mindbody would happily sell a pass onto the house client,
+  which is exactly the outcome this refuses.
+- **T91's dynamic "New client" cell on the walk-in card is now nearly
+  unreachable** and was left exactly as it is. It appears once a walk-in
+  ticket holds a Service or Package, and after T92 such a line can only
+  be one bought FOR somebody else, which needs no new client. It is
+  harmless (it still registers a walk-in), and removing it is a T91
+  decision, not a T92 one.
+- **The held items survive a cancelled New client form.** Cancel the form
+  and attach somebody by hand and the pass lands on them. That is the
+  same question answered a different way, so it was left; the recipient
+  branch cannot do this (it is marked separately and only a pick against
+  its own sentinel key lands it).
+- Dismissing the recipient search without picking leaves the held items
+  in a ref until the next pass tap replaces them. Nothing reads them in
+  between: only a pick against `PENDING_PASS_KEY` can, and only that
+  modal can ask for one.

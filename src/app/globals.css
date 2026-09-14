@@ -5556,6 +5556,16 @@ textarea.reason-note-field:disabled::placeholder {
   width: min(540px, 100%);
 }
 
+/* T92: the pass-owner ask and the refused detach. The walk-in dialog's
+ * frame at a fixed width ("all popups must be statically sized"), so the
+ * two 68px options below it do not move with the item's name. No colour
+ * of its own: the frame, the title rule and the two action faces are all
+ * .modal-sale's. */
+.modal.modal-passowner {
+  position: relative;
+  width: min(540px, 100%);
+}
+
 /* T53: the opt-in gate, the walk-in dialog's frame. The client line is
  * the name over the address; each option is a 64px row with a 26px
  * native box in the accent (color-scheme handles the box's own

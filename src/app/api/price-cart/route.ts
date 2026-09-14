@@ -17,6 +17,7 @@ import {
   groupByRecipient,
   houseClientId,
   parseCartLines,
+  passWithoutOwner,
   plainRefusal,
   priceCart,
   roundToCents,
@@ -77,6 +78,15 @@ export async function POST(request: Request) {
     typeof payload?.clientId === "string" && payload.clientId.trim()
       ? payload.clientId.trim()
       : undefined;
+  /* T92: a pass with no home never reaches Mindbody. On a cart with
+   * nobody attached, a Service or Package line must carry a T90
+   * recipient; the house client is for retail and is deliberately not a
+   * fallback for a pass. Checked before the discount, because a ticket
+   * that cannot be sold should not be priced at all. */
+  const orphanPass = passWithoutOwner(parsed.items, clientId);
+  if (orphanPass !== null) {
+    return NextResponse.json({ error: orphanPass }, { status: 400 });
+  }
   /* T79: the discount, checked before any Mindbody call. */
   let discount: Discount | null = null;
   if (payload?.discount !== undefined && payload?.discount !== null) {
