@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   claimVerifyAttempt,
+  isCompPurpose,
   issueCompToken,
   recordVerifySuccess,
   requireSession,
@@ -47,11 +48,23 @@ export async function POST(request: Request) {
   }
 
   let pin: unknown;
+  let purposeRaw: unknown;
   try {
-    ({ pin } = await request.json());
+    ({ pin, purpose: purposeRaw } = await request.json());
   } catch {
     return NextResponse.json({ error: "pin is required" }, { status: 400 });
   }
+  /* T94 review: what this PIN authorizes, signed into the token. A
+   * discount is the default because it is what every caller before T94
+   * asked for; an overdraft says so, and /api/checkout will not take
+   * one for the other. */
+  if (purposeRaw !== undefined && !isCompPurpose(purposeRaw)) {
+    return NextResponse.json(
+      { error: "purpose must be comp or overdraft" },
+      { status: 400 },
+    );
+  }
+  const purpose = purposeRaw === undefined ? "comp" : purposeRaw;
   if (!isPinShape(pin)) {
     return NextResponse.json(
       { error: `pin must be ${PIN_MIN} to ${PIN_MAX} digits` },
@@ -95,6 +108,6 @@ export async function POST(request: Request) {
   return NextResponse.json({
     ok: true,
     teacher: check.teacher,
-    token: issueCompToken(check.teacher),
+    token: issueCompToken(check.teacher, purpose),
   });
 }

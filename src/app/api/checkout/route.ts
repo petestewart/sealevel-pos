@@ -140,6 +140,20 @@ export const dynamic = "force-dynamic";
  *         receipt row or response, which carry the last four alone. A
  *         gift card needs no client, like cash: an anonymous sale rides
  *         the house client.
+ *         -- T94: `overdraftToken`, a one-shot token from
+ *         /api/teacher/verify, is what allows an account charge ABOVE the
+ *         live balance (Pete: "Accounts should be able to be charged even
+ *         if there is insufficient balance ... This will require the
+ *         teacher's PIN to authorize"). Without it the 409 stands. It is
+ *         refused beside any method that is not an account charge, spent
+ *         once like a discount's token, and the shortfall is this route's
+ *         own arithmetic on the profile it re-read; the browser's balance
+ *         decides nothing. The overdraft is logged with the teacher's
+ *         staff id and filed on the client (T45's note path) after the
+ *         charge resolved. The DebitAccount payment shape is unchanged:
+ *         whether Mindbody itself accepts a DebitAccount above the
+ *         balance is an OPEN QUESTION for a live probe, and its refusal
+ *         is a plain refusal, never retried in another shape.
  *   or, since T28, `split` instead of `method`:
  *       { items, clientId, split: { legs: [{method, amount}, {method,
  *         amount}] } } -- exactly two legs, methods from the whitelist
@@ -528,8 +542,14 @@ export async function POST(request: Request) {
   if (discount !== null) {
     teacher =
       typeof teacherTokenRaw === "string"
-        ? verifyCompToken(teacherTokenRaw)
+        ? verifyCompToken(teacherTokenRaw, "comp")
         : null;
+    /* T94 review: and it must be THIS teacher's. /api/teacher/verify
+     * only ever mints a token for the signed-in teacher, so a token
+     * naming somebody else is one carried across a sign-out inside its
+     * ten minutes: the name on the record would not be the name behind
+     * the tap. */
+    if (teacher !== null && teacher.id !== session.staffId) teacher = null;
     if (teacher === null) {
       return NextResponse.json(
         { error: "Enter your PIN to discount this sale.", reason: "teacher" },
@@ -537,6 +557,77 @@ export async function POST(request: Request) {
       );
     }
   }
+  /**
+   * T94: an AUTHORIZED account overdraft (Pete: "Accounts should be able
+   * to be charged even if there is insufficient balance ... This will
+   * require the teacher's PIN to authorize"). `overdraftToken` is a
+   * one-shot token from /api/teacher/verify, exactly as a discount's is,
+   * and it is the ONLY thing that lets the credit check below pass an
+   * amount above the live balance. Its own field rather than
+   * `teacherToken`: a discounted sale can also overdraw the account, and
+   * one one-shot token cannot answer for two authorizations.
+   *
+   * It applies to an account charge and nothing else, so a request that
+   * carries one with no credit line is refused rather than ignored: a
+   * token quietly dropped is a teacher's PIN spent on nothing.
+   */
+  const overdraftTokenRaw: unknown = payload?.overdraftToken;
+  const creditAsked =
+    method === "credit" ||
+    (split !== null &&
+      (split[0].method === "credit" || split[1].method === "credit"));
+  if (overdraftTokenRaw !== undefined && !creditAsked) {
+    return NextResponse.json(
+      { error: "overdraftToken applies only to an account payment" },
+      { status: 400 },
+    );
+  }
+  /* T94 review: T90 refuses an account payment outright on a ticket
+   * holding a line for another client, and no PIN moves that: the
+   * balance belongs to the payer and v6 has no per-item payer. Refused
+   * HERE, before the token is spent, so a refusal nothing could have
+   * satisfied does not cost a teacher their one-shot authorization. */
+  const payerRaw =
+    typeof payload?.clientId === "string" ? payload.clientId.trim() : "";
+  if (
+    overdraftTokenRaw !== undefined &&
+    items.some((line) => line.forClientId && line.forClientId !== payerRaw)
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "The account balance pays only for the client on the sale. Take " +
+          "cash, a card at the reader, or a gift card for lines bought " +
+          "for someone else. Nothing was charged.",
+        stage: "method",
+      },
+      { status: 409 },
+    );
+  }
+  let overdraftTeacher: TeacherIdentity | null = null;
+  if (overdraftTokenRaw !== undefined) {
+    overdraftTeacher =
+      typeof overdraftTokenRaw === "string"
+        ? verifyCompToken(overdraftTokenRaw, "overdraft")
+        : null;
+    /* Its own purpose, signed in: a PIN typed to discount a sale is not
+     * a PIN typed to overdraw an account, and separate request fields
+     * are no separation while one token answers for both. And this
+     * teacher's, for the reason the discount token's check gives. */
+    if (overdraftTeacher !== null && overdraftTeacher.id !== session.staffId) {
+      overdraftTeacher = null;
+    }
+    if (overdraftTeacher === null) {
+      return NextResponse.json(
+        {
+          error: "Enter your PIN to charge past the account balance.",
+          reason: "teacher",
+        },
+        { status: 401 },
+      );
+    }
+  }
+
   const clientId =
     typeof payload?.clientId === "string" && payload.clientId.trim()
       ? payload.clientId.trim()
@@ -714,6 +805,22 @@ export async function POST(request: Request) {
   if (discount !== null && !spendCompToken(teacherTokenRaw as string)) {
     return NextResponse.json(
       { error: "Enter your PIN to discount this sale.", reason: "teacher" },
+      { status: 401 },
+    );
+  }
+
+  /* T94: the overdraft token is spent in the same place and for the same
+   * reason: a token is never reused across two checkouts, and a replayed
+   * one costs no Mindbody call. It is spent whether or not the balance
+   * turns out to need it, because it was entered for THIS sale: a token
+   * left unspent because the balance had meanwhile covered the total
+   * would still be a live authorization for the next one. */
+  if (overdraftTeacher !== null && !spendCompToken(overdraftTokenRaw as string)) {
+    return NextResponse.json(
+      {
+        error: "Enter your PIN to charge past the account balance.",
+        reason: "teacher",
+      },
       { status: 401 },
     );
   }
@@ -1860,6 +1967,74 @@ export async function POST(request: Request) {
     return { id: filed.id, via: filed.via };
   };
 
+  /**
+   * T94: the overdraft this charge actually IS, filled in by whichever
+   * credit check found the balance short with a PIN behind it. Null until
+   * then, so a sale that stayed inside the balance records nothing even
+   * when a token was presented.
+   */
+  let overdraft: {
+    charged: number;
+    balance: number;
+    teacher: TeacherIdentity;
+  } | null = null;
+
+  /**
+   * T94: the record of an overdraft, once the charge it describes has
+   * resolved. One server log line ALWAYS (the teacher's staff id and the
+   * shortfall, never the token), and on a real sale for a named client
+   * the same sentence filed on the client the way a comp's reason is
+   * (T45, with T62's Notes fallback), through mindbody() with the client
+   * id so dry run and the write guard apply to it as to any write. It is
+   * filed AFTER the money moved and can never change that outcome; a
+   * suppressed sale files nothing, and says so.
+   */
+  const recordOverdraft = async (
+    saleId: string | null,
+    suppressed: boolean,
+  ): Promise<Record<string, unknown>> => {
+    if (overdraft === null) return {};
+    const short = roundToCents(overdraft.charged - overdraft.balance);
+    console.log(
+      `[overdraft] ${target()} sale=${suppressed ? "suppressed" : (saleId ?? "unknown")} ` +
+        `client=${clientId ?? "house"} charged=${overdraft.charged.toFixed(2)} ` +
+        `balance=${overdraft.balance.toFixed(2)} short=${short.toFixed(2)} ` +
+        `teacher=${overdraft.teacher.id}`,
+    );
+    let via: "formula" | "notes" | null = null;
+    const house = houseClientId();
+    const onHouse = clientId !== undefined && house !== null && clientId === house;
+    if (onHouse) console.log(`[overdraft] note skipped: house client`);
+    if (!suppressed && clientId !== undefined && !onHouse) {
+      /* T94 review: an account can already be negative when it is
+       * charged again, and "$-5.00" is not how money reads. */
+      const usd = (n: number) =>
+        `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
+      const note =
+        `Account charged ${usd(overdraft.charged)} against a ` +
+        `${usd(overdraft.balance)} balance, authorized by ` +
+        `${overdraft.teacher.name || `staff ${overdraft.teacher.id}`}.` +
+        (saleId ? ` Sale ${saleId}.` : "");
+      const filed = await fileFormulaNote({
+        session,
+        clientId,
+        note,
+        route: "/api/checkout overdraft-note",
+        logTag: "[overdraft]",
+      });
+      via = filed.via;
+    }
+    return {
+      overdraft: {
+        charged: overdraft.charged,
+        balanceBefore: overdraft.balance,
+        shortfall: short,
+        teacher: overdraft.teacher.name,
+        noteVia: via,
+      },
+    };
+  };
+
   /** After any path's write resolved: the note (real sales only), the
    *  log line and the receipt row. Answers the fields the response
    *  carries for a discounted sale, or nothing when there is none. */
@@ -1968,7 +2143,20 @@ export async function POST(request: Request) {
     if (creditLeg !== null) {
       /* A credit leg is a bound leg, so the profile above was read. */
       const balance = profile?.balance ?? null;
-      if (balance === null || balance < creditLeg.amount) {
+      /* T94: a PIN authorizes charging past the balance, and only a PIN
+       * does. The browser's number decides nothing: the shortfall is
+       * computed here, from the balance just read. */
+      if (
+        (balance ?? 0) < creditLeg.amount &&
+        overdraftTeacher !== null &&
+        clientId !== undefined
+      ) {
+        overdraft = {
+          charged: creditLeg.amount,
+          balance: balance ?? 0,
+          teacher: overdraftTeacher,
+        };
+      } else if (balance === null || balance < creditLeg.amount) {
         return NextResponse.json(
           {
             error:
@@ -2095,6 +2283,7 @@ export async function POST(request: Request) {
           ok: false,
           suppressed: outcome.suppressed,
           ...rec,
+          ...(await recordOverdraft(null, true)),
           ...actorFields(run),
         });
       }
@@ -2106,6 +2295,7 @@ export async function POST(request: Request) {
         shape: "lines",
         onStudio: discounted,
       });
+      const od = await recordOverdraft(ids.saleId, false);
       return NextResponse.json({
         ok: true,
         method: "split",
@@ -2127,6 +2317,7 @@ export async function POST(request: Request) {
         receiptRequested: sendEmail,
         emailReceipt: null,
         ...rec,
+        ...od,
         ...actorFields(run),
       });
     } catch (err) {
@@ -2423,7 +2614,19 @@ export async function POST(request: Request) {
        * header): partial credit is not ignored any more, it is a credit
        * LEG of a split, refused above the live balance in the split's
        * own branch. */
-      if (profile.balance === null || profile.balance < total) {
+      /* T94: the same authorization, on the whole-sale path. The
+       * shortfall is this route's arithmetic on this route's read. */
+      if (
+        (profile.balance ?? 0) < total &&
+        overdraftTeacher !== null &&
+        clientId !== undefined
+      ) {
+        overdraft = {
+          charged: total,
+          balance: profile.balance ?? 0,
+          teacher: overdraftTeacher,
+        };
+      } else if (profile.balance === null || profile.balance < total) {
         return NextResponse.json(
           {
             error:
@@ -2460,6 +2663,7 @@ export async function POST(request: Request) {
           ok: false,
           suppressed: outcome.suppressed,
           ...rec,
+          ...(await recordOverdraft(null, true)),
           ...actorFields(run),
         });
       }
@@ -2480,6 +2684,7 @@ export async function POST(request: Request) {
         receiptRequested: sendEmail,
         emailReceipt: null,
         ...rec,
+        ...(await recordOverdraft(ids.saleId, false)),
         ...actorFields(run),
       });
     }
