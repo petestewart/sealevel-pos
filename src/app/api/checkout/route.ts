@@ -598,6 +598,11 @@ export async function POST(request: Request) {
     };
     const nameOfGroup = (group: (typeof groups)[number]): string => {
       if (group.forClientId === null) {
+        /* The payer's own name when the browser sent it, for the same
+         * reason the recipients' names ride along: the sentence a
+         * teacher reads should name people. Display only. */
+        const named = trimmed(payload?.clientName);
+        if (named) return named;
         return clientId ? "the client on the sale" : "the walk-in account";
       }
       for (const line of group.items) {

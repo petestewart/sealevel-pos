@@ -10070,3 +10070,133 @@ local dry run add-only in every reader; the banner's X keyed to the
 exact line so a hidden banner returns on "Dry run on this iPad."; no
 secret in any log. Not exercised live: credentials issued for site
 -99 and a real staff token's site affinity; two real instances.
+
+
+## T90: a line on the ticket can be bought for another client
+
+Pete: "in mindbody, a client can purchase something for another client
+(like a membership, pass, etc.) that option needs to exist in the app.
+
+in our app it should work like this:
+* teacher adds a pass ("Drop In" in this case)
+* teacher clicks on the line item
+* instead of - 1 + X, the options are - 1 + Other Client
+* a - when there is a 1 is an X and removes the item
+* when Other Client is selected, the search box appears
+* another client can be selected and the pass is attributed to them
+* Item says client's name : Drop In (Alison Stewart)
+* side note: the price should be further to the right in the line item,
+  hopefully that makes room for the name"
+
+His Mindbody screenshot is a ticket for PETE STEWART holding "Mat Rental"
+and "Drop In (For: ALISON STEWART)", one grand total, one payment.
+
+### The mechanism: one ticket, one cart per recipient
+
+`checkoutshoppingcart` carries ONE `ClientId` (sale.yml:5654) and has no
+per-item recipient. `PayerClientId` (sale.yml:5663) needs a stored "Pays
+for" relationship, which T63 established is not something a teacher can
+set up at the counter. So a ticket holding lines for other people is
+checked out as **one Mindbody sale per recipient**: the paying client's
+lines in one cart under their id, each other client's lines in a cart
+under THAT client's id, so the pass lands on the right account. The
+screen still shows one ticket and one total, as Mindbody's own web app
+does.
+
+- `src/lib/sale.ts`: `CartLine.forClientId`, parsed by `parseCartLines`;
+  `groupByRecipient` (the payer's cart first, then each recipient in the
+  order their first line appears); `splitDiscount`, which spreads the
+  armed discount over the whole ticket once and hands each cart the sum
+  of its own lines' cents as an `amount` discount, so the parts sum to
+  the whole to the cent.
+- `/api/price-cart` prices one cart per recipient and answers the sum of
+  **Mindbody's** grand totals plus each cart's own figures in `carts`.
+  One cart disagreeing stops the whole ticket.
+- `/api/checkout` takes the same one tap and one request. It rehearses
+  EVERY cart before charging any (so a cart Mindbody will not price
+  stops the ticket with nothing spent), checks each cart's DiscountTotal
+  and then that the carts' discounts sum to the armed figure, and only
+  then runs the carts sequentially, the payer's first. Honest partial
+  results: "Sold Mat rental for Pete Stewart. Drop In for Alison Reed was
+  NOT sold: ... Nothing was retried or refunded." Nothing is retried,
+  rolled back or refunded, and suppression is reported per cart and never
+  as done (the write guard judges each cart by its own client id, so a
+  mixed outcome is reachable and says so). Each cart's discount is
+  recorded on its own client: its own `[comp]` line, its own
+  `comp_receipts` row, its own note.
+- The answer carries `sales`, one entry per recipient with its client id,
+  sale id, total and product ids; `onSold` passes them up (T88 will read
+  them) and the done screen lists every sale with its id.
+
+### Tenders
+
+Cash, and a comp, do not care whose cart they pay: each cart is paid with
+its own share. **The stored card and the account balance are the paying
+client's**, and a recipient's cart cannot draw on them, so while any line
+is for another client both tiles are greyed with the reason in words
+("The card on file pays only for Pete Stewart. Take cash, a card at the
+reader, or a gift card for lines bought for someone else.") and the route
+refuses both outright. It is never attempted: a refusal read back from
+Mindbody would not be proof that nothing was charged. A split is refused
+beside an other-client line rather than spread over carts.
+
+### The ticket
+
+- A selected line reads `- qty + Other Client`. T82's separate X square
+  is gone: at quantity one the minus IS the remove, with the X glyph, the
+  stop colour and "Remove <name>" on it. That slot is what let the price
+  sit flush to the row's right edge; the name column takes the rest and
+  ellipsizes with its full text on the `title`.
+- "Other Client" is 44px of accent text, not a filled button, and opens
+  the SAME modal T87 attaches with, titled "Who is this for?", Class |
+  All unchanged. Re-tapping it opens the modal with a row at the top
+  ("For Pete Stewart (this client)") that brings the line back to the
+  payer. Choosing the payer does the same thing.
+- The line reads "Drop In (Alison Reed)" in the ticket, the pay screen
+  and the done screen, the name in the item's own weight.
+- The cart key is `type-id:forClientId|self`, so the same item for two
+  people is two lines and a shelf tap always bumps the self line.
+  Emptying the cart clears it all; detaching the payer leaves the
+  other-client lines alone, since they do not depend on them.
+
+### Build notes
+
+Verified with the harness in scratchpad/t90 (`next start` on :3095 against
+a Mindbody mock on :4595, nothing stubbed in the browser but the dev log):
+
+- node-level (`api.js`, all pass): a ticket is priced as two Test carts
+  under the two ids and totals to the sum of Mindbody's figures; cash
+  checks out as two real carts, each paying its own share, summing to the
+  ticket total, with no `PayerClientId` ever sent; stored card and credit
+  are refused in words with nothing written; a split is refused; a second
+  cart failing with a 500 leaves exactly two writes, reports both
+  outcomes and is ambiguous; a 50% discount arrives as $1.36 and $14.00,
+  summing to $15.36, and a DiscountTotal a cent out stops the sale before
+  any write; a 100% discount comps both carts with no payments; a line
+  for another client with nobody attached rides that client's own cart;
+  and a ticket with no other-client line still takes exactly one cart and
+  the answer it always had.
+- UI (`ui.mjs`, all pass in light and dark, 1194x834 and 834x1194): the
+  control row and the missing X, the minus removing at one and reading
+  "one fewer" above it, the "Who is this for?" search and the picked
+  name in the line, the clear row, the price at the row's right padding
+  with a 30-character name plus "$128.00" on one line, the card and
+  account tiles off with the reason and on again when the recipient is
+  cleared, and a two-recipient cash sale ending with both sale ids on the
+  done screen.
+- `npm run typecheck` and `npm run build` clean.
+
+Deliberately not done, and the open question:
+
+- **Whether a recipient's cart could pay on the payer's stored card is
+  unverified, and stays unverified by design.** The tiles refuse rather
+  than attempt. A live probe on the sandbox is the only honest way to
+  settle it, and it is the T90 question to put to a probe.
+- The comp path for a multi-cart ticket sends the discount LINES with no
+  payments and does not carry T79's one "Comp payment" retry. That retry
+  exists for a site that refuses a $0 no-payment cart; here such a
+  refusal is reported as that cart's failure with Mindbody's reason
+  rather than being answered with a second write per cart.
+- Item and client names ride the checkout body (never forwarded to
+  Mindbody) only so the route's partial-outcome sentence can name people;
+  every decision it makes is on ids.

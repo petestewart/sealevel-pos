@@ -1920,6 +1920,9 @@ function PaymentPanel(props: {
               : {}),
           })),
           ...(clientId ? { clientId } : {}),
+          /* T90: display only, for the route's per-cart sentence; every
+             decision there is made on the id. */
+          ...(hasOtherClient && client ? { clientName: client.name } : {}),
           ...payment,
           /* T53: the toggle, as this render read it. The route ignores
            * it for the house client and for a comp anyway. */
