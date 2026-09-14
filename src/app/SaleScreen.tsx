@@ -399,16 +399,28 @@ interface ShelfSection {
  * nowhere else to live.
  */
 function passChildren(catalog: CatalogState, passes: ShelfItem[]): string[] {
-  const groups = catalog.passGroups.filter((g) =>
-    passes.some((i) => i.group === g),
-  );
+  /* Packages and Memberships arrive inside passGroups in the configured
+   * order (shelfconfig, 2026-09-14); a payload from before that names
+   * neither, so they are appended when they have something to sell. */
+  const isPinned = (l: string) => l === PACKAGES_LABEL || l === MEMBERSHIPS_LABEL;
+  const has = (l: string) =>
+    l === PACKAGES_LABEL
+      ? catalog.packages.length > 0
+      : l === MEMBERSHIPS_LABEL
+        ? catalog.contracts.length > 0
+        : passes.some((i) => i.group === l);
+  const ordered = catalog.passGroups.filter(has);
+  const groups = ordered.filter((l) => !isPinned(l));
   const other = passes.some((i) => !i.group || !groups.includes(i.group));
-  return [
-    ...groups,
-    ...(other ? [OTHER_GROUP_LABEL] : []),
-    ...(catalog.packages.length > 0 ? [PACKAGES_LABEL] : []),
-    ...(catalog.contracts.length > 0 ? [MEMBERSHIPS_LABEL] : []),
-  ];
+  const missing = [PACKAGES_LABEL, MEMBERSHIPS_LABEL].filter(
+    (l) => has(l) && !ordered.includes(l),
+  );
+  /* Other sits after the last pass group, before any pinned cell the
+   * order put at the end. */
+  const lastGroup = ordered.reduce((at, l, i) => (isPinned(l) ? at : i), -1);
+  const out = [...ordered];
+  if (other) out.splice(lastGroup + 1, 0, OTHER_GROUP_LABEL);
+  return [...out, ...missing];
 }
 
 /**
