@@ -10305,3 +10305,86 @@ Deliberately not done, and the open question:
   Mindbody) only so the route's partial-outcome sentence can name people;
   every decision it makes is on ids.
 
+
+### Review
+
+Read the three build commits against the brief, the T79/T80/T83 money
+rails and the vendored spec, then drove the built app on the ticket's own
+harness (mock Mindbody on :4595, `next start` on :3095) plus three added
+files in the reviewer's scratch dir: the gift card balance endpoint the
+mock was missing, a node suite for the amounts and the refusals the
+builder's `api.js` does not reach, and a Playwright pass for the tiles.
+
+Checked and found right: every cart is rehearsed BEFORE any is charged,
+so a cart Mindbody will not price stops the ticket with nothing spent;
+the real checkouts run sequentially, payer first, and a 4xx, a 5xx and a
+destroyed socket each leave exactly one write, reported as "Sold X. Y was
+NOT sold: ...", ambiguous where it is ambiguous, with no retry, no return
+and no refund and no third request; two synchronous Finalize taps are one
+request (the `inFlight` ref, unchanged); the ticket's total is the sum of
+Mindbody's per-cart grand totals and the cash tender, the over-tender and
+the change are all against that; a discount splits to the cent (33% of
+$28.00 and of $2.72 is $9.24 plus $0.90; $5 over three lines across two
+carts sums to exactly 500 cents), each cart's DiscountTotal is checked
+against Mindbody's and the carts' sum against the armed figure; a 100%
+comp comps both carts with no payments; the gift card takes ONE balance
+read for the whole ticket and a balance covering cart one but not cart two
+is refused before any write; a taxed retail line for a recipient and a
+tax-exempt pass for the payer price into the right carts; stored card and
+account credit are refused in words with nothing written even when curled
+past the UI; `PayerClientId` appears nowhere but comments; a recipient
+line with no payer attached uses the recipient's own cart, never the house
+client; quantity above 1 multiplies inside that cart; the comp note is
+filed on the right client per cart with that cart's own figures and does
+not carry the other person's name; select-to-reveal and tap-away still
+work; the price sits at the row's right padding with a 30-character name
+and "$128.00" on one line, in both palettes and both orientations; tokens
+only, radius 0, 16px floor, 44px icon squares, 64px primaries, no em
+dashes.
+
+Fixed, smallest change each:
+
+- **A refusal from `/api/price-cart` stopped removing its line.** T90
+  re-keyed the cart as `type-id:recipient`, and the refused-lines handler
+  still compared Mindbody's `type`/`metadataId` against that key. Nothing
+  matched: the refused line stayed in the cart, the notice named nobody,
+  and the ticket sat with no total until the teacher edited it by hand.
+  Matched on the item's key now, with the notice naming the line as the
+  ticket shows it.
+- **A line "for" the client paying is now folded server-side too.**
+  The screen folds it (picking the attached client clears the line), but
+  the route did not: the same client arrived as two carts, which is two
+  Mindbody sales for one person, and it switched off their own card on
+  file for no reason. `groupByRecipient` takes the payer's id and folds.
+- **A split was still buildable on screen.** The route refuses a split
+  outright, but the tiles let a teacher put $20 of cash down and then
+  reach for the gift card, so the refusal only arrived on the Finalize
+  tap. The second tender is greyed with "One tender only while a line is
+  for another client".
+- **A suppressed cart said nothing about which.** One suppressed cart
+  suppresses the whole ticket before anything is charged, which is right
+  (the write guard judges each cart by its own client id, so the listed
+  cart COULD have gone out alone, and must not: a ticket rung up as one
+  sale must not half exist because a test rail let one client through).
+  The answer now names the cart that stopped it. Verified: with the guard
+  listing only the payer, and again listing only the recipient, nothing
+  was written either way; with dry run on a prod target, nothing was
+  written and it read as suppressed, never as sold.
+- **The recipient modal's rows said "Attach <name>"** while they attach
+  nobody to the sale. They read "Buy this for <name>".
+
+Left alone, with the reason:
+
+- **A recipient's cart with a $0 total sends a `Cash` payment of $0.00.**
+  Reachable (a free pass for somebody else beside a paid line for the
+  payer); the mock takes it, and what site 471 does with a $0 cash
+  payment, or with a $0 cart carrying no payments at all, is unknown.
+  Changing a money payload on a guess is worse than the question: one
+  for the same live probe as the stored card.
+- **The email receipt toggle applies to every cart**, so a recipient gets
+  Mindbody's receipt for the pass bought for them under their own id. That
+  may be exactly right for a gift and it may not be what the payer
+  intended. Pete's call, not a reviewer's.
+- The mixed "some carts went out, some were suppressed" answer and its
+  screen wording are unreachable while suppression stops the whole ticket
+  at the rehearsal. Kept as the defence for the day that changes.
