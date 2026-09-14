@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
+import { mindbodyHttpStatus } from "@/lib/mindbody";
 import {
   discountCents,
   discountRefusal,
@@ -15,7 +16,9 @@ import {
   expectedTotal,
   houseClientId,
   parseCartLines,
+  plainRefusal,
   priceCart,
+  type CartLine,
 } from "@/lib/sale";
 
 export const dynamic = "force-dynamic";
@@ -119,9 +122,63 @@ export async function POST(request: Request) {
     );
     return NextResponse.json(priced);
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 502 },
-    );
+    const message = err instanceof Error ? err.message : String(err);
+    /* A 4xx is Mindbody refusing the CART, not failing (Pete, 2026-09-14,
+     * "Only new clients qualify for this intro series." sat in red under
+     * the ticket with the line still in it: "this failure needs to be
+     * graceful. the item should be removed from the cart and a clean
+     * message should explain why"). Mindbody's message names no line, so
+     * with more than one the lines are Test-priced one at a time, same
+     * client, no discount, and the ones refused alone are named; the
+     * screen removes those and says why in Mindbody's words minus the
+     * "mb.Core.BLL.ShoppingCart failed validation" noise. Bounded by the
+     * cart's length in metered calls, and only after a refusal. A 5xx or
+     * a dead transport stays a plain error: nothing is removed on a
+     * failure that said nothing about the lines. */
+    const status = mindbodyHttpStatus(err);
+    if (status !== null && status < 500) {
+      const refused = await refusedLines(parsed.items, effectiveClientId, message);
+      return NextResponse.json(
+        { error: plainRefusal(message), refused },
+        { status: 400 },
+      );
+    }
+    return NextResponse.json({ error: message }, { status: 502 });
   }
+}
+
+/** Which lines Mindbody refuses on their own. One line: that one, with
+ *  the cart's reason. Several: each priced alone; a line whose lone
+ *  pricing throws a 4xx is refused with that answer's reason. A line
+ *  whose lone pricing fails some other way (5xx, transport) is left
+ *  alone: not proven refused. When none is refused alone (the refusal
+ *  was about the combination, or about the client), the list is empty
+ *  and the screen shows the reason without removing anything. */
+async function refusedLines(
+  items: CartLine[],
+  clientId: string,
+  cartReason: string,
+): Promise<{ type: CartLine["type"]; metadataId: string; reason: string }[]> {
+  const first = items[0];
+  if (items.length === 1 && first) {
+    return [
+      { type: first.type, metadataId: String(first.metadataId), reason: plainRefusal(cartReason) },
+    ];
+  }
+  const out: { type: CartLine["type"]; metadataId: string; reason: string }[] = [];
+  for (const line of items) {
+    try {
+      await priceCart([line], clientId, null, null);
+    } catch (err) {
+      const status = mindbodyHttpStatus(err);
+      if (status !== null && status < 500) {
+        out.push({
+          type: line.type,
+          metadataId: String(line.metadataId),
+          reason: plainRefusal(err instanceof Error ? err.message : String(err)),
+        });
+      }
+    }
+  }
+  return out;
 }

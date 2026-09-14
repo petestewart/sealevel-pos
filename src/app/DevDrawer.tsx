@@ -328,7 +328,7 @@ const FLAGS: { key: keyof Settings; label: string; hint: string }[] = [
   {
     key: "autoWidenSearch",
     label: "Widen a search that finds nobody in class",
-    hint: "in the attach modal, Enter on a query matching nobody in the class moves the segment to All and searches everyone (T52)",
+    hint: "in the attach modal, a query matching nobody in the class moves the segment to All and searches everyone as you type (T52)",
   },
 ];
 
