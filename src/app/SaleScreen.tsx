@@ -1798,6 +1798,14 @@ function PaymentPanel(props: {
     /* Two lines is the maximum because /api/checkout accepts one method
      * or exactly two legs. Greyed WITH that reason, never hidden. */
     if (lines.length >= 2) return "Two parts is the maximum";
+    /* T90 review: a split cannot pay a ticket holding a line for
+     * another client, and the route refuses one (a split's two legs sum
+     * to ONE total, and there is no matrix of legs against carts). The
+     * tile says so instead of letting a teacher build a tender that is
+     * certain to be refused at the tap. */
+    if (hasOtherClient && lines.length >= 1) {
+      return "One tender only while a line is for another client";
+    }
     /* T38: while the ticket shows the browser's estimate the sources
      * stay greyed with the reason. A tender line pre-fills from the due,
      * and the due is null until Mindbody's number lands; a line taken
@@ -5909,15 +5917,26 @@ export default function SaleScreen(props: {
              * left through this same effect; the notice names each one
              * with Mindbody's reason. Not a priceError: the ticket that
              * remains is fine. */
-            const keys = new Set(refused.map((r) => `${r.type}-${r.metadataId}`));
-            const gone = cart.filter((l) => keys.has(l.key));
-            setCart((lines) => lines.filter((l) => !keys.has(l.key)));
-            setRevealedKey((k) => (k !== null && keys.has(k) ? null : k));
+            /* T90 review: the cart key carries the recipient now, so a
+             * refusal (which names the ITEM) is matched on the item's
+             * own key. Compared against l.key it matched nothing: the
+             * refused line stayed in the cart, the notice named nobody
+             * and the ticket sat with no total. */
+            const keys = new Set(
+              refused.map((r) => itemKey(r.type, r.metadataId)),
+            );
+            const of = (l: CartEntry) => itemKey(l.item.type, l.item.id);
+            const gone = cart.filter((l) => keys.has(of(l)));
+            const goneKeys = new Set(gone.map((l) => l.key));
+            setCart((lines) => lines.filter((l) => !keys.has(of(l))));
+            setRevealedKey((k) => (k !== null && goneKeys.has(k) ? null : k));
             setCartNotice(
               gone
                 .map((l) => {
-                  const r = refused.find((x) => `${x.type}-${x.metadataId}` === l.key);
-                  return `${l.item.name} was removed from the sale: ${r?.reason ?? "Mindbody did not accept it."}`;
+                  const r = refused.find(
+                    (x) => itemKey(x.type, x.metadataId) === itemKey(l.item.type, l.item.id),
+                  );
+                  return `${lineLabel(l)} was removed from the sale: ${r?.reason ?? "Mindbody did not accept it."}`;
                 })
                 .join(" "),
             );

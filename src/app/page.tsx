@@ -4844,7 +4844,13 @@ function FrontDesk({
           className="rrow rrow-tap"
           role="button"
           tabIndex={0}
-          aria-label={`Attach ${client.name}`}
+          /* T90 review: in recipient mode the row does not attach
+             anybody to the sale, so it must not say it does. */
+          aria-label={
+            recipientFor !== null
+              ? `Buy this for ${client.name}`
+              : `Attach ${client.name}`
+          }
           onClick={() => attachSaleClient(client)}
           onKeyDown={(e) => {
             if (e.target !== e.currentTarget) return;
