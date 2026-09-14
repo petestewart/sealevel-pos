@@ -4,6 +4,7 @@ import { requireActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 import { devtoolsEnabled } from "@/lib/calllog";
 import { clearRawCatalog } from "@/lib/catalog";
+import { clearGiftCardProducts } from "@/lib/giftcardsale";
 import { dbAvailable, dbConfigured, storageMode } from "@/lib/db";
 import {
   dryRunState,
@@ -197,6 +198,9 @@ export async function PUT(request: Request) {
     );
   }
   clearRawCatalog();
+  /* T95: and the gift card products, which are a cached read of the same
+   * kind and must never be served from the other studio. */
+  clearGiftCardProducts();
   /* The one log line, and no token or credential in it. */
   console.log(
     `[target] ${current} -> ${next} by staff=${admin.staffId} ` +
