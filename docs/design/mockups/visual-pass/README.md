@@ -290,8 +290,11 @@ New (Phase 2), the §2.9 two-pane shape. Left pane + the same 320px ticket.
   something is tendered, and by `Finalize Sale`'s title before that).
   Kicker 16px/600 uppercase, amount 34px/800 tabular. CHANGE turns `--warn` when
   non-zero.
-- **Method cards**: two equal 96px cells, `Card` and `Cash`, each icon (lucide
-  `credit-card` / `banknote`) + 20px/800 label + a 16px `--muted` note. The selected
+- **Method cards**: equal 96px cells, each icon (lucide `credit-card` / `banknote` /
+  `gift`) + 20px/800 label + a 16px `--muted` note. `Card` and `Cash` always, `Account`
+  first when there is a balance, and since T83 `Gift card` last, which makes four: at
+  four the row becomes a **2x2 grid** (`.pay-tiles.wrap`, the row divider a 1px gap
+  showing `--line`), at three it stays one row. The selected
   method fills `--accent-bg`, colors its icon/label `--accent`, and carries a **4px
   accent bottom edge** (the "selected" marker — no ring, no radius). Notes are honest:
   `Nothing left to cover` when due is 0, `Charge $X to the reader`, or
@@ -307,6 +310,13 @@ New (Phase 2), the §2.9 two-pane shape. Left pane + the same 320px ticket.
   - Right: 96px accent-filled `Done`.
   - **Cash only.** A stored-card charge is always the cart total — never render an
     editable amount for it (§2.9).
+  - **Gift card variant** (T83): the same panel opened by the `Gift card` tile, in two
+    steps. First the barcode: a 64px `.gift-number` field (`--surface-2`, tabular, the
+    one input in the payment seam, since a scanner types the number) with the same pad
+    beside it, and `Check balance` where `Done` sits. Then the amount: `ON THE CARD` and
+    `AMOUNT DUE` rows, the entry capped at the smaller of the two, and `Done`, which is
+    what adds the tender row. The row reads `Gift card ...1234`; the full number is
+    never rendered outside that field, never logged and never recorded.
 - `Tap an amount to change it.` helper, then the **Email receipt** row (64px,
   `--surface-2`, 0.7 opacity, right-hand note `No client to email on a walk-in sale`),
   then a right-aligned quiet `Comp this sale` (hover → `--stop`).

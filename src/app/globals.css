@@ -4216,6 +4216,23 @@ button.sale-for:disabled {
   border-right: 0;
 }
 
+/* T83: four tenders (Account, Card, Cash, Gift card) do not fit one row
+ * of a payment column at 834px, so at four the row becomes a 2x2 grid
+ * and at three (no account balance) it stays the single row it was. The
+ * divider between the two rows is the 1px gap showing the container's
+ * --line through, which is what keeps the tiles' own border-bottom free
+ * for the 4px selected edge. */
+.pay-tiles.wrap {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+
+.pay-tiles.wrap .pay-tile {
+  border-right: 0;
+}
+
 .pay-tile.off {
   cursor: default;
 }
@@ -4522,6 +4539,41 @@ button.sale-for:disabled {
   cursor: default;
 }
 
+/* T83: the gift-card modal's number field, the one input in the payment
+ * seam. It is not an amount (T35's no-keyboard rule is about money
+ * entry): a gift card carries a barcode and the studio's scanner types
+ * it, so it needs somewhere to land. 64px like every other target here,
+ * tabular so a mistyped digit is easy to spot. */
+.gift-number {
+  width: 100%;
+  min-height: 64px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.gift-number:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+.gift-number::placeholder {
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.gift-number:disabled {
+  color: var(--muted);
+}
+
 /* The keys: 3x4 on the quiet fill, 20px/800, del in the stop colour.
  * 64 tall (the floor; the mockup draws 56). */
 .pad-keys {
@@ -4575,6 +4627,15 @@ button.sale-for:disabled {
 
 .pad-change.short .pad-change-amt {
   color: var(--warn);
+}
+
+/* T83: the gift-card modal's refusal line. A card Mindbody would not
+ * answer for is a blocked action, so it reads in --stop rather than in
+ * the muted grey the rest of this line uses; the number it refused is
+ * never repeated. */
+.pad-change.gift-bad {
+  color: var(--stop);
+  font-weight: 600;
 }
 
 .pad-change.muted-note {
