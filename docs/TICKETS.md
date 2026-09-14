@@ -10071,6 +10071,109 @@ exact line so a hidden banner returns on "Dry run on this iPad."; no
 secret in any log. Not exercised live: credentials issued for site
 -99 and a real staff token's site affinity; two real instances.
 
+## T83: gift card as a tender
+
+Pete: "Add gift card as a form of payment"
+
+### The design
+
+- **A fourth tender tile, "Gift card"**, after Cash and always offered:
+  a gift card needs no client and no card on file. It cannot add its
+  line on the tap (a line needs a number and a balance), so it opens
+  the T36 amount modal in a gift-card variant: the barcode first, in a
+  64px field with the keypad beside it (the studio's scanner types the
+  number like a keyboard), then "Check balance", then the amount,
+  capped and defaulted to the smaller of the balance and what is still
+  due. Done adds the line; Cancel, Escape and the scrim leave the
+  payment exactly as it was. The row reads `Gift card ...1234`.
+- **The number is a secret.** A gift card is a bearer instrument: the
+  number alone spends the balance, so it is handled exactly as a card
+  number is since T84. It lives in the payment component's state for as
+  long as the tender does, goes to `/api/checkout` with the charge, and
+  reaches no log line, no note, no receipt row and no response; only
+  the last four is shown or recorded. `src/lib/calllog.ts` strikes it
+  out of the call log in both directions, the recorded PATH included.
+- **The balance is read, never trusted twice.** `/api/gift-card`
+  answers `{ balance }` from `GET /sale/giftcardbalance` and caches
+  nothing; `/api/checkout` re-reads the balance server-side at charge
+  time and refuses an amount above it 409 with nothing written, for the
+  same reason the card and the account balance are re-read there.
+- **Checkout** takes `method: "giftcard"` with `giftCard: { number }`,
+  or a `giftcard` split leg carrying its own `number`, and sends one
+  `GiftCard` Payments entry whose `Metadata` is a JSON STRING with
+  lowercase keys (`amount`, `cardNumber`), the spec's own type for the
+  field. A split of gift card and cash needs no client: both are bearer
+  tenders, so it rides the house client like any other anonymous sale.
+- **Refusals** (unknown card, nothing left, payment type not enabled)
+  surface as the existing "Not charged: <Mindbody's words>" stop, with
+  no retry.
+
+### Build notes
+
+- New: `src/lib/giftcard.ts` (number parsing, last four, the balance
+  read), `src/app/api/gift-card/route.ts`, the gift-card modal and the
+  fourth tile in `SaleScreen.tsx`, the `GiftCard` payment in
+  `src/lib/sale.ts`, gift card redaction in `src/lib/calllog.ts`.
+- Four tiles do not fit one row of the payment column at 834px, so at
+  four the row becomes a 2x2 grid (`.pay-tiles.wrap`) and at three (no
+  account balance) stays the single row it was.
+- **Unverified against live Mindbody**: the `GiftCard` payment type and
+  its metadata shape. The vendored spec's `Type` description is
+  truncated and its `Metadata` keys are not enumerated, and the site has
+  no gift card to test with, so the shape follows Mindbody's own gift
+  card documentation (keys `amount`, `cardNumber`). If Mindbody refuses
+  it, the first thing to try BY HAND is the PascalCase object every
+  other payment type here sends: a money call never retries itself in
+  another shape.
+
+### Review
+
+Read the four build commits against the brief, the T83 rails and the
+vendored spec, then drove the built app on the ticket's own harness
+(mock Mindbody on :4585, `next start` on :3085) with two added test
+files under the reviewer's scratch dir.
+
+Checked and found right: the spec (`barcodeId` in query,
+`RemainingBalance` in the answer, `Metadata` typed `string`); the
+balance is re-read server-side and the browser's figure never decides
+the amount (a card worth $40 at the check and $5 at the charge is
+refused on the $5); an amount above the balance, a spent-out card and
+an unknown card are refused with nothing written; dry run and the write
+guard report suppression as suppression, never success; a 5xx and a
+destroyed socket both read as ambiguous and neither retries; a split
+leg sums to the cent with its cash leg and goes out as ONE call with
+two Payments; a number on any other leg is refused; Finalize Sale is
+single flight (the guard and the tap are one synchronous block); the
+tile greys as "Already in the payment" so a second card cannot orphan
+the first line; the held number is dropped by an effect whenever no
+gift card line is left; tokens only in both palettes, radius 0, 16px
+floor, 64px targets, no em dashes, both palettes and both orientations
+screenshotted and looked at.
+
+Two ways the number escaped, both fixed:
+
+- **It was in a URL.** `/api/gift-card` took the number as a query
+  parameter, and a query string is copied by machines nobody asked:
+  `next dev` printed `GET /api/gift-card?number=6050001234567890 200`
+  into the server log (reproduced), and a proxy or platform access log
+  in front of the app does the same in production. The route is a POST
+  with the number in the body now. The Mindbody call it makes is
+  unchanged.
+- **A refusal quoted it back into the call log.** Mindbody answers "The
+  gift card number GC-9X7 is invalid.", and a barcode need not be
+  card-shaped, so T84's digit rule missed it and no key rule reaches
+  inside a sentence: the number sat in the drawer's record, readable by
+  `copy all` (reproduced). `record()` now lifts the numbers THIS call
+  is known to carry out of its own path and request body and strikes
+  those literals out of everything it records. The escaped-quote form
+  of the `cardNumber` key (the stringified Metadata echoed back inside
+  another JSON document) is struck too; proved with a mock that echoes
+  the Payments back.
+
+Also moved: a `.gift-number` CSS block had been inserted between the
+"The keys" comment and the `.pad-keys` rule it describes.
+
+
 
 ## T90: a line on the ticket can be bought for another client
 
@@ -10130,8 +10233,9 @@ does.
 
 ### Tenders
 
-Cash, and a comp, do not care whose cart they pay: each cart is paid with
-its own share. **The stored card and the account balance are the paying
+Cash, a comp and T83's gift card do not care whose cart they pay: each
+cart is paid with its own share, and the gift card's live balance is read
+once against the whole ticket before any cart is charged. **The stored card and the account balance are the paying
 client's**, and a recipient's cart cannot draw on them, so while any line
 is for another client both tiles are greyed with the reason in words
 ("The card on file pays only for Pete Stewart. Take cash, a card at the
@@ -10200,3 +10304,4 @@ Deliberately not done, and the open question:
 - Item and client names ride the checkout body (never forwarded to
   Mindbody) only so the route's partial-outcome sentence can name people;
   every decision it makes is on ids.
+

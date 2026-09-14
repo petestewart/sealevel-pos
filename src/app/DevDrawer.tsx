@@ -328,7 +328,7 @@ const FLAGS: { key: keyof Settings; label: string; hint: string }[] = [
   {
     key: "autoWidenSearch",
     label: "Widen a search that finds nobody in class",
-    hint: "in the attach modal, Enter on a query matching nobody in the class moves the segment to All and searches everyone (T52)",
+    hint: "in the attach modal, a query matching nobody in the class moves the segment to All and searches everyone as you type (T52)",
   },
 ];
 
@@ -1235,6 +1235,9 @@ const FIXED_PASS_GROUPS = [
   "Unlimited",
 ];
 
+/** Mirrors shelfconfig PINNED_PASS_CHILDREN for the same reason. */
+const PINNED_PASS_CHILDREN = ["Packages", "Memberships"];
+
 const isFixedLabel = (label: string) =>
   FIXED_PASS_GROUPS.some((g) => g.toLowerCase() === label.trim().toLowerCase());
 
@@ -1380,6 +1383,9 @@ function ShelfPanel() {
       const label = canonLabel(g.label);
       if (label.length > 0 && !all.includes(label)) all.push(label);
     }
+    /* Packages and Memberships sit in the same rail and, since Pete
+     * asked why they were missing here (2026-09-14), in the same order. */
+    for (const label of PINNED_PASS_CHILDREN) if (!all.includes(label)) all.push(label);
     /* Matched case-insensitively, as the server matches it (T86 review):
      * a stored "my label" names the group "My Label", and resolving to
      * the catalog's own spelling is what keeps this block, what Save
@@ -1609,7 +1615,9 @@ function ShelfPanel() {
         <div key={label} className="dev-setting dev-order-row">
           <span className="dev-setting-label">
             {label}
-            {isFixedLabel(label) ? null : (
+            {isFixedLabel(label) ? null : PINNED_PASS_CHILDREN.includes(label) ? (
+              <span className="muted"> {label === "Packages" ? "packages" : "contracts"}</span>
+            ) : (
               <span className="muted"> custom</span>
             )}
           </span>

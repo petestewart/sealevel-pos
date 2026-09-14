@@ -109,6 +109,13 @@ export const MAX_ENTRIES = 1000;
  *  OTHER_GROUP_LABEL). A group so named would draw two "Other" chips
  *  and two "Other" sections, so it is refused here, case-insensitively. */
 export const RESERVED_GROUP_LABEL = "Other";
+/** The two Passes children that are not pass groups (T30 packages from
+ *  /sale/packages, T30 contracts from /sale/contracts) but sit in the
+ *  same rail. Since Pete's 2026-09-14 "why isn't Memberships in the
+ *  settings where i can change the order of subcategories?" they take
+ *  part in `groupOrder` like any label; a custom group may not borrow
+ *  either name, since the rail would draw two cells of it. */
+export const PINNED_PASS_CHILDREN = ["Packages", "Memberships"] as const;
 /** T86: a bound on `groupOrder`. The rail can hold the eight fixed labels
  *  plus MAX_GROUPS custom ones, so 64 is far more than a real config
  *  needs and small enough that a fault is refused rather than sorted on
@@ -204,6 +211,11 @@ export function validateShelfConfig(
       return { error: `group label ${JSON.stringify(cleanLabel)} must not contain an em dash` };
     }
     const folded = cleanLabel.toLowerCase();
+    if (PINNED_PASS_CHILDREN.some((l) => l.toLowerCase() === folded)) {
+      return {
+        error: `group label ${JSON.stringify(label)} is the rail's own ${folded === "packages" ? "Packages" : "Memberships"} cell`,
+      };
+    }
     if (folded === RESERVED_GROUP_LABEL.toLowerCase()) {
       return {
         error: `group label ${JSON.stringify(RESERVED_GROUP_LABEL)} is reserved for the passes in no group`,
@@ -257,6 +269,7 @@ export function validateShelfConfig(
     }
     const known = new Set<string>([
       ...PASS_GROUPS.map((g) => g.toLowerCase()),
+      ...PINNED_PASS_CHILDREN.map((g) => g.toLowerCase()),
       ...cleanGroups.map((g) => canonicalGroupLabel(g.label).toLowerCase()),
     ]);
     const seenOrder = new Set<string>();
@@ -514,9 +527,10 @@ export interface ShelfOutput<
   contracts: C[];
   /** Group labels in rail order: since T86 the labels `config.groupOrder`
    *  names, in its order, then every other label in the code order (the
-   *  fixed PASS_GROUPS first, then any custom T74 label in config order).
-   *  Only labels with at least one visible pass on the Passes shelf, so
-   *  the screen never draws an empty cell. */
+   *  fixed PASS_GROUPS first, then any custom T74 label in config order,
+   *  then Packages and Memberships, which are orderable too since
+   *  2026-09-14). Only labels with something visible to show, so the
+   *  screen never draws an empty cell. */
   passGroups: string[];
 }
 
@@ -578,8 +592,16 @@ export function applyShelfConfig<
    * would silently drop the label to the end of a shelf someone
    * arranged by hand. The label that goes out is the catalog's own, so
    * `rest` below still subtracts it. */
+  /* Packages and Memberships ride the same order (Pete, 2026-09-14) and
+   * are listed only when they have something to sell, like a group. */
+  const pinned: string[] = [
+    ...(catalog.packages.filter(visible).length > 0 ? ["Packages"] : []),
+    ...(catalog.contracts.some((c) => !hidden.has(itemKey("Contract", c.id)))
+      ? ["Memberships"]
+      : []),
+  ];
   const orderable = new Map(
-    [...fixed, ...custom].map((label) => [label.toLowerCase(), label]),
+    [...fixed, ...custom, ...pinned].map((label) => [label.toLowerCase(), label]),
   );
   const named: string[] = [];
   for (const raw of config.groupOrder ?? []) {
@@ -587,7 +609,9 @@ export function applyShelfConfig<
     if (label === undefined || named.includes(label)) continue;
     named.push(label);
   }
-  const rest = [...fixed, ...custom].filter((label) => !named.includes(label));
+  const rest = [...fixed, ...custom, ...pinned].filter(
+    (label) => !named.includes(label),
+  );
   return {
     products: products.filter(visible),
     passes,
