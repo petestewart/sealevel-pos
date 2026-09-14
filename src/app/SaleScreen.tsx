@@ -2240,9 +2240,15 @@ function PaymentPanel(props: {
     const number = gift.number;
     setGift((cur) => (cur === null ? cur : { ...cur, checking: true, error: null }));
     try {
-      const res = await fetch(
-        `/api/gift-card?number=${encodeURIComponent(number)}`,
-      );
+      /* T83 review: a POST with the number in the BODY. The read is a
+         GET at Mindbody, but our own query strings are printed by the
+         dev server's request log and by any proxy log in front of the
+         app, and a gift card number must not be sitting in either. */
+      const res = await fetch("/api/gift-card", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ number }),
+      });
       const body = await res.json().catch(() => null);
       const balance = body?.balance;
       if (!res.ok || typeof balance !== "number") {
