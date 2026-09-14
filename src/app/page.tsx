@@ -28,6 +28,7 @@ import SaleScreen, {
   type ModeConfig,
   type SaleClient,
   type SaleNavState,
+  type SoldSale,
 } from "./SaleScreen";
 import { Hit } from "./Hit";
 import {
@@ -977,6 +978,44 @@ function FrontDesk({
    *  render-scope payDialog is stale. */
   const payDialogRef = useRef<typeof payDialog>(null);
   payDialogRef.current = payDialog;
+  /**
+   * T88 (Pete: "if they have no card on file, instead of 'use Buy' this
+   * should be able to take me where I can buy and check in"): the
+   * check-in the teacher left the pay dialog to finish on the Buy
+   * screen. The same facts the card path works from, captured at the
+   * tap so the writes cannot chase a moved row: the visit, the class it
+   * was tapped under, the client, and the pass that was chosen. `nonce`
+   * is what makes a second trip to the same pass arrive at SaleScreen.
+   */
+  const [pendingCheckIn, setPendingCheckIn] = useState<{
+    nonce: number;
+    visitId: number;
+    classId: number;
+    clientId: string;
+    clientName: string;
+    itemType: "Product" | "Service";
+    itemId: string | number;
+    /** Mindbody's ProductId for the chosen option: what the purchased
+     *  ClientService is matched on afterwards (T25 stage (b)). */
+    productId: number | null;
+    /** The one quiet line the sale screen shows above the ticket. */
+    note: string;
+  } | null>(null);
+  const pendingNonce = useRef(0);
+  /** Mirror of pendingCheckIn for the async finish, which runs from the
+   *  sale's callback and would otherwise read a stale render. */
+  const pendingRef = useRef<typeof pendingCheckIn>(null);
+  pendingRef.current = pendingCheckIn;
+  /** Single flight over the finish, the payFlight discipline: one sale
+   *  answers once, and nothing here is ever retried. */
+  const pendingFlight = useRef(false);
+  /** What the finish is doing or how it went, shown on the sale's done
+   *  screen. Cleared when a new pending check-in starts. */
+  const [pendingResult, setPendingResult] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
+
   /** Rows whose last session was just used where the renewal dialog had
    *  nothing to charge with (no card on file, no covering credit): a
    *  quiet row line instead, so the teacher can use Buy manually.
@@ -4857,6 +4896,242 @@ function FrontDesk({
     }
   };
 
+  /* ------------------------------------------------------------------
+   * T88: buy and check in. There is nothing to charge with -- no card
+   * on file, or an expired one, and no covering credit -- so instead of
+   * telling the teacher to go and use Buy, this takes her there with the
+   * pass she already chose on the ticket and the check-in remembered.
+   * The sale is then the ORDINARY sale (cash, a typed card, account,
+   * a discount): nothing here is a second payment path.
+   * ---------------------------------------------------------------- */
+
+  /** Is the no-tender state the one this offer is for? Only a settled
+   *  answer counts: while the card read is in flight, or after it
+   *  failed, what the client has is unknown, and the offer would be a
+   *  guess. */
+  const payNoTender =
+    payDialog !== null &&
+    payDialog.flavor === "unpaid" &&
+    payMethod === null &&
+    payProfile !== null &&
+    !payProfile.loading &&
+    payProfile.error === null &&
+    (payCard === null || payCard.expired);
+  const payBuyOffer =
+    payNoTender &&
+    /* T88 review: and a SETTLED price. Until the pricing loop answers,
+     * credit that covers the total still reads as no tender, and the
+     * offer would send a teacher to buy for cash what the balance on
+     * the account would have paid. A suppressed or refused price has
+     * settled, and still earns the offer. */
+    !payPricing &&
+    payStage === null &&
+    !payMoneyMoved &&
+    paySelected !== null &&
+    payDialog !== null &&
+    payDialog.entry.visitId !== null;
+
+  /** The tap: close the dialog, attach the row's client to the Buy
+   *  screen, and remember the check-in the sale is for. Writes nothing;
+   *  the sale the teacher runs next is what moves money. */
+  const buyAndCheckIn = () => {
+    if (payFlight.current || !payBuyOffer) return;
+    if (!payDialog || !paySelected) return;
+    const { entry, classId } = payDialog;
+    if (entry.visitId === null) return;
+    const cls = classes.find((c) => c.classId === classId) ?? null;
+    const nonce = ++pendingNonce.current;
+    const pending = {
+      nonce,
+      visitId: entry.visitId,
+      classId,
+      clientId: entry.clientId,
+      clientName: entry.name,
+      itemType: paySelected.type,
+      itemId: paySelected.id,
+      productId: paySelected.productId,
+      note: cls
+        ? `Then check ${entry.name} in to ${cls.name} at ${clockTime(cls.startsAt)}.`
+        : `Then check ${entry.name} in to this class.`,
+    };
+    pendingRef.current = pending;
+    setPendingCheckIn(pending);
+    setPendingResult(null);
+    /* Closed inline, as the finished gesture is: closePayDialog reads
+     * payStage from a stale closure. */
+    payGen.current += 1;
+    payPriceGen.current += 1;
+    setPayDialog(null);
+    setPayOutcome(null);
+    setPayPriced(null);
+    setPayPriceError(null);
+    setPayPricing(false);
+    setPaySelectedId(null);
+    setPayProfile(null);
+    setSaleClient({
+      id: entry.clientId,
+      name: entry.name,
+      balance: entry.balance,
+    });
+    openSale("shelf");
+  };
+
+  /** The pending check-in cannot happen any more: the ticket no longer
+   *  holds that pass, the attached client changed, or the teacher left
+   *  the sale without selling it. One quiet line, and nobody is checked
+   *  in. */
+  const dropPendingCheckIn = (reason: "cart" | "client" | "left") => {
+    const pending = pendingRef.current;
+    if (!pending || pendingFlight.current) return;
+    pendingRef.current = null;
+    setPendingCheckIn(null);
+    setPendingResult(null);
+    flashBanner(
+      reason === "left"
+        ? /* T88 review: what is certain here is that nobody was checked
+             in, not that nothing was sold: a sale that failed part way
+             through (T90's partial) can leave the pass bought. */
+          `Not checked in: ${pending.clientName} stays unpaid. If the pass was sold, attach it with the payment chevron.`
+        : "Not checked in: the sale was changed.",
+    );
+  };
+
+  /**
+   * The sale settled. If it sold the remembered pass to the remembered
+   * client, this is T25's stages (b) and (c) exactly -- find the new
+   * purchase instance, assign it to the visit, sign in -- through the
+   * same routes the card path uses, pessimistic and never retried. A
+   * sale for somebody else, or one that no longer carried the pass,
+   * checks nobody in and says so.
+   */
+  const finishPendingCheckIn = async (sales: readonly SoldSale[]) => {
+    const pending = pendingRef.current;
+    if (pendingFlight.current) return;
+    if (!pending) {
+      /* T88 review: nothing was waiting on this sale, so the LAST
+       * check-in's outcome must not ride along on its done screen. */
+      setPendingResult(null);
+      return;
+    }
+    const sold = sales.find(
+      (sale) =>
+        sale.clientId === pending.clientId &&
+        sale.productIds.some((id) => String(id) === String(pending.itemId)),
+    );
+    if (!sold) {
+      pendingRef.current = null;
+      setPendingCheckIn(null);
+      const line = `Not checked in: this sale did not sell the pass to ${pending.clientName}.`;
+      setPendingResult({ ok: false, text: line });
+      flashBanner(line);
+      return;
+    }
+    pendingFlight.current = true;
+    pendingRef.current = null;
+    setPendingCheckIn(null);
+    setPendingResult({ ok: true, text: `Checking ${pending.clientName} in...` });
+    try {
+      /* Stage (b): the purchase instance. The pass list carries no
+       * PaymentDate, so the instance is T25's rule -- the NEWEST id
+       * carrying the option's ProductId -- which is the same "what was
+       * not there before" answer and the one already proven here. */
+      try {
+        const pr = await fetch(
+          `/api/passes?clientId=${encodeURIComponent(pending.clientId)}`,
+        );
+        const pBody = await pr.json();
+        if (!pr.ok) throw new Error(pBody?.error ?? `HTTP ${pr.status}`);
+        const fresh: PassInfo[] = pBody?.passes ?? [];
+        /* The chevron's caches first, so the by-hand finish works
+         * whatever happens below. */
+        passSweepCache.current.set(pending.clientId, fresh);
+        setPassLists((l) => ({
+          ...l,
+          [pending.clientId]: { data: fresh, error: null, loading: false },
+        }));
+        if (pending.productId === null) {
+          throw new Error(
+            "this pricing option carries no ProductId, so the new " +
+              "purchase could not be identified",
+          );
+        }
+        const instance = fresh
+          .filter(
+            (x): x is PassInfo & { id: number } =>
+              x.id !== null && x.productId === pending.productId,
+          )
+          .reduce<(PassInfo & { id: number }) | null>(
+            (newest, x) => (newest === null || x.id > newest.id ? x : newest),
+            null,
+          );
+        if (!instance) {
+          throw new Error(
+            "the purchased pass has not appeared on their account yet",
+          );
+        }
+        const ar = await fetch("/api/visit-payment", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            visitId: pending.visitId,
+            clientServiceId: instance.id,
+            clientId: pending.clientId,
+          }),
+        });
+        const aBody = await ar.json();
+        if (!ar.ok) throw new Error(aBody?.error ?? `HTTP ${ar.status}`);
+        noteActor(aBody, pending.clientId);
+        if (aBody?.suppressed) {
+          throw new Error(
+            `the write was suppressed (${aBody.suppressed}) after the sale went through`,
+          );
+        }
+      } catch (err) {
+        const line =
+          `Paid, but the check-in failed: the pass was not attached to ` +
+          `this visit; it stays on ${pending.clientName}'s account, and ` +
+          `the row stays unpaid. Attach it with the payment chevron, ` +
+          `then check in. (${err instanceof Error ? err.message : String(err)})`;
+        setPendingResult({ ok: false, text: line });
+        flashBanner(line);
+        await refreshRoster(pending.classId);
+        return;
+      }
+      /* Stage (c): the sign-in, the same write the chip makes. */
+      try {
+        const cr = await fetch("/api/checkin", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            visitId: pending.visitId,
+            signedIn: true,
+            clientId: pending.clientId,
+          }),
+        });
+        const cBody = await cr.json();
+        if (!cr.ok) throw new Error(cBody?.error ?? `HTTP ${cr.status}`);
+        noteActor(cBody, pending.clientId);
+      } catch (err) {
+        const line =
+          `Paid, but the check-in failed: the pass is on the visit and ` +
+          `the check-in tap will finish it. (${
+            err instanceof Error ? err.message : String(err)
+          })`;
+        setPendingResult({ ok: false, text: line });
+        flashBanner(line);
+        await refreshRoster(pending.classId);
+        return;
+      }
+      setPendingResult({
+        ok: true,
+        text: `${pending.clientName} is paid and checked in.`,
+      });
+      await refreshRoster(pending.classId);
+    } finally {
+      pendingFlight.current = false;
+    }
+  };
+
   /** Free entry, the deliberate exception (T25): today's Phase 1
    *  behavior exactly -- no charge, just the pessimistic check-in write
    *  -- behind its own labelled choice. */
@@ -5026,7 +5301,9 @@ function FrontDesk({
       onTap: () => {
         /* The cart and its client survive, exactly as the Back this
          * replaces left them: closing the overlay renders nothing, it
-         * does not unmount the sale. */
+         * does not unmount the sale. T88: a check-in waiting on a sale
+         * that has not happened is dropped here, with its line. */
+        dropPendingCheckIn("left");
         setSaleMode("shelf");
         setSaleOpen(false);
       },
@@ -7821,7 +8098,12 @@ function FrontDesk({
                   ? `Pays with the stored card ...${payCard.lastFour}.`
                   : payMethodReason}
             </p>
-            <p className="pay-cash-note">For cash, use Buy.</p>
+            {/* T88: with nothing to charge with, "use Buy" was an
+                instruction where an action belongs. The line stays for
+                every other case. */}
+            {payBuyOffer ? null : (
+              <p className="pay-cash-note">For cash, use Buy.</p>
+            )}
 
             {/* The outcome, when the gesture did not simply finish. */}
             {payOutcome?.kind === "suppressed" ? (
@@ -7875,7 +8157,17 @@ function FrontDesk({
                     ? "Not now"
                     : "Cancel"}
               </button>
-              {!payMoneyMoved ? (
+              {payBuyOffer ? (
+                /* T88: the Charge control's own slot, so the one primary
+                   action is where it always is. It opens Buy with this
+                   client and this pass; nothing is written by the tap. */
+                <button
+                  className="modal-confirm pay-charge"
+                  onClick={buyAndCheckIn}
+                >
+                  Buy and check in
+                </button>
+              ) : !payMoneyMoved ? (
                 <button
                   className="modal-confirm pay-charge"
                   disabled={!payChargeable}
@@ -8005,7 +8297,13 @@ function FrontDesk({
           is the same bar on every screen. */}
       <SaleScreen
         open={saleOpen}
-        onClose={() => setSaleOpen(false)}
+        onClose={() => {
+          /* T88: Escape or the scrim leaves the sale too, and a pending
+             check-in no sale has earned goes with it. A settled sale has
+             already cleared it, so Done cannot trip this. */
+          dropPendingCheckIn("left");
+          setSaleOpen(false);
+        }}
         mode={saleMode}
         onModeChange={setSaleMode}
         onNavState={setSaleNav}
@@ -8038,6 +8336,23 @@ function FrontDesk({
         onContractPurchased={refreshClientState}
         onSaleCompleted={refreshClientState}
         onStaffSessionEnded={() => setTeacher(null)}
+        /* T88: the sale that finishes a check-in. `onSold` carries every
+           sale the charge made (T90), which is how the pass is matched to
+           the client it was sold to. */
+        onSold={(sales) => void finishPendingCheckIn(sales)}
+        pendingCheckIn={
+          pendingCheckIn
+            ? {
+                nonce: pendingCheckIn.nonce,
+                clientId: pendingCheckIn.clientId,
+                itemType: pendingCheckIn.itemType,
+                itemId: pendingCheckIn.itemId,
+                note: pendingCheckIn.note,
+              }
+            : null
+        }
+        pendingCheckInResult={pendingResult}
+        onPendingCheckInDrop={dropPendingCheckIn}
       />
 
       <StaffModal
