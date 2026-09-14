@@ -277,12 +277,29 @@ export function recordSigninSuccess(): void {
  * configuration; there is no auth-disabled bypass here, because that
  * bypass is exactly what let the $2 comp through.
  *
- * `c1.<staff id>.<name, base64url>.<issued-at ms>.<hmac>`, the T44 token
- * shape with a new prefix. Nothing in it is secret; the signature is what
- * makes it trustworthy, and the PIN a teacher typed never enters it. */
+ * `c2.<purpose>.<staff id>.<name, base64url>.<issued-at ms>.<hmac>`, the
+ * T44 token shape with a new prefix. Nothing in it is secret; the
+ * signature is what makes it trustworthy, and the PIN a teacher typed
+ * never enters it.
+ *
+ * T94 review: the PURPOSE is signed into it, and a reader names the
+ * purpose it will accept. A teacher who typed their PIN to discount a
+ * sale authorized a discount and nothing else, so that token must not
+ * pass as the authorization to overdraw an account, nor the reverse:
+ * two separate request fields are not a separation while one value fits
+ * both. The prefix moved from c1 to c2 with the shape, so a token minted
+ * before this change fails closed rather than being read as a comp. */
 
 const COMP_TOKEN_TTL_MS = 10 * 60 * 1000;
-const COMP_TOKEN_PREFIX = "c1";
+const COMP_TOKEN_PREFIX = "c2";
+
+/** What a teacher's PIN authorized: a discount, or charging an account
+ *  past its balance (T94). */
+export type CompPurpose = "comp" | "overdraft";
+
+export function isCompPurpose(value: unknown): value is CompPurpose {
+  return value === "comp" || value === "overdraft";
+}
 
 export interface TeacherIdentity {
   id: number;
@@ -316,10 +333,11 @@ function signComp(payload: string): string {
 /** A fresh comp token for a teacher whose PIN just matched. */
 export function issueCompToken(
   teacher: TeacherIdentity,
+  purpose: CompPurpose,
   now = Date.now(),
 ): string {
   const name = Buffer.from(teacher.name, "utf8").toString("base64url");
-  const payload = `${COMP_TOKEN_PREFIX}.${teacher.id}.${name}.${now}`;
+  const payload = `${COMP_TOKEN_PREFIX}.${purpose}.${teacher.id}.${name}.${now}`;
   return `${payload}.${signComp(payload)}`;
 }
 
@@ -327,18 +345,23 @@ export function issueCompToken(
  *  inside its ten minutes; else null. */
 export function verifyCompToken(
   token: string,
+  purpose: CompPurpose,
   now = Date.now(),
 ): TeacherIdentity | null {
   const parts = token.split(".");
-  if (parts.length !== 5) return null;
-  const [prefix, idRaw, nameRaw, issuedAtRaw, sig] = parts;
+  if (parts.length !== 6) return null;
+  const [prefix, purposeRaw, idRaw, nameRaw, issuedAtRaw, sig] = parts;
   if (prefix !== COMP_TOKEN_PREFIX || !idRaw || !issuedAtRaw || !sig) {
     return null;
   }
+  /* T94 review: the purpose the caller asked for, and only it. Checked
+   * before the signature so a comp token presented as an overdraft
+   * authorization is refused on what it SAYS, not on a key. */
+  if (purposeRaw !== purpose) return null;
   if (!/^\d{1,12}$/.test(idRaw) || !/^\d{1,15}$/.test(issuedAtRaw)) return null;
   if (!/^[A-Za-z0-9_-]*$/.test(nameRaw ?? "")) return null;
   /* Signature first, constant-time, as for the device token. */
-  const payload = `${COMP_TOKEN_PREFIX}.${idRaw}.${nameRaw}.${issuedAtRaw}`;
+  const payload = `${COMP_TOKEN_PREFIX}.${purposeRaw}.${idRaw}.${nameRaw}.${issuedAtRaw}`;
   if (!safeEqual(sig, signComp(payload))) return null;
   const issuedAt = Number(issuedAtRaw);
   if (issuedAt > now + 60_000) return null;
