@@ -1047,9 +1047,15 @@ function FrontDesk({
    *  display"; behind the autoWidenSearch setting). Drives the one line
    *  over the rows that says so; cleared by the segment, the X, a new
    *  submit and the close. T87: what it flips is the segment, Class to
-   *  All, the only path that moves the segment while the modal is open,
-   *  and only on the teacher's own Enter. */
+   *  All, the only path that moves the segment while the modal is open:
+   *  on the teacher's Enter, or, since 2026-09-14, on the live debounce
+   *  once the typed query matches nobody in class. */
   const [autoWidened, setAutoWidened] = useState(false);
+  /** The query the teacher deliberately put back on Class (a tap on the
+   *  Class cell while it was typed): the live widen leaves that one
+   *  alone, or the cell would bounce back to All on the next debounce.
+   *  Any other query widens as usual. */
+  const heldOnClass = useRef<string | null>(null);
   /** The client profile modal (T42): who it is about, and the read. The
    *  fetch fires on OPEN, not on the icon's render, since the profile is
    *  three metered reads; `profileGen` drops an answer that lands after
@@ -2175,16 +2181,28 @@ function FrontDesk({
    * characters"), with the modal, if open, left open and empty for the
    * next letters, and the bar keeping focus.
    *
-   * Not while the attach modal is on its Class cell: the box filters
-   * that roster in memory there, and Enter alone widens it (T42, T52,
-   * T87).
+   * On the attach modal's Class cell the box filters that roster in
+   * memory and no call goes out, EXCEPT when the settled query matches
+   * nobody in the class (Pete, 2026-09-14: "when i search for a name and
+   * class is selected as the default filter, if they are not in the
+   * class, the filter should automatically change to All"): then the
+   * same debounce moves the segment to All and searches everyone, the
+   * T52 widen without waiting for Enter, behind the same
+   * autoWidenSearch setting and the same line over the rows. A query
+   * that still matches someone in class stays on Class.
    * Skipped when a search for exactly this query is already in flight
    * or has landed (Enter got there first, or the last keystroke put the
    * query back), so the same call never goes out twice.
    */
   useEffect(() => {
-    if (attachMode && attachTab === "class") return;
     const q = query.trim();
+    const onClass = attachMode && attachTab === "class";
+    if (onClass) {
+      if (!settings.autoWidenSearch || !q) return;
+      if (q === heldOnClass.current) return;
+      const lq = q.toLowerCase();
+      if (entries.some((en) => en.name.toLowerCase().includes(lq))) return;
+    }
     /* T81 review: the drawer's number field reads 0 while it is being
      * retyped, and an older stored blob can hold anything, so the
      * minimum is at least one letter (an empty box searched Mindbody
@@ -2204,7 +2222,14 @@ function FrontDesk({
     if (searchInFlight.current) current?.abort();
     liveTimer.current = setTimeout(() => {
       liveTimer.current = null;
+      if (onClass) {
+        setAttachTab("all");
+        setSearchMsg(null);
+      }
       startSearch(q, true);
+      /* After startSearch, which resets it: the same batch, so it lands
+       * true and the "Nobody in class matched" line shows over the rows. */
+      if (onClass) setAutoWidened(true);
     }, debounceMs);
     return () => {
       if (liveTimer.current !== null) clearTimeout(liveTimer.current);
@@ -2213,7 +2238,9 @@ function FrontDesk({
   }, [
     attachMode,
     attachTab,
+    entries,
     query,
+    settings.autoWidenSearch,
     searchTitle,
     settings.minQueryLength,
     settings.searchDebounceMs,
@@ -2293,8 +2320,8 @@ function FrontDesk({
    * standing at the counter and its roster is already in memory (zero
    * calls); All otherwise, because a Class cell that can only say
    * "Nobody is booked yet." is not where to land. Nothing moves the
-   * segment after this but the teacher's own tap, or their Enter on a
-   * query nobody in class matches (T52).
+   * segment after this but the teacher's own tap, or a query nobody in
+   * class matches, on Enter or on the live debounce (T52).
    */
   const openAttachSearch = useCallback(() => {
     setAttachMode(true);
@@ -2312,6 +2339,7 @@ function FrontDesk({
     setQuery("");
     setSearchOpen(true);
     setAutoWidened(false);
+    heldOnClass.current = null;
     setAttachTab(
       activeIdRef.current !== null && entries.length > 0 ? "class" : "all",
     );
@@ -2333,6 +2361,7 @@ function FrontDesk({
        * not one they did. */
       setAutoWidened(false);
       setAttachTab(tab);
+      heldOnClass.current = tab === "class" ? query.trim() : null;
       if (tab === "class") {
         stopSearch();
         setSearchMsg(null);
