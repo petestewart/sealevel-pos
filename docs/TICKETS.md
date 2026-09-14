@@ -10525,3 +10525,221 @@ Left alone, with the reason:
 - The mixed "some carts went out, some were suppressed" answer and its
   screen wording are unreachable while suppression stops the whole ticket
   at the rehearsal. Kept as the defence for the day that changes.
+
+
+## T95. Selling a gift card (Pete, 2026-09-14)
+
+Pete, with screenshots of the Mindbody web POS (the "Payments/Gift Cards"
+tab, the item "Gift Card (Custom Amount)" with fields Gift Card ID, Price
+and Value; and the Prepaid Gift Card tender with Look Up and Remaining
+Balance):
+
+> "A customer needs to be able to buy a gift card. This is done in
+> mindbody by entering the price and value of the card manually and
+> giving it an ID. Then the gift card is available as a payment method in
+> a purchase.
+>
+> we will simplify this. Gift card will be an item in the store, and when
+> it's clicked a box pops up where the teacher must enter the amount
+> (there should be preset buttons as well as a number pad). The price is
+> always the value, and the ID is set automatically. use a hexadecimal ID
+> of 5 characters (82B8X7)
+>
+> then gift card should be added as a payment method. when it is clicked,
+> the teacher must enter the ID. it will show the gift card balance and
+> they can choose how much of the balance to use on the purchase."
+
+The second paragraph is T83, shipped. This is the first.
+
+### What Mindbody actually offers, and the one thing it does not
+
+- `GET /sale/giftcards` (sale.yml:398) lists the site's gift card
+  PRODUCTS: `Id` (a ProductId), `CardValue`, `SalePrice`, `LocationIds`.
+- `POST /sale/purchasegiftcard` (sale.yml:1959, request at 5090) sells
+  one of them: `GiftCardId`, `PurchaserClientId`, `LocationId`, `Test`,
+  `LayoutId`, `SendEmailReceipt`, `BarcodeId`, `PaymentInfo` (the same
+  CheckoutPaymentInfo a cart checkout sends). It answers `BarcodeId`,
+  `Value`, `AmountPaid`, `SaleId`, `EmailReceipt`.
+- **There is no amount field.** The value of the card sold is the
+  PRODUCT's `CardValue`, and nothing in the request can override it.
+
+So the preset buttons Pete asked for are not a choice this app makes:
+they ARE the site's gift card products, read live. **The number pad is
+built as he asked and can only resolve to a product of exactly the typed
+amount**; when there is none, the box says "Mindbody sells gift cards in
+set amounts here: $25, $50, $100" (the live list) and adds nothing. Which
+means:
+
+> **Pete has to create one fixed-value gift card product in Mindbody for
+> every amount he wants the counter to offer.** Nothing else makes an
+> amount sellable through the API. Whether the site's own "Gift Card
+> (Custom Amount)" product can be given a value through
+> `purchasegiftcard` is the open question below, and it needs a live
+> `Test: true` probe to settle.
+
+### The design
+
+- **The shelf item.** A "Gift cards" child under Retail, rendered only
+  when the site offers any, holding one fixed cell: "Gift card, choose
+  the amount". Not a catalog item, and not favourite-able (see the build
+  notes). Tapping it opens the amount box.
+- **The box** is the T36 amount modal in a sell variant, one fixed size:
+  kicker "Gift card", the typed figure, the site's amounts as 64px preset
+  chips in value order, the T82 keypad, Done and Cancel. A preset tap
+  adds the line at once. Done resolves the typed cents to a product of
+  exactly that value and is disabled when there is none. Escape, Cancel
+  and the scrim leave the ticket exactly as it was.
+- **The ticket line** reads "Gift card $50.00" and steps like any line;
+  each unit is its own card with its own id. It carries no tax and is
+  excluded from the cart's pricing entirely: the ticket's total is
+  Mindbody's cart total plus each card's SalePrice, and a ticket of gift
+  cards alone is never priced (there is no cart). A gift card line offers
+  no T90 "Other Client" control: a card is a bearer instrument, there is
+  nobody to attribute it to, and the purchase takes a purchaser and no
+  recipient.
+- **The id is generated server-side**: six characters from
+  `23456789ABCDEFGHJKLMNPQRSTUVWXYZ`. Pete's example (82B8X7) is six
+  characters and is not hexadecimal, so the example is what was built
+  rather than the word; the alphabet drops I, O, 0 and 1 because the id
+  is written on a card by hand and read back off it at a counter. It is
+  one constant in `src/lib/giftcardsale.ts` to change.
+  **Before any card is sold the id is checked** with
+  `GET /sale/giftcardbalance`: an id that EXISTS is regenerated (the spec
+  says a known barcode RELOADS that card, which must never happen by
+  accident), and a read that does not settle the question refuses the
+  sale with nothing written.
+- **The purchase is its own call.** A ticket holding gift cards checks
+  out in ONE /api/checkout request as: the ordinary cart, when there are
+  other lines, then one `purchasegiftcard` per card, sequentially. T90's
+  posture throughout: every part rehearsed with `Test: true` before any
+  of them is charged, nothing retried, rolled back or refunded, and an
+  answer that names exactly what landed ("Sold the ticket (2.00), a 50.00
+  gift card. the 50.00 gift card was NOT sold: ...").
+- **The rehearsal is also the price check.** A rehearsal whose `Value`
+  disagrees with the product record refuses the sale before anything is
+  charged: the teacher is about to hand over a card, and it must be worth
+  what the screen said.
+- **The tenders**, and why each is refused in words rather than guessed
+  at: a gift card cannot buy a gift card; account credit cannot (whether
+  Mindbody allows it is unknown, and an account balance turning into a
+  bearer instrument is a decision a studio makes deliberately); a split
+  cannot (each card is its own sale, and there is no matrix of legs
+  against cards, so one tender only); a discount or a comp cannot (a
+  discounted card is money given away that then spends like cash, and
+  Pete has not asked for one); a line bought for another client cannot
+  share the ticket. What is left is cash and the card on file. A card
+  payment needs EVERY part to clear the $10 minimum, because each part is
+  its own Mindbody sale and so its own card charge; a short part is
+  refused with the reason rather than topped up with credit.
+- **The purchaser** is the attached client, else the house client: a
+  walk-in buying a card is the common case, which is what Mindbody's own
+  web POS does with WALK-IN.
+- **The done screen** carries each card's id large, "Write this on the
+  $50.00 card", in the accent pairing at 34px with wide letter-spacing.
+  That screen and the emailed receipt (`SendEmailReceipt`) are the only
+  two places the id is meant to be read: everywhere else it is a bearer
+  secret exactly as T83's tender number is, and the call log strikes it
+  out of the request, the response and the balance read's query.
+
+### Build notes
+
+New: `src/lib/giftcardsale.ts` (the product list and its two-minute
+per-target cache, the id alphabet and the collision check, the purchase,
+the request-body parsing and the per-sale log line) and
+`src/app/api/gift-cards/route.ts`. Changed: the gift card branch of
+`/api/checkout`, `SaleScreen.tsx` (the rail child, the cell, the box, the
+ticket line and totals, the tender reasons, the done screen),
+`globals.css` (two blocks, tokens only, in both palettes by construction
+since they name only existing tokens), `src/lib/sale.ts` (the payment
+payload builder is exported as `checkoutPaymentPayload`, because
+`purchasegiftcard` takes exactly the same `PaymentInfo` and a second copy
+of those shapes is the last thing this file needs), and the target switch
+drops the gift card cache with the catalog.
+
+Deliberately not done, with the reason:
+
+- **The gift card list is NOT part of /api/catalog.** A site with gift
+  cards turned off answers `/sale/giftcards` with an error, and one
+  failed read must not take the four the counter cannot work without down
+  with it. `/api/gift-cards` answers `{ products: [], error }` with a 200
+  instead, the shelf simply has no Gift card cell, and the reason is in
+  the call log.
+- **The Gift card cell is not favourite-able.** The shared favorites
+  validator (`src/lib/favorites.ts`) admits Product, Service and Package
+  only, and widening it means a stored-row migration story that has
+  nothing to do with this ticket. If Pete wants a star on it, that is the
+  change to make.
+- **No `SalesRepId` on the purchase.** The write already runs under the
+  signed-in teacher's own token (T49), which is how Mindbody names them
+  on every other sale this app makes. Whether this endpoint also wants
+  the staff id, and whether it would refuse one that disagreed with the
+  token, is an open question below, and a money payload is not the place
+  to guess.
+- **A partial outcome does not clear the ticket.** The tender IS cleared,
+  so a bare re-tap of Finalize Sale is impossible, and the screen says
+  which part sold and not to tap again for it.
+
+### Verified by the builder
+
+`npm run typecheck` and `npm run build` clean. Playwright and a route
+driver against `next start` on :3096 with a mock Mindbody on :4596
+(scratchpad/t95: `mock.js`, `start.sh`, `stop.sh`, `route.mjs`,
+`guard.mjs`, `ui.mjs`), which adds `/sale/giftcards`,
+`/sale/purchasegiftcard` and a `/sale/giftcardbalance` that answers "not
+found" for a fresh id and a balance for a planted one.
+
+Proved at the route: one card on its own sends no cart checkout at all;
+a cart plus two cards sends one checkout and two purchases, each
+rehearsed with `Test: true` before any real call, with PaymentInfo shares
+(2.00 + 25.00 + 100.00) summing exactly to the ticket total; every id is
+six characters of the alphabet and was balance-checked before use; a
+planted collision is regenerated and the taken id is NOT sold onto; an
+unreadable balance read refuses with nothing written; a 5xx on the second
+card leaves the first sold, reports both, and attempts no third; a
+refused REHEARSAL charges nothing at all; a `Value` that disagrees is
+refused; a stale product id, short cash, more than ten cards, a gift card
+paying for a gift card, account credit, a split, a discount and another
+client's line are each refused in their own words with nothing sent; a
+walk-in rides the house client; the card on file goes out as a StoredCard
+payment for the card's price, and a $2.00 cart part on it is refused by
+the $10 floor with the reason. Under the write guard the whole ticket
+reports `suppressed`, never a sale, and the dev call log carries
+`barcodeId=<redacted>` and no `BarcodeId` value in either direction.
+
+Proved on screen, both palettes and both orientations (1194x834 and
+834x1194): the Retail rail's Gift cards child and its 104px cell; the box
+with the three live presets at 64px and the twelve-key pad; typing $37.00
+disabling Done and naming the amounts that exist; typing $50.00 resolving
+to the preset; the line reading "Gift card $50.00"; the stepper making it
+two cards; no Other Client control on it; a preset tap adding its own
+line; the ticket totalling "Gift cards $75.00" and "Total $75.00" with no
+tax row; the Gift card tender and Discount both off with their reasons;
+and a cash sale ending on a done screen carrying both ids at 34px, each
+under "Write this on the $50.00 card". The audit's only contrast findings
+on these screens are the existing disabled-control idiom (`.modal-actions
+button:disabled` at opacity 0.6, `.pay-tile.off`) and the nav bar's
+inactive label, all of which predate this ticket.
+
+### Open questions (for a live probe, none of them settled here)
+
+1. **A custom amount.** Can the site's "Gift Card (Custom Amount)"
+   product be given a value through `purchasegiftcard`? Send its
+   `GiftCardId` with `Test: true` and read `Value` back. If it can, the
+   number pad stops being limited to the configured amounts and this
+   ticket's one real compromise goes away. Until then Pete needs a
+   fixed-value product per amount.
+2. **The PaymentInfo shape.** `purchasegiftcard` is sent the same
+   PascalCase `{ Type, Metadata: { Amount, ... } }` a checkout sends,
+   which is the shape the one live checkout known to have passed used.
+   Unverified on this endpoint.
+3. **Account credit for a gift card.** Refused outright here. Whether
+   Mindbody permits `DebitAccount` on `purchasegiftcard` is unknown.
+4. **`SalesRepId`.** Not sent. Whether Mindbody attributes the sale from
+   the staff token alone on this endpoint, as it does on a checkout, and
+   whether an explicit SalesRepId would be honoured or refused.
+5. **What an unknown barcode id answers.** The collision check reads a
+   not-found-shaped 4xx as "free" and refuses the sale on anything else.
+   Site 471's actual answer for an id it has never seen is unverified;
+   if it is a 200 with no balance rather than a 404, the check will
+   refuse every sale and the classifier in
+   `giftcardsale.ts` is the one place to fix.

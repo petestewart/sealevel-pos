@@ -192,6 +192,26 @@ interface ShelfItem {
   group?: string | null;
 }
 
+/**
+ * T95: one gift card the site SELLS, as /api/gift-cards serves it
+ * (mirrors src/lib/giftcardsale.ts GiftCardProduct).
+ *
+ * These are the preset amounts. `POST /sale/purchasegiftcard` has no
+ * amount field at all -- the value of the card is the PRODUCT's CardValue
+ * -- so the amounts a teacher may choose are exactly the products the
+ * studio has configured, and nothing typed on the pad can invent one.
+ */
+interface GiftCardProduct {
+  id: number;
+  /** What the card is worth. */
+  cardValue: number;
+  /** What it costs. Pete: "The price is always the value", which is how
+   *  the studio configures them; both figures are carried so a product
+   *  that disagrees shows honestly rather than being averaged. */
+  salePrice: number;
+  description: string | null;
+}
+
 /** Mirrors src/lib/sale.ts AutopayScheduleInfo. */
 interface AutopayScheduleInfo {
   frequencyType: string | null;
@@ -385,6 +405,9 @@ const OTHER_GROUP_LABEL = "Other";
  *  not a shelf item, T30; it renders its own card and opens the
  *  membership dialog). */
 interface ShelfSection {
+  /** T95: this block is the Gift card cell, which is not a catalog item
+   *  and opens the amount box instead of ringing anything up. */
+  giftCard?: boolean;
   label: string | null;
   items: ShelfItem[];
   contracts: ContractInfo[];
@@ -488,7 +511,7 @@ function categoryShelf(
  */
 interface CartEntry {
   key: string;
-  item: ShelfItem;
+  item: CartItem;
   quantity: number;
   /**
    * T90 (Pete: "another client can be selected and the pass is
@@ -502,6 +525,59 @@ interface CartEntry {
   forClient?: SaleRecipient | null;
 }
 
+/**
+ * T95: a gift card ON THE TICKET. It looks like a shelf item to every
+ * part of the ticket (a name, a price, a stepper) and is NOT one to the
+ * charge: a gift card is not a cart item, so these lines are held out of
+ * the Mindbody cart and sent as `giftCards` instead, one
+ * /sale/purchasegiftcard call per card (see /api/checkout).
+ *
+ * `id` is the gift card PRODUCT's id, which is all the server needs; the
+ * price here is display only, exactly as a shelf item's is, and
+ * /api/checkout re-reads the live product to price the sale.
+ */
+interface GiftCardItem {
+  id: number;
+  name: string;
+  price: number;
+  /** A gift card is not taxed: the product's SalePrice is what the
+   *  purchase charges, and there is no tax line on it. */
+  taxExempt: true;
+  taxRate: null;
+  type: "GiftCard";
+  categoryId: null;
+  /** What the card will be worth, which is not always what it costs. */
+  cardValue: number;
+}
+
+/** Anything a ticket line can be. */
+type CartItem = ShelfItem | GiftCardItem;
+
+/** T95: is this line a gift card to be SOLD (rather than a cart item)? */
+function isGiftCardLine(line: CartEntry): boolean {
+  return line.item.type === "GiftCard";
+}
+
+/** The ticket line for one gift card product. Pete: the line reads
+ *  "Gift card $50.00". */
+function giftCardItem(product: GiftCardProduct): GiftCardItem {
+  return {
+    id: product.id,
+    name: `Gift card ${money(product.cardValue)}`,
+    price: product.salePrice,
+    taxExempt: true,
+    taxRate: null,
+    type: "GiftCard",
+    categoryId: null,
+    cardValue: product.cardValue,
+  };
+}
+
+/** T95: the Retail child the Gift card cell lives under. Not a Mindbody
+ *  category: its shelf is one fixed cell, and it renders only when the
+ *  site actually offers gift cards. */
+const GIFT_CARDS_LABEL = "Gift cards";
+
 /** T90: a line's recipient, as the search modal picked them. */
 export interface SaleRecipient {
   id: string;
@@ -509,7 +585,10 @@ export interface SaleRecipient {
 }
 
 /** The cart key: the item's identity, plus whose line it is. */
-function cartKey(item: ShelfItem, forClientId: string | null): string {
+function cartKey(
+  item: { type: string; id: string | number },
+  forClientId: string | null,
+): string {
   return `${itemKey(item.type, item.id)}:${forClientId ?? "self"}`;
 }
 
@@ -974,6 +1053,11 @@ type ChargeResult =
        *  answer carries no confirmation (a cart checkout never does);
        *  null when no receipt was requested. */
       receiptLine: string | null;
+      /** T95: the cards this sale created, each with the id to write on
+       *  it. The done screen is one of the two places the id is meant to
+       *  be read (the other is the emailed receipt); it is a bearer
+       *  secret everywhere else. Empty on a sale with no gift card. */
+      giftCards: { value: number; barcodeId: string }[];
     }
   /* T90: `summary` is the route's own sentence for a ticket where some
      carts went out and some were suppressed (the write guard judges each
@@ -981,6 +1065,10 @@ type ChargeResult =
      suppression. */
   | { kind: "suppressed"; mode: string; summary?: string | null }
   | { kind: "split"; message: string; mindbody: string }
+  /* T95: some of the ticket went out and some did not, and the route's
+     sentence says exactly which. Its own kind because the one thing that
+     must not happen next is a second tap on Finalize Sale. */
+  | { kind: "partial"; message: string }
   | { kind: "ambiguous"; message: string }
   | { kind: "error"; message: string };
 
@@ -1220,11 +1308,25 @@ function PaymentPanel(props: {
    * recomputed from the CART on every render, so a line added under an
    * armed discount re-spreads it (the amounts on screen are only ever
    * the browser's copy; the server spreads again from the lines). */
-  const cartSubtotalCents = subtotalCents(discountLines(cart));
+  /**
+   * T95: the ticket's gift cards, which are not cart lines. Everything
+   * here that talks about the CART (the discount spread, the pre-tax
+   * subtotal, the priced total) reads `saleLines`; the cards are added on
+   * top, because each one is its own /sale/purchasegiftcard call with its
+   * own price and no tax.
+   */
+  const giftCardLines = cart.filter(isGiftCardLine);
+  const saleLines = cart.filter((line) => !isGiftCardLine(line));
+  const hasGiftCard = giftCardLines.length > 0;
+  const giftCardsTotal = roundToCents(
+    giftCardLines.reduce((n, l) => n + l.item.price * l.quantity, 0),
+  );
+
+  const cartSubtotalCents = subtotalCents(discountLines(saleLines));
   const armedCents =
-    comp === null ? 0 : discountCents(discountLines(cart), comp.discount);
+    comp === null ? 0 : discountCents(discountLines(saleLines), comp.discount);
   const comped =
-    comp !== null && isFullDiscount(discountLines(cart), comp.discount);
+    comp !== null && isFullDiscount(discountLines(saleLines), comp.discount);
   const discounted = comp !== null;
   /** The reason dialog the Discount tap opens (T43): open, the amount
    *  draft (T79) and the reason draft the chips and the note field
@@ -1299,10 +1401,10 @@ function PaymentPanel(props: {
   const draftOffCents =
     draftDiscount === null
       ? 0
-      : discountCents(discountLines(cart), draftDiscount);
+      : discountCents(discountLines(saleLines), draftDiscount);
   const draftFull =
     draftDiscount !== null &&
-    isFullDiscount(discountLines(cart), draftDiscount);
+    isFullDiscount(discountLines(saleLines), draftDiscount);
   /** The segment. Switching drops the digits: an entry typed as cents
    *  means nothing as a percent. Whole sale needs no digits. */
   const chooseMode = (mode: DiscountDraftMode) => {
@@ -1412,10 +1514,21 @@ function PaymentPanel(props: {
    * holds the PREVIOUS cart's totals. Treat that as no total at all: the
    * Charge button must never restate a number the current cart has not
    * earned, stale-but-disabled included. */
+  /* T95: the CART's total, which is Mindbody's and nobody else's, and
+   * zero when the ticket has no cart lines at all (a ticket of gift
+   * cards alone is never priced: a gift card is not a cart item). */
+  const cartTotal =
+    saleLines.length === 0
+      ? 0
+      : !pricing && priced && !priced.suppressed && !priced.disagrees
+        ? priced.grandTotal
+        : null;
+  /* The ticket's total: the cart's, plus each card's own price. A card is
+   * untaxed and priced by its product, and /api/checkout re-reads that
+   * product and rehearses every purchase with `Test: true` before a cent
+   * moves, so this addition never stands in for a server figure. */
   const total =
-    !pricing && priced && !priced.suppressed && !priced.disagrees
-      ? priced.grandTotal
-      : null;
+    cartTotal === null ? null : roundToCents(cartTotal + giftCardsTotal);
 
   /** A fresher balance than the attach snapshot, learned from a split
    *  failure's report: it is what lets Account credit light up so the
@@ -1567,7 +1680,7 @@ function PaymentPanel(props: {
    * silently clamped figure is not the one the teacher entered. */
   useEffect(() => {
     if (comp === null || cart.length === 0) return;
-    const lines = discountLines(cart);
+    const lines = discountLines(saleLines);
     const bad =
       discountRefusal(cart.map((l) => ({ type: l.item.type }))) !== null ||
       (comp.discount.mode === "amount" &&
@@ -1643,6 +1756,23 @@ function PaymentPanel(props: {
       setCompCleared(true);
     }
   }, [visible, discounted, dismissPad, dismissGift, closeReason, setComp]);
+
+  /**
+   * T95: each part of a gift card ticket is its own Mindbody sale and so
+   * its own card charge, which is what the $10 floor is measured against
+   * (assumption P4's reading). The server refuses a part under it; this
+   * mirror only lets the tile grey with the reason instead of a round
+   * trip.
+   */
+  const giftCardParts: number[] = [
+    ...(saleLines.length > 0 && cartTotal !== null ? [cartTotal] : []),
+    ...giftCardLines.flatMap((l) =>
+      Array.from({ length: l.quantity }, () => l.item.price),
+    ),
+  ];
+  const giftShortPart = hasGiftCard
+    ? giftCardParts.find((part) => part < CARD_MINIMUM_USD)
+    : undefined;
 
   /* Source availability. An unavailable source renders greyed WITH the
    * reason, never hidden (PLAN 2.2: "account credit ($12) greyed out
@@ -1815,6 +1945,22 @@ function PaymentPanel(props: {
      * certain to be refused at the tap. */
     if (hasOtherClient && lines.length >= 1) {
       return "One tender only while a line is for another client";
+    }
+    /* T95: a gift card is a bearer instrument being SOLD, and each card
+     * is its own Mindbody sale. Three things follow, and the tile says
+     * each of them rather than letting a teacher build a tender the
+     * route will certainly refuse. */
+    if (hasGiftCard) {
+      if (source === "giftcard") return "A gift card cannot buy a gift card";
+      if (source === "credit") {
+        return "Account credit cannot buy a gift card";
+      }
+      if (lines.length >= 1) {
+        return "One tender only while a gift card is on the ticket";
+      }
+      if (source === "storedcard" && giftShortPart !== undefined) {
+        return `A gift card is its own sale, so ${money(giftShortPart)} would go on the card alone, under the $${CARD_MINIMUM_USD} minimum`;
+      }
     }
     /* T38: while the ticket shows the browser's estimate the sources
      * stay greyed with the reason. A tender line pre-fills from the due,
@@ -2065,7 +2211,7 @@ function PaymentPanel(props: {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          items: cart.map((line) => ({
+          items: saleLines.map((line) => ({
             type: line.item.type,
             metadataId: line.item.id,
             quantity: line.quantity,
@@ -2086,6 +2232,18 @@ function PaymentPanel(props: {
                 }
               : {}),
           })),
+          /* T95: the gift cards, beside the cart and never inside it.
+             The product id and how many, and nothing else: the route
+             re-reads the live product for the value and the price, and
+             generates each card's id itself. */
+          ...(hasGiftCard
+            ? {
+                giftCards: giftCardLines.map((line) => ({
+                  productId: Number(line.item.id),
+                  quantity: line.quantity,
+                })),
+              }
+            : {}),
           ...(clientId ? { clientId } : {}),
           /* T90: display only, for the route's per-cart sentence; every
              decision there is made on the id. */
@@ -2191,6 +2349,19 @@ function PaymentPanel(props: {
         const disc = body?.discount;
         setResult({
           kind: "paid",
+          /* T95: what Mindbody recorded, one entry per card. */
+          giftCards: Array.isArray(body?.giftCardsSold)
+            ? (body.giftCardsSold as { value?: unknown; barcodeId?: unknown }[])
+                .filter(
+                  (c) =>
+                    typeof c?.barcodeId === "string" &&
+                    typeof c?.value === "number",
+                )
+                .map((c) => ({
+                  value: c.value as number,
+                  barcodeId: c.barcodeId as string,
+                }))
+            : [],
           total: comped
             ? typeof disc?.subtotal === "number"
               ? disc.subtotal
@@ -2287,6 +2458,19 @@ function PaymentPanel(props: {
                 : "unknown (Mindbody did not answer the balance read)"
             }; do NOT re-run the credit step.`,
           mindbody: String(body?.error ?? "no reason returned"),
+        });
+      } else if (body?.partial === true) {
+        /* T95 (T90's posture): part of this ticket is SOLD and part is
+         * not. The tender is cleared so a bare re-tap of Finalize Sale is
+         * impossible, the cart is left alone so the teacher can see what
+         * was on it, and nothing is retried, rolled back or refunded. */
+        resetTender();
+        onClientDataStale();
+        setResult({
+          kind: "partial",
+          message: String(
+            body?.error ?? "Part of this ticket was sold and part was not.",
+          ),
         });
       } else if (body?.ambiguous === true) {
         setResult({
@@ -2982,9 +3166,12 @@ function PaymentPanel(props: {
   /** T79: why the cart cannot take a discount right now, or null: a
    *  package line (Mindbody ignores a discount on one). Read at the tap
    *  and shown in the quiet line rather than opening the dialog. */
-  const discountBlock = discountRefusal(
-    cart.map((l) => ({ type: l.item.type })),
-  );
+  const discountBlock = hasGiftCard
+    ? /* T95: a discounted gift card is money given away that then spends
+         like cash, and Pete has not asked for one. The route refuses it
+         too; this is the same sentence, before the dialog opens. */
+      "A gift card cannot be discounted: it is worth its face value whatever was paid for it."
+    : discountRefusal(saleLines.map((l) => ({ type: l.item.type })));
   const [discountRefused, setDiscountRefused] = useState<string | null>(null);
   useEffect(() => {
     if (discountBlock === null) setDiscountRefused(null);
@@ -3180,6 +3367,25 @@ function PaymentPanel(props: {
                   </span>
                 ) : null}
               </p>
+              {result.giftCards.length > 0 ? (
+                /* T95: the one thing a teacher MUST take off this screen.
+                   The card Mindbody sold is blank card stock in their
+                   hand, and this id is what ties the two together, so it
+                   is the largest thing here after the total. The id is a
+                   bearer secret everywhere else (the call log strikes it
+                   out); this screen and the emailed receipt are the two
+                   places it is meant to be read. */
+                <div className="pay-done-gifts">
+                  {result.giftCards.map((c) => (
+                    <div className="pay-done-gift" key={c.barcodeId}>
+                      <span className="pay-done-gift-label">
+                        Write this on the {money(c.value)} card
+                      </span>
+                      <span className="pay-done-gift-id">{c.barcodeId}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               {result.compReason ? (
                 /* T43: the reason, under the charged line, so the done
                    screen says why the sale was on the studio. T79: a
@@ -3482,6 +3688,25 @@ function PaymentPanel(props: {
                 <div className="sale-stop pay-split" role="alert">
                   <p className="pay-split-head">{result.message}</p>
                   <p className="pay-split-why">Mindbody said: {result.mindbody}</p>
+                  <button
+                    className="class-change pay-dismiss"
+                    onClick={() => setResult(null)}
+                  >
+                    Understood
+                  </button>
+                </div>
+              ) : result?.kind === "partial" ? (
+                /* T95: the honest partial. The route's own sentence names
+                   what landed and what did not; the tender is already
+                   cleared, so there is no control here that could charge
+                   the sold half again. */
+                <div className="sale-stop pay-split" role="alert">
+                  <p className="pay-split-head">{result.message}</p>
+                  <p className="pay-split-why">
+                    Do not tap Finalize Sale again for the part that sold.
+                    Check the dev drawer or Mindbody before charging
+                    anything else.
+                  </p>
                   <button
                     className="class-change pay-dismiss"
                     onClick={() => setResult(null)}
@@ -5372,6 +5597,35 @@ export default function SaleScreen(props: {
     () => catalog?.categories.find((c) => sectionOf(c) === PASSES_SECTION) ?? null,
     [catalog],
   );
+  /**
+   * T95: the gift cards the site sells, read separately from the catalog
+   * (see /api/gift-cards for why a failed read must not take the shelf
+   * with it). An empty list means no Gift card cell at all, which is the
+   * honest state for a site with none configured.
+   */
+  const [giftProducts, setGiftProducts] = useState<GiftCardProduct[]>([]);
+  const loadGiftCards = useCallback(() => {
+    fetch("/api/gift-cards")
+      .then((r) => r.json())
+      .then((body) => {
+        const list = Array.isArray(body?.products) ? body.products : [];
+        setGiftProducts(
+          list.filter(
+            (p: GiftCardProduct) =>
+              typeof p?.id === "number" &&
+              typeof p?.cardValue === "number" &&
+              typeof p?.salePrice === "number",
+          ),
+        );
+      })
+      .catch(() => {
+        /* No cell, and the reason is in the call log. A gift card the
+         * teacher cannot sell is better than a shelf that will not
+         * load. */
+        setGiftProducts([]);
+      });
+  }, []);
+
   const passesShelf = useMemo(
     () => (catalog && passesCategory ? categoryShelf(catalog, passesCategory) : []),
     [catalog, passesCategory],
@@ -5380,17 +5634,28 @@ export default function SaleScreen(props: {
     () => (catalog ? passChildren(catalog, passesShelf) : []),
     [catalog, passesShelf],
   );
-  const retailCategories = useMemo(
-    () =>
-      catalog
-        ? catalog.categories.filter(
-            (c) =>
-              sectionOf(c) === RETAIL_SECTION &&
-              categoryShelf(catalog, c).length > 0,
-          )
-        : [],
-    [catalog],
-  );
+  const retailCategories = useMemo(() => {
+    if (!catalog) return [];
+    const real = catalog.categories.filter(
+      (c) =>
+        sectionOf(c) === RETAIL_SECTION && categoryShelf(catalog, c).length > 0,
+    );
+    /* T95: a Retail child of its own rather than a cell inside Other. A
+     * gift card is not a Mindbody category and has no items to filter by
+     * one, and the cell it holds opens a box rather than ringing
+     * something up; a child keeps both facts in one place. It renders
+     * only when the site offers gift cards at all. */
+    return giftProducts.length > 0
+      ? [
+          ...real,
+          {
+            label: GIFT_CARDS_LABEL,
+            categoryIds: [],
+            section: RETAIL_SECTION,
+          },
+        ]
+      : real;
+  }, [catalog, giftProducts]);
   /** The Rentals cell renders whenever the catalog names the category,
    *  empty or not (Pete: "Rentals was supposed to be a main category as
    *  well"): a main category that hides itself when nothing routes to
@@ -5685,6 +5950,29 @@ export default function SaleScreen(props: {
    */
   const [clearPrompt, setClearPrompt] = useState<number | null>(null);
   const cancelClear = useCallback(() => setClearPrompt(null), []);
+
+  /**
+   * T95: the amount box behind the Gift card cell. Pete: "when it's
+   * clicked a box pops up where the teacher must enter the amount (there
+   * should be preset buttons as well as a number pad)."
+   *
+   * `entry` is what the pad has typed, in CENTS as a digit string, the
+   * T82 idiom. A preset chip adds its line at once and closes; the pad's
+   * Done resolves to a product of exactly that value, and there is no
+   * other way it can resolve: `purchasegiftcard` has no amount field, so
+   * an amount the studio has not configured is not a card Mindbody can
+   * sell. The box says so rather than pretending.
+   */
+  const [giftSell, setGiftSell] = useState<{ entry: string } | null>(null);
+  const closeGiftSell = useCallback(() => setGiftSell(null), []);
+  useEffect(() => {
+    if (giftSell === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeGiftSell();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [giftSell, closeGiftSell]);
   const confirmClear = useCallback(() => {
     setClearPrompt(null);
     emptyCart();
@@ -5739,6 +6027,18 @@ export default function SaleScreen(props: {
       const body = await r.json();
       if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
       const fresh = parseCatalog(body);
+      /* T95: the gift cards are their own read, so Refresh refetches them
+       * too, past their own cache. A failure leaves the list alone rather
+       * than emptying a shelf the teacher is standing at. */
+      const freshGifts: GiftCardProduct[] = await fetch(
+        "/api/gift-cards?refresh=1",
+      )
+        .then((gr) => gr.json())
+        .then((gb) =>
+          Array.isArray(gb?.products) ? gb.products : giftProducts,
+        )
+        .catch(() => giftProducts);
+      setGiftProducts(freshGifts);
       const byKey = new Map<string, ShelfItem>();
       for (const item of [...fresh.products, ...fresh.passes, ...fresh.packages]) {
         byKey.set(itemKey(item.type, item.id), item);
@@ -5747,6 +6047,26 @@ export default function SaleScreen(props: {
       const dropped: string[] = [];
       const rebuilt: CartEntry[] = [];
       for (const line of cartRef.current) {
+        /* T95: a gift card line is priced by its PRODUCT, not by the
+           catalog, so it is rebuilt from the fresh gift card list; a
+           product the site no longer offers is dropped exactly as a
+           missing catalog item is. */
+        if (isGiftCardLine(line)) {
+          const product = freshGifts.find((g) => g.id === line.item.id);
+          if (!product) {
+            dropped.push(line.item.name);
+            continue;
+          }
+          if (product.salePrice !== line.item.price) {
+            changes.push({
+              name: line.item.name,
+              from: line.item.price,
+              to: product.salePrice,
+            });
+          }
+          rebuilt.push({ ...line, item: giftCardItem(product) });
+          continue;
+        }
         /* T90: the cart key carries the recipient now, so the catalog is
            asked for the ITEM's identity. */
         const item = byKey.get(itemKey(line.item.type, line.item.id));
@@ -5781,7 +6101,7 @@ export default function SaleScreen(props: {
     } finally {
       setRechecking(false);
     }
-  }, [rechecking, landCatalog]);
+  }, [rechecking, landCatalog, giftProducts]);
 
   /** Fetch the shelf once per screen life; the route caches server-side
    *  for two minutes anyway (T75). A failure renders with a retry button. */
@@ -5805,8 +6125,10 @@ export default function SaleScreen(props: {
   useEffect(() => {
     if (open && catalog === null && !catalogLoading && catalogError === null) {
       loadCatalog();
+      /* T95: beside it, never inside it. */
+      loadGiftCards();
     }
-  }, [open, catalog, catalogLoading, catalogError, loadCatalog]);
+  }, [open, catalog, catalogLoading, catalogError, loadCatalog, loadGiftCards]);
 
   /**
    * The pricing loop: debounce, then POST the cart, and let only the
@@ -5897,11 +6219,17 @@ export default function SaleScreen(props: {
       : `${armedDiscount.discount.mode}:${armedDiscount.discount.value}`;
   useEffect(() => {
     const gen = ++priceGen.current;
-    if (cart.length === 0) {
+    /* T95: a gift card is not a cart item, so it is not priced here: a
+     * ticket of gift cards alone has no Mindbody cart at all, and one
+     * holding both prices only its cart lines. The ticket's total is
+     * that cart's total plus the cards' own prices. */
+    const priceable = cart.filter((line) => !isGiftCardLine(line));
+    if (priceable.length === 0) {
       setPriced(null);
       setPriceError(null);
       setPricing(false);
-      /* T79: an emptied cart has nothing to discount. */
+      /* T79: an emptied cart has nothing to discount. T95: nor has a
+       * ticket of gift cards, which cannot be discounted at all. */
       setArmedDiscount(null);
       return;
     }
@@ -5920,7 +6248,7 @@ export default function SaleScreen(props: {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            items: cart.map((line) => ({
+            items: priceable.map((line) => ({
               type: line.item.type,
               metadataId: line.item.id,
               quantity: line.quantity,
@@ -6005,6 +6333,7 @@ export default function SaleScreen(props: {
         payModalOpen ||
         cartPrompt ||
         clearPrompt !== null ||
+        giftSell !== null ||
         walkInPrompt ||
         consentPrompt ||
         contractDialog
@@ -6026,6 +6355,7 @@ export default function SaleScreen(props: {
     payModalOpen,
     cartPrompt,
     clearPrompt,
+    giftSell,
     walkInPrompt,
     consentPrompt,
     contractDialog,
@@ -6047,6 +6377,30 @@ export default function SaleScreen(props: {
        line". The other client's line is reached through its own row. */
     const key = cartKey(item, null);
     setCartNotice(null);
+    setCart((lines) => {
+      const have = lines.find((l) => l.key === key);
+      if (have) {
+        return lines.map((l) =>
+          l.key === key
+            ? { ...l, quantity: Math.min(l.quantity + 1, MAX_LINE_QUANTITY) }
+            : l,
+        );
+      }
+      return [...lines, { key, item, quantity: 1 }];
+    });
+  }, []);
+
+  /**
+   * T95: one gift card onto the ticket. The same key rule as addItem, so
+   * a second $50 card bumps the line to two (each unit is still its own
+   * card with its own id; /api/checkout expands the quantity), and the
+   * box closes on the tap.
+   */
+  const addGiftCard = useCallback((product: GiftCardProduct) => {
+    const item = giftCardItem(product);
+    const key = cartKey(item, null);
+    setCartNotice(null);
+    setGiftSell(null);
     setCart((lines) => {
       const have = lines.find((l) => l.key === key);
       if (have) {
@@ -6482,11 +6836,37 @@ export default function SaleScreen(props: {
    * Pay enters pay mode (T39.6); the charge itself is the panel's, in
    * the payment column's foot.
    */
+  /**
+   * T95: the ticket's two halves. A gift card is not a cart item, so the
+   * gift lines are held out of everything that talks to /sale (the
+   * pricing loop, the cart's own total) and carried separately; the
+   * ticket still reads as one ticket, exactly as T90's several carts do.
+   *
+   * `giftCardsTotal` is the sum of the products' own SalePrices. It is
+   * not a browser estimate of a Mindbody figure: a gift card has no tax
+   * and no cart to price, its price IS the live product's price, and
+   * /api/checkout re-reads that product and rehearses the purchase with
+   * `Test: true` before a cent moves, which is where a drifted price
+   * surfaces.
+   */
+  const giftCardLines = cart.filter(isGiftCardLine);
+  const saleLines = cart.filter((line) => !isGiftCardLine(line));
+  const giftCardsTotal = roundToCents(
+    giftCardLines.reduce((n, l) => n + l.item.price * l.quantity, 0),
+  );
+  const giftCardCount = giftCardLines.reduce((n, l) => n + l.quantity, 0);
+
   const payWhy: string | null = charging
     ? "Charging..."
     : cart.length === 0
       ? "Nothing rung up yet"
-      : pricing
+      : /* T95: a ticket of gift cards alone has no cart to price. Their
+           price is the live product's, and /api/checkout re-reads it and
+           rehearses each purchase before a cent moves, so there is no
+           server total to wait for here. */
+        saleLines.length === 0
+        ? null
+        : pricing
         ? "Pricing with Mindbody..."
         : priceError
           ? "Pricing failed; nothing to pay against"
@@ -6502,7 +6882,9 @@ export default function SaleScreen(props: {
                     ? "No total yet"
                     : null;
   const payAmount =
-    payWhy === null && priced !== null ? priced.grandTotal : null;
+    payWhy === null
+      ? roundToCents((priced?.grandTotal ?? 0) + giftCardsTotal)
+      : null;
   /** T51: whether Pay asks first. Nobody attached and no walk-in
    *  declared is the one case; with the flag set (the header's Walk-in
    *  button, or the dialog's own Continue) Pay goes straight through. */
@@ -6569,6 +6951,9 @@ export default function SaleScreen(props: {
           ? [
               {
                 label: null,
+                /* T95: the Gift cards child's shelf is the one fixed
+                   cell; there is no catalog item behind it. */
+                giftCard: retailChild.label === GIFT_CARDS_LABEL,
                 items: teacherTabs
                   ? retailChildItems.filter(
                       (i) => isTeacherItem(i) === (retailTab === "teacher"),
@@ -6579,6 +6964,7 @@ export default function SaleScreen(props: {
             ]
           : retailCategories.map((c) => ({
               label: c.label,
+              giftCard: c.label === GIFT_CARDS_LABEL,
               items: categoryShelf(catalog, c),
               contracts: [],
             }))
@@ -6593,7 +6979,11 @@ export default function SaleScreen(props: {
           : [];
   const shelfEmpty =
     shelfSections.every(
-      (section) => section.items.length === 0 && section.contracts.length === 0,
+      (section) =>
+        section.items.length === 0 &&
+        section.contracts.length === 0 &&
+        /* T95: a Gift cards block is never empty; its cell is fixed. */
+        section.giftCard !== true,
     ) &&
     (!onFavorites || resolvedBundles.length === 0);
 
@@ -6765,6 +7155,59 @@ export default function SaleScreen(props: {
     </button>
   );
 
+
+  /** T95: what the amount box has typed, in cents, and the product it
+   *  resolves to. `undefined` means no product has that value, which is
+   *  the one honest answer: Mindbody cannot sell an amount the studio has
+   *  not configured. */
+  const giftEntryCents = giftSell === null ? 0 : Number(giftSell.entry || "0");
+  const giftMatch = giftProducts.find(
+    (p) => Math.round(p.cardValue * 100) === giftEntryCents,
+  );
+  /** The live list, for the refusal line: "$25, $50, $100". */
+  const giftAmountList = giftProducts.map((p) => money(p.cardValue)).join(", ");
+  /** The T82 keypad's tap: digits append, `back` removes one, and the
+   *  entry is capped so a stuck finger cannot build a nonsense figure. */
+  const giftSellTap = (key: string) => {
+    setGiftSell((g) => {
+      if (g === null) return g;
+      if (key === "back") return { entry: g.entry.slice(0, -1) };
+      const next = (g.entry + key).replace(/^0+(?=\d)/, "");
+      return next.length > 7 ? g : { entry: next };
+    });
+  };
+
+  /** T95: the Gift card cell. Not a catalog item: it opens the amount
+   *  box (Pete's "a box pops up"), and the box adds the line. */
+  const giftCardCard = (
+    <div
+      className={giftCardCount > 0 ? "shelf-cell has-qty" : "shelf-cell"}
+      key="giftcard-cell"
+    >
+      <button
+        className={
+          giftCardCount > 0 ? "shelf-item shelf-gift in-cart" : "shelf-item shelf-gift"
+        }
+        onClick={() => setGiftSell({ entry: "" })}
+        aria-label="Sell a gift card, choose the amount"
+      >
+        <span className="shelf-name">Gift card</span>
+        <span className="shelf-foot">
+          <span className="shelf-price">
+            <span className="shelf-bundle-mark">choose the amount</span>
+          </span>
+          {giftCardCount > 0 ? (
+            <span
+              className="shelf-count"
+              aria-label={`${giftCardCount} on the ticket`}
+            >
+              &#215;{giftCardCount}
+            </span>
+          ) : null}
+        </span>
+      </button>
+    </div>
+  );
 
   /** What the totals area shows, in priority order: the amber suppression
    *  notice, the loud disagreement, a failed call, the spinner, or the
@@ -7294,6 +7737,7 @@ export default function SaleScreen(props: {
                         >
                           {section.items.map(shelfCard)}
                           {section.contracts.map(contractCard)}
+                          {section.giftCard ? giftCardCard : null}
                           {/* Bundles, after the starred items. One card,
                               one tap, every line into the cart. Only the
                               Favorites shelf has any, and it is always a
@@ -7329,7 +7773,11 @@ export default function SaleScreen(props: {
                          uppercase muted idiom. A block with nothing in
                          it (a section's All view never has one, but a
                          child list can) draws nothing. */
-                      if (section.items.length === 0 && section.contracts.length === 0) {
+                      if (
+                        section.items.length === 0 &&
+                        section.contracts.length === 0 &&
+                        section.giftCard !== true
+                      ) {
                         return null;
                       }
                       return section.label === null ? (
@@ -7562,7 +8010,14 @@ export default function SaleScreen(props: {
                               button, and it opens the SAME live search
                               the attach modal uses ("Who is this for?").
                               Re-tapping opens it again with the row that
-                              clears it. */}
+                              clears it.
+
+                              T95: never on a gift card. A card is a
+                              bearer instrument: whoever holds it spends
+                              it, so there is nobody to attribute it to,
+                              and Mindbody's purchase takes a PURCHASER
+                              and no recipient. */}
+                          {isGiftCardLine(line) ? null : (
                           <button
                             className={line.forClient ? "t-for on" : "t-for"}
                             disabled={charging}
@@ -7585,6 +8040,7 @@ export default function SaleScreen(props: {
                           >
                             {line.forClient ? line.forClient.name : "Other Client"}
                           </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -7628,7 +8084,29 @@ export default function SaleScreen(props: {
 
                 {/* The totals area. The server's numbers or an honest
                     absence; local math never renders as a total. */}
-                {estimate ? (
+                {saleLines.length === 0 && giftCardLines.length > 0 ? (
+                  /* T95: gift cards alone. There is no cart to price and
+                     no tax to add: a card's price is the live product's
+                     price, which /api/checkout re-reads and rehearses
+                     with Test: true before anything is charged. So this
+                     is not a local estimate standing in for a server
+                     figure; it is the figure. */
+                  <>
+                    <div className="t-line t-muted">
+                      <span>Gift cards</span>
+                      <span className="amt">{money(giftCardsTotal)}</span>
+                    </div>
+                    <hr className="t-rule" />
+                    <div className="t-line t-total">
+                      <span>Total</span>
+                      <span className="amt">{money(giftCardsTotal)}</span>
+                    </div>
+                    <p className="muted-note">
+                      A gift card is not taxed. Each card gets an id when
+                      the sale lands, to write on the card.
+                    </p>
+                  </>
+                ) : estimate ? (
                   <>
                     {/* T38: the browser's estimate while Mindbody prices
                         the cart, muted and labelled, in the same rows the
@@ -7742,12 +8220,24 @@ export default function SaleScreen(props: {
                         <span className="amt">{money(totals.taxTotal)}</span>
                       </div>
                     ) : null}
+                    {/* T95: the cards, under the cart's tax and outside
+                        it. Mindbody prices the cart; the cards are their
+                        own sales at their own prices, and the ticket's
+                        total is the two added up. */}
+                    {giftCardsTotal > 0 ? (
+                      <div className="t-line t-muted">
+                        <span>Gift cards</span>
+                        <span className="amt">{money(giftCardsTotal)}</span>
+                      </div>
+                    ) : null}
                     <hr className="t-rule" />
                     <div className="t-line t-total">
                       <span>Total</span>
                       <span className="amt">
                         {totals.grandTotal !== null
-                          ? money(totals.grandTotal)
+                          ? money(
+                              roundToCents(totals.grandTotal + giftCardsTotal),
+                            )
                           : ""}
                       </span>
                     </div>
@@ -8039,6 +8529,112 @@ export default function SaleScreen(props: {
           with the stop pairing on the confirm because this one IS
           destructive and was asked for deliberately. Scrim and Escape
           cancel; nothing but the confirm button empties. */}
+      {/* T95: the gift card amount box. Pete: "when it's clicked a box
+          pops up where the teacher must enter the amount (there should be
+          preset buttons as well as a number pad)."
+
+          The presets ARE the site's gift card products, because
+          `purchasegiftcard` has no amount field: the value of the card is
+          the product's, so an amount nobody configured in Mindbody is not
+          a card that can be sold. The pad is here as Pete asked, and its
+          Done resolves to a product of exactly the typed amount; when
+          there is none, the box says which amounts this studio sells and
+          adds nothing. One fixed size, the T82 keypad idiom, the T36
+          modal shape. Scrim, Cancel and Escape leave the ticket exactly
+          as it was. */}
+      {giftSell !== null ? (
+        <div className="modal-scrim" role="presentation" onClick={closeGiftSell}>
+          <div
+            className="modal modal-amount modal-pad"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Gift card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="pad-left">
+              <p className="modal-title pad-head">
+                <span className="pad-kicker">Gift card</span>
+                <span className="pad-entered-amt">
+                  {money(giftEntryCents / 100)}
+                </span>
+              </p>
+              <div className="pad-chips gift-sell-chips">
+                {giftProducts.map((product) => (
+                  <button
+                    key={product.id}
+                    className={
+                      giftEntryCents === Math.round(product.cardValue * 100)
+                        ? "pad-chip on"
+                        : "pad-chip"
+                    }
+                    onClick={() => addGiftCard(product)}
+                    title={
+                      product.salePrice === product.cardValue
+                        ? `A ${money(product.cardValue)} gift card`
+                        : `A ${money(product.cardValue)} gift card, ${money(product.salePrice)} to buy`
+                    }
+                  >
+                    {money(product.cardValue)}
+                  </button>
+                ))}
+              </div>
+              <p
+                className={
+                  giftEntryCents > 0 && giftMatch === undefined
+                    ? "pad-change gift-bad"
+                    : "pad-change muted-note"
+                }
+              >
+                {giftEntryCents === 0
+                  ? "Tap an amount, or type one on the pad."
+                  : giftMatch === undefined
+                    ? `Mindbody sells gift cards in set amounts here: ${giftAmountList}.`
+                    : giftMatch.salePrice === giftMatch.cardValue
+                      ? `A ${money(giftMatch.cardValue)} gift card. Done puts it on the ticket.`
+                      : `A ${money(giftMatch.cardValue)} gift card, ${money(giftMatch.salePrice)} to buy. Done puts it on the ticket.`}
+              </p>
+            </div>
+
+            <div className="pad-keys">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0"].map(
+                (k) => (
+                  <button
+                    key={k}
+                    className="pad-key"
+                    onClick={() => giftSellTap(k)}
+                  >
+                    {k}
+                  </button>
+                ),
+              )}
+              <button
+                className="pad-key del"
+                aria-label="Delete last digit"
+                title="Delete"
+                onClick={() => giftSellTap("back")}
+              >
+                <BackspaceIcon />
+              </button>
+            </div>
+
+            <div className="modal-actions">
+              <button
+                className="modal-confirm go"
+                disabled={giftMatch === undefined}
+                onClick={() =>
+                  giftMatch === undefined ? undefined : addGiftCard(giftMatch)
+                }
+              >
+                Done
+              </button>
+              <button className="modal-cancel" onClick={closeGiftSell}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {clearPrompt !== null ? (
         <div className="modal-scrim" role="presentation" onClick={cancelClear}>
           <div

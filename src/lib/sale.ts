@@ -1051,6 +1051,11 @@ export type CheckoutPayment =
   | { type: "GiftCard"; amount: number; cardNumber: string };
 
 /**
+ * T95 exported it under a name that says what it is: `purchasegiftcard`
+ * takes a `PaymentInfo` of exactly this shape (sale.yml:5142, a
+ * CheckoutPaymentInfo), so selling a gift card pays with the same
+ * payment shapes a cart does and there is no second copy of them.
+ *
  * CASING: the spec's Metadata key list spells everything lowercase
  * ("amount", "lastFour"; sale.yml:3934), but the one checkout call known
  * to have PASSED against the live API (the 2026-08-26 probe, design doc
@@ -1060,7 +1065,9 @@ export type CheckoutPayment =
  * and if Mindbody ever rejects an Amount it cannot see, lowercasing THESE
  * KEYS is the first thing to try.
  */
-function paymentPayload(p: CheckoutPayment): Record<string, unknown> {
+export function checkoutPaymentPayload(
+  p: CheckoutPayment,
+): Record<string, unknown> {
   /* T83: the ONE entry whose Metadata goes out as a STRING of JSON with
    * lowercase keys, which is what the spec types Metadata as
    * (sale.yml:3932, `type: string`) and what Mindbody's own gift card
@@ -1167,7 +1174,7 @@ export async function checkoutCart(
       Items: cartItemsPayload(items, spread),
       /* T79: the no-Payments shape carries no Payments key at all. */
       ...(payments.length > 0
-        ? { Payments: payments.map(paymentPayload) }
+        ? { Payments: payments.map(checkoutPaymentPayload) }
         : {}),
       ...(clientId ? { ClientId: clientId } : {}),
       Test: false,
@@ -1264,7 +1271,11 @@ export async function purchaseCredit(
       Test: false,
       LocationId: STUDIO_LOCATION_ID,
       SendEmailReceipt: sendEmailReceipt,
-      PaymentInfo: paymentPayload({ type: "StoredCard", amount, lastFour }),
+      PaymentInfo: checkoutPaymentPayload({
+        type: "StoredCard",
+        amount,
+        lastFour,
+      }),
     },
     clientId,
     ...(actor ? { actor } : {}),

@@ -4588,6 +4588,18 @@ button.sale-for:disabled {
   cursor: default;
 }
 
+/* T95: the sell-a-gift-card box's preset chips. The same 64px .pad-chip
+ * as every other quick cell; they WRAP, because the presets are the
+ * site's own gift card products and a studio may offer five of them. */
+.gift-sell-chips {
+  flex-wrap: wrap;
+}
+
+.gift-sell-chips .pad-chip {
+  flex: 1 0 auto;
+  min-width: 88px;
+}
+
 /* T83: the gift-card modal's number field, the one input in the payment
  * seam. It is not an amount (T35's no-keyboard rule is about money
  * entry): a gift card carries a barcode and the studio's scanner types
@@ -5045,6 +5057,43 @@ textarea.reason-note-field:disabled::placeholder {
   display: block;
   color: var(--warn);
   font-weight: 800;
+}
+
+/* T95: the ids of the cards this sale created. The teacher is holding
+ * blank card stock, and this is what ties it to the balance Mindbody now
+ * holds, so it is the biggest thing on the done screen after the total:
+ * 34px, tabular, letter-spaced so an 8 and a B cannot be confused, in the
+ * accent pairing that means "this is the thing to act on". */
+.pay-done-gifts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 34em;
+}
+
+.pay-done-gift {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 16px;
+  border: 2px solid var(--accent);
+  background: var(--accent-bg);
+}
+
+.pay-done-gift-label {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.pay-done-gift-id {
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
 }
 
 .pay-done-line {

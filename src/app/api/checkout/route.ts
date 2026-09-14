@@ -36,6 +36,15 @@ import {
   giftCardLastFour,
   parseGiftCardNumber,
 } from "@/lib/giftcard";
+import {
+  freshGiftCardId,
+  giftCardProducts,
+  giftCardTotal,
+  logGiftCardSale,
+  parseGiftCardLines,
+  purchaseGiftCard,
+  resolveGiftCardUnits,
+} from "@/lib/giftcardsale";
 import { fileFormulaNote } from "@/lib/formulanote";
 import { dryRunState, mindbodyHttpStatus, target } from "@/lib/mindbody";
 
@@ -298,7 +307,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
-  const parsed = parseCartLines(payload?.items);
+  /* T95: the gift card lines, read before the cart lines because they
+   * change what an EMPTY cart means. A ticket holding only gift cards
+   * has no Mindbody cart at all (a gift card is not a cart item; it
+   * sells through /sale/purchasegiftcard), so `items` may legitimately
+   * be absent, and parseCartLines refuses an empty array. Nothing about
+   * a card's price or value is read from the browser: the product id is
+   * all that travels, and the live list below prices it. */
+  const giftParsed = parseGiftCardLines(payload?.giftCards);
+  if (giftParsed.error !== null) {
+    return NextResponse.json({ error: giftParsed.error }, { status: 400 });
+  }
+  const giftLines = giftParsed.lines;
+  const rawItems: unknown = payload?.items;
+  const cartLinesOmitted =
+    giftLines.length > 0 &&
+    (rawItems === undefined ||
+      rawItems === null ||
+      (Array.isArray(rawItems) && rawItems.length === 0));
+  const parsed = cartLinesOmitted
+    ? ({ items: [] as CartLine[], error: null } as const)
+    : parseCartLines(rawItems);
   if (parsed.error !== null) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
@@ -373,6 +402,69 @@ export async function POST(request: Request) {
       { error: "giftCard applies only to method giftcard" },
       { status: 400 },
     );
+  }
+
+  /* ==================================================================
+   * T95: the shapes a gift card ticket will not be sold in.
+   *
+   * Up here, ahead of the generic checks, because those would refuse the
+   * same requests for the wrong reason: a split's card leg would be
+   * refused for having no client, and a discount would be refused for
+   * having no subtotal to take it off. Both are true and neither is what
+   * a teacher needs to read. Nothing below costs a Mindbody call; the
+   * selling itself is further down, after the cart's own validation.
+   * ================================================================== */
+  if (giftLines.length > 0) {
+    const refuse = (error: string) =>
+      NextResponse.json({ error, stage: "method" }, { status: 409 });
+    if (items.some((line) => line.forClientId != null)) {
+      return refuse(
+        "A gift card and a line bought for another client cannot be on one " +
+          "ticket. The card is a bearer instrument and belongs to whoever " +
+          "holds it, so sell it on its own. Nothing was charged.",
+      );
+    }
+    if (split !== null) {
+      return refuse(
+        "A gift card purchase takes one form of payment. Remove a part of " +
+          "the split, or sell the card on its own. Nothing was charged.",
+      );
+    }
+    if (payload?.discount !== undefined && payload?.discount !== null) {
+      /* A discounted gift card is money given away that then spends like
+       * cash. Pete has not asked for it, and the one place this app gives
+       * money away (the discount dialog) is aimed at passes and retail;
+       * until he does, it is refused rather than half built. */
+      return refuse(
+        "A gift card cannot be discounted or comped: the card is worth its " +
+          "face value whatever was paid for it. Remove the discount, or " +
+          "sell the card on its own. Nothing was charged.",
+      );
+    }
+    if (method === "giftcard") {
+      return refuse(
+        "A gift card cannot buy a gift card. Take cash or a card. Nothing " +
+          "was charged.",
+      );
+    }
+    if (method === "credit") {
+      /* Whether Mindbody lets account credit buy a gift card is unknown:
+       * the spec says nothing, and an account balance turning into a
+       * bearer instrument is exactly the conversion a studio would want
+       * to decide on deliberately. Refused until probed (T95's open
+       * questions), never attempted and then read back from the error. */
+      return refuse(
+        "Account credit cannot buy a gift card yet: whether Mindbody allows " +
+          "it has not been established. Take cash or a card. Nothing was " +
+          "charged.",
+      );
+    }
+    if (method !== "cash" && method !== "storedcard") {
+      return refuse(
+        "A gift card is paid for with cash or a card on file. Nothing was " +
+          "charged.",
+      );
+    }
   }
 
   /* T79: the discount, checked before the token, the reason and the
@@ -685,6 +777,442 @@ export async function POST(request: Request) {
     }
     return null;
   };
+
+  /* ==================================================================
+   * T95: selling a gift card.
+   *
+   * Pete: "A customer needs to be able to buy a gift card ... Gift card
+   * will be an item in the store, and when it's clicked a box pops up
+   * where the teacher must enter the amount ... The price is always the
+   * value, and the ID is set automatically."
+   *
+   * A gift card is NOT a cart item. It sells through
+   * /sale/purchasegiftcard, one call per card, each with its own
+   * PaymentInfo and its own sale in Mindbody's books. So a ticket
+   * holding gift cards checks out as: the ordinary cart (when there are
+   * other lines) PLUS one purchase per card, sequentially, in this one
+   * request, with the T90 posture throughout. Every part is rehearsed
+   * with `Test: true` before any of them is charged; there is no retry,
+   * no roll back and no refund; and the answer names exactly what
+   * landed.
+   *
+   * The barcode id is generated HERE, checked against Mindbody for an
+   * existing card first (the spec says a known id RELOADS that card,
+   * which must never happen by accident) and shown to the teacher
+   * afterwards so they can write it on the card.
+   * ================================================================== */
+  if (giftLines.length > 0) {
+    /* The shape refusals ran above, before the cart's own validation. */
+    /* The live product list, which is where a card's VALUE and PRICE come
+     * from: there is no amount field on the purchase, so the amount IS
+     * the product. A read, so a failure here charged nothing. */
+    let products;
+    try {
+      products = await giftCardProducts();
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error:
+            "Could not read the gift cards Mindbody offers: " +
+            `${errMessage(err)} Nothing was charged.`,
+          stage: "method",
+        },
+        { status: 502 },
+      );
+    }
+    const resolved = resolveGiftCardUnits(giftLines, products);
+    if (resolved.error !== null) {
+      return NextResponse.json(
+        { error: resolved.error, stage: "method" },
+        { status: 409 },
+      );
+    }
+    const units = resolved.units;
+    const cardsTotal = giftCardTotal(units);
+
+    /* The cart half, when the ticket has one: rehearsed exactly as every
+     * other sale is, and its total is Mindbody's. */
+    let cartTotal = 0;
+    if (items.length > 0) {
+      let cartPriced;
+      try {
+        cartPriced = await rehearseCheckout(items, saleClientId);
+      } catch (err) {
+        return NextResponse.json(
+          { error: errMessage(err), stage: "rehearsal" },
+          { status: 502 },
+        );
+      }
+      if (cartPriced.suppressed) {
+        return NextResponse.json({
+          ok: false,
+          suppressed: await suppressionKind(),
+        });
+      }
+      if (cartPriced.disagrees || cartPriced.grandTotal === null) {
+        return NextResponse.json(
+          {
+            error:
+              "Totals disagree between our math and Mindbody's. Nothing was " +
+              "charged; this is a bug to report, not a state to charge from.",
+            stage: "rehearsal",
+          },
+          { status: 409 },
+        );
+      }
+      cartTotal = cartPriced.grandTotal;
+    }
+    /* A gift card carries no tax (the product's own SalePrice is what the
+     * purchase charges), so the ticket's total is Mindbody's cart total
+     * plus each card's price. */
+    const ticketTotal = roundToCents(cartTotal + cardsTotal);
+    if (
+      typeof cashTendered === "number" &&
+      method === "cash" &&
+      cashTendered < ticketTotal
+    ) {
+      return NextResponse.json(
+        { error: "Tendered cash is less than the total." },
+        { status: 400 },
+      );
+    }
+
+    /* Each part is its own Mindbody sale and so its own card charge,
+     * which is what the $10 floor is measured against (the same reading
+     * as assumption P4). A part under it is REFUSED with the reason,
+     * never topped up: the under-$10 credit dance exists for one cart,
+     * and running it per part would turn one tap into a row of seams. */
+    const parts: number[] = [
+      ...(items.length > 0 ? [cartTotal] : []),
+      ...units.map((u) => u.salePrice),
+    ];
+    let cardOnFile: { lastFour: string } | null = null;
+    if (method === "storedcard") {
+      let profile;
+      try {
+        profile = await clientPaymentProfile(clientId as string);
+      } catch (err) {
+        return NextResponse.json(
+          {
+            error:
+              "Could not read the client's payment profile: " +
+              `${errMessage(err)} Nothing was charged.`,
+            stage: "method",
+          },
+          { status: 502 },
+        );
+      }
+      if (!profile.card) {
+        return NextResponse.json(
+          { error: "No card on file for this client.", stage: "method" },
+          { status: 409 },
+        );
+      }
+      if (profile.card.expired) {
+        return NextResponse.json(
+          {
+            error: `The card on file (ending ${profile.card.lastFour}) is expired.`,
+            stage: "method",
+          },
+          { status: 409 },
+        );
+      }
+      const short = parts.find((p) => p < CARD_MINIMUM_USD);
+      if (short !== undefined) {
+        return NextResponse.json(
+          {
+            error:
+              "A gift card is its own sale in Mindbody, so the card is " +
+              "charged once per part of this ticket, and " +
+              `${short.toFixed(2)} is under the $${CARD_MINIMUM_USD} card ` +
+              "minimum. Take cash, or sell the parts separately. Nothing " +
+              "was charged.",
+            stage: "method",
+          },
+          { status: 409 },
+        );
+      }
+      cardOnFile = { lastFour: profile.card.lastFour };
+    }
+    const paymentFor = (amount: number): CheckoutPayment =>
+      method === "storedcard"
+        ? {
+            type: "StoredCard",
+            amount,
+            lastFour: (cardOnFile as { lastFour: string }).lastFour,
+          }
+        : { type: "Cash", amount };
+
+    /* An id per CARD, each checked against Mindbody before it is used.
+     * A read, so nothing has been charged if this fails, and it fails
+     * loudly rather than risk reloading a card someone is holding. */
+    const ids: string[] = [];
+    try {
+      for (let i = 0; i < units.length; i++) ids.push(await freshGiftCardId());
+    } catch (err) {
+      return NextResponse.json(
+        { error: `${errMessage(err)} Nothing was charged.`, stage: "method" },
+        { status: 502 },
+      );
+    }
+
+    /* REHEARSE EVERY PURCHASE FIRST (T90's rule), with the real id and
+     * the real payment, under `Test: true`: a card Mindbody will not sell
+     * stops the whole ticket with nothing spent. It is also the one place
+     * that can catch a product whose value is not what the shelf said. */
+    for (const [i, unit] of units.entries()) {
+      let trial;
+      try {
+        trial = await purchaseGiftCard({
+          productId: unit.productId,
+          purchaserClientId: saleClientId,
+          barcodeId: ids[i] as string,
+          payment: paymentFor(unit.salePrice),
+          test: true,
+          sendEmailReceipt: false,
+        });
+      } catch (err) {
+        return NextResponse.json(
+          {
+            error:
+              `Mindbody refused the ${unit.cardValue.toFixed(2)} gift card: ` +
+              `${errMessage(err)} Nothing was charged.`,
+            stage: "rehearsal",
+          },
+          { status: 502 },
+        );
+      }
+      if (trial.suppressed) {
+        /* Dry run and the write guard both intercept a `Test: true` POST
+         * (the wrapper counts every POST as a write), so this is the
+         * ordinary suppressed answer: nothing was sent, nothing charged. */
+        return NextResponse.json({ ok: false, suppressed: trial.suppressed });
+      }
+      /* The rehearsal's Value is Mindbody's own word on what the card
+       * would be worth. A figure that disagrees with the product record
+       * means the shelf and the site have drifted, and the teacher is
+       * about to hand over a card worth something else. A MISSING value
+       * is not a disagreement: the field is optional in the answer, and
+       * inventing a refusal for an absent field is not this route's job. */
+      if (
+        trial.value !== null &&
+        roundToCents(trial.value) !== unit.cardValue
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              `Mindbody prices that gift card at ${trial.value.toFixed(2)}, ` +
+              `not the ${unit.cardValue.toFixed(2)} on the ticket. Nothing ` +
+              "was charged; this is a bug to report, not a state to charge " +
+              "from.",
+            stage: "rehearsal",
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    /* ---------------- the real calls, in order ---------------- */
+    const startedAt = new Date();
+    /** What landed, in the order it was charged. */
+    const sold: {
+      value: number;
+      price: number;
+      barcodeId: string;
+      saleId: string | null;
+    }[] = [];
+    let cartSale: {
+      total: number;
+      saleId: string | null;
+      cartId: string | null;
+    } | null = null;
+    let failure: { what: string; message: string; ambiguous: boolean } | null =
+      null;
+    let fallbackNote: ActorFallback | null = null;
+    let gone: Response | null = null;
+    let suppressedKind: string | null = null;
+    /* T53: the one confirmation Mindbody gives here. A cart checkout
+     * answers nothing either way; a gift card purchase answers
+     * EmailReceipt, and only its own `true` counts. */
+    let receiptConfirmed: boolean | null = null;
+
+    if (items.length > 0) {
+      try {
+        const run = await runAsActor(session, "/api/checkout", (actor) =>
+          checkoutCart(
+            items,
+            saleClientId,
+            paymentFor(cartTotal),
+            actor,
+            sendEmail,
+          ),
+        );
+        if (run.actorFallback) fallbackNote = run.actorFallback;
+        const outcome = run.result;
+        if (outcome.suppressed) {
+          /* The rehearsal was not suppressed and this was: the guard
+           * judges by client id and nothing changed between them, so this
+           * should be unreachable. Reported as suppression, never as a
+           * sale, and nothing after it runs. */
+          suppressedKind = outcome.suppressed;
+        } else {
+          const numeric = await latestSaleId(saleClientId, startedAt);
+          cartSale = {
+            total: cartTotal,
+            saleId: numeric === null ? outcome.saleId : String(numeric),
+            cartId: outcome.saleId,
+          };
+        }
+      } catch (err) {
+        const ended = staffSessionEndedResponse(err);
+        if (ended) return ended;
+        failure = {
+          what: "the rest of the ticket",
+          message: isAmbiguous(err)
+            ? "it did not answer, so it MAY have gone through. Check the " +
+              "dev drawer or Mindbody before charging again"
+            : errMessage(err),
+          ambiguous: isAmbiguous(err),
+        };
+      }
+    }
+
+    if (failure === null && suppressedKind === null) {
+      for (const [i, unit] of units.entries()) {
+        const id = ids[i] as string;
+        try {
+          const run = await runAsActor(session, "/api/checkout", (actor) =>
+            purchaseGiftCard({
+              productId: unit.productId,
+              purchaserClientId: saleClientId,
+              barcodeId: id,
+              payment: paymentFor(unit.salePrice),
+              actor,
+              test: false,
+              sendEmailReceipt: sendEmail,
+            }),
+          );
+          if (run.actorFallback) fallbackNote = run.actorFallback;
+          const outcome = run.result;
+          if (outcome.suppressed) {
+            suppressedKind = outcome.suppressed;
+            break;
+          }
+          if (outcome.emailReceipt === true) receiptConfirmed = true;
+          /* Mindbody's own BarcodeId when it echoes one, ours when it
+           * does not: what goes on the card has to be what the card is
+           * known by, and Mindbody holds the record. */
+          sold.push({
+            value: outcome.value ?? unit.cardValue,
+            price: outcome.amountPaid ?? unit.salePrice,
+            barcodeId: outcome.barcodeId ?? id,
+            saleId: outcome.saleId === null ? null : String(outcome.saleId),
+          });
+          logGiftCardSale({
+            outcome: "yes",
+            value: outcome.value ?? unit.cardValue,
+            price: outcome.amountPaid ?? unit.salePrice,
+            saleId: outcome.saleId,
+            clientId: saleClientId,
+            staffId: session.staffId,
+          });
+        } catch (err) {
+          const ended = staffSessionEndedResponse(err);
+          if (ended && sold.length === 0 && cartSale === null) {
+            gone = ended;
+            break;
+          }
+          failure = {
+            what: `the ${unit.cardValue.toFixed(2)} gift card`,
+            message: isAmbiguous(err)
+              ? "it did not answer, so it MAY have gone through. Check the " +
+                "dev drawer or Mindbody before charging again"
+              : errMessage(err),
+            ambiguous: isAmbiguous(err),
+          };
+          logGiftCardSale({
+            outcome: failure.ambiguous ? "unknown" : "no",
+            value: unit.cardValue,
+            price: unit.salePrice,
+            saleId: null,
+            clientId: saleClientId,
+            staffId: session.staffId,
+          });
+          /* No retry, no roll back, no refund, and no later card charged
+           * on the strength of a broken one. */
+          break;
+        }
+      }
+    }
+    if (gone) return gone;
+
+    const landedWords: string[] = [
+      ...(cartSale !== null
+        ? [`the ticket (${cartSale.total.toFixed(2)})`]
+        : []),
+      ...sold.map((c) => `a ${c.value.toFixed(2)} gift card`),
+    ];
+
+    if (failure !== null) {
+      const notDone = units
+        .slice(sold.length + 1)
+        .map((u) => `the ${u.cardValue.toFixed(2)} gift card`);
+      return NextResponse.json(
+        {
+          error: [
+            landedWords.length > 0 ? `Sold ${landedWords.join(", ")}.` : "",
+            `${failure.what} was NOT sold: ${failure.message}.`,
+            notDone.length > 0
+              ? `${notDone.join(", ")} was not attempted.`
+              : "",
+            "Nothing was retried or refunded.",
+          ]
+            .filter(Boolean)
+            .join(" "),
+          stage: "checkout",
+          ambiguous: failure.ambiguous,
+          partial: landedWords.length > 0,
+          total: ticketTotal,
+          giftCardsSold: sold,
+          ...(cartSale !== null ? { cartSold: cartSale } : {}),
+        },
+        { status: 502 },
+      );
+    }
+    if (suppressedKind !== null) {
+      return NextResponse.json({
+        ok: false,
+        suppressed: suppressedKind,
+        ...(landedWords.length > 0
+          ? {
+              summary:
+                `Sold ${landedWords.join(", ")}. The rest was not sent to ` +
+                `Mindbody (${suppressedKind}).`,
+              giftCardsSold: sold,
+            }
+          : {}),
+        ...actorFields({
+          actorFallback: fallbackNote,
+          staffSessionEnded: false,
+        }),
+      });
+    }
+    return NextResponse.json({
+      ok: true,
+      method: method as Method,
+      total: ticketTotal,
+      saleId: cartSale?.saleId ?? sold[0]?.saleId ?? null,
+      cartId: cartSale?.cartId ?? null,
+      /* What the done screen shows large, one per card: the id to write
+       * on it and what it is worth. The done screen and the emailed
+       * receipt are the only two places the id is meant to be read. */
+      giftCardsSold: sold,
+      ...(cartSale !== null ? { cartSold: cartSale } : {}),
+      receiptRequested: sendEmail,
+      emailReceipt: sendEmail ? receiptConfirmed : null,
+      ...actorFields({ actorFallback: fallbackNote, staffSessionEnded: false }),
+    });
+  }
 
   /* ==================================================================
    * T90: lines bought for another client.
