@@ -1237,6 +1237,10 @@ function PaymentPanel(props: {
   /** T53: whether a receipt can be emailed, and where. The toggle
    *  below the tender reads it; the Charge tap sends the toggle. */
   receipt: ReceiptState;
+  /** T88: how the check-in that was waiting on this sale went, in
+   *  page.tsx's words. Shown on the done screen: the sale stands either
+   *  way, and a failed check-in must be read where the teacher is. */
+  pendingResult: { ok: boolean; text: string } | null;
 }) {
   const {
     cart,
@@ -1257,6 +1261,7 @@ function PaymentPanel(props: {
     discount: comp,
     onDiscountChange: setComp,
     receipt,
+    pendingResult,
   } = props;
 
   /**
@@ -3763,6 +3768,18 @@ function PaymentPanel(props: {
                   {result.receiptLine}
                 </p>
               ) : null}
+              {pendingResult ? (
+                /* T88: the check-in this sale was for. A failure is a
+                   stop, not a detail: the money moved and the student is
+                   still not in the class. */
+                pendingResult.ok ? (
+                  <p className="pay-done-detail">{pendingResult.text}</p>
+                ) : (
+                  <div className="sale-stop pay-done-pending" role="alert">
+                    {pendingResult.text}
+                  </div>
+                )
+              ) : null}
               {/* Done means the sale is finished, so it goes back to the
                   roster (Pete, fourth live test): the counter's resting
                   screen is the sign-in view, not an empty cart. The
@@ -5805,6 +5822,34 @@ export default function SaleScreen(props: {
   /** T49: a money write answered that the signed-in teacher's token is
    *  no longer valid; page.tsx clears the header control. */
   onStaffSessionEnded?: () => void;
+  /**
+   * T88: every sale the last charge made, so page.tsx can finish a
+   * check-in the teacher started from the pay dialog. Reported for a
+   * completed sale only: a suppressed or refused charge sold nothing and
+   * must never look like it did.
+   */
+  onSold?: (sales: readonly SoldSale[]) => void;
+  /**
+   * T88: the check-in waiting on this sale, set by page.tsx when the
+   * teacher left the pay dialog through "Buy and check in". The screen
+   * rings the pass up once (`nonce` is what makes a second visit to the
+   * same pass arrive), says what the sale finishes with above the
+   * ticket, and reports the pending state DEAD as soon as the ticket
+   * stops holding that pass for that client.
+   */
+  pendingCheckIn?: {
+    nonce: number;
+    clientId: string;
+    itemType: "Product" | "Service" | "Package";
+    itemId: string | number;
+    /** The quiet line, built by page.tsx from the row it captured. */
+    note: string;
+  } | null;
+  /** T88: how the check-in after the sale went, as page.tsx worded it;
+   *  shown on the done screen beside the sale's own outcome. */
+  pendingCheckInResult?: { ok: boolean; text: string } | null;
+  /** T88: the pending check-in cannot happen any more, and why. */
+  onPendingCheckInDrop?: (reason: "cart" | "client") => void;
 }) {
   const {
     open,
@@ -5825,6 +5870,10 @@ export default function SaleScreen(props: {
     onContractPurchased,
     onSaleCompleted,
     onStaffSessionEnded,
+    onSold,
+    pendingCheckIn,
+    pendingCheckInResult,
+    onPendingCheckInDrop,
   } = props;
 
   const [catalog, setCatalog] = useState<CatalogState | null>(null);
@@ -6921,6 +6970,72 @@ export default function SaleScreen(props: {
     },
     [client, addLines],
   );
+
+  /* ------------------------------------------------------------------
+   * T88: the check-in waiting on this sale. page.tsx owns the facts (the
+   * visit, the class, the pass) and does the finishing writes; this
+   * screen only rings the pass up, says what the sale ends with, and
+   * reports the moment the ticket stops being the sale that was
+   * promised. Nothing here writes.
+   * ---------------------------------------------------------------- */
+  const pendingNonce = pendingCheckIn?.nonce ?? null;
+  /** The nonce whose pass this screen has already rung up, so a rerender
+   *  cannot ring it up twice. */
+  const pendingRung = useRef<number | null>(null);
+  /** The nonce whose line has actually been SEEN on the ticket. Until it
+   *  has, an empty cart is the cart before the preload landed and not
+   *  the teacher taking the line out. */
+  const pendingSeen = useRef<number | null>(null);
+  /** A settled sale empties the cart from inside this component: that is
+   *  the pending check-in being earned, not the ticket being changed. */
+  const pendingSold = useRef(false);
+  useEffect(() => {
+    /* T88 review: reset on EVERY nonce change, not only on the way back
+       to null. `pendingSold` is set by any completed sale, pending or
+       not, and a plain Buy sale between two check-ins used to leave it
+       true with the nonce already null: the next pending check-in then
+       had its drop detection switched off for good, so taking the pass
+       back out of the ticket said nothing. */
+    pendingRung.current = null;
+    pendingSeen.current = null;
+    pendingSold.current = false;
+  }, [pendingNonce]);
+  useEffect(() => {
+    if (!pendingCheckIn || catalog === null) return;
+    if (pendingRung.current === pendingCheckIn.nonce) return;
+    pendingRung.current = pendingCheckIn.nonce;
+    const want = itemKey(pendingCheckIn.itemType, pendingCheckIn.itemId);
+    const item = [
+      ...catalog.passes,
+      ...catalog.packages,
+      ...catalog.products,
+    ].find((i) => itemKey(i.type, i.id) === want);
+    if (!item) {
+      /* The catalog this screen loaded does not sell it (a refresh
+         between the two screens): nothing is rung up and nothing will be
+         checked in, which the roster is told rather than left to a line
+         that never appears. */
+      onPendingCheckInDrop?.("cart");
+      return;
+    }
+    addLines([{ item, quantity: 1 }]);
+  }, [pendingCheckIn, catalog, addLines, onPendingCheckInDrop]);
+  useEffect(() => {
+    if (!pendingCheckIn || pendingSold.current) return;
+    const want = itemKey(pendingCheckIn.itemType, pendingCheckIn.itemId);
+    const has = cart.some(
+      (l) => itemKey(l.item.type, l.item.id) === want && !l.forClient,
+    );
+    if (has) {
+      pendingSeen.current = pendingCheckIn.nonce;
+      if ((client?.id ?? null) !== pendingCheckIn.clientId) {
+        onPendingCheckInDrop?.("client");
+      }
+      return;
+    }
+    if (pendingSeen.current !== pendingCheckIn.nonce) return;
+    onPendingCheckInDrop?.("cart");
+  }, [pendingCheckIn, cart, client, onPendingCheckInDrop]);
 
   const bumpQuantity = useCallback((key: string, delta: number) => {
     setCart((lines) =>
@@ -8272,7 +8387,11 @@ export default function SaleScreen(props: {
             visible={inPay}
             ticketSlot={ticketSlot}
             notice={payNotice}
-            onSold={() => {
+            onSold={(sales) => {
+              /* T88: the pending check-in is earned by this sale, so the
+                 cart clearing below is not the ticket being changed. */
+              pendingSold.current = true;
+              onSold?.(sales);
               setCart([]);
               /* T51: the walk-in declaration was for the sale just made. */
               setWalkIn(false);
@@ -8288,6 +8407,7 @@ export default function SaleScreen(props: {
             discount={armedDiscount}
             onDiscountChange={setArmedDiscount}
             receipt={receipt}
+            pendingResult={pendingCheckInResult ?? null}
           />
 
           {/* CART, the right column (rail, grid, cart is the layout of
@@ -8297,6 +8417,15 @@ export default function SaleScreen(props: {
               are not selectable. */}
           <div className="sale-left">
               <div className="ticket">
+            {/* T88: what this sale finishes with, above the ticket and
+                quiet: the teacher chose the pass in the pay dialog, and
+                the sale is the ordinary one. */}
+            {pendingCheckIn ? (
+              <p className="sale-pending" role="status">
+                {pendingCheckIn.note}
+              </p>
+            ) : null}
+
             {/* T39.4: 1a's ticket. A head line, the count beside it, and
                 no studio heading: the teacher knows where she is. */}
             <div className="t-head">

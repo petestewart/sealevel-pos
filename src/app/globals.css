@@ -3050,6 +3050,18 @@ button.chip.action:active {
   font-weight: 600;
 }
 
+/* T88: what the sale is going to finish with ("Then check Ben Kim in
+ * to Hot 26 Fusion at 9:00 AM"), above the ticket. Quiet: it is a
+ * reminder of a decision already made, not a status and not an action,
+ * so it takes the muted token and an accent rail rather than a fill. */
+.sale-pending {
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  color: var(--muted);
+  font-size: 16px;
+}
+
 .sale-stop {
   margin: 8px 0;
   padding: 10px 12px;
@@ -3058,6 +3070,13 @@ button.chip.action:active {
   color: var(--stop);
   font-size: 16px;
   font-weight: 600;
+}
+
+/* T88: a check-in that failed after its sale, on the done screen. The
+ * stop block's own treatment, with room under the receipt lines. */
+.pay-done-pending {
+  margin: 12px 0 0;
+  text-align: left;
 }
 
 /* The cart lines scroll internally, so the totals and the charge button
