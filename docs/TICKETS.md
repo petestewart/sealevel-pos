@@ -10305,6 +10305,15 @@ payment column instead. And the mid-charge lock is code only
 (`disabled={charging}` on both Buy cells, the lock Attach and detach
 carry); no charge was held open to tap through.
 
+T92 review, 2026-09-14: **the dynamic cell is gone.** T92 stopped a
+walk-in ticket from holding a pass of its own, so the only pass such a
+ticket can hold is one bought FOR another client, which already has an
+owner and needs no new client: the cell's own reason for appearing had
+become the one case it was wrong for. The door Pete asked for at that
+moment is the T92 pass-owner modal, whose second option is New client.
+The two entries this ticket built (the sign-in bar and the Buy header)
+are untouched.
+
 One thing to know, which is the design working as drawn, not a bug: on
 the sign-in page a query of three letters opens the results modal over
 the bar, so the bar's cell (and its prefill) is reachable with the modal
@@ -10632,6 +10641,91 @@ Deliberately not done, and what to know:
   in a ref until the next pass tap replaces them. Nothing reads them in
   between: only a pick against `PENDING_PASS_KEY` can, and only that
   modal can ask for one.
+
+### Review
+
+Read the build against the brief, T41's house client, T90's recipient
+lines and T91's three doors, then drove it on the ticket's own harness
+(mock Mindbody on :4592, `next start` on :3092) with two added files in
+the reviewer's scratch dir: a Playwright pass for the held pass and the
+owner-less edges, and one for the bundle, which needed a bundle
+configured to exist at all.
+
+Held, checked against the built app: the modal's copy, its fixed 540px,
+radius 0, two 68px options at 17px, X, scrim and Escape each adding
+nothing, in both palettes at 1194x834 and 834x1194; retail on a walk-in
+cart still rings up with no question and still checks out on the house
+client; "Another client" lands the pass for the picked recipient and
+checks out as two carts, the pass under the recipient's id; "New client"
+creates once, attaches and lands the pass as theirs; the detach refusal
+names the lines and keeps the client; `/api/price-cart` and
+`/api/checkout` both refuse a Service and a Package with no owner, in
+words, at the cost of zero Mindbody calls, when curled straight at the
+route past the screen; a Contract is not a cart line at all
+(`CartLine.type` is Product, Service or Package), so "client-only
+already" is structural rather than a check; and T94's Account tile is
+client-only anyway, so nothing about the walk-in rule touches it.
+
+Fixed:
+
+- **The held pass outlived the question that held it.** The builder
+  recorded this as a decision; it is not one. A cancelled New client
+  form, a refused create and a suppressed create all left the items in
+  the ref, and the effect that lands them fires on ANY later attach, so
+  the pass rang itself up on the next person attached by hand, minutes
+  later, for a teacher who had cancelled out of it. Both doors are
+  page.tsx's layers above this screen, so the one effect now lands the
+  items only while the New client branch is the one waiting and drops
+  them the moment no layer is left above the sale: form cancelled, create
+  refused or suppressed, recipient search dismissed. Nothing enters the
+  cart until it has a home, and nothing waits for a home nobody is still
+  choosing.
+- **T90's "Remove client" could still make an owner-less pass.** On a
+  walk-in ticket, a pass bought for Alison had a control that put it back
+  on "the sale's client" when there is no such client: one tap and the
+  ticket held exactly the line T92 exists to prevent, left to fail at Pay
+  and at the route. It is refused in the ticket's own note slot instead,
+  naming the pass and the two ways out, and the control's aria-label says
+  the same rather than promising a client it cannot give. Quantity bumps
+  on such a line are therefore unreachable, which is what the brief asked
+  after.
+- **T91's dynamic "New client" cell is gone**, with the reason in both
+  tickets. T92 took its case away: a walk-in ticket can no longer hold a
+  pass of its own, so the only pass on one is a pass for somebody else,
+  which already has an owner and needs no new client. The cell would have
+  appeared exactly where it was wrong. The moment Pete asked it for ("a
+  dynamic option if a pass is added to a Walk-in cart") is now the
+  pass-owner modal itself, which offers New client as one of its two
+  doors, and the walk-in card's X still leads back to the row's own New
+  client cell.
+- **A bundle was invisible unless something was starred.** Older than
+  T92, found reaching for its bundle case: the Favorites shelf drops a
+  section with no items, and the bundle cards render INSIDE that
+  section's grid, so a configured bundle with no starred item drew
+  nothing at all, not even the empty line. The guard now counts the
+  bundle slot as content.
+- One CSS rule: `.modal-passowner` was a byte-for-byte copy of
+  `.modal-walkin`. One selector list, one comment.
+
+Verified after the fixes: the builder's own `ui.mjs` and `api.mjs` still
+pass whole; a cancelled form, a refused create, a suppressed create and a
+dismissed recipient search each leave the cart empty and keep it empty
+through a later attach by hand; "Remove client" on a walk-in's pass line
+is refused in words with the line's owner intact and Pay still enabled; a
+ticket whose only pass is somebody else's still detaches; the walk-in card
+carries no New client cell with a pass on the ticket; and a bundle of a
+pass plus two waters on a walk-in cart asks the same question, adds
+nothing (not even its retail) on Escape, and on "Another client" lands
+the pass for the recipient and both waters on the ticket, while the same
+bundle with a client attached rings up whole with no question. The bundle
+config used for that is the reviewer's, not committed:
+`src/lib/bundles.ts` ships empty as it always did. Typecheck and build
+clean.
+
+Left alone: nothing here was checked against live Mindbody, and the rule
+is still ours rather than Mindbody's (it would sell a pass onto the house
+client quite happily). The refusal's words are the same on both routes and
+on the Pay line, which is deliberate: one sentence for one rule.
 
 ## T94. The account can be charged past its balance, with the teacher's PIN (Pete, 2026-09-14)
 

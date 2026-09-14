@@ -6726,21 +6726,30 @@ export default function SaleScreen(props: {
     setLineRecipient(recipientPick.lineKey, recipientPick.client);
   }, [recipientPick, setLineRecipient, addLines, forgetHeldPass]);
 
-  /* T92: the New client answer. The form is page.tsx's and attaches the
-     person it creates, so the held items ride in on the attach, as the
-     payer's own lines: they are the client now. `heldForNewClient` marks
-     that branch, so the OTHER branch (the recipient search) can never
-     land its items on an attach instead. A teacher who cancels the form
-     and attaches somebody by hand still gets the pass, which is the same
-     question answered a different way. */
+  /* T92: the answer, or the lack of one. The New client form attaches the
+     person it creates, so on that branch the held items ride in on the
+     attach, as the payer's own lines: they are the client now.
+     `heldForNewClient` marks that branch, so the OTHER branch (the
+     recipient search) can never land its items on an attach instead.
+
+     T92 review: and if no answer comes, the held items are DROPPED. Both
+     doors live in page.tsx and are layers above this screen, so with no
+     layer left above us the question was closed without being answered:
+     the form was cancelled, the create was refused or suppressed, or the
+     recipient search was dismissed. Held items that outlive their own
+     question land on whoever is attached next, which is a pass rung up by
+     somebody who never asked for it. Nothing enters the cart until it has
+     a home, and nothing waits for a home nobody is still choosing. */
   useEffect(() => {
-    if (client === null) return;
-    if (!heldForNewClient.current) return;
-    const held = heldPass.current;
-    forgetHeldPass();
-    if (!held) return;
-    addLines(held);
-  }, [client, addLines, forgetHeldPass]);
+    if (heldPass.current === null) return;
+    if (heldForNewClient.current && client !== null) {
+      const held = heldPass.current;
+      forgetHeldPass();
+      addLines(held);
+      return;
+    }
+    if (!modalAbove) forgetHeldPass();
+  }, [client, modalAbove, addLines, forgetHeldPass]);
 
   /**
    * T38: how many receipt rows are clipped below the scroll box. Pete:
@@ -7355,13 +7364,6 @@ export default function SaleScreen(props: {
    * lines never depended on who is paying.
    */
   const selfPassLines = cart.filter((l) => isPassItem(l.item) && !l.forClient);
-  /** T91: does the ticket hold a pass? A Service is a pricing option and
-   *  a Package is a bundle of them: both belong to a person, which is why
-   *  the walk-in card's New client ramp appears for them and not for
-   *  retail. */
-  const hasPassLine = cart.some(
-    (l) => l.item.type === "Service" || l.item.type === "Package",
-  );
   /** T39.3: quantity per shelf card, from the cart's own keys; the count
    *  pill reads it and nothing is fetched. */
   const inCart = new Map(cart.map((l) => [l.key, l.quantity]));
@@ -7602,22 +7604,18 @@ export default function SaleScreen(props: {
                 <span className="sale-for-label">Sale for</span>
                 <span className="sale-for-name">Walk-in sale</span>
               </span>
-              {/* T91 (Pete): "It also will be a dynamic option if a pass
-                  is added to a Walk-in cart." A walk-in buying a pass has
-                  to become a client for the pass to have an owner, so the
-                  ramp appears exactly then, and never for a retail-only
-                  walk-in cart (a bottle of water needs no client). */}
-              {hasPassLine ? (
-                <button
-                  className="sale-walkin sale-new-client"
-                  disabled={charging}
-                  title="Register this walk-in as a new student"
-                  onClick={onRequestNewClient}
-                >
-                  <PersonPlusIcon />
-                  <span>New client</span>
-                </button>
-              ) : null}
+              {/* T91's dynamic New client cell stood here ("It also will
+                  be a dynamic option if a pass is added to a Walk-in
+                  cart"): a walk-in holding a pass had to become a client
+                  for the pass to have an owner. T92 review removed it,
+                  because T92 took its case away. A walk-in ticket can no
+                  longer hold a pass of its own at all, so the only pass on
+                  one is a pass bought FOR somebody else, which already has
+                  an owner and needs no new client; the cell would have
+                  appeared exactly where it was wrong. The moment Pete
+                  described is now the pass-owner modal, which offers New
+                  client as one of its two doors, and the walk-in card's X
+                  still leads back to the row's own New client cell. */}
               <button
                 className="row-icon sale-for-clear"
                 aria-label="Cancel the walk-in sale"
@@ -7857,6 +7855,18 @@ export default function SaleScreen(props: {
                 ) : (
                   <>
                     {shelfSections.map((section, index) => {
+                      /* T92 review: the bundle cards below render into
+                         THIS section's grid, so it is not an empty
+                         section when there are any. A Favorites shelf
+                         with bundles configured and nothing starred drew
+                         nothing at all: the empty check below returned
+                         null before the cards could render, so a bundle
+                         was invisible until somebody happened to star an
+                         item. */
+                      const bundleSlot =
+                        onFavorites &&
+                        index === shelfSections.length - 1 &&
+                        resolvedBundles.length > 0;
                       const grid = (
                         <div
                           className="shelf-grid"
@@ -7899,7 +7909,11 @@ export default function SaleScreen(props: {
                          uppercase muted idiom. A block with nothing in
                          it (a section's All view never has one, but a
                          child list can) draws nothing. */
-                      if (section.items.length === 0 && section.contracts.length === 0) {
+                      if (
+                        section.items.length === 0 &&
+                        section.contracts.length === 0 &&
+                        !bundleSlot
+                      ) {
                         return null;
                       }
                       return section.label === null ? (
@@ -8141,20 +8155,46 @@ export default function SaleScreen(props: {
                             className={line.forClient ? "t-for on" : "t-for"}
                             disabled={charging}
                             aria-label={
-                              line.forClient
-                                ? `Remove ${line.forClient.name} from ${line.item.name}; it goes back to the sale's client`
-                                : `Buy ${line.item.name} for another client`
+                              !line.forClient
+                                ? `Buy ${line.item.name} for another client`
+                                : client === null && isPassItem(line.item)
+                                  ? /* T92 review: there is no sale's client
+                                       to give a pass back to. */
+                                    `${line.item.name} stays on ${line.forClient.name}; a walk-in sale cannot hold a pass for nobody`
+                                  : `Remove ${line.forClient.name} from ${line.item.name}; it goes back to the sale's client`
                             }
                             title={
                               line.forClient
                                 ? "Remove client"
                                 : "Buy this for another client"
                             }
-                            onClick={() =>
-                              line.forClient
-                                ? setLineRecipient(line.key, null)
-                                : onRequestRecipient?.(line.key, false)
-                            }
+                            onClick={() => {
+                              /* T92 review: with nobody attached, taking
+                                 the recipient off a PASS leaves the line
+                                 with no owner at all, and the house
+                                 client is not one. Refused in words here
+                                 rather than left to fail at Pay: the
+                                 teacher removes the line, or keeps the
+                                 client it was bought for. */
+                              if (
+                                line.forClient &&
+                                client === null &&
+                                isPassItem(line.item)
+                              ) {
+                                setCartNotice(
+                                  `${line.item.name} is a pass, so it stays on ` +
+                                    `${line.forClient.name}: a walk-in sale ` +
+                                    `cannot hold a pass for nobody. Remove the ` +
+                                    `line, or attach a client to this sale.`,
+                                );
+                                return;
+                              }
+                              if (line.forClient) {
+                                setLineRecipient(line.key, null);
+                                return;
+                              }
+                              onRequestRecipient?.(line.key, false);
+                            }}
                           >
                             {line.forClient ? "Remove client" : "Other Client"}
                           </button>
