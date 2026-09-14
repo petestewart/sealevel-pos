@@ -10171,3 +10171,151 @@ Two ways the number escaped, both fixed:
 
 Also moved: a `.gift-number` CSS block had been inserted between the
 "The keys" comment and the `.pad-keys` rule it describes.
+
+## T93. A card typed at Pay: for this sale, or stored on the client (Pete, 2026-09-14)
+
+Pete, on the Pay screen:
+
+> On the Pay screen, the Card button should have a number keypad icon on
+> its right. this will open a credit card manual entry modal (same as the
+> 'Replace card on file' modal). if there is a client currently selected,
+> they can add or replace this as a stored card, or just use it
+> temporarily. If it is a walk in sale, they can just use it for the sale
+> (be sure all required fields are visible for this feature, if there are
+> any additional ones not currently captured in the form).
+>
+> Also, if a client is currently selected who does not have a stored
+> card, there should be text in the Card button that indicates there is
+> no stored card.
+
+### The design
+
+**The Card tile** keeps its meaning and gains a 44px keypad square at its
+right edge: a SIBLING button in the same cell, never nested inside the
+tile (a button inside a button is not a control). The tile body still
+means the stored card and greys with its reason; the keypad is live in
+every state the tile is not, because "no card on file" and "no client at
+all" are exactly when a card is handed across the counter. With an
+attached client and no stored card the tile reads "Card" with the reason
+line "No card on file", which is what Pete asked for and which the
+existing `cardReason` already said.
+
+**The modal** is T84's CardModal in a second mode ("same as the 'Replace
+card on file' modal", so it is the same component): title "Card for this
+sale", the four T84 fields PLUS the CVV, which the spec lists for a
+charge and which T84 omitted because Mindbody's `ClientCreditCard` model
+has none. Street address, city and state are optional, behind one
+"Billing address" disclosure, since the studio's processor may want them
+and nobody should have to type an address to take a payment. For an
+attached client there is a 64px two-cell choice, "Use once" or "Use and
+keep on file" ("Use and replace on file" when one is already there); on a
+walk-in cart there is no choice, because a card kept on the house client
+would belong to nobody.
+
+The box is ONE size in every state: the fields region is a fixed-height
+scroll area, so opening the disclosure does not grow the dialog under a
+finger (T68's rule).
+
+**The primary is "Use this card" and it CHARGES NOTHING.** It hands the
+card up to the payment surface as the tender line "Card (typed) ending
+1234", exactly as the gift card modal hands up its number (T83): held in
+`SaleScreen` state alone, dropped whenever the line is removed, the cart
+changes, the client changes, pay mode is left, or the sale completes (one
+effect, the same one shape as the gift card's). Finalize Sale is still
+the one tap that moves money, single flight, and a typed card can be one
+leg of a split with cash or a gift card.
+
+**The $10 floor** applies to a typed card, whole sale or leg. It is a
+card-processing floor and does not care whose card it is; unlike the
+stored card there is no credit-purchase path under it (that needs a
+client and a card on file), so it is a plain refusal with nothing
+charged, greyed in the browser with the same words.
+
+### The Mindbody mechanism
+
+A `CreditCard` entry in `checkoutshoppingcart`'s Payments array. The
+spec's key list for that type (`sale.yml:3934`) is lowercase (amount,
+creditCardNumber, expMonth, expYear, cvv, billingName, billingAddress,
+billingCity, billingState, billingPostalCode, saveInfo, cardId); the
+`CreditCardInfo` model (`sale.yml:2867`) spells them PascalCase. What
+ships is the PascalCase OBJECT shape `paymentPayload` already uses for
+StoredCard, the one shape a live checkout is known to have passed with,
+with the keys as `CreditCardInfo` spells them.
+
+`saveInfo` is NOT sent. "And keep on file" goes through T84's proven
+store instead (one `/client/updateclient` with `ClientCreditCard`, then a
+read-back), and it runs AFTER the charge succeeds: a refused charge
+stores nothing, and a stored card never precedes a charge. The order is
+the point. The cost is that the store can fail on its own after a charge
+that stood, and that is reported rather than hidden: `cardKept: false`
+with `cardKeptError`, rendered as "The card was not kept on file: ...".
+
+### Secrecy
+
+The number and the CVV live in the modal's state and in the one request.
+`src/lib/calllog.ts` now names `CreditCardNumber` beside `CardNumber` in
+its secret-key rule (CVV was already listed, against exactly this day),
+adds `creditCardNumber` to the literals `record()` lifts out of a call's
+own request and strikes out of everything it records, and adds a
+CONTEXT rule for a CVV quoted in free text: a CVV is three or four
+digits, so it cannot be matched by shape without mangling every amount
+and id in a message, but "cvv 737" in a refusal can be matched by the
+word in front of it. `Amount`, `ExpMonth` and `ExpYear` were added to the
+request keep-list, because a payment record with the amount struck out
+diagnoses nothing.
+
+### Open questions, all pending a live probe
+
+- **The payment metadata's casing.** PascalCase object is what ships. If
+  Mindbody refuses it, the by-hand thing to try is the spec's lowercase
+  key set, possibly as a JSON string like the gift card's. Never an
+  automatic retry: a money call must not quietly send itself again in a
+  different shape.
+- **Whether the CVV is wanted at all.** The spec lists `cvv`/`CVV` for
+  this payment type, so it is asked for and sent. If the processor does
+  not want it, the field comes out.
+- **Whether the billing postal code is required.** The checkout RESPONSE
+  carries `IsBillingPostalCodeRequired` (`sale.yml:5721`), which says the
+  site's answer is only knowable from a real call. It is required by this
+  form either way, since T84 already asks for it.
+- **Whether the street address, city and state are wanted.** Optional and
+  hidden until then; sent only when filled, never blank.
+- **Whether `saveInfo` would have worked.** Deliberately untried: the T84
+  path is proven and orders the store after the charge.
+- **`GET /sale/acceptedcardtypes`** (`sale.yml:22`) is not called. The
+  form does not ask which network a card is on, and Mindbody refuses a
+  card type the site does not take in words.
+
+### Build notes
+
+- `src/lib/cardrules.ts` is new: Luhn, the expiry test and the digit
+  strip, as a PURE module. They were in `clientcard.ts` (which imports
+  `mindbody()`, so the browser cannot have it) and copied by hand into
+  CardModal; T93 needs them in a third place, so there is now one copy
+  and `clientcard.ts` re-exports them.
+- `src/lib/typedcard.ts` is new: the `TypedCard` type and
+  `parseTypedCard`, the one validator the modal greys its button with and
+  the route refuses by.
+- Touched: `CardModal.tsx` (the second mode), `SaleScreen.tsx` (the
+  keypad square, the `typedcard` tender source, the held card, the
+  charge), `src/app/api/checkout/route.ts` (the method, the leg, the
+  keep), `src/lib/sale.ts` (the `CreditCard` payment),
+  `src/lib/calllog.ts` (the redaction), `globals.css` (tokens only, both
+  palettes).
+- Deliberately NOT done: no swipe or reader path (`EncryptedTrackData`
+  and `TrackData` exist in the spec and are a different ticket); no
+  `cardId` (that is the stored card, which has its own tender); a typed
+  card and a stored card cannot both be in one payment, greyed with
+  "Already paying by card", since two card charges in one sale is
+  nothing anybody asked for.
+- Verified on the ticket's harness (mock Mindbody on :4593, `next start`
+  on :3093): the exact Metadata keys on the wire; the store after the
+  charge and never before; keep refused for a walk-in and for the house
+  client; a refused charge storing nothing; a store that failed after a
+  charge that stood reported in words; the $10 floor; suppression as
+  suppression; two synchronous taps on Finalize sending one request; and
+  the leak grep (the number and the CVV absent from the call log in both
+  directions including a refusal that quotes both back, from every route
+  answer, from the server log, from the document, from localStorage,
+  from sessionStorage and from the URL). Both palettes, both
+  orientations.

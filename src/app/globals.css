@@ -6628,3 +6628,121 @@ textarea.reason-note-field:disabled::placeholder {
 .modal-scrim.over-profile {
   z-index: 32;
 }
+
+/* T93 -------------------------------------------------------------------
+ * A card typed at the counter for THIS sale (Pete: "the Card button
+ * should have a number keypad icon on its right. this will open a credit
+ * card manual entry modal (same as the 'Replace card on file' modal)").
+ * Tokens only, both palettes by the variable swap; radius 0; the 64px
+ * floor for every control and 44px for the icon square (the icon idiom).
+ */
+
+/* The keypad square at the Card tile's right edge. The tile is a button,
+ * so this cannot be nested inside it: the cell is a plain box holding two
+ * siblings, the tile filling it and this sitting on top at the right. It
+ * stays LIVE when the tile is off, which is the point of it: a client with
+ * no card on file, or a walk-in with no client at all, can still be
+ * charged on a card they hand over. */
+.pay-tile-cell {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.pay-tile-cell .pay-tile {
+  flex: 1 1 auto;
+  /* Room for the 44px square and its gutter, so a long reason line
+   * ("Checking for a card...") cannot run under it. */
+  padding-right: 64px;
+}
+
+.pay-keypad {
+  position: absolute;
+  top: 26px;
+  right: 10px;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.pay-keypad:active:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.pay-keypad:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* In the payment on a typed card: the accent pairing, so the tile's own
+ * selected marker is not the only thing that says where the money is
+ * going. */
+.pay-keypad.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* The modal in sale mode. The fields region is ONE fixed height that
+ * scrolls, so the box is exactly the same size whether the billing
+ * disclosure is open or shut and whichever mode it is in: T68's rule
+ * (a dialog must not change size under a finger), kept for a form that
+ * has an optional half. */
+.modal-card-sale .card-body {
+  height: 380px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The "Billing address" disclosure: a quiet full-width 64px row, not a
+ * primary. It reveals three optional fields and hides them again. */
+.card-disclose {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  margin: 0 0 12px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.card-disclose:active:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.card-disclose-note {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* The two-cell choice: use the card once, or keep it on file as well.
+ * The .pad-chip pairing, 64px cells, the chosen one in the accent. */
+.card-keep {
+  margin: 4px 0 0;
+}
+
+.card-keep-label {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--muted);
+}

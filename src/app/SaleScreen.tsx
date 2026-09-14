@@ -12,7 +12,9 @@ import {
 import { createPortal } from "react-dom";
 
 import { actorFallbackLine } from "./actornote";
+import CardModal from "./CardModal";
 import { toggleTheme } from "./theme";
+import type { TypedCard } from "@/lib/typedcard";
 
 import {
   COMP_DETAIL_MAX,
@@ -770,6 +772,22 @@ function GiftCardIcon() {
   );
 }
 
+/** T93: the number keypad at the Card tile's right edge (Pete: "the Card
+ *  button should have a number keypad icon on its right"). Twelve squares
+ *  in a 3x4 grid, drawn with the Icon stroke so it reads as a keypad at
+ *  44px and inherits its colour from the button it sits in. */
+function KeypadIcon() {
+  return (
+    <Icon size={22}>
+      {[3, 9, 15].map((x) =>
+        [3, 8.5, 14, 19.5].map((y) => (
+          <rect key={`${x}-${y}`} x={x} y={y} width="3" height="3" />
+        )),
+      )}
+    </Icon>
+  );
+}
+
 function AccountIcon() {
   return (
     <Icon d="M4 21c0-4 3.6-6 8-6s8 2 8 6" size={24}>
@@ -834,7 +852,17 @@ interface ReceiptState {
  *  "giftcard", the one source whose line cannot be added by a single
  *  tap: it needs a number and a balance read first (the gift-card
  *  modal), and only then becomes an ordinary line. */
-type TenderSource = "storedcard" | "credit" | "cash" | "giftcard";
+type TenderSource =
+  | "storedcard"
+  /** T93: a card TYPED at the counter for this sale. Like "giftcard" its
+   *  line cannot be added by a single tap (it needs the number, the
+   *  expiry, the CVV and the rest first), and it has no tile of its own:
+   *  it is the keypad square inside the Card tile, which is live even
+   *  when the tile body is not (no card on file, or no client at all). */
+  | "typedcard"
+  | "credit"
+  | "cash"
+  | "giftcard";
 
 /** Keep in sync with src/lib/giftcard.ts. Mirrored rather than
  *  imported: that module reaches Mindbody, and nothing server-side
@@ -862,6 +890,20 @@ interface GiftCardHeld {
   number: string;
   lastFour: string;
   balanceCents: number;
+}
+
+/**
+ * T93: the card typed at the counter, held for as long as its tender line
+ * is. The whole card is a secret and lives ONLY here, in this component's
+ * state: it goes to /api/checkout with the charge and nowhere else, and
+ * `lastFour` is the only part that ever reaches the screen. It is dropped
+ * whenever the line goes -- the line removed, the cart changed, the
+ * client changed, pay mode left, the sale done -- by the same effect that
+ * drops a gift card.
+ */
+interface TypedCardHeld {
+  card: TypedCard;
+  lastFour: string;
 }
 
 /**
@@ -1332,6 +1374,12 @@ function PaymentPanel(props: {
   /** T83: the gift card the tender holds, and the modal's draft. */
   const [giftCard, setGiftCard] = useState<GiftCardHeld | null>(null);
   const [gift, setGift] = useState<GiftDraft | null>(null);
+  /** T93: the typed card the tender holds, and whether its modal is
+   *  open. The modal has no draft state here: it holds what is being
+   *  typed itself and hands up a validated card, so a cancelled entry
+   *  leaves this component with nothing. */
+  const [typedCard, setTypedCard] = useState<TypedCardHeld | null>(null);
+  const [cardEntry, setCardEntry] = useState(false);
   /** Digits typed since the modal opened, accumulating into CENTS
    *  (2-0-0-0 reads $20.00), exactly as the cash tender field did. Empty
    *  means nothing was typed, and Done then leaves the line as it was. */
@@ -1426,6 +1474,14 @@ function PaymentPanel(props: {
     onModalChange(false);
   }, [onModalChange]);
 
+  /** T93: close the typed-card modal, reporting the close upward exactly
+   *  as dismissPad does. A typed card already IN the payment is
+   *  untouched: this closes an editor, it does not remove a tender. */
+  const dismissCardEntry = useCallback(() => {
+    setCardEntry(false);
+    onModalChange(false);
+  }, [onModalChange]);
+
   /** Close the reason dialog with nothing armed and the draft gone, and
    *  report the close upward exactly as dismissPad does: the dialog owns
    *  Escape while open, so a reset that closes it must not leave
@@ -1465,8 +1521,10 @@ function PaymentPanel(props: {
      * discount change, a client change) is covered without being
      * touched. */
     dismissGift();
+    /* T93: and the typed card, the same way and for the same reason. */
+    dismissCardEntry();
     closeReason();
-  }, [dismissPad, dismissGift, closeReason, setComp]);
+  }, [dismissPad, dismissGift, dismissCardEntry, closeReason, setComp]);
 
   /* T79: the discount is cart state, so a change to it (armed, removed,
    * or a different figure) moves the total under every tender line the
@@ -1555,6 +1613,8 @@ function PaymentPanel(props: {
     dismissPad();
     /* T83: and the gift-card modal, whose draft is not a tender. */
     dismissGift();
+    /* T93: and the typed-card modal, for the same reason. */
+    dismissCardEntry();
     /* T43: a reason dialog left open by a hold that landed just before
      * Back to items goes the same way, with its draft. */
     closeReason();
@@ -1562,7 +1622,15 @@ function PaymentPanel(props: {
       setComp(null);
       setCompCleared(true);
     }
-  }, [visible, discounted, dismissPad, dismissGift, closeReason, setComp]);
+  }, [
+    visible,
+    discounted,
+    dismissPad,
+    dismissGift,
+    dismissCardEntry,
+    closeReason,
+    setComp,
+  ]);
 
   /* Source availability. An unavailable source renders greyed WITH the
    * reason, never hidden (PLAN 2.2: "account credit ($12) greyed out
@@ -1631,6 +1699,17 @@ function PaymentPanel(props: {
     if (lines.some((l) => l.source === "giftcard")) return;
     setGiftCard(null);
   }, [lines, giftCard]);
+
+  /* T93: the typed card belongs to its LINE, exactly as the gift card
+   * does. Whatever removed that line -- its x, a cart edit, a client
+   * change, a discount change, a completed sale -- the card goes with it,
+   * so no PAN outlives the tender it was typed for and the next Card tap
+   * starts from nothing. */
+  useEffect(() => {
+    if (typedCard === null) return;
+    if (lines.some((l) => l.source === "typedcard")) return;
+    setTypedCard(null);
+  }, [lines, typedCard]);
 
   /* An amount modal whose LINE has gone must not stay open in name only.
    * Every deliberate path (removeLine, Cancel, Done, the resets)
@@ -1713,6 +1792,9 @@ function PaymentPanel(props: {
     if (source === "giftcard") {
       return giftCard === null ? 0 : Math.min(room, giftCard.balanceCents);
     }
+    /* T93: a typed card caps at the total like the stored card does.
+     * There is no balance to cap it against: the processor answers that,
+     * at the charge. */
     return room;
   };
 
@@ -1734,9 +1816,17 @@ function PaymentPanel(props: {
     }
     if (dueCents !== null && dueCents <= 0) return "Nothing left to cover";
     if (source === "credit") return creditReason;
+    /* T93: one card leg at a time. A stored card and a typed card in the
+     * same payment would be two card charges in one sale, which nobody
+     * asked for and which the $10-per-leg floor makes worse; greyed WITH
+     * the reason, as every other refusal here is. */
+    if (source === "typedcard" && usedSources.has("storedcard")) {
+      return "Already paying by card";
+    }
     /* T83: a gift card needs no client and no card on file; what it
      * needs is a number, which the modal asks for. */
     if (source === "storedcard") {
+      if (usedSources.has("typedcard")) return "Already paying by card";
       if (cardReason !== null) return cardReason;
       /* T82: the under-$10 guard, not rule 1. A whole-sale card payment
        * (the card as the first and therefore only line) under the $10
@@ -1783,6 +1873,20 @@ function PaymentPanel(props: {
       if (giftCard === null) return "Enter the gift card again";
       if (giftCard.balanceCents < line.cents) {
         return `Only ${money(giftCard.balanceCents / 100)} on the gift card`;
+      }
+      return null;
+    }
+    if (line.source === "typedcard") {
+      /* Unreachable in normal use: the effect above drops the line with
+       * the card. Refused rather than charged on a card this render does
+       * not hold. */
+      if (typedCard === null) return "Enter the card again";
+      /* The $10 floor is a card-processing floor, so it applies to a
+       * typed card whether it is the whole sale or one leg: unlike the
+       * stored card there is no credit-purchase path under it, and
+       * /api/checkout refuses it outright. */
+      if (covered < CARD_MINIMUM_USD * 100) {
+        return `A card payment is under the $${CARD_MINIMUM_USD} card minimum`;
       }
       return null;
     }
@@ -1842,29 +1946,37 @@ function PaymentPanel(props: {
   const sourceLabel = (s: TenderSource) =>
     s === "storedcard"
       ? "Card"
-      : s === "credit"
-        ? "Account"
-        : s === "giftcard"
-          ? "Gift card"
-          : "Cash";
+      : s === "typedcard"
+        ? "Card (typed)"
+        : s === "credit"
+          ? "Account"
+          : s === "giftcard"
+            ? "Gift card"
+            : "Cash";
 
   /** The tender row's name. A gift card wears its last four, which is
    *  the only part of the number that ever reaches a screen (T83). */
   const lineName = (line: TenderLine) =>
     line.source === "giftcard" && giftCard !== null
       ? `Gift card ...${giftCard.lastFour}`
-      : sourceLabel(line.source);
+      : /* T93: the typed card wears its last four for the same reason: it
+           is the only part of the number that ever reaches a screen. */
+        line.source === "typedcard" && typedCard !== null
+        ? `Card (typed) ending ${typedCard.lastFour}`
+        : sourceLabel(line.source);
 
   /** One leg of a split, as the Charge button restates it. The cash leg
    *  reads "collect $X cash": the leg amount IS what is collected. */
   const legLabel = (s: TenderSource, usd: number) =>
     s === "storedcard"
       ? `${money(usd)} card`
-      : s === "credit"
-        ? `${money(usd)} from account`
-        : s === "giftcard"
-          ? `${money(usd)} gift card`
-          : `collect ${money(usd)} cash`;
+      : s === "typedcard"
+        ? `${money(usd)} typed card`
+        : s === "credit"
+          ? `${money(usd)} from account`
+          : s === "giftcard"
+            ? `${money(usd)} gift card`
+            : `collect ${money(usd)} cash`;
 
   const soleLine = lines.length === 1 ? lines[0] : undefined;
   /** The cash line, if one is in the payment: the Cash tile reopens its
@@ -1917,6 +2029,11 @@ function PaymentPanel(props: {
       ...(line.source === "giftcard" && giftCard !== null
         ? { number: giftCard.number }
         : {}),
+      /* T93: the typed card rides its own leg and nothing else's; the
+       * route refuses a typedCard on any other method. */
+      ...(line.source === "typedcard" && typedCard !== null
+        ? { typedCard: typedCard.card }
+        : {}),
     }));
     /* T43: a comp carries its reason (the route refuses a comp without
      * one, and a reason on any other method). The reason never reaches
@@ -1936,6 +2053,10 @@ function PaymentPanel(props: {
               /* T83: the whole-sale gift card shape. */
               ...(soleLine.source === "giftcard" && giftCard !== null
                 ? { giftCard: { number: giftCard.number } }
+                : {}),
+              /* T93: and the whole-sale typed card shape. */
+              ...(soleLine.source === "typedcard" && typedCard !== null
+                ? { typedCard: typedCard.card }
                 : {}),
             }
           : null;
@@ -1964,6 +2085,11 @@ function PaymentPanel(props: {
     /* T83: the last four for the done screen, captured at the tap: the
      * held card goes with the tender the moment the sale lands. */
     const giftLastFourAtTap = giftCard?.lastFour ?? null;
+    /* T93: the same, for the typed card, and whether "keep on file" was
+     * asked for: the held card goes with the tender the moment the sale
+     * lands, and the done block needs both after it has. */
+    const typedLastFourAtTap = typedCard?.lastFour ?? null;
+    const typedKeepAtTap = typedCard?.card.keep === true;
     inFlight.current = true;
     setCharging(true);
     onBusyChange(true);
@@ -2030,9 +2156,17 @@ function PaymentPanel(props: {
           typeof body?.giftCard?.lastFour === "string"
             ? body.giftCard.lastFour
             : giftLastFourAtTap;
+        /* T93: the server's copy of the typed card's last four for
+           preference, as for the gift card; never the number. */
+        const typedFour =
+          typeof body?.typedCard?.lastFour === "string"
+            ? body.typedCard.lastFour
+            : typedLastFourAtTap;
         const legDesc = (m: TenderSource, usd: number) =>
           m === "storedcard"
             ? `${money(usd)} on the stored card${card ? ` ...${card.lastFour}` : ""}`
+            : m === "typedcard"
+              ? `${money(usd)} on the card ending ${typedFour ?? "----"}`
             : m === "credit"
               ? `${money(usd)} from account`
               : m === "giftcard"
@@ -2046,6 +2180,8 @@ function PaymentPanel(props: {
               ? "the payment"
               : soleLine.source === "storedcard"
                 ? `stored card${card ? ` ...${card.lastFour}` : ""}`
+                : soleLine.source === "typedcard"
+                  ? `card ending ${typedFour ?? "----"}`
                 : soleLine.source === "credit"
                   ? "account balance"
                   : soleLine.source === "giftcard"
@@ -2104,6 +2240,18 @@ function PaymentPanel(props: {
           }.`,
           detail: [
             body?.saleId ? `Sale ${body.saleId}.` : null,
+            /* T93: the store runs after the charge, so it can fail on its
+               own. Say which happened; never let a failed store read as a
+               failed sale, and never let it pass silently. */
+            typedKeepAtTap
+              ? body?.cardKept === true
+                ? "The card was kept on file."
+                : `The card was not kept on file: ${
+                    typeof body?.cardKeptError === "string" && body.cardKeptError
+                      ? body.cardKeptError
+                      : "Mindbody did not confirm it."
+                  }`
+              : null,
             body?.creditPurchased
               ? `Includes a ${money(body.creditPurchased)} account balance purchase (card minimum); the unspent remainder stays on their account.`
               : null,
@@ -2204,6 +2352,10 @@ function PaymentPanel(props: {
      * the number and the balance the line needs. A bare tap could only
      * ever make a line with no card behind it. */
     if (source === "giftcard") return;
+    /* T93: and the typed card, for the same reason: a bare tap could only
+     * make a line with no card behind it. Its line comes from the modal
+     * (openCardEntry). */
+    if (source === "typedcard") return;
     const cents =
       source === "credit"
         ? Math.min(dueCents, balanceCents ?? 0)
@@ -2268,6 +2420,46 @@ function PaymentPanel(props: {
     onModalChange(true);
     setCompCleared(false);
     clearStaleResult();
+  };
+
+  /* ------------------ T93: the typed-card modal --------------------
+   * Pete: "the Card button should have a number keypad icon on its
+   * right. this will open a credit card manual entry modal ... If it is
+   * a walk in sale, they can just use it for the sale". Like the gift
+   * card this is not a one-tap tender: it needs the number, the expiry,
+   * the CVV and the rest before an amount can mean anything. Nothing
+   * about the money moves here either: the modal's "Use this card" adds
+   * an ordinary tender line and holds the card, and Finalize Sale is the
+   * one tap that charges it. */
+
+  /** Open the modal. Refused for the same reasons the keypad square is
+   *  greyed, so a keyboard Enter cannot get past them. */
+  const openCardEntry = () => {
+    if (addReason("typedcard") !== null || charging) return;
+    if (dueCents === null || dueCents <= 0) return;
+    setCardEntry(true);
+    dismissPad();
+    onModalChange(true);
+    setCompCleared(false);
+    clearStaleResult();
+  };
+
+  /** "Use this card": the card is held and its tender line added, for the
+   *  whole remaining due (the ordinary one-tap amount, changeable on the
+   *  line like every other). The line is an ordinary tender line from
+   *  here on, and /api/checkout validates the card again. */
+  const applyTypedCard = (card: TypedCard, lastFour: string) => {
+    if (dueCents === null || dueCents <= 0) return;
+    if (addReason("typedcard") !== null) return;
+    setTypedCard({ card, lastFour });
+    const id = nextLineId.current++;
+    setLines((cur) => [
+      ...cur,
+      { id, source: "typedcard" as TenderSource, cents: dueCents },
+    ]);
+    setCompCleared(false);
+    clearStaleResult();
+    dismissCardEntry();
   };
 
   /** Whatever a scanner or a keyboard put in the field, as a barcode
@@ -3146,7 +3338,16 @@ function PaymentPanel(props: {
                      the 4px accent edge), whether or not the tile can
                      still take a tap. */
                   const inPayment = usedSources.has(s);
-                  return (
+                  /* T93: the Card tile carries the keypad square that
+                     opens the manual-entry modal. It is a SIBLING button
+                     in the same cell, never nested inside the tile (a
+                     button inside a button is not a control), and it is
+                     live when the tile body is not: "no card on file" and
+                     "attach a client" both still allow a card handed
+                     across the counter. */
+                  const typedReason =
+                    s === "storedcard" ? addReason("typedcard") : null;
+                  const tile = (
                     <button
                       key={s}
                       className={
@@ -3185,6 +3386,28 @@ function PaymentPanel(props: {
                         <span className="pay-tile-badge">{money(balance)}</span>
                       ) : null}
                     </button>
+                  );
+                  if (s !== "storedcard") return tile;
+                  return (
+                    <div className="pay-tile-cell" key={s}>
+                      {tile}
+                      <button
+                        className={
+                          usedSources.has("typedcard")
+                            ? "pay-keypad on"
+                            : "pay-keypad"
+                        }
+                        disabled={typedReason !== null || charging}
+                        onClick={openCardEntry}
+                        aria-label="Type a card number for this sale"
+                        title={
+                          typedReason ??
+                          "Type a card number for this sale"
+                        }
+                      >
+                        <KeypadIcon />
+                      </button>
+                    </div>
                   );
                 })}
               </div>
@@ -3553,6 +3776,26 @@ function PaymentPanel(props: {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {/* T93: the manual card-entry modal, the T84 box in its sale mode:
+          the same fields plus the CVV, the three optional billing lines
+          behind one disclosure, and for an attached client the choice
+          between using the card once and keeping it on file as well. It
+          charges nothing: "Use this card" adds the tender line, and the
+          card goes to Mindbody only with the Finalize Sale that charges
+          it. Mounted only while open, so nothing typed into it outlives
+          it. */}
+      {cardEntry ? (
+        <CardModal
+          mode="sale"
+          clientId={clientId}
+          name={client ? client.name : "Walk-in sale"}
+          current={card}
+          amount={dueCents !== null ? money(dueCents / 100) : "This sale"}
+          onClose={dismissCardEntry}
+          onUse={applyTypedCard}
+        />
       ) : null}
 
       {padLine !== undefined ? (
