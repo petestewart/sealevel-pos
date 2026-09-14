@@ -698,6 +698,16 @@ function PlusIcon() {
   return <Icon d="M12 5v14M5 12h14" size={22} />;
 }
 
+/** T91: the New client cell's glyph, the same head-and-plus the roster's
+ *  own New client control uses, so one idiom means "register somebody". */
+function PersonPlusIcon() {
+  return (
+    <Icon d="M2 21c0-4 3.6-6 8-6c1.4 0 2.7.3 3.8.9M19 14v6M16 17h6" size={22}>
+      <circle cx="10" cy="8" r="4" />
+    </Icon>
+  );
+}
+
 /** The sun cell in the header: light becomes dark and back (theme.ts). */
 function SunIcon() {
   return (
@@ -4332,6 +4342,15 @@ export default function SaleScreen(props: {
   client: SaleClient | null;
   /** Opens the existing search modal in attach mode (page.tsx owns it). */
   onRequestAttach: () => void;
+  /** T91: opens the T59b New client form (page.tsx owns it, as it owns
+   *  the attach modal, so the form stacks above this overlay). On create
+   *  page.tsx attaches the new person, which clears the walk-in flag. */
+  onRequestNewClient: () => void;
+  /** T91: the amber note a New client create from this screen produced (a
+   *  suppressed write, or the service-account fallback line), shown in
+   *  the ticket's note slot; `onClientNoteRead` retires it. */
+  clientNote: string | null;
+  onClientNoteRead: () => void;
   onDetachClient: () => void;
   /** True while a modal (search, info view) is stacked above the overlay,
    *  so Escape peels that layer instead of closing the sale. */
@@ -4358,6 +4377,9 @@ export default function SaleScreen(props: {
     config,
     client,
     onRequestAttach,
+    onRequestNewClient,
+    clientNote,
+    onClientNoteRead,
     onDetachClient,
     modalAbove,
     onContractPurchased,
@@ -4820,6 +4842,13 @@ export default function SaleScreen(props: {
   useEffect(() => {
     if (client !== null) setWalkIn(false);
   }, [client]);
+  /** T91: the New client note is read and gone, 20 seconds, the same life
+   *  the roster's actor banner gives the identical line. */
+  useEffect(() => {
+    if (clientNote === null) return;
+    const t = setTimeout(onClientNoteRead, 20_000);
+    return () => clearTimeout(t);
+  }, [clientNote, onClientNoteRead]);
   const cancelWalkInPrompt = useCallback(() => setWalkInPrompt(false), []);
 
   /**
@@ -5992,6 +6021,13 @@ export default function SaleScreen(props: {
     config?.houseClient === false
       ? "No house client for an anonymous sale; attach a client"
       : null;
+  /** T91: does the ticket hold a pass? A Service is a pricing option and
+   *  a Package is a bundle of them: both belong to a person, which is why
+   *  the walk-in card's New client ramp appears for them and not for
+   *  retail. */
+  const hasPassLine = cart.some(
+    (l) => l.item.type === "Service" || l.item.type === "Package",
+  );
   /** T39.3: quantity per shelf card, from the cart's own keys; the count
    *  pill reads it and nothing is fetched. */
   const inCart = new Map(cart.map((l) => [l.key, l.quantity]));
@@ -6223,6 +6259,22 @@ export default function SaleScreen(props: {
                 <span className="sale-for-label">Sale for</span>
                 <span className="sale-for-name">Walk-in sale</span>
               </span>
+              {/* T91 (Pete): "It also will be a dynamic option if a pass
+                  is added to a Walk-in cart." A walk-in buying a pass has
+                  to become a client for the pass to have an owner, so the
+                  ramp appears exactly then, and never for a retail-only
+                  walk-in cart (a bottle of water needs no client). */}
+              {hasPassLine ? (
+                <button
+                  className="sale-walkin sale-new-client"
+                  disabled={charging}
+                  title="Register this walk-in as a new student"
+                  onClick={onRequestNewClient}
+                >
+                  <PersonPlusIcon />
+                  <span>New client</span>
+                </button>
+              ) : null}
               <button
                 className="row-icon sale-for-clear"
                 aria-label="Cancel the walk-in sale"
@@ -6268,6 +6320,20 @@ export default function SaleScreen(props: {
                 onClick={() => setWalkIn(true)}
               >
                 Walk-in
+              </button>
+              {/* T91 (Pete): "it can be accessed in the buy app with a New
+                  Client button to the right of the Walk-in button." Same
+                  cell idiom as Walk-in; on create the new person is
+                  attached, so the row becomes the attached card. */}
+              <button
+                className="sale-walkin sale-new-client"
+                /* Mid-charge, no client change; see the detach button. */
+                disabled={charging}
+                title="Register a new student in Mindbody"
+                onClick={onRequestNewClient}
+              >
+                <PersonPlusIcon />
+                <span>New client</span>
               </button>
             </div>
           )}
@@ -6576,6 +6642,14 @@ export default function SaleScreen(props: {
               </span>
             </div>
 
+            {/* T91: the New client create's amber line, in the ticket's
+                note slot because that is where the teacher is looking
+                after the form closes. */}
+            {clientNote ? (
+              <div className="sale-note" role="status">
+                {clientNote}
+              </div>
+            ) : null}
             {cartNotice ? (
               <div className="sale-note" role="status">
                 {cartNotice}

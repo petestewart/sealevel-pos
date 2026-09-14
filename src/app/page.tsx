@@ -404,6 +404,21 @@ function Icon({
   );
 }
 
+/**
+ * T59b's prefill rule, factored out in T91 so all three entries to the
+ * New client form agree: a query that looks like a name (two words, no
+ * digits or @) fills first and last, anything else fills nothing. A
+ * half-typed email or a phone number is not a name.
+ */
+function namePrefill(text: string): { first: string; last: string } {
+  const words = text.trim().split(/\s+/);
+  const looksLikeName =
+    words.length === 2 && words.every((w) => !/[\d@]/.test(w));
+  return looksLikeName
+    ? { first: words[0] ?? "", last: words[1] ?? "" }
+    : { first: "", last: "" };
+}
+
 function CloseIcon() {
   return <Icon d="M6 6l12 12M18 6 6 18" />;
 }
@@ -880,8 +895,9 @@ function FrontDesk({
     first: string;
     last: string;
     /** T59c: who asked for the form. "search" hands the new person to
-     *  the walk-in results; "guest" selects them as the guest. */
-    for: "search" | "guest";
+     *  the walk-in results; "guest" selects them as the guest. T91 adds
+     *  "sale": the new person is attached to the open sale. */
+    for: "search" | "guest" | "sale";
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<ModeConfig | null>(null);
@@ -1349,6 +1365,11 @@ function FrontDesk({
   /** The client the sale is for, or null for an anonymous sale. Chosen
    *  through the search modal's attach mode; rides /api/price-cart. */
   const [saleClient, setSaleClient] = useState<SaleClient | null>(null);
+  /** T91: the amber note from a New client create made on the Buy screen
+   *  (a suppressed write, or the service-account fallback line). It rides
+   *  down to SaleScreen's note slot, because that is where the teacher is
+   *  looking; cleared when the sale screen says it has been read. */
+  const [saleClientNote, setSaleClientNote] = useState<string | null>(null);
   /** True while the search modal is open as the sale's attach picker
    *  (T23): same modal, same submit-triggered search, same row format,
    *  but the row action selects the client instead of booking, and the
@@ -5267,6 +5288,22 @@ function FrontDesk({
         >
           <SearchIcon />
         </button>
+        {/* T91 (Pete): "It can be accessed with a New Client button in the
+            sign-in page, to the right of the magnifying glass." The same
+            T59b form the "Nobody found" state opens, with the same
+            prefill rule, so a teacher who already knows the person is new
+            does not have to search for nobody first. On create the person
+            lands as the walk-in result, which is what "search" does. */}
+        <button
+          className="search-new-client"
+          onClick={() =>
+            setNewClient({ ...namePrefill(query), for: "search" })
+          }
+          title="Register a new student in Mindbody"
+        >
+          <PersonPlusIcon />
+          <span>New client</span>
+        </button>
       </div>
       {searchMsg ? <p className="search-quiet">{searchMsg}</p> : null}
 
@@ -5898,10 +5935,40 @@ function FrontDesk({
               pickGuest({ person: client, standing: null });
               return;
             }
+            if (target === "sale") {
+              /* T91: the Buy screen asked, so the new person is ATTACHED
+               * to the sale exactly as an attach-modal row tap attaches
+               * them. The walk-in flag clears itself once a client is
+               * attached (SaleScreen), and the cart is untouched, which
+               * is the whole point of the third entry: a walk-in with a
+               * pass in the ticket becomes a real client without losing
+               * the ticket. The amber note rides the sale screen's own
+               * note slot rather than the roster's row messages. */
+              setSaleClient({
+                id: client.id,
+                name: client.name,
+                balance: client.balance,
+              });
+              setSaleClientNote(note);
+              return;
+            }
             setFound((rows) => [
               client,
               ...rows.filter((r) => r.id !== client.id),
             ]);
+            /* T91: the form is now reachable from the sign-in bar as well
+             * as from inside the results modal, so the modal may not be
+             * open at all, and the box may be empty. Open it on the new
+             * person, otherwise the row this just made lands where nobody
+             * is looking. The box is seeded with their name as well as the
+             * title: the live search (T81) keys on the box, and a title
+             * with an empty box reads as a query of nothing and clears the
+             * results on the next tick. */
+            if (!query.trim()) {
+              setQuery(client.name);
+              setSearchTitle(client.name);
+            }
+            setSearchOpen(true);
             if (note) setBookMsg((m) => ({ ...m, [client.id]: note }));
           }}
         />
@@ -6180,19 +6247,10 @@ function FrontDesk({
                   <button
                     className="modal-confirm go"
                     onClick={() => {
-                      const words = searchTitle.trim().split(/\s+/);
-                      const looksLikeName =
-                        words.length === 2 &&
-                        words.every((w) => !/[\d@]/.test(w));
-                      setNewClient(
-                        looksLikeName
-                          ? {
-                              first: words[0] ?? "",
-                              last: words[1] ?? "",
-                              for: "search",
-                            }
-                          : { first: "", last: "", for: "search" },
-                      );
+                      setNewClient({
+                        ...namePrefill(searchTitle),
+                        for: "search",
+                      });
                     }}
                   >
                     New client
@@ -7834,12 +7892,26 @@ function FrontDesk({
         config={config}
         client={saleClient}
         onRequestAttach={openAttachSearch}
-        onDetachClient={() => setSaleClient(null)}
+        /* T91: the Buy screen's New client entries. page.tsx owns the
+           form, as it owns the attach modal, so the modal stacks above
+           the sale overlay the same way. */
+        onRequestNewClient={() =>
+          setNewClient({ first: "", last: "", for: "sale" })
+        }
+        clientNote={saleClientNote}
+        onClientNoteRead={() => setSaleClientNote(null)}
+        onDetachClient={() => {
+          setSaleClient(null);
+          setSaleClientNote(null);
+        }}
         modalAbove={
           searchOpen ||
           infoView !== null ||
           waiverPrompt !== null ||
-          profileView !== null
+          profileView !== null ||
+          /* T91: the New client form is a layer above the sale too, so
+             Escape peels the form and not the whole overlay. */
+          newClient !== null
         }
         onContractPurchased={refreshClientState}
         onSaleCompleted={refreshClientState}
