@@ -6629,6 +6629,69 @@ textarea.reason-note-field:disabled::placeholder {
   z-index: 32;
 }
 
+/* --- T91: the New client entries ------------------------------------
+ * Pete: a New client button on the sign-in page beside the magnifier, one
+ * beside Walk-in on the Buy screen, and a dynamic one on the walk-in card
+ * once the ticket holds a pass. Tokens only, both palettes; no new tokens
+ * were needed. */
+
+/* The sign-in bar's cell: the bar's full height, icon
+ * plus label in the accent so it reads as the one action on the bar that
+ * is not the search itself, on the bar surface rather than a filled
+ * primary: searching is still the primary thing this bar does. */
+.search-new-client {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  /* 64px, the floor for a primary tap target: it is the tallest cell, so
+   * the bar and the magnifier beside it come up to 64 with it (they were
+   * 60, under the floor). */
+  min-height: 64px;
+  padding: 0 20px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 17px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.search-new-client:active {
+  background: var(--surface-2);
+}
+
+/* The Buy screen's cells reuse the Walk-in cell whole (same height, same
+ * line, same weight); only the glyph beside the label is added, and on
+ * the walk-in card the left line would double the card's padding edge, so
+ * it keeps the line and gains its own inset. */
+.sale-new-client {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sale-new-client svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.sale-for.sale-for-walkin .sale-new-client {
+  margin-left: auto;
+}
+
+/* Portrait (768 wide): three cells in the row. The hint under "Attach a
+ * client" goes before any label wraps to two lines, as the brief's rule
+ * says: the verb is what a teacher reads. */
+@media (max-width: 900px) {
+  .sale-top .sale-for-row .sale-for-hint {
+    display: none;
+  }
+}
+
 /* T93 -------------------------------------------------------------------
  * A card typed at the counter for THIS sale (Pete: "the Card button
  * should have a number keypad icon on its right. this will open a credit
