@@ -54,6 +54,7 @@ import {
   houseClientId,
   latestSaleId,
   parseCartLines,
+  passWithoutOwner,
   purchaseCredit,
   rehearseCheckout,
   roundToCents,
@@ -769,6 +770,18 @@ export async function POST(request: Request) {
     };
   });
 
+  /* T92: the same rule the pricing route applies, at the last gate
+   * before a client id is chosen. A Service or a Package with neither an
+   * attached client nor a T90 recipient is refused in words and NEVER
+   * filed under the house client: a pass sold onto the walk-in
+   * placeholder is a pass nobody can use. Retail is untouched. */
+  const orphanPass = passWithoutOwner(items, clientId);
+  if (orphanPass !== null) {
+    return NextResponse.json(
+      { error: orphanPass, stage: "method" },
+      { status: 400 },
+    );
+  }
   const saleClientId = clientId ?? houseClientId() ?? undefined;
   if (!saleClientId) {
     return NextResponse.json(
