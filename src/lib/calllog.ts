@@ -166,8 +166,17 @@ export function scrubGiftCard(text: string): string {
  * non-alphanumerics, then the digits -- which needs no knowledge of the
  * value and so covers a refusal as well as a request.
  */
+/* T93 review: the gap between the word and the digits is anything that is
+ * NOT a digit, up to twenty characters, not just punctuation and space.
+ * The punctuation-only form missed the phrasing a processor is most
+ * likely to use -- "The security code you entered, 737, was wrong." --
+ * and a CVV then reached the route's answer and the dev call log. Over-
+ * redaction is bounded to text that names a CVV within twenty characters,
+ * which is the one place a number must not survive. Not covered, and
+ * recorded rather than guessed at: a CVV quoted BEFORE the word ("737 is
+ * not a valid security code"), which no observed refusal does. */
 const CVV_IN_TEXT =
-  /((?:cvv|cvc|security\s*code|card\s*code)["'\s:=)\]}.,>-]{0,8})\d{3,4}(?!\d)/gi;
+  /((?:cvv|cvc|security\s*code|card\s*code)[^0-9]{0,20}?)\d{3,4}(?!\d)/gi;
 
 export function scrubCvv(text: string): string {
   return text.replace(CVV_IN_TEXT, `$1${REDACTED}`);
