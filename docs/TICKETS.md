@@ -10574,8 +10574,11 @@ finger (T68's rule).
 card up to the payment surface as the tender line "Card (typed) ending
 1234", exactly as the gift card modal hands up its number (T83): held in
 `SaleScreen` state alone, dropped whenever the line is removed, the cart
-changes, the client changes, pay mode is left, or the sale completes (one
-effect, the same one shape as the gift card's). Finalize Sale is still
+changes, the client changes, the discount changes, or the sale completes
+(one effect, the same one shape as the gift card's). Leaving pay mode
+dismisses the MODAL but keeps the line and the card, which is T39.6's
+rule (the panel stays mounted so the tender survives Back to items) and
+what T83's gift card number already does. Finalize Sale is still
 the one tap that moves money, single flight, and a typed card can be one
 leg of a split with cash or a gift card.
 
@@ -10705,3 +10708,89 @@ diagnoses nothing.
   answer, from the server log, from the document, from localStorage,
   from sessionStorage and from the URL). Both palettes, both
   orientations.
+
+### Review
+
+Adversarial pass on `t93-typed-card`, merged with `feature/phase-2` at
+the roster pass-count commit. `npm run typecheck` and `npm run build`
+clean, the builder's harness (mock on :4593, `next start` on :3093) green
+after every change, plus the review's own probes.
+
+**Changed in review.**
+
+1. **Pete's decision, 2026-09-14: "Allow two charges."** A typed card was
+   refused on a T90 ticket; it now pays one authorization per recipient
+   cart. See the design section for what follows: the per-cart $10 floor
+   refused before any charge and named in the browser too, the sentence
+   under the tender line saying how many times the card will be charged
+   and for what (Mindbody's per-cart figures, never an estimate), T90's
+   existing honest-partial wording, and "keep on file" storing the card
+   once, after the attached client's own cart stood. Proved on the
+   harness: two carts, two `CreditCard` payments of $230.00 and $28.00 in
+   ONE request, the payer's cart first; the second cart 500ing leaves one
+   charge, reports both and still keeps the card once; the floor refusal
+   with nothing charged; suppression suppressing the whole ticket and
+   keeping nothing. Proved in a browser, both palettes and both
+   orientations: the keypad live on such a ticket, the sentence exact, one
+   tap charging twice, and no number or CVV in the document, storage or
+   URL.
+2. **A CVV quoted in free text leaked.** The context rule allowed only
+   punctuation and space between the word and the digits, so "The
+   security code you entered, 737, was wrong." went through: the CVV
+   reached the route's 502 answer, which the screen shows, and the dev
+   call log's response record. The gap is now any run of non-digits up to
+   twenty characters. Residual, recorded rather than guessed at: a CVV
+   quoted BEFORE the word ("737 is not a valid security code"), which no
+   observed refusal does; a CVV alone is not spendable, and the number
+   beside it is struck out by shape, by key and by literal.
+3. **The worktree's `node_modules` symlink was committed** (`.gitignore`
+   said `node_modules/`, and a symlink is not a directory). Untracked,
+   and the pattern now covers both.
+4. **A wording correction.** The card was documented as dropped when pay
+   mode is left. It is not, and should not be: T39.6 keeps the panel
+   mounted so the tender survives Back to items, and T83's gift card
+   number is held across it the same way. Proved: the line and the card
+   survive Back to items with no PAN in the document, and a cart change
+   or a client change drops both.
+
+**Checked and sound, no change.**
+
+- The secret, every surface the brief names: absent from the call log in
+  both directions (key rule, the card-shaped digit rule, and the literal
+  lifted out of the request, which is what covers a refusal quoting a
+  number no shape rule would match), from `/api/devlog` and copy-all, from
+  every route answer including each validation 400 (none echoes the field
+  value), from `cardKeptError` after a store that failed, from the server
+  log, the done screen, the receipt request, the T84 store call (no CVV
+  reaches it) and every T90 per-recipient answer. A 15-digit Amex, a
+  19-digit number, spaces and dashes all charge and report the right last
+  four; a past expiry, a two-digit CVV, a bad Luhn, a bad postal code and
+  a short number are each a 400 with nothing written.
+- Money: single flight on Finalize (two synchronous taps, one request);
+  the $10 floor whole-sale, per leg and now per cart; a typed leg plus
+  cash summing to the cent in ONE call with the card on its own leg; the
+  keep store only after a real success, never after suppression, a 5xx or
+  a refusal; a store failure reported with the sale standing; keep refused
+  by curl for a walk-in and for a house-client cart; the Metadata keys
+  exactly `CreditCardInfo`'s spelling; no `SaveInfo`. T94 is not on this
+  branch, so its overdraft token has nothing to meet here.
+- The modal: one size in every state and both orientations, fields cleared
+  on cancel, on use and on a client change, Escape peeling the modal alone
+  and leaving pay mode standing, the keypad a 44px sibling button and not
+  nested, the choice defaulting to "Use once", "No card on file" on the
+  tile.
+- UI rules: tokens only in both palettes (no hex added), radius 0, the
+  16px floor, 64px primaries, no em dashes.
+
+**Not verified, and unverifiable here.** Everything the ticket's open
+questions list: the payment metadata's casing, whether the CVV, the postal
+code or the billing address are wanted, and whether a live processor
+accepts this payment at all. A typed card has never been charged against
+Mindbody.
+
+**Noted, not changed.** A stored card leg and a typed card leg in one
+split are refused in the browser ("Already paying by card") but accepted
+by `/api/checkout` past it. Both legs are floor-checked and both ride ONE
+`checkoutshoppingcart` call, so there is no seam and the legs still sum to
+the rehearsed total; it is a browser rule the route does not duplicate,
+not a money hole.

@@ -945,8 +945,12 @@ interface GiftCardHeld {
  * state: it goes to /api/checkout with the charge and nowhere else, and
  * `lastFour` is the only part that ever reaches the screen. It is dropped
  * whenever the line goes -- the line removed, the cart changed, the
- * client changed, pay mode left, the sale done -- by the same effect that
- * drops a gift card.
+ * client changed, a discount change, the sale done -- by the same effect
+ * that drops a gift card. T93 review: leaving pay mode is NOT one of
+ * them, and deliberately: T39.6 keeps this panel mounted so the tender
+ * survives Back to items, and T83's gift card number is held across it
+ * for the same reason. The modal is dismissed either way, so nothing
+ * half typed survives, and the screen shows the last four alone.
  */
 interface TypedCardHeld {
   card: TypedCard;
