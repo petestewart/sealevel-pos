@@ -479,6 +479,21 @@ export interface LineAudit {
 /** Round half-up to cents. The epsilon absorbs float dust like
  *  2.9999999999999996 from 2.72 * 1.1035 so .995-style boundaries land on
  *  the cent the arithmetic means. */
+/**
+ * Mindbody's refusal as a sentence a teacher can read: the internal
+ * "mb.Core.BLL.ShoppingCart failed validation" prefix (and any other
+ * dotted mb.* class name at the front) is dropped, the rest kept as
+ * Mindbody wrote it, with a full stop. Empty in, a generic line out.
+ */
+export function plainRefusal(message: string): string {
+  const cleaned = message
+    .replace(/^\s*(mb\.[A-Za-z0-9_.]+\s+failed validation[:\s]*)+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "Mindbody did not accept it.";
+  return /[.!?]$/.test(cleaned) ? cleaned : cleaned + ".";
+}
+
 export function roundToCents(amount: number): number {
   return Math.round((amount + Number.EPSILON) * 100) / 100;
 }

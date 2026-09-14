@@ -4754,6 +4754,12 @@ export default function SaleScreen(props: {
    *  screen is stale for all of it. */
   const [pricing, setPricing] = useState(false);
   const [priceError, setPriceError] = useState<string | null>(null);
+  /** Lines Mindbody refused and the screen removed, in words (Pete,
+   *  2026-09-14: "the item should be removed from the cart and a clean
+   *  message should explain why"). Shown in the totals area in the warn
+   *  tokens, not the stop red: nothing is broken, one item cannot be
+   *  sold to this client. Cleared by the next add and by Empty cart. */
+  const [cartNotice, setCartNotice] = useState<string | null>(null);
   /** Stale-response guard, the codebase's activeIdRef pattern: only the
    *  newest generation's answer may write state. */
   const priceGen = useRef(0);
@@ -4930,6 +4936,7 @@ export default function SaleScreen(props: {
     setCart([]);
     setPriced(null);
     setPriceError(null);
+    setCartNotice(null);
     setCartResetNonce((n) => n + 1);
     setCartPrompt(null);
     /* T51: a walk-in was declared for THIS cart; the next one asks again. */
@@ -5209,7 +5216,32 @@ export default function SaleScreen(props: {
         });
         const body = await res.json();
         if (priceGen.current !== gen) return;
-        if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+        if (!res.ok) {
+          const refused = Array.isArray(body?.refused)
+            ? (body.refused as { type: string; metadataId: string; reason: string }[])
+            : [];
+          if (refused.length > 0) {
+            /* The refused lines leave the cart, which reprices what is
+             * left through this same effect; the notice names each one
+             * with Mindbody's reason. Not a priceError: the ticket that
+             * remains is fine. */
+            const keys = new Set(refused.map((r) => `${r.type}-${r.metadataId}`));
+            const gone = cart.filter((l) => keys.has(l.key));
+            setCart((lines) => lines.filter((l) => !keys.has(l.key)));
+            setRevealedKey((k) => (k !== null && keys.has(k) ? null : k));
+            setCartNotice(
+              gone
+                .map((l) => {
+                  const r = refused.find((x) => `${x.type}-${x.metadataId}` === l.key);
+                  return `${l.item.name} was removed from the sale: ${r?.reason ?? "Mindbody did not accept it."}`;
+                })
+                .join(" "),
+            );
+            setPriced(null);
+            return;
+          }
+          throw new Error(body?.error ?? `HTTP ${res.status}`);
+        }
         setPriced(body as PricedResult);
       } catch (err) {
         if (priceGen.current !== gen) return;
@@ -5279,6 +5311,7 @@ export default function SaleScreen(props: {
 
   const addItem = useCallback((item: ShelfItem) => {
     const key = `${item.type}-${item.id}`;
+    setCartNotice(null);
     setCart((lines) => {
       const have = lines.find((l) => l.key === key);
       if (have) {
@@ -6543,6 +6576,11 @@ export default function SaleScreen(props: {
               </span>
             </div>
 
+            {cartNotice ? (
+              <div className="sale-note" role="status">
+                {cartNotice}
+              </div>
+            ) : null}
             {cart.length === 0 ? (
               <div className="t-lines-wrap">
                 <p className="t-empty">Nothing on the ticket yet. Tap an item.</p>

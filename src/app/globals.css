@@ -3017,6 +3017,19 @@ button.chip.action:active {
 /* The loud pricing failure: totals disagreement or a failed call. Stop
  * treatment, because charging against it would be the bug the design doc
  * says never to swallow. */
+/* A line Mindbody refused and the screen took out of the ticket: warn
+ * tokens, not stop, since the sale that remains is fine. Text on a
+ * --warn-bg is --warn in both palettes. */
+.sale-note {
+  margin: 8px 12px;
+  padding: 10px 12px;
+  border-radius: 0;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 16px;
+  font-weight: 600;
+}
+
 .sale-stop {
   margin: 8px 0;
   padding: 10px 12px;
