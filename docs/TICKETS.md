@@ -11171,3 +11171,129 @@ by `/api/checkout` past it. Both legs are floor-checked and both ride ONE
 `checkoutshoppingcart` call, so there is no seam and the legs still sum to
 the rehearsed total; it is a browser rule the route does not duplicate,
 not a money hole.
+
+## T88. Pay and check in with no card: buy for cash, then check in (Pete, 2026-09-14)
+
+Pete: "if they have no card on file, instead of 'use Buy' this should be
+able to take me where I can buy and check in."
+
+### The design
+
+1. **The no-tender pay dialog gets a primary.** T25's pay-and-check-in
+   dialog over an unpaid row reads the card on file. When the read has
+   SETTLED and there is nothing to charge with (no card, or an expired
+   one, and no balance covering the total), the line "For cash, use Buy."
+   was an instruction where an action belongs. It becomes a 64px accent
+   "Buy and check in", in the Charge control's own slot. Cancel and
+   "Check in free (comp)" stay exactly as they were. While the card read
+   is in flight, or after it failed, the offer does not appear: what the
+   client has is unknown and the offer would be a guess.
+2. **The tap writes nothing.** It closes the dialog, attaches the row's
+   client to the Buy screen and rings up the pass the teacher already
+   chose, at quantity 1, with the check-in remembered in page.tsx: the
+   visit, the class it was tapped under, the client, and the option's
+   ProductId. The same facts the card path captures at open, for the same
+   reason: the writes must not chase a moved row.
+3. **The sale is the ordinary sale.** Cash, a typed card, account,
+   a discount: T88 adds no payment path. The sale screen shows one quiet
+   line above the ticket, "Then check <name> in to <class> at <time>", so
+   the teacher can see what the sale finishes with.
+4. **When the sale settles, the finish is T25's stages (b) and (c)**,
+   through the same routes the card path uses: re-read the client's
+   passes, take the newest ClientService carrying the option's ProductId,
+   assign it to the visit, sign in. Single flight, nothing retried. It
+   runs only for the sale whose client is the remembered one and whose
+   lines carry the remembered pass (T90 makes one sale per recipient).
+   Every outcome is said twice, on the sale's done screen and in the
+   roster banner, in the card path's words: a failed assignment is
+   "Paid, but the check-in failed: ... the pass stays on their account,
+   and the row stays unpaid."
+5. **The pending check-in is dropped, in words**, when the ticket stops
+   holding that pass, when the attached client changes, and when the
+   teacher leaves the sale without selling it. A suppressed sale (dry run
+   or the write guard) checks nobody in and says so: suppression is never
+   success.
+
+### Build notes
+
+- `payNoTender` / `payBuyOffer` in page.tsx gate the offer; `buyAndCheckIn`
+  closes the dialog inline (`closePayDialog`'s payStage guard reads a
+  stale closure), attaches the client and records `pendingCheckIn` with a
+  nonce, which is what makes a second trip to the same pass arrive.
+- SaleScreen takes `pendingCheckIn`, `pendingCheckInResult`,
+  `onPendingCheckInDrop` and T90's `onSold`. It rings the pass up once per
+  nonce from its OWN catalog, so the line carries the item's real category
+  and group, and reports the pending state dead when the ticket stops
+  holding that pass for that client. Three refs keep that honest: rung up
+  once, an empty cart before the preload landed is not a removal, and a
+  settled sale emptying the cart from inside is the check-in being earned
+  rather than the ticket changing.
+- The purchase instance is matched by T25's rule verbatim, the newest
+  ClientService id carrying the ProductId, not by PaymentDate: `/api/passes`
+  carries no PaymentDate, the answer is the same ("what was not there
+  before"), and it reuses proven code rather than widening an API shape for
+  one caller.
+- Deliberately not done: no second assign-and-check-in route, no auto-retry
+  anywhere, and nothing was run against live Mindbody.
+
+### Review
+
+Reviewed at 6bf5677 against the builder's harness (mock88 on 4590,
+`next start` on 3090), then re-run after the fixes. `origin/feature/phase-2`
+had not moved, so there was nothing to merge. Three findings, each
+reproduced at 6bf5677 before it was fixed:
+
+- **The done screen kept the LAST check-in's outcome.** `pendingResult`
+  was cleared only when a new pending check-in started, so the next
+  ordinary Buy sale, which checked nobody in, ended on "Ben Kim is paid
+  and checked in." Reproduced: two sales in a row, the second plain, and
+  the second done screen carried the first's sentence. A settled sale with
+  nothing waiting on it now clears it.
+- **Any completed sale switched the drop detection off for good.**
+  SaleScreen reset `pendingSold` only on the way back to a null nonce, and
+  a plain sale sets it with the nonce already null. Reproduced: one plain
+  sale, then "Buy and check in", then the pass taken back out of the
+  ticket, and the quiet line stayed with no line on the roster; the
+  teacher heard nothing until she left the sale, and then heard the wrong
+  reason. The refs now reset on every nonce change. Nobody was ever
+  checked in wrongly by this: the finish matches the sale's own lines, so
+  it failed safe and late rather than unsafe.
+- **"was not sold the pass" is more than is known.** A charge that fails
+  part way through a multi-recipient ticket (T90's partial, a 502 that
+  does not clear the cart) can leave the pass bought, and leaving the sale
+  then asserted it was not. It now says what is certain: nobody was
+  checked in, the row stays unpaid, and the pass, if it was sold, is
+  attached with the payment chevron. Believing a pass unsold is how it
+  gets sold twice.
+
+One tightening: the offer now waits for a SETTLED price as well as a
+settled card read. Until the pricing loop answers, credit that covers the
+total still reads as no tender, so the primary appeared for a client whose
+account balance would have paid, sending a teacher to buy for cash. A
+suppressed price (dry run) has settled and still earns the offer.
+
+Held as known, not fixed: a T90 partial charge leaves the pending
+check-in standing rather than resolving it, because the client learns
+about a partial only through the pay surface's stop block and wiring a
+fourth outcome into the money path for it would cost more than it buys.
+The 502's own words name every cart that landed and every one that did
+not, and the drop line above no longer contradicts them.
+
+Verified after the fixes: the offer at 68px with the cash line gone and
+"Check in free (comp)" and Cancel intact; the landing on Buy with the
+client attached, the pass on the ticket and the quiet line, with no
+pass-owner modal (T92 is satisfied by the attached client); a cash sale
+driving checkout, the clientservices re-read, `updateclientvisit
+{VisitId, ClientServiceId}` then `{VisitId, SignedIn: true}`, the row
+reading "10 Class Pack / 10 remaining / checked in"; the assignment-failure
+knob reporting on the done screen AND the banner with the visit left
+`SignedIn: false` and the row unpaid; removing the pass dropping the
+pending state with its line and no visit write; dry run keeping the offer,
+refusing the cart at Pay and making no write at all; T25's card path
+untouched (no offer, the cash line back, one tap charging, attaching and
+signing in); both palettes at 1194x834 and 834x1194 with nothing under
+16px and no new contrast under 4.5. The three failures in the copied T87
+harness were confirmed identical at `origin/feature/phase-2` with
+`src/app` reverted and rebuilt, so they are artifacts of that copy and not
+regressions; they concern the attach modal's search bookkeeping, which
+this ticket does not touch. Typecheck and build clean.
