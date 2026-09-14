@@ -10253,3 +10253,60 @@ Not done, and why: nothing was verified against live Mindbody, so the
 real `requiredclientfields` list for site 471 is still unknown (T59b's
 gap, unchanged). The suppressed-create path was not re-exercised here
 because T59b owns it and it never reaches these three entries.
+
+### Review
+
+Three fixes, all small, and the rest held.
+
+- **The seeded box meant a search it should not have.** Creating from
+  the sign-in bar with an EMPTY box puts the new person's name in the
+  box so the results modal has something to key on, and the live search
+  (T81) keys on the box too: it fired a metered `/client/clients` call
+  for a name nobody typed (counted at the mock: `Zed Quill` arrived as a
+  search), and that page then replaced the row the create had just put
+  in the list. The mock returning the same person hid the second half.
+  A ref now holds the one query the app seeded, the live effect skips
+  exactly it, and typing in either search box clears it, so the same
+  name typed by hand still searches. The created row stays the tappable
+  `rrow-tap` ("Add Zed Quill to this class") it was.
+- **The amber note's twenty seconds restarted on every parent render.**
+  `onClientNoteRead` was a fresh arrow each render and the sale screen's
+  timer effect depends on it; page.tsx re-renders on its own (the
+  `/api/config` poll), so the note could outlive its life. It is a
+  `useCallback` now.
+- **The sign-in cell was 60px**, under the floor. It is the tallest
+  thing on that bar, so at 64 the bar and the magnifier beside it come
+  up to 64 with it, which is where both should have been. 65 with the
+  bar's rule, one line, 17px, accent in both palettes, radius 0.
+
+Held, in the browser against the mock: two synchronous taps on Create
+send ONE `POST /api/client-create` and one `addclient`. With
+`POS_DRY_RUN=true`, and again with `POS_WRITE_CLIENT_IDS` set to
+somebody else, both entries report the suppression in the form, the form
+stays open, Mindbody sees no `addclient`, no walk-in result appears, the
+search box is untouched, nothing is attached and the walk-in card is
+still there with its cart. A refused create (duplicate) does the same
+and attaches nothing. A create the teacher's own group refuses and the
+service account carries reads "Done as the studio account: ..." in the
+ticket's note slot, in its own div above the cart notice, so a money
+message cannot be overwritten. From the dynamic cell the cart lines and
+quantities survive, the walk-in flag clears, and the price loop fires
+exactly one re-price for the new client (the payment column goes from
+"Attach a client" to the client's own card state). Escape peels the form
+and leaves the Buy overlay open. Portrait 768 still holds three cells on
+one line with the hint dropped.
+
+Two things could not be exercised, both recorded rather than changed.
+`needsClient` cannot coexist with a walk-in cart: with no house client
+the Walk-in cell is disabled (T41), so that state is unreachable from
+the dynamic entry, and the re-price was proven by the call and the
+payment column instead. And the mid-charge lock is code only
+(`disabled={charging}` on both Buy cells, the lock Attach and detach
+carry); no charge was held open to tap through.
+
+One thing to know, which is the design working as drawn, not a bug: on
+the sign-in page a query of three letters opens the results modal over
+the bar, so the bar's cell (and its prefill) is reachable with the modal
+shut, while with results up the door is the modal's own "New client",
+which shows in the "Nobody found" state. Worth a look the first time
+somebody searches a name that matches the wrong person.
