@@ -4426,8 +4426,6 @@ button.sale-for:disabled {
   cursor: default;
 }
 
-/* The keys: 3x4 on the quiet fill, 20px/800, del in the stop colour.
- * 64 tall (the floor; the mockup draws 56). */
 /* T83: the gift-card modal's number field, the one input in the payment
  * seam. It is not an amount (T35's no-keyboard rule is about money
  * entry): a gift card carries a barcode and the studio's scanner types
@@ -4463,6 +4461,8 @@ button.sale-for:disabled {
   color: var(--muted);
 }
 
+/* The keys: 3x4 on the quiet fill, 20px/800, del in the stop colour.
+ * 64 tall (the floor; the mockup draws 56). */
 .pad-keys {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
