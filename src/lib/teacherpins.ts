@@ -2,6 +2,7 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypt
 
 import {
   findTeacherPin,
+  findTeacherPinByStaff,
   teacherPinExists,
   teacherPinInfo,
   upsertTeacherPin,
@@ -112,16 +113,22 @@ function envPins(): Map<string, string> | null {
 
 export type PinCheck =
   | { ok: true; teacher: TeacherIdentity }
-  | { ok: false; reason: "wrong" | "unavailable" | "staff" };
+  | { ok: false; reason: "wrong" | "nopin" | "unavailable" };
 
 /**
- * Whose PIN this is. The database first; with none, the env fallback;
- * with neither, `unavailable`, which the verify route reports as such
- * rather than as a wrong PIN. `wrong` is one answer for every miss, and
- * the scrypt check runs even when the lookup found nothing, so a miss and
- * a hit cost the same.
+ * Whether this PIN is the signed-in teacher's own. The database first;
+ * with none, the env fallback; with neither, `unavailable`, which the
+ * verify route reports as such rather than as a wrong PIN. `nopin` is a
+ * teacher who has not set one yet (the route sends them to set it up);
+ * `wrong` is one answer for every miss, and the scrypt check runs even
+ * when there is no row, so a miss and a hit cost the same. PINs are not
+ * unique (Pete: "there's no reason to force PINs to be unique"): the
+ * gate confirms the teacher the session already names.
  */
-export async function verifyTeacherPin(pin: string): Promise<PinCheck> {
+export async function verifyTeacherPin(
+  pin: string,
+  teacher: TeacherIdentity,
+): Promise<PinCheck> {
   /* T89 review: envPins() below refuses the plaintext POS_TEACHER_PINS
    * list when the target is prod, and nothing else on the comp gate's
    * path loads the stored target: on a fresh process pointed at the
@@ -129,35 +136,30 @@ export async function verifyTeacherPin(pin: string): Promise<PinCheck> {
    * read the environment and would have let a dev PIN through against
    * the real studio. */
   await ensureTarget();
-  const found = await findTeacherPin(pinLookup(pin));
+  const found = await findTeacherPinByStaff(String(teacher.id));
   if (found.available) {
     const row = found.row;
     /* One scrypt either way. */
     const matched = pinMatchesHash(pin, row?.pinHash ?? DUMMY_HASH);
-    if (row === null || !matched) return { ok: false, reason: "wrong" };
-    return {
-      ok: true,
-      teacher: { id: Number(row.staffId), name: row.name },
-    };
+    if (row === null) return { ok: false, reason: "nopin" };
+    if (!matched) return { ok: false, reason: "wrong" };
+    return { ok: true, teacher };
   }
   const env = envPins();
   if (env === null) return { ok: false, reason: "unavailable" };
   /* Constant-time over the whole list, no early exit: the time this
    * takes must not say whether the PIN is in it. */
-  let hit: string | null = null;
+  let hit = false;
+  let any = false;
   for (const [candidate, staffId] of env) {
-    if (safeEqualStr(candidate, pin)) hit = staffId;
+    if (staffId === String(teacher.id)) {
+      any = true;
+      if (safeEqualStr(candidate, pin)) hit = true;
+    }
   }
-  if (hit === null) return { ok: false, reason: "wrong" };
-  let teachers;
-  try {
-    teachers = await listTeachers();
-  } catch {
-    return { ok: false, reason: "staff" };
-  }
-  const teacher = teachers.find((t) => String(t.id) === hit);
-  if (!teacher) return { ok: false, reason: "wrong" };
-  return { ok: true, teacher: { id: teacher.id, name: teacher.name } };
+  if (!any) return { ok: false, reason: "nopin" };
+  if (!hit) return { ok: false, reason: "wrong" };
+  return { ok: true, teacher };
 }
 
 /** A real hash of a PIN nobody can type (seven digits), so a miss costs

@@ -371,6 +371,19 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         ADD COLUMN IF NOT EXISTS pin_length smallint;
     `,
   },
+  {
+    /* PINs need not be unique (Pete: "there's no reason to force PINs
+     * to be unique"). They had to be while the discount gate found the
+     * teacher BY the PIN; since T50 every teacher is signed in, so the
+     * gate checks the PIN against the signed-in teacher's own row and
+     * two teachers may choose the same digits. `pin_lookup` stays as a
+     * column, no longer unique and no longer read. */
+    version: 11,
+    sql: `
+      ALTER TABLE teacher_pins
+        DROP CONSTRAINT IF EXISTS teacher_pins_pin_lookup_key;
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -683,6 +696,35 @@ export async function findTeacherPin(
     const res = await p.query(
       `SELECT staff_id, name, pin_hash FROM teacher_pins WHERE pin_lookup = $1`,
       [lookup],
+    );
+    const r = res.rows[0];
+    if (!r) return { available: true, row: null };
+    return {
+      available: true,
+      row: { staffId: String(r.staff_id), name: r.name, pinHash: r.pin_hash },
+    };
+  } catch (err) {
+    logDbError("teacher-pin-read", err);
+    return { available: false };
+  }
+}
+
+/** One teacher's PIN row by staff id, for the discount gate: the PIN is
+ *  checked against the SIGNED-IN teacher, never looked up on its own.
+ *  `available` says whether the store answered at all. */
+export async function findTeacherPinByStaff(
+  staffId: string,
+): Promise<
+  | { available: false }
+  | { available: true; row: null }
+  | { available: true; row: { staffId: string; name: string; pinHash: string } }
+> {
+  try {
+    const p = await ready();
+    if (!p) return { available: false };
+    const res = await p.query(
+      `SELECT staff_id, name, pin_hash FROM teacher_pins WHERE staff_id = $1`,
+      [staffId],
     );
     const r = res.rows[0];
     if (!r) return { available: true, row: null };
