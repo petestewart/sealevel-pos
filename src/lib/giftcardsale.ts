@@ -15,15 +15,29 @@
  *   ONE of them, with its own `PaymentInfo` (the same CheckoutPaymentInfo
  *   shapes /api/checkout sends) and its own sale in Mindbody's books.
  *
- * **There is no amount field.** The value of the card sold is the
- * PRODUCT's CardValue; nothing in the request can override it. So Pete's
- * number pad can only ever resolve to a product the site already has,
- * and the studio needs one fixed-value gift card product per amount it
- * wants to sell (see the T95 ticket: this is the first thing Pete has to
- * set up in Mindbody). Whether the site's "Gift Card (Custom Amount)"
- * product can be given a value through this endpoint is an OPEN QUESTION
- * for a live `Test: true` probe; the spec shows no field for it, and a
- * capability this file cannot see is not a capability it may assume.
+ * **There is no amount field, and an amount can still be chosen (T96).**
+ * The request carries no value, so for a FIXED product the card is worth
+ * that product's CardValue. But a product with `EditableByConsumer:
+ * true` prices ITSELF from the PaymentInfo amount: rehearsed live against
+ * site 471 on 2026-09-16 (`Test: true`, through this file's own
+ * purchaseGiftCard), product 282 "Gift Card (Custom Amount)", CardValue
+ * 0, answered `Value=$37.00 AmountPaid=$37.00` when paid $37.00 and
+ * `Value=$63.50 AmountPaid=$63.50` when paid $63.50. So the counter's
+ * number pad is free whenever the site has such a product, and no
+ * per-amount product has to be configured. T95 had concluded the
+ * opposite, because giftCardProducts() dropped every zero-value product
+ * and a custom-amount product is exactly that.
+ *
+ * **The fixed products are not consistent, which is why both figures are
+ * asserted.** On that same site the nine fixed products, paid an amount
+ * that disagreed with their price, answered two different ways: six
+ * issued a card worth the amount paid, three issued a card worth their
+ * own CardValue while booking the smaller payment. Every documented
+ * field on all nine is identical, so nothing here predicts which way one
+ * goes. Every purchase is rehearsed with `Test: true` first and both
+ * `Value` and `AmountPaid` are compared to the cent before anything is
+ * charged (see /api/checkout): a card worth more than was paid for it is
+ * money out of the studio's till.
  *
  * THE BARCODE ID IS A SECRET, exactly as in T83: a gift card is a bearer
  * instrument, so the id generated here is treated like a card number.
@@ -62,6 +76,13 @@ export interface GiftCardProduct {
    *  its value and charged at its price, and the ticket says so. */
   salePrice: number;
   description: string | null;
+  /**
+   * T96: `EditableByConsumer`. An editable product takes its value from
+   * the amount paid, so it sells for ANY amount the teacher types and its
+   * own cardValue and salePrice (0 on site 471) mean nothing. A fixed
+   * product sells only at its own two figures.
+   */
+  editable: boolean;
 }
 
 /**
@@ -109,16 +130,26 @@ export async function giftCardProducts(
     const e = entry as Record<string, unknown>;
     const id = num(e["Id"]);
     const cardValue = num(e["CardValue"]);
-    if (id === null || cardValue === null || cardValue <= 0) continue;
+    if (id === null || cardValue === null) continue;
+    const editable = e["EditableByConsumer"] === true;
+    /* T96: a zero-value product is KEPT only when it is editable, which
+     * is the shape a custom-amount product comes in (site 471's product
+     * 282 carries CardValue 0 and SalePrice 0, and prices itself from
+     * the payment). A non-editable zero-value product is still dropped:
+     * there is no amount it could be sold for. T95 dropped both, which
+     * is why its author never saw the custom-amount product. */
+    if (cardValue <= 0 && !editable) continue;
     /* SalePrice is documented "if applicable"; a card with none is sold
      * at its value, which is Pete's rule for every card the studio
-     * offers ("The price is always the value"). */
+     * offers ("The price is always the value"). Neither figure means
+     * anything on an editable product: the teacher's amount is both. */
     const salePrice = num(e["SalePrice"]);
     data.push({
       id,
-      cardValue: roundToCents(cardValue),
+      editable,
+      cardValue: roundToCents(Math.max(0, cardValue)),
       salePrice: roundToCents(
-        salePrice !== null && salePrice > 0 ? salePrice : cardValue,
+        salePrice !== null && salePrice > 0 ? salePrice : Math.max(0, cardValue),
       ),
       description:
         typeof e["Description"] === "string" && e["Description"].trim()
@@ -126,10 +157,49 @@ export async function giftCardProducts(
           : null,
     });
   }
-  /* By value, which is the order the preset chips read in. */
+  /* By value, which is the order the preset chips read in. An editable
+   * product sorts to the front on its zero value and is never a preset
+   * anyway: it is the pad's product, not a chip. */
   data.sort((a, b) => a.cardValue - b.cardValue);
   cache = { key, at: Date.now(), data };
   return data;
+}
+
+/**
+ * T96: the product the number pad sells through, or null when the site
+ * has none (in which case the pad can only resolve to a preset, exactly
+ * as T95 left it).
+ *
+ * Site 471 has exactly one. A site with several is not a shape Mindbody
+ * documents or that this studio has, so the LOWEST id is taken and the
+ * choice is recorded in the T96 ticket rather than guessed at per sale:
+ * one product, chosen the same way on every call, is the only answer
+ * that cannot price two identical tickets differently.
+ */
+export function editableGiftCardProduct(
+  products: readonly GiftCardProduct[],
+): GiftCardProduct | null {
+  let best: GiftCardProduct | null = null;
+  for (const p of products) {
+    if (!p.editable) continue;
+    if (best === null || p.id < best.id) best = p;
+  }
+  return best;
+}
+
+/**
+ * T96: the amounts an editable gift card may be sold for, one constant
+ * each. A dollar is the floor because a card worth less than the ink is
+ * a mistyped figure, and a thousand the ceiling because a counter tap
+ * should not be able to sell a car; both are refused in words, on both
+ * sides, before anything is charged.
+ */
+export const MIN_GIFT_CARD_AMOUNT = 1;
+export const MAX_GIFT_CARD_AMOUNT = 1000;
+
+/** A dollar figure as a refusal names it: "$1.00", "$1,000.00". */
+function dollars(n: number): string {
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
 /* ===================================================================
@@ -353,6 +423,16 @@ export async function purchaseGiftCard(opts: {
 export interface GiftCardLine {
   productId: number;
   quantity: number;
+  /**
+   * T96: the amount to sell this card for, in dollars, and ONLY for the
+   * editable product: it is the one figure on a ticket the teacher does
+   * choose, because Mindbody prices that product from the payment and
+   * has no other way of being told. Every other number still comes from
+   * the live product list. A fixed product sent an amount is refused
+   * rather than honoured, so the browser cannot name a price for a card
+   * Mindbody prices itself.
+   */
+  amount?: number;
 }
 
 /** A ticket holds at most this many gift card LINES, and at most this
@@ -385,6 +465,7 @@ export function parseGiftCardLines(
   for (const entry of raw) {
     const productId = (entry as { productId?: unknown } | null)?.productId;
     const quantity = (entry as { quantity?: unknown } | null)?.quantity;
+    const amount = (entry as { amount?: unknown } | null)?.amount;
     if (!Number.isInteger(productId) || (productId as number) <= 0) {
       return { lines: null, error: "each gift card line needs a productId" };
     }
@@ -394,6 +475,32 @@ export function parseGiftCardLines(
         error: "each gift card line needs a quantity of at least 1",
       };
     }
+    /* T96: the amount, when one came. Whole cents inside the two
+     * constants, refused in words on both sides; anything else is a
+     * figure nobody typed. */
+    let chosen: number | null = null;
+    if (amount !== undefined && amount !== null) {
+      if (typeof amount !== "number" || !Number.isFinite(amount)) {
+        return { lines: null, error: "a gift card amount must be a number" };
+      }
+      const cents = Math.round(amount * 100);
+      if (Math.abs(amount * 100 - cents) > 0.001) {
+        return { lines: null, error: "a gift card amount must be whole cents" };
+      }
+      if (cents < MIN_GIFT_CARD_AMOUNT * 100) {
+        return {
+          lines: null,
+          error: `the smallest gift card this app sells is ${dollars(MIN_GIFT_CARD_AMOUNT)}`,
+        };
+      }
+      if (cents > MAX_GIFT_CARD_AMOUNT * 100) {
+        return {
+          lines: null,
+          error: `the largest gift card this app sells is ${dollars(MAX_GIFT_CARD_AMOUNT)}`,
+        };
+      }
+      chosen = roundToCents(cents / 100);
+    }
     cards += quantity as number;
     if (cards > MAX_GIFT_CARDS) {
       return {
@@ -401,7 +508,11 @@ export function parseGiftCardLines(
         error: `a ticket holds at most ${MAX_GIFT_CARDS} gift cards`,
       };
     }
-    lines.push({ productId: productId as number, quantity: quantity as number });
+    lines.push({
+      productId: productId as number,
+      quantity: quantity as number,
+      ...(chosen === null ? {} : { amount: chosen }),
+    });
   }
   return { lines, error: null };
 }
@@ -410,8 +521,18 @@ export function parseGiftCardLines(
  *  call of its own with an id of its own. */
 export interface GiftCardUnit {
   productId: number;
+  /** T96: what the card is expected to be WORTH. The product's CardValue
+   *  for a fixed product, the teacher's amount for the editable one, and
+   *  either way the figure Mindbody's rehearsed `Value` must equal to the
+   *  cent before anything is charged. */
   cardValue: number;
-  salePrice: number;
+  /** T96: what to CHARGE for it, and so the PaymentInfo amount. The
+   *  product's SalePrice for a fixed product, the teacher's amount for
+   *  the editable one (which is what makes the card worth it). */
+  amount: number;
+  /** T96: which of the two rules above priced this card, for the wording
+   *  of a refusal and for nothing else. */
+  editable: boolean;
 }
 
 /**
@@ -435,11 +556,41 @@ export function resolveGiftCardUnits(
           "Remove the line and add it again. Nothing was charged.",
       };
     }
+    /* T96: the editable product is priced by the amount and by nothing
+     * else, so an amount is REQUIRED with it and refused on every other
+     * product. Both refusals mean the browser and the live product list
+     * disagree about which card this is, which is a stale shelf, not
+     * something to charge a guess for. */
+    if (product.editable && line.amount === undefined) {
+      return {
+        units: null,
+        error:
+          "That gift card is sold for an amount the teacher enters, and no " +
+          "amount came with it. Remove the line and add it again. Nothing " +
+          "was charged.",
+      };
+    }
+    if (!product.editable && line.amount !== undefined) {
+      return {
+        units: null,
+        error:
+          "Mindbody prices that gift card itself, so an amount cannot be " +
+          "chosen for it. Remove the line and add it again. Nothing was " +
+          "charged.",
+      };
+    }
+    const cardValue = product.editable
+      ? (line.amount as number)
+      : product.cardValue;
+    const amount = product.editable
+      ? (line.amount as number)
+      : product.salePrice;
     for (let i = 0; i < line.quantity; i++) {
       units.push({
         productId: product.id,
-        cardValue: product.cardValue,
-        salePrice: product.salePrice,
+        cardValue,
+        amount,
+        editable: product.editable,
       });
     }
   }
@@ -449,7 +600,7 @@ export function resolveGiftCardUnits(
 /** What the cards on a ticket cost, to the cent. */
 export function giftCardTotal(units: readonly GiftCardUnit[]): number {
   let total = 0;
-  for (const u of units) total += u.salePrice;
+  for (const u of units) total += u.amount;
   return roundToCents(total);
 }
 

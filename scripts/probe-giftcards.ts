@@ -25,6 +25,12 @@
  *   why the checkout asserts BOTH figures before it charges: a card
  *   worth more than was paid for it is money out of the studio's till.
  *
+ * **T96 was built on those two runs**: the editable product is kept in
+ * `giftCardProducts()`, the counter's number pad sells any amount through
+ * it, and both figures are asserted before anything is charged. This
+ * script stays as the way to re-ask the question on another site, or after
+ * Mindbody changes its mind.
+ *
  * Nothing is sold. Every purchase is `Test: true`, which per the spec
  * (sale.yml:5108) "allows you to test the request without affecting the
  * database". It runs through the app's own purchaseGiftCard(), so what

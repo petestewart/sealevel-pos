@@ -1094,8 +1094,10 @@ export async function POST(request: Request) {
   if (giftLines.length > 0) {
     /* The shape refusals ran above, before the cart's own validation. */
     /* The live product list, which is where a card's VALUE and PRICE come
-     * from: there is no amount field on the purchase, so the amount IS
-     * the product. A read, so a failure here charged nothing. */
+     * from: a fixed product carries both, and the ONE editable product
+     * (T96) is priced by the amount the teacher typed, which is the only
+     * figure on this ticket that does not come from Mindbody. A read, so
+     * a failure here charged nothing. */
     let products;
     try {
       products = await giftCardProducts();
@@ -1152,9 +1154,9 @@ export async function POST(request: Request) {
       }
       cartTotal = cartPriced.grandTotal;
     }
-    /* A gift card carries no tax (the product's own SalePrice is what the
-     * purchase charges), so the ticket's total is Mindbody's cart total
-     * plus each card's price. */
+    /* A gift card carries no tax (the amount sent with the purchase is
+     * what it charges), so the ticket's total is Mindbody's cart total
+     * plus each card's amount. */
     const ticketTotal = roundToCents(cartTotal + cardsTotal);
     if (
       typeof cashTendered === "number" &&
@@ -1174,7 +1176,7 @@ export async function POST(request: Request) {
      * and running it per part would turn one tap into a row of seams. */
     const parts: number[] = [
       ...(items.length > 0 ? [cartTotal] : []),
-      ...units.map((u) => u.salePrice),
+      ...units.map((u) => u.amount),
     ];
     let cardOnFile: { lastFour: string } | null = null;
     if (method === "storedcard") {
@@ -1263,7 +1265,7 @@ export async function POST(request: Request) {
           productId: unit.productId,
           purchaserClientId: saleClientId,
           barcodeId: ids[i] as string,
-          payment: paymentFor(unit.salePrice),
+          payment: paymentFor(unit.amount),
           test: true,
           sendEmailReceipt: false,
         });
@@ -1284,36 +1286,50 @@ export async function POST(request: Request) {
          * ordinary suppressed answer: nothing was sent, nothing charged. */
         return NextResponse.json({ ok: false, suppressed: trial.suppressed });
       }
-      /* The rehearsal's Value is Mindbody's own word on what the card
-       * would be worth. A figure that disagrees with the product record
-       * means the shelf and the site have drifted, and the teacher is
-       * about to hand over a card worth something else. A MISSING value
-       * is not a disagreement: the field is optional in the answer, and
-       * inventing a refusal for an absent field is not this route's job. */
-      /* T95 review: and what Mindbody says it COSTS. The payment sent
-       * with each purchase is the cached product's SalePrice, so a price
-       * that has moved since the list was read would charge the customer
-       * one figure while Mindbody books another. Absent is not a
-       * disagreement, for the reason the value check gives. */
-      if (
-        trial.amountPaid !== null &&
-        roundToCents(trial.amountPaid) !== unit.salePrice
-      ) {
+      /* T96: BOTH of Mindbody's figures, to the cent, for EVERY card,
+       * fixed or editable. `Value` is its own word on what the card would
+       * be worth and `AmountPaid` on what it would cost, and the two are
+       * compared with the value and the amount on the ticket.
+       *
+       * This is the assertion the whole rehearsal exists for. Site 471's
+       * nine fixed gift card products, paid an amount that disagreed with
+       * their price, split three ways to six: some issued a card worth
+       * what was paid, some a card worth their own CardValue while
+       * booking the smaller payment, and no documented field says which.
+       * A card worth more than the studio was paid for it is money out of
+       * the till, so a disagreement refuses the WHOLE ticket with nothing
+       * charged.
+       *
+       * A MISSING figure refuses too, which is stricter than T95 was.
+       * Both fields are documented on the answer (sale.yml:4920, 4924)
+       * and the live probe saw both on every product at every amount; an
+       * answer without them does not say what is about to be handed over,
+       * and silence is not agreement where a bearer instrument is. */
+      if (trial.amountPaid === null || trial.value === null) {
+        return NextResponse.json(
+          {
+            error:
+              "Mindbody did not say what the " +
+              `${unit.cardValue.toFixed(2)} gift card would be worth or what ` +
+              "it would cost, so it cannot be sold. Nothing was charged.",
+            stage: "rehearsal",
+          },
+          { status: 502 },
+        );
+      }
+      if (roundToCents(trial.amountPaid) !== unit.amount) {
         return NextResponse.json(
           {
             error:
               `Mindbody charges ${trial.amountPaid.toFixed(2)} for that gift ` +
-              `card, not the ${unit.salePrice.toFixed(2)} on the ticket. ` +
+              `card, not the ${unit.amount.toFixed(2)} on the ticket. ` +
               "Nothing was charged; tap Recheck prices and try again.",
             stage: "rehearsal",
           },
           { status: 409 },
         );
       }
-      if (
-        trial.value !== null &&
-        roundToCents(trial.value) !== unit.cardValue
-      ) {
+      if (roundToCents(trial.value) !== unit.cardValue) {
         return NextResponse.json(
           {
             error:
@@ -1407,7 +1423,7 @@ export async function POST(request: Request) {
               productId: unit.productId,
               purchaserClientId: saleClientId,
               barcodeId: id,
-              payment: paymentFor(unit.salePrice),
+              payment: paymentFor(unit.amount),
               actor,
               test: false,
               sendEmailReceipt: sendEmail,
@@ -1425,14 +1441,14 @@ export async function POST(request: Request) {
            * known by, and Mindbody holds the record. */
           sold.push({
             value: outcome.value ?? unit.cardValue,
-            price: outcome.amountPaid ?? unit.salePrice,
+            price: outcome.amountPaid ?? unit.amount,
             barcodeId: outcome.barcodeId ?? id,
             saleId: outcome.saleId === null ? null : String(outcome.saleId),
           });
           logGiftCardSale({
             outcome: "yes",
             value: outcome.value ?? unit.cardValue,
-            price: outcome.amountPaid ?? unit.salePrice,
+            price: outcome.amountPaid ?? unit.amount,
             saleId: outcome.saleId,
             clientId: saleClientId,
             staffId: session.staffId,
@@ -1454,7 +1470,7 @@ export async function POST(request: Request) {
           logGiftCardSale({
             outcome: failure.ambiguous ? "unknown" : "no",
             value: unit.cardValue,
-            price: unit.salePrice,
+            price: unit.amount,
             saleId: null,
             clientId: saleClientId,
             staffId: session.staffId,

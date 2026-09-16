@@ -8,10 +8,13 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/gift-cards -- the gift cards this site SELLS (T95).
  *
- * The shelf's preset amounts. `purchasegiftcard` has no amount field, so
- * the amounts a teacher may choose are exactly the site's gift card
- * products, and this is the live list of them: `{ products: [{ id,
- * cardValue, salePrice, description }] }`, cheapest first.
+ * The shelf's amounts: `{ products: [{ id, cardValue, salePrice,
+ * description, editable }] }`, cheapest first. The FIXED products are the
+ * preset chips, each sold at its own two figures. T96: an EDITABLE
+ * product (`EditableByConsumer`) is in the list too, and is the one the
+ * number pad sells any amount through, because Mindbody prices it from
+ * the amount paid; it carries a zero value of its own and is never
+ * offered as a preset.
  *
  * Deliberately NOT part of /api/catalog, although it is shelf data and it
  * is cached the same way. A site with gift cards turned off answers this
