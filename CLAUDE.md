@@ -266,6 +266,21 @@ while `git clone` works, so clone the repo rather than fetching files.
   rule: never a refund); otherwise the pass stays and the screen says
   so. `PurchasedItem.Id` is the pricing option's ProductId for a
   service, and there is no ClientServiceId on a sale line.
+- **A gift card's value comes from its PRODUCT, unless that product is
+  editable.** `POST /sale/purchasegiftcard` has no amount field, so a
+  fixed product issues a card worth its own `CardValue`. A product with
+  `EditableByConsumer: true` prices itself from the `PaymentInfo` amount
+  instead: site 471's product 282, "Gift Card (Custom Amount)", carries
+  `CardValue: 0` and answered `Value=$37.00 AmountPaid=$37.00` when paid
+  $37.00 (T96, two live `Test: true` probes, 2026-09-16). That one product
+  is what lets the counter sell any amount, and it is why a zero-value
+  product must not be filtered out of `/sale/giftcards` by reflex. **A
+  FIXED product may quietly issue a card worth MORE than was paid**: of
+  the nine on that site, six followed the payment and three followed their
+  own CardValue, with every documented field identical. So every purchase
+  is rehearsed with `Test: true` and both `Value` and `AmountPaid` are
+  asserted to the cent before anything is charged; a disagreement, or
+  either figure missing, refuses the whole ticket.
 - **The checkout answer carries no ClientService.** After selling a
   pass, the purchase instance (the id `updateclientvisit` and
   `addclienttoclass` take) comes from re-reading `/client/clientservices`

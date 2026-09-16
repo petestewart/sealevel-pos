@@ -4763,6 +4763,13 @@ button.sale-for:disabled {
   font-weight: 600;
 }
 
+/* T96: the line now has more to say (a card the pad priced itself, or one
+ * of the two limits refused in words), and the box must not resize as it
+ * changes: two lines of room, always, whichever sentence is in it. */
+.pad-change.gift-note {
+  min-height: 45px;
+}
+
 .pad-change.muted-note {
   font-size: 16px;
   font-weight: 400;

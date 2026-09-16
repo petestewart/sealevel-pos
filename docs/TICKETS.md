@@ -11300,6 +11300,16 @@ this ticket does not touch. Typecheck and build clean.
 
 ## T95. Selling a gift card (Pete, 2026-09-14)
 
+> **Superseded in part by T96 (2026-09-16).** Everything below about the
+> mechanism, the id, the tenders, the rehearsal and the partial outcome
+> stands. What is WRONG is the conclusion that a card's value is always
+> its product's CardValue and that Pete must configure one product per
+> amount: the site already has a product Mindbody prices from the amount
+> paid, and the number pad now sells any amount through it. The paragraphs
+> that say otherwise are marked below. **Nothing has to be set up in
+> Mindbody for gift cards except each teacher's permission to sell
+> them.**
+
 Pete, with screenshots of the Mindbody web POS (the "Payments/Gift Cards"
 tab, the item "Gift Card (Custom Amount)" with fields Gift Card ID, Price
 and Value; and the Prepaid Gift Card tender with Look Up and Remaining
@@ -11348,6 +11358,18 @@ means:
 > `purchasegiftcard` is the open question below, and it needs a live
 > `Test: true` probe to settle.
 
+> **Superseded by T96 (2026-09-16).** The probe was run, twice, against
+> site 471. The request has no amount field, and the product it names can
+> still be priced by the payment: `EditableByConsumer: true` on product
+> 282, "Gift Card (Custom Amount)", answered `Value=$37.00
+> AmountPaid=$37.00` when paid $37.00 and `$63.50` when paid $63.50.
+> **Pete has to create nothing.** The paragraph above and the quoted
+> instruction with it are wrong, and stay only so the reasoning that led
+> there is legible: `giftCardProducts()` dropped every product whose
+> CardValue was not above zero, and a custom-amount product carries
+> CardValue 0, so the one product that answered the question was filtered
+> out of the list before anyone could see it.
+
 ### The design
 
 - **The shelf item.** A "Gift cards" child under Retail, rendered only
@@ -11359,7 +11381,10 @@ means:
   chips in value order, the T82 keypad, Done and Cancel. A preset tap
   adds the line at once. Done resolves the typed cents to a product of
   exactly that value and is disabled when there is none. Escape, Cancel
-  and the scrim leave the ticket exactly as it was.
+  and the scrim leave the ticket exactly as it was. *(T96: Done now also
+  resolves any amount from $1.00 to $1,000.00 through the editable
+  product; the sentence above is what a site with no editable product
+  still does.)*
 - **The ticket line** reads "Gift card $50.00" and steps like any line;
   each unit is its own card with its own id. It carries no tax and is
   excluded from the cart's pricing entirely: the ticket's total is
@@ -11493,12 +11518,11 @@ inactive label, all of which predate this ticket.
 
 ### Open questions (for a live probe, none of them settled here)
 
-1. **A custom amount.** Can the site's "Gift Card (Custom Amount)"
-   product be given a value through `purchasegiftcard`? Send its
-   `GiftCardId` with `Test: true` and read `Value` back. If it can, the
-   number pad stops being limited to the configured amounts and this
-   ticket's one real compromise goes away. Until then Pete needs a
-   fixed-value product per amount.
+1. **A custom amount.** ~~Can the site's "Gift Card (Custom Amount)"
+   product be given a value through `purchasegiftcard`?~~ **Answered yes,
+   2026-09-16, and built in T96:** it prices itself from the PaymentInfo
+   amount. The pad is free and no per-amount product is needed. The probe
+   is `scripts/probe-giftcards.ts`.
 2. **The PaymentInfo shape.** `purchasegiftcard` is sent the same
    PascalCase `{ Type, Metadata: { Amount, ... } }` a checkout sends,
    which is the shape the one live checkout known to have passed used.
@@ -11577,3 +11601,178 @@ Left alone deliberately: the two-minute product cache means a checkout
 inside that window prices cards from the cached list rather than a fresh
 read. That is the catalog's own posture, and the rehearsal is what
 catches a drifted value or price, now on both figures.
+
+## T96. The gift card amount is free, sold through the editable product (Pete, 2026-09-16)
+
+T95 shipped believing a gift card's value is always its PRODUCT's
+CardValue, because `PurchaseGiftCardRequest` has no amount field. So its
+number pad could only resolve to a preset, and Pete was told he needed one
+fixed-value product per amount. **Two live probes against site 471
+(2026-09-16, `scripts/probe-giftcards.ts`, every call `Test: true`) proved
+otherwise.**
+
+Pete's original words still set the feature:
+
+> "a box pops up where the teacher must enter the amount (there should be
+> preset buttons as well as a number pad). The price is always the value,
+> and the ID is set automatically."
+
+### What the probes found
+
+- The site carries ONE product with `EditableByConsumer: true`: id 282,
+  "Gift Card (Custom Amount)", `CardValue: 0`, `SalePrice: 0`.
+- Rehearsed through the app's own `purchaseGiftCard()`, it answered
+  `Value=$37.00 AmountPaid=$37.00` when paid $37.00, and `Value=$63.50
+  AmountPaid=$63.50` when paid $63.50. **It prices itself from the
+  PaymentInfo amount.**
+- `giftCardProducts()` had been hiding it: it dropped a product whose
+  CardValue is not above zero, which is exactly what a custom-amount
+  product carries. That filter is why T95's author never saw it.
+- The nine FIXED products answered INCONSISTENTLY when paid an amount that
+  disagreed with their price: six issued a card worth the amount paid,
+  three issued a card worth their own CardValue while recording the
+  smaller payment. Every documented field on those nine is identical
+  (`EditableByConsumer: false` on all of them), so nothing predicts which
+  way one goes. That is the reason the rehearsal's assertion of both
+  figures stays, and gets stricter.
+
+### The design
+
+- **The product list keeps the editable product.** `EditableByConsumer`
+  is parsed into `GiftCardProduct.editable`. A product with `cardValue
+  <= 0` is kept ONLY when it is editable; a non-editable zero-value
+  product is still dropped, because there is no amount it could be sold
+  for. `editableGiftCardProduct()` picks the editable one, or the LOWEST
+  id if a site somehow has several: one product chosen the same way on
+  every call is the only answer that cannot price two identical tickets
+  differently.
+- **The amount box.** The presets are the FIXED products, by value, each
+  still sold through its own product id at its own price. The pad is free
+  whenever an editable product exists: any amount from
+  `MIN_GIFT_CARD_AMOUNT` ($1.00) to `MAX_GIFT_CARD_AMOUNT` ($1,000.00),
+  cents allowed, sold through the editable product, with both limits
+  refused in words and Done off. A typed amount that IS a preset resolves
+  to the PRESET, deliberately: typing $50.00 and tapping the $50.00 chip
+  have to be the same sale, and a studio that configured a fixed product
+  for an amount meant that product to be the one sold at it. With no
+  editable product the box behaves exactly as T95 left it: a preset, or
+  "Mindbody sells gift cards in set amounts here: ...".
+- **The unit.** `GiftCardUnit` carries the product id, the amount to
+  CHARGE and the value the card is EXPECTED to have. For a fixed product
+  those are its SalePrice and its CardValue; for the editable product both
+  are the amount the teacher typed. The ticket line reads "Gift card
+  $37.00" either way, and nothing on screen names the Mindbody product.
+- **The amount is the one number that travels from the browser**, and only
+  for the editable product, because Mindbody has no other way of being
+  told. It is validated server-side (a number, whole cents, inside the two
+  constants), REQUIRED on the editable product and REFUSED on every other
+  one. Everything else is still read from the live product list.
+- **The rehearsal's assertion, stricter.** For every unit, before any real
+  call, Mindbody's rehearsed `Value` must equal the expected value AND
+  `AmountPaid` must equal the amount being charged, to the cent. A
+  disagreement refuses the whole ticket in words naming the card, with
+  nothing charged. T96 adds: a MISSING figure refuses too. Both fields are
+  documented on the answer and the live probe saw both on every product at
+  every amount; an answer without them does not say what is about to be
+  handed over, and silence is not agreement where a bearer instrument is.
+- **Everything else in T95 is unchanged**: one purchase per card,
+  rehearse every part before charging any, sequential, honest partial
+  results, no retry or rollback, the `partialLock` that refuses a second
+  Finalize on a partly sold ticket, the server-generated six-character id
+  checked unused before selling, the tender and discount refusals, the
+  done screen's ids, the call log redaction.
+
+**What Pete has to set up in Mindbody: one thing.** Each teacher's
+permission group must allow selling gift cards, because a sale runs under
+their own login (T49). No new products are needed.
+
+### Build notes
+
+Changed: `src/lib/giftcardsale.ts` (the `editable` field and the
+zero-value rule, `editableGiftCardProduct`, the two amount constants, the
+amount on `GiftCardLine` with its validation, `GiftCardUnit`'s
+`amount`/`cardValue`/`editable`, `resolveGiftCardUnits`, `giftCardTotal`),
+the gift card branch of `/api/checkout` (the amount is what is charged,
+and the two assertions, now including absence), `src/app/api/gift-cards/
+route.ts` (the doc, and `editable` reaches the browser),
+`SaleScreen.tsx` (the product mirror, the amount on the cart item and in
+the payload, the per-amount cart key, the preset/pad split, the free pad
+and its wording, the recheck that keeps a custom amount) and
+`globals.css` (one no-colour rule keeping the box's message two lines
+tall). A cart key now carries the amount, because two custom cards of
+different amounts are the same product and must be two lines.
+
+Deliberately not done, with the reason:
+
+- **No per-amount rounding, and no presets invented from thin air.** The
+  chips stay the site's own fixed products. A studio that wants $75 on a
+  chip makes a $75 product; the pad already sells $75 without one.
+- **The pad does not sell through the editable product when a fixed
+  product carries the typed value.** See the design above: the same
+  amount must not mean two different sales depending on how it was
+  entered.
+- **`MAX_GIFT_CARD_AMOUNT` is not configurable.** It is one constant in
+  `giftcardsale.ts` mirrored by one in `SaleScreen.tsx`; a limit a
+  browser could raise is not a limit.
+
+### Verified by the builder
+
+`npm run typecheck` and `npm run build` clean. A route driver, a rail
+check and Playwright against `next start` on :3096 with the mock on :4596
+(`scratchpad/t96`: `mock.js` extended with the editable product 2000,
+which prices itself from the payment, alongside the fixed 2001-2003, which
+do not; knobs `giftEditableValue`, `giftEditablePaid`, `giftNoFigures`).
+
+Proved at the route: the editable product is listed with `editable: true`
+and a zero value of its own, beside the three fixed ones; $37.50 sells
+through it, rehearsed then charged, both calls carrying PaymentInfo
+$37.50, and the card comes back worth $37.50; $1.00 and $1,000.00 sell,
+$0.99, $0, a negative and $1,000.01 are each refused in words with
+NOTHING sent to Mindbody (checked past the browser with curl too), and so
+is a fraction of a cent; an amount on a FIXED product is refused, and the
+editable product with NO amount is refused, both with nothing sent; a
+fixed product priced $45 for a $50 card still sells at $45 through its own
+product id and is worth $50; a rehearsed `Value` that disagrees, an
+`AmountPaid` that disagrees, and an answer carrying neither figure each
+refuse the ticket with only the rehearsal ever sent; a site with no
+editable product refuses a custom amount as a stale shelf and still sells
+its presets; two cards of $25.00 and $63.50 on one ticket are two
+rehearsals then two charges, each with its own amount, two distinct ids
+and an $88.50 total; a quantity of two is two cards and two ids; a 5xx on
+the second card leaves the first sold and names both. Under the write
+guard a custom card reports `suppressed`, never a sale, nothing reaches
+Mindbody, and the call log shows the amount it would have charged with
+`BarcodeId: <redacted>`. T95's own route and rail drivers still pass
+unchanged.
+
+Proved on screen, both palettes and both orientations (1194x834 and
+834x1194): the presets are the three FIXED amounts at 64px and the
+editable product is never one of them and is never named; the opening
+line invites any amount; $37.50 reads "A $37.50 gift card. Done puts it on
+the ticket."; $0.99 and $10,000.00 read the two limits with Done off; the
+box is 760x306 in every one of those states; two custom amounts are two
+ticket lines, the same amount again bumps its line to $75.00, a fixed
+preset still adds its own line, and the three total $126.00 untaxed; the
+sale sends three purchases at 37.5, 63.5 and 25.00 and the done screen
+carries three distinct ids under "Write this on the $37.50 card" and so
+on; with no editable product the box is T95's again, word for word; and a
+partly sold ticket refuses Finalize with the reason on the button, with
+exactly two real calls ever made. The audit's only contrast findings on
+these screens are the pre-existing disabled-control idiom and the nav
+bar's inactive label, both of which predate T95.
+
+### Not verified
+
+- **Nothing was run against live Mindbody.** The editable product's
+  behaviour is Pete's two probes (both `Test: true`); no real card has
+  been sold at a custom amount, and `Test: true` is not proof that a real
+  purchase prices the same way. The first live sale should be a $1.00
+  card, with the balance read back.
+- **Which way a fixed product jumps is still unpredictable**, and the
+  assertion is what stands between that and a mispriced card. If the
+  studio ever wants a fixed product sold at an amount other than its
+  price, that is a ticket, not a tweak.
+- The open questions T95 left about `SalesRepId`, account credit on
+  `purchasegiftcard` and what an unknown barcode id answers are all still
+  open.
+
