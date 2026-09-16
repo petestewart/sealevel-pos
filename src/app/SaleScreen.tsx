@@ -198,21 +198,30 @@ interface ShelfItem {
  * T95: one gift card the site SELLS, as /api/gift-cards serves it
  * (mirrors src/lib/giftcardsale.ts GiftCardProduct).
  *
- * These are the preset amounts. `POST /sale/purchasegiftcard` has no
- * amount field at all -- the value of the card is the PRODUCT's CardValue
- * -- so the amounts a teacher may choose are exactly the products the
- * studio has configured, and nothing typed on the pad can invent one.
+ * The FIXED products are the preset amounts. T96: the one EDITABLE
+ * product is the pad's, never a chip: Mindbody prices it from the amount
+ * paid, so any amount between the two constants below sells through it.
  */
 interface GiftCardProduct {
   id: number;
-  /** What the card is worth. */
+  /** What the card is worth. Zero on the editable product, where the
+   *  teacher's amount is the value. */
   cardValue: number;
   /** What it costs. Pete: "The price is always the value", which is how
    *  the studio configures them; both figures are carried so a product
    *  that disagrees shows honestly rather than being averaged. */
   salePrice: number;
   description: string | null;
+  /** T96: `EditableByConsumer`. True on the custom-amount product. */
+  editable: boolean;
 }
+
+/** T96: the amounts a custom gift card may be sold for. Mirrors
+ *  MIN_GIFT_CARD_AMOUNT and MAX_GIFT_CARD_AMOUNT in
+ *  src/lib/giftcardsale.ts, which is where they are ENFORCED: this copy
+ *  only decides what the box lets a teacher tap Done on. */
+const MIN_GIFT_CARD_AMOUNT = 1;
+const MAX_GIFT_CARD_AMOUNT = 1000;
 
 /** Mirrors src/lib/sale.ts AutopayScheduleInfo. */
 interface AutopayScheduleInfo {
@@ -550,6 +559,12 @@ interface GiftCardItem {
   categoryId: null;
   /** What the card will be worth, which is not always what it costs. */
   cardValue: number;
+  /** T96: sold through the editable product, and so for an amount the
+   *  teacher typed rather than for the product's own figures. The amount
+   *  travels to /api/checkout, which is the only line on a ticket where
+   *  a number comes from the browser; the route re-reads the product and
+   *  refuses an amount on anything else. */
+  editable: boolean;
 }
 
 /** Anything a ticket line can be. */
@@ -560,19 +575,49 @@ function isGiftCardLine(line: CartEntry): boolean {
   return line.item.type === "GiftCard";
 }
 
-/** The ticket line for one gift card product. Pete: the line reads
- *  "Gift card $50.00". */
-function giftCardItem(product: GiftCardProduct): GiftCardItem {
+/**
+ * The ticket line for one gift card. Pete: the line reads "Gift card
+ * $50.00", and T96 keeps that reading for both kinds: `amount` is the
+ * teacher's figure on the editable product, and the product's own value
+ * and price on a fixed one. Nothing on the line names the Mindbody
+ * product.
+ */
+function giftCardItem(product: GiftCardProduct, amount?: number): GiftCardItem {
+  const value = product.editable ? (amount ?? 0) : product.cardValue;
+  const price = product.editable ? (amount ?? 0) : product.salePrice;
   return {
     id: product.id,
-    name: `Gift card ${money(product.cardValue)}`,
-    price: product.salePrice,
+    name: `Gift card ${money(value)}`,
+    price,
     taxExempt: true,
     taxRate: null,
     type: "GiftCard",
     categoryId: null,
-    cardValue: product.cardValue,
+    cardValue: value,
+    editable: product.editable,
   };
+}
+
+/** T96: the gift card line's key. The product id is not enough any more:
+ *  two custom cards of different amounts are the same product and must
+ *  be two lines, while a second card of the SAME amount still bumps the
+ *  one line to two. */
+function giftCardKey(item: GiftCardItem): string {
+  return `${cartKey(item, null)}:${Math.round(item.price * 100)}`;
+}
+
+/** T96: the product the pad sells through, or null when the site has
+ *  none. Mirrors editableGiftCardProduct in src/lib/giftcardsale.ts,
+ *  including the lowest-id rule. */
+function editableGiftCard(
+  products: readonly GiftCardProduct[],
+): GiftCardProduct | null {
+  let best: GiftCardProduct | null = null;
+  for (const p of products) {
+    if (!p.editable) continue;
+    if (best === null || p.id < best.id) best = p;
+  }
+  return best;
 }
 
 /** T95: the Retail child the Gift card cell lives under. Not a Mindbody
@@ -2575,6 +2620,13 @@ function PaymentPanel(props: {
                 giftCards: giftCardLines.map((line) => ({
                   productId: Number(line.item.id),
                   quantity: line.quantity,
+                  /* T96: the amount, and only for the editable product:
+                     Mindbody has no other way of being told what a
+                     custom card is worth. The route refuses an amount on
+                     a fixed product and requires one here. */
+                  ...((line.item as GiftCardItem).editable
+                    ? { amount: line.item.price }
+                    : {}),
                 })),
               }
             : {}),
@@ -6444,7 +6496,8 @@ export default function SaleScreen(props: {
             (p: GiftCardProduct) =>
               typeof p?.id === "number" &&
               typeof p?.cardValue === "number" &&
-              typeof p?.salePrice === "number",
+              typeof p?.salePrice === "number" &&
+              typeof p?.editable === "boolean",
           ),
         );
       })
@@ -6887,14 +6940,21 @@ export default function SaleScreen(props: {
             dropped.push(line.item.name);
             continue;
           }
-          if (product.salePrice !== line.item.price) {
+          /* T96: a custom card's amount is the teacher's, not the
+             product's, so a recheck keeps it; only a fixed card is
+             repriced from the list. A product that stopped being
+             editable loses the amount and reports the change. */
+          const fresh = product.editable
+            ? giftCardItem(product, line.item.price)
+            : giftCardItem(product);
+          if (fresh.price !== line.item.price) {
             changes.push({
               name: line.item.name,
               from: line.item.price,
-              to: product.salePrice,
+              to: fresh.price,
             });
           }
-          rebuilt.push({ ...line, item: giftCardItem(product) });
+          rebuilt.push({ ...line, item: fresh, key: giftCardKey(fresh) });
           continue;
         }
         /* T90: the cart key carries the recipient now, so the catalog is
@@ -7315,9 +7375,10 @@ export default function SaleScreen(props: {
    * card with its own id; /api/checkout expands the quantity), and the
    * box closes on the tap.
    */
-  const addGiftCard = useCallback((product: GiftCardProduct) => {
-    const item = giftCardItem(product);
-    const key = cartKey(item, null);
+  const addGiftCard = useCallback(
+    (product: GiftCardProduct, amount?: number) => {
+    const item = giftCardItem(product, amount);
+    const key = giftCardKey(item);
     setCartNotice(null);
     setGiftSell(null);
     setCart((lines) => {
@@ -7331,7 +7392,9 @@ export default function SaleScreen(props: {
       }
       return [...lines, { key, item, quantity: 1 }];
     });
-  }, []);
+    },
+    [],
+  );
 
   /** One tap rings up every line of a bundle, bumping quantities exactly
    *  like addItem does (same key, same MAX clamp), so a bundle is nothing
@@ -8182,16 +8245,94 @@ export default function SaleScreen(props: {
   );
 
 
-  /** T95: what the amount box has typed, in cents, and the product it
-   *  resolves to. `undefined` means no product has that value, which is
-   *  the one honest answer: Mindbody cannot sell an amount the studio has
-   *  not configured. */
+  /**
+   * T95, amended by T96: what the amount box has typed, in cents, and
+   * what it resolves to.
+   *
+   * The PRESETS are the site's fixed products, which sell at their own
+   * two figures. The PAD is free whenever the site has an editable
+   * product: Mindbody prices that one from the amount paid, so any figure
+   * between the two constants sells through it.
+   *
+   * A typed amount that IS a preset resolves to the preset, deliberately:
+   * typing $50.00 and tapping the $50.00 chip are the same sale, and a
+   * studio that configured a fixed product for an amount meant that
+   * product to be the one sold at it. T96 review: only while that
+   * product's price IS its value, though, because a typed figure has to
+   * be the figure charged; see giftPresetMatch below. Everything else
+   * goes to the editable product.
+   */
   const giftEntryCents = giftSell === null ? 0 : Number(giftSell.entry || "0");
-  const giftMatch = giftProducts.find(
+  /** The chips: fixed products only. The editable one has no amount of
+   *  its own to put on a chip. */
+  const giftPresets = giftProducts.filter((p) => !p.editable);
+  const giftEditableProduct = editableGiftCard(giftProducts);
+  const giftTypedPreset = giftPresets.find(
     (p) => Math.round(p.cardValue * 100) === giftEntryCents,
   );
+  /**
+   * T96 review: a TYPED figure is charged as typed, or it is not the sale
+   * the teacher asked for. A fixed product whose price differs from its
+   * value would charge the price: type $50.00 at a site whose $50.00 card
+   * costs $45.00 and the customer pays $45.00 for a card they asked to
+   * load with $50.00. So a typed amount resolves to a preset only when
+   * that product's price IS its value to the cent; otherwise it goes to
+   * the editable product, which charges exactly what was typed. Tapping
+   * the chip still sells that product at its own price, because the chip
+   * says both figures and the tap chose it.
+   *
+   * Where the site has NO editable product there is nowhere else for the
+   * figure to go, so T95's behaviour stands unchanged: the preset
+   * resolves and the line under the chips names both figures before Done
+   * is tapped.
+   */
+  const giftPresetMatch =
+    giftTypedPreset !== undefined &&
+    (Math.round(giftTypedPreset.salePrice * 100) ===
+      Math.round(giftTypedPreset.cardValue * 100) ||
+      giftEditableProduct === null)
+      ? giftTypedPreset
+      : undefined;
+  const giftCustomOk =
+    giftEditableProduct !== null &&
+    giftEntryCents >= MIN_GIFT_CARD_AMOUNT * 100 &&
+    giftEntryCents <= MAX_GIFT_CARD_AMOUNT * 100;
+  /** What Done would put on the ticket, or null when nothing can be. */
+  const giftResolved: { product: GiftCardProduct; amount?: number } | null =
+    giftPresetMatch !== undefined
+      ? { product: giftPresetMatch }
+      : giftCustomOk
+        ? {
+            product: giftEditableProduct as GiftCardProduct,
+            amount: giftEntryCents / 100,
+          }
+        : null;
   /** The live list, for the refusal line: "$25, $50, $100". */
-  const giftAmountList = giftProducts.map((p) => money(p.cardValue)).join(", ");
+  const giftAmountList = giftPresets.map((p) => money(p.cardValue)).join(", ");
+  /** The one line under the chips, in words. It says what Done would do,
+   *  or why it will not. */
+  const giftNote = (): string => {
+    if (giftEntryCents === 0) {
+      return giftEditableProduct !== null
+        ? "Tap an amount, or type any amount on the pad."
+        : "Tap an amount, or type one on the pad.";
+    }
+    if (giftPresetMatch !== undefined) {
+      return giftPresetMatch.salePrice === giftPresetMatch.cardValue
+        ? `A ${money(giftPresetMatch.cardValue)} gift card. Done puts it on the ticket.`
+        : `A ${money(giftPresetMatch.cardValue)} gift card, ${money(giftPresetMatch.salePrice)} to buy. Done puts it on the ticket.`;
+    }
+    if (giftEditableProduct === null) {
+      return `Mindbody sells gift cards in set amounts here: ${giftAmountList}.`;
+    }
+    if (giftEntryCents < MIN_GIFT_CARD_AMOUNT * 100) {
+      return `The smallest gift card this app sells is ${money(MIN_GIFT_CARD_AMOUNT)}.`;
+    }
+    if (giftEntryCents > MAX_GIFT_CARD_AMOUNT * 100) {
+      return `The largest gift card this app sells is ${money(MAX_GIFT_CARD_AMOUNT)}.`;
+    }
+    return `A ${money(giftEntryCents / 100)} gift card. Done puts it on the ticket.`;
+  };
   /** The T82 keypad's tap: digits append, `back` removes one, and the
    *  entry is capped so a stuck finger cannot build a nonsense figure. */
   const giftSellTap = (key: string) => {
@@ -9712,12 +9853,14 @@ export default function SaleScreen(props: {
           pops up where the teacher must enter the amount (there should be
           preset buttons as well as a number pad)."
 
-          The presets ARE the site's gift card products, because
-          `purchasegiftcard` has no amount field: the value of the card is
-          the product's, so an amount nobody configured in Mindbody is not
-          a card that can be sold. The pad is here as Pete asked, and its
-          Done resolves to a product of exactly the typed amount; when
-          there is none, the box says which amounts this studio sells and
+          The presets are the site's FIXED gift card products, each sold
+          through its own product id. T96: the pad is FREE, because the
+          site has one product Mindbody prices from the amount paid, so
+          any figure from $1.00 to $1,000.00 is a card it can sell, cents
+          and all; the line under the chips says what Done would do or why
+          it will not, and both limits are refused in words. A site with
+          no editable product keeps T95's behaviour exactly: Done resolves
+          to a preset, or the box names the amounts this studio sells and
           adds nothing. One fixed size, the T82 keypad idiom, the T36
           modal shape. Scrim, Cancel and Escape leave the ticket exactly
           as it was. */}
@@ -9738,11 +9881,14 @@ export default function SaleScreen(props: {
                 </span>
               </p>
               <div className="pad-chips gift-sell-chips">
-                {giftProducts.map((product) => (
+                {giftPresets.map((product) => (
                   <button
                     key={product.id}
                     className={
-                      giftEntryCents === Math.round(product.cardValue * 100)
+                      /* T96 review: lit when the typed figure is THIS
+                         chip's sale, which a mispriced product's is not
+                         (it routes to the editable product instead). */
+                      giftPresetMatch?.id === product.id
                         ? "pad-chip on"
                         : "pad-chip"
                     }
@@ -9759,18 +9905,12 @@ export default function SaleScreen(props: {
               </div>
               <p
                 className={
-                  giftEntryCents > 0 && giftMatch === undefined
-                    ? "pad-change gift-bad"
-                    : "pad-change muted-note"
+                  giftEntryCents > 0 && giftResolved === null
+                    ? "pad-change gift-note gift-bad"
+                    : "pad-change gift-note muted-note"
                 }
               >
-                {giftEntryCents === 0
-                  ? "Tap an amount, or type one on the pad."
-                  : giftMatch === undefined
-                    ? `Mindbody sells gift cards in set amounts here: ${giftAmountList}.`
-                    : giftMatch.salePrice === giftMatch.cardValue
-                      ? `A ${money(giftMatch.cardValue)} gift card. Done puts it on the ticket.`
-                      : `A ${money(giftMatch.cardValue)} gift card, ${money(giftMatch.salePrice)} to buy. Done puts it on the ticket.`}
+                {giftNote()}
               </p>
             </div>
 
@@ -9799,9 +9939,11 @@ export default function SaleScreen(props: {
             <div className="modal-actions">
               <button
                 className="modal-confirm go"
-                disabled={giftMatch === undefined}
+                disabled={giftResolved === null}
                 onClick={() =>
-                  giftMatch === undefined ? undefined : addGiftCard(giftMatch)
+                  giftResolved === null
+                    ? undefined
+                    : addGiftCard(giftResolved.product, giftResolved.amount)
                 }
               >
                 Done
