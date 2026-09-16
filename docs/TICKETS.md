@@ -11654,9 +11654,10 @@ Pete's original words still set the feature:
   refused in words and Done off. A typed amount that IS a preset resolves
   to the PRESET, deliberately: typing $50.00 and tapping the $50.00 chip
   have to be the same sale, and a studio that configured a fixed product
-  for an amount meant that product to be the one sold at it. With no
-  editable product the box behaves exactly as T95 left it: a preset, or
-  "Mindbody sells gift cards in set amounts here: ...".
+  for an amount meant that product to be the one sold at it. **Amended by
+  the review below: only while that product's price IS its value to the
+  cent.** With no editable product the box behaves exactly as T95 left it:
+  a preset, or "Mindbody sells gift cards in set amounts here: ...".
 - **The unit.** `GiftCardUnit` carries the product id, the amount to
   CHARGE and the value the card is EXPECTED to have. For a fixed product
   those are its SalePrice and its CardValue; for the editable product both
@@ -11710,7 +11711,8 @@ Deliberately not done, with the reason:
 - **The pad does not sell through the editable product when a fixed
   product carries the typed value.** See the design above: the same
   amount must not mean two different sales depending on how it was
-  entered.
+  entered. *(Narrowed by the review below to a fixed product priced at
+  its value.)*
 - **`MAX_GIFT_CARD_AMOUNT` is not configurable.** It is one constant in
   `giftcardsale.ts` mirrored by one in `SaleScreen.tsx`; a limit a
   browser could raise is not a limit.
@@ -11776,3 +11778,87 @@ bar's inactive label, both of which predate T95.
   `purchasegiftcard` and what an unknown barcode id answers are all still
   open.
 
+### Review
+
+Reviewed on the branch, 2026-09-16, against `origin/feature/phase-2` (which
+had not moved). The harness is the builder's own (`scratchpad/t96`: the mock
+on :4596, `next start` on :3096 from the worktree), plus a second route
+driver and a second Playwright driver written for the review.
+
+**The one decision: a typed figure is the figure charged.** The builder
+routed a typed amount that equalled a fixed preset's VALUE to that preset,
+and left a fixed product priced differently from its value "keeping its own
+price". Followed through, that is a teacher typing $50.00 at a site whose
+$50.00 card costs $45.00 and the customer being charged $45.00 for a card
+they asked to load with $50.00: a figure nobody typed. Site 471 has price
+equal to value on all nine fixed products today, so it was latent, but a
+latent money surprise is the thing this app refuses everywhere else.
+
+Settled the narrow way, which keeps the builder's reporting benefit: **a
+typed amount resolves to a preset only when that product's price equals its
+value to the cent; otherwise it goes to the editable product**, which
+charges exactly what was typed. Tapping the CHIP still sells that product
+at its own price, because the chip's title names both figures ("A $50.00
+gift card, $45.00 to buy") and the tap chose it; the chip is also no longer
+lit by a typed figure that does not resolve to it, since a lit chip that is
+not the sale is the same lie in a smaller font. Where the site has NO
+editable product there is nowhere else for the figure to go, so T95's
+behaviour stands unchanged there, mispriced product and all: the preset
+resolves and the line under the chips reads "A $50.00 gift card, $45.00 to
+buy. Done puts it on the ticket." before Done is tapped. Rejected the wider
+option (a typed amount ALWAYS goes to the editable product) only because it
+would have thrown away the fixed products' own reporting in Mindbody for a
+case the studio does not have.
+
+One line of `SaleScreen.tsx` decides it (`giftPresetMatch`), and nothing on
+the server changed: the route already refused an amount on a fixed product
+and required one on the editable product, so the browser could not have
+asked for the other sale anyway.
+
+**The amount, end to end.** Whole cents are enforced on the SERVER, and the
+route was driven past the browser with raw bodies the UI cannot produce: a
+string (`"50"`, `"1e3"`), a boolean, an array, an object, `1e400`
+(Infinity), a negative, a negative zero, zero, half a cent (`1.005`),
+`0.999` and `1000.001` are each refused in words with NOTHING sent to
+Mindbody, and `null` reads as absent and refuses as a missing amount. The
+accepted figures charge to the cent with no float drift: `99.99`,
+`33.33 * 3`, `0.07 * 3 + 100`, `999.99`, and the two boundaries `1` and
+`1000` each arrive at Mindbody as exactly that figure in both the rehearsal
+and the charge, and come back on the done screen as the same. Cash under a
+custom total is refused.
+
+**The assertion.** Both figures, for every unit, before any real call,
+fixed and editable alike, and a missing figure refuses: confirmed, and
+confirmed to be ALL-before-ANY. A ticket of a $25.00 preset then a $37.00
+custom card whose rehearsed `Value` comes back $40.00 refuses with card one
+never charged; so does a rehearsal that 400s on card two. The
+three-fixed-products hazard was mocked directly (a fixed product that
+ignores the payment and answers its own larger `Value`: paid $50.00,
+answers $75.00) and the ticket refuses with only the rehearsal ever sent.
+
+**T95's invariants.** Its own route driver, rail check and Playwright UI
+all still pass unchanged against this branch (the T95 mock carries no
+editable product, so that file is now the regression test for the
+preserved branch; a note at its head says so). Re-proved here with a custom
+amount on the ticket: one purchase per card, sequential, two distinct
+six-character ids, honest partial results with no retry or rollback, the
+`partialLock` refusing a second Finalize with the reason on the button, the
+gift-card tender, account credit, a discount, a split and a line for
+another client each refused with nothing sent, the six-line and ten-card
+caps, and under the write guard a suppression reported as a suppression
+with `BarcodeId: <redacted>` in both directions and the amount still
+visible.
+
+**State and UI.** Two custom amounts are two lines, the same amount bumps
+its line, Empty cart drops them, the box measures 760x306 in every message
+state including the two refusals and the mispriced-preset case, the
+editable product is never a chip and is never named on screen, and a site
+with no editable product reads as T95 word for word. Both palettes, both
+orientations. `npm run typecheck` and `npm run build` clean.
+
+**Left alone, and why.** The wording of a refusal below a dollar with cents
+in it ("a gift card amount must be whole cents" for `0.999`, rather than
+the floor) is accurate and both sentences refuse; the browser cannot send
+it. Nothing was run against live Mindbody, so the editable product's
+behaviour rests on Pete's two `Test: true` probes, and the T96 "Not
+verified" list above stands as written.

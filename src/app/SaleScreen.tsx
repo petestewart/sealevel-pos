@@ -8257,17 +8257,42 @@ export default function SaleScreen(props: {
    * A typed amount that IS a preset resolves to the preset, deliberately:
    * typing $50.00 and tapping the $50.00 chip are the same sale, and a
    * studio that configured a fixed product for an amount meant that
-   * product to be the one sold at it (its price may not even be its
-   * value). Everything else goes to the editable product.
+   * product to be the one sold at it. T96 review: only while that
+   * product's price IS its value, though, because a typed figure has to
+   * be the figure charged; see giftPresetMatch below. Everything else
+   * goes to the editable product.
    */
   const giftEntryCents = giftSell === null ? 0 : Number(giftSell.entry || "0");
   /** The chips: fixed products only. The editable one has no amount of
    *  its own to put on a chip. */
   const giftPresets = giftProducts.filter((p) => !p.editable);
   const giftEditableProduct = editableGiftCard(giftProducts);
-  const giftPresetMatch = giftPresets.find(
+  const giftTypedPreset = giftPresets.find(
     (p) => Math.round(p.cardValue * 100) === giftEntryCents,
   );
+  /**
+   * T96 review: a TYPED figure is charged as typed, or it is not the sale
+   * the teacher asked for. A fixed product whose price differs from its
+   * value would charge the price: type $50.00 at a site whose $50.00 card
+   * costs $45.00 and the customer pays $45.00 for a card they asked to
+   * load with $50.00. So a typed amount resolves to a preset only when
+   * that product's price IS its value to the cent; otherwise it goes to
+   * the editable product, which charges exactly what was typed. Tapping
+   * the chip still sells that product at its own price, because the chip
+   * says both figures and the tap chose it.
+   *
+   * Where the site has NO editable product there is nowhere else for the
+   * figure to go, so T95's behaviour stands unchanged: the preset
+   * resolves and the line under the chips names both figures before Done
+   * is tapped.
+   */
+  const giftPresetMatch =
+    giftTypedPreset !== undefined &&
+    (Math.round(giftTypedPreset.salePrice * 100) ===
+      Math.round(giftTypedPreset.cardValue * 100) ||
+      giftEditableProduct === null)
+      ? giftTypedPreset
+      : undefined;
   const giftCustomOk =
     giftEditableProduct !== null &&
     giftEntryCents >= MIN_GIFT_CARD_AMOUNT * 100 &&
@@ -9860,7 +9885,10 @@ export default function SaleScreen(props: {
                   <button
                     key={product.id}
                     className={
-                      giftEntryCents === Math.round(product.cardValue * 100)
+                      /* T96 review: lit when the typed figure is THIS
+                         chip's sale, which a mispriced product's is not
+                         (it routes to the editable product instead). */
+                      giftPresetMatch?.id === product.id
                         ? "pad-chip on"
                         : "pad-chip"
                     }
