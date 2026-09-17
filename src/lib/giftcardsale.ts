@@ -59,6 +59,7 @@ import {
   roundToCents,
   type CheckoutPayment,
 } from "./sale";
+import { plainText } from "./richtext";
 import { giftCardHidden, type ShelfConfig } from "./shelfconfig";
 import { ensureTarget } from "./target";
 
@@ -104,6 +105,16 @@ let cache: { key: string; at: number; data: GiftCardProduct[] } | null = null;
 /** T89: a target switch drops the cached products with the catalog. */
 export function clearGiftCardProducts(): void {
   cache = null;
+}
+
+/** T101: a gift card product's Description as a one-line name, or null.
+ *  `plainText` is the app's one way of showing anything Mindbody's rich
+ *  text editor wrote (src/lib/richtext.ts); the newlines it can leave are
+ *  no use in a button, so they collapse to spaces. */
+function giftCardDescription(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const text = plainText(raw).replace(/\s+/g, " ").trim();
+  return text === "" ? null : text;
 }
 
 function num(v: unknown): number | null {
@@ -152,10 +163,12 @@ export async function giftCardProducts(
       salePrice: roundToCents(
         salePrice !== null && salePrice > 0 ? salePrice : Math.max(0, cardValue),
       ),
-      description:
-        typeof e["Description"] === "string" && e["Description"].trim()
-          ? e["Description"].trim()
-          : null,
+      /* T101: this is the product's NAME on the counter's gift card box,
+       * so it is stripped of any markup the owner typed into Mindbody
+       * before it leaves the server (the T99 review flagged it as the one
+       * rich-text field reaching the browser unrendered) and collapsed to
+       * a single line, because it is a button's label. */
+      description: giftCardDescription(e["Description"]),
     });
   }
   /* By value, which is the order the preset chips read in. An editable

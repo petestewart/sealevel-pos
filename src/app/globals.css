@@ -3268,6 +3268,49 @@ button.chip.action:active {
   border-radius: 0;
   user-select: none;
   -webkit-user-select: none;
+  /* T101: the row itself is the swipe target, and the vertical scroll
+   * stays the browser's (the ticket is a long list under the same
+   * finger). `relative` is for the hint behind the row. */
+  position: relative;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+
+/* T101 (Pete: "In the ticket rows on the buy screen, swiping left on a
+ * row should delete the item from the cart."): what is about to happen,
+ * behind the row, in the --stop token because it is destructive. Quiet
+ * while the swipe is short of the distance that removes, filled once it
+ * is past it, so the release is never a surprise. Text on the --stop
+ * fill is --bg (white fails in dark). */
+.t-row-swipe {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  background: var(--stop-bg);
+  color: var(--stop);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.t-row-swipe.armed {
+  background: var(--stop);
+  color: var(--bg);
+}
+
+/* The row follows the finger. No transition: a swipe that lags the
+ * finger reads as a stuck screen, and the row is put back by a render
+ * when the gesture ends. */
+.t-row.swiping .t-row-main {
+  position: relative;
+  z-index: 1;
+  background: var(--surface);
 }
 
 .t-row-main {
@@ -3364,18 +3407,25 @@ button.chip.action:active {
  * accent because it is actionable. With a recipient on the line it wears
  * the name and the accent tint, so a glance at the ticket shows which
  * lines are somebody else's. */
+/* T101, Pete: "'Other Client' should look like a button and not be in
+ * bold text." So it takes the surface and the 1px --line border every
+ * other secondary control on this row has (.t-ctl-btn, .modal-cancel),
+ * and its weight drops to the body's. The accent ink stays: the control
+ * is actionable, and --accent is the token that says so. Both states are
+ * unchanged otherwise, including the accent tint it wears with a
+ * recipient on the line. */
 .t-for {
   flex: 0 1 auto;
   min-width: 0;
   min-height: 44px;
   margin-left: 6px;
-  padding: 0 10px;
-  border: 0;
+  padding: 0 12px;
+  border: 1px solid var(--line);
   border-radius: 0;
-  background: transparent;
+  background: var(--surface);
   color: var(--accent);
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 400;
   text-align: left;
   white-space: nowrap;
   overflow: hidden;
@@ -3383,11 +3433,12 @@ button.chip.action:active {
 }
 
 .t-for.on {
+  border-color: var(--accent);
   background: var(--accent-bg);
 }
 
 .t-for:active:not(:disabled) {
-  opacity: 0.7;
+  background: var(--surface-2);
 }
 
 .t-for:disabled {
@@ -3395,12 +3446,33 @@ button.chip.action:active {
   cursor: default;
 }
 
+/* T101 (Pete: "both sections should make the qty clickable and use a
+ * number keypad to enter an amt. it should be obvious that the amt is
+ * clickable"): the count is a CONTROL now, so it wears the stepper
+ * buttons' own surface and border at the same 44px height rather than
+ * sitting between them as bare text. */
 .t-ctl-qty {
-  min-width: 2.4em;
+  flex: 0 0 auto;
+  min-width: 3em;
+  min-height: 44px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
   text-align: center;
   font-size: 20px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
+}
+
+.t-ctl-qty:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.t-ctl-qty:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* The "For:" affordance atop the cart: a full-width 64px quiet button
@@ -3796,51 +3868,63 @@ button.sale-for:disabled {
   grid-template-rows: minmax(0, 1fr) auto;
 }
 
-/* The quantity strip along an in-cart card's bottom edge (Pete: "So a
- * user can adjust quanityt in the cart or on the item itself"): 48px, the
- * card's own accent border continued, minus and plus at either end of the
- * count. Tapping the card's body above it still adds one. */
+/* T82 drew this as a full-width strip along the card's bottom edge.
+ * T101 makes it the TICKET ROW'S stepper instead, at the card's lower
+ * right (Pete: "An individual item's button should have the +/amt/-
+ * section (like the ticket row) in its lower right when there is >0 qty
+ * in the cart"): the same 44px squares on the same 1px --line border,
+ * pushed to the right of the card's own width, with the quantity between
+ * them. Tapping the card's body above it still adds one, so this is the
+ * only way down. */
 .shelf-qty {
   display: flex;
-  align-items: stretch;
-  height: 48px;
-  border: 2px solid var(--accent);
-  border-top: 1px solid var(--line);
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 4px 4px 4px 0;
   background: var(--surface);
 }
 
-.shelf-qty-btn {
-  flex: 1 1 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-}
-
-.shelf-qty-btn:active:not(:disabled) {
-  background: var(--surface-2);
-}
-
-.shelf-qty-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-/* The strip's X: the stop colour, as the ticket's X. */
-.shelf-qty-x {
-  color: var(--stop);
-}
-
+.shelf-qty-btn,
 .shelf-qty-n {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 2.2em;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.shelf-qty-btn {
+  width: 44px;
+}
+
+.shelf-qty-btn:active:not(:disabled),
+.shelf-qty-n:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.shelf-qty-btn:disabled,
+.shelf-qty-n:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* T90's rule, on the card: at quantity one the minus IS the remove, so
+ * it takes the stop colour the separate X square carried. */
+.shelf-qty-x {
+  color: var(--stop);
+}
+
+/* T101: the quantity is a control, in the same idiom as the two squares
+ * beside it, because it opens the number pad. */
+.shelf-qty-n {
+  min-width: 3em;
+  padding: 0 6px;
   font-size: 18px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -4709,16 +4793,105 @@ button.sale-for:disabled {
   cursor: default;
 }
 
-/* T95: the sell-a-gift-card box's preset chips. The same 64px .pad-chip
- * as every other quick cell; they WRAP, because the presets are the
- * site's own gift card products and a studio may offer five of them. */
-.gift-sell-chips {
-  flex-wrap: wrap;
+/* T101, Pete: "The gift card section was supposed to have a list of
+ * items but instead it has dollar amounts as the button labels. List the
+ * items names and the dollar amount for each one." Each cell carries the
+ * product's NAME over its amount, on the .pad-chip surface at the same
+ * 64px. A name can be long, so it wraps to two lines and then ellipsizes,
+ * with the whole of it on the title; it never overflows the cell and the
+ * cell never grows. */
+.modal-gift-list {
+  width: min(560px, 100%);
 }
 
-.gift-sell-chips .pad-chip {
-  flex: 1 0 auto;
-  min-width: 88px;
+.gift-card-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+/* Inside the keypad state the cells share the entry column, so they are
+ * one per row and the list scrolls rather than stretching the box: one
+ * size whatever the site sells. */
+.gift-card-list-pad {
+  grid-template-columns: minmax(0, 1fr);
+  max-height: 176px;
+  overflow-y: auto;
+}
+
+.gift-card-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  min-height: 64px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+
+.gift-card-chip:active:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* T96 review: lit when the typed figure is THIS product's sale. */
+.gift-card-chip.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.gift-card-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.gift-card-amt {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* T101: the quantity pad. The line it is about, under the figure, and
+ * the zero key filling the row the "00" key does not belong on: a
+ * quantity is counted in whole units. */
+.qty-pad-name {
+  margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.pad-key-wide {
+  grid-column: span 2;
+}
+
+/* The figure the line holds NOW, until a digit is typed over it: the
+ * same 30px cipher, muted, so it reads as the starting point rather than
+ * as an entry. */
+.pad-entered-held {
+  color: var(--muted);
 }
 
 /* T83: the gift-card modal's number field, the one input in the payment

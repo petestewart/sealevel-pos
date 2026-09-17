@@ -609,6 +609,25 @@ function giftCardKey(item: GiftCardItem): string {
   return `${cartKey(item, null)}:${Math.round(item.price * 100)}`;
 }
 
+/**
+ * T101, Pete: "The gift card section was supposed to have a list of
+ * items but instead it has dollar amounts as the button labels. List the
+ * items names and the dollar amount for each one."
+ *
+ * What a gift card product is CALLED. Mindbody's `GiftCard` schema
+ * carries no Name at all (docs/mindbody-openapi/sale.yml: Id,
+ * LocationIds, Description, EditableByConsumer, CardValue, SalePrice,
+ * ...), so the studio's product name arrives in `Description`; the
+ * drawer's Shelf tab already reads it that way
+ * (src/app/api/admin/shelf/route.ts). A product with none falls back to
+ * its amount, which is exactly what the chip read before this ticket.
+ */
+function giftCardName(p: GiftCardProduct): string {
+  return typeof p.description === "string" && p.description.trim()
+    ? p.description.trim()
+    : `${money(p.cardValue)} gift card`;
+}
+
 /** T96: the product the pad sells through, or null when the site has
  *  none. Mirrors editableGiftCardProduct in src/lib/giftcardsale.ts,
  *  including the lowest-id rule. */
@@ -1374,6 +1393,15 @@ function PaymentPanel(props: {
    *  control goes back to "Sign in". */
   onStaffSessionEnded: () => void;
   /**
+   * T101: why the ticket's rows must not be edited, or null when they
+   * may be. Pay mode's rows became editable with this ticket, and two
+   * states of this panel are not the mode: a ticket that was PARTLY sold
+   * (T95's partial latch, where gift cards are already real cards in
+   * Mindbody) and a settled sale. Both are facts only the panel knows, so
+   * it says so and SaleScreen locks the rows.
+   */
+  onTicketLock: (why: string | null) => void;
+  /**
    * A charge finished in a state that may have moved money, so everything
    * this screen shows about the client (credit above all, and the roster
    * underneath) is now a stale snapshot. Fired for a completed sale, for
@@ -1418,6 +1446,7 @@ function PaymentPanel(props: {
     visible,
     ticketSlot,
     notice,
+    onTicketLock,
     onSold,
     onDone,
     onStaffSessionEnded,
@@ -1877,6 +1906,20 @@ function PaymentPanel(props: {
     dismissCardEntry();
     closeReason();
   }, [dismissPad, dismissGift, dismissCardEntry, closeReason, setComp]);
+
+  /* T101: the ticket's rows are editable in pay mode now, EXCEPT where
+   * this panel knows something the ticket does not. A part-sold ticket
+   * holds lines that are already sold in Mindbody (T95's latch), and a
+   * settled sale is not a ticket any more; editing either would be
+   * editing history. Reported up rather than inferred there, because
+   * both facts live here. */
+  const ticketLockWhy =
+    result?.kind === "paid"
+      ? "This sale is done. Start a new ticket."
+      : partialLock;
+  useEffect(() => {
+    onTicketLock(ticketLockWhy);
+  }, [ticketLockWhy, onTicketLock]);
 
   /* T79: the discount is cart state, so a change to it (armed, removed,
    * or a different figure) moves the total under every tender line the
@@ -7029,6 +7072,9 @@ export default function SaleScreen(props: {
    *  ref into state, since the element exists only after the first
    *  commit. */
   const [ticketSlot, setTicketSlot] = useState<HTMLElement | null>(null);
+  /** T101: PaymentPanel's word on whether this ticket may still be
+   *  edited (a part-sold ticket, a settled sale), and why. */
+  const [ticketLock, setTicketLock] = useState<string | null>(null);
   /** Every close goes through here so the mode resets with it. */
   const close = useCallback(() => {
     setSaleMode("shelf");
@@ -7235,6 +7281,14 @@ export default function SaleScreen(props: {
   const [giftSell, setGiftSell] = useState<{
     entry: string;
     /**
+     * T101 (Pete: "Custom is one of the buttons, and custom brings up the
+     * number keypad"): which of the box's two states is showing. False is
+     * the LIST, the site's cards by name with Custom beside them; true is
+     * the keypad, which is T95/T96's box unchanged. Two states, one fixed
+     * size each.
+     */
+    custom?: boolean;
+    /**
      * T100 review: the refusal's own sentence, when the box was opened
      * from the note's offer. Adding to the ticket clears the note, and
      * that took Mindbody's reason off the screen at the moment the
@@ -7259,6 +7313,42 @@ export default function SaleScreen(props: {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [giftSell, closeGiftSell]);
+
+  /**
+   * T101, Pete: "And both sections should make the qty clickable and use
+   * a number keypad to enter an amt. it should be obvious that the amt is
+   * clickable."
+   *
+   * One pad, opened from the ticket row's quantity and from the shelf
+   * card's, both of which are now controls rather than bare text. It is a
+   * QUANTITY, not money: the pad has digits and a backspace and nothing
+   * else, so a fraction, a sign and a letter cannot be typed at all, and
+   * the two bounds are refused in words. The server refuses the same
+   * range again (src/lib/sale.ts MAX_LINE_QUANTITY), because nothing the
+   * browser decides is the last word on a cart line.
+   */
+  const [qtyPad, setQtyPad] = useState<{
+    key: string;
+    name: string;
+    entry: string;
+  } | null>(null);
+  const closeQtyPad = useCallback(() => setQtyPad(null), []);
+  /* A pad opened on a line the cart no longer holds is a pad about
+     nothing (a recheck dropped it, the row was removed on another
+     control): Done would have nowhere to land, so it closes itself
+     rather than waiting to be cancelled. */
+  useEffect(() => {
+    if (qtyPad === null) return;
+    if (!cart.some((l) => l.key === qtyPad.key)) setQtyPad(null);
+  }, [cart, qtyPad]);
+  useEffect(() => {
+    if (qtyPad === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeQtyPad();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [qtyPad, closeQtyPad]);
   const confirmClear = useCallback(() => {
     setClearPrompt(null);
     emptyCart();
@@ -7928,6 +8018,19 @@ export default function SaleScreen(props: {
     );
   }, []);
 
+  /**
+   * T101: the typed quantity, from the pad. Everything the pad cannot
+   * type is refused here too, so no caller can put a fraction, a
+   * negative, a NaN or a figure past the cap on a line; the pad's Done is
+   * disabled on the same test, and the server checks it again.
+   */
+  const setLineQuantity = useCallback((key: string, next: number) => {
+    if (!Number.isInteger(next) || next < 1 || next > MAX_LINE_QUANTITY) return;
+    setCart((lines) =>
+      lines.map((l) => (l.key === key ? { ...l, quantity: next } : l)),
+    );
+  }, []);
+
   /* Select-to-reveal, back (Pete, live, on every line wearing its
    * controls: "the items on the right should only show the +/1/X
    * buttons when i click on one to make it show"). One line at a time;
@@ -7952,6 +8055,51 @@ export default function SaleScreen(props: {
   const removeLine = useCallback((key: string) => {
     setRevealedKey((k) => (k === key ? null : k));
     setCart((lines) => lines.filter((l) => l.key !== key));
+  }, []);
+
+  /**
+   * T101, Pete: "In the ticket rows on the buy screen, swiping left on a
+   * row should delete the item from the cart."
+   *
+   * The gesture calls `removeLine`, the same removal the minus performs
+   * at quantity one, so there is ONE removal with one set of
+   * consequences: the tender lines go, an armed discount re-spreads, a
+   * held card or gift card number drops with its line. No confirm, as
+   * T82 decided for the row's own remove: one tap from the shelf puts the
+   * item back, and a gesture that asks twice is not a gesture.
+   *
+   * It must not fight the list, which scrolls vertically under the same
+   * finger. So a drag counts only when it is clearly horizontal and
+   * clearly deliberate: nothing moves until it is past a wobble AND more
+   * horizontal than vertical, and a drag that goes vertical first is
+   * abandoned for the rest of the press. `touch-action: pan-y` on the row
+   * leaves the vertical scroll to the browser. Pointer events, so a mouse
+   * and a test harness drive the same code as a thumb.
+   *
+   * Buy screen only, which is what was asked for: pay mode keeps the
+   * controls. An armed tender is not something a gesture should be able
+   * to invalidate, and nothing moves while `charging` either. The minus
+   * stays where it is for the keyboard and the screen reader: the gesture
+   * is an addition, never the only way out.
+   */
+  const SWIPE_ARM = 14;
+  const SWIPE_REMOVE = 96;
+  const swipeRef = useRef<{
+    key: string;
+    x: number;
+    y: number;
+    live: boolean;
+    dead: boolean;
+  } | null>(null);
+  /** The row that is following the finger, and by how far. Null when no
+   *  gesture is live, which is every render but the ones during one. */
+  const [swipe, setSwipe] = useState<{ key: string; dx: number } | null>(null);
+  /** A swipe that removed a line must not also read as a tap on the row
+   *  it left under the finger. */
+  const swipeAte = useRef(false);
+  const endSwipe = useCallback(() => {
+    swipeRef.current = null;
+    setSwipe(null);
   }, []);
 
   /**
@@ -8523,8 +8671,14 @@ export default function SaleScreen(props: {
    *  moved, so a sectioned Passes shelf and a plain one draw the same
    *  thing. */
   const shelfCard = (item: ShelfItem) => {
-    const key = itemKey(item.type, item.id);
-    const starred = favSet.has(key);
+    const starred = favSet.has(itemKey(item.type, item.id));
+    /* T101: the CART's key, which is not the catalog's. T90 gave a line
+       its recipient ("Product-9001:self", "Product-9001:100041277") and
+       this card kept reading the bare "Product-9001", so `count` had been
+       zero for every card since: no count badge, and no T82 strip to
+       adjust. A shelf tap bumps the SELF line (T90's rule, addItem), so
+       this card is about that line and its controls act on it. */
+    const key = cartKey(item, null);
     const count = inCart.get(key) ?? 0;
     return (
       <div
@@ -8559,45 +8713,73 @@ export default function SaleScreen(props: {
                 </span>
               ) : null}
             </span>
-            {/* T39.3: how many are rung up, from cart
-                state. Reads "x2" so a teacher can see a
-                double tap landed without looking at
-                the ticket. */}
-            {count > 0 ? (
-              <span
-                className="shelf-count"
-                aria-label={`${count} in the cart`}
-              >
-                &#215;{count}
-              </span>
-            ) : null}
+            {/* T39.3 put the count here, reading "x2", so a teacher
+                could see a double tap landed without looking at the
+                ticket. T101 moves the quantity into the strip below,
+                which sits in this very corner and carries the same
+                number between its minus and its plus: two copies of one
+                figure on one card, one of them tappable and one not, is
+                the sort of thing that gets reported as a bug. The card
+                still says it is in the cart, in its 2px accent border.
+                The gift card cell, which has no strip, keeps its
+                badge. */}
           </span>
         </button>
-        {/* T82: the quantity on the item itself (Pete: "Add + and - ...
-            So a user can adjust quanityt in the cart or on the item
-            itself"), the ticket's stepper along the card's bottom edge
-            and only for a card the cart holds. Siblings of the add
-            button, never inside it: nested buttons are invalid HTML and
-            double-fire. The card's body still adds one, so the strip is
-            the only way DOWN, and minus stops at one; removing the line
-            is the ticket's X. */}
+        {/* T82 put the quantity on the item itself (Pete: "Add + and -
+            ... So a user can adjust quanityt in the cart or on the item
+            itself") as a full-width strip with a separate X. T101 makes
+            it the TICKET ROW'S shape instead, at the card's lower right
+            (Pete: "An individual item's button should have the +/amt/-
+            section (like the ticket row) in its lower right when there is
+            >0 qty in the cart. Clicking on - (or X) lowers the qty.
+            clicking anywhere else raises it."): minus, the quantity,
+            plus, and at quantity one the MINUS IS THE REMOVE, drawn as
+            the X glyph in --stop, exactly as T90 did for the row. The
+            separate X square is gone with it.
+
+            Still SIBLINGS of the add button, never inside it: nested
+            buttons are invalid HTML and double-fire, and they still stop
+            propagation. The card's body above them adds one, so the strip
+            is the only way DOWN. */}
         {count > 0 ? (
           <div className="shelf-qty">
             <button
-              className="shelf-qty-btn"
-              disabled={count <= 1 || charging}
-              aria-label={`One fewer ${item.name}`}
-              title={`One fewer ${item.name}`}
+              className={
+                count <= 1 ? "shelf-qty-btn shelf-qty-x" : "shelf-qty-btn"
+              }
+              disabled={charging}
+              aria-label={
+                count <= 1
+                  ? `Remove ${item.name} from the sale`
+                  : `One fewer ${item.name}`
+              }
+              title={
+                count <= 1 ? `Remove ${item.name}` : `One fewer ${item.name}`
+              }
               onClick={(e) => {
                 e.stopPropagation();
-                bumpQuantity(key, -1);
+                if (count <= 1) removeLine(key);
+                else bumpQuantity(key, -1);
               }}
             >
-              <MinusIcon />
+              {count <= 1 ? <CloseIcon /> : <MinusIcon />}
             </button>
-            <span className="shelf-qty-n" aria-live="polite">
+            {/* T101: the number is a CONTROL, on the same surface and
+                border as the squares beside it, so it is obvious it can
+                be tapped; it opens the quantity pad. */}
+            <button
+              className="shelf-qty-n"
+              disabled={charging}
+              aria-live="polite"
+              aria-label={`Quantity of ${item.name}, tap to type it`}
+              title="Tap to type a quantity"
+              onClick={(e) => {
+                e.stopPropagation();
+                setQtyPad({ key, name: item.name, entry: "" });
+              }}
+            >
               {count}
-            </span>
+            </button>
             <button
               className="shelf-qty-btn"
               disabled={count >= MAX_LINE_QUANTITY || charging}
@@ -8609,20 +8791,6 @@ export default function SaleScreen(props: {
               }}
             >
               <PlusIcon />
-            </button>
-            {/* Pete: "the individual cards should also have a X to
-                remove the item from the cart." */}
-            <button
-              className="shelf-qty-btn shelf-qty-x"
-              disabled={charging}
-              aria-label={`Remove ${item.name} from the sale`}
-              title={`Remove ${item.name}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                removeLine(key);
-              }}
-            >
-              <CloseIcon />
             </button>
           </div>
         ) : null}
@@ -8780,9 +8948,70 @@ export default function SaleScreen(props: {
   const giftSellTap = (key: string) => {
     setGiftSell((g) => {
       if (g === null) return g;
-      if (key === "back") return { entry: g.entry.slice(0, -1) };
+      /* T101: `...g` matters. The box's state carries which of its two
+         states is up (and T100's kept note), and a backspace that
+         returned a bare { entry } sent the pad back to the list on the
+         first delete. */
+      if (key === "back") return { ...g, entry: g.entry.slice(0, -1) };
       const next = (g.entry + key).replace(/^0+(?=\d)/, "");
-      return next.length > 7 ? g : { entry: next };
+      return next.length > 7 ? g : { ...g, entry: next };
+    });
+  };
+  /** T101: the box's first state lists the site's cards by NAME. The one
+   *  line under them says what the list is, or that there is no list. */
+  const giftListNote = (): string => {
+    if (giftPresets.length === 0) {
+      return "This studio has no set gift card amounts. Tap Custom to type one.";
+    }
+    return giftEditableProduct !== null
+      ? "Tap a card, or Custom to type any amount."
+      : "Tap a card. This studio sells gift cards in set amounts.";
+  };
+
+  /**
+   * T101: the quantity pad's figure and its refusal, in words.
+   *
+   * The entry is digits only, so a fraction, a negative and a letter
+   * cannot be typed; the test is still written out, because the refusal
+   * has to hold for whatever reaches it, and the same range is enforced
+   * again server-side. An empty entry is not a quantity either: Done is
+   * off until a figure is typed, and the box shows what the line holds
+   * now so nothing is guessed at.
+   */
+  const qtyEntry = qtyPad?.entry ?? "";
+  const qtyHeld =
+    qtyPad === null ? null : (cart.find((l) => l.key === qtyPad.key)?.quantity ?? null);
+  const qtyValue = /^\d+$/.test(qtyEntry) ? Number(qtyEntry) : null;
+  const qtyOk =
+    qtyValue !== null &&
+    Number.isInteger(qtyValue) &&
+    qtyValue >= 1 &&
+    qtyValue <= MAX_LINE_QUANTITY;
+  const qtyNote = (): string => {
+    if (qtyEntry === "") {
+      return `Type a quantity, 1 to ${MAX_LINE_QUANTITY}.`;
+    }
+    if (qtyValue === null || !Number.isInteger(qtyValue)) {
+      return `A quantity is a whole number, 1 to ${MAX_LINE_QUANTITY}.`;
+    }
+    if (qtyValue < 1) {
+      return "A line on the ticket needs at least one. Remove the line instead.";
+    }
+    if (qtyValue > MAX_LINE_QUANTITY) {
+      return `The most of one line this app rings up is ${MAX_LINE_QUANTITY}.`;
+    }
+    return `${qtyValue} on the ticket. Done sets it.`;
+  };
+  /** The T82 keypad's tap, counting in whole units rather than cents:
+   *  digits append, `back` removes one, and three digits is the cap, one
+   *  more than the maximum has, so the refusal above is reachable by
+   *  typing rather than hidden behind a key that will not respond. */
+  const qtyTap = (key: string) => {
+    setQtyPad((q) => {
+      if (q === null) return q;
+      if (key === "back") return { ...q, entry: q.entry.slice(0, -1) };
+      const next = (q.entry + key).replace(/^0+(?=\d)/, "");
+      return next.length > 3 ? q : { ...q, entry: next };
     });
   };
 
@@ -8835,6 +9064,22 @@ export default function SaleScreen(props: {
       ? recheckReport
       : null;
   const inPay = saleMode === "pay";
+  /**
+   * T101, Pete: "The pay screen should still have the option to change
+   * quantities on the ticket rows like the buy screen."
+   *
+   * T39.6 made a ticket row read-only in pay mode, because a quantity
+   * change moves the total the tender was arranged against. That is
+   * still true, and it is now handled rather than forbidden: every cart
+   * edit already clears the tender lines, re-spreads an armed discount
+   * (or drops it when the smaller subtotal cannot carry it) and drops a
+   * held card or gift card number with its line, and the pricing loop
+   * reprices from Mindbody before anything can be finalised. So the
+   * rule it relaxes is the MODE, not the safety: what locks a row now is
+   * a charge in flight or a ticket this panel says is finished or part
+   * sold.
+   */
+  const rowsEditable = !charging && ticketLock === null;
   /** T39.4: the tax row's label carries the rate only when the server
    *  sent one (`/api/config`'s studioTaxRate, T38); never a literal. */
   const taxLabel =
@@ -9463,6 +9708,7 @@ export default function SaleScreen(props: {
             onDone={close}
             onStaffSessionEnded={() => onStaffSessionEnded?.()}
             onBusyChange={setCharging}
+            onTicketLock={setTicketLock}
             onModalChange={setPayModalOpen}
             cartResetNonce={cartResetNonce}
             onClientDataStale={onClientDataStale}
@@ -9543,6 +9789,10 @@ export default function SaleScreen(props: {
                           setGiftSell({
                             entry: String(offer.cents),
                             keepNote: cartNotice.text,
+                            /* T101: the offer carries a figure, so it
+                               opens on the pad rather than on the list
+                               the figure would be lost in. */
+                            custom: true,
                           })
                         }
                       >
@@ -9587,27 +9837,113 @@ export default function SaleScreen(props: {
                      buttons the controls are), so nothing bubbles and
                      nothing needs stopping: the stepper changes the
                      quantity and the X removes the line, each on its own
-                     44px square. In pay mode the row is read-only, as it
-                     has been since T39.6. */
+                     44px square.
+
+                     T39.6 made the row READ-ONLY in pay mode. T101
+                     relaxes that for the quantity controls alone (Pete:
+                     "The pay screen should still have the option to
+                     change quantities on the ticket rows like the buy
+                     screen"), so there is one row behaviour rather than
+                     two; `rowsEditable` is what locks it now, and that is
+                     a charge in flight or a ticket already part sold, not
+                     the mode. The recipient control is untouched and
+                     stays out of pay mode. */
                   <div
                     className={
-                      revealedKey === line.key && !inPay ? "t-row sel" : "t-row"
+                      (revealedKey === line.key && rowsEditable
+                        ? "t-row sel"
+                        : "t-row") +
+                      (swipe?.key === line.key ? " swiping" : "")
                     }
                     key={line.key}
+                    /* T101: swipe left to remove, buy screen only. */
+                    onPointerDown={(e) => {
+                      if (inPay || !rowsEditable || !e.isPrimary) return;
+                      swipeAte.current = false;
+                      swipeRef.current = {
+                        key: line.key,
+                        x: e.clientX,
+                        y: e.clientY,
+                        live: false,
+                        dead: false,
+                      };
+                    }}
+                    onPointerMove={(e) => {
+                      const g = swipeRef.current;
+                      if (!g || g.key !== line.key || g.dead) return;
+                      const dx = e.clientX - g.x;
+                      const dy = e.clientY - g.y;
+                      if (!g.live) {
+                        /* The list is scrolling: this press belongs to
+                           it, and nothing it does afterwards removes a
+                           line. */
+                        if (Math.abs(dy) > Math.abs(dx) || Math.abs(dy) > 10) {
+                          g.dead = true;
+                          return;
+                        }
+                        if (dx > -SWIPE_ARM) return;
+                        g.live = true;
+                        try {
+                          (e.currentTarget as HTMLElement).setPointerCapture(
+                            e.pointerId,
+                          );
+                        } catch {
+                          /* A harness pointer without capture still
+                             swipes; the row simply stops following if the
+                             finger leaves it. */
+                        }
+                      }
+                      setSwipe({ key: line.key, dx: Math.min(0, dx) });
+                    }}
+                    onPointerUp={(e) => {
+                      const g = swipeRef.current;
+                      if (!g || g.key !== line.key) return;
+                      const dx = e.clientX - g.x;
+                      const go = g.live && !g.dead && dx <= -SWIPE_REMOVE;
+                      swipeAte.current = g.live;
+                      endSwipe();
+                      if (go) removeLine(line.key);
+                    }}
+                    onPointerCancel={endSwipe}
+                    onClickCapture={(e) => {
+                      /* The press that removed a line, or dragged the row
+                         and changed its mind, is not also a tap on it. */
+                      if (!swipeAte.current) return;
+                      swipeAte.current = false;
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
                   >
+                    {swipe?.key === line.key ? (
+                      <span
+                        className={
+                          swipe.dx <= -SWIPE_REMOVE
+                            ? "t-row-swipe armed"
+                            : "t-row-swipe"
+                        }
+                        aria-hidden="true"
+                      >
+                        Remove
+                      </span>
+                    ) : null}
                     <div
                       className="t-row-main"
-                      role={inPay ? undefined : "button"}
-                      tabIndex={inPay ? undefined : 0}
-                      aria-expanded={inPay ? undefined : revealedKey === line.key}
-                      aria-label={inPay ? undefined : `${line.item.name}, tap for quantity and remove`}
+                      style={
+                        swipe?.key === line.key
+                          ? { transform: `translateX(${swipe.dx}px)` }
+                          : undefined
+                      }
+                      role={rowsEditable ? "button" : undefined}
+                      tabIndex={rowsEditable ? 0 : undefined}
+                      aria-expanded={rowsEditable ? revealedKey === line.key : undefined}
+                      aria-label={rowsEditable ? `${line.item.name}, tap for quantity and remove` : undefined}
                       onClick={() =>
-                        inPay
+                        !rowsEditable
                           ? undefined
                           : setRevealedKey((k) => (k === line.key ? null : line.key))
                       }
                       onKeyDown={(e) => {
-                        if (inPay) return;
+                        if (!rowsEditable) return;
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
                           setRevealedKey((k) => (k === line.key ? null : line.key));
@@ -9641,7 +9977,7 @@ export default function SaleScreen(props: {
                           {line.quantity} @ {line.item.price.toFixed(2)}
                         </div>
                       ) : null}
-                      {inPay || revealedKey !== line.key ? null : (
+                      {!rowsEditable || revealedKey !== line.key ? null : (
                         <div className="t-ctl" onClick={(e) => e.stopPropagation()}>
                           {/* T90 (Pete: "instead of - 1 + X, the options
                               are - 1 + Other Client. a - when there is a
@@ -9673,9 +10009,28 @@ export default function SaleScreen(props: {
                           >
                             {line.quantity <= 1 ? <CloseIcon /> : <MinusIcon />}
                           </button>
-                          <span className="t-ctl-qty" aria-live="polite">
+                          {/* T101 (Pete: "both sections should make the
+                              qty clickable and use a number keypad to
+                              enter an amt. it should be obvious that the
+                              amt is clickable"): the number wears the
+                              same surface and border as the squares
+                              beside it and opens the quantity pad. */}
+                          <button
+                            className="t-ctl-qty"
+                            disabled={charging}
+                            aria-live="polite"
+                            aria-label={`Quantity of ${line.item.name}, tap to type it`}
+                            title="Tap to type a quantity"
+                            onClick={() =>
+                              setQtyPad({
+                                key: line.key,
+                                name: lineLabel(line),
+                                entry: "",
+                              })
+                            }
+                          >
                             {line.quantity}
-                          </span>
+                          </button>
                           <button
                             className="t-ctl-btn"
                             disabled={line.quantity >= MAX_LINE_QUANTITY || charging}
@@ -9700,7 +10055,12 @@ export default function SaleScreen(props: {
                               it, so there is nobody to attribute it to,
                               and Mindbody's purchase takes a PURCHASER
                               and no recipient. */}
-                          {isGiftCardLine(line) ? null : (
+                          {/* T101: the quantity controls above now work
+                              in pay mode; the recipient control does NOT,
+                              because nobody asked for it and moving a
+                              line onto another account under an armed
+                              tender is a different conversation. */}
+                          {isGiftCardLine(line) || inPay ? null : (
                           <button
                             className={line.forClient ? "t-for on" : "t-for"}
                             disabled={charging}
@@ -10343,8 +10703,68 @@ export default function SaleScreen(props: {
           adds nothing. One fixed size, the T82 keypad idiom, the T36
           modal shape. Scrim, Cancel and Escape leave the ticket exactly
           as it was. */}
+      {/* T101, Pete: "The gift card section was supposed to have a list of
+          items but instead it has dollar amounts as the button labels.
+          List the items names and the dollar amount for each one. Custom
+          is one of the buttons, and custom brings up the number keypad."
+
+          So the box has two states. It OPENS on the list: one cell per
+          visible fixed product (T97 hides the rest server-side), reading
+          the product's name over its amount, with Custom beside them.
+          Tapping a card puts it on the ticket exactly as its chip did.
+          Tapping Custom brings up the keypad, which is T95/T96's box
+          unchanged, cells and all, so a typed figure still lights the
+          product it resolves to. Each state is one fixed size. */}
       {giftSell !== null ? (
         <div className="modal-scrim" role="presentation" onClick={closeGiftSell}>
+          {giftSell.custom !== true ? (
+            <div
+              className="modal modal-amount modal-gift-list"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Gift card"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="modal-title">Gift card</p>
+              <div className="gift-card-list">
+                {giftPresets.map((product) => (
+                  <button
+                    key={product.id}
+                    className="gift-card-chip"
+                    onClick={() => addGiftCard(product)}
+                    title={giftCardName(product)}
+                    aria-label={`${giftCardName(product)}, ${money(product.cardValue)}`}
+                  >
+                    <span className="gift-card-name">
+                      {giftCardName(product)}
+                    </span>
+                    <span className="gift-card-amt">
+                      {money(product.cardValue)}
+                      {product.salePrice !== product.cardValue
+                        ? ` (${money(product.salePrice)} to buy)`
+                        : ""}
+                    </span>
+                  </button>
+                ))}
+                <button
+                  className="gift-card-chip gift-card-custom"
+                  onClick={() =>
+                    setGiftSell((g) => (g === null ? g : { ...g, custom: true }))
+                  }
+                  aria-label="Custom amount, type it on the number pad"
+                >
+                  <span className="gift-card-name">Custom</span>
+                  <span className="gift-card-amt">any amount</span>
+                </button>
+              </div>
+              <p className="pad-change gift-note muted-note">{giftListNote()}</p>
+              <div className="modal-actions">
+                <button className="modal-cancel" onClick={closeGiftSell}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
           <div
             className="modal modal-amount modal-pad"
             role="dialog"
@@ -10359,26 +10779,35 @@ export default function SaleScreen(props: {
                   {money(giftEntryCents / 100)}
                 </span>
               </p>
-              <div className="pad-chips gift-sell-chips">
+              <div className="gift-card-list gift-card-list-pad">
                 {giftPresets.map((product) => (
                   <button
                     key={product.id}
                     className={
                       /* T96 review: lit when the typed figure is THIS
-                         chip's sale, which a mispriced product's is not
+                         cell's sale, which a mispriced product's is not
                          (it routes to the editable product instead). */
                       giftPresetMatch?.id === product.id
-                        ? "pad-chip on"
-                        : "pad-chip"
+                        ? "gift-card-chip on"
+                        : "gift-card-chip"
                     }
                     onClick={() => addGiftCard(product)}
                     title={
                       product.salePrice === product.cardValue
-                        ? `A ${money(product.cardValue)} gift card`
-                        : `A ${money(product.cardValue)} gift card, ${money(product.salePrice)} to buy`
+                        ? `${giftCardName(product)}: a ${money(product.cardValue)} gift card`
+                        : `${giftCardName(product)}: a ${money(product.cardValue)} gift card, ${money(product.salePrice)} to buy`
                     }
+                    aria-label={`${giftCardName(product)}, ${money(product.cardValue)}`}
                   >
-                    {money(product.cardValue)}
+                    <span className="gift-card-name">
+                      {giftCardName(product)}
+                    </span>
+                    <span className="gift-card-amt">
+                      {money(product.cardValue)}
+                      {product.salePrice !== product.cardValue
+                        ? ` (${money(product.salePrice)} to buy)`
+                        : ""}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -10428,6 +10857,94 @@ export default function SaleScreen(props: {
                 Done
               </button>
               <button className="modal-cancel" onClick={closeGiftSell}>
+                Cancel
+              </button>
+            </div>
+          </div>
+          )}
+        </div>
+      ) : null}
+
+      {/* T101: the quantity pad, opened from a ticket row's quantity or
+          from a shelf card's. The T82 keypad idiom, counting whole units:
+          no dot, no sign, so the only things left to refuse are the two
+          bounds and an empty entry, each in words, with Done off until
+          the figure is one the server will also accept. */}
+      {qtyPad !== null ? (
+        <div className="modal-scrim" role="presentation" onClick={closeQtyPad}>
+          <div
+            className="modal modal-amount modal-pad"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Quantity"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="pad-left">
+              <p className="modal-title pad-head">
+                <span className="pad-kicker">Quantity</span>
+                <span
+                  className={
+                    qtyEntry === ""
+                      ? "pad-entered-amt pad-entered-held"
+                      : "pad-entered-amt"
+                  }
+                >
+                  {qtyEntry === "" ? (qtyHeld ?? 1) : qtyEntry}
+                </span>
+              </p>
+              <p className="qty-pad-name" title={qtyPad.name}>
+                {qtyPad.name}
+              </p>
+              <p
+                className={
+                  qtyEntry !== "" && !qtyOk
+                    ? "pad-change gift-note gift-bad"
+                    : "pad-change gift-note muted-note"
+                }
+              >
+                {qtyNote()}
+              </p>
+            </div>
+
+            <div className="pad-keys">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((k) => (
+                <button
+                  key={k}
+                  className="pad-key"
+                  onClick={() => qtyTap(k)}
+                >
+                  {k}
+                </button>
+              ))}
+              <button
+                className="pad-key pad-key-wide"
+                onClick={() => qtyTap("0")}
+              >
+                0
+              </button>
+              <button
+                className="pad-key del"
+                aria-label="Delete last digit"
+                title="Delete"
+                onClick={() => qtyTap("back")}
+              >
+                <BackspaceIcon />
+              </button>
+            </div>
+
+            <div className="modal-actions">
+              <button
+                className="modal-confirm go"
+                disabled={!qtyOk}
+                onClick={() => {
+                  if (qtyValue === null || !qtyOk) return;
+                  setLineQuantity(qtyPad.key, qtyValue);
+                  setQtyPad(null);
+                }}
+              >
+                Done
+              </button>
+              <button className="modal-cancel" onClick={closeQtyPad}>
                 Cancel
               </button>
             </div>
