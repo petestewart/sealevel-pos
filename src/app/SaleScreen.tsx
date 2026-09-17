@@ -660,6 +660,11 @@ const PENDING_PASS_KEY = "t92-pending-pass";
  * ticket.
  */
 interface RefusedGiftOffer {
+  /** The refused ITEM's key, which is also this offer's React key: T90
+   *  lets the same pass sit on the ticket twice (one line for the payer,
+   *  one for somebody else) and a refusal takes both, but there is one
+   *  pass to gift and so one offer (T100 review). */
+  key: string;
   name: string;
   cents: number;
 }
@@ -6823,6 +6828,12 @@ export default function SaleScreen(props: {
     const prev = prevClientRef.current;
     prevClientRef.current = client;
     if ((prev?.id ?? null) === (client?.id ?? null)) return;
+    /* T100 review: whoever the sale is for now, a note that says what
+       Mindbody refused the LAST client is not about this sale, and since
+       T100 it carries a control. Cleared on every change of client, the
+       first attach included: the pricing loop reruns on the new client
+       and says so again if the refusal still stands. */
+    setCartNotice(null);
     /* From nobody: keep silently, per the rule above. */
     if (prev === null) return;
     const count = cartRef.current.reduce((n, l) => n + l.quantity, 0);
@@ -6888,7 +6899,24 @@ export default function SaleScreen(props: {
    * an amount the studio has not configured is not a card Mindbody can
    * sell. The box says so rather than pretending.
    */
-  const [giftSell, setGiftSell] = useState<{ entry: string } | null>(null);
+  const [giftSell, setGiftSell] = useState<{
+    entry: string;
+    /**
+     * T100 review: the refusal's own sentence, when the box was opened
+     * from the note's offer. Adding to the ticket clears the note, and
+     * that took Mindbody's reason off the screen at the moment the
+     * teacher acted on it: the person at the counter is still asking why
+     * they cannot buy the pass, and the answer had gone. So a card added
+     * from the offer puts the sentence back, without its control (the
+     * way forward has been taken; the Gift card cell sells another). Any
+     * other add clears the note as it always did.
+     */
+    keepNote?: string;
+  } | null>(null);
+  /** The box's state, readable inside addGiftCard without making it a
+   *  dependency of a callback the whole ticket hangs off. */
+  const giftSellRef = useRef<{ entry: string; keepNote?: string } | null>(null);
+  giftSellRef.current = giftSell;
   const closeGiftSell = useCallback(() => setGiftSell(null), []);
   useEffect(() => {
     if (giftSell === null) return;
@@ -7217,6 +7245,29 @@ export default function SaleScreen(props: {
             const of = (l: CartEntry) => itemKey(l.item.type, l.item.id);
             const gone = cart.filter((l) => keys.has(of(l)));
             const goneKeys = new Set(gone.map((l) => l.key));
+            /* T100: only a PASS. A gift card stands in for a service
+               this client may not buy; a refused retail product or
+               package is removed with its reason and nothing else,
+               because a card is not a way to sell either of those. The
+               unit price is the card's amount: one card for the pass the
+               counter could not ring up, whatever quantity the line
+               carried.
+               T100 review: one offer per ITEM, not per line. The same
+               pass can be two lines (T90: one for the payer, one for
+               somebody else) and both go, but there is one pass to gift,
+               so two identical controls would be a choice that is not
+               one. */
+            const giftOffers: RefusedGiftOffer[] = [];
+            for (const l of gone) {
+              if (l.item.type !== "Service" || l.item.price <= 0) continue;
+              const key = itemKey(l.item.type, l.item.id);
+              if (giftOffers.some((o) => o.key === key)) continue;
+              giftOffers.push({
+                key,
+                name: l.item.name,
+                cents: Math.round(l.item.price * 100),
+              });
+            }
             setCart((lines) => lines.filter((l) => !keys.has(of(l))));
             setRevealedKey((k) => (k !== null && goneKeys.has(k) ? null : k));
             setCartNotice({
@@ -7228,18 +7279,7 @@ export default function SaleScreen(props: {
                   return `${lineLabel(l)} was removed from the sale: ${r?.reason ?? "Mindbody did not accept it."}`;
                 })
                 .join(" "),
-              /* T100: only a PASS. A gift card stands in for a service
-                 this client may not buy; a refused retail product or
-                 package is removed with its reason and nothing else,
-                 because a card is not a way to sell either of those. The
-                 unit price is the card's amount: one card for the pass
-                 the counter could not ring up. */
-              offers: gone
-                .filter((l) => l.item.type === "Service" && l.item.price > 0)
-                .map((l) => ({
-                  name: l.item.name,
-                  cents: Math.round(l.item.price * 100),
-                })),
+              offers: giftOffers,
             });
             setPriced(null);
             return;
@@ -7433,7 +7473,10 @@ export default function SaleScreen(props: {
     (product: GiftCardProduct, amount?: number) => {
     const item = giftCardItem(product, amount);
     const key = giftCardKey(item);
-    setCartNotice(null);
+    /* T100 review: the refusal's sentence survives the card that answers
+       it; see keepNote on giftSell. */
+    const keep = giftSellRef.current?.keepNote;
+    setCartNotice(keep === undefined ? null : { text: keep, offers: [] });
     setGiftSell(null);
     setCart((lines) => {
       const have = lines.find((l) => l.key === key);
@@ -8097,18 +8140,30 @@ export default function SaleScreen(props: {
                 /* T95: the Gift cards child's shelf is the one fixed
                    cell; there is no catalog item behind it. */
                 giftCard: retailChild.label === GIFT_CARDS_LABEL,
-                items: teacherTabs
-                  ? retailChildItems.filter(
-                      (i) => isTeacherItem(i) === (retailTab === "teacher"),
-                    )
-                  : retailChildItems,
+                /* T100 review: the Gift cards child carries NO catalog
+                   items. It is not a Mindbody category, so it holds no
+                   category ids, and `categoryShelf` reads an empty id
+                   list as "the passes filed under nothing": the block
+                   drew every uncategorised pass above its one cell, so
+                   "Drop In $28.00" sat under the Gift cards heading. */
+                items:
+                  retailChild.label === GIFT_CARDS_LABEL
+                    ? []
+                    : teacherTabs
+                      ? retailChildItems.filter(
+                          (i) => isTeacherItem(i) === (retailTab === "teacher"),
+                        )
+                      : retailChildItems,
                 contracts: [],
               },
             ]
           : retailCategories.map((c) => ({
               label: c.label,
               giftCard: c.label === GIFT_CARDS_LABEL,
-              items: categoryShelf(catalog, c),
+              /* T100 review: see above; the Gift cards block is its cell
+                 and nothing else, in the parent view too. */
+              items:
+                c.label === GIFT_CARDS_LABEL ? [] : categoryShelf(catalog, c),
               contracts: [],
             }))
         : activeCat === RENTALS_SECTION && catalog && rentalsCategory
@@ -9061,6 +9116,12 @@ export default function SaleScreen(props: {
               pendingSold.current = true;
               onSold?.(sales);
               setCart([]);
+              /* T100 review: and the removal note goes with the ticket it
+                 was about. It outlived the sale, which left a finished
+                 ticket carrying a live "Sell it as a gift card" for a
+                 pass refused on the sale before: one tap and the next
+                 customer's ticket opens with a card on it. */
+              setCartNotice(null);
               /* T51: the walk-in declaration was for the sale just made. */
               setWalkIn(false);
               /* T53: so was the gate's answer; the next sale asks again. */
@@ -9143,9 +9204,14 @@ export default function SaleScreen(props: {
                   <div className="sale-note-acts">
                     {cartNotice.offers.map((offer) => (
                       <button
-                        key={offer.name}
+                        key={offer.key}
                         className="sale-note-act"
-                        onClick={() => setGiftSell({ entry: String(offer.cents) })}
+                        onClick={() =>
+                          setGiftSell({
+                            entry: String(offer.cents),
+                            keepNote: cartNotice.text,
+                          })
+                        }
                       >
                         {cartNotice.offers.length === 1
                           ? "Sell it as a gift card"
