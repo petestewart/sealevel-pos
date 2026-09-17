@@ -13639,3 +13639,358 @@ them off.
   the day, prints each one's items and any barcode, reads the balance of
   any card named, and returns the comped ones. This is what read the
   empty baskets.
+
+### Build notes
+
+Built on `t103-empty-basket`, from the finding above.
+
+**1. The assertion, at the checkout boundary** (`src/lib/sale.ts`,
+`assertBasket`, next to `auditLines` and in T75's shape). It compares
+what came back against what was sent, line for line, by the id that was
+sent and the quantity, and refuses the whole answer on any of: an empty
+basket, a line the sale does not hold, a line short on quantity, or a
+line the ticket never ordered. It carries T75's per-line audit
+(`BasketAudit`: ours x2 against theirs x1, with Mindbody's own name for
+the item when the sale gave one), because a refusal that cannot name
+the line is a correct refusal nobody can act on.
+
+Matching is the same either-way match `auditLines` uses: a purchased
+item answers to its `Id` (the pricing option's ProductId for a service,
+sale.yml:2311) and to its `BarcodeId` (2320), which is what a Product
+line is sent as. `PurchasedItem.Quantity` is documented "applicable for
+products only", so a matched item with no quantity counts as one: a
+service sold once satisfies a line of one, and a line of two is still
+short. There is no tolerance in either direction, exactly as
+`totalsDisagree` has none.
+
+**Where the basket comes from, and the one case that is not a refusal.**
+The documented checkout answer carries `ShoppingCart.CartItems`, which
+is what was PRICED: the two live probes had the gift card line priced in
+the cart and absent from the sale, so asserting against CartItems would
+agree with itself and prove nothing. So the basket is read from
+`PurchasedItems` and nowhere else: the answer's own when it carries one
+(`purchasedItemsOf`), otherwise the sale's, taken from the
+`GET /sale/sales` read `latestSaleId` already makes for the numeric id
+(`latestSale`, which is that function with the found sale's basket
+attached; `latestSaleId` is now a one-line wrapper and no caller
+changed). No extra metered call anywhere.
+
+When NEITHER says what the sale holds -- no basket on the answer and the
+sale not found, which T49's own bookkeeping can produce (a list that has
+not caught up, a failed or timed-out read, or an earlier unresolved sale
+for the same client) -- the outcome is `[basket] unverified` in the log
+and the sale STANDS. A refusal has to rest on evidence: telling a
+teacher to escalate every time the sale list lags would be a worse
+counter than the bug this ticket fixes, and it would train them to
+ignore the one message that must never be ignored.
+
+**2. The refusal is its own outcome, and it can only report.** It runs
+on the answer to the real charge, so by the time it fires Mindbody has
+the money. `/api/checkout` answers 502 with `soldNothing: true`,
+`ambiguous: false`, the sale id, the total and the per-line `basket`,
+and a sentence that names the money first ("The payment went through and
+nothing was sold: ..."), then the sale, then the one move left ("Do not
+charge again: tell the studio, and have the sale fixed in Mindbody").
+A comp gets its own first clause ("Mindbody recorded the sale and sold
+nothing ... No money moved, so there is nothing to refund"), because a
+100% discount sends no payment at all and a sentence claiming one would
+send a teacher looking for a charge nobody made. Nothing is retried,
+roll back or refunded anywhere in this path (T24), and the record is
+written the way T45/T62 write a comp's reason: one `[sold-nothing]` log
+line always, with the per-line audit in it, and the same sentence filed
+on the client (never the house client, never able to change the
+outcome).
+
+It is wired into every path that checks out a cart: the eight
+single-cart paths through one `basketStop` helper beside `saleIds`, the
+T95/T102 gift card ticket (the cart half is asserted BEFORE any card is
+charged, so a ticket whose cart sold nothing buys no cards and says they
+were not attempted), and the T90 multi-recipient loop (each cart's own
+sale asserted against that cart's own lines, the ticket stopping there,
+with the carts that stood and the ones never attempted both named). The
+discount record is written first in every case: the sale happened, and a
+discount on it is on the studio either way.
+
+On the screen (`SaleScreen.tsx`, `page.tsx`): its own result kind,
+rendered as a stop with the route's sentence, the per-line audit under
+it (Line / Ordered / In the sale, the missing figures in `--stop`), and
+one Understood button. The tender is cleared and the ticket locked, so
+Finalize Sale is refused afterwards with that reason in its title and a
+second tap writes nothing; it is never a done screen, never green, and
+there is no retry affordance anywhere on it. The T88 pay-and-check-in
+dialog gets the same outcome: the gesture stops, nothing is attached and
+nobody is checked in.
+
+**3. A gift card product id can no longer reach a cart line.**
+`/api/checkout` refuses a `Product` or `Service` line whose id is one of
+the site's gift card products, in words ("That is a gift card, and a
+gift card is not a cart line: sold that way Mindbody takes the money and
+issues no card. Sell it from the gift card box, which sets the id to
+write on the card"), before any Mindbody call and before the teacher's
+one-shot token is spent. `giftCardProductIds` (giftcardsale.ts) carries
+EVERY id the site listed, including the ones the shelf drops (a fixed
+product worth nothing is exactly the one a cart would price at zero), and
+a read that does not answer refuses the ticket rather than waving it
+through: a guard switched off by a failed read is not a guard.
+
+**The two-minute cache**: the guard reads through `giftCardProducts`'
+existing per-target two-minute cache rather than forcing a refresh. The
+gift card sale path in the same request reads that list anyway, and the
+alternative is a metered call on every single sale to close a window two
+minutes wide, on a list that changes a few times a year. The browser
+never builds such a line in the first place (gift cards travel as
+`giftCards`, beside the cart), so this rail is for a request that did not
+come from it; the residual case is a gift card product created in
+Mindbody in the last two minutes AND sent as a cart line in that window.
+
+**4. The pass and contract paths were not widened.** T25's
+`/client/clientservices` re-read is the stronger check on a pass (it
+proves the purchase instance exists, not just that the sale names it)
+and stays as it was; a contract is its own endpoint and is untouched.
+The new assertion does overlap T25 for a Service line: both would now
+catch a pass the sale does not hold, T103 from the sale's basket and T25
+from the client's services. Both are kept deliberately, and neither was
+removed.
+
+### Verified
+
+Route driver and Playwright against `npm run build` + `next start` on
+:3211, with the T102 mock on :4611 extended with a `basket` knob
+(`ok` / `empty` / `missing` / `short` / `extra` / `none`) and an
+`answerBasket` knob that puts the same `PurchasedItems` on the checkout
+answer itself. Two mock bugs were fixed to make it honest: sale ids now
+survive a `__reset` (the app remembers every id it has handed out, so a
+reset that re-issued 777001 made every later lookup find nothing new),
+and a purchased item now carries a `BarcodeId` as well as an `Id`, which
+is how the real API names a product.
+
+Route driver, all passing: an empty basket, a basket missing one line of
+two, a short quantity, a line nobody ordered and an empty basket on the
+ANSWER each refuse with 502 `soldNothing`, say the payment went through,
+name the sale in the sentence, carry the per-line audit, offer no retry,
+leave exactly one real checkout in the call log and file the record on
+the client; the good answer is unaffected and completes; a sale nothing
+can identify is NOT refused; a gift card id in a cart line is refused
+before any Mindbody call as a Product, as a Service, as the editable
+custom-amount product and beside another line; a gift card list that
+does not answer refuses the ticket (run first, on a cold cache); a real
+gift card sale through `purchasegiftcard` still sells; a gift card
+ticket whose cart half sold nothing charges no card and says so; a T90
+ticket stops at the cart that sold nothing with one real checkout out;
+and a comp that sold nothing does not claim a payment.
+
+Playwright, both palettes and both orientations (1180x820 and 820x1180),
+all passing with no text under 16px, no low contrast and no short
+target: the stop renders with the route's sentence and the audit table,
+there is no done screen and no green Charged, Finalize Sale is refused
+afterwards with the reason in its title, a forced second tap writes
+nothing, and Understood clears the stop while the lock stays.
+
+`npm run typecheck` and `npm run build` clean.
+
+### Not verified
+
+- **Nothing live.** Whether a real checkout answer ever carries
+  `PurchasedItems` is unknown (the vendored spec does not document it on
+  `ShoppingCart`; the cart-sale probe looked for it), which is exactly
+  why the sale read is the fallback and why "neither said" is not a
+  refusal. The first live sale on this branch will say which source
+  answered: `[basket] unverified` in the log means neither did.
+- The unverified path depends on `latestSale` finding the sale, and
+  T49's bookkeeping deliberately answers null when an earlier sale for
+  the same client is still unnamed. That is visible in the log and never
+  in a refusal, but it does mean a run of sales after one unnamed sale
+  is unasserted.
+- No live test of the gift card line refusal against a real gift card
+  product id, and no live confirmation that sales 426536 and 426537
+  (which Mindbody still refuses to return) are unaffected by any of
+  this; nothing here touches them.
+
+### Review
+
+Reviewed on the branch, against the mock on :4611 and `next start` on
+:3211 (rebuilt first). The rail is right and stays; what changed is what
+it CLAIMS, because the first job of this review was hunting false
+positives. A false refusal here tells a teacher with a customer in front
+of them that the money is gone and nothing was sold. Six legitimate sale
+shapes were refused by the first cut, and one wrong sale could pass.
+
+**Narrowed, each one proved against a built sale** (route driver
+`t103r-route.mjs`, 39 checks; all of these refused before the fix and
+stand after it):
+
+1. **A cart holding a Package line is not asserted at all.** A package
+   "combine[s] multiple services and/or products into a single offering"
+   (sale.yml:511) and `PurchasedItem` has no package field of any kind
+   (sale.yml:2302): a package sale can only come back as its components,
+   whose ids are nowhere in the ticket. The first cut refused such a sale
+   twice over, as a missing line and as unordered items. This is T30's
+   existing carve-out (a package-bearing cart is already outside the
+   strict total assertion, `packagePricing`) one level on, and it is
+   recorded as `unassertable: "package"`, logged `[basket] unverified`.
+   Whether Mindbody expands a package is unproven either way, which is
+   exactly why it must not refuse.
+2. **A line the ticket never ordered is no longer a refusal.** Mindbody
+   files lines of its own in a sale (a tax line, a fee, a bundled
+   component), and an extra line is not evidence that the ordered ones
+   were missed. The ids stay in `unordered`, in the audit and in a log
+   line, and the sale stands.
+3. **A quantity Mindbody did not report is not read as short.**
+   `PurchasedItem.Quantity` is documented "applicable for products only"
+   (sale.yml:2348), so a Service line of two answered by one item with
+   no `Quantity` was being called short on a figure Mindbody never gave.
+   `BasketAudit.quantityReported` now carries whether it said anything,
+   and only a reported shortfall refuses. A product line still is
+   checked, because a product's Quantity is documented present, and a
+   line of three split into three items of one still passes.
+4. **A sale that was READ and holds none of this ticket is not called a
+   sale that sold nothing.** The sale id comes from a dated
+   `/sale/sales` list filtered on the client, not from the answer, so
+   "holds only items we never ordered" is what a mis-identified sale
+   looks like. Recorded as `unassertable: "mismatch"` and logged. The
+   answer's OWN basket is never excused this way: an empty or short
+   basket on the checkout answer is certainly this sale's and still
+   refuses.
+5. **Ids are folded to lower case.** A barcode is a string; the two
+   sides must not disagree over the casing of one.
+
+**Tightened, one thing:** the either-way match on `Id` and `BarcodeId`
+CAN collide. A Product line is sent as the product's barcode and a
+Service line as the pricing option's ProductId, and both namespaces are
+small integers on one site, so a sale holding a PASS could answer for a
+retail product that was never sold. `purchasedMatches` now refuses a
+match whose `IsService` (sale.yml:2314) contradicts the line's type;
+where the flag is absent nothing is contradicted and the match stands.
+Proved both ways against the mock: before the fix a pass whose Id was a
+product line's id passed for that product, after it the product is
+correctly reported missing.
+
+**Two records were being skipped by the stop, and are now written
+before it.** The T95/T102 gift card ticket answered sold-nothing before
+its T79 discount record ran, and the T94 overdraft record (the account
+charged past its balance on a teacher's PIN) sat after `basketStop` on
+the split and credit paths. Both moved: the cart IS a sale and the
+discount and the overdraft are on the studio whatever the sale turned
+out to hold, which is the rule the other paths already followed. The
+gift cards are still never attempted, and the answer now carries the
+discount fields with it.
+
+**The screen shows what else is outstanding.** The route was already
+answering `summary` (the gift cards never attempted, the T90 carts never
+attempted) and the stop was dropping it. It is rendered under the
+sentence now, in the same `pay-split-why` line, since a teacher told to
+escalate has to know what is still unsold.
+
+### What was checked and found sound
+
+- **Only ever reports.** No retry, no rollback, no refund, no second
+  charge on any path: the T90 loop breaks after its record, the gift
+  card ticket never reaches `purchasegiftcard`, T88's gesture returns
+  before the attach and the check-in (`payMoneyMoved` covers
+  `sold-nothing`, so the dialog offers no Charge and no free entry), and
+  the Pay screen clears the tender and locks the ticket. Proved past the
+  browser: exactly one real checkout in the call log on every refusing
+  shape, zero real gift card purchases, and a forced second tap on a
+  disabled Finalize Sale writes nothing.
+- **The gift card line refusal**, extended past what the build tested:
+  refused for a zero-value FIXED product (dropped from the shelf by T96
+  and still refused, which is why `allIds` keeps every id), for a line
+  bought for another client (the T90 path), beside a real gift card
+  sale, and with the list read failing on a cold cache. Always before
+  any Mindbody call.
+- **The record** carries no secret: the `[sold-nothing]` log line holds
+  the target, the sale and cart ids, the client, what was paid, the
+  problem and the per-line audit, and the note on the client is the
+  teacher's own sentence. No PIN, token, card number or gift card
+  barcode. A walk-in sale (the house client) files no note and still
+  stops; a note Mindbody refuses is one log line and never changes the
+  outcome.
+- **"Neither said" is quiet and stands**, as the build intended: a sale
+  list that errors, a sale the list never held, and an earlier unnamed
+  sale for the same client all log `[basket] unverified` and answer a
+  completed sale. Nothing scary reaches the counter for any of them.
+- **The mock's two fixes are in the scratchpad only.** Nothing in `src/`
+  was bent to make a test pass; the review's own shapes are mock knobs
+  too.
+- Both palettes and both orientations, 1180x820 and 820x1180: no text
+  under 16px, no short target, and the only low-contrast text on the
+  screen is the pre-existing disabled payment tile (`--disabled-ink`),
+  untouched here. `npm run typecheck` and `npm run build` clean.
+
+### Still open after the review
+
+- **The rail switches itself off for a client after ONE sale the list
+  could not name, for the life of the process.** T49's `unresolvedSales`
+  counter never ages out: once a client has an unresolved sale, every
+  later lookup for them answers null, so `latestSale` returns no basket
+  and every following sale is `[basket] unverified`. Measured: after one
+  sale the list never held, five consecutive EMPTY baskets for the same
+  client were all reported as completed sales. This is T49's own
+  bookkeeping, not T103's, and fixing it means changing which sale gets
+  NAMED, which can misname a receipt; it is deliberately not touched
+  here. It is the largest remaining hole in this rail and wants its own
+  ticket (age the waiting count out, so a sale that can no longer appear
+  stops blocking the next one).
+- **A site where `/sale/giftcards` does not answer cannot sell anything
+  from the cart.** The guard is fail-closed on purpose (T103's brief:
+  "a read that does not answer means the ticket is refused"), and the
+  mock's own refusal is the plausible one, "Gift cards are not enabled
+  for this site" -- site 471 has exactly that shape of per-site switch
+  on Formula Notes. If it ever bites, the fix is to treat a definite
+  "not enabled" answer as an empty list, not to weaken the rail.
+- **Nothing live still.** Whether a real answer carries
+  `PurchasedItems`, what a real package sale's basket holds, and whether
+  a real product's purchased item echoes its barcode are all unread; the
+  narrowings above are why none of them can produce a false refusal
+  while they stay unread.
+- Two concurrent checkouts for the same client in the same second could
+  still have one assert against the other's sale. The browser's single
+  flight makes it unreachable from the app, and it is not a shape a
+  counter produces.
+- A typed card the teacher asked to keep is still stored on file when a
+  T90 ticket later stops on a sale that holds nothing. Storing a card is
+  not a charge and the teacher asked for it, so it was left alone.
+
+## T105: a sale the list could not name must not switch a rail off
+
+Found by the T103 review, 2026-09-17, and left untouched by it on
+purpose: the fix changes which sale gets NAMED, which is a T49/T63
+decision rather than a T103 one.
+
+`latestSaleId` (src/lib/sale.ts) counts how many sales for a client are
+still waiting to be named, in `unresolvedSales`, so that two sales in
+quick succession cannot both claim the same id. **That count never ages
+out.** One sale the dated `/sale/sales` read cannot name leaves the
+counter raised for the life of the process, and every later lookup for
+that client answers null.
+
+Measured by the reviewer against the mock: after ONE unnamed sale, five
+consecutive checkouts answering `PurchasedItems: []` for the same client
+were all reported as completed sales. T103's basket assertion depends on
+that read for its evidence whenever the checkout answer carries no
+basket of its own, so an unnamed sale silently switches the rail off for
+that client, and nothing on screen says so. The log does: `[basket]
+unverified`.
+
+### What to build
+
+Age the waiting count out, and nothing more. A sale unnamed after the
+window the sale list needs is a sale that will never be named, so the
+count must come back down rather than standing forever. Keep what the
+counter exists for: two sales seconds apart must still not be given the
+same id, and no sale may be named as another sale's.
+
+Then say in the ticket what a teacher sees in each case, because the
+answer must stay boring: an unnamed sale is not an error at the counter,
+it is a sale whose id we could not report and whose basket we could not
+assert, and the honest posture (T103) is that it stands with the log
+saying so.
+
+### Verified when
+
+A driver proves: one unnamed sale does not blind the next; the sale
+after it is asserted again; two sales in the same second still get
+different ids or none; no sale is ever named as another's; and T103's
+assertion refuses an empty basket on the sale AFTER an unnamed one,
+which is exactly what it fails to do today. Each run needs a fresh
+`next start`, because the counter is process state.

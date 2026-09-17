@@ -40,6 +40,7 @@ import {
 } from "@/lib/giftcard";
 import {
   freshGiftCardId,
+  giftCardProductIds,
   giftCardProducts,
   logGiftCardSale,
   parseGiftCardLines,
@@ -58,19 +59,22 @@ import {
 import { saveClientCard } from "@/lib/clientcard";
 
 import {
+  assertBasket,
   CARD_MINIMUM_USD,
   checkoutCart,
   clientPaymentProfile,
   groupByRecipient,
   houseClientId,
-  latestSaleId,
+  latestSale,
   parseCartLines,
   passWithoutOwner,
   purchaseCredit,
   rehearseCheckout,
   roundToCents,
   splitDiscount,
+  type BasketVerdict,
   type CartLine,
+  type CheckoutOutcome,
   type CheckoutPayment,
 } from "@/lib/sale";
 
@@ -903,6 +907,67 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  /**
+   * T103: a gift card product id may never reach a cart line.
+   *
+   * Settled by two live comped sales on 2026-09-17. As a cart line the
+   * editable custom-amount product prices at $0.00 (a cart prices from
+   * the product's own SalePrice and that product has none), which hands
+   * out a free card; a fixed product prices and discounts correctly and
+   * then books the payment against nothing, because BOTH sales came back
+   * holding no items at all. So the cart is not the route for a gift
+   * card and `purchasegiftcard` is, which is also the only route that
+   * can set the barcode a teacher writes on blank stock.
+   *
+   * Refused HERE, before any Mindbody call and before the teacher's
+   * one-shot token is spent: this is the "catch it before the charge"
+   * half of T103, and the basket assertion after the charge is only
+   * ever the half that reports. The browser never builds such a line
+   * (gift cards travel as `giftCards`, beside the cart), so this is the
+   * rail for a request that did not come from it.
+   *
+   * A read that does not ANSWER refuses the ticket rather than waving it
+   * through: a guard switched off by a failed read is not a guard. The
+   * list is giftCardProducts' own two-minute cache, unrefreshed on
+   * purpose (the gift card sale path in this same request reads it too,
+   * and the alternative is a metered call on every sale to close a
+   * window two minutes wide), and it carries every id the site listed,
+   * including the ones the shelf drops.
+   */
+  if (items.length > 0) {
+    let giftIds: Set<number>;
+    try {
+      giftIds = await giftCardProductIds();
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error:
+            "Could not check the ticket against the gift cards Mindbody " +
+            `offers: ${errMessage(err)} Nothing was charged.`,
+          stage: "method",
+        },
+        { status: 502 },
+      );
+    }
+    const asCard = items.find(
+      (line) =>
+        (line.type === "Product" || line.type === "Service") &&
+        giftIds.has(Number(line.metadataId)),
+    );
+    if (asCard !== undefined) {
+      return NextResponse.json(
+        {
+          error:
+            "That is a gift card, and a gift card is not a cart line: sold " +
+            "that way Mindbody takes the money and issues no card. Sell it " +
+            "from the gift card box, which sets the id to write on the " +
+            "card. Nothing was charged.",
+          stage: "method",
+        },
+        { status: 409 },
+      );
+    }
+  }
   const saleClientId = clientId ?? houseClientId() ?? undefined;
   if (!saleClientId) {
     return NextResponse.json(
@@ -1095,6 +1160,165 @@ export async function POST(request: Request) {
       );
       return { cardKept: false, cardKeptError: errMessage(err) };
     }
+  };
+
+  /* ==================================================================
+   * T103: a payment with no purchased items is not a sale.
+   *
+   * Two live comped sales on 2026-09-17 came back with
+   * `PurchasedItems: []`: Mindbody priced the line, applied the
+   * discount, took the payment and sold nothing, and this route would
+   * have answered a completed sale. So every cart checkout's answer is
+   * now asserted against what was sent, line for line, by the id that
+   * was sent and the quantity (src/lib/sale.ts assertBasket), and an
+   * answer that does not hold the ticket is refused.
+   *
+   * This half can only ever REPORT: it runs on the answer to the real
+   * charge, so by the time it fires Mindbody has the money. That is why
+   * it is its own outcome rather than a generic failure. It says the
+   * payment went through, names the sale so it can be found, files the
+   * same sentence on the client the way T45/T62 file a comp's reason,
+   * and offers no retry, because a retry here is a second charge (T24).
+   * Everything that can be caught BEFORE the charge is caught before
+   * it: the rehearsal, and the gift card line refusal above.
+   * ================================================================== */
+
+  /** The verdict for one cart's answer: the answer's own basket when it
+   *  carried one, else the basket of the sale the id lookup read anyway.
+   *  Null means neither SAID what the sale holds, which is logged and
+   *  never dressed up as either verdict: a refusal has to rest on
+   *  evidence, and a sale id lookup that has not caught up is not it. */
+  const basketVerdict = (
+    lines: readonly CartLine[],
+    outcome: CheckoutOutcome,
+    fromSale: unknown[] | null,
+    saleId: string | null,
+  ): BasketVerdict | null => {
+    if (outcome.suppressed !== null) return null;
+    const verdict =
+      outcome.basket ??
+      (fromSale === null ? null : assertBasket(lines, fromSale, "sale"));
+    if (verdict === null) {
+      console.warn(
+        `[basket] unverified sale=${saleId ?? "unknown"} ` +
+          `client=${saleClientId}: neither the checkout answer nor the sale ` +
+          "said what it holds",
+      );
+      return verdict;
+    }
+    /* T103 review: asserted, but not against this. Logged in the same
+     * words as the case above, because it is the same posture -- no
+     * evidence, so no refusal -- and the counter is told nothing. */
+    if (verdict.unassertable !== null) {
+      console.warn(
+        `[basket] unverified sale=${saleId ?? "unknown"} ` +
+          `client=${saleClientId}: ` +
+          (verdict.unassertable === "package"
+            ? "a package line has no basket of its own to assert"
+            : "the sale that was read holds none of this ticket " +
+              `(${verdict.unordered.join(", ")}), which is a lookup that ` +
+              "may have found the wrong sale, not a sale that sold nothing"),
+      );
+    } else if (verdict.unordered.length > 0) {
+      /* Recorded, never a refusal: Mindbody files lines of its own. */
+      console.log(
+        `[basket] sale=${saleId ?? "unknown"} holds ${verdict.unordered.length} ` +
+          `line(s) this ticket did not order (${verdict.unordered.join(", ")})`,
+      );
+    }
+    return verdict;
+  };
+
+  /** What the teacher is told. It names the money first, because that is
+   *  the part nothing here can undo, then the sale, then the one move
+   *  left: escalate. No retry is offered anywhere in this sentence. */
+  const soldNothingWords = (
+    verdict: BasketVerdict,
+    saleId: string | null,
+    /** What was actually taken. Zero is the comp's case: no money moved,
+     *  and a sentence that said it did would send a teacher looking for
+     *  a charge nobody made. */
+    paid: number | null,
+  ): string =>
+    (paid !== null && paid <= 0
+      ? `Mindbody recorded the sale and sold nothing: ${verdict.problem}. ` +
+        "No money moved, so there is nothing to refund. "
+      : `The payment went through and nothing was sold: ${verdict.problem}. ` +
+        "Mindbody has the money. ") +
+    `The sale is ${
+      saleId ?? "not identified (no id came back: find it by today's date in Mindbody)"
+    }. ` +
+    "This cannot be retried, rolled back or refunded from here. Do not " +
+    "charge again: tell the studio, and have the sale fixed in Mindbody.";
+
+  /** The one answer for a sale that holds nothing it was paid for: the
+   *  record written first (the log line always, the client's note on top
+   *  of it, neither able to change the outcome), then the 502 the screen
+   *  renders as its own stop. */
+  const soldNothingAnswer = async (o: {
+    verdict: BasketVerdict;
+    saleId: string | null;
+    cartId: string | null;
+    /** The client the sale was addressed to; the note is filed on them,
+     *  never on the house client, which names nobody. */
+    onClientId: string;
+    paid: number | null;
+    extra?: Record<string, unknown>;
+  }): Promise<NextResponse> => {
+    const words = soldNothingWords(o.verdict, o.saleId, o.paid);
+    /* T75's per-line idiom in the log: ours against theirs, per line, so
+     * the refusal is fixable by whoever reads it afterwards. */
+    const audit = o.verdict.audit
+      .map(
+        (a) =>
+          `${a.type}:${a.metadataId} ours x${a.orderedQuantity} theirs ` +
+          `${a.soldQuantity === null ? "none" : `x${a.soldQuantity}`}`,
+      )
+      .join(" | ");
+    console.error(
+      `[sold-nothing] ${target()} sale=${o.saleId ?? "unknown"} ` +
+        `cart=${o.cartId ?? "unknown"} client=${o.onClientId} ` +
+        `paid=${o.paid === null ? "unknown" : o.paid.toFixed(2)} ` +
+        `problem=${JSON.stringify(o.verdict.problem ?? "")} ` +
+        `lines=${JSON.stringify(audit)}` +
+        (o.verdict.unordered.length > 0
+          ? ` unordered=${o.verdict.unordered.join(",")}`
+          : ""),
+    );
+    const house = houseClientId();
+    if (house === null || o.onClientId !== house) {
+      try {
+        await fileFormulaNote({
+          session,
+          clientId: o.onClientId,
+          note: words,
+          route: "/api/checkout sold-nothing",
+          logTag: "[sold-nothing]",
+        });
+      } catch (err) {
+        /* The money moved whatever this did; a failed note is a log line
+         * and never the outcome. */
+        console.error(
+          `[sold-nothing] the note could not be filed: ${errMessage(err)}`,
+        );
+      }
+    }
+    return NextResponse.json(
+      {
+        error: words,
+        stage: "checkout",
+        soldNothing: true,
+        /* Not ambiguous: the answer came back and said this. Not
+         * `partial` either, whose screen invites ringing up the rest. */
+        ambiguous: false,
+        saleId: o.saleId,
+        cartId: o.cartId,
+        basket: o.verdict.audit,
+        ...(o.paid === null ? {} : { total: o.paid }),
+        ...(o.extra ?? {}),
+      },
+      { status: 502 },
+    );
   };
   /* ===========================================================   * T90: lines bought for another client.
   /* ==================================================================
@@ -1518,6 +1742,16 @@ export async function POST(request: Request) {
     } | null = null;
     let failure: { what: string; message: string; ambiguous: boolean } | null =
       null;
+    /** T103: set when the cart half's answer did not hold the cart. It
+     *  stops the ticket where a failure stops it, and answers in its own
+     *  words: the money moved and nothing was sold, so no card after it
+     *  is charged on the strength of it. */
+    let soldNothing: {
+      verdict: BasketVerdict;
+      saleId: string | null;
+      cartId: string | null;
+      paid: number;
+    } | null = null;
     let fallbackNote: ActorFallback | null = null;
     let gone: Response | null = null;
     let suppressedKind: string | null = null;
@@ -1547,12 +1781,29 @@ export async function POST(request: Request) {
            * sale, and nothing after it runs. */
           suppressedKind = outcome.suppressed;
         } else {
-          const numeric = await latestSaleId(saleClientId, startedAt);
+          const found = await latestSale(saleClientId, startedAt);
+          const saleId =
+            found.id === null ? outcome.saleId : String(found.id);
           cartSale = {
             total: cartTotal,
-            saleId: numeric === null ? outcome.saleId : String(numeric),
+            saleId,
             cartId: outcome.saleId,
           };
+          /* T103: what this sale HOLDS, before any card is charged. */
+          const verdict = basketVerdict(
+            items,
+            outcome,
+            found.purchasedItems,
+            saleId,
+          );
+          if (verdict !== null && !verdict.ok) {
+            soldNothing = {
+              verdict,
+              saleId,
+              cartId: outcome.saleId,
+              paid: cartTotal,
+            };
+          }
         }
       } catch (err) {
         const ended = staffSessionEndedResponse(err);
@@ -1572,7 +1823,12 @@ export async function POST(request: Request) {
      *  is what the "was not attempted" list is measured from. Zero when
      *  the cart half failed first. */
     let cardsAttempted = 0;
-    if (failure === null && suppressedKind === null) {
+    /* T103: the cart half took money and sold nothing, so no card is
+     * charged on the strength of it, exactly as a failure stops the
+     * ticket. The answer waits until the record below is written (T103
+     * review: the cart IS a sale and its discount is on the studio
+     * either way, which is why every other path records first). */
+    if (failure === null && suppressedKind === null && soldNothing === null) {
       for (const [i, unit] of units.entries()) {
         const id = ids[i] as string;
         cardsAttempted += 1;
@@ -1764,6 +2020,25 @@ export async function POST(request: Request) {
         : []),
       ...sold.map((c) => `a $${c.value.toFixed(2)} gift card`),
     ];
+
+    /* T103: the cart half sold nothing. Answered here, after the record,
+     * naming the cards that were never attempted. */
+    if (soldNothing !== null) {
+      const untried = units
+        .map((u) => `the $${u.cardValue.toFixed(2)} gift card`)
+        .join(", ");
+      return await soldNothingAnswer({
+        verdict: soldNothing.verdict,
+        saleId: soldNothing.saleId,
+        cartId: soldNothing.cartId,
+        onClientId: saleClientId,
+        paid: soldNothing.paid,
+        extra: {
+          ...(untried ? { summary: `${untried} was not attempted.` } : {}),
+          ...discountFields,
+        },
+      });
+    }
 
     if (failure !== null) {
       /* T95 review: what was never attempted. A CARD failed at index
@@ -2101,6 +2376,16 @@ export async function POST(request: Request) {
     let fallbackNote: ActorFallback | null = null;
     let sessionEnded = false;
     let gone: Response | null = null;
+    /** T103: the cart whose answer did not hold it. Like a failure, it
+     *  stops the ticket where it happened: no later cart is charged on
+     *  the strength of a sale that sold nothing. */
+    let soldNothing: {
+      verdict: BasketVerdict;
+      saleId: string | null;
+      cartId: string | null;
+      clientId: string;
+      paid: number;
+    } | null = null;
 
     for (const cart of rehearsed) {
       const startedAt = new Date();
@@ -2150,15 +2435,33 @@ export async function POST(request: Request) {
         if (run.staffSessionEnded) sessionEnded = true;
         const ids =
           outcome.suppressed !== null
-            ? { saleId: null, cartId: null }
+            ? { saleId: null, cartId: null, purchasedItems: null }
             : await (async () => {
-                const numeric = await latestSaleId(cart.clientId, startedAt);
+                const found = await latestSale(cart.clientId, startedAt);
                 return {
                   saleId:
-                    numeric === null ? outcome.saleId : String(numeric),
+                    found.id === null ? outcome.saleId : String(found.id),
                   cartId: outcome.saleId,
+                  purchasedItems: found.purchasedItems,
                 };
               })();
+        /* T103: what this cart's own sale holds, asserted against this
+         * cart's own lines, before the next cart is charged. */
+        const verdict = basketVerdict(
+          cart.group.items,
+          outcome,
+          ids.purchasedItems,
+          ids.saleId,
+        );
+        if (verdict !== null && !verdict.ok) {
+          soldNothing = {
+            verdict,
+            saleId: ids.saleId,
+            cartId: ids.cartId,
+            clientId: cart.clientId,
+            paid: isComp ? 0 : cart.total,
+          };
+        }
         sales.push({
           forClientId: cart.group.forClientId,
           clientId: cart.clientId,
@@ -2239,6 +2542,10 @@ export async function POST(request: Request) {
             saleTotal: paid,
           });
         }
+        /* The record above is written first (this cart IS a sale, and a
+         * discount on it is on the studio either way), then the ticket
+         * stops here. */
+        if (soldNothing !== null) break;
       } catch (err) {
         const ended = staffSessionEndedResponse(err);
         if (ended && sales.length === 0) {
@@ -2284,6 +2591,28 @@ export async function POST(request: Request) {
 
     const landed = sales.filter((sale) => sale.suppressed === null);
     const suppressedSales = sales.filter((sale) => sale.suppressed !== null);
+    /* T103: one cart's answer did not hold that cart. The ticket stopped
+     * there, so what is reported is the cart that took the money, the
+     * carts that stood before it, and the ones never attempted; nothing
+     * is retried and nothing is refunded. */
+    if (soldNothing !== null) {
+      const untried = rehearsed
+        .slice(sales.length)
+        .map((c) => `${itemsOf(c.group)} for ${nameOfGroup(c.group)}`)
+        .join("; ");
+      return await soldNothingAnswer({
+        verdict: soldNothing.verdict,
+        saleId: soldNothing.saleId,
+        cartId: soldNothing.cartId,
+        onClientId: soldNothing.clientId,
+        paid: soldNothing.paid,
+        extra: {
+          sales,
+          ...(untried ? { summary: `${untried} was not attempted.` } : {}),
+          ...(sessionEnded ? { staffSessionEnded: true } : {}),
+        },
+      });
+    }
     const said = (list: typeof sales): string =>
       list
         .map((sale) => `${sale.items} for ${sale.name}`)
@@ -2448,10 +2777,52 @@ export async function POST(request: Request) {
   const startedAt = new Date();
   const saleIds = async (
     cartId: string | null,
-  ): Promise<{ saleId: string | null; cartId: string | null }> => {
-    if (cartId === null) return { saleId: null, cartId: null };
-    const numeric = await latestSaleId(saleClientId, startedAt);
-    return { saleId: numeric === null ? cartId : String(numeric), cartId };
+  ): Promise<{
+    saleId: string | null;
+    cartId: string | null;
+    /** T103: the found sale's own `PurchasedItems`, from the read this
+     *  lookup already makes, for the answers that carried no basket of
+     *  their own. Null when the sale was not found. */
+    purchasedItems: unknown[] | null;
+  }> => {
+    if (cartId === null) {
+      return { saleId: null, cartId: null, purchasedItems: null };
+    }
+    const found = await latestSale(saleClientId, startedAt);
+    return {
+      saleId: found.id === null ? cartId : String(found.id),
+      cartId,
+      purchasedItems: found.purchasedItems,
+    };
+  };
+
+  /** T103, for the eight single-cart paths: the stop when the answer to
+   *  the charge does not hold the ticket, or null when it does (and when
+   *  nothing was sent at all). Called after the record is written and
+   *  before the completed-sale answer, never in place of the suppression
+   *  branch: a suppressed write sold nothing because it never went. */
+  const basketStop = async (
+    lines: readonly CartLine[],
+    outcome: CheckoutOutcome,
+    ids: { saleId: string | null; cartId: string | null; purchasedItems: unknown[] | null },
+    paid: number | null,
+    extra?: Record<string, unknown>,
+  ): Promise<NextResponse | null> => {
+    const verdict = basketVerdict(
+      lines,
+      outcome,
+      ids.purchasedItems,
+      ids.saleId,
+    );
+    if (verdict === null || verdict.ok) return null;
+    return await soldNothingAnswer({
+      verdict,
+      saleId: ids.saleId,
+      cartId: ids.cartId,
+      onClientId: saleClientId,
+      paid,
+      ...(extra ? { extra } : {}),
+    });
   };
 
   /* A PRESENT tendered amount below the total is a short tender, zero
@@ -2899,7 +3270,17 @@ export async function POST(request: Request) {
         shape: "lines",
         onStudio: discounted,
       });
+      /* T103 review: the T94 overdraft record belongs with the discount
+       * record, BEFORE the stop below: the account was charged past its
+       * balance on a teacher's PIN whatever the sale turned out to hold. */
       const od = await recordOverdraft(ids.saleId, false);
+      /* T103: the answer is refused when the sale does not hold what
+       * was sent. The money has already moved, so this reports it; it
+       * never retries and never claims a sale. */
+      const nothingSold = await basketStop(items, outcome, ids, total, {
+        ...od,
+      });
+      if (nothingSold) return nothingSold;
       return NextResponse.json({
         ok: true,
         method: "split",
@@ -3072,7 +3453,7 @@ export async function POST(request: Request) {
       const outcome = run.result;
       const ids =
         outcome.suppressed !== null
-          ? { saleId: null, cartId: null }
+          ? { saleId: null, cartId: null, purchasedItems: null }
           : await saleIds(outcome.saleId);
       const rec = await recordDiscount({
         ...ids,
@@ -3081,6 +3462,11 @@ export async function POST(request: Request) {
         shape,
         onStudio,
       });
+      /* T103: the answer is refused when the sale does not hold what
+       * was sent. A comp moved no money, and the sentence says so; what
+       * it never does is claim a sale or invite a retry. */
+      const nothingSold = await basketStop(items, outcome, ids, 0);
+      if (nothingSold) return nothingSold;
       if (outcome.suppressed) {
         return NextResponse.json({
           ok: false,
@@ -3121,7 +3507,7 @@ export async function POST(request: Request) {
       const outcome = run.result;
       const ids =
         outcome.suppressed !== null
-          ? { saleId: null, cartId: null }
+          ? { saleId: null, cartId: null, purchasedItems: null }
           : await saleIds(outcome.saleId);
       const rec = await recordDiscount({
         ...ids,
@@ -3130,6 +3516,11 @@ export async function POST(request: Request) {
         shape: "lines",
         onStudio: discounted,
       });
+      /* T103: the answer is refused when the sale does not hold what
+       * was sent. The money has already moved, so this reports it; it
+       * never retries and never claims a sale. */
+      const nothingSold = await basketStop(items, outcome, ids, total);
+      if (nothingSold) return nothingSold;
       if (outcome.suppressed) {
         return NextResponse.json({
           ok: false,
@@ -3184,7 +3575,7 @@ export async function POST(request: Request) {
       const outcome = run.result;
       const ids =
         outcome.suppressed !== null
-          ? { saleId: null, cartId: null }
+          ? { saleId: null, cartId: null, purchasedItems: null }
           : await saleIds(outcome.saleId);
       const rec = await recordDiscount({
         ...ids,
@@ -3193,6 +3584,11 @@ export async function POST(request: Request) {
         shape: "lines",
         onStudio: discounted,
       });
+      /* T103: the answer is refused when the sale does not hold what
+       * was sent. The money has already moved, so this reports it; it
+       * never retries and never claims a sale. */
+      const nothingSold = await basketStop(items, outcome, ids, total);
+      if (nothingSold) return nothingSold;
       if (outcome.suppressed) {
         /* Suppression is never success, so nothing is kept on file
          * either: the charge did not happen. */
@@ -3242,7 +3638,7 @@ export async function POST(request: Request) {
       const outcome = run.result;
       const ids =
         outcome.suppressed !== null
-          ? { saleId: null, cartId: null }
+          ? { saleId: null, cartId: null, purchasedItems: null }
           : await saleIds(outcome.saleId);
       const rec = await recordDiscount({
         ...ids,
@@ -3251,6 +3647,11 @@ export async function POST(request: Request) {
         shape: "lines",
         onStudio: discounted,
       });
+      /* T103: the answer is refused when the sale does not hold what
+       * was sent. The money has already moved, so this reports it; it
+       * never retries and never claims a sale. */
+      const nothingSold = await basketStop(items, outcome, ids, total);
+      if (nothingSold) return nothingSold;
       if (outcome.suppressed) {
         return NextResponse.json({
           ok: false,
@@ -3361,6 +3762,17 @@ export async function POST(request: Request) {
         shape: "lines",
         onStudio: discounted,
       });
+      /* T103 review: the T94 record is written before the stop, like the
+       * discount record: the account was charged past its balance on a
+       * teacher's PIN whatever the sale turned out to hold. */
+      const od = await recordOverdraft(ids.saleId, false);
+      /* T103: the answer is refused when the sale does not hold what
+       * was sent. The money has already moved, so this reports it; it
+       * never retries and never claims a sale. */
+      const nothingSold = await basketStop(items, outcome, ids, total, {
+        ...od,
+      });
+      if (nothingSold) return nothingSold;
       return NextResponse.json({
         ok: true,
         method: m,
@@ -3370,7 +3782,7 @@ export async function POST(request: Request) {
         receiptRequested: sendEmail,
         emailReceipt: null,
         ...rec,
-        ...(await recordOverdraft(ids.saleId, false)),
+        ...od,
         ...actorFields(run),
       });
     }
@@ -3443,6 +3855,11 @@ export async function POST(request: Request) {
         shape: "lines",
         onStudio: discounted,
       });
+      /* T103: the answer is refused when the sale does not hold what
+       * was sent. The money has already moved, so this reports it; it
+       * never retries and never claims a sale. */
+      const nothingSold = await basketStop(items, outcome, ids, total);
+      if (nothingSold) return nothingSold;
       return NextResponse.json({
         ok: true,
         method: m,
@@ -3567,6 +3984,11 @@ export async function POST(request: Request) {
         shape: "lines",
         onStudio: discounted,
       });
+      /* T103: the answer is refused when the sale does not hold what
+       * was sent. The money has already moved, so this reports it; it
+       * never retries and never claims a sale. */
+      const nothingSold = await basketStop(items, outcome, ids, total);
+      if (nothingSold) return nothingSold;
       /* Either write may have fallen back; one note covers both. */
       const fallback = creditRun.actorFallback ?? run.actorFallback;
       return NextResponse.json({
