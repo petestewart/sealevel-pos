@@ -13062,6 +13062,133 @@ Not done, and why:
   (the gift card box's Done has always read the same way while nothing is
   typed). Left as is, recorded here.
 
+### Review (separate reviewer)
+
+Read against T22-T24 (the money invariants), T39.6 (the pay-screen
+read-only rule this ticket relaxes), T90, T95/T96/T97 and T98, then driven
+in a real browser: the builder's own Playwright suite (224 assertions,
+light and dark, 1194x834 and 834x1194) plus four new drivers for the
+attacks it did not make, and one more run against a scratch Postgres for
+T97. `origin/feature/phase-2` was merged twice while this was open, the
+second time bringing T102 (the gift card discount, the done screen's hold
+on an unwritten id) and T103's note; the only code conflict was one state
+declaration in SaleScreen, and the reconciliation held without changes,
+because T102 spreads its discount from the cart on every render
+(`ticketDiscountParts`) and the pricing loop sends the cart's share, so a
+quantity change in pay mode re-spreads it over the cards too. Verified
+after the merge: a pay-mode quantity change clears the tender lines, drops
+a held gift card number, re-prices with Mindbody, leaves Finalize unarmed,
+and re-spreads an armed discount with the figures still summing to the
+cent.
+
+The money seam held: `chargeable` still requires `!pricing` and a
+non-suppressed, non-disagreeing SERVER price, the pricing effect depends
+on the cart (so a quantity change sets `pricing` in the same commit and
+Finalize is off while the answer is on the wire, proved with the call held
+for four seconds), and the quantity is refused a third time by
+`parseCartLines` and `assertCartLines` on every route that prices or
+charges. No sequence found that charges a figure the screen did not show.
+Three fixes, all on the two new gestures rather than on the money:
+
+- **A swipe begun on the buy screen removed a line after pay mode
+  opened.** Reproduced in both palettes: hold the row past the threshold,
+  open pay mode (the row is the same element, portaled into the pay
+  panel), release. `onPointerUp` lived on the row and asked nothing about
+  the screen it was releasing on, so the removal went through on a screen
+  whose whole rule is that a gesture may not take a row off it. The
+  release is handled on the WINDOW now and re-reads the facts at the
+  moment of release (`rowsEditableRef`, `inPayRef`), and `onPointerMove`
+  abandons a gesture whose screen has changed under it. The same move also
+  fixes a row left STUCK mid-swipe, with its Remove hint showing, whenever
+  the release did not reach the row (the finger left it and
+  `setPointerCapture` was not taken).
+- **A second finger drove the first finger's row.** `onPointerDown`
+  checked `e.isPrimary`, but neither `onPointerMove` nor the release
+  checked WHICH pointer they belonged to, so a two-finger drag measured
+  the second pointer against the first pointer's origin and dragged the
+  row (measured: `translateX(-120px)` on a row nobody had touched with the
+  pointer that armed it). The gesture now carries its `pointerId` and
+  ignores every other pointer, and a second press cannot take over a
+  gesture already in the air.
+- **The quantity pad was the one control that could edit a locked
+  ticket.** The row's minus and plus are disabled while a charge is in
+  flight, on a part-sold ticket and on a settled sale; the pad's Done was
+  disabled only on the FIGURE. It now closes on the same test that
+  disables the row, and its Done is off with it, so the pad cannot outlive
+  the ticket it was opened on.
+
+And one contrast fix, which is the brief's item 6c: the quantity pad's
+disabled Done measured **1.9:1** (the build notes above had it at 2.68 by
+another method; either way it fails), because `.modal-actions button:disabled`
+faded an accent fill to 0.6. It now takes the treatment T102's review
+settled on for `.pad-chip:disabled` and `.nav-item[aria-disabled]`:
+`--surface-2` behind `--muted`, in tokens, both palettes, no opacity.
+Measured in the browser afterwards: **6.14:1 light, 5.87:1 dark**. The two
+scoped selectors are needed because `.modal-pad .modal-confirm.go` and
+`.modal-sale .modal-confirm.go` each carry three classes. The rest of the
+app's `:disabled` fades were audited and left, as T102's review left
+`.pay-tile.off`: `.t-ctl-btn` / `.t-ctl-qty` / `.shelf-qty-*` at 0.4
+(2.46:1 light, only while a charge is in flight), `.t-foot-empty` on an
+empty cart (1.85:1), `.pay-free` and `.audit-recheck` at 0.6. They are one
+app-wide sweep in one change, not a third treatment introduced here.
+
+The builder's three gaps are closed rather than carried:
+
+- **The swipe DOES work in portrait.** The claim that no pointer reaches a
+  buy-screen row there was the harness, not the layout: in the stacked
+  fold `.t-foot` is `position: sticky; bottom: 0` (T85, so Pay is never
+  scrolled to) and it covers the tail of a short list until the pane is
+  scrolled to its end. Scroll the overlay (`.sale-overlay`, 285px here)
+  and the row is hittable and the swipe removes the line, in both
+  palettes. Recorded as what it is: a sticky foot over the list's tail
+  mid-scroll, T85's behaviour and not this ticket's.
+- **T97's hide list is verified for real**, against a scratch Postgres 16
+  on :5433 with `DATABASE_URL` set: one `app_settings` row hiding
+  `GiftCard:2002`, and then the product is absent from `/api/gift-cards`,
+  absent from the box, refused past the browser by `/api/checkout` (409,
+  "That gift card is turned off at this counter", with no
+  `purchasegiftcard` call of any kind, rehearsal included), never lit by a
+  typed figure at its value, while the visible product still sells. A
+  malformed hide key (`GiftCard-2002`) made the server ignore the whole
+  stored config, loudly, and serve the code default, which is the T29
+  charter behaving as written.
+- The disabled Done is fixed above.
+
+Also verified, since each was a way the new surfaces could lie: the gift
+card `Description` reaches the browser as plain text (a product whose
+description was `<p><b>Single</b> Class&nbsp;Gift Card</p><script>` plus a
+`<style>` rendered as "Single Class Gift Card", nothing executed, nothing
+hidden, no markup in the cell's `innerHTML`); a product with NO
+description still renders as "$50.00 gift card" and still sells (the
+harness mock had been supplying one, so this path was untested before);
+the quantity pad's typing edges (leading zeros collapse, a third digit is
+typeable so the refusal is reachable, a fourth does nothing, 99 passes and
+100 is refused in words with the line unchanged); the pad closes when T90
+re-keys its line onto another client; a swipe under an open keypad removes
+nothing; a line that leaves the cart mid-drag takes the gesture with it
+and no other row is dragged; a part-sold ticket refuses to open a row's
+controls at all; and the shelf strip fits the narrowest cell without
+overflowing or covering the card's name.
+
+Two finds outside this ticket's diff, one fixed:
+
+- **Six gift card amounts were printed with no unit**, on the sentences a
+  teacher escalates from: "Sold a 25.00 gift card. the 25.00 gift card was
+  NOT sold". Fixed in `src/app/api/checkout/route.ts` (T95/T102 copy, not
+  T101's), since an amount without its unit on the partial-sale outcome is
+  the one screen where the figure matters most. The lowercase "the"
+  starting the second sentence is left: it is how that sentence is
+  assembled from parts, and rewording it is a copy change of its own.
+- **A part-sold ticket now locks the BUY screen's rows too**, which
+  follows from `ticketLock` being a fact rather than a mode. It is
+  defensible (those lines are already sold in Mindbody) and the way on is
+  "Empty cart", which stays enabled; but the buy screen does not say WHY
+  the controls are gone, while the pay screen does (`partialLock` is its
+  primary's reason). Recorded rather than changed: the sentence belongs
+  wherever T95's latch is next opened.
+
+`npm run typecheck` and `npm run build` clean.
+
 ## T102. A gift card can be discounted, and its id holds the screen (Pete, 2026-09-17)
 
 Pete: "Additionally, the gift card needs an ID, which needs to be
