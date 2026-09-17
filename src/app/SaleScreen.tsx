@@ -1316,8 +1316,57 @@ type ChargeResult =
       message: string;
       giftCards: { value: number; barcodeId: string }[];
     }
+  /* T103: the sale took the money and holds none of what was ordered.
+     Its own kind, and the loudest one here: every other outcome either
+     says nothing was charged or says a sale stands, and this says
+     neither. There is no retry affordance, because a retry is a second
+     charge; the one move left is to escalate. `basket` is the route's
+     per-line audit (T75's idiom), which is what makes the refusal
+     fixable by whoever reads it afterwards. */
+  | {
+      kind: "sold-nothing";
+      message: string;
+      saleId: string | null;
+      basket: BasketRow[];
+      /* T103 review: what the rest of the ticket did, when there was a
+         rest: the gift cards never attempted, the carts that stood. It
+         is the route's sentence and it is shown, because a teacher who
+         is told to escalate has to know what else is outstanding. */
+      summary: string | null;
+    }
   | { kind: "ambiguous"; message: string }
   | { kind: "error"; message: string };
+
+/** T103: one line of the sold-nothing audit, as /api/checkout answers
+ *  it: what was ordered against what the sale holds. */
+interface BasketRow {
+  type: string;
+  metadataId: string;
+  name: string | null;
+  orderedQuantity: number;
+  soldQuantity: number | null;
+}
+
+/** The audit off a checkout answer, defensively: a screen that has just
+ *  been told the money moved must render whatever it got. */
+function basketRows(raw: unknown): BasketRow[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Record<string, unknown>[])
+    .filter((r) => r && typeof r === "object")
+    .map((r) => ({
+      type: typeof r["type"] === "string" ? (r["type"] as string) : "line",
+      metadataId: String(r["metadataId"] ?? ""),
+      name: typeof r["name"] === "string" ? (r["name"] as string) : null,
+      orderedQuantity:
+        typeof r["orderedQuantity"] === "number"
+          ? (r["orderedQuantity"] as number)
+          : 0,
+      soldQuantity:
+        typeof r["soldQuantity"] === "number"
+          ? (r["soldQuantity"] as number)
+          : null,
+    }));
+}
 
 /**
  * T95: the cards a checkout answer says it sold, each with the id to
@@ -3206,6 +3255,30 @@ function PaymentPanel(props: {
             }; do NOT re-run the credit step.`,
           mindbody: String(body?.error ?? "no reason returned"),
         });
+      } else if (body?.soldNothing === true) {
+        /* T103: Mindbody took the payment and the sale holds nothing
+           that was ordered. The tender is cleared and the ticket locked
+           so a second Finalize tap is impossible (a retry here is a
+           second charge), the cart is left alone so the teacher can see
+           what was rung up, and the sentence is the route's: it names
+           the sale and says to escalate. */
+        resetTender();
+        onClientDataStale();
+        setPartialLock(
+          "This ticket took a payment and sold nothing. It cannot be " +
+            "charged again: tell the studio and have the sale fixed in " +
+            "Mindbody.",
+        );
+        setResult({
+          kind: "sold-nothing",
+          message: String(
+            body?.error ??
+              "The payment went through and nothing was sold.",
+          ),
+          saleId: typeof body?.saleId === "string" ? body.saleId : null,
+          basket: basketRows(body?.basket),
+          summary: typeof body?.summary === "string" ? body.summary : null,
+        });
       } else if (body?.partial === true) {
         /* T95 (T90's posture): part of this ticket is SOLD and part is
          * not. The tender is cleared so a bare re-tap of Finalize Sale is
@@ -4784,6 +4857,63 @@ function PaymentPanel(props: {
                       if (holdingGiftIds) return;
                       setResult(null);
                     }}
+                  >
+                    Understood
+                  </button>
+                </div>
+              ) : result?.kind === "sold-nothing" ? (
+                /* T103: the one outcome where money moved and no sale
+                   exists. Same stop treatment as a partial, with the
+                   per-line audit under it and no control that could
+                   charge anything. */
+                <div className="sale-stop pay-split" role="alert">
+                  <p className="pay-split-head">{result.message}</p>
+                  {result.summary ? (
+                    <p className="pay-split-why">{result.summary}</p>
+                  ) : null}
+                  <p className="pay-split-why">
+                    Finalize Sale is refused on this ticket now. Do not
+                    charge again: this is for the studio to fix in
+                    Mindbody, with the sale named above.
+                  </p>
+                  {result.basket.length > 0 ? (
+                    <div className="audit-wrap">
+                      <table className="audit">
+                        <thead>
+                          <tr>
+                            <th>Line</th>
+                            <th>Ordered</th>
+                            <th>In the sale</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {result.basket.map((row, i) => (
+                            <tr key={`${row.type}-${row.metadataId}-${i}`}>
+                              <td>
+                                {row.name ?? `${row.type} ${row.metadataId}`}
+                              </td>
+                              <td>x{row.orderedQuantity}</td>
+                              <td
+                                className={
+                                  row.soldQuantity === null ||
+                                  row.soldQuantity < row.orderedQuantity
+                                    ? "audit-bad"
+                                    : undefined
+                                }
+                              >
+                                {row.soldQuantity === null
+                                  ? "nothing"
+                                  : `x${row.soldQuantity}`}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                  <button
+                    className="class-change pay-dismiss"
+                    onClick={() => setResult(null)}
                   >
                     Understood
                   </button>
