@@ -4865,6 +4865,46 @@ button.sale-for:disabled {
   color: var(--accent-ink);
 }
 
+/* The password box and its reveal (2026-09-17). The eye sits INSIDE the
+ * box's right edge, a 44px square like every other icon control, and the
+ * input reserves room for it so a long password never runs under it. */
+.pw-field {
+  position: relative;
+  width: 100%;
+}
+
+.pw-input {
+  padding-right: 52px;
+}
+
+.pw-eye {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* Revealed is a state worth seeing at a glance, and --accent is this
+ * app's token for "on". */
+.pw-eye[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+.pw-eye:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .reason-input {
   width: 100%;
   min-height: 64px;
