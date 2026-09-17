@@ -13062,6 +13062,362 @@ Not done, and why:
   (the gift card box's Done has always read the same way while nothing is
   typed). Left as is, recorded here.
 
+## T102. A gift card can be discounted, and its id holds the screen (Pete, 2026-09-17)
+
+Pete: "Additionally, the gift card needs an ID, which needs to be
+displayed so the teacher can write it on the physical card. When is that
+displayed? Also, a gift card should be able to be discounted. The app
+prohibits it rn."
+
+The first is a question, and the answer was already in the code: the id
+shows on the Sale complete screen, the largest thing after the total,
+under "Write this on the $50.00 card", and in the emailed receipt. Part 2
+below hardens that. Part 1 is the change.
+
+Told that the custom amount card would be refused a discount by
+construction, since Mindbody prices that product from the payment and a
+discount there can only mean a smaller card, Pete: "NO. the gift card can
+be discounted regardless. Mindbody UI lets you do that." So there is no
+refusal by construction on any product, and the evidence-based guard is
+the only thing between a discount and a shrunken card.
+
+### The discount
+
+A gift card is not a cart line, so a ticket holding one has no single
+cart to discount. T79's spread now runs over ONE list: the cart lines
+(each with its quantity) and then one entry per CARD, because each card
+is its own `/sale/purchasegiftcard` call with its own payment. From that
+one spread:
+
+- the cart lines' share rides as an `amount` discount for their own cart,
+  which is T90's `splitDiscount` argument: re-spread inside the cart it
+  sums back to exactly the cents handed to it, and Mindbody's own
+  DiscountTotal is still asserted against it;
+- each card's share comes off what is charged for that card, which is the
+  PaymentInfo amount and the only figure that endpoint takes.
+
+The teacher's PIN is required exactly as T79 requires it, the reason is
+required, and the record is T79's: one `[comp]` log line always, the
+`comp_receipts` row (with the cards among its items), the client note,
+and the answer's `discount` block for the done screen. It is written from
+what actually LANDED, so a ticket that broke half way through records the
+half that stood and the discount that came off it.
+
+The browser sends the whole ticket's `{mode, value}` as it always did;
+the server spreads again from what it was sent. Its own copy of the
+spread is what the ticket shows: "Gift cards $50.00", "Discount (20%)
+-$10.00", "Total $40.00", with the discount row now carrying the cart's
+DiscountTotal plus the cards' share against the whole ticket's subtotal.
+
+### The guard, which is evidence and not a rule
+
+`POST /sale/purchasegiftcard` has no price, value, discount or promotion
+field. Its whole field list is LocationId, PurchaserClientId, GiftCardId,
+Test, LayoutId, SendEmailReceipt, RecipientEmail, RecipientName, Title,
+GiftMessage, DeliveryDate, PaymentInfo, SalesRepId, ConsumerPresent,
+PaymentAuthenticationCallbackUrl, BarcodeId, SenderName. The only figure
+the counter controls is what is PAID. So on that endpoint a discount is
+"pay less for the same card" only if the product says so, and the T96
+probes found the site does not answer that consistently: of site 471's
+nine fixed products, six issued a card worth the amount paid and three
+kept their own CardValue, with every documented field identical. The
+custom amount card follows the payment by definition.
+
+So every purchase is still rehearsed with `Test: true` before anything is
+charged, and both figures are still asserted: `Value` against what the
+ticket promised the card is worth (the product's CardValue, or the typed
+amount on the custom card), `AmountPaid` against the discounted figure
+being charged. A card that would come back worth LESS than the ticket
+said refuses the WHOLE ticket in its own sentence, naming both figures
+and saying the discount would reduce what the card is worth rather than
+what it costs. Nothing is charged and nothing is explained afterwards.
+
+What is still refused, on both sides:
+
+- **A comp.** Method comp on a ticket holding a gift card is refused in
+  words, and so is any discount that would charge a card nothing: a free
+  bearer instrument is not a comp, and Pete has not asked for one. The
+  dialog greys "Whole sale" and says why.
+- **A discount that takes the whole of the rest of the ticket**, because
+  the cart half would then need T79's 100% no-Payments shape, which
+  cannot be mixed with cards being paid for in the same breath.
+- Everything else in T95/T96/T97/T100 is unchanged: one purchase per
+  card, every part rehearsed before any is charged, sequential, honest
+  partial results, no retry or rollback, the partial lock, the id
+  generated server side and checked unused, the hidden-card refusal, and
+  the call log still striking the id out.
+
+### The id holds the screen
+
+The id is the one thing a teacher must carry off that screen onto blank
+card stock in their hand. It is shown once; the call log redacts it, and
+it is deliberately NOT in the sale history, because a history listing
+gift card ids would let anyone holding the iPad spend a customer's card.
+That leaves Mindbody as the only place a dismissed id can be recovered
+from.
+
+So a sale that sold at least one card carries a 64px "Written on the
+card" on the Sale complete screen, and the ordinary dismissals are inert
+until it is tapped: Done (greyed, with the reason in its title), Escape,
+and the nav bar's items, which grey the same way they do mid-charge. One
+tap per sale, not per card. This is the only screen in the app that traps
+a teacher, and the reason is the reason: every other screen's content is
+recoverable, and this one's is a bearer secret shown once.
+
+### Open question, for the first live discounted sale
+
+Which of site 471's products shrink under a discounted payment is known
+only for the T96 probe's $37.00 case. The first live discounted sale of
+each product is the real test, and the assertion above is what makes that
+safe: it refuses before any money moves, per card and per sale, rather
+than predicting.
+
+The bigger open question was the OTHER endpoint. Mindbody's own POS
+shows a gift card as a ticket line with Price, Value and Discount as
+three columns, which is a cart's shape, and `checkoutshoppingcart` takes
+`DiscountAmount` per line. `scripts/probe-giftcard-discount.ts` asks
+whether a gift card product prices as a cart line at all, with `Test:
+true` and nothing sold. It has now been run live against prod, site 471,
+client 100041277, and it answered three things:
+
+1. **The EDITABLE custom-amount product (id 282, CardValue 0, SalePrice
+   0) prices at $0.00 as a cart line**, as a Product and as a Service,
+   with and without a $10 discount. The per-line audit read `ours $50.00
+   x1  theirs $0.00 x1`: Mindbody MATCHED the line and charged nothing
+   for it. A cart never carries our price, it prices from the product's
+   own SalePrice, and that product has none. **So a custom-amount gift
+   card routed through a cart is a FREE card.** T75's subtotal assertion
+   catches it (expected 50, server 0, `disagrees` true) and would refuse
+   the sale, but the conclusion belongs here in words: the cart route
+   must never be used for the editable product, whatever else changes.
+2. **A FIXED product (id 323, "Single Class Gift Card", CardValue 28,
+   SalePrice 28) prices at $28.00 as a cart line, and a $10 discount
+   LANDS**: subtotal $28.00, discount $10.00, tax $0.00, total $18.00,
+   as a Product and as a Service. So Mindbody will discount a fixed gift
+   card as an ordinary cart line.
+3. **What that does NOT settle.** Test mode commits nothing, so nobody
+   knows whether a cart sale ISSUES a card at all, what value it would
+   carry, or what its barcode id would be. `purchasegiftcard` is still
+   the only call that lets the counter SET the id the teacher writes on
+   the physical card (`checkoutshoppingcart` has no BarcodeId), which is
+   why it stays the route this ticket builds on. The cart evidence is
+   recorded as the known ALTERNATIVE, for the day the rehearsal shows a
+   product shrinking under a discounted payment: the first live cart
+   sale of a gift card is the untried experiment, and it is untried
+   because the id is the whole point of the screen.
+
+### Build notes
+
+- `src/app/api/checkout/route.ts`: the blanket gift card discount refusal
+  is gone. The discount's shape is validated where it always was, and on
+  a gift card ticket its BOUND is re-checked further down against the
+  ticket's real subtotal (cart lines plus the live product list's prices)
+  by the same `parseDiscount`, in the same words. The spread, the per
+  card charges, the free-card and whole-cart refusals, the Value guard
+  and T79's record all live in the gift card branch.
+- `src/lib/giftcardsale.ts`: `giftCardTotal` is gone. What a ticket's
+  cards cost is no longer the sum of the units' own amounts, and a helper
+  that ignored the discount would be a wrong total waiting to be called.
+- `src/app/SaleScreen.tsx`: `ticketDiscountLines` and
+  `ticketDiscountParts` build the same list the server builds, in the
+  same order, so the figures on screen are the figures the server arrives
+  at; the pricing call carries the cart's share; the panel's total, the
+  $10 per-part card floor and the ticket rows all read the discounted
+  card figures. The done screen's hold is reported up through
+  `onHoldChange`, and `SaleNavState` gained `holdWhy`.
+- `.pad-chip:disabled` was `opacity: 0.4`, which measured 2.46:1 on the
+  surface. With a gift card on the ticket the discount dialog greys
+  "Whole sale" every time it opens, so it is tokens now (`--surface-2`,
+  `--muted`, `--line`) and readable in both palettes, which is what the
+  T99 review asked for on a disabled calendar day.
+- Deliberately not done: a gift card as a CART line. That is the probe's
+  question and Pete's to answer with a live run; building it on a guess
+  is exactly what the vendored spec exists to prevent.
+
+### Verified by the builder
+
+`npm run typecheck` and `npm run build` clean. A route driver and
+Playwright against `next start` on :3210 with the T100 mock on :4610,
+extended so a fixed product can follow the PAYMENT rather than its own
+CardValue (product 2004) while the others keep their face value, which
+puts both of the live behaviours on one mock.
+
+Route driver, 15 checks: a $50 card with $10 off charges $40 and the card
+is worth $50; the answer's discount block; the shrinking product refuses
+at the rehearsal with nothing charged and sells fine undiscounted; a
+discounted custom amount card is refused by the rehearsal (not by a
+rule); method comp and a 100% discount are both refused with nothing
+sent; no PIN is 401 `reason: "teacher"` with nothing sent, and no reason
+is a 400; a mixed pass-and-card ticket spreads $4.90 to the cart line and
+$5.00 to the card and sums to the cent; a discount that swallows the cart
+is refused; a discount past the ticket's subtotal is refused in
+`parseDiscount`'s own words; two cards each take their own share; an odd
+cent over two identical cards still sums to the discount.
+
+Playwright, both palettes and both orientations: the Discount control
+opens on a ticket holding a gift card, Whole sale is greyed, 100% by
+percent says why and cannot be armed, the effect line reads against the
+whole ticket, the armed discount reads on the ticket rows, the sale
+charges $40 for a $50 card, and the done screen holds (Done, Escape and
+the nav bar all inert) until "Written on the card" is tapped, once for
+one card and once for two. A shrinking product refuses in words with
+nothing sent. A sale with no gift card has no confirmation and dismisses
+at once, exactly as before.
+
+Not verified: anything live. No live gift card has been discounted, which
+is the open question above.
+
+Noted in passing, out of scope: while the done screen holds, the nav
+bar's Sign-in and Buy items grey through the SAME treatment they use
+mid-charge, and that treatment measures 2.6:1 in light and 2.5:1 in dark.
+Pre-existing and unchanged here, but a teacher can sit in the hold for as
+long as it takes to write six characters, where mid-charge is a second,
+so it is worth the same fix `.pad-chip:disabled` just had.
+
+### Review
+
+Reviewed adversarially on 2026-09-17, on top of the merge of
+`origin/feature/phase-2` and the live cart probe's answer. Three fixes,
+all in the direction the ticket already points.
+
+**The money holds.** The two spreads are one list. The browser's
+`ticketDiscountLines` and the route's `spreadLines` were transcribed into
+one harness and compared over 20,111 shapes: several cards of one
+product, cards of several products, cards plus a multi-quantity cart, one
+card alone, an empty cart half, odd cents, percents that land on a half
+cent, and 20,000 random tickets. In every one the lists were identical in
+order, the per-card charges agreed to the cent, the cart's share agreed,
+the parts summed exactly to the armed figure, and the cart share
+re-spread inside the cart summed back to exactly the cents handed to it
+(T90's `splitDiscount` argument, proved rather than asserted). A 100%
+discount refused in all of them.
+
+Then the seam, past the browser with curl. A cart line the browser
+priced at a cent, which would push almost the whole discount onto the
+card, is refused by the price check ("Totals disagree between our math
+and Mindbody's") with no card charged; so is an inflated one. Reordering
+the gift card lines moves which card carries which share and cannot move
+the ticket's total. A package on a discounted gift card ticket is
+refused before any call, so the one line whose price Mindbody would not
+assert can never be the lever. T90's several recipients and a gift card
+still cannot share a ticket, so `splitDiscount` never runs beside a
+card.
+
+**The rehearsal.** Every bad answer refuses before anything is charged:
+AmountPaid missing, Value missing, both missing, a Value a cent low (the
+T102 sentence), a cent high, zero, a rehearsal that 4xxs, 5xxs, or has
+its socket cut, and a slow one (1.5s) that still makes exactly one real
+call. Card two's rehearsal failing leaves card one uncharged. A numeric
+string for either figure is read as the number it is, deliberately, and
+is still asserted to the cent.
+
+**Fix 1: a figure that is not a number is ABSENT, not zero.**
+`giftcardsale.ts`'s `num` is lenient by design (`Number(null)` is 0),
+which is the safe direction for the balance read behind `giftCardTaken`:
+anything that parses means the id is taken. On the purchase answer it was
+the wrong direction. `Value: null` read as 0, slipped past T96's "a
+MISSING figure refuses" and came out as T102's "the card would be worth
+0.00 instead of 50.00", which blames Mindbody for saying something it
+never said; `""` and `true` did the same at 0 and 1. A `SaleId: null`
+became the string "0" on the record the same way. Nothing was ever
+charged in any of these, so this is honesty, not safety: a new `figure`
+helper reads Value, AmountPaid and SaleId, keeps numeric strings, and
+sends null, "" and booleans to the "did not say what it would be worth"
+refusal that was written for them.
+
+**Fix 2: a PARTIAL sale showed no id at all. This was the real find.**
+Card one sells, card two is refused: the route answers 502 with
+`partial: true` and `giftCardsSold` carrying the sold card's id, and the
+browser threw that array away, keeping only the message. The route's
+sentence names the card by value and deliberately never by id. So the
+card existed in Mindbody, the customer had paid for it, and its id was
+nowhere a teacher could read it: not on the screen, not in the call log
+(struck out), not in the sale history (deliberately). "Understood"
+dismissed freely. That is precisely the loss Part 2 of this ticket exists
+to prevent, in the one outcome where a stray tap is likeliest, because
+the teacher is reading a failure at the same moment. The `partial` result
+now carries its cards, the ids render in the same block as the done
+screen's through one `giftIdBlock` helper, the same "Written on the
+card(s)" confirmation holds the screen, and "Understood" is inert
+(`aria-disabled`, `.pay-dismiss.off` in tokens) until it is tapped.
+`soldGiftCards` reads `giftCardsSold` in one place so a future outcome
+cannot quietly drop it again.
+
+**Fix 3: the nav bar's greyed items, which the builder flagged and left.**
+`.nav-item[aria-disabled="true"]` was `--muted` under `opacity: 0.55`,
+measured in the browser at 2.43:1 light and 2.71:1 dark. The opacity is
+gone; the token alone is 6.52:1 and 5.85:1, and against the `--ink` of a
+live item it still plainly reads as off. The lit-but-inert rule
+(`.nav-item.on[aria-disabled="true"]`, accent at full opacity) is
+untouched, and it is the only other user of the treatment.
+
+**The floors**, each refused with nothing sent: a negative amount, a
+negative percent, a zero amount, a zero percent, a non-number, NaN, a
+percent over 100, a fractional percent, a sub-cent amount, a bad mode, a
+discount past the ticket's subtotal, and one that takes it exactly (the
+free-card refusal). A cent short of the subtotal sells. The bound really
+is re-checked against the LIVE product price: with the shelf's $50 card
+now $30 in Mindbody, a $40 discount is refused as "more than the 30.00
+subtotal" before any call.
+
+**The PIN.** A token sells one ticket and the same token on a second is
+401 `reason: "teacher"` with nothing sent; a forged one is refused; a
+token with no discount is refused rather than ignored. No PIN, hash or
+token appears in the server log, the call log or any response; the
+`[comp]` and `[giftcard]` lines carry neither, and the call log still
+strikes the gift card id out on a discounted sale (verified with
+`POS_DEVTOOLS=true` against `/api/devlog`).
+
+**The hold**, re-run after the fixes: all four palette and orientation
+combinations pass, one card and several, the ids stay until the tap, and
+a sale with no gift card dismisses exactly as before.
+
+Three things that turned out NOT to be problems, recorded so they are not
+re-opened:
+
+- A 100% discount armed on a cart and then joined by a gift card cannot
+  happen. Adding anything to the ticket means leaving pay mode, and the
+  T39.6 effect clears an armed discount whenever the panel goes hidden.
+  Verified in the browser: the quiet line reads "Discount was cleared."
+- The staff session quietly expiring under a hold does not take the ids
+  away. The sign-in gate comes back only on a 401 carrying
+  `reason: "staff"`, which only a WRITE route returns, and nothing polls
+  a write. The next charge is refused, as it should be; the screen the
+  teacher is reading stays.
+- The "that discount takes the whole of the rest of the ticket" refusal
+  is unreachable in practice: a proportional share can only take a cart
+  line's whole extension when the discount takes the whole ticket, and
+  then the free-card refusal fires first. It is kept as the belt to that
+  brace.
+
+Two limitations, left as they are and recorded:
+
+- **A reload while the screen holds loses the ids.** The result is React
+  state; nothing persists it, and nothing should: the id is a bearer
+  secret and the charter keeps it out of the database. After a reload
+  Mindbody is the only place it can be recovered from, which is the same
+  position a dismissed screen was always in. The same is true of the
+  browser's back gesture, which the app does not intercept anywhere.
+- **The gift card refusals that need the live product list are checked
+  AFTER the teacher's token is spent**, so a discount the live prices
+  turn out not to allow costs a PIN and asks again. That follows the T48
+  rule as written ("a refused or ambiguous charge does cost a PIN"), but
+  it is one step looser than the T94 review's instinct of moving an
+  unsatisfiable refusal ahead of the spend. Moving it would mean reading
+  the products before spending the token, which is a restructure of the
+  route's order and not this review's business.
+
+Noted in passing, not changed: `.pay-tile.off .pay-tile-name` and
+`.pay-tile.off .pay-tile-badge` are `opacity: 0.5` over the ink, which
+measures 3.25:1 in light (4.73:1 in dark) on the "Card" and "Gift card"
+tender tiles when they are unavailable. It is the same treatment
+`.pad-chip:disabled` and `.nav-item[aria-disabled]` have now both left,
+it shows on this very screen, and it is pre-existing and app-wide rather
+than anything T102 introduced, so it belongs to its own change and not to
+this review. Every other text on the partial and done screens measures
+clear in both palettes at both orientations, with no text under 16px and
+no tap target under its floor.
+
 ## T103: a paid sale that sold nothing
 
 Found by probe on 2026-09-17, chasing Pete's question "did you try using

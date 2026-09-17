@@ -122,6 +122,26 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * T102 review: a FIGURE that is not a number is ABSENT, not zero.
+ *
+ * `num` is deliberately lenient (`Number(null)` is 0, `Number(true)` is
+ * 1), and for the balance read at giftCardTaken that leniency is the safe
+ * direction: anything that parses at all means the id is taken. On the
+ * purchase answer it is the wrong direction. T96's rehearsal promises
+ * that a MISSING figure refuses because "silence is not agreement where
+ * a bearer instrument is", and `Value: null` is silence: read as 0 it
+ * slipped past that refusal and came out as T102's "the card would be
+ * worth 0.00", which blames Mindbody for saying something it never said.
+ * A numeric string is still read as the number it is; the assertions
+ * then compare the real figures to the cent.
+ */
+function figure(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") return num(v);
+  return null;
+}
+
 export async function giftCardProducts(
   refresh = false,
 ): Promise<GiftCardProduct[]> {
@@ -421,9 +441,9 @@ export async function purchaseGiftCard(opts: {
       typeof res?.BarcodeId === "string" && res.BarcodeId.trim()
         ? res.BarcodeId.trim()
         : null,
-    value: num(res?.Value),
-    amountPaid: num(res?.AmountPaid),
-    saleId: num(res?.SaleId),
+    value: figure(res?.Value),
+    amountPaid: figure(res?.AmountPaid),
+    saleId: figure(res?.SaleId),
     emailReceipt:
       typeof res?.EmailReceipt === "boolean" ? res.EmailReceipt : null,
   };
@@ -632,12 +652,12 @@ export function resolveGiftCardUnits(
   return { units, error: null };
 }
 
-/** What the cards on a ticket cost, to the cent. */
-export function giftCardTotal(units: readonly GiftCardUnit[]): number {
-  let total = 0;
-  for (const u of units) total += u.amount;
-  return roundToCents(total);
-}
+/* T102: giftCardTotal lived here and was the sum of the units' own
+ * amounts. What a ticket's cards COST is no longer that sum: a discount
+ * comes off each card's payment (/api/checkout spreads it over the cart
+ * lines and the cards together), so the figure is computed there from
+ * what each card is actually charged, and a helper that ignored the
+ * discount would be a wrong total waiting to be called. */
 
 /**
  * A gift card sale on record, as one server log line. The T29 charter's

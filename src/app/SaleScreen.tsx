@@ -35,6 +35,7 @@ import {
   isPinShape,
   PIN_MAX,
   PIN_MIN,
+  spreadDiscount,
   subtotalCents,
   type CompKind,
   type CompReason,
@@ -1234,10 +1235,39 @@ type ChargeResult =
   | { kind: "split"; message: string; mindbody: string }
   /* T95: some of the ticket went out and some did not, and the route's
      sentence says exactly which. Its own kind because the one thing that
-     must not happen next is a second tap on Finalize Sale. */
-  | { kind: "partial"; message: string }
+     must not happen next is a second tap on Finalize Sale.
+
+     T102 review: `giftCards` is the cards that DID sell before the
+     ticket broke. They are real cards, charged for, and their ids have
+     to be written on card stock exactly as a whole sale's do: the
+     route's sentence names them by value and deliberately not by id, so
+     without this the one place the id was ever readable would be the
+     screen a partial sale never reaches. */
+  | {
+      kind: "partial";
+      message: string;
+      giftCards: { value: number; barcodeId: string }[];
+    }
   | { kind: "ambiguous"; message: string }
   | { kind: "error"; message: string };
+
+/**
+ * T95: the cards a checkout answer says it sold, each with the id to
+ * write on it. T102 review: read in ONE place, because a whole sale and
+ * a partial one both have to show them, and a partial that quietly
+ * dropped them lost those ids for good.
+ */
+function soldGiftCards(raw: unknown): { value: number; barcodeId: string }[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as { value?: unknown; barcodeId?: unknown }[])
+    .filter(
+      (c) => typeof c?.barcodeId === "string" && typeof c?.value === "number",
+    )
+    .map((c) => ({
+      value: c.value as number,
+      barcodeId: c.barcodeId as string,
+    }));
+}
 
 
 /** T43: a discount needs a reason; T45: the reason is a KIND from
@@ -1337,6 +1367,76 @@ function discountLines(cart: readonly CartEntry[]): DiscountLine[] {
 }
 
 /**
+ * T102: the lines a discount spreads over on a ticket that holds gift
+ * cards, in the order /api/checkout builds the same list: the cart lines
+ * first, each with its quantity, then ONE entry per CARD, because each
+ * card is its own /sale/purchasegiftcard call with its own payment. Both
+ * sides spread the same list, so the figures on screen are the figures
+ * the server arrives at, to the cent. (They are still only the browser's
+ * copy: the server spreads again from what it was sent, and Mindbody's
+ * own DiscountTotal is what the cart half is asserted against.)
+ */
+function ticketDiscountLines(cart: readonly CartEntry[]): DiscountLine[] {
+  return [
+    ...cart
+      .filter((l) => !isGiftCardLine(l))
+      .map((l) => ({ price: l.item.price, quantity: l.quantity })),
+    ...cart
+      .filter(isGiftCardLine)
+      .flatMap((l) =>
+        Array.from({ length: l.quantity }, () => ({
+          price: l.item.price,
+          quantity: 1,
+        })),
+      ),
+  ];
+}
+
+/** T102: an armed discount, divided the way the ticket is charged. */
+interface TicketDiscountParts {
+  /** The whole ticket's discount, in cents. */
+  offCents: number;
+  /** The gift cards' share of it, in cents. */
+  giftCents: number;
+  /** What each CARD is charged, in dollars, in ticket order. */
+  cardCharges: number[];
+  /** The cart lines' share, as the discount the pricing call and the
+   *  cart's own checkout carry: re-spread inside the cart it sums back
+   *  to exactly these cents (T90's splitDiscount argument). */
+  cartShare: Discount | null;
+}
+
+function ticketDiscountParts(
+  cart: readonly CartEntry[],
+  discount: Discount | null,
+): TicketDiscountParts {
+  const cards = cart
+    .filter(isGiftCardLine)
+    .flatMap((l) => Array.from({ length: l.quantity }, () => l.item.price));
+  if (discount === null) {
+    return {
+      offCents: 0,
+      giftCents: 0,
+      cardCharges: cards.map((price) => roundToCents(price)),
+      cartShare: null,
+    };
+  }
+  const cartLines = cart.filter((l) => !isGiftCardLine(l)).length;
+  const spread = spreadDiscount(ticketDiscountLines(cart), discount);
+  const cartCents = spread.slice(0, cartLines).reduce((n, c) => n + c, 0);
+  const cardCents = spread.slice(cartLines);
+  return {
+    offCents: spread.reduce((n, c) => n + c, 0),
+    giftCents: cardCents.reduce((n, c) => n + c, 0),
+    cardCharges: cards.map((price, i) =>
+      roundToCents(price - (cardCents[i] ?? 0) / 100),
+    ),
+    cartShare:
+      cartCents > 0 ? { mode: "amount", value: cartCents / 100 } : null,
+  };
+}
+
+/**
  * THE T24 SEAM, now live, and since the second live test the whole LEFT
  * column: the tender block above the receipt, the receipt itself (passed
  * in, so the cart and pricing loop stay outside the seam), the comp hold,
@@ -1419,6 +1519,14 @@ function PaymentPanel(props: {
    *  the amount modal: one keypad over a scrim, for whichever tender
    *  line was tapped. */
   onModalChange: (open: boolean) => void;
+  /**
+   * T102: whether the done screen is HOLDING the teacher on it, because
+   * a gift card id is on it and nobody has said it is written down yet.
+   * SaleScreen blocks Escape and its own close on it, and the nav bar
+   * greys the items that would leave. The one way out is the screen's
+   * own "Written on the card".
+   */
+  onHoldChange: (held: boolean) => void;
   /** Bumped by SaleScreen when "Empty cart" is confirmed on a client
    *  change (third live test): the cart is gone, so every tender line and
    *  any armed comp goes with it. */
@@ -1453,6 +1561,7 @@ function PaymentPanel(props: {
     onClientDataStale,
     onBusyChange,
     onModalChange,
+    onHoldChange,
     cartResetNonce,
     discount: comp,
     onDiscountChange: setComp,
@@ -1504,11 +1613,22 @@ function PaymentPanel(props: {
     giftCardLines.reduce((n, l) => n + l.item.price * l.quantity, 0),
   );
 
-  const cartSubtotalCents = subtotalCents(discountLines(saleLines));
-  const armedCents =
-    comp === null ? 0 : discountCents(discountLines(saleLines), comp.discount);
+  /* T102: the discount is the whole TICKET's, cards included (Pete: "a
+   * gift card should be able to be discounted. The app prohibits it
+   * rn."), so every figure below spreads over the cart lines and the
+   * cards together. With no gift card on the ticket this is the cart's
+   * own list and nothing about T79 changes. */
+  const ticketSubtotalCents = subtotalCents(ticketDiscountLines(cart));
+  const armedParts = ticketDiscountParts(cart, comp?.discount ?? null);
+  const armedCents = armedParts.offCents;
+  /** What the cards are charged once their share of the discount is
+   *  off: what the ticket adds to the cart's total. */
+  const giftCardsCharged = roundToCents(
+    giftCardsTotal - armedParts.giftCents / 100,
+  );
   const comped =
-    comp !== null && isFullDiscount(discountLines(saleLines), comp.discount);
+    comp !== null &&
+    isFullDiscount(ticketDiscountLines(cart), comp.discount);
   const discounted = comp !== null;
   /** The reason dialog the Discount tap opens (T43): open, the amount
    *  draft (T79) and the reason draft the chips and the note field
@@ -1606,14 +1726,18 @@ function PaymentPanel(props: {
   /* ---------------- T79: the amount step's keypad ------------------ */
   /** The discount the drafts describe right now, against the cart's
    *  pre-tax subtotal, or null while the entry is incomplete. */
-  const draftDiscount = draftToDiscount(discountDraft, cartSubtotalCents);
+  const draftDiscount = draftToDiscount(discountDraft, ticketSubtotalCents);
   const draftOffCents =
     draftDiscount === null
       ? 0
-      : discountCents(discountLines(saleLines), draftDiscount);
+      : discountCents(ticketDiscountLines(cart), draftDiscount);
   const draftFull =
     draftDiscount !== null &&
-    isFullDiscount(discountLines(saleLines), draftDiscount);
+    isFullDiscount(ticketDiscountLines(cart), draftDiscount);
+  /** T102: a gift card comped to nothing is a bearer instrument handed
+   *  over for free, which is not a comp. The route refuses it; this
+   *  greys the button before the PIN is typed and says why. */
+  const fullBlockedByGiftCard = hasGiftCard && draftFull;
   /** The segment. Switching drops the digits: an entry typed as cents
    *  means nothing as a percent. Whole sale needs no digits. */
   const chooseMode = (mode: DiscountDraftMode) => {
@@ -1638,7 +1762,7 @@ function PaymentPanel(props: {
         if (n > DISCOUNT_PERCENT_MAX) return;
         next = raw;
       } else {
-        next = String(Math.min(n, cartSubtotalCents));
+        next = String(Math.min(n, ticketSubtotalCents));
       }
     }
     if (next === "0") next = "";
@@ -1653,7 +1777,7 @@ function PaymentPanel(props: {
     const entry =
       d.mode === "percent"
         ? String(Math.min(DISCOUNT_PERCENT_MAX, value))
-        : String(Math.min(cartSubtotalCents, value * 100));
+        : String(Math.min(ticketSubtotalCents, value * 100));
     setDiscountDraft({ mode: d.mode, entry });
   };
   /** The figure the entry reads as, for the head: "$60.00" or "60%". */
@@ -1665,17 +1789,20 @@ function PaymentPanel(props: {
         : money((discountDraft.entry === "" ? 0 : Number(discountDraft.entry)) / 100);
   /** The running effect (the brief's line): "Discount $60.00, they pay
    *  $40.00" before tax, or "Comped, they pay $0.00" at 100%. */
-  const discountEffect =
-    draftDiscount === null
-      ? cartSubtotalCents <= 0
+  const discountEffect = fullBlockedByGiftCard
+    ? /* T102: the one discount a ticket with a gift card on it cannot
+         take. */
+      "A gift card cannot be given away for nothing. Discount less, so there is something to pay."
+    : draftDiscount === null
+      ? ticketSubtotalCents <= 0
         ? "Nothing to discount."
         : discountDraft.mode === "percent"
-          ? `Enter 1 to 100 percent of the ${money(cartSubtotalCents / 100)} subtotal.`
-          : `Enter up to ${money(cartSubtotalCents / 100)}, the subtotal before tax.`
+          ? `Enter 1 to 100 percent of the ${money(ticketSubtotalCents / 100)} subtotal.`
+          : `Enter up to ${money(ticketSubtotalCents / 100)}, the subtotal before tax.`
       : draftFull
         ? `Comped, they pay ${money(0)}.`
         : `Discount ${money(draftOffCents / 100)}, they pay ${money(
-            (cartSubtotalCents - draftOffCents) / 100,
+            (ticketSubtotalCents - draftOffCents) / 100,
           )} before tax.`;
   /* The keyboard stands in for the amount pad on the reason step, but
    * only while the note is not focused (the note takes its own keys). */
@@ -1692,7 +1819,7 @@ function PaymentPanel(props: {
     /* discountTap reads the draft through a ref; the subtotal is the
      * only closed-over value that can change. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reasonOpen, reasonStep, cartSubtotalCents]);
+  }, [reasonOpen, reasonStep, ticketSubtotalCents]);
   /** Whether the pointer went down on the reason dialog's scrim, so the
    *  scrim closes on a real tap on it and not on the click a touch
    *  pointer fires when the hold that opened the dialog lifts. */
@@ -1702,6 +1829,21 @@ function PaymentPanel(props: {
    *  a modal is def better than this"), so opening it moves nothing in
    *  the payment column. No OS keyboard anywhere in the payment seam. */
   const [padFor, setPadFor] = useState<number | null>(null);
+  /**
+   * T102 (Pete: "the gift card needs an ID, which needs to be displayed
+   * so the teacher can write it on the physical card"): whether the ids
+   * on the done screen have been written down.
+   *
+   * The id is shown ONCE. It is a bearer secret, so the call log strikes
+   * it out and the sale history deliberately does not list it (a history
+   * of gift card ids would let anyone holding the iPad spend a
+   * customer's card), which leaves Mindbody as the only place a
+   * dismissed id can be recovered from. So this is the one screen in the
+   * app that traps a teacher: a stray tap on Done, Escape or the nav bar
+   * costs them the number they are meant to be writing on blank card
+   * stock in their hand. One tap per sale, not per card.
+   */
+  const [giftIdsWritten, setGiftIdsWritten] = useState(false);
   /** T83: the gift card the tender holds, and the modal's draft. */
   const [giftCard, setGiftCard] = useState<GiftCardHeld | null>(null);
   const [gift, setGift] = useState<GiftDraft | null>(null);
@@ -1756,7 +1898,7 @@ function PaymentPanel(props: {
    * product and rehearses every purchase with `Test: true` before a cent
    * moves, so this addition never stands in for a server figure. */
   const total =
-    cartTotal === null ? null : roundToCents(cartTotal + giftCardsTotal);
+    cartTotal === null ? null : roundToCents(cartTotal + giftCardsCharged);
 
   /** A fresher balance than the attach snapshot, learned from a split
    *  failure's report: it is what lets Account credit light up so the
@@ -1940,7 +2082,7 @@ function PaymentPanel(props: {
    * silently clamped figure is not the one the teacher entered. */
   useEffect(() => {
     if (comp === null || cart.length === 0) return;
-    const lines = discountLines(saleLines);
+    const lines = ticketDiscountLines(cart);
     const bad =
       discountRefusal(cart.map((l) => ({ type: l.item.type }))) !== null ||
       (comp.discount.mode === "amount" &&
@@ -2039,9 +2181,9 @@ function PaymentPanel(props: {
    */
   const giftCardParts: number[] = [
     ...(saleLines.length > 0 && cartTotal !== null ? [cartTotal] : []),
-    ...giftCardLines.flatMap((l) =>
-      Array.from({ length: l.quantity }, () => l.item.price),
-    ),
+    /* T102: what each card is CHARGED, since that is the authorization
+     * the $10 floor is measured against. */
+    ...armedParts.cardCharges,
   ];
   const giftShortPart = hasGiftCard
     ? giftCardParts.find((part) => part < CARD_MINIMUM_USD)
@@ -2496,6 +2638,65 @@ function PaymentPanel(props: {
            coverage). */
         dueCents === 0 && tenderValid);
 
+  /** T102: the done screen holds while an unwritten id is on it. T102
+   *  review: and so does the PARTIAL screen, for the cards that did sell
+   *  before the ticket broke. Those are charged-for bearer instruments
+   *  like any others, and the partial is the one outcome where a teacher
+   *  is being told something went wrong at the same moment: exactly when
+   *  a stray tap is likeliest. */
+  const heldGiftIds =
+    result?.kind === "paid" || result?.kind === "partial"
+      ? result.giftCards
+      : [];
+  const holdingGiftIds = heldGiftIds.length > 0 && !giftIdsWritten;
+  useEffect(() => {
+    onHoldChange(holdingGiftIds);
+  }, [holdingGiftIds, onHoldChange]);
+  /* The hold belongs to ONE result: a new sale arms it again, and a
+   * cleared result never leaves the overlay stuck. */
+  useEffect(() => {
+    if (result?.kind !== "paid" && result?.kind !== "partial") {
+      setGiftIdsWritten(false);
+    }
+  }, [result]);
+  useEffect(() => () => onHoldChange(false), [onHoldChange]);
+  /**
+   * T95: the one thing a teacher MUST take off this screen. The card
+   * Mindbody sold is blank card stock in their hand, and this id is what
+   * ties the two together, so it is the largest thing here after the
+   * total. The id is a bearer secret everywhere else (the call log
+   * strikes it out, the sale history does not carry it); this screen and
+   * the emailed receipt are the two places it is meant to be read.
+   *
+   * T102: and the screen holds until the confirmation is tapped. One tap
+   * for the whole sale, however many cards are on it; Done, Escape and
+   * the nav bar do nothing until then. T102 review: one function,
+   * because the PARTIAL outcome shows the same ids under the same hold.
+   */
+  const giftIdBlock = (cards: { value: number; barcodeId: string }[]) =>
+    cards.length === 0 ? null : (
+      <div className="pay-done-gifts">
+        {cards.map((c) => (
+          <div className="pay-done-gift" key={c.barcodeId}>
+            <span className="pay-done-gift-label">
+              Write this on the {money(c.value)} card
+            </span>
+            <span className="pay-done-gift-id">{c.barcodeId}</span>
+          </div>
+        ))}
+        {holdingGiftIds ? (
+          <button
+            className="pay-done-gift-ack"
+            onClick={() => setGiftIdsWritten(true)}
+          >
+            {cards.length === 1
+              ? "Written on the card"
+              : "Written on the cards"}
+          </button>
+        ) : null}
+      </div>
+    );
+
   const sourceLabel = (s: TenderSource) =>
     s === "storedcard"
       ? "Card"
@@ -2544,7 +2745,7 @@ function PaymentPanel(props: {
   /** T79: what a comp puts on the studio, the pre-tax subtotal (tax on
    *  $0 is $0): the figure the Comp button and the done screen carry,
    *  since Mindbody's discounted total is $0.00 and says nothing. */
-  const compAmount = cartSubtotalCents / 100;
+  const compAmount = ticketSubtotalCents / 100;
 
   const chargeLabel = comped
     ? total === null
@@ -2827,18 +3028,7 @@ function PaymentPanel(props: {
         setResult({
           kind: "paid",
           /* T95: what Mindbody recorded, one entry per card. */
-          giftCards: Array.isArray(body?.giftCardsSold)
-            ? (body.giftCardsSold as { value?: unknown; barcodeId?: unknown }[])
-                .filter(
-                  (c) =>
-                    typeof c?.barcodeId === "string" &&
-                    typeof c?.value === "number",
-                )
-                .map((c) => ({
-                  value: c.value as number,
-                  barcodeId: c.barcodeId as string,
-                }))
-            : [],
+          giftCards: soldGiftCards(body?.giftCardsSold),
           total: comped
             ? typeof disc?.subtotal === "number"
               ? disc.subtotal
@@ -2964,6 +3154,11 @@ function PaymentPanel(props: {
           message: String(
             body?.error ?? "Part of this ticket was sold and part was not.",
           ),
+          /* T102 review: the cards that DID sell. The route's sentence
+             names them by value and never by id, so these are the only
+             copy of the ids anywhere the teacher can read, and the screen
+             holds on them exactly as the done screen does. */
+          giftCards: soldGiftCards(body?.giftCardsSold),
         });
       } else if (body?.ambiguous === true) {
         setResult({
@@ -3839,6 +4034,8 @@ function PaymentPanel(props: {
       reason === null ||
       !compValid(reasonDraft) ||
       draftDiscount === null ||
+      /* T102: and never the 100% case with a card on the ticket. */
+      fullBlockedByGiftCard ||
       charging ||
       verified === null
     ) {
@@ -3879,12 +4076,14 @@ function PaymentPanel(props: {
   /** T79: why the cart cannot take a discount right now, or null: a
    *  package line (Mindbody ignores a discount on one). Read at the tap
    *  and shown in the quiet line rather than opening the dialog. */
-  const discountBlock = hasGiftCard
-    ? /* T95: a discounted gift card is money given away that then spends
-         like cash, and Pete has not asked for one. The route refuses it
-         too; this is the same sentence, before the dialog opens. */
-      "A gift card cannot be discounted: it is worth its face value whatever was paid for it."
-    : discountRefusal(saleLines.map((l) => ({ type: l.item.type })));
+  /* T102: a gift card no longer blocks the dialog. Pete, told the custom
+     amount card would be refused by construction: "NO. the gift card can
+     be discounted regardless. Mindbody UI lets you do that." What a
+     discounted card is actually worth is Mindbody's answer, asserted per
+     card in the rehearsal before anything is charged. */
+  const discountBlock = discountRefusal(
+    saleLines.map((l) => ({ type: l.item.type })),
+  );
   const [discountRefused, setDiscountRefused] = useState<string | null>(null);
   useEffect(() => {
     if (discountBlock === null) setDiscountRefused(null);
@@ -4082,25 +4281,7 @@ function PaymentPanel(props: {
                   </span>
                 ) : null}
               </p>
-              {result.giftCards.length > 0 ? (
-                /* T95: the one thing a teacher MUST take off this screen.
-                   The card Mindbody sold is blank card stock in their
-                   hand, and this id is what ties the two together, so it
-                   is the largest thing here after the total. The id is a
-                   bearer secret everywhere else (the call log strikes it
-                   out); this screen and the emailed receipt are the two
-                   places it is meant to be read. */
-                <div className="pay-done-gifts">
-                  {result.giftCards.map((c) => (
-                    <div className="pay-done-gift" key={c.barcodeId}>
-                      <span className="pay-done-gift-label">
-                        Write this on the {money(c.value)} card
-                      </span>
-                      <span className="pay-done-gift-id">{c.barcodeId}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
+              {giftIdBlock(result.giftCards)}
               {result.compReason ? (
                 /* T43: the reason, under the charged line, so the done
                    screen says why the sale was on the studio. T79: a
@@ -4152,8 +4333,16 @@ function PaymentPanel(props: {
                   screen is the sign-in view, not an empty cart. The
                   receipt is cleared first so reopening Buy starts clean. */}
               <button
-                className="pay-done-btn"
+                className={holdingGiftIds ? "pay-done-btn off" : "pay-done-btn"}
+                aria-disabled={holdingGiftIds}
+                title={
+                  holdingGiftIds
+                    ? "Write the gift card id on the card first"
+                    : undefined
+                }
                 onClick={() => {
+                  /* T102: inert, not hidden, while an id is unwritten. */
+                  if (holdingGiftIds) return;
                   setResult(null);
                   onDone();
                 }}
@@ -4505,9 +4694,28 @@ function PaymentPanel(props: {
                     anything else. Finalize Sale is refused on this ticket
                     now: empty it and ring up only what is still owed.
                   </p>
+                  {/* T102 review: the cards that DID sell, with the ids
+                      to write on them, and the same hold as the done
+                      screen. A partial sale is the worst moment to lose
+                      an id: the teacher is reading a failure, and these
+                      cards were charged for all the same. */}
+                  {giftIdBlock(result.giftCards)}
                   <button
-                    className="class-change pay-dismiss"
-                    onClick={() => setResult(null)}
+                    className={
+                      holdingGiftIds
+                        ? "class-change pay-dismiss off"
+                        : "class-change pay-dismiss"
+                    }
+                    aria-disabled={holdingGiftIds}
+                    title={
+                      holdingGiftIds
+                        ? "Write the gift card id on the card first"
+                        : undefined
+                    }
+                    onClick={() => {
+                      if (holdingGiftIds) return;
+                      setResult(null);
+                    }}
                   >
                     Understood
                   </button>
@@ -5041,7 +5249,7 @@ function PaymentPanel(props: {
                 <p className="modal-title">Discount this sale</p>
             <div className="pad-row">
               <span className="pad-label">Subtotal before tax</span>
-              <span className="pad-amt">{money(cartSubtotalCents / 100)}</span>
+              <span className="pad-amt">{money(ticketSubtotalCents / 100)}</span>
             </div>
             {/* T79: the amount step. The T70 pad panel's shape inside
                 T68's one fixed box: the entry column at the left (the
@@ -5074,6 +5282,15 @@ function PaymentPanel(props: {
                       discountDraft.mode === mode ? "pad-chip on" : "pad-chip"
                     }
                     aria-checked={discountDraft.mode === mode}
+                    /* T102: Whole sale is 100%, and 100% off a gift card
+                       is a free card. Greyed WITH the reason rather than
+                       hidden, so the segment keeps one shape. */
+                    disabled={mode === "whole" && hasGiftCard}
+                    title={
+                      mode === "whole" && hasGiftCard
+                        ? "A gift card cannot be given away for nothing"
+                        : undefined
+                    }
                     onClick={() => chooseMode(mode)}
                   >
                     {label}
@@ -5103,7 +5320,7 @@ function PaymentPanel(props: {
                     key={v}
                     className="pad-chip"
                     disabled={
-                      discountDraft.mode === "whole" || cartSubtotalCents <= 0
+                      discountDraft.mode === "whole" || ticketSubtotalCents <= 0
                     }
                     onClick={() => discountChip(v)}
                   >
@@ -5195,9 +5412,15 @@ function PaymentPanel(props: {
               </button>
               <button
                 className="modal-confirm go"
-                disabled={!compValid(reasonDraft) || draftDiscount === null}
+                disabled={
+                  !compValid(reasonDraft) ||
+                  draftDiscount === null ||
+                  fullBlockedByGiftCard
+                }
                 title={
-                  draftDiscount === null
+                  fullBlockedByGiftCard
+                    ? "A gift card cannot be given away for nothing"
+                    : draftDiscount === null
                     ? discountDraft.mode === "percent"
                       ? "Enter 1 to 100 percent"
                       : "Enter an amount"
@@ -5321,7 +5544,7 @@ function PaymentPanel(props: {
                 </p>
             <div className="pad-row">
               <span className="pad-label">Subtotal before tax</span>
-              <span className="pad-amt">{money(cartSubtotalCents / 100)}</span>
+              <span className="pad-amt">{money(ticketSubtotalCents / 100)}</span>
             </div>
                 <p className="reason-who">
                   {draftFull ? "Comping" : "Discounting"} as{" "}
@@ -5340,8 +5563,16 @@ function PaymentPanel(props: {
                   </button>
                   <button
                     className="modal-confirm go"
-                    disabled={charging || draftDiscount === null}
-                    title={draftFull ? "Comp this sale" : "Discount this sale"}
+                    disabled={
+                      charging || draftDiscount === null || fullBlockedByGiftCard
+                    }
+                    title={
+                      fullBlockedByGiftCard
+                        ? "A gift card cannot be given away for nothing"
+                        : draftFull
+                          ? "Comp this sale"
+                          : "Discount this sale"
+                    }
                     onClick={confirmComp}
                   >
                     {draftFull ? "Comp" : "Discount"}
@@ -6462,6 +6693,10 @@ export interface SaleNavState {
   payWhy: string | null;
   charging: boolean;
   payTap: () => void;
+  /** T102: why no item may leave the screen right now, or null. One
+   *  case: a gift card id is on the done screen and has not been
+   *  written on the card yet. */
+  holdWhy: string | null;
 }
 
 export default function SaleScreen(props: {
@@ -7075,11 +7310,17 @@ export default function SaleScreen(props: {
   /** T101: PaymentPanel's word on whether this ticket may still be
    *  edited (a part-sold ticket, a settled sale), and why. */
   const [ticketLock, setTicketLock] = useState<string | null>(null);
+  /** T102: the payment panel is holding the teacher on the done screen
+   *  (an unwritten gift card id). Every way out of the overlay reads it:
+   *  this component's close, its Escape, and the nav bar through
+   *  onNavState. */
+  const [payHeld, setPayHeld] = useState(false);
   /** Every close goes through here so the mode resets with it. */
   const close = useCallback(() => {
+    if (payHeld) return;
     setSaleMode("shelf");
     onClose();
-  }, [onClose, setSaleMode]);
+  }, [onClose, setSaleMode, payHeld]);
   const leavePay = useCallback(() => setSaleMode("shelf"), [setSaleMode]);
 
   /**
@@ -7611,9 +7852,11 @@ export default function SaleScreen(props: {
       setPriced(null);
       setPriceError(null);
       setPricing(false);
-      /* T79: an emptied cart has nothing to discount. T95: nor has a
-       * ticket of gift cards, which cannot be discounted at all. */
-      setArmedDiscount(null);
+      /* T79: an emptied cart has nothing to discount. T102: a ticket of
+       * gift cards alone still HAS: the cards carry the discount
+       * themselves, each one paid for with less, so it is only an empty
+       * ticket that clears it. */
+      if (cart.length === 0) setArmedDiscount(null);
       return;
     }
     setPricing(true);
@@ -7625,6 +7868,10 @@ export default function SaleScreen(props: {
             mode: armedDiscountKey.split(":")[0] as Discount["mode"],
             value: Number(armedDiscountKey.split(":")[1]),
           };
+    /* T102: the CART's share of a ticket discount, which is what this
+     * cart may be priced with. The cards' share is not Mindbody's to
+     * price: it comes off each card's own payment at checkout. */
+    const cartShare = ticketDiscountParts(cart, discount).cartShare;
     const timer = setTimeout(async () => {
       try {
         const res = await fetch("/api/price-cart", {
@@ -7643,7 +7890,7 @@ export default function SaleScreen(props: {
               ...(line.forClient ? { forClientId: line.forClient.id } : {}),
             })),
             ...(clientId ? { clientId } : {}),
-            ...(discount ? { discount } : {}),
+            ...(cartShare ? { discount: cartShare } : {}),
           }),
         });
         const body = await res.json();
@@ -7800,6 +8047,8 @@ export default function SaleScreen(props: {
         return;
       }
       if (charging) return;
+      /* T102: and never off a done screen still holding an id. */
+      if (payHeld) return;
       if (saleMode === "pay") {
         leavePay();
         return;
@@ -7822,6 +8071,7 @@ export default function SaleScreen(props: {
     contractDialog,
     pricing,
     charging,
+    payHeld,
     saleMode,
     leavePay,
     close,
@@ -8516,6 +8766,13 @@ export default function SaleScreen(props: {
     giftCardLines.reduce((n, l) => n + l.item.price * l.quantity, 0),
   );
   const giftCardCount = giftCardLines.reduce((n, l) => n + l.quantity, 0);
+  /* T102: the ticket's discount, divided the way it is charged. The
+   * cards' share comes off their own payments (the cart's share is
+   * priced by Mindbody and shows as its DiscountTotal), so the ticket's
+   * total is the priced cart plus the cards LESS what came off them. */
+  const ticketParts = ticketDiscountParts(cart, armedDiscount?.discount ?? null);
+  const giftDiscountOff = roundToCents(ticketParts.giftCents / 100);
+  const giftCardsCharged = roundToCents(giftCardsTotal - giftDiscountOff);
 
   const payWhy: string | null = charging
     ? "Charging..."
@@ -8550,7 +8807,7 @@ export default function SaleScreen(props: {
                     : null;
   const payAmount =
     payWhy === null
-      ? roundToCents((priced?.grandTotal ?? 0) + giftCardsTotal)
+      ? roundToCents((priced?.grandTotal ?? 0) + giftCardsCharged)
       : null;
   /** T51: whether Pay asks first. Nobody attached and no walk-in
    *  declared is the one case; with the flag set (the header's Walk-in
@@ -8587,8 +8844,13 @@ export default function SaleScreen(props: {
    * This reports the nav item's enabled state and the tap it delegates
    * to, neither of which can move money by itself. */
   useEffect(() => {
-    onNavState({ payWhy, charging, payTap });
-  }, [onNavState, payWhy, charging, payTap]);
+    onNavState({
+      payWhy,
+      charging,
+      payTap,
+      holdWhy: payHeld ? "Write the gift card id on the card first" : null,
+    });
+  }, [onNavState, payWhy, charging, payTap, payHeld]);
 
   if (!open) return null;
 
@@ -9211,12 +9473,21 @@ export default function SaleScreen(props: {
     if (
       armedDiscount === null ||
       t.discountTotal === null ||
-      t.discountTotal <= 0
+      /* T102: the cart's share can be zero on a ticket whose discount
+       * all lands on the cards, and the row still belongs on screen. */
+      (t.discountTotal <= 0 && giftDiscountOff <= 0)
     ) {
       return null;
     }
-    const sub = t.subTotal ?? t.expectedSubtotal;
-    const full = t.discountTotal >= sub;
+    /* T102: the row carries the WHOLE ticket's discount, against the
+     * whole ticket's subtotal: Mindbody's DiscountTotal for the cart
+     * (which the price check just proved equal to ours) plus what comes
+     * off the cards' own payments, which Mindbody never prices. The Gift
+     * cards line above stays at what the cards are worth, so the two
+     * rows and the total add up. */
+    const sub = roundToCents((t.subTotal ?? t.expectedSubtotal) + giftCardsTotal);
+    const off = roundToCents(t.discountTotal + giftDiscountOff);
+    const full = off >= sub;
     return (
       <div className="t-line t-discount">
         <span>
@@ -9224,11 +9495,11 @@ export default function SaleScreen(props: {
             ? "Comped"
             : `Discount (${discountPercentLabel(
                 armedDiscount.discount,
-                t.discountTotal,
+                off,
                 sub,
               )})`}
         </span>
-        <span className="amt">-{money(t.discountTotal)}</span>
+        <span className="amt">-{money(off)}</span>
       </div>
     );
   };
@@ -9710,6 +9981,7 @@ export default function SaleScreen(props: {
             onBusyChange={setCharging}
             onTicketLock={setTicketLock}
             onModalChange={setPayModalOpen}
+            onHoldChange={setPayHeld}
             cartResetNonce={cartResetNonce}
             onClientDataStale={onClientDataStale}
             discount={armedDiscount}
@@ -10166,10 +10438,27 @@ export default function SaleScreen(props: {
                       <span>Gift cards</span>
                       <span className="amt">{money(giftCardsTotal)}</span>
                     </div>
+                    {/* T102: the discount, off the cards' own payments.
+                        There is no cart here for Mindbody to price, so
+                        this figure is the spread's, and each card's
+                        share is asserted against Mindbody's rehearsed
+                        AmountPaid before anything is charged. */}
+                    {giftDiscountOff > 0 && armedDiscount !== null ? (
+                      <div className="t-line t-discount">
+                        <span>
+                          {`Discount (${discountPercentLabel(
+                            armedDiscount.discount,
+                            giftDiscountOff,
+                            giftCardsTotal,
+                          )})`}
+                        </span>
+                        <span className="amt">-{money(giftDiscountOff)}</span>
+                      </div>
+                    ) : null}
                     <hr className="t-rule" />
                     <div className="t-line t-total">
                       <span>Total</span>
-                      <span className="amt">{money(giftCardsTotal)}</span>
+                      <span className="amt">{money(giftCardsCharged)}</span>
                     </div>
                     <p className="muted-note">
                       A gift card is not taxed. Each card gets an id when
@@ -10306,7 +10595,9 @@ export default function SaleScreen(props: {
                       <span className="amt">
                         {totals.grandTotal !== null
                           ? money(
-                              roundToCents(totals.grandTotal + giftCardsTotal),
+                              roundToCents(
+                                totals.grandTotal + giftCardsCharged,
+                              ),
                             )
                           : ""}
                       </span>
