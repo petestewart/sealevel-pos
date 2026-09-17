@@ -569,10 +569,13 @@ export function resolveGiftCardUnits(
     if (shelf !== undefined && giftCardHidden(shelf, product)) {
       return {
         units: null,
+        /* T97 review: the sentence a TEACHER reads, so it does not send
+         * them to the dev drawer, which 404s on the counter iPad. It still
+         * says the thing that matters: this counter turned the card off,
+         * which is not the same as Mindbody no longer having it. */
         error:
-          "That gift card is turned off for this counter in the dev " +
-          "drawer's Shelf tab, so it cannot be sold. Remove the line. " +
-          "Nothing was charged.",
+          "That gift card is turned off at this counter, so it cannot be " +
+          "sold. Remove the line. Nothing was charged.",
       };
     }
     /* T96: the editable product is priced by the amount and by nothing

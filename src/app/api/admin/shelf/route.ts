@@ -35,7 +35,8 @@ export const dynamic = "force-dynamic";
  * devlog does. GET lists the UNFILTERED catalog (every product, pass,
  * package and contract, hidden ones included, because the point is to
  * pick which to hide) from the same cached reads /api/catalog uses; the
- * only call it can add is T97's gift card read, itself cached two minutes. PUT stores the whole config after the same
+ * only call it can add is T97's gift card read, itself cached two
+ * minutes. PUT stores the whole config after the same
  * validation the catalog route applies on the way out. With no database
  * the route answers honestly (available: false, 503 on write) and the
  * shelf keeps serving the code default.
@@ -82,7 +83,11 @@ interface ShelfAdminItem {
 
 /** T97: one gift card product as the Shelf tab lists it. The name is the
  *  product's own description when it has one, and otherwise its value,
- *  which is how the preset chips read on the Buy screen. */
+ *  which is how the preset chips read on the Buy screen. T97 review: the
+ *  figure is the card's VALUE rather than its sale price, because the
+ *  chip a teacher is deciding to turn off carries the value (T95: shown
+ *  at its value, charged at its price), and the two rarely but legally
+ *  differ. The editable product has neither, and the row shows none. */
 function giftCardItem(
   card: GiftCardProduct,
   hidden: boolean,
@@ -92,7 +97,7 @@ function giftCardItem(
     id: card.id,
     key: itemKey("GiftCard", card.id),
     name: card.description ?? `$${card.cardValue.toFixed(2)} gift card`,
-    price: card.editable ? 0 : card.salePrice,
+    price: card.editable ? 0 : card.cardValue,
     editable: card.editable,
     placement: card.editable
       ? "Buy > Gift cards: the custom amount"

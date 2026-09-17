@@ -12246,3 +12246,107 @@ Not done, deliberately: the three ids above are not seeded anywhere, per
 the point of the ticket; and nothing was run against the live site, so the
 ten real products and their ids are from the T95/T96 record, not from a
 call made here.
+
+### Review
+
+Adversarial review of `t97-giftcard-presets-b`, driven against `next start`
+with the T96 mock, a scratch Postgres and Playwright at 1194x834 and
+834x1194 in both palettes. `origin/feature/phase-2` had not moved past
+`bf8ede8` (T99 and T100 have not landed), so the merge was a no-op and the
+T100 interplay could not be exercised; see the note at the end. Three
+things changed, and the mechanism held everywhere else.
+
+**1. A stored hide key naming the custom amount product locked the Shelf
+tab, and now heals itself.** The PUT refuses that key, but one can still
+get STORED: the PUT only knows which product is editable when
+`/sale/giftcards` reads, and when it does not the save goes through, by
+design. Proved on a freshly started server with the mock's gift card read
+turned off: `PUT {hidden:["GiftCard:2000","GiftCard:2003"]}` answered 200
+and stored both. From then on the Shelf tab was unsaveable. The tab loads
+the stored `hidden` into its own state, has no toggle for that row to clear
+it with, and sends the whole set back on Save, so every later Save, of the
+gift cards, the pass groups, the sub-category order or a product move,
+answered 400 "the custom amount gift card cannot be hidden" with nothing a
+teacher could do about it short of editing `app_settings` by hand. The
+drawer now drops a hide key naming an editable gift card row as it loads,
+so the next Save writes the config clean; the key hid nothing either way
+(`giftCardHidden`), so nothing is lost. A row the gift card read did not
+return is left alone: unknown is not editable. The PUT still refuses the
+key in words, which is right for a caller that asks for it on purpose.
+Verified in the browser: seed the key, open the tab, tick a card, Save;
+the save is confirmed, the stored list is the teacher's two keys with the
+editable one gone, and the pad's product is still on sale.
+
+**2. The checkout refusal sent a teacher to a drawer they cannot open.**
+"turned off for this counter in the dev drawer's Shelf tab" is the sentence
+that reaches the counter iPad, where `POS_DEVTOOLS` is off and the drawer
+404s. It now reads "That gift card is turned off at this counter, so it
+cannot be sold. Remove the line. Nothing was charged.", which keeps the
+distinction the ticket is careful about: turned off here is not gone from
+Mindbody.
+
+**3. The Shelf row showed a card's PRICE where the chip shows its VALUE.**
+T95's rule is that a card is shown at its value and charged at its price,
+and the preset chip a teacher is deciding to turn off is named by the
+value, so the row now carries `cardValue`. On site 471 the two agree on
+every card, which is exactly why this would have been found the day they
+did not. The custom amount row's "$0.00" is gone with it: that product has
+no figure of its own and the row already says what it is.
+
+What was hunted and held:
+
+- **A hidden card is unsellable, not merely unlisted.** `curl` past the
+  browser: `/api/checkout` refuses a hidden product id with 409 and zero
+  `purchasegiftcard` calls, alone and beside a retail line, and in the
+  second case the cart is not rehearsed either, so the whole ticket is
+  refused with nothing sent. A card added to the ticket before the hide
+  and checked out after is the same request and the same refusal: the
+  config is read per request, not at page load, so a second iPad or a
+  stale page cannot get past it. The two-minute product cache does not
+  delay a hide either way: the products are cached, the config is not, and
+  `/api/gift-cards` with no `refresh=1` dropped the card immediately and
+  brought it back immediately.
+- **The editable product's three protections.** The drawer gives no
+  toggle; the PUT refuses the key, alone and beside a legal one, storing
+  nothing; and a key written straight into `app_settings` is ignored by
+  `giftCardHidden` while a fixed key beside it still applies, with the pad
+  still selling $20 through it. A bad key never invalidates the rest: the
+  way out of the table validates without the editable id on purpose, and a
+  config carrying `GiftCard:<editable>` still applies its other keys.
+- **The config as a whole.** `GiftCard:abc` and a 20-digit id store and
+  match nothing; `GiftCard: 2003 ` trims and de-duplicates against
+  `GiftCard:2003`; the 1000-key cap bites with gift card keys and 1000
+  exactly still saves, with the pad alive at the cap. A config written
+  before this change (hidden over Service and Product, a pass group, a
+  `groupOrder`, a product move) reads back whole, still hides its two
+  items, still groups its pass and still orders the rail.
+- **T96's pad.** With every fixed card hidden, `/api/gift-cards` serves
+  one product, the box shows no chips and the pad sells $63.50; the amount
+  of a hidden card is still sellable on the pad, which is the right
+  answer (the studio stopped stocking that pre-printed card, not that
+  amount).
+- **The failure posture, deliberately accepted.** `giftCardProducts`
+  serves the last good list for up to two minutes when the read starts
+  failing, and a hide decision does not ride on that list: the hide list
+  is the config, read fresh from Postgres per request, and the only thing
+  taken from the product list is the id and the `editable` flag. So a
+  stale list hides exactly what a fresh one would. The one window it
+  opens is a product whose `EditableByConsumer` changed in Mindbody in the
+  last two minutes staying unhideable for the rest of it, which is a
+  Mindbody product setting nobody touches at a counter, and whose worst
+  outcome is a card still being offered rather than a wrong charge: every
+  purchase is still rehearsed with `Test: true` and both figures asserted.
+  Not worth a shorter cache or a bypass here.
+- **The rest.** The tab's section in both palettes and both orientations,
+  the custom amount row with its reason, the read-failure line (the
+  heading stays and names the reason, the rest of the tab still lists and
+  still saves), Save's wording, and the no-database state (code default,
+  rows readable, Save off, every preset on sale). Tokens only, radius 0,
+  no text under 16px in the section, no em dashes. `npm run typecheck` and
+  `npm run build` clean.
+
+**For whoever lands T100**: its offer of a refused pass as a gift card must
+preselect from the list `/api/gift-cards` serves, which is already the
+filtered one, and never from a product list of its own; a preset the studio
+turned off must not be preselectable, and `/api/checkout` will refuse it if
+it is.

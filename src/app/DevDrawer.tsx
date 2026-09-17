@@ -1322,7 +1322,23 @@ function ShelfPanel() {
         typeof body.giftCardError === "string" ? body.giftCardError : null,
       );
       const config: ShelfAdminConfig = body.config ?? { hidden: [], groups: [] };
-      setHidden(new Set(config.hidden ?? []));
+      /* T97 review: a stored key naming the custom amount product is
+       * dropped HERE, on the way into the tab. The PUT refuses that key,
+       * and one can still be stored (a save made while /sale/giftcards was
+       * down cannot know which product is editable), so without this the
+       * tab would carry the key back on every Save and the Shelf tab could
+       * never be saved again, with no toggle to clear it. The key hides
+       * nothing either way (`giftCardHidden`), so dropping it loses
+       * nothing. A row the read did not return is left alone: unknown is
+       * not the same as editable. */
+      const editableKeys = new Set(
+        ((body.items ?? []) as ShelfAdminItem[])
+          .filter((i) => i.type === "GiftCard" && i.editable === true)
+          .map((i) => i.key),
+      );
+      setHidden(
+        new Set((config.hidden ?? []).filter((k) => !editableKeys.has(k))),
+      );
       setGroups((config.groups ?? []).map((g) => ({ ...g, ids: [...g.ids] })));
       setGroupOrder([...(config.groupOrder ?? [])]);
       setMoves(
@@ -1683,7 +1699,12 @@ function ShelfPanel() {
               <div key={item.key} className="dev-setting">
                 <span className="dev-setting-label">
                   {item.name}
-                  <span className="muted"> ${item.price.toFixed(2)}</span>
+                  {/* T97 review: the custom amount product has no figure
+                      of its own, and "$0.00" beside it reads as a card
+                      worth nothing. */}
+                  {item.editable ? null : (
+                    <span className="muted"> ${item.price.toFixed(2)}</span>
+                  )}
                   {item.placement ? (
                     <span className="muted dev-shelf-where">
                       {" "}
