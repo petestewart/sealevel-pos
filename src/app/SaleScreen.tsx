@@ -764,7 +764,16 @@ function lineLabel(line: CartEntry): string {
 function lineText(line: CartEntry): string {
   const item = line.item;
   if (item.type !== "GiftCard") return lineLabel(line);
-  return `${item.name} ${money(item.cardValue)}, ${item.subName}`;
+  /* T104 review: the figure this leads with is the one the sub-line does
+     NOT already carry. A card worth what it costs is named by its value,
+     which is also the row's own figure; a card priced under its value has
+     that value in the sub-line ("Friends and family, a $60.00 card"), and
+     leading with it too read "Gift card $60.00, Friends and family, a
+     $60.00 card". Each figure once, and the one this label owes a teacher
+     reading a ticket of three is what the line CHARGES. */
+  const same =
+    Math.round(item.cardValue * 100) === Math.round(item.price * 100);
+  return `${item.name} ${money(same ? item.cardValue : item.price)}, ${item.subName}`;
 }
 
 /** T104: the line under a row's title, or null when it has none. Only a
