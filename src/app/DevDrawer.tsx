@@ -1195,7 +1195,7 @@ function BundlesPanel() {
 /** Mirrors src/lib/shelfconfig.ts, re-declared like the bundle shapes so
  *  no server module is pulled into the client bundle. */
 interface ShelfAdminItem {
-  type: "Product" | "Service" | "Package" | "Contract";
+  type: "Product" | "Service" | "Package" | "Contract" | "GiftCard";
   id: string | number;
   key: string;
   name: string;
@@ -1203,6 +1203,9 @@ interface ShelfAdminItem {
   /** Where the counter files it as saved (the route computes it the
    *  way /api/catalog does); absent from a pre-placement answer. */
   placement?: string;
+  /** T97, gift cards only: the custom amount product, which the number
+   *  pad sells any amount through, so it carries no hide toggle. */
+  editable?: boolean;
 }
 
 interface ShelfAdminGroup {
@@ -1274,6 +1277,10 @@ const SHELF_KINDS: { type: ShelfAdminItem["type"]; heading: string }[] = [
   { type: "Product", heading: "products" },
   { type: "Package", heading: "packages" },
   { type: "Contract", heading: "memberships (contracts)" },
+  /* T97: the gift cards the site sells, which are the preset amounts on
+   * the Buy screen. Pete: "the app should only have these preset options
+   * + the custom amount one". */
+  { type: "GiftCard", heading: "gift cards" },
 ];
 
 function ShelfPanel() {
@@ -1282,6 +1289,10 @@ function ShelfPanel() {
   const [configured, setConfigured] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [items, setItems] = useState<ShelfAdminItem[]>([]);
+  /* T97: why the gift cards section is empty, when it is. Its read is the
+   * route's own try, so a site with gift cards turned off still gets the
+   * rest of this tab. */
+  const [giftCardError, setGiftCardError] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [groups, setGroups] = useState<ShelfAdminGroup[]>([]);
   /* T86: the stored sub-category order, and the product moves by item
@@ -1307,8 +1318,27 @@ function ShelfPanel() {
       setAvailable(Boolean(body.available));
       setConfigured(Boolean(body.configured));
       setItems(body.items ?? []);
+      setGiftCardError(
+        typeof body.giftCardError === "string" ? body.giftCardError : null,
+      );
       const config: ShelfAdminConfig = body.config ?? { hidden: [], groups: [] };
-      setHidden(new Set(config.hidden ?? []));
+      /* T97 review: a stored key naming the custom amount product is
+       * dropped HERE, on the way into the tab. The PUT refuses that key,
+       * and one can still be stored (a save made while /sale/giftcards was
+       * down cannot know which product is editable), so without this the
+       * tab would carry the key back on every Save and the Shelf tab could
+       * never be saved again, with no toggle to clear it. The key hides
+       * nothing either way (`giftCardHidden`), so dropping it loses
+       * nothing. A row the read did not return is left alone: unknown is
+       * not the same as editable. */
+      const editableKeys = new Set(
+        ((body.items ?? []) as ShelfAdminItem[])
+          .filter((i) => i.type === "GiftCard" && i.editable === true)
+          .map((i) => i.key),
+      );
+      setHidden(
+        new Set((config.hidden ?? []).filter((k) => !editableKeys.has(k))),
+      );
       setGroups((config.groups ?? []).map((g) => ({ ...g, ids: [...g.ids] })));
       setGroupOrder([...(config.groupOrder ?? [])]);
       setMoves(
@@ -1538,8 +1568,9 @@ function ShelfPanel() {
         overrides that for the passes it names, under a fixed label or a
         custom one. The order block below sets the order the rail draws
         those sub-categories in, and a retail product can be moved off
-        Mindbody&apos;s own category onto another counter cell. Ids are
-        per site.
+        Mindbody&apos;s own category onto another counter cell. The gift
+        cards at the end are the preset amounts the Buy screen offers.
+        Ids are per site.
       </p>
       {!available ? (
         <p className="muted">
@@ -1642,15 +1673,38 @@ function ShelfPanel() {
 
       {SHELF_KINDS.map(({ type, heading }) => {
         const list = byKind(type);
-        if (list.length === 0) return null;
+        /* T97: the gift cards heading shows even with nothing under it,
+         * because the reason it is empty is the useful part. */
+        if (list.length === 0 && !(type === "GiftCard" && giftCardError)) {
+          return null;
+        }
         return (
           <div key={type}>
             <div className="dev-label">{heading}</div>
+            {type === "GiftCard" ? (
+              giftCardError ? (
+                <p className="dev-bad">
+                  The gift cards did not read: {giftCardError}
+                </p>
+              ) : (
+                <p className="muted">
+                  The preset amounts on the Buy screen. Hiding one takes it
+                  off the presets and refuses it at checkout. The custom
+                  amount product is the number pad&apos;s and cannot be
+                  hidden.
+                </p>
+              )
+            ) : null}
             {list.map((item) => (
               <div key={item.key} className="dev-setting">
                 <span className="dev-setting-label">
                   {item.name}
-                  <span className="muted"> ${item.price.toFixed(2)}</span>
+                  {/* T97 review: the custom amount product has no figure
+                      of its own, and "$0.00" beside it reads as a card
+                      worth nothing. */}
+                  {item.editable ? null : (
+                    <span className="muted"> ${item.price.toFixed(2)}</span>
+                  )}
                   {item.placement ? (
                     <span className="muted dev-shelf-where">
                       {" "}
@@ -1707,14 +1761,21 @@ function ShelfPanel() {
                     ))}
                   </select>
                 ) : null}
-                <label className="dev-bundle-toggle">
-                  <span className="muted">hidden</span>
-                  <input
-                    type="checkbox"
-                    checked={hidden.has(item.key)}
-                    onChange={() => toggleHidden(item.key)}
-                  />
-                </label>
+                {type === "GiftCard" && item.editable ? (
+                  /* T97: no toggle on the custom amount product. Listed
+                   * all the same, so a teacher can see it is there and
+                   * why it cannot be turned off. */
+                  <span className="muted">custom amount, always on</span>
+                ) : (
+                  <label className="dev-bundle-toggle">
+                    <span className="muted">hidden</span>
+                    <input
+                      type="checkbox"
+                      checked={hidden.has(item.key)}
+                      onChange={() => toggleHidden(item.key)}
+                    />
+                  </label>
+                )}
               </div>
             ))}
           </div>
