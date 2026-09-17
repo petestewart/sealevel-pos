@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
+import { currentShelfConfig } from "@/lib/catalog";
 import { giftCardProducts } from "@/lib/giftcardsale";
+import { visibleGiftCards } from "@/lib/shelfconfig";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +26,13 @@ export const dynamic = "force-dynamic";
  * with a 200, the shelf simply has no Gift card cell, and the reason is
  * in the drawer's call log and in this answer for whoever looks.
  *
+ * T97: the shelf config's hide list is applied HERE, server-side, so a
+ * preset the studio turned off in the drawer cannot be shown, or sold, by
+ * a browser holding an older list (/api/checkout refuses the id too).
+ * Pete: "the app should only have these preset options + the custom amount
+ * one". The EDITABLE product is never hidden, whatever the config says:
+ * it is the number pad's product (see `giftCardHidden`).
+ *
  * A read, so it goes out under dry run like every other read. Nothing
  * here is the price of a sale: /api/checkout re-reads this list
  * server-side and rehearses every purchase against Mindbody before any
@@ -34,7 +43,17 @@ export async function GET(request: Request) {
   if (denied) return denied;
   const refresh = new URL(request.url).searchParams.get("refresh") === "1";
   try {
-    return NextResponse.json({ products: await giftCardProducts(refresh) });
+    /* Two reads: the products (cached two minutes, metered) and the shelf
+     * config (local, per request, exactly as /api/catalog reads it, so a
+     * hide toggled in the drawer shows on the next load rather than up to
+     * two minutes later). */
+    const [products, { config }] = await Promise.all([
+      giftCardProducts(refresh),
+      currentShelfConfig(),
+    ]);
+    return NextResponse.json({
+      products: visibleGiftCards(products, config),
+    });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     console.warn(`[giftcard] the site's gift card list did not read: ${error}`);

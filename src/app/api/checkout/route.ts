@@ -30,6 +30,7 @@ import {
   type Discount,
   compNeedsDetail,
 } from "@/lib/comp";
+import { currentShelfConfig } from "@/lib/catalog";
 import { insertCompReceipt, type CompReceiptItem } from "@/lib/db";
 import {
   giftCardBalance,
@@ -1112,7 +1113,13 @@ export async function POST(request: Request) {
         { status: 502 },
       );
     }
-    const resolved = resolveGiftCardUnits(giftLines, products);
+    /* T97: the shelf config, so a preset the studio turned off cannot be
+     * sold by a browser holding an older list. Local and unmetered, read
+     * per request exactly as /api/catalog and /api/gift-cards read it; a
+     * database that does not answer means the code default, which hides
+     * nothing, and the sale goes through as it did before T97. */
+    const { config: shelf } = await currentShelfConfig();
+    const resolved = resolveGiftCardUnits(giftLines, products, shelf);
     if (resolved.error !== null) {
       return NextResponse.json(
         { error: resolved.error, stage: "method" },
