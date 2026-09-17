@@ -776,6 +776,19 @@ function lineText(line: CartEntry): string {
   return `${item.name} ${money(same ? item.cardValue : item.price)}, ${item.subName}`;
 }
 
+/**
+ * T104 review: the same line NAMED but with no figure on it, for the one
+ * sentence that supplies its own two ("X: $50.00 is now $45.00"). With
+ * `lineText` there it read "Gift card $50.00, 5 class pack: $50.00 is now
+ * $45.00", which is Pete's complaint again in the sentence this ticket
+ * claims to have cleaned.
+ */
+function lineNameOnly(line: CartEntry): string {
+  const item = line.item;
+  if (item.type !== "GiftCard") return lineLabel(line);
+  return `${item.name}, ${item.subName}`;
+}
+
 /** T104: the line under a row's title, or null when it has none. Only a
  *  gift card has one today. */
 function lineSubName(line: CartEntry): string | null {
@@ -7923,7 +7936,8 @@ export default function SaleScreen(props: {
             : giftCardItem(product);
           if (fresh.price !== line.item.price) {
             changes.push({
-              name: lineText(line),
+              /* T104 review: the sentence carries both figures itself. */
+              name: lineNameOnly(line),
               from: line.item.price,
               to: fresh.price,
             });
