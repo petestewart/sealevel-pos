@@ -1416,6 +1416,7 @@ function FrontDesk({
     payWhy: "Nothing rung up yet",
     charging: false,
     payTap: () => undefined,
+    holdWhy: null,
   });
   /** T85: the dev drawer's pill became the bar's Dev item, so the drawer's
    *  two facts are held here: whether /api/devlog answered at all, and
@@ -5291,7 +5292,11 @@ function FrontDesk({
    * Back and the bar's Back to items both had).
    */
   const onPay = saleOpen && saleMode === "pay";
-  const leaveWhy = saleNav.charging ? "Charging..." : null;
+  /* T102: and a done screen holding an unwritten gift card id keeps
+   * every item that would leave it inert, for the same reason
+   * mid-charge does: what is on that screen is not recoverable from
+   * anywhere else once it is gone. */
+  const leaveWhy = saleNav.charging ? "Charging..." : saleNav.holdWhy;
   const navItems: NavItem[] = [
     {
       key: "signin",
