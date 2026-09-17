@@ -33,9 +33,18 @@
  *   MINDBODY_TARGET=prod POS_DRY_RUN=false POS_WRITE_CLIENT_IDS=<clientId> \
  *     npx tsx --env-file=.env scripts/probe-giftcard-discount.ts <clientId> [productId]
  *
- * <clientId> any real client to price against. [productId] defaults to
- * the site's editable gift card product, the custom-amount one, which
- * is the case Pete is asking about.
+ * <clientId> any real client to price against. With no [productId] it
+ * lists every gift card product on the site and then probes TWO of
+ * them, which answer different questions: the editable custom-amount
+ * card, whose SalePrice is $0 so a cart prices it at nothing, and the
+ * first fixed card, which carries a real SalePrice and is the only one
+ * a cart could charge for and take a discount off.
+
+ * The first honest run (2026-09-17, product 282) came back PRICED at
+ * $0.00 with the audit reading `theirs $0.00 x1`: Mindbody matched the
+ * line and charged nothing for it. A cart never carries our price, so
+ * a product with no price of its own is a free card. That is the
+ * reason this script now names the zero case loudly.
  *
  * BOTH RAILS MATTER HERE even though nothing is sold: a Test cart is
  * still a POST, so dry run suppresses it and the write guard suppresses
@@ -53,7 +62,7 @@
  * can only mean paying less, which for the custom card means a smaller
  * card.
  */
-import { giftCardProducts } from "../src/lib/giftcardsale";
+import { giftCardProducts, type GiftCardProduct } from "../src/lib/giftcardsale";
 import { priceCart, type CartLine } from "../src/lib/sale";
 
 function money(n: number | null | undefined): string {
@@ -121,36 +130,24 @@ async function tryLine(
   }
 }
 
-async function main(): Promise<void> {
-  const [clientId, productRaw] = process.argv.slice(2);
-  if (!clientId) {
-    console.error(
-      "Usage: npx tsx --env-file=.env scripts/probe-giftcard-discount.ts " +
-        "<clientId> [productId]",
-    );
-    process.exit(1);
-  }
-
-  const products = await giftCardProducts(true);
-  const editable = products.find((p) => p.editable) ?? null;
-  const wanted =
-    productRaw === undefined ? null : products.find((p) => String(p.id) === productRaw);
-  const target = wanted ?? editable ?? products[0];
-  if (!target) {
-    console.log("\nThe site offers no gift card products. Nothing to ask.\n");
-    return;
-  }
+async function probeProduct(
+  target: GiftCardProduct,
+  clientId: string,
+): Promise<void> {
   console.log(
     `\n=== ${target.description ?? "(unnamed)"} (id ${target.id}), value ` +
       `${money(target.cardValue)}, price ${money(target.salePrice)}` +
-      `${target.editable ? ", EDITABLE (custom amount)" : ", fixed"}\n`,
+      `${target.editable ? ", EDITABLE (custom amount)" : ", fixed"}`,
   );
-  /* An editable product carries no price of its own, so the figure a
-   * cart line would have to name is the teacher's. $50 is a plain,
-   * round stand-in; the $10 discount below is what the question is. */
-  const price = target.cardValue > 0 ? target.cardValue : 50;
+  /* A cart never carries our price: Mindbody prices a line from its own
+   * catalog. So the figure here is only what we ASSERT against, and the
+   * product's own numbers are the honest expectation. The editable
+   * product has none, which is why it came back worth nothing; $50 is
+   * the stand-in that makes that visible rather than plausible. */
+  const price =
+    target.salePrice > 0 ? target.salePrice : target.cardValue > 0 ? target.cardValue : 50;
+  console.log(`    expecting ${money(price)} a card\n`);
 
-  console.log("=== priced as a cart line, Test: true, nothing is sold");
   for (const type of ["Product", "Service"] as const) {
     const line: CartLine = {
       type,
@@ -166,6 +163,55 @@ async function main(): Promise<void> {
       value: 10,
     });
   }
+}
+
+async function main(): Promise<void> {
+  const [clientId, productRaw] = process.argv.slice(2);
+  if (!clientId) {
+    console.error(
+      "Usage: npx tsx --env-file=.env scripts/probe-giftcard-discount.ts " +
+        "<clientId> [productId]",
+    );
+    process.exit(1);
+  }
+
+  const products = await giftCardProducts(true);
+  if (products.length === 0) {
+    console.log("\nThe site offers no gift card products. Nothing to ask.\n");
+    return;
+  }
+
+  console.log("\n=== the gift card products on this site");
+  for (const p of products) {
+    console.log(
+      `  id=${String(p.id).padEnd(6)} value ${money(p.cardValue).padStart(9)}` +
+        `  price ${money(p.salePrice).padStart(9)}` +
+        `  ${p.editable ? "EDITABLE" : "fixed   "}  ${p.description ?? "(unnamed)"}`,
+    );
+  }
+
+  /* Two products answer two different questions, so BOTH go out unless
+   * one is named. The editable card has no price of its own and a cart
+   * therefore prices it at nothing; a fixed card carries a real
+   * SalePrice, and whether a cart charges that, and takes a discount off
+   * it, is the question the first run could not reach. */
+  const named =
+    productRaw === undefined
+      ? null
+      : (products.find((p) => String(p.id) === productRaw) ?? null);
+  if (productRaw !== undefined && !named) {
+    console.log(`\nNo gift card product has id ${productRaw}.\n`);
+    return;
+  }
+  const targets: GiftCardProduct[] = named
+    ? [named]
+    : [
+        products.find((p) => p.editable),
+        products.find((p) => !p.editable && p.salePrice > 0),
+      ].filter((p): p is GiftCardProduct => p !== undefined);
+
+  console.log("\n=== priced as a cart line, Test: true, nothing is sold");
+  for (const target of targets) await probeProduct(target, clientId);
 
   console.log(
     "\nNothing above was sold: every call was a Test cart.\n" +
