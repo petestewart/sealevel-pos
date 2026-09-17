@@ -652,6 +652,18 @@ function isPassItem(item: CartItem): boolean {
  *  sentinel rather than a real line. */
 const PENDING_PASS_KEY = "t92-pending-pass";
 
+/**
+ * T100: one refused pass the note offers to sell as a gift card. The
+ * name is for the control's label when more than one line went, and the
+ * cents are what the amount box opens on, so the teacher confirms a
+ * figure rather than typing the price of something that just left the
+ * ticket.
+ */
+interface RefusedGiftOffer {
+  name: string;
+  cents: number;
+}
+
 /** The cart key: the item's identity, plus whose line it is. */
 function cartKey(
   item: { type: string; id: string | number },
@@ -6634,8 +6646,19 @@ export default function SaleScreen(props: {
    *  2026-09-14: "the item should be removed from the cart and a clean
    *  message should explain why"). Shown in the totals area in the warn
    *  tokens, not the stop red: nothing is broken, one item cannot be
-   *  sold to this client. Cleared by the next add and by Empty cart. */
-  const [cartNotice, setCartNotice] = useState<string | null>(null);
+   *  sold to this client. Cleared by the next add and by Empty cart.
+   *
+   *  T100: `offers` are the refused PASSES, the way forward under the
+   *  reason (Pete, 2026-09-16: "since this CAN be purchased as a gift
+   *  card, we should swallow the error and pop up an option to add it as
+   *  a gift card for someone else"). Recorded whatever the site sells:
+   *  whether a control is drawn is decided at render, against the live
+   *  gift card list, so this state can never promise a box the site has
+   *  nothing to fill. */
+  const [cartNotice, setCartNotice] = useState<{
+    text: string;
+    offers: RefusedGiftOffer[];
+  } | null>(null);
   /** Stale-response guard, the codebase's activeIdRef pattern: only the
    *  newest generation's answer may write state. */
   const priceGen = useRef(0);
@@ -7196,8 +7219,8 @@ export default function SaleScreen(props: {
             const goneKeys = new Set(gone.map((l) => l.key));
             setCart((lines) => lines.filter((l) => !keys.has(of(l))));
             setRevealedKey((k) => (k !== null && goneKeys.has(k) ? null : k));
-            setCartNotice(
-              gone
+            setCartNotice({
+              text: gone
                 .map((l) => {
                   const r = refused.find(
                     (x) => itemKey(x.type, x.metadataId) === itemKey(l.item.type, l.item.id),
@@ -7205,7 +7228,19 @@ export default function SaleScreen(props: {
                   return `${lineLabel(l)} was removed from the sale: ${r?.reason ?? "Mindbody did not accept it."}`;
                 })
                 .join(" "),
-            );
+              /* T100: only a PASS. A gift card stands in for a service
+                 this client may not buy; a refused retail product or
+                 package is removed with its reason and nothing else,
+                 because a card is not a way to sell either of those. The
+                 unit price is the card's amount: one card for the pass
+                 the counter could not ring up. */
+              offers: gone
+                .filter((l) => l.item.type === "Service" && l.item.price > 0)
+                .map((l) => ({
+                  name: l.item.name,
+                  cents: Math.round(l.item.price * 100),
+                })),
+            });
             setPriced(null);
             return;
           }
@@ -9094,7 +9129,31 @@ export default function SaleScreen(props: {
             ) : null}
             {cartNotice ? (
               <div className="sale-note" role="status">
-                {cartNotice}
+                {/* T100: Mindbody's sentence stays, whole. Pete's
+                    "swallow the error" means do not leave the teacher
+                    stuck, not hide the reason: a teacher who does not
+                    know why the pass was refused cannot explain it to
+                    the person at the counter. The way forward goes
+                    UNDER it. */}
+                <span>{cartNotice.text}</span>
+                {/* Drawn only when the site actually sells gift cards
+                    (the T95 list, read live): with none there is no box
+                    to open, and a dead control is worse than none. */}
+                {giftProducts.length > 0 && cartNotice.offers.length > 0 ? (
+                  <div className="sale-note-acts">
+                    {cartNotice.offers.map((offer) => (
+                      <button
+                        key={offer.name}
+                        className="sale-note-act"
+                        onClick={() => setGiftSell({ entry: String(offer.cents) })}
+                      >
+                        {cartNotice.offers.length === 1
+                          ? "Sell it as a gift card"
+                          : `Sell ${offer.name} as a gift card`}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {cart.length === 0 ? (
@@ -9273,12 +9332,14 @@ export default function SaleScreen(props: {
                                 client === null &&
                                 isPassItem(line.item)
                               ) {
-                                setCartNotice(
-                                  `${line.item.name} is a pass, so it stays on ` +
+                                setCartNotice({
+                                  text:
+                                    `${line.item.name} is a pass, so it stays on ` +
                                     `${line.forClient.name}: a walk-in sale ` +
                                     `cannot hold a pass for nobody. Remove the ` +
                                     `line, or attach a client to this sale.`,
-                                );
+                                  offers: [],
+                                });
                                 return;
                               }
                               if (line.forClient) {

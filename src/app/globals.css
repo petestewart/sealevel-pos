@@ -3050,6 +3050,36 @@ button.chip.action:active {
   font-weight: 600;
 }
 
+/* T100: the way forward under a refused pass ("Sell it as a gift card").
+ * Inside the note, so the reason and the offer read as one thing, and
+ * 64px because it is a primary action rather than an aside. On a
+ * --warn-bg it takes the surface for its own ground and the warn rule
+ * and ink to stay part of the note; pressed, it fills with --warn and
+ * takes --bg for text, which is the rule for text on a warn fill. */
+.sale-note-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.sale-note-act {
+  min-height: 64px;
+  padding: 0 16px;
+  border: 2px solid var(--warn);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--warn);
+  font-size: 16px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.sale-note-act:active {
+  background: var(--warn);
+  color: var(--bg);
+}
+
 /* T88: what the sale is going to finish with ("Then check Ben Kim in
  * to Hot 26 Fusion at 9:00 AM"), above the ticket. Quiet: it is a
  * reminder of a decision already made, not a status and not an action,
