@@ -620,7 +620,7 @@ export async function POST(request: Request) {
       {
         error:
           discount === null
-            ? "a comp needs a discount covering the whole sale " +
+            ? "a comp needs a discount covering the entire sale " +
               "(discount: { mode: \"percent\", value: 100 })"
             : "the discount leaves something to pay; choose how they are paying",
       },
@@ -631,7 +631,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "the discount covers the whole sale, so there is nothing to " +
+          "the discount covers the entire sale, so there is nothing to " +
           "pay; send method comp",
       },
       { status: 400 },

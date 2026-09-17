@@ -112,7 +112,7 @@ export type DiscountMode = "amount" | "percent";
  * A discount on the WHOLE cart (Pete was offered per-line and did not
  * take it). `value` is dollars for `amount` (0.01 up to the pre-tax
  * subtotal) and a whole number of percent for `percent` (1 to 100). The
- * dialog's "Whole sale" segment is `percent` 100. Applied to the lines by
+ * dialog's "Entire sale" segment is `percent` 100. Applied to the lines by
  * spreadDiscount, which is the only place the per-line figures come
  * from, on both sides: the browser for the ticket, the server for what
  * goes to Mindbody (the browser's per-line numbers are never trusted).

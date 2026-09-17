@@ -1532,7 +1532,7 @@ export async function checkoutCart(
   const full = discount ? isFullDiscount(items, discount) : false;
   if (payments.length === 0 && !full) {
     throw new Error(
-      "checkoutCart needs a payment unless the discount covers the whole sale.",
+      "checkoutCart needs a payment unless the discount covers the entire sale.",
     );
   }
   if (payments.length > 2) {

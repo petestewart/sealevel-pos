@@ -1440,16 +1440,20 @@ interface CompDraft {
 }
 const EMPTY_COMP_DRAFT: CompDraft = { kind: null, detail: "" };
 
-/** T79: the amount step's draft. `mode` is the segment (Whole sale is
+/** T79: the amount step's draft. `mode` is the segment (Entire sale is
  *  percent 100 with the keys off); `entry` the digits typed since the
  *  dialog opened, accumulating into CENTS for an amount (2-0-0-0 reads
- *  $20.00, the T36 pad's idiom) and into whole percent for a percent. */
+ *  $20.00, the T36 pad's idiom) and into whole percent for a percent.
+ *  T106, Pete: "percentage should be the first/default option, not
+ *  dollar amount", so a freshly opened dialog is in PERCENT and a typed
+ *  5 means 5%. The mode KEY stays `"whole"`: it is not user-facing, and
+ *  renaming it would touch the refusal-reopen path for nothing. */
 type DiscountDraftMode = "amount" | "percent" | "whole";
 interface DiscountDraft {
   mode: DiscountDraftMode;
   entry: string;
 }
-const EMPTY_DISCOUNT_DRAFT: DiscountDraft = { mode: "amount", entry: "" };
+const EMPTY_DISCOUNT_DRAFT: DiscountDraft = { mode: "percent", entry: "" };
 
 /** A teacher as /api/teacher/verify names them: id and name. */
 interface StaffChoice {
@@ -1897,7 +1901,7 @@ function PaymentPanel(props: {
    *  greys the button before the PIN is typed and says why. */
   const fullBlockedByGiftCard = hasGiftCard && draftFull;
   /** The segment. Switching drops the digits: an entry typed as cents
-   *  means nothing as a percent. Whole sale needs no digits. */
+   *  means nothing as a percent. Entire sale needs no digits. */
   const chooseMode = (mode: DiscountDraftMode) => {
     setDiscountDraft((d) => (d.mode === mode ? d : { mode, entry: "" }));
   };
@@ -1905,7 +1909,7 @@ function PaymentPanel(props: {
    *  it). Amount digits accumulate into cents and clamp at the subtotal
    *  (the pad's clamp: nothing above the cap is ever held); percent
    *  digits accumulate into a whole number and a key that would pass
-   *  100 is refused. Whole sale takes no key. */
+   *  100 is refused. Entire sale takes no key. */
   const discountTap = (key: string) => {
     const d = discountDraftRef.current;
     if (d.mode === "whole") return;
@@ -1927,8 +1931,9 @@ function PaymentPanel(props: {
     setDiscountDraft({ mode: d.mode, entry: next });
   };
   /** A quick cell SETS the entry, as the pad's chips do: $5 / $10 / $20
-   *  for an amount (clamped at the subtotal), 10 / 25 / 50 for a
-   *  percent. */
+   *  for an amount (clamped at the subtotal), 10 / 20 / 30 for a percent
+   *  (T106: 30 is the studio's fixed teacher discount and 20 the fixed
+   *  cleaner one, which is why those two figures and not 25 and 50). */
   const discountChip = (value: number) => {
     const d = discountDraftRef.current;
     if (d.mode === "whole") return;
@@ -5492,10 +5497,17 @@ function PaymentPanel(props: {
             </div>
             {/* T79: the amount step. The T70 pad panel's shape inside
                 T68's one fixed box: the entry column at the left (the
-                head with the live figure, the Amount | Percent | Whole
-                sale segment, the running effect, the quick cells, the
-                reason chips and the note), the 3x4 keys at the right.
-                Nothing here moves when a segment or a chip is tapped. */}
+                head with the live figure, the Percent | Amount | Entire
+                sale segment, the running effect and the quick cells,
+                then the Reason group under its own label and hairline),
+                the 3x4 keys at the right. Nothing here moves when a
+                segment or a chip is tapped.
+                T106, Pete: "this box is laid out confusingly. the
+                reasons should be labeled with Reason above them and
+                seprated more from the dollar amounts." The quick cells
+                and the reason chips were two .pad-chips rows of the same
+                cell, one under the other, so the box read as six
+                interchangeable buttons. */}
             <div className="reason-body discount-body">
             <div className="pad-left discount-left">
               <p className="pad-head discount-head">
@@ -5509,9 +5521,10 @@ function PaymentPanel(props: {
               >
                 {(
                   [
-                    ["amount", "Amount"],
+                    /* T106: Percent FIRST, because it is the default. */
                     ["percent", "Percent"],
-                    ["whole", "Whole sale"],
+                    ["amount", "Amount"],
+                    ["whole", "Entire sale"],
                   ] as const
                 ).map(([mode, label]) => (
                   <button
@@ -5521,9 +5534,9 @@ function PaymentPanel(props: {
                       discountDraft.mode === mode ? "pad-chip on" : "pad-chip"
                     }
                     aria-checked={discountDraft.mode === mode}
-                    /* T102: Whole sale is 100%, and 100% off a gift card
-                       is a free card. Greyed WITH the reason rather than
-                       hidden, so the segment keeps one shape. */
+                    /* T102: Entire sale is 100%, and 100% off a gift
+                       card is a free card. Greyed WITH the reason rather
+                       than hidden, so the segment keeps one shape. */
                     disabled={mode === "whole" && hasGiftCard}
                     title={
                       mode === "whole" && hasGiftCard
@@ -5546,14 +5559,24 @@ function PaymentPanel(props: {
               >
                 {discountEffect}
               </p>
-              {/* The quick cells (the pad's chips): $5 / $10 / $20 for
-                  an amount, 10% / 25% / 50% for a percent; none for
-                  Whole sale, which needs no figure. A cell SETS the
-                  entry. */}
+              {/* The quick cells (the pad's chips): 10% / 20% / 30% for
+                  a percent, $5 / $10 / $20 for an amount; inert under
+                  Entire sale, which needs no figure, and showing the
+                  PERCENT cells there because Entire sale is percent 100
+                  (T106: with Percent the default, the common path is
+                  Percent then Entire sale, and the cells flipping from
+                  percents to dollars as they grey out was a change of
+                  unit in a control nobody had touched). A cell SETS the
+                  entry. T106: these carry NO label of their own. The
+                  head's DISCOUNT kicker already names everything above
+                  the hairline, and a second label here would be a third
+                  word for one group and 30px of box height for nothing.
+                  What the cells are is said by the segment above them
+                  and by the % or $ on their own faces. */}
               <div className="pad-chips discount-quick">
-                {(discountDraft.mode === "percent"
-                  ? [10, 25, 50]
-                  : [5, 10, 20]
+                {(discountDraft.mode === "amount"
+                  ? [5, 10, 20]
+                  : [10, 20, 30]
                 ).map((v) => (
                   <button
                     key={v}
@@ -5563,14 +5586,30 @@ function PaymentPanel(props: {
                     }
                     onClick={() => discountChip(v)}
                   >
-                    {discountDraft.mode === "percent" ? `${v}%` : `$${v}`}
+                    {discountDraft.mode === "amount" ? `$${v}` : `${v}%`}
                   </button>
                 ))}
               </div>
+              {/* T106: the reason is its own GROUP, under the word
+                  Reason and a hairline, so the three kinds cannot read
+                  as three more figures. The label is the dialog's
+                  existing section idiom (.pad-kicker, the same
+                  uppercase muted 16px as the head's DISCOUNT), not a
+                  new treatment, and the note belongs to this group
+                  because it is the reason's note. */}
+              <div className="discount-reason">
+              <p className="pad-kicker discount-reason-label" id="discount-reason-label">
+                Reason
+              </p>
               {/* T45: the chips choose a KIND (Pete: "we aren't saving an
                   enum with the row"), never paste text. T79: three, no
-                  Teacher. */}
-              <div className="pad-chips reason-chips">
+                  Teacher. T106 keeps the list and its order exactly: the
+                  kind is stored with the sale. */}
+              <div
+                className="pad-chips reason-chips"
+                role="group"
+                aria-labelledby="discount-reason-label"
+              >
                 {COMP_KINDS.map((kind) => (
                   <button
                     key={kind}
@@ -5620,6 +5659,7 @@ function PaymentPanel(props: {
                   }
                 }}
               />
+              </div>
             </div>
             <div className="pad-keys">
               {["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0"].map(
