@@ -12290,3 +12290,145 @@ mispriced; only the label "prorated" would need re-wording.
   on the start date) is not offered: Pete asked for a prorated first
   month, and an un-prorated deferred start is a different product
   decision.
+
+### Review
+
+Reviewed on `t99-membership-start-date` at 65c2c1e, rebuilt before every
+browser run. One fix applied.
+
+**The waiver's receipt is intact.** This was the highest risk in the
+diff, since `waiver.ts` gave up its own `stripHtml` for the shared
+`plainText`. Proven against the running app with an HTML waiver (a
+wrapping `<div>`, a `<br>`, entities, a list and a `<script>`):
+
+- The sha256 is still `createHash("sha256").update(raw)` over the exact
+  string `/site/liabilitywaiver` served. Compared to an independently
+  computed sha of those bytes: equal. It is NOT the sha of the displayed
+  text, and not the sha of what the OLD transform displayed either, so
+  the hash input never touched either transform.
+- A receipt written BEFORE this change still verifies: its sha echoed to
+  `/api/waiver-agree` is accepted (200, `agreed: true`), and a sha of the
+  displayed text is refused 409. **The receipt attests the RAW text, not
+  the displayed text**, which is the right artifact: the transform is
+  deterministic code in this repo, so the rendering at any commit can be
+  re-derived from the hashed original. Worth stating plainly because the
+  rendering DID change, so a receipt from before attests bytes whose
+  display today is slightly different from what that client read.
+- The hole was real and is closed. The old stripper dropped `<script>`
+  TAGS and kept the body, so a waiver with a script in it showed its
+  source in the middle of the text a client agreed to (`var t = "SIGN
+  HERE FREE";` in the probe). It is gone now. The other display change is
+  the one the build notes record: `<br>` is a single newline rather than a
+  blank line, and a list item gets a bullet.
+
+**`plainText` holds up adversarially.** Driven directly over 24 cases:
+`<scr<script>ipt>`, a `<script>` with `>` inside an attribute, an
+unclosed `<script>`, `<style>`, mixed case and a newline inside the tag
+(contents gone every time); `&lt;script&gt;` and `&#60;script&#62;` and
+`&#x3c;b&#x3e;` decode to VISIBLE TEXT, which is correct, since the
+author escaped them on purpose and nothing here is ever injected;
+`&amp;lt;` stays once-escaped; lone-surrogate and out-of-range numeric
+entities are left verbatim rather than thrown on; an unknown entity is
+left as written; nested lists, a tag truncated at the end of the string,
+an unclosed comment, and malformed UTF-16 all come through without
+throwing. No catastrophic backtracking: eight pathological inputs up to
+1MB (an unterminated tag with 200k characters of attribute, 100k nested
+`<`, 50k tags, 100k entities) all finished in under 60ms.
+`dangerouslySetInnerHTML` appears exactly once in the repo, on
+`layout.tsx`'s T70 theme boot script, which is a local constant; no
+remote string reaches it.
+
+Two deliberate limitations, recorded rather than fixed: only `<`
+followed by a letter or a slash counts as markup (that is what keeps
+"Class size < 30" alive), so `<!DOCTYPE ...>`, `<![CDATA[...]]>` and an
+attribute value containing a literal `>` leave visible noise. The old
+stripper ate those, but it also ate "spots < 10" and a script's body, so
+the trade is the right way round; all three are text-only noise, none is
+reachable from Mindbody's rich text editor, and adding attribute-aware
+tag matching would put an ambiguous quantifier into the one code path
+that was just shown to be linear. Not worth it.
+
+**The dates are the studio's.** `/api/purchase-contract` was driven past
+the browser:
+
+- Today's request body is **byte identical** to T30's, compared as raw
+  JSON text against the pre-T99 field list and order:
+  `{"ContractId":77,"ClientId":"...","Test":true,"LocationId":1,"FirstPaymentOccurs":"Instant","StoredCardInfo":{"LastFour":"4242"},"SendNotifications":true}`.
+  The empty spread adds nothing, not even key reordering.
+- A chosen day arrives unshifted for the 1st, the 31st, a month
+  boundary, and both days either side of each America/Los_Angeles clock
+  change (2026-11-01/02 and 2027-03-14/15): the day the teacher taps is
+  the day in `StartDate` and `ProrateDate`, as `YYYY-MM-DDT00:00:00`.
+  `dayKeyUtc` does its arithmetic at UTC midnight on both sides, so DST
+  cannot move a count of days.
+- The window holds at the edges: 365 days out is accepted, 366 refused,
+  yesterday refused, 2027-02-29 refused as not a real day and 2028-02-29
+  refused for distance (the right reason each time).
+- `contractStartProblem` refuses the same things on both sides, and 11
+  shapes a browser would never send (`2026-9-30`, `26-10-01`,
+  `2026-10-01T00:00:00`, `9999-99-99`, `0000-01-01`, a number, a
+  boolean, an object, an array) are each 400 with **nothing sent to
+  Mindbody**. A padded `" 2026-10-01 "` is trimmed and accepted.
+
+**The figure is Mindbody's, in every failure mode.** With a chosen day,
+the catalog's un-prorated $165.00 never appears as the prorated one:
+proven for a rehearsal that returns no `Totals`, one whose `Total` is a
+string, `null`, an object or a boolean, and one that is refused. Each
+shows `--`, says so in words, and leaves the confirm disabled reading
+"No prorated figure for that date". **The race holds**: with the
+rehearsal for one date delayed 3s and a second date picked immediately
+after, the later answer is what the screen ends on, the earlier answer
+never overwrites it when it lands 4s later, the button agrees with the
+row, and the one charge carries the later date (`rehearseGen` guards
+both the resolve and the catch).
+
+**The spec reading is right.** Read at sale.yml:1866 independently: the
+operation description, not the field docs, is where `ProrateDate` is
+explained, and it says verbatim that `FirstPaymentOccurs = StartDate`
+with a `ProrateDate` "returns pro-rate amount + contract amount
+requiring instant payment. The rest of the contract will be due on
+`StartDate`", and that "Pro-rate amount payment on `StartDate` is not
+supported by this endpoint". The dialog matches it, and the claim about
+a prorated payment on the start date being unsupported is the spec's own
+sentence. One wording nuance for the live rehearsal to settle with the
+open question: 1866 says the Total is the pro-rate amount PLUS whatever
+the contract requires instantly, so on a contract with a signup fee
+"Charge $X today, prorated" names a figure that is not entirely a
+proration. The figure is still Mindbody's own, so nothing is mispriced.
+
+**Fixed: the calendar's disabled days were unreadable.**
+`.cal-day:disabled` shipped as `--muted` AND `opacity: 0.5`, which
+measured **2.21 in light and 2.46 in dark** against the surface: a whole
+month of greyed numbers below every threshold, in both palettes, and the
+same mistake the builder had already corrected one rule above on
+`.contract-start:disabled`. The `opacity` is gone; `--muted` ink now
+measures 6.52 light and 5.85 dark, and the enabled days stay clearly
+distinct at `--ink` 600 weight. The disabled month arrow was measured
+too and left alone: its glyph is 3.25 light and 4.73 dark, above the 3:1
+a non-text control needs.
+
+**Not a regression: the dialog grows when it refuses.** With a chosen
+day and no prorated figure the box is 709px against 606px otherwise, so
+the build note's "choosing a start date cannot change the dialog's
+height" holds only while a figure comes back. Measured against the
+dialog's own pre-existing behaviour: T30's rehearsal-error branch (with
+its Retry) has always grown it to 758px on exactly the same screen. A
+refusal paragraph appearing is this dialog's established idiom, and
+reserving 100px of blank space in the common case to avoid it would be
+worse. Left as is, recorded here.
+
+Everything else checked clean: the T98 band holds for BOTH layers with
+the keyboard up (the calendar and the dialog each sit inside
+`visualViewport.height` at 55%, in both orientations), Escape peels the
+calendar before the dialog, today is ringed and pickable, the back arrow
+is disabled in the current month and the forward arrow stops at
+September 2027 with the days past the window disabled rather than
+hidden, no text under 16px, tokens only in both palettes with no hex and
+radius 0, no em dash outside the entity table, and no model identifier
+anywhere in the diff. The builder's own 36 route checks and four-pass
+Playwright run were re-run on a fresh build and are green. `npm run
+typecheck` and `npm run build` clean.
+
+Noted in passing, out of scope: `giftcardsale.ts` carries a gift card
+product's `Description` to the browser (SaleScreen's gift card type) and
+nothing renders it. If it is ever rendered it wants `plainText` too.

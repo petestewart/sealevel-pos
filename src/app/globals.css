@@ -5545,10 +5545,13 @@ textarea.reason-note-field:disabled::placeholder {
 
 /* A day outside the pickable window (T99: before today, or more than a
  * year out) is shown and refused rather than hidden, so it is visible
- * why it cannot be chosen. */
+ * why it cannot be chosen. Dimmed to --muted ink and NOT faded: --muted
+ * at opacity 0.5 measured 2.21 in light and 2.46 in dark against the
+ * surface, so a whole month of numbers was unreadable in a hot room. The
+ * enabled days are --ink at 600 weight, which is distinction enough. The
+ * same fix the start row above took. */
 .cal-day:disabled {
   color: var(--muted);
-  opacity: 0.5;
   cursor: default;
 }
 
