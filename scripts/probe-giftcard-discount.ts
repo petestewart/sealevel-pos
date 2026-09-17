@@ -30,12 +30,19 @@
  *
  * Usage, against prod:
  *
- *   MINDBODY_TARGET=prod npx tsx --env-file=.env \
- *     scripts/probe-giftcard-discount.ts <clientId> [productId]
+ *   MINDBODY_TARGET=prod POS_DRY_RUN=false POS_WRITE_CLIENT_IDS=<clientId> \
+ *     npx tsx --env-file=.env scripts/probe-giftcard-discount.ts <clientId> [productId]
  *
- * <clientId> any real client to price against (the house client will
- * do). [productId] defaults to the site's editable gift card product,
- * the custom-amount one, which is the case Pete is asking about.
+ * <clientId> any real client to price against. [productId] defaults to
+ * the site's editable gift card product, the custom-amount one, which
+ * is the case Pete is asking about.
+ *
+ * BOTH RAILS MATTER HERE even though nothing is sold: a Test cart is
+ * still a POST, so dry run suppresses it and the write guard suppresses
+ * it unless the client is listed. A suppressed call never reaches
+ * Mindbody and answers nothing, which is why this script now refuses to
+ * report one as a result (the first run of it did, and the output read
+ * like an answer).
  *
  * What to read in the output: whether a gift card product prices as a
  * cart line at all, and if it does, whether a DiscountAmount comes back
@@ -62,6 +69,14 @@ async function tryLine(
   console.log(`\n  --- ${label}`);
   try {
     const priced = await priceCart([line], clientId, null, discount);
+    if (priced.suppressed) {
+      console.log(
+        "      SUPPRESSED. Mindbody never saw this call, so it answers\n" +
+          "      nothing. Set POS_DRY_RUN=false and put this client in\n" +
+          "      POS_WRITE_CLIENT_IDS, then run it again.",
+      );
+      return;
+    }
     console.log(
       `      PRICED. subtotal ${money(priced.subTotal)}` +
         `  discount ${money(priced.discountTotal)}` +
