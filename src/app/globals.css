@@ -5418,6 +5418,16 @@ textarea.reason-note-field:disabled::placeholder {
   margin-top: 8px;
 }
 
+/* T102 review: inert while a gift card id on THIS screen has not been
+ * written on the card, which a partial sale can carry. The same pair as
+ * .pay-done-btn.off: tokens, not an opacity, so the label stays readable
+ * for as long as the hold lasts. */
+.pay-dismiss.off {
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: default;
+}
+
 /* --- Pay and check in (T25): the unpaid row's dialog ------------------
  * Reuses the modal and pass-opt idioms; tokens only, both palettes come
  * from the variable swap. Rows keep the 64px floor and 16px text. */
@@ -6978,11 +6988,18 @@ textarea.reason-note-field:disabled::placeholder {
 }
 
 /* An item with nothing to do is plainly grey (Pete: "when there is
- * nothing in the cart, make Pay greyed out"): muted, and dimmed, since a
- * control that refuses the tap need not clear the text contrast bar. */
+ * nothing in the cart, make Pay greyed out"): the muted ink, and NO
+ * opacity on top of it.
+ *
+ * T102 review: 0.55 of the muted ink on the bar measured 2.43:1 light
+ * and 2.71:1 dark, and T102's hold can sit on the done screen for as
+ * long as it takes to write six characters on a card, with Sign-in and
+ * Buy greyed the whole time. Tokens rather than an opacity, the same fix
+ * .pad-chip:disabled just took: --muted on --surface is 6.5:1 light and
+ * 5.9:1 dark, and against the --ink of a live item it still plainly
+ * reads as off. */
 .nav-item[aria-disabled="true"] {
   color: var(--muted);
-  opacity: 0.55;
 }
 
 /* The lit item stays FULLY lit while it is inert (mid-charge, or the done

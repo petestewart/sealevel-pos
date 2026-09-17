@@ -1216,10 +1216,39 @@ type ChargeResult =
   | { kind: "split"; message: string; mindbody: string }
   /* T95: some of the ticket went out and some did not, and the route's
      sentence says exactly which. Its own kind because the one thing that
-     must not happen next is a second tap on Finalize Sale. */
-  | { kind: "partial"; message: string }
+     must not happen next is a second tap on Finalize Sale.
+
+     T102 review: `giftCards` is the cards that DID sell before the
+     ticket broke. They are real cards, charged for, and their ids have
+     to be written on card stock exactly as a whole sale's do: the
+     route's sentence names them by value and deliberately not by id, so
+     without this the one place the id was ever readable would be the
+     screen a partial sale never reaches. */
+  | {
+      kind: "partial";
+      message: string;
+      giftCards: { value: number; barcodeId: string }[];
+    }
   | { kind: "ambiguous"; message: string }
   | { kind: "error"; message: string };
+
+/**
+ * T95: the cards a checkout answer says it sold, each with the id to
+ * write on it. T102 review: read in ONE place, because a whole sale and
+ * a partial one both have to show them, and a partial that quietly
+ * dropped them lost those ids for good.
+ */
+function soldGiftCards(raw: unknown): { value: number; barcodeId: string }[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as { value?: unknown; barcodeId?: unknown }[])
+    .filter(
+      (c) => typeof c?.barcodeId === "string" && typeof c?.value === "number",
+    )
+    .map((c) => ({
+      value: c.value as number,
+      barcodeId: c.barcodeId as string,
+    }));
+}
 
 
 /** T43: a discount needs a reason; T45: the reason is a KIND from
@@ -2566,20 +2595,64 @@ function PaymentPanel(props: {
            coverage). */
         dueCents === 0 && tenderValid);
 
-  /** T102: the done screen holds while an unwritten id is on it. */
-  const holdingGiftIds =
-    result?.kind === "paid" &&
-    result.giftCards.length > 0 &&
-    !giftIdsWritten;
+  /** T102: the done screen holds while an unwritten id is on it. T102
+   *  review: and so does the PARTIAL screen, for the cards that did sell
+   *  before the ticket broke. Those are charged-for bearer instruments
+   *  like any others, and the partial is the one outcome where a teacher
+   *  is being told something went wrong at the same moment: exactly when
+   *  a stray tap is likeliest. */
+  const heldGiftIds =
+    result?.kind === "paid" || result?.kind === "partial"
+      ? result.giftCards
+      : [];
+  const holdingGiftIds = heldGiftIds.length > 0 && !giftIdsWritten;
   useEffect(() => {
     onHoldChange(holdingGiftIds);
   }, [holdingGiftIds, onHoldChange]);
   /* The hold belongs to ONE result: a new sale arms it again, and a
    * cleared result never leaves the overlay stuck. */
   useEffect(() => {
-    if (result?.kind !== "paid") setGiftIdsWritten(false);
+    if (result?.kind !== "paid" && result?.kind !== "partial") {
+      setGiftIdsWritten(false);
+    }
   }, [result]);
   useEffect(() => () => onHoldChange(false), [onHoldChange]);
+  /**
+   * T95: the one thing a teacher MUST take off this screen. The card
+   * Mindbody sold is blank card stock in their hand, and this id is what
+   * ties the two together, so it is the largest thing here after the
+   * total. The id is a bearer secret everywhere else (the call log
+   * strikes it out, the sale history does not carry it); this screen and
+   * the emailed receipt are the two places it is meant to be read.
+   *
+   * T102: and the screen holds until the confirmation is tapped. One tap
+   * for the whole sale, however many cards are on it; Done, Escape and
+   * the nav bar do nothing until then. T102 review: one function,
+   * because the PARTIAL outcome shows the same ids under the same hold.
+   */
+  const giftIdBlock = (cards: { value: number; barcodeId: string }[]) =>
+    cards.length === 0 ? null : (
+      <div className="pay-done-gifts">
+        {cards.map((c) => (
+          <div className="pay-done-gift" key={c.barcodeId}>
+            <span className="pay-done-gift-label">
+              Write this on the {money(c.value)} card
+            </span>
+            <span className="pay-done-gift-id">{c.barcodeId}</span>
+          </div>
+        ))}
+        {holdingGiftIds ? (
+          <button
+            className="pay-done-gift-ack"
+            onClick={() => setGiftIdsWritten(true)}
+          >
+            {cards.length === 1
+              ? "Written on the card"
+              : "Written on the cards"}
+          </button>
+        ) : null}
+      </div>
+    );
 
   const sourceLabel = (s: TenderSource) =>
     s === "storedcard"
@@ -2912,18 +2985,7 @@ function PaymentPanel(props: {
         setResult({
           kind: "paid",
           /* T95: what Mindbody recorded, one entry per card. */
-          giftCards: Array.isArray(body?.giftCardsSold)
-            ? (body.giftCardsSold as { value?: unknown; barcodeId?: unknown }[])
-                .filter(
-                  (c) =>
-                    typeof c?.barcodeId === "string" &&
-                    typeof c?.value === "number",
-                )
-                .map((c) => ({
-                  value: c.value as number,
-                  barcodeId: c.barcodeId as string,
-                }))
-            : [],
+          giftCards: soldGiftCards(body?.giftCardsSold),
           total: comped
             ? typeof disc?.subtotal === "number"
               ? disc.subtotal
@@ -3049,6 +3111,11 @@ function PaymentPanel(props: {
           message: String(
             body?.error ?? "Part of this ticket was sold and part was not.",
           ),
+          /* T102 review: the cards that DID sell. The route's sentence
+             names them by value and never by id, so these are the only
+             copy of the ids anywhere the teacher can read, and the screen
+             holds on them exactly as the done screen does. */
+          giftCards: soldGiftCards(body?.giftCardsSold),
         });
       } else if (body?.ambiguous === true) {
         setResult({
@@ -4171,39 +4238,7 @@ function PaymentPanel(props: {
                   </span>
                 ) : null}
               </p>
-              {result.giftCards.length > 0 ? (
-                /* T95: the one thing a teacher MUST take off this screen.
-                   The card Mindbody sold is blank card stock in their
-                   hand, and this id is what ties the two together, so it
-                   is the largest thing here after the total. The id is a
-                   bearer secret everywhere else (the call log strikes it
-                   out); this screen and the emailed receipt are the two
-                   places it is meant to be read. */
-                <div className="pay-done-gifts">
-                  {result.giftCards.map((c) => (
-                    <div className="pay-done-gift" key={c.barcodeId}>
-                      <span className="pay-done-gift-label">
-                        Write this on the {money(c.value)} card
-                      </span>
-                      <span className="pay-done-gift-id">{c.barcodeId}</span>
-                    </div>
-                  ))}
-                  {/* T102: and the screen holds until this is tapped.
-                      One tap for the whole sale, however many cards are
-                      on it; Done, Escape and the nav bar do nothing
-                      until then. */}
-                  {holdingGiftIds ? (
-                    <button
-                      className="pay-done-gift-ack"
-                      onClick={() => setGiftIdsWritten(true)}
-                    >
-                      {result.giftCards.length === 1
-                        ? "Written on the card"
-                        : "Written on the cards"}
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
+              {giftIdBlock(result.giftCards)}
               {result.compReason ? (
                 /* T43: the reason, under the charged line, so the done
                    screen says why the sale was on the studio. T79: a
@@ -4616,9 +4651,28 @@ function PaymentPanel(props: {
                     anything else. Finalize Sale is refused on this ticket
                     now: empty it and ring up only what is still owed.
                   </p>
+                  {/* T102 review: the cards that DID sell, with the ids
+                      to write on them, and the same hold as the done
+                      screen. A partial sale is the worst moment to lose
+                      an id: the teacher is reading a failure, and these
+                      cards were charged for all the same. */}
+                  {giftIdBlock(result.giftCards)}
                   <button
-                    className="class-change pay-dismiss"
-                    onClick={() => setResult(null)}
+                    className={
+                      holdingGiftIds
+                        ? "class-change pay-dismiss off"
+                        : "class-change pay-dismiss"
+                    }
+                    aria-disabled={holdingGiftIds}
+                    title={
+                      holdingGiftIds
+                        ? "Write the gift card id on the card first"
+                        : undefined
+                    }
+                    onClick={() => {
+                      if (holdingGiftIds) return;
+                      setResult(null);
+                    }}
                   >
                     Understood
                   </button>

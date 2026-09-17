@@ -111,6 +111,26 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * T102 review: a FIGURE that is not a number is ABSENT, not zero.
+ *
+ * `num` is deliberately lenient (`Number(null)` is 0, `Number(true)` is
+ * 1), and for the balance read at giftCardTaken that leniency is the safe
+ * direction: anything that parses at all means the id is taken. On the
+ * purchase answer it is the wrong direction. T96's rehearsal promises
+ * that a MISSING figure refuses because "silence is not agreement where
+ * a bearer instrument is", and `Value: null` is silence: read as 0 it
+ * slipped past that refusal and came out as T102's "the card would be
+ * worth 0.00", which blames Mindbody for saying something it never said.
+ * A numeric string is still read as the number it is; the assertions
+ * then compare the real figures to the cent.
+ */
+function figure(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") return num(v);
+  return null;
+}
+
 export async function giftCardProducts(
   refresh = false,
 ): Promise<GiftCardProduct[]> {
@@ -408,9 +428,9 @@ export async function purchaseGiftCard(opts: {
       typeof res?.BarcodeId === "string" && res.BarcodeId.trim()
         ? res.BarcodeId.trim()
         : null,
-    value: num(res?.Value),
-    amountPaid: num(res?.AmountPaid),
-    saleId: num(res?.SaleId),
+    value: figure(res?.Value),
+    amountPaid: figure(res?.AmountPaid),
+    saleId: figure(res?.SaleId),
     emailReceipt:
       typeof res?.EmailReceipt === "boolean" ? res.EmailReceipt : null,
   };
