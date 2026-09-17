@@ -298,18 +298,26 @@ while `git clone` works, so clone the repo rather than fetching files.
   beside another payment, so a discount there can only mean paying
   less, and T102's `Test: true` rehearsal of both `Value` and
   `AmountPaid` is what keeps that safe.
-- **A payment with no purchased items is not a sale, and nothing here
-  checks for one yet** (T103). The checkout path reads the answer's
-  totals and sale id and never asks what the sale HOLDS; `grep -rn
-  PurchasedItems src/` finds one use, in `guestsale.ts`, reading
-  someone else's sale. A pass is caught indirectly by T25's
-  `/client/clientservices` re-read and a contract is its own endpoint,
-  but a retail product is not caught at all. The probe above proves a
-  200 with a priced total, a taken payment and an empty basket is
-  reachable. The assertion belongs at the checkout boundary in T75's
-  shape, and it cannot un-take the payment: it must say that money
-  moved and nothing was sold, which is the one case a teacher escalates
-  rather than retries.
+- **A payment with no purchased items is not a sale** (T103). A 200
+  with a priced total, a taken payment and an empty basket is
+  reachable, so every cart checkout is now asserted against what was
+  sent, line for line, by the id that was sent and the quantity
+  (`assertBasket` in `src/lib/sale.ts`, beside T75's total assertion,
+  with the same per-line audit). An empty basket, a missing line, a
+  short quantity or a line nobody ordered refuses the whole answer.
+  The basket comes from the answer's own `PurchasedItems` when it
+  carries one, else from the sale that `latestSale` already reads for
+  the numeric id; when NEITHER says what the sale holds the outcome is
+  logged `[basket] unverified` and the sale stands, because a refusal
+  has to rest on evidence. It cannot un-take the payment, so the
+  refusal is its own outcome: money moved, nothing was sold, the sale
+  id is named, the same sentence is filed on the client the way
+  T45/T62 file a comp's reason, and there is NO retry anywhere in it
+  (a retry is a second charge). Everything catchable before the charge
+  is caught before it: a gift card product id in a cart line is
+  refused by /api/checkout before any Mindbody call, and a gift card
+  list that does not answer refuses the ticket rather than waving it
+  through.
 - **A contract's text arrives as HTML, and a contract can start on a
   chosen day.** `AgreementTerms` and `Description` on `/sale/contracts`
   are written in Mindbody's rich text editor, so they come back with

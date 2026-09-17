@@ -1042,6 +1042,198 @@ function auditLines(items: readonly CartLine[], cart: any): LineAudit[] {
 }
 
 /* =====================================================================
+ * T103: a payment with no purchased items is not a sale.
+ *
+ * Found on 2026-09-17, chasing whether a gift card can be discounted. A
+ * gift card product as a cart line priced, took a discount and took a
+ * comp payment, and both resulting sales held `PurchasedItems: []`: the
+ * cart sold nothing and answered like a sale. Nothing here noticed,
+ * because until this block nothing here LOOKED: the checkout path read
+ * the answer's totals and its sale id and never asked what the sale
+ * holds. A pass is caught indirectly (T25 re-reads
+ * /client/clientservices and matches by ProductId) and a contract is
+ * its own endpoint; a retail product was not caught at all.
+ *
+ * So the same rail as T75's total assertion, one level further on: what
+ * came back is compared against what was sent, line for line, by the id
+ * that was sent and the quantity, and an answer that does not hold the
+ * ticket is REFUSED. This one cannot un-take the payment, which is
+ * exactly why it is loud: by the time it can run, Mindbody has the
+ * money (see /api/checkout's soldNothingAnswer).
+ * =================================================================== */
+
+/**
+ * One ordered line, as both sides hold it: T75's per-line audit idiom,
+ * because a refusal that cannot name the line is a correct refusal
+ * nobody can act on. Diagnostic only; nothing here is ever charged.
+ */
+export interface BasketAudit {
+  type: CartLine["type"];
+  metadataId: string;
+  /** Mindbody's own name for the matched item, when the sale gave one. */
+  name: string | null;
+  /** What the ticket ordered. */
+  orderedQuantity: number;
+  /**
+   * What the sale says it holds of this line: the matched purchased
+   * items' quantities summed, counting an item with no Quantity as one
+   * (PurchasedItem.Quantity is documented "applicable for products
+   * only", sale.yml:2348). Null when NOTHING in the basket matched the
+   * id that was sent, which is itself the finding.
+   */
+  soldQuantity: number | null;
+}
+
+/** What the basket assertion decided. */
+export interface BasketVerdict {
+  ok: boolean;
+  /**
+   * What is wrong, in a teacher's words, naming the lines. Null when
+   * ok. It says nothing about the money: the caller knows whether the
+   * payment was taken and owns that sentence.
+   */
+  problem: string | null;
+  audit: BasketAudit[];
+  /** Ids the basket holds that this ticket never ordered. */
+  unordered: string[];
+}
+
+/**
+ * The basket an answer carries, or null when it carries none.
+ *
+ * `PurchasedItems` is the Sale model's list of what a sale holds
+ * (sale.yml:2772, items at 2302). The checkout answer's documented
+ * shape is `ShoppingCart` with `CartItems` (4013), which is what was
+ * PRICED and is deliberately not read here: the two live probes had a
+ * gift card line priced in the cart and absent from the sale, so
+ * asserting against CartItems would agree with itself and prove
+ * nothing. So: the answer's own `PurchasedItems` when it has one (the
+ * live answer's key set is wider than the vendored spec's, which is the
+ * standing warning in CLAUDE.md), else null and the caller must read
+ * the SALE before it trusts the answer.
+ */
+export function purchasedItemsOf(res: unknown): unknown[] | null {
+  const r = res as Record<string, unknown> | null | undefined;
+  const cart = r?.["ShoppingCart"] as Record<string, unknown> | undefined;
+  for (const held of [cart?.["PurchasedItems"], r?.["PurchasedItems"]]) {
+    if (Array.isArray(held)) return held;
+  }
+  return null;
+}
+
+/** An id a purchased item answers to: its `Id` (the pricing option's
+ *  ProductId for a service, sale.yml:2311) and its `BarcodeId` (2320),
+ *  which is what a Product line is sent as. The same either-way match
+ *  auditLines uses, for the same reason. */
+function purchasedIds(entry: unknown): string[] {
+  const e = entry as Record<string, unknown> | null | undefined;
+  const out: string[] = [];
+  for (const key of ["Id", "BarcodeId"]) {
+    const v = e?.[key];
+    if (typeof v === "string" && v.trim() !== "") out.push(v.trim());
+    else if (typeof v === "number" && Number.isFinite(v)) out.push(String(v));
+  }
+  return out;
+}
+
+/**
+ * Does this sale hold what was sent? The whole answer is refused when
+ * the basket is empty, misses a line, is short on a line's quantity, or
+ * holds something that was never ordered.
+ *
+ * Strict in one direction only, exactly like totalsDisagree: there is no
+ * tolerance, and a missing figure is never read as agreement. A line
+ * whose matched items carry no Quantity at all counts as one apiece,
+ * which is Mindbody's documented shape for a service, so a service sold
+ * once satisfies a line of one and a line of two is still short.
+ */
+export function assertBasket(
+  items: readonly CartLine[],
+  purchased: readonly unknown[],
+): BasketVerdict {
+  /* Which ordered line each basket entry answers to, so an entry is
+   * never counted twice and an entry nobody ordered is visible. */
+  const claimed = new Set<number>();
+  const audit: BasketAudit[] = items.map((line) => {
+    const id = String(line.metadataId);
+    let sold: number | null = null;
+    let name: string | null = null;
+    purchased.forEach((entry, i) => {
+      if (!purchasedIds(entry).includes(id)) return;
+      claimed.add(i);
+      const e = entry as Record<string, unknown>;
+      const qty = e["Quantity"];
+      const one = typeof qty === "number" && Number.isFinite(qty) ? qty : 1;
+      sold = (sold ?? 0) + one;
+      if (name === null) {
+        for (const key of ["Name", "Description"]) {
+          const v = e[key];
+          if (typeof v === "string" && v.trim() !== "") {
+            name = v.trim();
+            break;
+          }
+        }
+      }
+    });
+    return {
+      type: line.type,
+      metadataId: id,
+      name,
+      orderedQuantity: line.quantity,
+      soldQuantity: sold,
+    };
+  });
+  const unordered = purchased
+    .map((entry, i) =>
+      claimed.has(i) ? null : (purchasedIds(entry)[0] ?? "unnamed"),
+    )
+    .filter((id): id is string => id !== null);
+
+  const nameOf = (a: BasketAudit): string =>
+    a.name ?? `${a.type.toLowerCase()} ${a.metadataId}`;
+  if (purchased.length === 0) {
+    return {
+      ok: false,
+      problem:
+        "the sale holds no items at all: " +
+        items.map((l) => `${l.type.toLowerCase()} ${l.metadataId}`).join(", ") +
+        " was paid for and none of it was sold",
+      audit,
+      unordered,
+    };
+  }
+  const missing = audit.filter((a) => a.soldQuantity === null);
+  const short = audit.filter(
+    (a) => a.soldQuantity !== null && a.soldQuantity < a.orderedQuantity,
+  );
+  const problems: string[] = [];
+  if (missing.length > 0) {
+    problems.push(`the sale does not hold ${missing.map(nameOf).join(", ")}`);
+  }
+  if (short.length > 0) {
+    problems.push(
+      "the sale is short: " +
+        short
+          .map(
+            (a) =>
+              `${nameOf(a)} ordered x${a.orderedQuantity}, sold x${a.soldQuantity}`,
+          )
+          .join(", "),
+    );
+  }
+  if (unordered.length > 0) {
+    problems.push(
+      `the sale holds ${unordered.length === 1 ? "an item" : "items"} the ` +
+        `ticket never ordered (${unordered.join(", ")})`,
+    );
+  }
+  if (problems.length === 0) {
+    return { ok: true, problem: null, audit, unordered };
+  }
+  return { ok: false, problem: problems.join("; "), audit, unordered };
+}
+
+/* =====================================================================
  * T24: payment execution (PLAN 2.2 + 2.3). Everything below can move
  * real money, which is why all of it goes through mindbody() -- dry run
  * and POS_WRITE_CLIENT_IDS intercept these POSTs exactly as they do a
@@ -1169,6 +1361,15 @@ export interface CheckoutOutcome {
   saleId: string | null;
   /** ShoppingCart.GrandTotal as Mindbody recorded it. */
   grandTotal: number | null;
+  /**
+   * T103: what the ANSWER says this sale holds, asserted against what
+   * was sent (assertBasket). Null in two cases, and they mean different
+   * things: a suppressed write sold nothing because it never went, and
+   * an answer carrying no `PurchasedItems` at all has not SAID what it
+   * holds, which the caller must settle by reading the sale itself
+   * (latestSale) before it reports a completed sale.
+   */
+  basket: BasketVerdict | null;
 }
 
 /**
@@ -1254,16 +1455,31 @@ export async function checkoutCart(
     ...(actor ? { actor } : {}),
   });
   if (res?.DryRun === true) {
-    return { suppressed: "dry-run", saleId: null, grandTotal: null };
+    return {
+      suppressed: "dry-run",
+      saleId: null,
+      grandTotal: null,
+      basket: null,
+    };
   }
   if (res?.WriteSuppressed === true) {
-    return { suppressed: "write-guard", saleId: null, grandTotal: null };
+    return {
+      suppressed: "write-guard",
+      saleId: null,
+      grandTotal: null,
+      basket: null,
+    };
   }
   const cart = res?.ShoppingCart ?? {};
+  /* T103: the basket assertion, right beside the sale id and the total,
+   * on the answer to the call that took the money. A basket the answer
+   * did not carry is null here and settled by the caller. */
+  const purchased = purchasedItemsOf(res);
   return {
     suppressed: null,
     saleId: str(cart?.Id) ?? (num(cart?.Id) !== null ? String(cart.Id) : null),
     grandTotal: num(cart?.GrandTotal),
+    basket: purchased === null ? null : assertBasket(items, purchased),
   };
 }
 
@@ -2001,6 +2217,24 @@ export async function latestSaleId(
   /** When the checkout call went out; nothing sold before it counts. */
   startedAt: Date,
 ): Promise<number | null> {
+  return (await latestSale(clientId, startedAt)).id;
+}
+
+/**
+ * T103: latestSaleId's read, with the found sale's own basket.
+ *
+ * The lookup already reads `GET /sale/sales`, and `PurchasedItems`
+ * (sale.yml:2772) is the field the two live probes read the empty
+ * baskets from, so the sale a checkout just made can be checked for
+ * what it HOLDS without a second metered call. `purchasedItems` is null
+ * whenever the sale was not found (a list that has not caught up, a
+ * failed or timed-out read): then nothing is known about the basket, and
+ * a caller must say so rather than invent either verdict.
+ */
+export async function latestSale(
+  clientId: string,
+  startedAt: Date,
+): Promise<{ id: number | null; purchasedItems: unknown[] | null }> {
   const now = new Date();
   const dayStart = `${studioWall(now).slice(0, 10)}T00:00:00`;
   const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
@@ -2024,6 +2258,9 @@ export async function latestSaleId(
       }),
     ]);
     const sales: unknown[] = Array.isArray(body?.Sales) ? body.Sales : [];
+    /* T103: the candidate sales' own baskets, by id, so the winner's can
+     * be answered with it. */
+    const baskets = new Map<number, unknown[] | null>();
     const floor = studioWall(
       new Date(startedAt.getTime() - SALE_CLOCK_SKEW_MS),
     );
@@ -2040,6 +2277,8 @@ export async function latestSaleId(
       const at = sale["SaleDateTime"];
       if (typeof at !== "string" || at.slice(0, 19) < floor) continue;
       candidates.push(id);
+      const held = sale["PurchasedItems"];
+      baskets.set(id, Array.isArray(held) ? held : null);
     }
     const waiting = unresolvedSales.get(clientId) ?? 0;
     if (candidates.length <= waiting) {
@@ -2048,18 +2287,18 @@ export async function latestSaleId(
         `[sale-id] none new for client ${clientId} (${sales.length} sales today, ` +
           `${candidates.length} candidates, ${waiting} earlier still unnamed)`,
       );
-      return null;
+      return { id: null, purchasedItems: null };
     }
     const best = Math.max(...candidates);
     for (const id of candidates) seenSaleIds.add(id);
     unresolvedSales.delete(clientId);
-    return best;
+    return { id: best, purchasedItems: baskets.get(best) ?? null };
   } catch (err) {
     unresolvedSales.set(clientId, (unresolvedSales.get(clientId) ?? 0) + 1);
     console.log(
       `[sale-id] lookup failed: ${err instanceof Error ? err.message : String(err)}`,
     );
-    return null;
+    return { id: null, purchasedItems: null };
   } finally {
     clearTimeout(timer);
   }

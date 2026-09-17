@@ -100,7 +100,14 @@ export interface GiftCardProduct {
  * as a wrong charge.
  */
 const CACHE_TTL_MS = 2 * 60 * 1000;
-let cache: { key: string; at: number; data: GiftCardProduct[] } | null = null;
+let cache: {
+  key: string;
+  at: number;
+  data: GiftCardProduct[];
+  /** T103: EVERY id the site's gift card list carried, the ones `data`
+   *  drops included. See giftCardProductIds. */
+  allIds: number[];
+} | null = null;
 
 /** T89: a target switch drops the cached products with the catalog. */
 export function clearGiftCardProducts(): void {
@@ -158,10 +165,17 @@ export async function giftCardProducts(
   );
   const raw = Array.isArray(res?.GiftCards) ? res.GiftCards : [];
   const data: GiftCardProduct[] = [];
+  /* T103: every id on the list, before any of the filtering below. A
+   * gift card product must never reach a cart line, and the products
+   * this function DROPS (a fixed product worth nothing, one with no
+   * usable figures) are exactly the ones a cart would price at zero or
+   * book a payment against nothing. */
+  const allIds: number[] = [];
   for (const entry of raw) {
     const e = entry as Record<string, unknown>;
     const id = num(e["Id"]);
     const cardValue = num(e["CardValue"]);
+    if (id !== null) allIds.push(id);
     if (id === null || cardValue === null) continue;
     const editable = e["EditableByConsumer"] === true;
     /* T96: a zero-value product is KEPT only when it is editable, which
@@ -195,8 +209,32 @@ export async function giftCardProducts(
    * product sorts to the front on its zero value and is never a preset
    * anyway: it is the pad's product, not a chip. */
   data.sort((a, b) => a.cardValue - b.cardValue);
-  cache = { key, at: Date.now(), data };
+  cache = { key, at: Date.now(), data, allIds };
   return data;
+}
+
+/**
+ * T103: every gift card PRODUCT id the site has, so no cart line can
+ * carry one.
+ *
+ * Two live comped sales on 2026-09-17 settled what a gift card as a cart
+ * line does: the editable custom-amount product priced at $0.00 (a free
+ * card), a fixed one priced and discounted correctly, and BOTH sales
+ * came back holding no items at all. So the cart is not the route for a
+ * gift card, `purchasegiftcard` is, and /api/checkout refuses such a
+ * line before it calls anything.
+ *
+ * It reads through giftCardProducts' own two-minute cache rather than
+ * forcing a refresh: the list changes a few times a year, the gift card
+ * sale path in the same request reads it anyway, and a per-checkout
+ * refresh would buy a metered call on every sale to close a window two
+ * minutes wide. What it never does is FAIL OPEN: a read that does not
+ * answer throws, and the route refuses the ticket, because a refusal
+ * turned off by a failed read is not a rail.
+ */
+export async function giftCardProductIds(): Promise<Set<number>> {
+  await giftCardProducts();
+  return new Set(cache?.allIds ?? []);
 }
 
 /**
