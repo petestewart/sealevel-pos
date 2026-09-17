@@ -62,8 +62,9 @@ export interface ShelfProductOverride {
 
 export interface ShelfConfig {
   /** Items that never reach the shelf, as "<Type>:<id>" keys, the type
-   *  being the catalog item's `type` ("Product" | "Service" | "Package")
-   *  or "Contract" for a membership contract, the id as a string. */
+   *  being the catalog item's `type` ("Product" | "Service" | "Package"),
+   *  "Contract" for a membership contract or, since T97, "GiftCard" for a
+   *  gift card product, the id as a string. */
   hidden: string[];
   /** Pass sub-categories, in rail order. A pass in no group is
    *  ungrouped. */
@@ -86,16 +87,27 @@ export const shelfConfigDefault: ShelfConfig = { hidden: [], groups: [] };
 /** The app_settings key the config lives under. */
 export const SHELF_SETTING_KEY = "shelf_config";
 
-/** The four kinds a hide key may name. Contracts are not CatalogItems
+/** The kinds a hide key may name. Contracts are not CatalogItems
  *  (they sell through the Memberships dialog, T30), so the key carries
- *  its own type name for them. */
-export type ShelfItemType = "Product" | "Service" | "Package" | "Contract";
+ *  its own type name for them. T97 added GiftCard: a gift card product
+ *  comes from /sale/giftcards rather than the catalog (T95), which is the
+ *  only reason it was not here, and Pete asked for exactly this config
+ *  over it ("the app should only have these preset options + the custom
+ *  amount one ... what is the best way to do that so we can edit what is
+ *  available easily"). */
+export type ShelfItemType =
+  | "Product"
+  | "Service"
+  | "Package"
+  | "Contract"
+  | "GiftCard";
 
 const ITEM_TYPES: readonly ShelfItemType[] = [
   "Product",
   "Service",
   "Package",
   "Contract",
+  "GiftCard",
 ];
 
 export const MAX_GROUPS = 12;
@@ -140,6 +152,15 @@ export function itemKey(type: ShelfItemType, id: string | number): string {
   return `${type}:${String(id)}`;
 }
 
+/** T97: what a caller may tell the validator about the live gift card
+ *  products. Only the admin PUT knows it (it reads /sale/giftcards), and
+ *  it is optional so every other caller validates exactly as before. */
+export interface ValidateShelfOptions {
+  /** The id of the ONE editable gift card product (T96), when it is
+   *  known. A `GiftCard:<that id>` hide key is refused in words. */
+  editableGiftCardId?: number | null;
+}
+
 /**
  * The shape gate on the way IN (the admin PUT) and on the way OUT of the
  * table (a stored value nobody can trust blindly). Returns the cleaned
@@ -148,6 +169,7 @@ export function itemKey(type: ShelfItemType, id: string | number): string {
  */
 export function validateShelfConfig(
   input: unknown,
+  opts: ValidateShelfOptions = {},
 ): ShelfConfig | { error: string } {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     return { error: "config must be an object with hidden and groups" };
@@ -175,10 +197,29 @@ export function validateShelfConfig(
     const id = colon > 0 ? key.slice(colon + 1).trim() : "";
     if (!ITEM_TYPES.includes(type as ShelfItemType) || id.length === 0) {
       return {
-        error: `hidden key ${JSON.stringify(raw)} is not "<Product|Service|Package|Contract>:<id>"`,
+        error: `hidden key ${JSON.stringify(raw)} is not "<Product|Service|Package|Contract|GiftCard>:<id>"`,
       };
     }
     const clean = `${type}:${id}`;
+    /* T97: the editable gift card product is the number pad's product,
+     * and hiding it would turn the pad off with nothing on the screen to
+     * say why. Refused in words, and only when the caller knows which
+     * product that is: the way OUT of the table (parseShelfConfig) does
+     * not, deliberately, so a stored key can never invalidate the whole
+     * config and throw the rest of the hide list away with it. The filter
+     * itself never hides an editable product either (`giftCardHidden`),
+     * which is what actually protects the pad. */
+    if (
+      opts.editableGiftCardId !== undefined &&
+      opts.editableGiftCardId !== null &&
+      clean === itemKey("GiftCard", opts.editableGiftCardId)
+    ) {
+      return {
+        error:
+          "the custom amount gift card cannot be hidden: it is the product " +
+          "the number pad sells any amount through",
+      };
+    }
     if (seenHidden.has(clean)) continue;
     seenHidden.add(clean);
     cleanHidden.push(clean);
@@ -621,4 +662,45 @@ export function applyShelfConfig<
     ),
     passGroups: [...named, ...rest],
   };
+}
+
+/* ===================================================================
+ * T97: gift cards on the shelf
+ * =================================================================== */
+
+/** The least a gift card product needs to be filtered: its id and
+ *  whether Mindbody prices it from the payment (T96 `editable`). */
+export interface GiftCardKeyed {
+  id: number;
+  editable: boolean;
+}
+
+/**
+ * T97: is this gift card product turned off at the counter?
+ *
+ * The EDITABLE product never is, whatever the config says: it is the one
+ * the number pad sells any amount through, so hiding it would take the
+ * pad away silently. The admin PUT refuses that key in words, and this is
+ * the second guard, for a row stored before the product became editable
+ * or by a hand outside the drawer.
+ */
+export function giftCardHidden(
+  config: ShelfConfig,
+  card: GiftCardKeyed,
+): boolean {
+  if (card.editable) return false;
+  return config.hidden.includes(itemKey("GiftCard", card.id));
+}
+
+/**
+ * The gift card products the counter may sell: the hide list applied,
+ * order untouched. Applied server-side in /api/gift-cards, so a stale
+ * browser cannot show a preset the studio turned off, and again in
+ * /api/checkout, so it cannot sell one either.
+ */
+export function visibleGiftCards<T extends GiftCardKeyed>(
+  cards: readonly T[],
+  config: ShelfConfig,
+): T[] {
+  return cards.filter((c) => !giftCardHidden(config, c));
 }

@@ -59,6 +59,7 @@ import {
   roundToCents,
   type CheckoutPayment,
 } from "./sale";
+import { giftCardHidden, type ShelfConfig } from "./shelfconfig";
 import { ensureTarget } from "./target";
 
 /** One gift card product the site sells, as the counter needs it. */
@@ -540,10 +541,19 @@ export interface GiftCardUnit {
  * list. A string return is the refusal to answer the browser with: a
  * product id the site does not have is a stale shelf, not something to
  * guess at.
+ *
+ * T97: `shelf`, when it is given, is the shelf config, and a preset the
+ * studio turned off in the drawer is refused HERE rather than sold. The
+ * screen never offers one (/api/gift-cards drops it server-side), so this
+ * is the guard for the browser that is holding an older list, and it says
+ * which of the two things happened in words: turned off at this counter is
+ * not the same as gone from Mindbody. The editable product is never
+ * hidden (`giftCardHidden`), so the pad cannot be turned off this way.
  */
 export function resolveGiftCardUnits(
   lines: readonly GiftCardLine[],
   products: readonly GiftCardProduct[],
+  shelf?: ShelfConfig,
 ): { units: GiftCardUnit[]; error: null } | { units: null; error: string } {
   const units: GiftCardUnit[] = [];
   for (const line of lines) {
@@ -554,6 +564,15 @@ export function resolveGiftCardUnits(
         error:
           "Mindbody no longer offers one of the gift cards on this ticket. " +
           "Remove the line and add it again. Nothing was charged.",
+      };
+    }
+    if (shelf !== undefined && giftCardHidden(shelf, product)) {
+      return {
+        units: null,
+        error:
+          "That gift card is turned off for this counter in the dev " +
+          "drawer's Shelf tab, so it cannot be sold. Remove the line. " +
+          "Nothing was charged.",
       };
     }
     /* T96: the editable product is priced by the amount and by nothing
