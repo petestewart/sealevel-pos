@@ -25,6 +25,7 @@ import {
   isCompKind,
   isFullDiscount,
   parseDiscount,
+  spreadDiscount,
   subtotalCents,
   type CompReason,
   type Discount,
@@ -40,11 +41,11 @@ import {
 import {
   freshGiftCardId,
   giftCardProducts,
-  giftCardTotal,
   logGiftCardSale,
   parseGiftCardLines,
   purchaseGiftCard,
   resolveGiftCardUnits,
+  type GiftCardUnit,
 } from "@/lib/giftcardsale";
 import { fileFormulaNote } from "@/lib/formulanote";
 import { dryRunState, mindbodyHttpStatus, target } from "@/lib/mindbody";
@@ -525,15 +526,27 @@ export async function POST(request: Request) {
           "the split, or sell the card on its own. Nothing was charged.",
       );
     }
-    if (payload?.discount !== undefined && payload?.discount !== null) {
-      /* A discounted gift card is money given away that then spends like
-       * cash. Pete has not asked for it, and the one place this app gives
-       * money away (the discount dialog) is aimed at passes and retail;
-       * until he does, it is refused rather than half built. */
+    /* T102 (Pete: "a gift card should be able to be discounted. The app
+     * prohibits it rn.", and on refusing the custom amount card by
+     * construction: "NO. the gift card can be discounted regardless.
+     * Mindbody UI lets you do that."). So a discount IS offered on every
+     * gift card, fixed and custom alike, with the teacher's PIN exactly
+     * as T79 asks for it. The only thing standing between a discount and
+     * a card worth less than the ticket promised is the rehearsal, and it
+     * fires on what Mindbody ANSWERS rather than on a rule of ours: see
+     * the Value assertion further down.
+     *
+     * A discount that takes the whole ticket is still refused: a card
+     * comped to nothing is a bearer instrument handed over for free,
+     * which is not a comp and is not something Pete asked for. Refused
+     * HERE because the generic "a gift card is paid for with cash or a
+     * card on file" below is true and is not what a teacher needs to
+     * read. */
+    if (method === "comp") {
       return refuse(
-        "A gift card cannot be discounted or comped: the card is worth its " +
-          "face value whatever was paid for it. Remove the discount, or " +
-          "sell the card on its own. Nothing was charged.",
+        "A gift card cannot be comped: a card given away for nothing is " +
+          "still worth its face value to whoever holds it. Discount part " +
+          "of the ticket instead. Nothing was charged.",
       );
     }
     if (method === "giftcard") {
@@ -574,13 +587,28 @@ export async function POST(request: Request) {
     if (refusal !== null) {
       return NextResponse.json({ error: refusal }, { status: 400 });
     }
-    const d = parseDiscount(discountRaw, subtotalCents(items));
+    /* T102: on a ticket holding gift cards the subtotal is not known
+     * here. A card's price comes from the LIVE product list, read
+     * further down, so the SHAPE is validated now against a bound that
+     * cannot bite and the bound itself is checked there, by this same
+     * validator and in the same words, against the whole ticket. */
+    const d = parseDiscount(
+      discountRaw,
+      giftLines.length > 0 ? Number.MAX_SAFE_INTEGER : subtotalCents(items),
+    );
     if (typeof d === "string") {
       return NextResponse.json({ error: d }, { status: 400 });
     }
     discount = d;
   }
-  const full = discount !== null && isFullDiscount(items, discount);
+  /* T102: `full` is the CART's 100% case, the one that sends method comp
+   * and no tender. A gift card ticket never reaches it: method comp is
+   * refused above, and the gift card block below refuses any discount
+   * that leaves a part of the ticket with nothing to pay. */
+  const full =
+    giftLines.length === 0 &&
+    discount !== null &&
+    isFullDiscount(items, discount);
   /* Method comp IS the 100% discount: nothing else may use it, and a
    * discount that leaves something to pay needs a tender. */
   if (method === "comp" && !full) {
@@ -1127,7 +1155,106 @@ export async function POST(request: Request) {
       );
     }
     const units = resolved.units;
-    const cardsTotal = giftCardTotal(units);
+
+    /* ================================================================
+     * T102: the discount, across the WHOLE ticket.
+     *
+     * A gift card is not a cart line, so there is no DiscountAmount to
+     * send with it: the one figure /sale/purchasegiftcard takes is the
+     * PaymentInfo amount (the T96 probes read the whole field list, and
+     * that endpoint carries no price, value, discount or promotion
+     * field). So a discounted card is a card paid for with less, and
+     * whether the card is then still worth its face value is Mindbody's
+     * answer to give, not ours to assume. The rehearsal below asks it.
+     *
+     * The spread is T79's, over the cart lines and the cards together in
+     * one list, so the parts sum to the armed figure to the cent exactly
+     * as T90's carts do. The cart's share rides as an `amount` discount
+     * for its own cart (splitDiscount's argument: re-spread inside the
+     * cart it sums back to the cents handed to it); each card's share
+     * comes off what is charged for it.
+     * ================================================================ */
+    /** What each card is CHARGED, after its share of the discount. The
+     *  unit's own `amount` stays what the ticket priced it at. */
+    let charged: number[] = units.map((u) => u.amount);
+    /** Each card's share of the discount, in cents, for the record. */
+    let cardOff: number[] = units.map(() => 0);
+    /** The cart lines' share, as the discount their cart carries, and
+     *  the same figure in cents for the record. */
+    let cartDiscount: Discount | null = null;
+    let cartOffCents = 0;
+    /** The whole ticket's pre-tax figures, for the record and the
+     *  answer's `discount` block. */
+    const ticketSubtotal = roundToCents(
+      (subtotalCents(items) +
+        units.reduce((n, u) => n + Math.round(u.amount * 100), 0)) /
+        100,
+    );
+    let ticketDiscounted = 0;
+    if (discount !== null) {
+      /* The bound parseDiscount could not check above, in its own words:
+       * the ticket's subtotal is the cart's lines plus the cards. */
+      const bounded = parseDiscount(
+        discountRaw,
+        Math.round(ticketSubtotal * 100),
+      );
+      if (typeof bounded === "string") {
+        return NextResponse.json({ error: bounded }, { status: 400 });
+      }
+      discount = bounded;
+      const spreadLines = [
+        ...items.map((line) => ({ price: line.price, quantity: line.quantity })),
+        ...units.map((u) => ({ price: u.amount, quantity: 1 })),
+      ];
+      const spread = spreadDiscount(spreadLines, discount);
+      const cartCents = spread
+        .slice(0, items.length)
+        .reduce((n, c) => n + c, 0);
+      cardOff = spread.slice(items.length);
+      ticketDiscounted = roundToCents(
+        spread.reduce((n, c) => n + c, 0) / 100,
+      );
+      charged = units.map((u, i) =>
+        roundToCents(u.amount - (cardOff[i] ?? 0) / 100),
+      );
+      /* Every part of the ticket must keep something to pay. A card
+       * discounted to nothing is the free bearer instrument method comp
+       * was refused for, and a CART discounted to nothing would need the
+       * 100% no-Payments shape, which cannot be mixed with cards paid
+       * for in the same breath. */
+      const freeCard = charged.findIndex((amount) => amount <= 0);
+      if (freeCard >= 0) {
+        return NextResponse.json(
+          {
+            error:
+              "That discount would give the " +
+              `${(units[freeCard] as GiftCardUnit).cardValue.toFixed(2)} gift ` +
+              "card away for nothing, and a free card is still worth its " +
+              "face value to whoever holds it. Discount less. Nothing was " +
+              "charged.",
+            stage: "method",
+          },
+          { status: 409 },
+        );
+      }
+      if (items.length > 0 && cartCents >= subtotalCents(items)) {
+        return NextResponse.json(
+          {
+            error:
+              "That discount takes the whole of the rest of the ticket, " +
+              "which a ticket holding a gift card cannot be charged for. " +
+              "Discount less, or sell the comped lines on their own. " +
+              "Nothing was charged.",
+            stage: "method",
+          },
+          { status: 409 },
+        );
+      }
+      cartOffCents = cartCents;
+      cartDiscount =
+        cartCents > 0 ? { mode: "amount", value: cartCents / 100 } : null;
+    }
+    const cardsTotal = roundToCents(charged.reduce((n, a) => n + a, 0));
 
     /* The cart half, when the ticket has one: rehearsed exactly as every
      * other sale is, and its total is Mindbody's. */
@@ -1135,7 +1262,7 @@ export async function POST(request: Request) {
     if (items.length > 0) {
       let cartPriced;
       try {
-        cartPriced = await rehearseCheckout(items, saleClientId);
+        cartPriced = await rehearseCheckout(items, saleClientId, cartDiscount);
       } catch (err) {
         return NextResponse.json(
           { error: errMessage(err), stage: "rehearsal" },
@@ -1183,7 +1310,7 @@ export async function POST(request: Request) {
      * and running it per part would turn one tap into a row of seams. */
     const parts: number[] = [
       ...(items.length > 0 ? [cartTotal] : []),
-      ...units.map((u) => u.amount),
+      ...charged,
     ];
     let cardOnFile: { lastFour: string } | null = null;
     if (method === "storedcard") {
@@ -1272,7 +1399,7 @@ export async function POST(request: Request) {
           productId: unit.productId,
           purchaserClientId: saleClientId,
           barcodeId: ids[i] as string,
-          payment: paymentFor(unit.amount),
+          payment: paymentFor(charged[i] as number),
           test: true,
           sendEmailReceipt: false,
         });
@@ -1324,13 +1451,41 @@ export async function POST(request: Request) {
           { status: 502 },
         );
       }
-      if (roundToCents(trial.amountPaid) !== unit.amount) {
+      if (roundToCents(trial.amountPaid) !== (charged[i] as number)) {
         return NextResponse.json(
           {
             error:
               `Mindbody charges ${trial.amountPaid.toFixed(2)} for that gift ` +
-              `card, not the ${unit.amount.toFixed(2)} on the ticket. ` +
-              "Nothing was charged; tap Recheck prices and try again.",
+              `card, not the ${(charged[i] as number).toFixed(2)} on the ` +
+              "ticket. Nothing was charged; tap Recheck prices and try again.",
+            stage: "rehearsal",
+          },
+          { status: 409 },
+        );
+      }
+      /* T102: THE guard on a discounted card, and the only one. The
+       * endpoint has no field for a price that differs from a value, so
+       * a card paid less for may come back worth less, which would make
+       * the discount a smaller card rather than a cheaper one. Whether
+       * it does is a property of the product (six of site 471's nine
+       * fixed products followed the payment, three their own CardValue,
+       * with every documented field identical), so it is READ off the
+       * rehearsal per card and per sale, never predicted. Its own
+       * sentence ahead of the general mismatch below, because "worth
+       * less than the ticket said" needs to name what to do. */
+      if (
+        (cardOff[i] ?? 0) > 0 &&
+        roundToCents(trial.value) < unit.cardValue
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              `Discounting that gift card would make it worth ` +
+              `${trial.value.toFixed(2)} instead of ` +
+              `${unit.cardValue.toFixed(2)}: on this card Mindbody takes the ` +
+              "discount off what the card is WORTH, not off what it costs. " +
+              "Sell it at its full price, or discount the rest of the " +
+              "ticket instead. Nothing was charged.",
             stage: "rehearsal",
           },
           { status: 409 },
@@ -1384,6 +1539,7 @@ export async function POST(request: Request) {
             paymentFor(cartTotal),
             actor,
             sendEmail,
+            cartDiscount,
           ),
         );
         if (run.actorFallback) fallbackNote = run.actorFallback;
@@ -1430,7 +1586,7 @@ export async function POST(request: Request) {
               productId: unit.productId,
               purchaserClientId: saleClientId,
               barcodeId: id,
-              payment: paymentFor(unit.amount),
+              payment: paymentFor(charged[i] as number),
               actor,
               test: false,
               sendEmailReceipt: sendEmail,
@@ -1448,14 +1604,14 @@ export async function POST(request: Request) {
            * known by, and Mindbody holds the record. */
           sold.push({
             value: outcome.value ?? unit.cardValue,
-            price: outcome.amountPaid ?? unit.amount,
+            price: outcome.amountPaid ?? (charged[i] as number),
             barcodeId: outcome.barcodeId ?? id,
             saleId: outcome.saleId === null ? null : String(outcome.saleId),
           });
           logGiftCardSale({
             outcome: "yes",
             value: outcome.value ?? unit.cardValue,
-            price: outcome.amountPaid ?? unit.amount,
+            price: outcome.amountPaid ?? (charged[i] as number),
             saleId: outcome.saleId,
             clientId: saleClientId,
             staffId: session.staffId,
@@ -1477,7 +1633,7 @@ export async function POST(request: Request) {
           logGiftCardSale({
             outcome: failure.ambiguous ? "unknown" : "no",
             value: unit.cardValue,
-            price: unit.amount,
+            price: charged[i] as number,
             saleId: null,
             clientId: saleClientId,
             staffId: session.staffId,
@@ -1489,6 +1645,122 @@ export async function POST(request: Request) {
       }
     }
     if (gone) return gone;
+
+    /* ================================================================
+     * T102: T79's record, for the ticket that just resolved.
+     *
+     * Written here rather than through recordDiscount (which is built
+     * further down, out of the single cart's rehearsal) for the same
+     * reason T90's carts write their own: this ticket is several
+     * Mindbody sales, and the figures are the ticket's, not one cart's.
+     * The record is a side effect of an ANSWER: it names what actually
+     * landed, so a ticket that broke half way through records the half
+     * that stood and the discount that came off it, never the armed
+     * figure. One log line always (the T29 charter: a record with no
+     * database at all), the receipt row and the client note on top.
+     * ================================================================ */
+    let discountFields: Record<string, unknown> = {};
+    if (discount !== null && compReason !== null) {
+      const landedCards = sold.length;
+      const suppressedHere =
+        suppressedKind !== null && cartSale === null && landedCards === 0;
+      /* What came off what actually went through. */
+      const offCents =
+        (cartSale !== null ? cartOffCents : 0) +
+        cardOff.slice(0, landedCards).reduce((n, c) => n + c, 0);
+      const off = roundToCents(offCents / 100);
+      const onTicket = roundToCents(
+        (cartSale?.total ?? 0) + sold.reduce((n, c) => n + c.price, 0),
+      );
+      const subtotalHere = roundToCents(
+        ((cartSale !== null ? subtotalCents(items) : 0) +
+          units
+            .slice(0, landedCards)
+            .reduce((n, u) => n + Math.round(u.amount * 100), 0)) /
+          100,
+      );
+      const line = discountRecordLine({
+        discount,
+        discounted: off,
+        subtotal: subtotalHere,
+        paid: onTicket,
+        full: false,
+        reason: compReason,
+        teacherName: teacher?.name ?? null,
+      });
+      const recordSaleId = cartSale?.saleId ?? sold[0]?.saleId ?? null;
+      let noteId: number | null = null;
+      const house = houseClientId();
+      if (
+        !suppressedHere &&
+        clientId !== undefined &&
+        (house === null || clientId !== house)
+      ) {
+        const filed = await fileFormulaNote({
+          session,
+          clientId,
+          note: [
+            `${line}${teacher ? "." : ""}`,
+            recordSaleId ? `Sale ${recordSaleId}.` : null,
+          ]
+            .filter(Boolean)
+            .join(" "),
+          route: "/api/checkout formula-note",
+          logTag: "[comp]",
+        });
+        noteId = filed.id;
+      }
+      console.log(
+        `[comp] ${target()} sale=${suppressedHere ? "suppressed" : (recordSaleId ?? "unknown")} ` +
+          `client=${clientId ?? "house"} total=${off.toFixed(2)} ` +
+          `reason=${JSON.stringify(line)} kind=${compReason.kind} ` +
+          `discount=${discount.mode}:${discount.value} ` +
+          `off=${off.toFixed(2)} paid=${onTicket.toFixed(2)} ` +
+          `shape=lines giftcards=${landedCards} ` +
+          teacherLogTag(teacher) +
+          (noteId !== null ? ` note=${noteId}` : ""),
+      );
+      await insertCompReceipt({
+        saleId: suppressedHere ? null : recordSaleId,
+        cartId: suppressedHere ? null : (cartSale?.cartId ?? null),
+        clientId: clientId ?? null,
+        totalCents: Math.round(off * 100),
+        items: [
+          ...(cartSale !== null ? compItems : []),
+          ...sold.map((card, i) => ({
+            type: "GiftCard",
+            id: String((units[i] as GiftCardUnit).productId),
+            name: `Gift card ${card.value.toFixed(2)}`,
+            quantity: 1,
+            price: card.price,
+          })),
+        ],
+        reason: line,
+        target: target(),
+        suppressed: suppressedHere,
+        teacherId: teacher === null ? null : String(teacher.id),
+        teacherName: teacher?.name ?? null,
+        kind: compReason.kind,
+        detail: compReason.detail ? compReason.detail : null,
+        formulaNoteId: noteId,
+        discountAmount: off,
+        discountPercent: discount.mode === "percent" ? discount.value : null,
+        saleTotal: onTicket,
+      });
+      discountFields = {
+        discountShape: "lines",
+        discount: {
+          mode: discount.mode,
+          value: discount.value,
+          amount: off,
+          subtotal: subtotalHere,
+          percent: discountPercentLabel(discount, off, subtotalHere),
+          full: false,
+          reason: compReason,
+          teacher: teacher ? { id: teacher.id, name: teacher.name } : null,
+        },
+      };
+    }
 
     const landedWords: string[] = [
       ...(cartSale !== null
@@ -1524,6 +1796,7 @@ export async function POST(request: Request) {
           total: ticketTotal,
           giftCardsSold: sold,
           ...(cartSale !== null ? { cartSold: cartSale } : {}),
+          ...discountFields,
         },
         { status: 502 },
       );
@@ -1540,6 +1813,7 @@ export async function POST(request: Request) {
               giftCardsSold: sold,
             }
           : {}),
+        ...discountFields,
         ...actorFields({
           actorFallback: fallbackNote,
           staffSessionEnded: false,
@@ -1559,6 +1833,7 @@ export async function POST(request: Request) {
       ...(cartSale !== null ? { cartSold: cartSale } : {}),
       receiptRequested: sendEmail,
       emailReceipt: sendEmail ? receiptConfirmed : null,
+      ...discountFields,
       ...actorFields({ actorFallback: fallbackNote, staffSessionEnded: false }),
     });
   }

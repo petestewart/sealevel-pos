@@ -619,12 +619,12 @@ export function resolveGiftCardUnits(
   return { units, error: null };
 }
 
-/** What the cards on a ticket cost, to the cent. */
-export function giftCardTotal(units: readonly GiftCardUnit[]): number {
-  let total = 0;
-  for (const u of units) total += u.amount;
-  return roundToCents(total);
-}
+/* T102: giftCardTotal lived here and was the sum of the units' own
+ * amounts. What a ticket's cards COST is no longer that sum: a discount
+ * comes off each card's payment (/api/checkout spreads it over the cart
+ * lines and the cards together), so the figure is computed there from
+ * what each card is actually charged, and a helper that ignored the
+ * discount would be a wrong total waiting to be called. */
 
 /**
  * A gift card sale on record, as one server log line. The T29 charter's

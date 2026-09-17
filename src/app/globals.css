@@ -5324,6 +5324,28 @@ textarea.reason-note-field:disabled::placeholder {
   font-variant-numeric: tabular-nums;
 }
 
+/* T102: the one tap that lets the done screen go, inside the gift card
+ * block it acknowledges. Accent, because while an id is unwritten this
+ * is the only actionable thing on the screen; Done goes quiet under it
+ * (.pay-done-btn.off) until this is tapped, which is the same pair
+ * .pay-primary and .pay-primary.off already read as. */
+.pay-done-gift-ack {
+  min-height: 64px;
+  margin-top: 4px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 17px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.pay-done-gift-ack:active {
+  background: var(--accent-press);
+}
+
 .pay-done-line {
   margin: 0;
   max-width: 34em;
@@ -5350,8 +5372,17 @@ textarea.reason-note-field:disabled::placeholder {
   text-align: left;
 }
 
-.pay-done-btn:active {
+.pay-done-btn:active:not(.off) {
   background: var(--accent-press);
+}
+
+/* T102: inert while a gift card id on this screen has not been written
+ * on the card. Not hidden: the way out stays where it always is, it
+ * just does nothing yet, and its title says what to do first. */
+.pay-done-btn.off {
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: default;
 }
 
 /* A dry run's suppressed outcome takes the canvas's title; still amber,
