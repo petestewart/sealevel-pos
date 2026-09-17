@@ -12841,3 +12841,98 @@ typecheck` and `npm run build` clean.
 Noted in passing, out of scope: `giftcardsale.ts` carries a gift card
 product's `Description` to the browser (SaleScreen's gift card type) and
 nothing renders it. If it is ever rendered it wants `plainText` too.
+
+## T103: a paid sale that sold nothing
+
+Found by probe on 2026-09-17, chasing Pete's question "did you try using
+Comp as part of the PaymentInfo body?" down to its end. It is not a
+change request; it is a hole this project did not know it had, written
+down before it is forgotten.
+
+### What happened
+
+Four probes, in order, asked whether a gift card can be discounted:
+
+1. `POST /sale/purchasegiftcard` has no price, value or discount field.
+   The only figure the counter controls is what is PAID, and six of site
+   471's nine fixed products answer a smaller payment with a smaller
+   card (T96), so paying less is a coin flip between discounting the
+   card and shrinking it.
+2. A **Comp** payment on that endpoint is refused outright: "Invalid
+   payment method", for a comp alone for the full value, for a comp
+   alone for part of it, and for a comp beside an account payment (an
+   array where the spec documents one object). So the arithmetic that
+   would have kept the total at face value while charging the customer
+   less is not available there.
+3. As a **cart line**, a gift card product prices. The editable
+   custom-amount product (282) prices at **$0.00**, with the per-line
+   audit reading `ours $50.00 x1 theirs $0.00 x1`: a cart never carries
+   our price, it prices from the product's own SalePrice, and that
+   product has none. A fixed product (323, $28) prices at $28.00 and a
+   `DiscountAmount` of $10.00 LANDS: $28.00 / -$10.00 / $18.00, as a
+   Product and as a Service.
+4. So two REAL sales were made, comped so no money moved, to see what
+   the cart actually creates (Pete authorised them; `Test: true` cannot
+   answer it, because a card that was never created has no balance to
+   read). Sales 426536 ($28.00) and 426537 ($21.00, after a $7.00
+   discount), both `Comp/Guest`, both on the dummy client.
+
+**Both sales came back with `PurchasedItems: []`.** No gift card, no
+barcode, no item of any kind, `LocationId: null`, and Pete cannot see
+either sale in Mindbody's own UI. The cart accepted the line, priced it,
+applied the discount, took the payment, and **sold nothing**.
+
+### What that settles, and what it opens
+
+Settled: **the cart is not the route for a gift card.** Not for the
+editable product, which prices at zero and would hand out a free card,
+and not for a fixed one, which prices and discounts correctly and then
+books a payment against no item. `purchasegiftcard` stays the only
+route, which is also the only one that can SET the barcode a teacher
+writes on blank stock. T102's rehearsal guard remains the whole answer
+to the discount question, and a gift card product id must never reach a
+cart line.
+
+Opened, and this is the part that outlives gift cards: **nothing in this
+app checks that a sale it just paid for actually contains what was
+sold.** `grep -rn PurchasedItems src/` finds exactly one use, in
+`guestsale.ts`, reading someone else's sale. The checkout path reads the
+answer's totals and sale id and never asks what the sale holds. A pass
+is caught indirectly, because T25 re-reads `/client/clientservices` and
+matches by ProductId, and a contract is its own endpoint; a RETAIL
+product is not caught at all. On this evidence a cart can answer 200
+with a priced total, a taken payment and an empty basket, and the
+counter would show a completed sale.
+
+That is a money invariant this project already believes in ("suppression
+never success") applied one level further: **a payment with no purchased
+items is not a sale.** The fix is an assertion at the checkout boundary,
+in the same shape as T75's total assertion: compare what came back
+against what was sent, line for line, and refuse the whole answer when
+the basket is empty or short, loudly, naming what is missing. It cannot
+un-take a payment that Mindbody already took, so it must also say
+plainly that money moved and nothing was sold, which is the one case a
+teacher must escalate rather than retry.
+
+Open, needing Mindbody rather than code: sales 426536 and 426537 cannot
+be returned. `POST /sale/returnsale` refuses both with "This saleId is
+for 'Return Sale' and it cannot be returned", which is not a sentence
+the spec explains for a comped sale of no items. Their exposure is nil,
+two comps of $49 total on a dummy client with no card issued and nothing
+visible in the UI, but they are on the books and only Mindbody can take
+them off.
+
+### Probes, kept
+
+- `scripts/probe-giftcard-comp.ts` -- the four Comp rehearsals.
+- `scripts/probe-giftcard-discount.ts` -- a gift card as a cart line,
+  with the per-line audit that turned "PRICED $0.00" into an answer.
+- `scripts/probe-giftcard-cart-sale.ts` -- the two live comped sales.
+  Its own bug is recorded in it: it read the sale id from
+  `ShoppingCart.Id`, which the checkout answer does not carry, so it
+  could not return what it made. `latestSaleId` in `src/lib/sale.ts`
+  exists for exactly that reason (T63) and the probe did not use it.
+- `scripts/probe-giftcard-cart-cleanup.ts` -- finds a client's sales for
+  the day, prints each one's items and any barcode, reads the balance of
+  any card named, and returns the comped ones. This is what read the
+  empty baskets.
