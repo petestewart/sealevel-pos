@@ -1082,6 +1082,16 @@ export interface BasketAudit {
    * id that was sent, which is itself the finding.
    */
   soldQuantity: number | null;
+  /**
+   * T103 review: did Mindbody actually REPORT a quantity for this line?
+   * False when every matched item came back without a `Quantity`, which
+   * is the documented shape for a pricing option ("applicable for
+   * products only"). Then `soldQuantity` counts the matched items and is
+   * never read as short: a line of two answered by one item with no
+   * quantity at all is Mindbody saying nothing about how many, and a
+   * refusal has to rest on what it said.
+   */
+  quantityReported: boolean;
 }
 
 /** What the basket assertion decided. */
@@ -1094,8 +1104,33 @@ export interface BasketVerdict {
    */
   problem: string | null;
   audit: BasketAudit[];
-  /** Ids the basket holds that this ticket never ordered. */
+  /**
+   * Ids the basket holds that this ticket never ordered. Recorded, never
+   * a refusal on its own (T103 review): Mindbody puts its own lines in a
+   * sale (a tax line, a fee, a bundled component of a package), and an
+   * extra line is not evidence that the ordered ones were missed.
+   */
   unordered: string[];
+  /**
+   * T103 review: why this answer carries no assertable basket, or null
+   * when it was asserted. `ok` is true in both cases and nothing is
+   * refused; the caller logs it so it is visible to us and to nobody at
+   * the counter.
+   *
+   * - `package`: the ticket held a Package line. A package bundles
+   *   services and products into one offering, and `PurchasedItem` has
+   *   no package field at all (sale.yml:2302): a package sale can only
+   *   come back as its components, whose ids are nowhere in the ticket.
+   *   Asserting it would refuse every package sale, so the whole cart is
+   *   carved out exactly as T30 carves it out of the total assertion.
+   * - `mismatch`: the SALE that was read holds items and none of them
+   *   answers to this ticket at all. That is what a mis-identified sale
+   *   looks like (the sale id comes from a dated list filtered on the
+   *   client, not from the answer), and reading it as "you paid and got
+   *   nothing" would invent a crisis out of a lookup that picked the
+   *   wrong row. The answer's OWN basket is never excused this way.
+   */
+  unassertable: "package" | "mismatch" | null;
 }
 
 /**
@@ -1124,32 +1159,71 @@ export function purchasedItemsOf(res: unknown): unknown[] | null {
 /** An id a purchased item answers to: its `Id` (the pricing option's
  *  ProductId for a service, sale.yml:2311) and its `BarcodeId` (2320),
  *  which is what a Product line is sent as. The same either-way match
- *  auditLines uses, for the same reason. */
+ *  auditLines uses, for the same reason. Folded to lower case, since a
+ *  barcode is a string and the two sides must not disagree over the
+ *  casing of one (T103 review). */
 function purchasedIds(entry: unknown): string[] {
   const e = entry as Record<string, unknown> | null | undefined;
   const out: string[] = [];
   for (const key of ["Id", "BarcodeId"]) {
     const v = e?.[key];
-    if (typeof v === "string" && v.trim() !== "") out.push(v.trim());
+    if (typeof v === "string" && v.trim() !== "") out.push(v.trim().toLowerCase());
     else if (typeof v === "number" && Number.isFinite(v)) out.push(String(v));
   }
   return out;
 }
 
 /**
+ * Does this purchased item answer to this ordered line?
+ *
+ * The id has to match, and the item's own `IsService` (sale.yml:2314:
+ * "the purchased item was a pricing option for a service") must not
+ * CONTRADICT the line's type. Both id namespaces are small integers on
+ * one site -- a product's barcode and a pricing option's ProductId can
+ * coincide -- so without this a sale holding a pass could answer for a
+ * retail product that was never sold (T103 review, proved against the
+ * mock). Where the flag is absent nothing is contradicted and the
+ * either-way match stands.
+ */
+function purchasedMatches(entry: unknown, line: CartLine): boolean {
+  const id = String(line.metadataId).trim().toLowerCase();
+  if (!purchasedIds(entry).includes(id)) return false;
+  const isService = (entry as Record<string, unknown> | null | undefined)?.[
+    "IsService"
+  ];
+  if (isService === true && line.type === "Product") return false;
+  if (isService === false && line.type === "Service") return false;
+  return true;
+}
+
+/**
  * Does this sale hold what was sent? The whole answer is refused when
- * the basket is empty, misses a line, is short on a line's quantity, or
- * holds something that was never ordered.
+ * the basket is empty, misses a line, or is short on a line's quantity
+ * as Mindbody itself reported it.
  *
  * Strict in one direction only, exactly like totalsDisagree: there is no
- * tolerance, and a missing figure is never read as agreement. A line
- * whose matched items carry no Quantity at all counts as one apiece,
- * which is Mindbody's documented shape for a service, so a service sold
- * once satisfies a line of one and a line of two is still short.
+ * tolerance, and a missing figure is never read as agreement. What it
+ * does NOT claim (T103 review, each one a shape a legitimate sale comes
+ * back in):
+ *
+ * - it never refuses for an EXTRA line. Mindbody puts lines of its own
+ *   in a sale, and an extra one says nothing about the ordered ones.
+ *   Extras are recorded in `unordered` and logged.
+ * - it never refuses a line whose matched items carry no `Quantity`
+ *   (the documented shape for a pricing option): then Mindbody has not
+ *   said how many, and a short count cannot be inferred.
+ * - it asserts nothing at all about a cart holding a Package line, or
+ *   about a SALE READ that holds only items this ticket never ordered.
+ *   See BasketVerdict.unassertable.
+ *
+ * `source` says where the basket came from: the checkout answer itself,
+ * which is certainly this sale, or a `/sale/sales` read, which is this
+ * sale as far as the lookup could tell.
  */
 export function assertBasket(
   items: readonly CartLine[],
   purchased: readonly unknown[],
+  source: "answer" | "sale" = "answer",
 ): BasketVerdict {
   /* Which ordered line each basket entry answers to, so an entry is
    * never counted twice and an entry nobody ordered is visible. */
@@ -1157,14 +1231,16 @@ export function assertBasket(
   const audit: BasketAudit[] = items.map((line) => {
     const id = String(line.metadataId);
     let sold: number | null = null;
+    let reported = false;
     let name: string | null = null;
     purchased.forEach((entry, i) => {
-      if (!purchasedIds(entry).includes(id)) return;
+      if (!purchasedMatches(entry, line)) return;
       claimed.add(i);
       const e = entry as Record<string, unknown>;
       const qty = e["Quantity"];
-      const one = typeof qty === "number" && Number.isFinite(qty) ? qty : 1;
-      sold = (sold ?? 0) + one;
+      const said = typeof qty === "number" && Number.isFinite(qty);
+      if (said) reported = true;
+      sold = (sold ?? 0) + (said ? (qty as number) : 1);
       if (name === null) {
         for (const key of ["Name", "Description"]) {
           const v = e[key];
@@ -1181,6 +1257,7 @@ export function assertBasket(
       name,
       orderedQuantity: line.quantity,
       soldQuantity: sold,
+      quantityReported: reported,
     };
   });
   const unordered = purchased
@@ -1189,6 +1266,17 @@ export function assertBasket(
     )
     .filter((id): id is string => id !== null);
 
+  /* T30's carve-out, one level on: a package has no basket shape of its
+   * own to assert against. */
+  if (items.some((line) => line.type === "Package")) {
+    return {
+      ok: true,
+      problem: null,
+      audit,
+      unordered,
+      unassertable: "package",
+    };
+  }
   const nameOf = (a: BasketAudit): string =>
     a.name ?? `${a.type.toLowerCase()} ${a.metadataId}`;
   if (purchased.length === 0) {
@@ -1200,11 +1288,30 @@ export function assertBasket(
         " was paid for and none of it was sold",
       audit,
       unordered,
+      unassertable: null,
+    };
+  }
+  /* A sale that was READ and answers to none of this ticket is more
+   * likely the wrong sale than a sale that sold nothing. */
+  if (
+    source === "sale" &&
+    audit.every((a) => a.soldQuantity === null) &&
+    unordered.length > 0
+  ) {
+    return {
+      ok: true,
+      problem: null,
+      audit,
+      unordered,
+      unassertable: "mismatch",
     };
   }
   const missing = audit.filter((a) => a.soldQuantity === null);
   const short = audit.filter(
-    (a) => a.soldQuantity !== null && a.soldQuantity < a.orderedQuantity,
+    (a) =>
+      a.soldQuantity !== null &&
+      a.quantityReported &&
+      a.soldQuantity < a.orderedQuantity,
   );
   const problems: string[] = [];
   if (missing.length > 0) {
@@ -1221,16 +1328,16 @@ export function assertBasket(
           .join(", "),
     );
   }
-  if (unordered.length > 0) {
-    problems.push(
-      `the sale holds ${unordered.length === 1 ? "an item" : "items"} the ` +
-        `ticket never ordered (${unordered.join(", ")})`,
-    );
-  }
   if (problems.length === 0) {
-    return { ok: true, problem: null, audit, unordered };
+    return { ok: true, problem: null, audit, unordered, unassertable: null };
   }
-  return { ok: false, problem: problems.join("; "), audit, unordered };
+  return {
+    ok: false,
+    problem: problems.join("; "),
+    audit,
+    unordered,
+    unassertable: null,
+  };
 }
 
 /* =====================================================================

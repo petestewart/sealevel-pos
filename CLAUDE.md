@@ -303,8 +303,18 @@ while `git clone` works, so clone the repo rather than fetching files.
   reachable, so every cart checkout is now asserted against what was
   sent, line for line, by the id that was sent and the quantity
   (`assertBasket` in `src/lib/sale.ts`, beside T75's total assertion,
-  with the same per-line audit). An empty basket, a missing line, a
-  short quantity or a line nobody ordered refuses the whole answer.
+  with the same per-line audit). An empty basket, a missing line or a
+  quantity Mindbody itself reported short refuses the whole answer. It
+  deliberately does NOT refuse for a line Mindbody ADDED (a sale
+  carries lines of its own), for a line whose items report no
+  `Quantity` at all (the documented shape for a pricing option, so a
+  short count cannot be inferred), for a cart holding a Package line
+  (a package can only come back as its components, T30's carve-out one
+  level on), or for a sale that was READ and holds none of this ticket
+  (that is a lookup that found the wrong sale, not a sale that sold
+  nothing). Each of those is logged and stands: a FALSE refusal tells a
+  teacher at the counter that the money is gone and nothing was sold,
+  which is worse than the bug this rail catches.
   The basket comes from the answer's own `PurchasedItems` when it
   carries one, else from the sale that `latestSale` already reads for
   the numeric id; when NEITHER says what the sale holds the outcome is
