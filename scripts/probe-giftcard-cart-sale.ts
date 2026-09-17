@@ -154,7 +154,14 @@ async function sell(
   }
 
   const cart = res?.ShoppingCart ?? {};
-  const saleId = num(cart?.Id);
+  /* The checkout answer does NOT reliably carry a sale id: the first live
+   * run of this probe read ShoppingCart.Id and got nothing twice, leaving
+   * two comped sales it could not return. src/lib/sale.ts's latestSaleId
+   * exists for exactly this reason (T63): the sale is found by re-reading
+   * /sale/sales afterwards. So this probe no longer pretends the id is in
+   * the answer; scripts/probe-giftcard-cart-cleanup.ts finds and returns
+   * the sale, and is what must be run after this. */
+  const saleId = num(cart?.Id) ?? num(res?.SaleId);
   console.log(
     `    SOLD. sale id ${saleId ?? "(none)"}  total ${money(num(cart?.GrandTotal))}` +
       `  discount ${money(num(cart?.DiscountTotal))}`,
@@ -191,8 +198,12 @@ async function sell(
 
   if (saleId === null) {
     console.log(
-      "    !! NO SALE ID came back, so this sale cannot be returned from\n" +
-        "    here. Find it in Mindbody and void it by hand.",
+      "    !! NO SALE ID in the answer, which is expected: the checkout\n" +
+        "    response does not carry one. RUN THIS NOW to find the sale,\n" +
+        "    read what it created and return it:\n" +
+        `      MINDBODY_TARGET=prod POS_DRY_RUN=false POS_WRITE_CLIENT_IDS=${clientId} \\\n` +
+        "        npx tsx --env-file=.env " +
+        `scripts/probe-giftcard-cart-cleanup.ts ${clientId} RETURN`,
     );
     return;
   }
