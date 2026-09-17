@@ -2524,8 +2524,24 @@ button.chip.action:active {
   margin: 0 0 16px;
 }
 
-.modal-actions button:disabled {
-  opacity: 0.6;
+/* T101 review: a disabled modal action in TOKENS, not a fade. The
+ * quantity pad's Done is off until a figure is typed, and 0.6 of the
+ * accent fill under --accent-ink measured 1.9:1 there; the gift card
+ * box's Done has always read the same way, and so does a disabled
+ * Cancel on the --stop fill (1.9:1 light, 2.3:1 dark). This is the
+ * treatment T102's review settled on for .pad-chip:disabled and
+ * .nav-item[aria-disabled="true"], reused rather than a third one:
+ * --muted on --surface-2 measures 5.97:1 light and 5.25:1 dark, so a
+ * control that is off still says what it is. The two scoped selectors
+ * are here because `.modal-pad .modal-confirm.go` and `.modal-sale
+ * .modal-confirm.go` each carry three classes and would otherwise keep
+ * painting the accent fill under a disabled button. */
+.modal-actions button:disabled,
+.modal-pad .modal-actions button:disabled,
+.modal-sale .modal-actions button:disabled {
+  border-color: var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
   cursor: default;
 }
 
