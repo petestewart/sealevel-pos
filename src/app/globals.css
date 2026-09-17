@@ -3365,6 +3365,18 @@ button.chip.action:active {
   font-weight: 600;
 }
 
+/* T104 (Pete: "the ticket rows should also say the name of the gift card
+ * in small/lighter text under the title of 'Gift card'"): the line's
+ * secondary text, in the sub-line's own muted 16px rather than a second
+ * treatment. One line, ellipsized: it must not push the row's height
+ * around and must not reach the stepper the row reveals under it. */
+.t-sub-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: normal;
+}
+
 /* `2 @ 1.81`: muted, only above quantity one. 16px since T70. */
 .t-sub-line {
   margin-top: 2px;
@@ -3799,9 +3811,18 @@ button.sale-for:disabled {
   flex-direction: column;
   justify-content: space-between;
   gap: 8px;
+  /* See .shelf-cell: the card may never be wider than its column. */
+  min-width: 0;
   min-height: 104px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
+  /* T104 review: the SAME outer edge the in-cart card below reads, less
+     this card's own 1px line. Half of this pair was anchored to the
+     cell's numbers and half was still `14px 16px`, so raising
+     `--cell-edge-y` would have moved the card's outer edge the moment a
+     line landed on the ticket, which is the one thing that pair exists
+     to prevent. */
+  padding: calc(var(--cell-edge-y, 15px) - var(--cell-line, 1px))
+    calc(var(--cell-edge-x, 17px) - var(--cell-line, 1px));
+  border: var(--cell-line, 1px) solid var(--line);
   border-radius: 0;
   background: var(--surface);
   color: var(--ink);
@@ -3812,9 +3833,14 @@ button.sale-for:disabled {
   border-color: var(--accent);
 }
 
+/* The 2px border eats into the card's own padding so its outer edge does
+ * not move when a line lands on the ticket: 13 + 2 is the 14 + 1 above.
+ * T104 review: read from the cell's three numbers (see .shelf-cell) so
+ * the strip that stands on this inner edge cannot drift away from it. */
 .shelf-item.in-cart {
-  padding: 13px 15px;
-  border: 2px solid var(--accent);
+  padding: calc(var(--cell-edge-y, 15px) - var(--cell-border, 2px))
+    calc(var(--cell-edge-x, 17px) - var(--cell-border, 2px));
+  border: var(--cell-border, 2px) solid var(--accent);
 }
 
 .shelf-name {
@@ -3825,43 +3851,82 @@ button.sale-for:disabled {
   line-height: 1.2;
 }
 
-/* The bottom row: price bottom-left, count badge bottom-right. */
+/* The bottom row: the price at the bottom left and, since T104, the
+ * stepper at its right (Pete: "the -/amt/+ buttons ... shoujld be in the
+ * box, not outside it, in line with and to the right of the price").
+ *
+ * 44px tall on EVERY cell, in the cart or not: the stepper is 44px, and a
+ * row that only reserved its height once the strip appeared would make
+ * the grid reflow under the teacher's finger, which is worse than the bug
+ * this fixes. The card's 104px minimum already covers it (14 + a 21px
+ * name + the 8px gap + 44 + 14 = 101). */
 .shelf-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-height: 44px;
 }
 
+/* T104: 16px, the app's floor, rather than T70's 18px. The stepper takes
+ * 126px of the foot's width and the narrowest cell in the grid is 208px
+ * (measured), which leaves 61px for the figure: "$125.00" is 59px at
+ * 16px and 67px at 18px, so 18px could not hold the studio's own prices
+ * beside the control Pete asked to have there. It ellipsizes rather than
+ * wrapping, so a long tail ("no tax", "package, est.") gives way before
+ * the figure does. */
 .shelf-price {
+  /* A row, so the FIGURE can be told never to give way while the tail
+   * beside it ("no tax", "package, est.") ellipsizes: one ellipsis over
+   * the whole line cut "$27.65 package, est." down to "$27.6...", which
+   * is the one thing on the cell that may not be approximate. The 4px
+   * gap replaces the spaces the flex items' own whitespace no longer
+   * provides. */
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
   min-width: 0;
-  font-size: 18px;
+  font-size: 16px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
+/* T104 review: the figure never SHRINKS against the tail beside it
+ * (flex-shrink 0, which is what makes the tail give way first), but where
+ * it alone is wider than the room the strip leaves it, it has to say so:
+ * `max-width` caps a non-shrinking flex item at its container, and the
+ * ellipsis is then the difference between a truncated number and a
+ * WRONG one. "$1,250.00" in the 61px of the narrowest in-cart cell drew
+ * "$1,250.0" against the X, which reads as a price rather than as a
+ * figure that did not fit. */
 .shelf-amt {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-weight: 400;
 }
 
-/* How many of this card the cart holds, from cart state (T39.3): the
- * accent-filled badge, 28px tall, 16px/800, reading "x2". Absent when
- * the item is not in the cart. */
-.shelf-count {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 34px;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: 0;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-size: 16px;
-  font-weight: 800;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
+/* The tail gives way first, and says so with an ellipsis. */
+.shelf-price .shelf-notax,
+.shelf-price .shelf-bundle-mark {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* T104: and on a card that is IN the cart it gives way entirely, because
+ * the 61px the stepper leaves the price at the narrowest cell is the
+ * figure and nothing else: an ellipsis there reads "$27.65 p", which
+ * looks like a typo rather than a truncation. The tail is a caveat, not
+ * a number ("no tax", "package, est."); the ticket carries both facts
+ * for a line that is on it (the package note under the total), and the
+ * cell says it again the moment the line leaves the cart. */
+.shelf-cell.has-qty .shelf-price .shelf-notax,
+.shelf-cell.has-qty .shelf-price .shelf-bundle-mark {
+  display: none;
 }
 
 /* The subtle tax-exempt marker on a shelf item. */
@@ -3878,10 +3943,53 @@ button.sale-for:disabled {
 .shelf-cell {
   position: relative;
   display: grid;
+  /* T104 review: the numbers the cards and the stepper over them ALL
+   * read, so that "2px in, 15px up" stays the card's own inner
+   * corner rather than a pair of literals that happen to agree with it
+   * today. The outer edge (15 down the card, 17 across) is the same
+   * whatever the border costs; the border is what the strip clears; the
+   * strip's own width is three 44px squares less a 40px one's two
+   * collapsed borders. Change one here and the foot's reserve, the
+   * card's padding and the strip's corner all follow. */
+  --cell-edge-y: 15px;
+  --cell-edge-x: 17px;
+  /* T104 review: the idle card's line as well as the in-cart card's
+     border, so both paddings are the one outer edge less their own
+     line. */
+  --cell-line: 1px;
+  --cell-border: 2px;
+  --strip-w: 126px;
+  /* A grid item does not shrink below its min-content width by default,
+   * and a nowrap price with the strip's band reserved beside it made that
+   * min-content wider than the 208px column: the card grew over its
+   * neighbour rather than ellipsizing (found in the browser, T104). Both
+   * this and the button below have to say so. */
+  min-width: 0;
 }
 
-.shelf-cell.has-qty {
-  grid-template-rows: minmax(0, 1fr) auto;
+/* T104, Pete: "the -/amt/+ buttons are in the wrong spot on individual
+ * item boxes. they shoujld be in the box, not outside it, in line with
+ * and to the right of the price."
+ *
+ * T82/T101 gave the cell a SECOND grid row for the strip, which drew it
+ * under the card's border and so outside the box the eye sees. The button
+ * fills the whole cell again and the strip is positioned over its lower
+ * right, inside the 2px accent border an in-cart card wears. The controls
+ * stay siblings of the add button, never nested inside it (a button
+ * inside a button is invalid and breaks the tap target), so this is
+ * placement and nothing else. The foot keeps the room the strip needs, so
+ * the price is never under it. */
+.shelf-cell.has-qty .shelf-foot {
+  /* The strip is 126px and hangs 13px into the card's own right padding
+   * (it sits 2px from the cell's edge, the padding is 15), so the band
+   * the foot has to keep clear of it is 113px plus a 2px breath. What is
+   * left of the narrowest cell's 178px is 65px for the figure, which
+   * holds "$125.00" (59px at 16px, measured) and "$145.00" (60px) with
+   * room to spare. A four-figure price would ellipsize; nothing on this
+   * counter's shelf is one, and the ticket carries the real number. */
+  padding-right: calc(
+    var(--strip-w) - var(--cell-edge-x) + var(--cell-border) + 2px
+  );
 }
 
 /* T82 drew this as a full-width strip along the card's bottom edge.
@@ -3893,11 +4001,24 @@ button.sale-for:disabled {
  * them. Tapping the card's body above it still adds one, so this is the
  * only way down. */
 .shelf-qty {
+  position: absolute;
+  /* Inside the in-cart card's own 2px border, which is the box Pete
+   * means: the border draws around the control rather than under it.
+   *
+   * 15px up, which is that border plus the card's own 13px of bottom
+   * padding, so the strip's 44px box and the 44px foot line coincide and
+   * the stepper really is level with the price rather than merely near
+   * it. Flush to the right, because the price needs the 15px of padding
+   * on that side: at the narrowest cell in the grid (208px measured) the
+   * figure has 59px, which is exactly what "$125.00" takes at 16px. */
+  right: var(--cell-border, 2px);
+  bottom: var(--cell-edge-y, 15px);
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 2px;
-  padding: 4px 4px 4px 0;
+  gap: 0;
+  padding: 0;
   background: var(--surface);
 }
 
@@ -3917,6 +4038,13 @@ button.sale-for:disabled {
 
 .shelf-qty-btn {
   width: 44px;
+}
+
+/* T104: adjacent borders collapse, so the strip reads as one control and
+ * costs 126px rather than 136 on a 208px cell. */
+.shelf-qty-n,
+.shelf-qty > .shelf-qty-btn:last-child {
+  margin-left: -1px;
 }
 
 .shelf-qty-btn:active:not(:disabled),
@@ -3939,11 +4067,24 @@ button.sale-for:disabled {
 /* T101: the quantity is a control, in the same idiom as the two squares
  * beside it, because it opens the number pad. */
 .shelf-qty-n {
-  min-width: 3em;
-  padding: 0 6px;
+  /* 44px of height (the icon-square idiom) and room for two digits: the
+   * ticket row's 3em would have cost the price its own space. */
+  min-width: 40px;
+  padding: 0 4px;
   font-size: 18px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
+}
+
+/* T104: a gift card cell is named by the studio's own product name, which
+ * can be long. Two lines and then an ellipsis, exactly as T101's chip
+ * did, with the whole of it on the button's title, so a cell never grows
+ * past its neighbours and never runs under the stepper. */
+.shelf-gift-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 /* Room for the star so a long name never runs under it. Only the name
@@ -4823,10 +4964,6 @@ button.sale-for:disabled {
  * 64px. A name can be long, so it wraps to two lines and then ellipsizes,
  * with the whole of it on the title; it never overflows the cell and the
  * cell never grows. */
-.modal-gift-list {
-  width: min(560px, 100%);
-}
-
 .gift-card-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
