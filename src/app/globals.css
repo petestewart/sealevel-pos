@@ -5522,8 +5522,11 @@ textarea.reason-note-field:disabled::placeholder {
   border-color: var(--accent);
 }
 
+/* Once the membership has started the row is a record, not a control:
+ * dimmed to --muted rather than faded, so it stays readable in dark
+ * (at opacity 0.5 the pair measured 4.49 against the surface). */
 .contract-start:disabled {
-  opacity: 0.5;
+  color: var(--muted);
   cursor: default;
 }
 

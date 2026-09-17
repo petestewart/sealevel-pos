@@ -12260,7 +12260,9 @@ mispriced; only the label "prorated" would need re-wording.
 - `src/app/globals.css`: `.contract-desc` deleted; `.contract-start`
   (64px, `--accent` border when a day other than today is selected),
   `.cal-day:disabled` and `.cal-nav:disabled`. Tokens only, both
-  palettes, radius 0, 16px floor.
+  palettes, radius 0, 16px floor. The disabled start row is dimmed to
+  `--muted` rather than faded to opacity 0.5, which the dark-mode audit
+  measured at 4.49 against the surface.
 - Verified with `scratchpad/t99` (mock on :4599, `next start` on :3099,
   rebuilt before every run). Route driver: 36 checks green, including
   the catalog's shape (no `description`, no surviving markup tag, the
@@ -12275,8 +12277,12 @@ mispriced; only the label "prorated" would need re-wording.
   cross-month pick through the arrow, two dates giving two figures,
   Today putting it back, the dialog measuring the same in every state,
   one tap being one charge, and the no-figure case refused in words. No
-  text under 16px and no contrast below 4.5 in anything this ticket
-  touched.
+  text under 16px, and the one contrast finding this ticket introduced
+  (the disabled start row at 4.49 in dark) was fixed by dimming it to
+  `--muted`. Left alone as pre-existing and shared: a DISABLED confirm
+  button reads low whatever it says, because `.modal-actions
+  button:disabled` fades every one of them to opacity 0.6, which is how
+  T30's own "Not sellable here" has always rendered.
 - `npm run typecheck` and `npm run build` clean.
 - Deliberately NOT done: no signature pad (T30's reasoning stands), no
   live Mindbody run from this container, and `FirstPaymentOccurs:
