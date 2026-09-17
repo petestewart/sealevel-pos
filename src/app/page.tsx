@@ -346,6 +346,12 @@ type PayOutcome =
   | { kind: "suppressed"; mode: string }
   | { kind: "charge-failed"; message: string }
   | { kind: "charge-ambiguous"; message: string }
+  /* T103: the charge went through and the sale holds nothing that was
+     ordered. Its own kind because "charge-failed" invites a retry and
+     this must never: the money moved, and a second tap is a second
+     charge. The gesture stops here, so nothing is attached and nobody is
+     checked in on a pass that does not exist. */
+  | { kind: "sold-nothing"; message: string }
   | { kind: "split"; message: string; mindbody: string }
   | { kind: "attach-failed"; message: string }
   | { kind: "checkin-failed" };
@@ -4721,6 +4727,20 @@ function FrontDesk({
           });
           return;
         }
+        if (chargeBody?.soldNothing === true) {
+          /* T103: Mindbody took the payment and sold nothing. The
+             gesture stops: no attach, no check-in, and the wording is
+             the route's, which names the sale and says to escalate
+             rather than retry. */
+          setPayOutcome({
+            kind: "sold-nothing",
+            message: String(
+              chargeBody?.error ??
+                "The payment went through and nothing was sold.",
+            ),
+          });
+          return;
+        }
         if (chargeBody?.ambiguous === true) {
           setPayOutcome({
             kind: "charge-ambiguous",
@@ -8125,6 +8145,19 @@ function FrontDesk({
               <div className="sale-stop">
                 Not charged: {payOutcome.message} Nothing else happened; it is
                 safe to try again.
+              </div>
+            ) : payOutcome?.kind === "sold-nothing" ? (
+              /* T103: the money moved and the sale holds nothing. The
+                 route's sentence names the sale; the dialog offers no
+                 Charge control once money has moved (payMoneyMoved), so
+                 the only way out of here is Close and a word with the
+                 studio. */
+              <div className="sale-stop">
+                <p className="pay-split-head">{payOutcome.message}</p>
+                <p className="pay-split-why">
+                  Nothing was attached and nobody was checked in. Do not
+                  charge again.
+                </p>
               </div>
             ) : payOutcome?.kind === "charge-ambiguous" ? (
               <div className="sale-stop">
