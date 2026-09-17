@@ -1403,7 +1403,7 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             error:
-              `Mindbody refused the ${unit.cardValue.toFixed(2)} gift card: ` +
+              `Mindbody refused the $${unit.cardValue.toFixed(2)} gift card: ` +
               `${errMessage(err)} Nothing was charged.`,
             stage: "rehearsal",
           },
@@ -1440,7 +1440,7 @@ export async function POST(request: Request) {
           {
             error:
               "Mindbody did not say what the " +
-              `${unit.cardValue.toFixed(2)} gift card would be worth or what ` +
+              `$${unit.cardValue.toFixed(2)} gift card would be worth or what ` +
               "it would cost, so it cannot be sold. Nothing was charged.",
             stage: "rehearsal",
           },
@@ -1619,7 +1619,7 @@ export async function POST(request: Request) {
             break;
           }
           failure = {
-            what: `the ${unit.cardValue.toFixed(2)} gift card`,
+            what: `the $${unit.cardValue.toFixed(2)} gift card`,
             message: isAmbiguous(err)
               ? "it did not answer, so it MAY have gone through. Check the " +
                 "dev drawer or Mindbody before charging again"
@@ -1760,9 +1760,9 @@ export async function POST(request: Request) {
 
     const landedWords: string[] = [
       ...(cartSale !== null
-        ? [`the ticket (${cartSale.total.toFixed(2)})`]
+        ? [`the ticket ($${cartSale.total.toFixed(2)})`]
         : []),
-      ...sold.map((c) => `a ${c.value.toFixed(2)} gift card`),
+      ...sold.map((c) => `a $${c.value.toFixed(2)} gift card`),
     ];
 
     if (failure !== null) {
@@ -1773,7 +1773,7 @@ export async function POST(request: Request) {
        * from the sentence when the cart was the thing that broke. */
       const notDone = units
         .slice(cardsAttempted)
-        .map((u) => `the ${u.cardValue.toFixed(2)} gift card`);
+        .map((u) => `the $${u.cardValue.toFixed(2)} gift card`);
       return NextResponse.json(
         {
           error: [

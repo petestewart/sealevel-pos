@@ -12842,6 +12842,353 @@ Noted in passing, out of scope: `giftcardsale.ts` carries a gift card
 product's `Description` to the browser (SaleScreen's gift card type) and
 nothing renders it. If it is ever rendered it wants `plainText` too.
 
+## T101. A typeable quantity, a shelf card that reads like the ticket, gift cards by name, a quantity on the pay screen and a swipe to remove (Pete, 2026-09-17)
+
+Pete, on the Buy screen:
+
+> "'Other Client' should look like a button and not be in bold text
+>
+> An individual item's button should have the +/amt/- section (like the
+> ticket row) in its lower right when there is >0 qty in the cart.
+> Clicking on - (or X) lowers the qty. clicking anywhere else raises it.
+>
+> And both sections should make the qty clickable and use a number keypad
+> to enter an amt. it should be obvious that the amt is clickable.
+>
+> The gift card section was supposed to have a list of items but instead
+> it has dollar amounts as the button labels. List the items names and
+> the dollar amount for each one. Custom is one of the buttons, and
+> custom brings up the number keypad."
+
+Then, on the Pay screen:
+
+> "The pay screen should still have the option to change quantities on
+> the ticket rows like the buy screen."
+
+And, on the ticket row itself:
+
+> "In the ticket rows on the buy screen, swiping left on a row should
+> delete the item from the cart."
+
+### The design
+
+1. **"Other Client" is drawn as a button.** It was transparent, `--accent`
+   ink at weight 700, which read as a link between two bordered squares.
+   It now takes the surface and the 1px `--line` border every other
+   secondary control on that row has (`.t-ctl-btn`, `.modal-cancel`), at
+   the body weight. The accent ink stays, because `--accent` is the token
+   for "actionable" and this control is; both states are otherwise
+   untouched, including the accent tint it wears once a recipient is on
+   the line (T90) and the 44px icon-square height.
+
+2. **The shelf card's stepper is the ticket row's, at the card's lower
+   right.** T82 drew it as a full-width strip along the card's bottom edge
+   with a separate X square. It is now minus, quantity, plus, on 44px
+   squares against the card's right edge, and **at quantity one the minus
+   IS the remove**, drawn as the X glyph in `--stop` with the aria label
+   "Remove <name> from the sale", exactly as T90 settled it for the ticket
+   row. The separate X square is gone with it. The controls are still
+   SIBLINGS of the add button, never nested inside it (nested buttons are
+   invalid HTML and double-fire), and still stop propagation, so the
+   card's body above them still adds one and the strip is the only way
+   down.
+
+   **T39.3's count badge goes while the strip is up.** The strip carries
+   the number, between its own two controls, in the corner the badge
+   occupied; two copies of one figure on one card, one tappable and one
+   not, is the sort of thing that gets reported as a bug. The card still
+   says it is in the cart, in its 2px accent border. The Gift card cell,
+   which has no strip, keeps its badge.
+
+   **The strip had not rendered at all since T90.** The card read
+   `inCart` with the catalog's key (`Product-9001`) while T90 had re-keyed
+   every cart line with its recipient (`Product-9001:self`), so `count`
+   was zero on every card: no badge, no strip, nothing to adjust. Fixed
+   here, with the cart key, because a ticket about that strip cannot ship
+   with it invisible.
+
+3. **The quantity is typed on a number pad, from both places.** The
+   quantity on the shelf strip and the quantity on the ticket row are
+   controls now, on the same surface and border as the stepper's buttons
+   (Pete: "it should be obvious that the amt is clickable"), labelled
+   "Quantity of <name>, tap to type it", and both open the same pad. The
+   pad is the T82 keypad idiom in the T98 band: the kicker, the figure,
+   the line it is about, the refusal line, the keys with a wide zero where
+   the amount pad's "00" would be, and Done in the 96px column.
+
+   It is a QUANTITY, so it counts in whole units: no dot key and no sign,
+   which is how a fraction, a negative and a letter are refused before
+   they can be typed at all. What is left is refused in words with Done
+   off: an empty entry ("Type a quantity, 1 to 99."), zero ("A line on
+   the ticket needs at least one. Remove the line instead.") and anything
+   past the cap ("The most of one line this app rings up is 99."). Three
+   digits can be typed so that the refusal is reachable rather than hidden
+   behind a dead key. `setLineQuantity` refuses the same set again for any
+   caller that is not the pad, and the SERVER refuses it a third time
+   (`parseCartLines`, src/lib/sale.ts: "quantity (integer, 1 to 99)"),
+   which is where it actually matters. A pad opened on a line the cart no
+   longer holds closes itself, because Done would have nowhere to land.
+
+4. **The gift card box lists the site's products by name.** Its chips read
+   "$25.00". They now read the product's NAME over its amount, one cell
+   per visible product (T97's hide list still does the filtering,
+   server-side), with **Custom** in the same grid. Tapping a card rings it
+   up exactly as its chip did; tapping Custom brings up the number keypad,
+   which is T95/T96's box unchanged: the same limits, the same two
+   assertions, the same checkout path, the same hidden-card refusal, and
+   the same preset-match rule (a typed figure resolves to a preset only
+   while that product's price IS its value), with the cells still lighting
+   when a typed figure is theirs. So the box has two states, one fixed
+   size each, and the keypad is behind Custom rather than always up.
+
+   **The name is `Description`.** Mindbody's `GiftCard` schema carries no
+   Name at all (docs/mindbody-openapi/sale.yml), so the studio's product
+   name arrives in `Description`; the drawer's Shelf tab already read it
+   that way. A product with none falls back to its amount, which is what
+   the chip read before. Names can be long, so a cell clamps to two lines
+   with an ellipsis and carries the whole name on its `title`. A site with
+   no fixed products at all is Custom alone and says so.
+
+5. **A pay-screen row takes a quantity change.** This RELAXES T39.6's
+   "the row is read-only in pay mode". That rule existed because a
+   quantity change moves the total the tender was arranged against, and
+   that is still true: it is now handled rather than forbidden. Every cart
+   edit already clears the tender lines, re-spreads an armed discount (or
+   drops it when the smaller subtotal cannot carry it), drops a held card
+   or gift card number with its line, and reprices with Mindbody before
+   Finalize can arm. Those effects key off the cart, not the mode, so they
+   fire from pay mode without a change. What locks a row now is not the
+   mode but the FACTS: a charge in flight, a ticket this panel says was
+   part sold (T95's latch, where gift cards are already real cards in
+   Mindbody), and a settled sale. The panel reports those up through
+   `onTicketLock`, since only it knows them, and `rowsEditable` in
+   SaleScreen is what every control on the row is gated on. The recipient
+   control is deliberately NOT part of this and stays out of pay mode:
+   moving a line onto another account under an armed tender is a different
+   conversation and nobody asked for it.
+
+6. **A left swipe on a buy-screen row removes that line.** It calls
+   `removeLine`, the same removal the minus performs at quantity one, so
+   there is one removal with one set of consequences. No confirm, matching
+   T82's decision for the row's own remove: one tap from the shelf puts
+   the item back, and a gesture that asks twice is not a gesture. The row
+   follows the finger over a `--stop` hint that reads REMOVE, quiet while
+   the swipe is short of the distance that removes and filled once it is
+   past it, so the release is never a surprise (text on the `--stop` fill
+   is `--bg`, as the palette rule requires).
+
+   **It must not fight the list.** The ticket scrolls vertically under the
+   same finger, so nothing moves until the drag is past a wobble (14px)
+   AND more horizontal than vertical, the gesture is abandoned for the
+   rest of the press the moment it goes vertical, removal needs 96px, and
+   `touch-action: pan-y` leaves the vertical scroll to the browser.
+   Pointer events, so a mouse, a thumb and the harness drive one code
+   path. Buy screen only, and nothing at all while a charge is in flight.
+   The minus stays where it is: the gesture is an addition, never the only
+   way out, and the keyboard and the screen reader keep the control.
+
+### Build notes
+
+Built: all six. `src/app/SaleScreen.tsx` (the row, the shelf card, the two
+new modals, the swipe, `onTicketLock`), `src/app/globals.css` (tokens
+only, radius 0, both palettes), and one server-side change in
+`src/lib/giftcardsale.ts`: a product's `Description` now goes through
+`plainText` and collapses to one line before it leaves the server, which
+is the T99 review's standing note ("if it is ever rendered it wants
+plainText too") coming due, since this ticket is what renders it.
+
+Two bugs found on the way and fixed here:
+
+- **The shelf card's count had been dead since T90** (the key mismatch in
+  item 2 above). Nothing on the Buy screen showed a card's quantity, and
+  T82's strip never appeared.
+- **The gift box's backspace dropped the box's own state.** `giftSellTap`
+  returned a bare `{ entry }` for `back`, which with T101's `custom` flag
+  (and T100's kept note) sent the pad back to the list on the first
+  delete. It spreads the state now.
+
+Verified in a real browser, `next start` on :3101 against the mocked
+Mindbody on :4501, in four passes (light and dark, 1194x834 and 834x1194),
+every pass green, screenshots looked at:
+
+- "Other Client" and "Remove client": weight 400, a 1px solid `--line`
+  border, a painted surface, 44px, radius 0, 16px.
+- The strip: three controls, right-aligned at the card's lower right, 44px
+  squares with the quantity between them, no separate X, no count badge;
+  the card's body adds one; the minus steps down above one and removes at
+  one with the X glyph and the "Remove ... from the sale" label.
+- The pad from BOTH places, naming its line; empty, zero and 100 each
+  refused in words with Done off and the line's quantity unchanged; 7 and
+  3 set; the box one size whatever it is saying; the pad closing when its
+  line leaves the cart.
+- The server refusing 0, 2.5, -1, "3" and 100 through /api/price-cart with
+  "quantity (integer, 1 to 99)", 400 each, from the page itself.
+- The gift box: three named cards with their amounts plus Custom; a 57
+  character name clipped inside its cell with the full text on the title;
+  no keypad until Custom; $37.00 priced on the pad; a typed $50.00 still
+  lighting "Five Class Gift Card"; Done and a named tap each ringing up
+  one line; a product the server withholds absent; a site with only the
+  editable product showing Custom alone and saying so; one size per state.
+- Pay mode: the row's controls present and "Other Client" absent; a cash
+  tender armed on the due, then a quantity change clearing it, repricing
+  with Mindbody and leaving Finalize unarmed; the typed pad setting 4
+  there too; a held gift card number cleared by a quantity change; an
+  armed discount re-spreading over the bigger cart with the figures still
+  summing to the cent.
+- The swipe: a short drag and a mostly vertical drag removing nothing, a
+  clear left swipe removing the line, no removal in pay mode, and none
+  while a charge is in flight (proved with the checkout response held for
+  six seconds).
+
+`npm run typecheck` and `npm run build` clean.
+
+Not done, and why:
+
+- **The swipe could not be exercised in PORTRAIT.** In portrait the sale
+  panes stack and the ticket's own foot ("Empty cart", "Pay") is painted
+  over the short list it leaves, so no pointer reaches a buy-screen row
+  there: `elementsFromPoint` puts `.t-foot-empty` above `.t-row` across
+  the whole list. That is this layout as it stands and not something this
+  ticket changed (the row's existing tap-to-reveal is equally out of
+  reach), so it is recorded rather than fixed. Everything else was proved
+  in both orientations, and the swipe in both palettes in landscape.
+- **T97's hide list could not be exercised through the drawer** in the
+  harness, which runs with no database. What was proved instead is the
+  half that matters here: the box lists exactly the products
+  `/api/gift-cards` serves, so a product the server withholds is one the
+  box cannot show or sell.
+- The quantity pad's disabled Done sits at 2.68:1 against its accent
+  fill, which is the app's existing `:disabled` opacity on that button
+  (the gift card box's Done has always read the same way while nothing is
+  typed). Left as is, recorded here.
+
+### Review (separate reviewer)
+
+Read against T22-T24 (the money invariants), T39.6 (the pay-screen
+read-only rule this ticket relaxes), T90, T95/T96/T97 and T98, then driven
+in a real browser: the builder's own Playwright suite (224 assertions,
+light and dark, 1194x834 and 834x1194) plus four new drivers for the
+attacks it did not make, and one more run against a scratch Postgres for
+T97. `origin/feature/phase-2` was merged twice while this was open, the
+second time bringing T102 (the gift card discount, the done screen's hold
+on an unwritten id) and T103's note; the only code conflict was one state
+declaration in SaleScreen, and the reconciliation held without changes,
+because T102 spreads its discount from the cart on every render
+(`ticketDiscountParts`) and the pricing loop sends the cart's share, so a
+quantity change in pay mode re-spreads it over the cards too. Verified
+after the merge: a pay-mode quantity change clears the tender lines, drops
+a held gift card number, re-prices with Mindbody, leaves Finalize unarmed,
+and re-spreads an armed discount with the figures still summing to the
+cent.
+
+The money seam held: `chargeable` still requires `!pricing` and a
+non-suppressed, non-disagreeing SERVER price, the pricing effect depends
+on the cart (so a quantity change sets `pricing` in the same commit and
+Finalize is off while the answer is on the wire, proved with the call held
+for four seconds), and the quantity is refused a third time by
+`parseCartLines` and `assertCartLines` on every route that prices or
+charges. No sequence found that charges a figure the screen did not show.
+Three fixes, all on the two new gestures rather than on the money:
+
+- **A swipe begun on the buy screen removed a line after pay mode
+  opened.** Reproduced in both palettes: hold the row past the threshold,
+  open pay mode (the row is the same element, portaled into the pay
+  panel), release. `onPointerUp` lived on the row and asked nothing about
+  the screen it was releasing on, so the removal went through on a screen
+  whose whole rule is that a gesture may not take a row off it. The
+  release is handled on the WINDOW now and re-reads the facts at the
+  moment of release (`rowsEditableRef`, `inPayRef`), and `onPointerMove`
+  abandons a gesture whose screen has changed under it. The same move also
+  fixes a row left STUCK mid-swipe, with its Remove hint showing, whenever
+  the release did not reach the row (the finger left it and
+  `setPointerCapture` was not taken).
+- **A second finger drove the first finger's row.** `onPointerDown`
+  checked `e.isPrimary`, but neither `onPointerMove` nor the release
+  checked WHICH pointer they belonged to, so a two-finger drag measured
+  the second pointer against the first pointer's origin and dragged the
+  row (measured: `translateX(-120px)` on a row nobody had touched with the
+  pointer that armed it). The gesture now carries its `pointerId` and
+  ignores every other pointer, and a second press cannot take over a
+  gesture already in the air.
+- **The quantity pad was the one control that could edit a locked
+  ticket.** The row's minus and plus are disabled while a charge is in
+  flight, on a part-sold ticket and on a settled sale; the pad's Done was
+  disabled only on the FIGURE. It now closes on the same test that
+  disables the row, and its Done is off with it, so the pad cannot outlive
+  the ticket it was opened on.
+
+And one contrast fix, which is the brief's item 6c: the quantity pad's
+disabled Done measured **1.9:1** (the build notes above had it at 2.68 by
+another method; either way it fails), because `.modal-actions button:disabled`
+faded an accent fill to 0.6. It now takes the treatment T102's review
+settled on for `.pad-chip:disabled` and `.nav-item[aria-disabled]`:
+`--surface-2` behind `--muted`, in tokens, both palettes, no opacity.
+Measured in the browser afterwards: **6.14:1 light, 5.87:1 dark**. The two
+scoped selectors are needed because `.modal-pad .modal-confirm.go` and
+`.modal-sale .modal-confirm.go` each carry three classes. The rest of the
+app's `:disabled` fades were audited and left, as T102's review left
+`.pay-tile.off`: `.t-ctl-btn` / `.t-ctl-qty` / `.shelf-qty-*` at 0.4
+(2.46:1 light, only while a charge is in flight), `.t-foot-empty` on an
+empty cart (1.85:1), `.pay-free` and `.audit-recheck` at 0.6. They are one
+app-wide sweep in one change, not a third treatment introduced here.
+
+The builder's three gaps are closed rather than carried:
+
+- **The swipe DOES work in portrait.** The claim that no pointer reaches a
+  buy-screen row there was the harness, not the layout: in the stacked
+  fold `.t-foot` is `position: sticky; bottom: 0` (T85, so Pay is never
+  scrolled to) and it covers the tail of a short list until the pane is
+  scrolled to its end. Scroll the overlay (`.sale-overlay`, 285px here)
+  and the row is hittable and the swipe removes the line, in both
+  palettes. Recorded as what it is: a sticky foot over the list's tail
+  mid-scroll, T85's behaviour and not this ticket's.
+- **T97's hide list is verified for real**, against a scratch Postgres 16
+  on :5433 with `DATABASE_URL` set: one `app_settings` row hiding
+  `GiftCard:2002`, and then the product is absent from `/api/gift-cards`,
+  absent from the box, refused past the browser by `/api/checkout` (409,
+  "That gift card is turned off at this counter", with no
+  `purchasegiftcard` call of any kind, rehearsal included), never lit by a
+  typed figure at its value, while the visible product still sells. A
+  malformed hide key (`GiftCard-2002`) made the server ignore the whole
+  stored config, loudly, and serve the code default, which is the T29
+  charter behaving as written.
+- The disabled Done is fixed above.
+
+Also verified, since each was a way the new surfaces could lie: the gift
+card `Description` reaches the browser as plain text (a product whose
+description was `<p><b>Single</b> Class&nbsp;Gift Card</p><script>` plus a
+`<style>` rendered as "Single Class Gift Card", nothing executed, nothing
+hidden, no markup in the cell's `innerHTML`); a product with NO
+description still renders as "$50.00 gift card" and still sells (the
+harness mock had been supplying one, so this path was untested before);
+the quantity pad's typing edges (leading zeros collapse, a third digit is
+typeable so the refusal is reachable, a fourth does nothing, 99 passes and
+100 is refused in words with the line unchanged); the pad closes when T90
+re-keys its line onto another client; a swipe under an open keypad removes
+nothing; a line that leaves the cart mid-drag takes the gesture with it
+and no other row is dragged; a part-sold ticket refuses to open a row's
+controls at all; and the shelf strip fits the narrowest cell without
+overflowing or covering the card's name.
+
+Two finds outside this ticket's diff, one fixed:
+
+- **Six gift card amounts were printed with no unit**, on the sentences a
+  teacher escalates from: "Sold a 25.00 gift card. the 25.00 gift card was
+  NOT sold". Fixed in `src/app/api/checkout/route.ts` (T95/T102 copy, not
+  T101's), since an amount without its unit on the partial-sale outcome is
+  the one screen where the figure matters most. The lowercase "the"
+  starting the second sentence is left: it is how that sentence is
+  assembled from parts, and rewording it is a copy change of its own.
+- **A part-sold ticket now locks the BUY screen's rows too**, which
+  follows from `ticketLock` being a fact rather than a mode. It is
+  defensible (those lines are already sold in Mindbody) and the way on is
+  "Empty cart", which stays enabled; but the buy screen does not say WHY
+  the controls are gone, while the pay screen does (`partialLock` is its
+  primary's reason). Recorded rather than changed: the sentence belongs
+  wherever T95's latch is next opened.
+
+`npm run typecheck` and `npm run build` clean.
+
 ## T102. A gift card can be discounted, and its id holds the screen (Pete, 2026-09-17)
 
 Pete: "Additionally, the gift card needs an ID, which needs to be
