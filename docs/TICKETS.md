@@ -14134,3 +14134,420 @@ was merged before finishing and was already contained in this branch
   wrong number on a receipt.
 - No UI was touched, so nothing was re-audited in the browser; the
   screens render exactly what T103 built.
+
+## T104. Gift cards are cells in the grid, a ticket row says "Gift card" once, and the stepper moves inside the box (Pete, 2026-09-17)
+
+Pete, on the Buy screen:
+
+> "the gift card UX is wrong. the individual gift card types should be in
+> the grid, not in a pop up modal. there is no need for the modal.
+>
+> the ticket rows currently list the gift card items as "Gift card $123"
+> next to the price, so it looks like  "Gift card $123
+> $123" . this is redundant
+>
+> instead, the ticket rows should also say the name of the gift card in
+> small/lighter text under the title of "Gift card" like this:
+> Gift card                            $123
+> 5 class pack"
+
+And, in the same cells, one more:
+
+> "the -/amt/+ buttons are in the wrong spot on individual item boxes.
+> they shoujld be in the box, not outside it, in line with and to the
+> right of the price."
+
+### 1. The products are cells
+
+The Gift cards shelf was ONE cell, "Gift card, choose the amount", which
+opened a modal whose first state listed the products (T101) and whose
+second was the number pad (T95/T96). The list state is gone. The shelf is
+now one cell per VISIBLE product, tapped to ring that card up exactly as a
+pass or a shirt is, plus one cell for the custom amount.
+
+- **A product cell is a shelf cell, not a variant of one.** The studio's
+  own name for the card (T101's `giftCardName`, Mindbody's `Description`,
+  which is the only name that schema carries) over the card's VALUE, and
+  it carries everything a shelf cell carries: the T101 stepper at its
+  lower right once the ticket holds it, the body adding one, the minus
+  becoming the remove at quantity one, and the typeable quantity. The
+  stepper is now literally the same code: `shelfStepper(key, name, count)`
+  came out of `shelfCard` so that a gift card cell and a pass cell cannot
+  drift apart, which is the bug this ticket exists to remove. A card
+  priced differently from its value still says both figures, as its chip
+  did.
+- **The custom amount keeps a pad, and that is not the modal Pete
+  removed.** An amount is never typed into a text field in this app
+  (CLAUDE.md, T35), so a figure the studio has no product for needs the
+  keypad. That cell opens T95/T96/T101's second state unchanged: both
+  limits, the preset-match rule (a typed figure sells through a fixed
+  product only while that product's price IS its value), the chips that
+  light when a typed figure is theirs, both rehearsal assertions and the
+  same checkout path. T100's offer of a refused pass still opens that same
+  pad with the pass's own cents already in hand.
+- **The custom cell carries no stepper, and that is not an exception to
+  the rule above.** Each amount typed is its OWN ticket line (T96's
+  per-amount cart key), so there is no single line for the cell to hold a
+  quantity of. The lines it makes step on the ticket like any other, and
+  the product cells, which are one line each, carry the stepper.
+- **It is drawn only where the site has an editable product**, because
+  that product is the only thing that can sell a typed figure (T96).
+  Without one the pad could offer nothing the cells beside it do not
+  already, and a dead control is worse than none. With no FIXED products
+  the custom cell stands alone. With no gift cards at all, or a read that
+  fails, there is no Gift cards shelf and the reason is in the answer and
+  the call log, exactly as T95 left it.
+- **Where the cells sit, and what a studio can change, is T97's mechanism
+  and no other.** The hide list in `app_settings` already takes
+  `GiftCard:<id>` keys and `/api/gift-cards` already applies them
+  server-side, so a card the drawer's Shelf tab turns off simply has no
+  cell, and `/api/checkout` still refuses its id in words. The order is
+  the order that route serves, cheapest first, with the custom cell last;
+  the Gift cards child still sits where T95 put it, last among the Retail
+  children. **Nothing became reorderable that was not**: `groupOrder`
+  orders pass sub-categories and `products` moves a retail product, and
+  neither reaches a gift card, which is not a catalog item. What CHANGED
+  for a studio is only what the hide list now does: it used to remove a
+  chip inside a modal, and it now removes a cell from the shelf.
+
+### 2. A ticket row says "Gift card" once
+
+`giftCardItem` built `name: "Gift card $50.00"`, so the row read "Gift card
+$50.00 ... $50.00". The title is `"Gift card"` now and the product's name
+goes under it, in the sub-line the row already had for `n @ price` (T90's
+recipient is a different thing: it rides IN the name, because it qualifies
+the item rather than describing it). One line, muted 16px, ellipsized, so
+it cannot push the row's height around or reach the controls the row
+reveals under it, with the whole of it on the title.
+
+- The custom amount card has no product name, and the line reads **custom
+  amount**: the words on the cell that sold it, so the row names where it
+  came from rather than leaving the line blank. A fixed product the studio
+  gave no description reads **set amount** for the same reason, and never
+  T101's "$50.00 gift card" fallback, which would print the figure twice
+  on a row whose whole complaint was that.
+- A card worth more or less than it costs also names its VALUE in that
+  line ("5 class pack, a $60.00 card"), because the row's figure is what
+  is CHARGED and the value would otherwise be nowhere on the ticket. Site
+  471 prices every card at its value, which is exactly why this is the
+  case that would have gone unnoticed.
+- **Everywhere the name travelled, it still says the whole thing.** One
+  helper, `lineText`, gives a gift card line as one string ("Gift card
+  $50.00, 5 class pack") for the places with no room for two: the row's
+  aria-label, the minus/plus/quantity labels, the quantity pad's line, and
+  the price recheck's "dropped" and "repriced" lists. The pay screen's
+  rows are the same element, portaled, so they read the same way; the
+  discount dialog lists no items at all (it works off the subtotal); the
+  done screen names cards by value from the SERVER.
+- **Nothing that reaches Mindbody changed.** The checkout payload sends a
+  gift card as `{ productId, quantity, amount? }` and never a name; the
+  cart's `name` field (T43/T90) is built from `items`, which never holds a
+  gift card. The comp receipt's line for a card, the client note it feeds
+  (T45/T62) and every partial-sale sentence are written server-side from
+  the unit and the live product ("a $50.00 gift card"), and are untouched.
+  The barcode id is untouched too: still struck from the call log, still
+  shown only on the done screen and the emailed receipt.
+
+### 3. The stepper is inside the box
+
+T82 drew the stepper as a strip along the card's bottom edge and T101
+moved it to the lower right, but both gave the cell a SECOND grid row for
+it, which put it under the card's border and so outside the box the eye
+sees. The button fills the whole cell again and the strip is positioned
+over its lower right, 2px in from the cell's edge and 15px up, which is
+the in-cart card's 2px border plus its own 13px of bottom padding: the
+strip's 44px box and the 44px foot line coincide, so it is level with the
+price rather than merely near it.
+
+The constraint that put it outside has not gone away and is not weakened:
+the controls are still SIBLINGS of the add button, never nested inside it
+(a button inside a button is invalid and breaks the tap target), so this
+is placement, in CSS, and nothing else. The card's body still adds one,
+the strip still stops propagation, the minus is still the remove at
+quantity one in `--stop` with T90's label, the quantity still opens the
+pad, and the count badge is still gone while the strip is up (T101's rule,
+and the gift cards' badge goes with it: every cell has a stepper now, so
+`.shelf-count` has no user left and its rule is deleted).
+
+**What the 126px cost, measured rather than guessed.** The narrowest cell
+in the grid is 208px (landscape; portrait is 258), so the foot has 178px
+and the strip's band takes 113 of it. What is left is 61px for the price.
+Three things follow, and each is a decision:
+
+- **The shelf price is 16px, the app's floor, rather than T70's 18px.**
+  "$125.00" is 67px at 18px and 59px at 16px; the studio's own prices
+  would not have fitted beside the control Pete asked for.
+- **The quantity control is 40px wide** (44 tall, the icon-square idiom),
+  and the three controls collapse their shared borders, which is what
+  makes the strip 126 rather than 136.
+- **The price line is a row now, so the FIGURE never gives way.** One
+  ellipsis over the whole line turned "$27.65 package, est." into
+  "$27.6...", and the figure is the one thing on a cell that may not be
+  approximate. The tail ("no tax", "package, est.", "$45.00 to buy")
+  ellipsizes first and, on a card that is IN the cart, is hidden
+  altogether: 61px is the figure and nothing else, and a one-letter stub
+  reads as a typo rather than a truncation. The ticket carries both facts
+  for a line that is on it, and the cell says it again the moment the line
+  leaves the cart.
+
+**And one bug found on the way.** A grid item does not shrink below its
+min-content width, so the nowrap price plus the reserved band made the
+card's min-content wider than its 208px column and the card grew OVER its
+neighbour. `.shelf-cell` and `.shelf-item` say `min-width: 0` now. It was
+visible only with a long price tail in the cart, which is how it was
+found: in the browser, not in the CSS.
+
+### Build notes
+
+- `src/app/SaleScreen.tsx`: `GiftCardItem.subName` and `giftCardSubName`;
+  `GIFT_CARD_TITLE`; `lineText` and `lineSubName`; the row's sub-line and
+  every label that now uses `lineText`; `shelfStepper` lifted out of
+  `shelfCard`; `giftProductCell`, `giftCustomCell` and `giftCardCells`
+  replacing `giftCardCard`; the box's list state, its `custom` flag and
+  `giftListNote` deleted, with T100's offer opening the pad directly.
+  `giftCardCells` is built after `inCart` is declared, deliberately: it is
+  an eagerly evaluated const, and above that line it reads a binding that
+  does not exist yet.
+- `src/app/globals.css`: the foot's 44px floor and its reserved band, the
+  16px price as a row with a non-shrinking figure, the absolute strip and
+  its collapsed borders, the 40px quantity, `.shelf-gift-name`'s two-line
+  clamp, `.t-sub-name`, `min-width: 0` on the cell and the card, and the
+  two rules with no users left (`.shelf-count`, `.modal-gift-list`).
+  Tokens only, radius 0, both palettes by construction (no colour moved).
+- **Nothing server-side changed at all.** No route, no lib, no payload.
+
+Deliberately not done:
+
+- **The pad keeps its chips.** They are T95/T96/T101's second state, which
+  the brief keeps unchanged; a typed figure still lights the product it
+  resolves to, and tapping one still rings it up. They are now a second
+  way to the same sale the cells offer, which is the price of leaving that
+  state alone.
+- **No star on a gift card cell.** The shared favorites validator admits
+  Product, Service and Package only (T95); widening it is a stored-row
+  migration and its own change.
+
+### Verified by the builder
+
+`npm run typecheck` and `npm run build` clean. Five drivers against `next
+start` with the T100/T102 mock, extended so every gift card product
+carries a studio NAME (`Desc`, including a 51 character one) and so a
+product can be priced under its value:
+
+- **:4104 mock, :3104 app, no database** -- `ui1.mjs` (128 assertions, run
+  in light and dark at 1194x834 and 834x1194, screenshots looked at):
+  one cell per visible product, named by the product over its amount,
+  cheapest first with Custom last; the long name clamped to two lines with
+  the whole of it on the title and no cell taller than its own grid row;
+  the stepper 2px/15px inside the cell, level with the price, to its right,
+  with the price unclipped, three 44px-tall controls, the X at quantity
+  one and "One fewer" above it; the cell's height unchanged when the strip
+  appears; no count badge anywhere; the body adding one; the quantity pad
+  opened from the cell, naming the cell, setting 4; the minus stepping
+  down to one and then removing; the custom cell opening the pad (never a
+  list), typing $37.00, a typed $50.00 still lighting "5 class pack", the
+  box one size in both states, Done ringing up a custom line; the row
+  reading "Gift card" over "5 class pack" with $50.00 once and "custom
+  amount" for the pad's line; and the pay screen's rows saying it the same
+  way with no figure printed twice.
+- `ui4.mjs` (18): a pass cell's stepper and a gift card cell's are the
+  same box in the same place to the pixel; a $230.00 price is not clipped
+  beside it; no `.modal-gift-list` or `.gift-card-list` is reachable any
+  more; T100's offer still appears on a refused pass, still opens the PAD
+  on $49.00, still rings up a custom card and still leaves Mindbody's
+  reason on screen; a $60 card priced $55 names both figures on the cell
+  and "Friends and family card, a $60.00 card" on the ticket; the discount
+  dialog opens on a gift card ticket with "Whole sale" greyed and no
+  doubled figure; a 20% discount reads "Gift cards $50.00 / Discount (20%)
+  -$10.00 / Total $40.00"; the sale charges $40.00 with one rehearsal and
+  one charge, and the done screen holds on "Written on the card" until it
+  is tapped.
+- `ui5.mjs`: the price tails under the strip, at both orientations. The
+  figure survives in every case.
+- `route.mjs` is T102's own route driver, unchanged, all 15 checks green:
+  the discount spread, the shrinking product's refusal, the comp and 100%
+  refusals, the PIN, the mixed ticket, the odd cent. Nothing on the money
+  path moved.
+- **:3105 app with a scratch Postgres 16** (`start-db.sh`) -- `ui2.mjs`:
+  one `app_settings` row hiding `GiftCard:2002` and that card has no CELL,
+  no chip on the pad, and is refused past the browser by `/api/checkout`
+  (409, "That gift card is turned off at this counter") with zero
+  `purchasegiftcard` calls of any kind, while the visible card still
+  sells; then a site with only the editable product showing the custom
+  cell alone. `ui3.mjs`, against a server started with the gift card read
+  failing: no Gift cards shelf at all, the reason in `/api/gift-cards`'s
+  answer, the rest of Retail intact.
+- The shared contrast and size audit over the changed screens, both
+  palettes, both orientations: 44-45 texts each, **no text under 16px, no
+  contrast under 4.5:1 and no tap target under its floor**; the worst
+  readings are 6.08/6.14 in light and 5.85 in dark.
+
+### Not verified
+
+- **Nothing was run against live Mindbody**, and nothing needed to be:
+  no server code changed. The gift card products in the harness are the
+  mock's, so the studio's real names (Pete's seven pre-printed cards) have
+  never been seen in a cell. What they will look like is exactly what the
+  drawer's Shelf tab already lists, which is the same `Description`.
+- **The two-minute product cache still applies to the cells**, as it did
+  to the chips: a product renamed in Mindbody keeps its old cell name for
+  up to two minutes. The hide list is not cached (it is read per request),
+  and every purchase is still rehearsed with `Test: true`.
+- The `.shelf-count` badge is gone from the code; if a future cell ever
+  wants a count without a stepper, that rule has to come back with it.
+
+### After the merge
+
+`origin/feature/phase-2` was merged in at `da4be62` (T103's basket
+assertion and its review, then T105) and everything above was re-run on
+the merged tree: typecheck, build, all five drivers and the audit, every
+one green, with only one conflict and it was in docs/TICKETS.md (two
+sections appended at the same end). T103's rule that a gift card product
+id must never reach a cart line is untouched by this ticket: the cells add
+gift cards through `addGiftCard`, which puts them on the `giftCards` half
+of the payload exactly as the modal did, and `items` still never holds
+one.
+
+### Review
+
+Adversarially reviewed in two passes. **The first pass was interrupted**:
+its container restarted after four commits, before it reported or wrote
+anything here. A second reviewer read those four commits, satisfied
+itself of each, re-ran what they claimed, and then worked the brief from
+the top. Which pass found what is named below, because the first one's
+coverage could not be assumed.
+
+**The claim to check first held.** The diff against `feature/phase-2` is
+`src/app/SaleScreen.tsx`, `src/app/globals.css` and `docs/TICKETS.md`,
+with no route, lib or payload in it; the review then added four user
+facing words to `/api/checkout`'s refusal copy (below) and nothing else
+server side. The checkout payload was read again by hand: a gift card
+line travels as `{productId, quantity, amount?}` on the `giftCards` half
+and `name` rides only on a CART line, and only for a comp or a T90
+ticket, neither of which a gift card can be part of. A route driver
+confirmed it from the wire: the `purchasegiftcard` body carries
+`LocationId, PurchaserClientId, GiftCardId, Test, LayoutId,
+SendEmailReceipt, PaymentInfo, BarcodeId` and nothing about our copy, and
+the barcode is still struck from the call log.
+
+#### Found by the first pass
+
+1. **A four-figure price was hard clipped, not ellipsized.** `.shelf-amt`
+   was `flex: 0 0 auto` with no cap, so "$1,250.00" in the 61px the strip
+   leaves it drew "$1,250.0" against the X: a price that reads as a
+   smaller price. `max-width: 100%` caps a non-shrinking flex item, so the
+   figure still never gives way before the tail does and now says when it
+   did not fit. Reachable on any shelf, not only this one: a membership
+   over $1,000 is a four-figure price.
+2. **A card priced under its value said $60.00 twice.** `lineText` led
+   with the card's VALUE and the sub-line names that same value when the
+   two differ, so the row's title, its label and the quantity pad read
+   "Gift card $60.00, Friends and family, a $60.00 card". It leads with
+   what the line CHARGES when they differ, so both figures are there and
+   each once.
+3. **The recheck's repricing sentence said $50.00 twice**, for the same
+   reason: that sentence supplies its own two figures ("X: $50.00 is now
+   $45.00"), so `lineNameOnly` names the card without one. The DROPPED
+   list keeps the whole of it, since nothing else in that sentence says
+   which card went.
+4. **The strip's corner was two literals, not the card's corner.** `right:
+   2px; bottom: 15px` and `padding-right: 113px` happened to agree with
+   `.shelf-item.in-cart`'s own border and padding written eighty lines
+   away. The cell now carries the numbers both rules read, so the card's
+   padding, the foot's reserve and the strip's corner follow each other.
+   This is the brief's "coincidence or anchor" question, answered by
+   anchoring.
+
+#### Found by the second pass
+
+5. **A membership's schedule was cut off mid-word** (`8ef7d6a`). Making
+   `.shelf-price` a nowrap flex row with `overflow: hidden` gave the two
+   tails an ellipsis, but the contract card's tail is a BARE TEXT NODE,
+   `{frequencyPhrase(c)}`, and an anonymous flex item cannot take
+   `text-overflow`. Before this ticket that line wrapped. After it,
+   "$165.00 each time the included pass runs out or expires" (the
+   `PricingOptionRunsOutOrExpires` branch) was clipped at the cell's edge
+   with nothing to say so: measured at 385px of text in 171px of room, on
+   the narrowest cell. In `.shelf-bundle-mark` it ellipsizes like every
+   other tail, with the whole of it on its title. A contract card is never
+   inside a `.shelf-cell`, so the in-cart rule that hides a tail cannot
+   reach it.
+6. **Half of the anchoring above was still literal** (`109b4bf`). The
+   IDLE card kept `padding: 14px 16px; border: 1px`. The pair exists to
+   put ONE outer edge in both states so a card does not jump when a line
+   lands on the ticket, and raising `--cell-edge-y` would have moved only
+   the in-cart one. `--cell-line: 1px` beside `--cell-border: 2px`, each
+   padding the edge less its own line; every figure drawn is the same to
+   the pixel, re-measured.
+7. **The pad's chips said the amount three times** (`88d23fe`). The
+   ticket took Pete's redundancy out of the row and off the cell and left
+   it on the one gift card surface it kept: a fixed product with no
+   `Description` read "$40.00 gift card" over "$40.00", titled "$40.00
+   gift card: a $40.00 gift card". Worse, it made one product read two
+   ways at once, since the new cell calls that product "Gift card".
+   `giftCardTitle` is what a product is called where the figure is already
+   beside it, and the cell and the chips share it; `giftCardName`, which
+   falls back to "$50.00 gift card", stays where it belongs, on the
+   stepper's spoken label where nothing else says which card.
+   In the same commit: `/api/checkout`'s refusal for a gift card product
+   sent as a cart line told the teacher to "sell it from the gift card
+   box". That box was T101's list, which this ticket deleted. It names a
+   Gift cards cell now. The rail itself is untouched.
+
+#### Re-run on the final tree
+
+`npm run typecheck` and `npm run build` clean. Every driver was re-run
+after a fresh `next start` on a fresh build, which the ordering below
+takes seriously (the gift card product list is cached two minutes in the
+server process, and T105's unnamed-sale count is process state):
+
+- The builder's `ui1` (128), `ui4`, `ui5`, `ui2` (the scratch Postgres
+  hide list), `ui3` (the failing read) and `route.mjs` (T102's, unchanged,
+  15 checks): all green, including the discounted gift card sale that
+  rehearses once, charges once and holds the done screen until "Written on
+  the card".
+- The first pass's `r1` (the strip under hostile layout: the narrowest and
+  widest cell, both orientations, a one-word name, a clamped name, a
+  four-figure price, tails, last column, last row, a grid of one cell, the
+  shelf scrolled), `r2` (the gesture and keyboard cases: boundary taps,
+  double taps, drags, touch, tab order, Enter, no button inside a button),
+  `r3` (the naming everywhere, and the custom cell's coherence), `r5` (the
+  recheck's sentences) and `r6` (both limits refused in words on both
+  sides): all green.
+- New this pass: `rb1` (the contract card's tail, which is finding 5, plus
+  an honest re-probe of `min-width: 0`), `rb2` (the pad's chips, finding
+  7), `rb3` (a MALFORMED `shelf_config` row: the whole row is ignored
+  loudly, `[shelf-config] stored shelf_config ignored, using the default`,
+  the shelf falls back to the code default and every visible product has
+  a cell again, so a hide list that cannot be read hides nothing and
+  hides nothing extra).
+- T103's own route driver and the T103 review's, each on a fresh process:
+  both green. Run in the same process as another driver they fail, which
+  is not a regression but T105's recorded posture (an unnamed sale leaves
+  the next lookups unasserted for 248s), and is why each got its own
+  start.
+- The contrast and size audit over the changed screens, both palettes,
+  both orientations: **no text under 16px, no contrast under 4.5:1, no
+  tap target under its floor, no horizontal overflow.** Worst 6.08 light,
+  5.85 dark. No hex outside the palette blocks, no radius, no em dash.
+
+#### Left standing, with reasons
+
+- **`min-width: 0` on the cell and the card was not proved to be load
+  bearing.** The first pass's assertion for it was `A || !A` and passed
+  vacuously. Re-probed honestly: with the rule forced to `auto` no cell
+  grows today, in either orientation, because the price's own `min-width:
+  0` already keeps the card's min-content small. It is kept anyway: it is
+  free, it states the intent, and the builder saw the overflow in the
+  browser before adding it.
+- **The pad's chips are a second way to a sale the cells now offer**,
+  which the builder recorded as the price of leaving T95/T96's pad
+  unchanged. Still true after finding 7, which only changed what a chip
+  is CALLED.
+- **Nothing live.** No server behaviour changed, so nothing needed a live
+  call, and the studio's real card names have still never been seen in a
+  cell.
+- **A gift card line's label names the UNIT price** ("Gift card $37.00,
+  custom amount") while the row's own column shows the extended amount
+  ($111.00 at three). That is the ticket row's existing convention, with
+  the `n @ price` sub-line under it saying so, and it was left alone.

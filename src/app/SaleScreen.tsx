@@ -554,6 +554,17 @@ interface CartEntry {
 interface GiftCardItem {
   id: number;
   name: string;
+  /**
+   * T104, Pete: "the ticket rows currently list the gift card items as
+   * 'Gift card $123' next to the price, so it looks like 'Gift card $123
+   * $123'. this is redundant ... instead, the ticket rows should also say
+   * the name of the gift card in small/lighter text under the title of
+   * 'Gift card'". So `name` is the title, "Gift card", and this is the
+   * line under it: the studio's own name for the product, the T101
+   * `giftCardName`. The custom amount card has no product name worth
+   * showing and says what it is instead (see `giftCardSubName`).
+   */
+  subName: string;
   price: number;
   /** A gift card is not taxed: the product's SalePrice is what the
    *  purchase charges, and there is no tax line on it. */
@@ -580,18 +591,19 @@ function isGiftCardLine(line: CartEntry): boolean {
 }
 
 /**
- * The ticket line for one gift card. Pete: the line reads "Gift card
- * $50.00", and T96 keeps that reading for both kinds: `amount` is the
- * teacher's figure on the editable product, and the product's own value
- * and price on a fixed one. Nothing on the line names the Mindbody
- * product.
+ * The ticket line for one gift card. T95 read "Gift card $50.00" beside
+ * the row's own $50.00 figure, which is the redundancy T104 removes: the
+ * title is "Gift card" and the product's name goes UNDER it, in the
+ * sub-line the row already has. `amount` is the teacher's figure on the
+ * editable product, and the product's own value and price on a fixed one.
  */
 function giftCardItem(product: GiftCardProduct, amount?: number): GiftCardItem {
   const value = product.editable ? (amount ?? 0) : product.cardValue;
   const price = product.editable ? (amount ?? 0) : product.salePrice;
   return {
     id: product.id,
-    name: `Gift card ${money(value)}`,
+    name: GIFT_CARD_TITLE,
+    subName: giftCardSubName(product, value, price),
     price,
     taxExempt: true,
     taxRate: null,
@@ -623,10 +635,66 @@ function giftCardKey(item: GiftCardItem): string {
  * (src/app/api/admin/shelf/route.ts). A product with none falls back to
  * its amount, which is exactly what the chip read before this ticket.
  */
+/** T104: every gift card line's title. The amount is the row's own
+ *  column, so it is not repeated here. */
+const GIFT_CARD_TITLE = "Gift card";
+
+/**
+ * T104: the line under that title.
+ *
+ * A fixed product carries the studio's name for the pre-printed card
+ * ("5 class pack"), which is exactly what Pete asked to see. Two cases
+ * have no name to show and say what they are instead, rather than leaving
+ * the line empty: the EDITABLE product, which is not a stocked card at
+ * all but the amount the teacher typed ("custom amount", the words on
+ * the cell that sold it), and a fixed product the studio gave no
+ * description, which is "set amount" for the same reason -- T101's
+ * `giftCardName` falls back to "$50.00 gift card" there, and that would
+ * print the figure twice, which is the bug this ticket removes.
+ *
+ * A card worth more or less than it costs also names its VALUE, since
+ * the row's figure is what is CHARGED and the value would otherwise be
+ * nowhere on the ticket (site 471 prices every card at its value, so
+ * this is the case that would have gone unnoticed).
+ */
+function giftCardSubName(
+  product: GiftCardProduct,
+  value: number,
+  price: number,
+): string {
+  const base = product.editable
+    ? "custom amount"
+    : typeof product.description === "string" && product.description.trim()
+      ? product.description.trim()
+      : "set amount";
+  return Math.round(value * 100) === Math.round(price * 100)
+    ? base
+    : `${base}, a ${money(value)} card`;
+}
+
 function giftCardName(p: GiftCardProduct): string {
   return typeof p.description === "string" && p.description.trim()
     ? p.description.trim()
     : `${money(p.cardValue)} gift card`;
+}
+
+/**
+ * T104 review: what a gift card product is CALLED on screen, wherever
+ * the figure is already beside it.
+ *
+ * `giftCardName` above falls back to "$50.00 gift card", which is right
+ * for a spoken label standing on its own ("One fewer $50.00 gift card")
+ * and wrong everywhere the amount is drawn next to it: the pad's chips
+ * read "$40.00 gift card" over "$40.00", and their title read "$40.00
+ * gift card: a $40.00 gift card". That is Pete's complaint ("so it looks
+ * like 'Gift card $123 $123'. this is redundant") on the one surface the
+ * ticket left alone, and it made one product read two ways, since the
+ * new cell beside it already says "Gift card" there.
+ */
+function giftCardTitle(p: GiftCardProduct): string {
+  return typeof p.description === "string" && p.description.trim()
+    ? p.description.trim()
+    : GIFT_CARD_TITLE;
 }
 
 /** T96: the product the pad sells through, or null when the site has
@@ -703,6 +771,47 @@ function cartKey(
  *  all name a line: "Drop In", or "Drop In (Alison Stewart)". */
 function lineLabel(line: CartEntry): string {
   return line.forClient ? `${line.item.name} (${line.forClient.name})` : line.item.name;
+}
+
+/**
+ * T104: the same line as ONE string, for every place that has no room
+ * for a second (an aria-label, the quantity pad's line, the recheck's
+ * list of what was dropped). The row shows the amount in its own column
+ * and the name under the title; a label reading only "Gift card" would
+ * name neither the card nor its figure on a ticket holding three.
+ */
+function lineText(line: CartEntry): string {
+  const item = line.item;
+  if (item.type !== "GiftCard") return lineLabel(line);
+  /* T104 review: the figure this leads with is the one the sub-line does
+     NOT already carry. A card worth what it costs is named by its value,
+     which is also the row's own figure; a card priced under its value has
+     that value in the sub-line ("Friends and family, a $60.00 card"), and
+     leading with it too read "Gift card $60.00, Friends and family, a
+     $60.00 card". Each figure once, and the one this label owes a teacher
+     reading a ticket of three is what the line CHARGES. */
+  const same =
+    Math.round(item.cardValue * 100) === Math.round(item.price * 100);
+  return `${item.name} ${money(same ? item.cardValue : item.price)}, ${item.subName}`;
+}
+
+/**
+ * T104 review: the same line NAMED but with no figure on it, for the one
+ * sentence that supplies its own two ("X: $50.00 is now $45.00"). With
+ * `lineText` there it read "Gift card $50.00, 5 class pack: $50.00 is now
+ * $45.00", which is Pete's complaint again in the sentence this ticket
+ * claims to have cleaned.
+ */
+function lineNameOnly(line: CartEntry): string {
+  const item = line.item;
+  if (item.type !== "GiftCard") return lineLabel(line);
+  return `${item.name}, ${item.subName}`;
+}
+
+/** T104: the line under a row's title, or null when it has none. Only a
+ *  gift card has one today. */
+function lineSubName(line: CartEntry): string | null {
+  return line.item.type === "GiftCard" ? line.item.subName : null;
 }
 
 /** Mirrors src/lib/sale.ts PricedCart, as /api/price-cart returns it. */
@@ -7682,14 +7791,6 @@ export default function SaleScreen(props: {
   const [giftSell, setGiftSell] = useState<{
     entry: string;
     /**
-     * T101 (Pete: "Custom is one of the buttons, and custom brings up the
-     * number keypad"): which of the box's two states is showing. False is
-     * the LIST, the site's cards by name with Custom beside them; true is
-     * the keypad, which is T95/T96's box unchanged. Two states, one fixed
-     * size each.
-     */
-    custom?: boolean;
-    /**
      * T100 review: the refusal's own sentence, when the box was opened
      * from the note's offer. Adding to the ticket clears the note, and
      * that took Mindbody's reason off the screen at the moment the
@@ -7840,7 +7941,9 @@ export default function SaleScreen(props: {
         if (isGiftCardLine(line)) {
           const product = freshGifts.find((g) => g.id === line.item.id);
           if (!product) {
-            dropped.push(line.item.name);
+            /* T104: the whole of it, since "Gift card" alone would name
+               neither the card nor its figure. */
+            dropped.push(lineText(line));
             continue;
           }
           /* T96: a custom card's amount is the teacher's, not the
@@ -7852,7 +7955,8 @@ export default function SaleScreen(props: {
             : giftCardItem(product);
           if (fresh.price !== line.item.price) {
             changes.push({
-              name: line.item.name,
+              /* T104 review: the sentence carries both figures itself. */
+              name: lineNameOnly(line),
               from: line.item.price,
               to: fresh.price,
             });
@@ -8985,7 +9089,6 @@ export default function SaleScreen(props: {
   const giftCardsTotal = roundToCents(
     giftCardLines.reduce((n, l) => n + l.item.price * l.quantity, 0),
   );
-  const giftCardCount = giftCardLines.reduce((n, l) => n + l.quantity, 0);
   /* T102: the ticket's discount, divided the way it is charged. The
    * cards' share comes off their own payments (the cart's share is
    * priced by Mindbody and shows as its DiscountTotal), so the ticket's
@@ -9152,6 +9255,75 @@ export default function SaleScreen(props: {
    *  markup is exactly the card the grid always drew; only its home
    *  moved, so a sectioned Passes shelf and a plain one draw the same
    *  thing. */
+  /**
+   * T101's stepper, at a cell's lower right whenever the ticket holds
+   * that line: minus, the typeable quantity, plus, with the minus drawn
+   * as the remove at quantity one. T104 lifts it out of `shelfCard` so
+   * every cell in the grid carries the SAME control, gift cards included
+   * (Pete: "the individual gift card types should be in the grid"; a cell
+   * that behaved differently from the cell beside it is the bug).
+   *
+   * `key` is the CART key the controls act on and `name` is what the
+   * labels say. Still SIBLINGS of the add button, never inside it: nested
+   * buttons are invalid HTML and double-fire, and they still stop
+   * propagation, so the card's body adds one and the strip is the only
+   * way DOWN.
+   *
+   * T104 (Pete: "the -/amt/+ buttons are in the wrong spot on individual
+   * item boxes. they shoujld be in the box, not outside it, in line with
+   * and to the right of the price"): it is positioned INSIDE the cell's
+   * border now, on the price's own line, which is CSS (.shelf-qty is
+   * absolute in .shelf-cell) rather than a change of markup, because the
+   * controls may not move inside the button.
+   */
+  const shelfStepper = (key: string, name: string, count: number) => (
+    <div className="shelf-qty">
+      <button
+        className={count <= 1 ? "shelf-qty-btn shelf-qty-x" : "shelf-qty-btn"}
+        disabled={charging}
+        aria-label={
+          count <= 1 ? `Remove ${name} from the sale` : `One fewer ${name}`
+        }
+        title={count <= 1 ? `Remove ${name}` : `One fewer ${name}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (count <= 1) removeLine(key);
+          else bumpQuantity(key, -1);
+        }}
+      >
+        {count <= 1 ? <CloseIcon /> : <MinusIcon />}
+      </button>
+      {/* T101: the number is a CONTROL, on the same surface and border as
+          the squares beside it, so it is obvious it can be tapped; it
+          opens the quantity pad. */}
+      <button
+        className="shelf-qty-n"
+        disabled={charging}
+        aria-live="polite"
+        aria-label={`Quantity of ${name}, tap to type it`}
+        title="Tap to type a quantity"
+        onClick={(e) => {
+          e.stopPropagation();
+          setQtyPad({ key, name, entry: "" });
+        }}
+      >
+        {count}
+      </button>
+      <button
+        className="shelf-qty-btn"
+        disabled={count >= MAX_LINE_QUANTITY || charging}
+        aria-label={`One more ${name}`}
+        title={`One more ${name}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          bumpQuantity(key, 1);
+        }}
+      >
+        <PlusIcon />
+      </button>
+    </div>
+  );
+
   const shelfCard = (item: ShelfItem) => {
     const starred = favSet.has(itemKey(item.type, item.id));
     /* T101: the CART's key, which is not the catalog's. T90 gave a line
@@ -9197,85 +9369,17 @@ export default function SaleScreen(props: {
             </span>
             {/* T39.3 put the count here, reading "x2", so a teacher
                 could see a double tap landed without looking at the
-                ticket. T101 moves the quantity into the strip below,
-                which sits in this very corner and carries the same
-                number between its minus and its plus: two copies of one
-                figure on one card, one of them tappable and one not, is
-                the sort of thing that gets reported as a bug. The card
-                still says it is in the cart, in its 2px accent border.
-                The gift card cell, which has no strip, keeps its
-                badge. */}
+                ticket. T101 moved the quantity into the stepper, which
+                sits in this very corner and carries the same number
+                between its minus and its plus: two copies of one figure
+                on one card, one of them tappable and one not, is the sort
+                of thing that gets reported as a bug. The card still says
+                it is in the cart, in its 2px accent border. T104: the
+                gift card cells carry the stepper too, so the badge has no
+                user left at all. */}
           </span>
         </button>
-        {/* T82 put the quantity on the item itself (Pete: "Add + and -
-            ... So a user can adjust quanityt in the cart or on the item
-            itself") as a full-width strip with a separate X. T101 makes
-            it the TICKET ROW'S shape instead, at the card's lower right
-            (Pete: "An individual item's button should have the +/amt/-
-            section (like the ticket row) in its lower right when there is
-            >0 qty in the cart. Clicking on - (or X) lowers the qty.
-            clicking anywhere else raises it."): minus, the quantity,
-            plus, and at quantity one the MINUS IS THE REMOVE, drawn as
-            the X glyph in --stop, exactly as T90 did for the row. The
-            separate X square is gone with it.
-
-            Still SIBLINGS of the add button, never inside it: nested
-            buttons are invalid HTML and double-fire, and they still stop
-            propagation. The card's body above them adds one, so the strip
-            is the only way DOWN. */}
-        {count > 0 ? (
-          <div className="shelf-qty">
-            <button
-              className={
-                count <= 1 ? "shelf-qty-btn shelf-qty-x" : "shelf-qty-btn"
-              }
-              disabled={charging}
-              aria-label={
-                count <= 1
-                  ? `Remove ${item.name} from the sale`
-                  : `One fewer ${item.name}`
-              }
-              title={
-                count <= 1 ? `Remove ${item.name}` : `One fewer ${item.name}`
-              }
-              onClick={(e) => {
-                e.stopPropagation();
-                if (count <= 1) removeLine(key);
-                else bumpQuantity(key, -1);
-              }}
-            >
-              {count <= 1 ? <CloseIcon /> : <MinusIcon />}
-            </button>
-            {/* T101: the number is a CONTROL, on the same surface and
-                border as the squares beside it, so it is obvious it can
-                be tapped; it opens the quantity pad. */}
-            <button
-              className="shelf-qty-n"
-              disabled={charging}
-              aria-live="polite"
-              aria-label={`Quantity of ${item.name}, tap to type it`}
-              title="Tap to type a quantity"
-              onClick={(e) => {
-                e.stopPropagation();
-                setQtyPad({ key, name: item.name, entry: "" });
-              }}
-            >
-              {count}
-            </button>
-            <button
-              className="shelf-qty-btn"
-              disabled={count >= MAX_LINE_QUANTITY || charging}
-              aria-label={`One more ${item.name}`}
-              title={`One more ${item.name}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                bumpQuantity(key, 1);
-              }}
-            >
-              <PlusIcon />
-            </button>
-          </div>
-        ) : null}
+        {count > 0 ? shelfStepper(key, item.name, count) : null}
         {/* Its own tap target beside (not inside) the add
             button: nested buttons are invalid HTML and
             double-fire. stopPropagation belt-and-braces. */}
@@ -9323,8 +9427,19 @@ export default function SaleScreen(props: {
             <>
               <span className="shelf-amt">
                 {money(c.recurringPaymentTotal)}
-              </span>{" "}
-              {frequencyPhrase(c)}
+              </span>
+              {/* T104 review: the tail is an ELEMENT, not a bare text
+                  node. `.shelf-price` became a flex row that does not
+                  wrap, and an anonymous flex item cannot take
+                  `text-overflow`, so "each time the included pass runs
+                  out or expires" (frequencyPhrase's longest branch) was
+                  cut off mid-word at the cell's edge with nothing to say
+                  so: 385px of text in 171px of room. In the tail's own
+                  span it ellipsizes like every other tail, with the whole
+                  of it on the span's title. */}
+              <span className="shelf-bundle-mark" title={frequencyPhrase(c)}>
+                {frequencyPhrase(c)}
+              </span>
             </>
           ) : c.firstPaymentTotal !== null ? (
             <span className="shelf-amt">{money(c.firstPaymentTotal)}</span>
@@ -9430,26 +9545,14 @@ export default function SaleScreen(props: {
   const giftSellTap = (key: string) => {
     setGiftSell((g) => {
       if (g === null) return g;
-      /* T101: `...g` matters. The box's state carries which of its two
-         states is up (and T100's kept note), and a backspace that
-         returned a bare { entry } sent the pad back to the list on the
-         first delete. */
+      /* T101: `...g` matters. The box's state carries more than the
+         entry (T100's kept note), and a backspace that returned a bare
+         { entry } threw the rest of it away on the first delete. */
       if (key === "back") return { ...g, entry: g.entry.slice(0, -1) };
       const next = (g.entry + key).replace(/^0+(?=\d)/, "");
       return next.length > 7 ? g : { ...g, entry: next };
     });
   };
-  /** T101: the box's first state lists the site's cards by NAME. The one
-   *  line under them says what the list is, or that there is no list. */
-  const giftListNote = (): string => {
-    if (giftPresets.length === 0) {
-      return "This studio has no set gift card amounts. Tap Custom to type one.";
-    }
-    return giftEditableProduct !== null
-      ? "Tap a card, or Custom to type any amount."
-      : "Tap a card. This studio sells gift cards in set amounts.";
-  };
-
   /**
    * T101: the quantity pad's figure and its refusal, in words.
    *
@@ -9497,33 +9600,116 @@ export default function SaleScreen(props: {
     });
   };
 
-  /** T95: the Gift card cell. Not a catalog item: it opens the amount
-   *  box (Pete's "a box pops up"), and the box adds the line. */
-  const giftCardCard = (
-    <div
-      className={giftCardCount > 0 ? "shelf-cell has-qty" : "shelf-cell"}
-      key="giftcard-cell"
-    >
-      <button
-        className={
-          giftCardCount > 0 ? "shelf-item shelf-gift in-cart" : "shelf-item shelf-gift"
-        }
-        onClick={() => setGiftSell({ entry: "" })}
-        aria-label="Sell a gift card, choose the amount"
+  /**
+   * T104, Pete: "the gift card UX is wrong. the individual gift card
+   * types should be in the grid, not in a pop up modal. there is no need
+   * for the modal."
+   *
+   * So the Gift cards shelf is one cell PER PRODUCT, tapped to ring up
+   * that card exactly as a pass or a shirt is rung up, carrying
+   * everything a shelf cell carries: the T101 stepper at its lower right
+   * once the ticket holds it, the body adding one, the minus becoming the
+   * remove at quantity one, and the typeable quantity. The products are
+   * the ones /api/gift-cards serves, which is the studio's list minus
+   * whatever T97's hide list turns off (server-side, so a hidden card is
+   * absent here and refused by /api/checkout as well), cheapest first as
+   * that route sorts them.
+   *
+   * The cell is named by the product (T101's `giftCardName`, the studio's
+   * own Description) over the card's VALUE, in the shelf cell's own
+   * idiom: a name at the top left, the figure at the foot. A card priced
+   * differently from its value says both, as the chip it replaces did.
+   * There is no star: the shared favorites validator admits Product,
+   * Service and Package only (T95), and widening it is its own change.
+   */
+  const giftProductCell = (product: GiftCardProduct) => {
+    const item = giftCardItem(product);
+    const key = giftCardKey(item);
+    const count = inCart.get(key) ?? 0;
+    /* The spoken name, for the labels: the studio's own, or T101's
+       fallback to the amount. */
+    const name = giftCardName(product);
+    /* What the cell READS. A product the studio gave no description falls
+       back to "Gift card" rather than T101's "$50.00 gift card", because
+       the amount is already the line under it and printing it twice on
+       one cell is the very thing this ticket removes from the row.
+       T104 review: the same helper the pad's chips read, so one product
+       cannot be called two things on two surfaces. */
+    const title = giftCardTitle(product);
+    return (
+      <div
+        className={count > 0 ? "shelf-cell has-qty" : "shelf-cell"}
+        key={`giftcard-${product.id}`}
       >
-        <span className="shelf-name">Gift card</span>
+        <button
+          className={
+            count > 0
+              ? "shelf-item shelf-gift in-cart"
+              : "shelf-item shelf-gift"
+          }
+          onClick={() => addGiftCard(product)}
+          aria-label={
+            title === GIFT_CARD_TITLE
+              ? `Add a ${money(product.cardValue)} gift card`
+              : `Add a ${money(product.cardValue)} gift card, ${title}`
+          }
+          title={title}
+        >
+          {/* A studio name can be long, so it wraps to two lines and then
+              ellipsizes, exactly as T101's chip did, with the whole of it
+              on the title. The cell never grows past its neighbours. */}
+          <span className="shelf-name shelf-gift-name">{title}</span>
+          <span className="shelf-foot">
+            <span className="shelf-price">
+              <span className="shelf-amt">{money(product.cardValue)}</span>
+              {Math.round(product.salePrice * 100) !==
+              Math.round(product.cardValue * 100) ? (
+                <span className="shelf-bundle-mark">
+                  {` ${money(product.salePrice)} to buy`}
+                </span>
+              ) : null}
+            </span>
+          </span>
+        </button>
+        {/* The labels name the CELL, which is the product, exactly as a
+            pass cell's do: the cell already carries the figure, and "One
+            more 5 class pack" is what a teacher would say. */}
+        {count > 0 ? shelfStepper(key, name, count) : null}
+      </div>
+    );
+  };
+
+  /**
+   * T104: the custom amount, which is the one gift card cell that opens a
+   * pad rather than ringing something up. That pad is NOT the modal Pete
+   * removed: an amount is never typed into a text field in this app
+   * (CLAUDE.md, T35), so a figure the studio has no product for needs the
+   * keypad, and this is T95/T96/T101's second state unchanged, limits,
+   * preset-match rule, assertions and checkout path and all. What went is
+   * the LIST state the products now are.
+   *
+   * It carries no stepper, because it is not one line: each amount typed
+   * is its own ticket line (T96's per-amount cart key), so there is no
+   * single quantity for the cell to hold. The lines it makes step on the
+   * ticket like any other.
+   *
+   * Drawn only where the site HAS an editable product, since that product
+   * is the only thing that can sell a typed figure (T96): without one the
+   * pad could offer nothing the cells beside it do not already, and a
+   * dead control is worse than none.
+   */
+  const giftCustomCell = (
+    <div className="shelf-cell" key="giftcard-custom">
+      <button
+        className="shelf-item shelf-gift"
+        onClick={() => setGiftSell({ entry: "" })}
+        aria-label="Custom amount gift card, type the amount on the number pad"
+      >
+        <span className="shelf-name">Custom amount</span>
         <span className="shelf-foot">
           <span className="shelf-price">
-            <span className="shelf-bundle-mark">choose the amount</span>
+            <span className="shelf-bundle-mark">any amount, on the pad</span>
           </span>
-          {giftCardCount > 0 ? (
-            <span
-              className="shelf-count"
-              aria-label={`${giftCardCount} on the ticket`}
-            >
-              &#215;{giftCardCount}
-            </span>
-          ) : null}
         </span>
       </button>
     </div>
@@ -9566,9 +9752,20 @@ export default function SaleScreen(props: {
    * lines never depended on who is paying.
    */
   const selfPassLines = cart.filter((l) => isPassItem(l.item) && !l.forClient);
-  /** T39.3: quantity per shelf card, from the cart's own keys; the count
-   *  pill reads it and nothing is fetched. */
+  /** T39.3: quantity per shelf card, from the cart's own keys; the
+   *  stepper reads it (T101, and T104 on the gift card cells) and nothing
+   *  is fetched. */
   const inCart = new Map(cart.map((l) => [l.key, l.quantity]));
+
+  /** T104: the Gift cards block's cells, in the order /api/gift-cards
+   *  serves them, with the custom amount last. */
+  const giftCardCells = (
+    <>
+      {giftPresets.map(giftProductCell)}
+      {giftEditableProduct !== null ? giftCustomCell : null}
+    </>
+  );
+
 
   /**
    * T38's audit table, one element used in two places: inside the
@@ -10085,7 +10282,7 @@ export default function SaleScreen(props: {
                         >
                           {section.items.map(shelfCard)}
                           {section.contracts.map(contractCard)}
-                          {section.giftCard ? giftCardCard : null}
+                          {section.giftCard ? giftCardCells : null}
                           {/* Bundles, after the starred items. One card,
                               one tap, every line into the cart. Only the
                               Favorites shelf has any, and it is always a
@@ -10261,13 +10458,12 @@ export default function SaleScreen(props: {
                         key={offer.key}
                         className="sale-note-act"
                         onClick={() =>
+                          /* T100: the offer carries a figure, and the
+                             box it opens is the pad (T104: the only state
+                             it has left). */
                           setGiftSell({
                             entry: String(offer.cents),
                             keepNote: cartNotice.text,
-                            /* T101: the offer carries a figure, so it
-                               opens on the pad rather than on the list
-                               the figure would be lost in. */
-                            custom: true,
                           })
                         }
                       >
@@ -10428,7 +10624,7 @@ export default function SaleScreen(props: {
                       role={rowsEditable ? "button" : undefined}
                       tabIndex={rowsEditable ? 0 : undefined}
                       aria-expanded={rowsEditable ? revealedKey === line.key : undefined}
-                      aria-label={rowsEditable ? `${line.item.name}, tap for quantity and remove` : undefined}
+                      aria-label={rowsEditable ? `${lineText(line)}, tap for quantity and remove` : undefined}
                       onClick={() =>
                         !rowsEditable
                           ? undefined
@@ -10452,13 +10648,29 @@ export default function SaleScreen(props: {
                             takes the rest, ellipsized with its full text
                             on the title. The name is the item's weight,
                             never bold. */}
-                        <span className="t-name" title={lineLabel(line)}>
+                        <span className="t-name" title={lineText(line)}>
                           {lineLabel(line)}
                         </span>
                         <span className="amt">
                           {money(line.item.price * line.quantity)}
                         </span>
                       </div>
+                      {/* T104 (Pete: "the ticket rows should also say the
+                          name of the gift card in small/lighter text
+                          under the title of 'Gift card'"): the line's
+                          secondary text, in the sub-line the row already
+                          had for `n @ price` rather than a second
+                          treatment. One line, ellipsized, so it cannot
+                          push the row's height around or reach the
+                          stepper; the whole of it is on the title. */}
+                      {lineSubName(line) !== null ? (
+                        <div
+                          className="t-sub-line t-sub-name"
+                          title={lineSubName(line) ?? undefined}
+                        >
+                          {lineSubName(line)}
+                        </div>
+                      ) : null}
                       {/* The sub-line only above quantity one (0.1): a
                           single item's price IS its total. No "@ 0.00"
                           clause: a zero unit price cannot reach the shelf
@@ -10485,13 +10697,13 @@ export default function SaleScreen(props: {
                             disabled={charging}
                             aria-label={
                               line.quantity <= 1
-                                ? `Remove ${lineLabel(line)}`
-                                : `One fewer ${line.item.name}`
+                                ? `Remove ${lineText(line)}`
+                                : `One fewer ${lineText(line)}`
                             }
                             title={
                               line.quantity <= 1
-                                ? `Remove ${lineLabel(line)}`
-                                : `One fewer ${line.item.name}`
+                                ? `Remove ${lineText(line)}`
+                                : `One fewer ${lineText(line)}`
                             }
                             onClick={() =>
                               line.quantity <= 1
@@ -10511,12 +10723,12 @@ export default function SaleScreen(props: {
                             className="t-ctl-qty"
                             disabled={charging}
                             aria-live="polite"
-                            aria-label={`Quantity of ${line.item.name}, tap to type it`}
+                            aria-label={`Quantity of ${lineText(line)}, tap to type it`}
                             title="Tap to type a quantity"
                             onClick={() =>
                               setQtyPad({
                                 key: line.key,
-                                name: lineLabel(line),
+                                name: lineText(line),
                                 entry: "",
                               })
                             }
@@ -10526,8 +10738,8 @@ export default function SaleScreen(props: {
                           <button
                             className="t-ctl-btn"
                             disabled={line.quantity >= MAX_LINE_QUANTITY || charging}
-                            aria-label={`One more ${line.item.name}`}
-                            title={`One more ${line.item.name}`}
+                            aria-label={`One more ${lineText(line)}`}
+                            title={`One more ${lineText(line)}`}
                             onClick={() => bumpQuantity(line.key, 1)}
                           >
                             <PlusIcon />
@@ -11214,68 +11426,16 @@ export default function SaleScreen(props: {
           adds nothing. One fixed size, the T82 keypad idiom, the T36
           modal shape. Scrim, Cancel and Escape leave the ticket exactly
           as it was. */}
-      {/* T101, Pete: "The gift card section was supposed to have a list of
-          items but instead it has dollar amounts as the button labels.
-          List the items names and the dollar amount for each one. Custom
-          is one of the buttons, and custom brings up the number keypad."
-
-          So the box has two states. It OPENS on the list: one cell per
-          visible fixed product (T97 hides the rest server-side), reading
-          the product's name over its amount, with Custom beside them.
-          Tapping a card puts it on the ticket exactly as its chip did.
-          Tapping Custom brings up the keypad, which is T95/T96's box
-          unchanged, cells and all, so a typed figure still lights the
-          product it resolves to. Each state is one fixed size. */}
+      {/* T104, Pete: "the individual gift card types should be in the
+          grid, not in a pop up modal. there is no need for the modal."
+          T101's LIST state is gone: the products are cells in the grid
+          now. What is left is the state that cannot be a cell, because an
+          amount is never typed into a text field in this app (CLAUDE.md,
+          T35): the keypad, opened by the Custom amount cell and by T100's
+          offer, which arrives with a figure already in hand. One state,
+          one fixed size. */}
       {giftSell !== null ? (
         <div className="modal-scrim" role="presentation" onClick={closeGiftSell}>
-          {giftSell.custom !== true ? (
-            <div
-              className="modal modal-amount modal-gift-list"
-              role="dialog"
-              aria-modal="true"
-              aria-label="Gift card"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <p className="modal-title">Gift card</p>
-              <div className="gift-card-list">
-                {giftPresets.map((product) => (
-                  <button
-                    key={product.id}
-                    className="gift-card-chip"
-                    onClick={() => addGiftCard(product)}
-                    title={giftCardName(product)}
-                    aria-label={`${giftCardName(product)}, ${money(product.cardValue)}`}
-                  >
-                    <span className="gift-card-name">
-                      {giftCardName(product)}
-                    </span>
-                    <span className="gift-card-amt">
-                      {money(product.cardValue)}
-                      {product.salePrice !== product.cardValue
-                        ? ` (${money(product.salePrice)} to buy)`
-                        : ""}
-                    </span>
-                  </button>
-                ))}
-                <button
-                  className="gift-card-chip gift-card-custom"
-                  onClick={() =>
-                    setGiftSell((g) => (g === null ? g : { ...g, custom: true }))
-                  }
-                  aria-label="Custom amount, type it on the number pad"
-                >
-                  <span className="gift-card-name">Custom</span>
-                  <span className="gift-card-amt">any amount</span>
-                </button>
-              </div>
-              <p className="pad-change gift-note muted-note">{giftListNote()}</p>
-              <div className="modal-actions">
-                <button className="modal-cancel" onClick={closeGiftSell}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
           <div
             className="modal modal-amount modal-pad"
             role="dialog"
@@ -11303,15 +11463,25 @@ export default function SaleScreen(props: {
                         : "gift-card-chip"
                     }
                     onClick={() => addGiftCard(product)}
+                    /* T104 review: `giftCardTitle`, not `giftCardName`.
+                       The amount is drawn on the chip and said again in
+                       the label, so a product with no description read
+                       "$40.00 gift card / $40.00" and a title saying it
+                       a third time. The cell in the grid now says "Gift
+                       card" for that product; the chip says the same. */
                     title={
-                      product.salePrice === product.cardValue
-                        ? `${giftCardName(product)}: a ${money(product.cardValue)} gift card`
-                        : `${giftCardName(product)}: a ${money(product.cardValue)} gift card, ${money(product.salePrice)} to buy`
+                      giftCardTitle(product) === GIFT_CARD_TITLE
+                        ? product.salePrice === product.cardValue
+                          ? `A ${money(product.cardValue)} gift card`
+                          : `A ${money(product.cardValue)} gift card, ${money(product.salePrice)} to buy`
+                        : product.salePrice === product.cardValue
+                          ? `${giftCardTitle(product)}: a ${money(product.cardValue)} gift card`
+                          : `${giftCardTitle(product)}: a ${money(product.cardValue)} gift card, ${money(product.salePrice)} to buy`
                     }
-                    aria-label={`${giftCardName(product)}, ${money(product.cardValue)}`}
+                    aria-label={`${giftCardTitle(product)}, ${money(product.cardValue)}`}
                   >
                     <span className="gift-card-name">
-                      {giftCardName(product)}
+                      {giftCardTitle(product)}
                     </span>
                     <span className="gift-card-amt">
                       {money(product.cardValue)}
@@ -11372,7 +11542,6 @@ export default function SaleScreen(props: {
               </button>
             </div>
           </div>
-          )}
         </div>
       ) : null}
 
