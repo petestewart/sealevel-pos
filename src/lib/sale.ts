@@ -2271,14 +2271,22 @@ export async function purchaseContract(opts: {
  *  today's window is ever a candidate, and the set is small. */
 const seenSaleIds = new Set<number>();
 
-/** Per client, how many REAL checkouts this process made whose sale id
- *  was never found: the list had not caught up, or the lookup failed or
- *  hung (T49 review). Each is an id somewhere above the ones seen, and
- *  a later lookup for the same client must leave room for it: the newest
- *  unseen id is THIS checkout's only when there are more unseen ids than
- *  earlier checkouts still waiting for one. Without this, a list one
- *  sale behind handed the previous sale's number to the next sale. */
-const unresolvedSales = new Map<string, number>();
+/** Per client, the REAL checkouts this process made whose sale id was
+ *  never found: the list had not caught up, or the lookup failed or hung
+ *  (T49 review). Each is an id somewhere above the ones seen, and a later
+ *  lookup for the same client must leave room for it: the newest unseen
+ *  id is THIS checkout's only when there are more unseen ids than earlier
+ *  checkouts still waiting for one. Without this, a list one sale behind
+ *  handed the previous sale's number to the next sale.
+ *
+ *  T105: each entry is WHEN that checkout went out, not a bare count, so
+ *  the waiting can age out. A count never came down: one sale the dated
+ *  read could not name left the room reserved for the life of the
+ *  process, so every later lookup for that client answered null and
+ *  T103's basket assertion had no evidence for any of them (measured:
+ *  after one unnamed sale, five consecutive empty baskets were reported
+ *  as completed sales). */
+const unresolvedSales = new Map<string, number[]>();
 
 /** How long the done screen waits for the sale list before settling
  *  for the cart GUID (the Formula Note's own bound, T45 review). */
@@ -2290,6 +2298,63 @@ const SALE_LOOKUP_WAIT_MS = 8_000;
  *  morning, another counter, a sale from before a restart) is never a
  *  candidate, however unseen. */
 const SALE_CLOCK_SKEW_MS = 2 * 60 * 1000;
+
+/** T105: how long an unnamed checkout keeps its room reserved.
+ *
+ *  The basis is the CLOCK, and not any clock: it is exactly the window in
+ *  which that checkout's sale could still turn up as a candidate. A
+ *  candidate must carry a `SaleDateTime` no earlier than this lookup's
+ *  `startedAt` less SALE_CLOCK_SKEW_MS, so an earlier sale stamped around
+ *  its own start can only clear that floor while it is younger than the
+ *  skew allowance, plus the time its own lookup could still have been
+ *  running (SALE_LOOKUP_WAIT_MS), plus a second skew allowance for the
+ *  stamp itself. Past that the floor excludes it anyway, which is the
+ *  whole reason ageing it out cannot misname anything: the guard is
+ *  dropped only once the older guard has taken over.
+ *
+ *  Wrong in one direction (too long) and the rail stays off for that
+ *  client for longer: sale ids fall back to the cart GUID and baskets go
+ *  unasserted, which is what T105 was opened to end but is safe. Wrong in
+ *  the other (too short) and an earlier sale that appears late could be
+ *  named as a later sale's, which is a receipt with someone else's number
+ *  on it, so the window is deliberately the generous end of what the
+ *  floor allows. The one shape it cannot survive is Mindbody stamping a
+ *  sale more than two minutes after it happened, which is the assumption
+ *  SALE_CLOCK_SKEW_MS already makes and this ticket did not change. */
+const SALE_UNRESOLVED_TTL_MS = SALE_LOOKUP_WAIT_MS + 2 * SALE_CLOCK_SKEW_MS;
+
+/** T105: the unnamed checkouts for this client that could still be named,
+ *  as of `now`. Older ones are forgotten, loudly: nothing else in this
+ *  process would ever say the count came down. */
+function waitingFor(clientId: string, now: Date): number {
+  const kept: number[] = [];
+  let aged = 0;
+  for (const at of unresolvedSales.get(clientId) ?? []) {
+    if (now.getTime() - at <= SALE_UNRESOLVED_TTL_MS) kept.push(at);
+    else aged++;
+  }
+  if (aged > 0) {
+    console.log(
+      `[sale-id] aged out ${aged} unnamed sale${aged === 1 ? "" : "s"} for ` +
+        `client ${clientId} (older than ${Math.round(SALE_UNRESOLVED_TTL_MS / 1000)}s, ` +
+        `so the date floor excludes them); ${kept.length} still waiting`,
+    );
+  }
+  if (kept.length === 0) unresolvedSales.delete(clientId);
+  else unresolvedSales.set(clientId, kept);
+  return kept.length;
+}
+
+/** T105: this checkout joins the waiting, stamped with when it went out.
+ *  `startedAt` and not the time of this line, because it is that moment
+ *  the date floor will measure the sale against. Prunes as it goes, so a
+ *  run of failed reads cannot leave stale entries behind either. */
+function joinWaiting(clientId: string, startedAt: Date): void {
+  const kept = unresolvedSales.get(clientId) ?? [];
+  kept.push(startedAt.getTime());
+  unresolvedSales.set(clientId, kept);
+  waitingFor(clientId, new Date());
+}
 
 /**
  * The numeric `Sale.Id` (sale.yml:2734) of the sale a REAL checkout just
@@ -2387,9 +2452,9 @@ export async function latestSale(
       const held = sale["PurchasedItems"];
       baskets.set(id, Array.isArray(held) ? held : null);
     }
-    const waiting = unresolvedSales.get(clientId) ?? 0;
+    const waiting = waitingFor(clientId, now);
     if (candidates.length <= waiting) {
-      unresolvedSales.set(clientId, waiting + 1);
+      joinWaiting(clientId, startedAt);
       console.log(
         `[sale-id] none new for client ${clientId} (${sales.length} sales today, ` +
           `${candidates.length} candidates, ${waiting} earlier still unnamed)`,
@@ -2401,7 +2466,7 @@ export async function latestSale(
     unresolvedSales.delete(clientId);
     return { id: best, purchasedItems: baskets.get(best) ?? null };
   } catch (err) {
-    unresolvedSales.set(clientId, (unresolvedSales.get(clientId) ?? 0) + 1);
+    joinWaiting(clientId, startedAt);
     console.log(
       `[sale-id] lookup failed: ${err instanceof Error ? err.message : String(err)}`,
     );
