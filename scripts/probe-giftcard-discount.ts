@@ -82,6 +82,26 @@ async function tryLine(
         `  discount ${money(priced.discountTotal)}` +
         `  tax ${money(priced.taxTotal)}  total ${money(priced.grandTotal)}`,
     );
+    /* A priced cart whose subtotal is ZERO when we asked for a real
+     * figure is the dangerous answer, not a harmless one: Mindbody took
+     * the line and charged nothing for it. Whether it took the ITEM is
+     * what the audit below says: a null `theirPrice` means no line in
+     * Mindbody's cart matched what we sent, so the cart is empty and the
+     * gift card never entered it. */
+    if ((priced.subTotal ?? 0) === 0 && priced.expectedSubtotal > 0) {
+      console.log(
+        `      -> ZERO. We asked for ${money(priced.expectedSubtotal)} and the` +
+          ` cart came back worth nothing.`,
+      );
+    }
+    for (const line of priced.lineAudit ?? []) {
+      console.log(
+        `      audit: id ${line.metadataId} as ${line.type}` +
+          `  ours ${money(line.ourPrice)} x${line.quantity}` +
+          `  theirs ${money(line.theirPrice)} x${line.theirQuantity ?? "(none)"}` +
+          `${line.theirPrice === null ? "  <- NO LINE MATCHED: Mindbody priced no such item" : ""}`,
+      );
+    }
     if (discount) {
       const took =
         priced.discountTotal !== null &&
@@ -149,11 +169,14 @@ async function main(): Promise<void> {
 
   console.log(
     "\nNothing above was sold: every call was a Test cart.\n" +
-      "If a line PRICED and the discount LANDED, a gift card can be\n" +
-      "discounted the way passes and retail already are, and the next\n" +
-      "question is how the barcode id rides along. If every line was\n" +
-      "refused, the purchase endpoint is the only route and a discount\n" +
-      "there can only mean paying less.\n",
+      "If a line PRICED at the figure asked and the discount LANDED, a\n" +
+      "gift card can be discounted the way passes and retail already\n" +
+      "are, and the next question is how the barcode id rides along. If\n" +
+      "every line was refused, the purchase endpoint is the only route\n" +
+      "and a discount there can only mean paying less. If a line PRICED\n" +
+      "at ZERO, that is the worst of the three: Mindbody accepted the\n" +
+      "cart and charged nothing, so the cart route would give a card\n" +
+      "away. The audit line says whether it matched the item at all.\n",
   );
 }
 
