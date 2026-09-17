@@ -13994,3 +13994,137 @@ different ids or none; no sale is ever named as another's; and T103's
 assertion refuses an empty basket on the sale AFTER an unnamed one,
 which is exactly what it fails to do today. Each run needs a fresh
 `next start`, because the counter is process state.
+
+### Build notes
+
+Built on `t105-unnamed-sale`. One file changed, `src/lib/sale.ts`, and
+nothing else: no route, no screen, no copy.
+
+**The count became a list of times.** `unresolvedSales` was
+`Map<clientId, number>` and is now `Map<clientId, number[]>`, one
+timestamp per REAL checkout for that client whose sale the dated
+`/sale/sales` read could not name. `waitingFor` returns how many of them
+could still be named as of now, forgetting the rest and saying so in the
+log; `joinWaiting` adds this checkout, stamped with its own `startedAt`
+and not with the moment the line runs, because `startedAt` is what the
+candidate date floor will measure that sale against. Every other part of
+the lookup is untouched: the same candidate rule, the same
+`seenSaleIds`, the same "candidates must outnumber the waiting" test, the
+same answer shape.
+
+**The basis is the clock, and it is not an arbitrary clock.**
+`SALE_UNRESOLVED_TTL_MS = SALE_LOOKUP_WAIT_MS + 2 * SALE_CLOCK_SKEW_MS`
+(248s), which is the window in which the unnamed sale could still turn
+up as a candidate at all. A candidate must carry a `SaleDateTime` no
+earlier than the current lookup's `startedAt` less
+`SALE_CLOCK_SKEW_MS`, so an older sale stamped anywhere near its own
+start can only clear that floor while it is younger than the skew
+allowance, plus however long its own lookup could still have been running
+(`SALE_LOOKUP_WAIT_MS`), plus a second skew allowance for the stamp
+itself. That is the whole safety argument: **the entry is dropped only
+once the date floor has taken the job over**, so ageing it out cannot
+name an old sale as a new one. Nothing was relaxed to make it work; the
+guard that predates this ticket is the reason the new one can retire.
+
+The two alternatives were considered and rejected.
+
+- **The window the sale list covers** (the read is "today, studio-local")
+  would age the count out at midnight. That is the wrong order of
+  magnitude by a factor of hundreds: it leaves the client blind for a
+  whole trading day, which is the bug.
+- **The number of reads since** never comes down for the client it
+  matters to. The counter is per client, and a client with one unnamed
+  sale and no further sales for an hour is exactly the one whose next
+  sale must be asserted; counting reads would keep them blind until they
+  bought something several more times, and reads are not what makes a
+  sale appear in the list. Time is.
+
+**What it costs when the window is wrong, in each direction.** Too long:
+the rail stays off for that client for longer than it needed to, so the
+done screen shows the cart GUID instead of a sale number and the basket
+goes unasserted, logged `[basket] unverified`. That is the T105 bug in
+miniature and it is safe, which is why the window is set at the generous
+end of what the floor allows rather than the tight end. Too short: an
+earlier sale that appears in the list late could be handed to a later
+checkout, which is a receipt, a note and a done screen carrying another
+sale's number, and T103 asserting one sale's basket against another
+ticket. The only shape that could do it is Mindbody stamping a
+`SaleDateTime` more than two minutes after the sale happened, which is
+the assumption `SALE_CLOCK_SKEW_MS` has always made and this ticket did
+not change: if that assumption is ever disproved, both constants move
+together.
+
+**What a teacher sees, in each case.** This stays boring on purpose; an
+unnamed sale is not an error at the counter.
+
+- **The unnamed sale itself**: a completed sale, with the cart GUID where
+  the sale number would be. Nothing amber, nothing to escalate. The log
+  says `[sale-id] none new ...` and `[basket] unverified`.
+- **A sale seconds after it** (inside the window): the same, a completed
+  sale with the GUID. The guard is still holding room for the first one,
+  so nothing is named and nothing is asserted. This is unchanged by T105
+  and is the price of never misnaming a sale.
+- **A sale more than the window later**: back to normal. The sale number
+  shows, and T103's basket assertion has its evidence again, so an empty
+  basket is refused with the sold-nothing stop instead of being reported
+  as a completed sale. The log says `[sale-id] aged out 1 unnamed sale
+  for client ... 0 still waiting` on the way past.
+- **Nothing new appears at the counter anywhere.** No new copy, no new
+  state, no new control.
+
+### Verified
+
+Route driver against `npm run build` + `next start` on **:3215** with the
+T103 mock on **:4615** (its `basket` knob: `none` is a sale the list
+never held, `empty` is the two live comped sales' answer). One process
+per run, and each scenario on its own client id, because the counter is
+per client and process state. The same driver was run against a build of
+the code WITHOUT the change to show the hole first.
+
+**Before the change** (`route.mjs before`): the sale after an unnamed one
+is not refused although its basket is empty, and the client stays blind
+for the rest of the process. `[basket] unverified` 11 times in one run.
+
+**After the change** (`route.mjs after`), all passing:
+
+- A sale the list could not name still stands, with the cart GUID.
+- A sale seconds after it is NOT given that sale's number: the GUID
+  again, the guard intact.
+- Two checkouts for one client fired in the same second get two
+  different answers, never the same id, before and after the window.
+- **An empty basket on the sale AFTER an unnamed one is refused**: 502
+  `soldNothing`, "The payment went through and nothing was sold ...",
+  the sale named in the sentence, no retry offered, `ambiguous: false`.
+  This is precisely what the same driver shows passing as a completed
+  sale on the build without the change.
+- A good sale after the window is named again and completes.
+- The record filed on the client names ITS own sale and no other: the
+  sold-nothing note on the refused sale carries that sale's number, the
+  T79 discount note on a later sale carries its own.
+- Across the whole run: no sale number reported twice, every number
+  reported belongs to the client it was reported for, no number reported
+  was one that already existed before its own checkout began, and no note
+  names another client's sale.
+- The ageing is audible: `[sale-id] aged out N unnamed sale(s) for client
+  ... so the date floor excludes them); 0 still waiting`.
+
+`npm run typecheck` and `npm run build` clean, before and after merging
+`origin/feature/phase-2` (T104), and the driver was re-run in full on the
+merged tree.
+
+### Not verified
+
+- **Nothing live.** Whether a real `/sale/sales` ever lags, and by how
+  long, is still unmeasured, so the window is reasoned from
+  `SALE_CLOCK_SKEW_MS` rather than measured against Mindbody. The first
+  live sale that ages out will say so in the log.
+- **A sale stamped late by Mindbody** is the one shape that could still
+  be misnamed after ageing, and it cannot be tested against the mock
+  without asserting the very thing that is unknown; it is recorded above
+  as the assumption both constants share.
+- The window's blind spot is unchanged and deliberate: within 248s of an
+  unnamed sale, the next sale for that same client is still unnamed and
+  unasserted. Shortening it would trade a safe gap for the chance of a
+  wrong number on a receipt.
+- No UI was touched, so nothing was re-audited in the browser; the
+  screens render exactly what T103 built.
