@@ -39,7 +39,14 @@
  * Usage, against prod:
  *
  *   MINDBODY_TARGET=prod POS_DRY_RUN=false POS_WRITE_CLIENT_IDS=<clientId> \
- *     npx tsx --env-file=.env scripts/probe-giftcards.ts <clientId> [productId]
+ *     npx tsx --env-file=.env scripts/probe-giftcards.ts <clientId> [productId] [account]
+ *
+ * A third argument of `account` pays with the client's ACCOUNT CREDIT
+ * (a DebitAccount payment) instead of cash, which answers T95's other
+ * open question: whether Mindbody lets a stored balance become a gift
+ * card. The app refuses that today, and the refusal is OURS, not
+ * Mindbody's. Use a client who actually holds credit, or the answer is
+ * only "not enough balance".
  *
  * <clientId> is any real client to name as the purchaser (the house
  * client is the obvious one); nothing lands on their account, because
@@ -104,7 +111,8 @@ async function rawProducts(): Promise<RawProduct[]> {
 }
 
 async function main(): Promise<void> {
-  const [clientId, productRaw] = process.argv.slice(2);
+  const [clientId, productRaw, payWith] = process.argv.slice(2);
+  const useAccount = (payWith ?? "").toLowerCase() === "account";
   if (!clientId) {
     console.error(
       "Usage: npx tsx --env-file=.env scripts/probe-giftcards.ts <clientId> [productId]",
@@ -148,7 +156,8 @@ async function main(): Promise<void> {
   console.log(
     `\n=== rehearsing ${targets.length} product(s) at ${AMOUNTS.map((a) =>
       money(a),
-    ).join(" and ")}, Test: true, nothing is sold\n`,
+    ).join(" and ")}, paid by ${useAccount ? "ACCOUNT CREDIT" : "cash"},` +
+      ` Test: true, nothing is sold\n`,
   );
   for (const p of targets) {
     console.log(`  --- id=${p.id} ${p.description} (value ${money(p.cardValue)})`);
@@ -159,7 +168,9 @@ async function main(): Promise<void> {
           productId: p.id,
           purchaserClientId: clientId,
           barcodeId,
-          payment: { type: "Cash", amount },
+          payment: useAccount
+            ? { type: "DebitAccount", amount }
+            : { type: "Cash", amount },
           test: true,
           sendEmailReceipt: false,
         });
