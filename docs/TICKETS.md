@@ -12952,19 +12952,39 @@ each product is the real test, and the assertion above is what makes that
 safe: it refuses before any money moves, per card and per sale, rather
 than predicting.
 
-The bigger open question is the OTHER endpoint. Mindbody's own POS shows
-a gift card as a ticket line with Price, Value and Discount as three
-columns, which is a cart's shape, and `checkoutshoppingcart` takes
-`DiscountAmount` per line. Whether a gift card product prices as a cart
-line at all is what `scripts/probe-giftcard-discount.ts` asks, with
-`Test: true` and nothing sold; Pete will run it. Its first honest run
-priced product 282 (the custom amount card) at $0.00, which is what a
-cart does with a product that has no price of its own. If a FIXED product
-does price as a line and honours DiscountAmount, that becomes how a
-discounted gift card is sold, and the open question becomes where the
-barcode id rides on that call, since `checkoutshoppingcart` has no
-BarcodeId. Until then the purchase endpoint is the only route and this
-ticket's guard is the rail.
+The bigger open question was the OTHER endpoint. Mindbody's own POS
+shows a gift card as a ticket line with Price, Value and Discount as
+three columns, which is a cart's shape, and `checkoutshoppingcart` takes
+`DiscountAmount` per line. `scripts/probe-giftcard-discount.ts` asks
+whether a gift card product prices as a cart line at all, with `Test:
+true` and nothing sold. It has now been run live against prod, site 471,
+client 100041277, and it answered three things:
+
+1. **The EDITABLE custom-amount product (id 282, CardValue 0, SalePrice
+   0) prices at $0.00 as a cart line**, as a Product and as a Service,
+   with and without a $10 discount. The per-line audit read `ours $50.00
+   x1  theirs $0.00 x1`: Mindbody MATCHED the line and charged nothing
+   for it. A cart never carries our price, it prices from the product's
+   own SalePrice, and that product has none. **So a custom-amount gift
+   card routed through a cart is a FREE card.** T75's subtotal assertion
+   catches it (expected 50, server 0, `disagrees` true) and would refuse
+   the sale, but the conclusion belongs here in words: the cart route
+   must never be used for the editable product, whatever else changes.
+2. **A FIXED product (id 323, "Single Class Gift Card", CardValue 28,
+   SalePrice 28) prices at $28.00 as a cart line, and a $10 discount
+   LANDS**: subtotal $28.00, discount $10.00, tax $0.00, total $18.00,
+   as a Product and as a Service. So Mindbody will discount a fixed gift
+   card as an ordinary cart line.
+3. **What that does NOT settle.** Test mode commits nothing, so nobody
+   knows whether a cart sale ISSUES a card at all, what value it would
+   carry, or what its barcode id would be. `purchasegiftcard` is still
+   the only call that lets the counter SET the id the teacher writes on
+   the physical card (`checkoutshoppingcart` has no BarcodeId), which is
+   why it stays the route this ticket builds on. The cart evidence is
+   recorded as the known ALTERNATIVE, for the day the rehearsal shows a
+   product shrinking under a discounted payment: the first live cart
+   sale of a gift card is the untried experiment, and it is untried
+   because the id is the whole point of the screen.
 
 ### Build notes
 
@@ -13026,3 +13046,10 @@ at once, exactly as before.
 
 Not verified: anything live. No live gift card has been discounted, which
 is the open question above.
+
+Noted in passing, out of scope: while the done screen holds, the nav
+bar's Sign-in and Buy items grey through the SAME treatment they use
+mid-charge, and that treatment measures 2.6:1 in light and 2.5:1 in dark.
+Pre-existing and unchanged here, but a teacher can sit in the hold for as
+long as it takes to write six characters, where mid-charge is a second,
+so it is worth the same fix `.pad-chip:disabled` just had.

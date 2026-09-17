@@ -1190,7 +1190,6 @@ export async function POST(request: Request) {
         units.reduce((n, u) => n + Math.round(u.amount * 100), 0)) /
         100,
     );
-    let ticketDiscounted = 0;
     if (discount !== null) {
       /* The bound parseDiscount could not check above, in its own words:
        * the ticket's subtotal is the cart's lines plus the cards. */
@@ -1211,9 +1210,6 @@ export async function POST(request: Request) {
         .slice(0, items.length)
         .reduce((n, c) => n + c, 0);
       cardOff = spread.slice(items.length);
-      ticketDiscounted = roundToCents(
-        spread.reduce((n, c) => n + c, 0) / 100,
-      );
       charged = units.map((u, i) =>
         roundToCents(u.amount - (cardOff[i] ?? 0) / 100),
       );
