@@ -14255,3 +14255,15 @@ product can be priced under its value:
   and every purchase is still rehearsed with `Test: true`.
 - The `.shelf-count` badge is gone from the code; if a future cell ever
   wants a count without a stepper, that rule has to come back with it.
+
+### After the merge
+
+`origin/feature/phase-2` was merged in at `da4be62` (T103's basket
+assertion and its review, then T105) and everything above was re-run on
+the merged tree: typecheck, build, all five drivers and the audit, every
+one green, with only one conflict and it was in docs/TICKETS.md (two
+sections appended at the same end). T103's rule that a gift card product
+id must never reach a cart line is untouched by this ticket: the cells add
+gift cards through `addGiftCard`, which puts them on the `giftCards` half
+of the payload exactly as the modal did, and `items` still never holds
+one.
