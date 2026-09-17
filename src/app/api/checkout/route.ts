@@ -960,7 +960,11 @@ export async function POST(request: Request) {
           error:
             "That is a gift card, and a gift card is not a cart line: sold " +
             "that way Mindbody takes the money and issues no card. Sell it " +
-            "from the gift card box, which sets the id to write on the " +
+            /* T104 review: from a Gift cards CELL. The box this named
+               was T101's list, which T104 replaced with one cell per
+               product in the grid, so the sentence was pointing a
+               teacher at a screen that no longer exists. */
+            "from a Gift cards cell, which sets the id to write on the " +
             "card. Nothing was charged.",
           stage: "method",
         },

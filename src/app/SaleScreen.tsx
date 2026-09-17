@@ -678,6 +678,25 @@ function giftCardName(p: GiftCardProduct): string {
     : `${money(p.cardValue)} gift card`;
 }
 
+/**
+ * T104 review: what a gift card product is CALLED on screen, wherever
+ * the figure is already beside it.
+ *
+ * `giftCardName` above falls back to "$50.00 gift card", which is right
+ * for a spoken label standing on its own ("One fewer $50.00 gift card")
+ * and wrong everywhere the amount is drawn next to it: the pad's chips
+ * read "$40.00 gift card" over "$40.00", and their title read "$40.00
+ * gift card: a $40.00 gift card". That is Pete's complaint ("so it looks
+ * like 'Gift card $123 $123'. this is redundant") on the one surface the
+ * ticket left alone, and it made one product read two ways, since the
+ * new cell beside it already says "Gift card" there.
+ */
+function giftCardTitle(p: GiftCardProduct): string {
+  return typeof p.description === "string" && p.description.trim()
+    ? p.description.trim()
+    : GIFT_CARD_TITLE;
+}
+
 /** T96: the product the pad sells through, or null when the site has
  *  none. Mirrors editableGiftCardProduct in src/lib/giftcardsale.ts,
  *  including the lowest-id rule. */
@@ -9613,11 +9632,10 @@ export default function SaleScreen(props: {
     /* What the cell READS. A product the studio gave no description falls
        back to "Gift card" rather than T101's "$50.00 gift card", because
        the amount is already the line under it and printing it twice on
-       one cell is the very thing this ticket removes from the row. */
-    const title =
-      typeof product.description === "string" && product.description.trim()
-        ? product.description.trim()
-        : GIFT_CARD_TITLE;
+       one cell is the very thing this ticket removes from the row.
+       T104 review: the same helper the pad's chips read, so one product
+       cannot be called two things on two surfaces. */
+    const title = giftCardTitle(product);
     return (
       <div
         className={count > 0 ? "shelf-cell has-qty" : "shelf-cell"}
@@ -11445,15 +11463,25 @@ export default function SaleScreen(props: {
                         : "gift-card-chip"
                     }
                     onClick={() => addGiftCard(product)}
+                    /* T104 review: `giftCardTitle`, not `giftCardName`.
+                       The amount is drawn on the chip and said again in
+                       the label, so a product with no description read
+                       "$40.00 gift card / $40.00" and a title saying it
+                       a third time. The cell in the grid now says "Gift
+                       card" for that product; the chip says the same. */
                     title={
-                      product.salePrice === product.cardValue
-                        ? `${giftCardName(product)}: a ${money(product.cardValue)} gift card`
-                        : `${giftCardName(product)}: a ${money(product.cardValue)} gift card, ${money(product.salePrice)} to buy`
+                      giftCardTitle(product) === GIFT_CARD_TITLE
+                        ? product.salePrice === product.cardValue
+                          ? `A ${money(product.cardValue)} gift card`
+                          : `A ${money(product.cardValue)} gift card, ${money(product.salePrice)} to buy`
+                        : product.salePrice === product.cardValue
+                          ? `${giftCardTitle(product)}: a ${money(product.cardValue)} gift card`
+                          : `${giftCardTitle(product)}: a ${money(product.cardValue)} gift card, ${money(product.salePrice)} to buy`
                     }
-                    aria-label={`${giftCardName(product)}, ${money(product.cardValue)}`}
+                    aria-label={`${giftCardTitle(product)}, ${money(product.cardValue)}`}
                   >
                     <span className="gift-card-name">
-                      {giftCardName(product)}
+                      {giftCardTitle(product)}
                     </span>
                     <span className="gift-card-amt">
                       {money(product.cardValue)}
