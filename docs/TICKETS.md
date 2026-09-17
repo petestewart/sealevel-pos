@@ -14551,3 +14551,207 @@ server process, and T105's unnamed-sale count is process state):
   custom amount") while the row's own column shows the extended amount
   ($111.00 at three). That is the ticket row's existing convention, with
   the `n @ price` sub-line under it saying so, and it was left alone.
+
+## T106. The discount dialog reads as three things, and the two foot buttons are one height (Pete, 2026-09-17)
+
+Pete, on the discount dialog:
+
+> "this box is laid out confusingly. the reasons should be labeled with
+> Reason above them and seprated more from the dollar amounts. also,
+> under percentage, we should have presets for 30% (fixed teacher
+> discount) and 20% (fixed cleaner discount) in lieu of 25% and 50%. and
+> percentage should be the first/default option, not dollar amount.
+>
+> Also replace "Whole sale" with "Entire sale""
+
+And, on the pay screen behind it:
+
+> "also the Discount button should be the same height as the Finalize
+> sale button"
+
+### 1. The reason is its own group, under its own word
+
+The dialog's left column was six identical 64px cells in two `.pad-chips`
+rows, one under the other: the quick figures ($5 / $10 / $20) and the
+three reason KINDS (Trade / Damaged item / Other). Nothing said which row
+was money and which was a taxonomy, so the box read as six
+interchangeable buttons.
+
+The reason chips and the note now sit inside one `.discount-reason`
+group, under the word **Reason** and a 1px `--line` rule. The label is
+the dialog's own section idiom, `.pad-kicker`: the same uppercase muted
+16px as the **DISCOUNT** kicker on the head one row above it. No new
+treatment, no new token, radius still 0.
+
+**The quick cells got no label of their own, deliberately.** The head's
+DISCOUNT kicker already names everything above the rule, and what the
+cells hold is said twice over by the segment directly above them and by
+the `%` or `$` on their own faces. A second label would have been a third
+word for one group and about 30px of box height bought for nothing, in a
+box whose height is fixed at 680 and already the tightest thing in the
+app. The separation Pete asked for is carried by the rule and by the
+measured 53px between the last cell and the first chip, not by a caption.
+
+**The three kinds did not move.** Not added to, not renamed, not
+reordered: the kind is stored with the sale (T45), and T79 settled that
+this list is three with no Teacher.
+
+### 2. Percent is first, and is what the dialog opens on
+
+The segment is now **Percent | Amount | Entire sale**, and
+`EMPTY_DISCOUNT_DRAFT` is `{ mode: "percent", entry: "" }`. A freshly
+opened dialog is in Percent, so a typed 5 means 5% where it used to mean
+$5.
+
+That is the risk in this ticket, and what answers it is that the digit is
+never the only thing on the screen:
+
+- the head reads **`5%`**, never `$5.00`; money in this dialog always
+  carries a `$` and two decimals, a percent always a `%`;
+- the running effect line spells the same figure out in money against the
+  live subtotal: "Discount $1.60, they pay $30.40 before tax.";
+- with nothing typed the prompt is "Enter 1 to 100 percent of the $32.00
+  subtotal.", which names the unit before a key is pressed.
+
+Everything that assumed the draft opens on amount was found and made
+right, or found already right: the entry buffer and the key handler read
+`d.mode` (an amount accumulates into cents, a percent into whole
+percent), `chooseMode` still drops the digits on a switch because cents
+mean nothing as a percent, and the refusal-reopen path (a teacher token
+Mindbody refused mid-charge) rebuilds the draft from the ARMED discount's
+own mode, not from the default, so it still comes back saying what it
+said. `openComp` and `closeReason` both reset to the same constant.
+
+The mode KEY in the code is still `"whole"`. It is not user-facing, and
+renaming it would have touched the refusal-reopen path and `comp.ts`'s
+contract for no gain.
+
+### 3. The percent cells are 10 / 20 / 30
+
+25 and 50 are gone. **30% is the studio's fixed teacher discount and 20%
+its fixed cleaner discount** (Pete), so two of the three cells are now the
+two figures the counter actually rings up, and 10 stays as the round one.
+The cells are plain figures: no Teacher or Cleaner reason chip was
+invented to go with them, because the reason kinds are a stored taxonomy
+and T79 settled that list. A teacher discount is filed under whichever
+kind fits with the note saying so, exactly as it was.
+
+Under Entire sale the cells are inert and show the PERCENT figures, not
+the dollar ones. Entire sale IS percent 100, and with Percent now the
+default the common path is Percent then Entire sale: the cells flipping
+from percents to dollars as they greyed out was a change of unit in a
+control nobody had touched.
+
+### 4. "Whole sale" is now "Entire sale"
+
+Changed everywhere a teacher can reach it, and in the comments that name
+the control:
+
+- the segment's label, which is the only place it was ever drawn;
+- `/api/checkout`'s two refusals that named it: "a comp needs a discount
+  covering the **entire** sale ..." and "the discount covers the
+  **entire** sale, so there is nothing to pay; send method comp";
+- `checkoutCart`'s own precondition message in `src/lib/sale.ts`, same
+  feature, same sentence shape;
+- `comp.ts`'s contract comment for `Discount`, `globals.css`'s two
+  comments and `SaleScreen.tsx`'s comments that named the segment.
+
+Nothing else about those refusals moved: the same status, the same
+condition, the same rest of the sentence, and each one is asserted
+verbatim by T106's route driver.
+
+**Left alone on purpose**: comments and one refusal that use "the whole
+sale" as ordinary English about a Mindbody sale rather than as the name of
+this control, above all `guestpass.ts`'s "a return would take back the
+whole sale", which is T63's sentence about a bundled sale and has nothing
+to do with the discount dialog.
+
+### 5. The two foot buttons are one height
+
+Discount was `min-height: 64px` beside Finalize Sale's 72px, in the same
+flex row. Both now read `min-height: var(--pay-btn-h)`, declared once on
+`.pay-foot`, so Finalize Sale's height wins (the primary is never
+shrunk) and neither can drift from the other again. No pixel is
+hardcoded twice, nothing else about either button changed, and the
+`.pay-foot-done` row carries the same class, so the "Charged $35.31"
+segment after a sale is the same 72 as the button it replaces.
+
+### Build notes
+
+- `src/app/SaleScreen.tsx`: the default mode, the segment's order and
+  labels, the cells' figures and their unit under Entire sale, the
+  `.discount-reason` group with its label and `aria-labelledby`.
+- `src/app/globals.css`: `.discount-reason` and `.discount-reason-label`,
+  `--pay-btn-h` on `.pay-foot`, and the two comments that named the
+  segment. Tokens only, both palettes reached through the variable swap,
+  no hex added anywhere.
+- `src/app/api/checkout/route.ts`, `src/lib/sale.ts`, `src/lib/comp.ts`:
+  wording only.
+- **No money logic was touched.** Not `parseDiscount`, not
+  `spreadDiscount`, not `isFullDiscount`, not the gift card rails, not the
+  token, not `assertBasket`.
+
+#### Verified
+
+Rebuilt before every browser run. `npm run typecheck` and `npm run build`
+clean.
+
+- **T106's UI driver** (`scratchpad/t106/ui.mjs`, `next start` on :3106
+  against the T102 mock on :4106), 156 checks, all four palette and
+  orientation combinations plus a gift card ticket in each palette and a
+  charge in each: the dialog opens in Percent with the head at `0%`; the
+  segment reads Percent | Amount | Entire sale in that order; the cells
+  read 10%/20%/30% and $5/$10/$20; a typed 5 discounts 5% and the effect
+  line says "Discount $1.60, they pay $30.40 before tax."; the 30% cell
+  takes $9.60 off $32; a key that would pass 100 is refused; an empty or
+  zero entry is refused with Next off; Amount still reads cents and still
+  clamps at the subtotal; the Reason label is present at 16px and the two
+  groups are separated by a 1px solid rule with 53px between them.
+- **One size per state, measured**: the box is 760x680 in every state of
+  the reason step (percent empty, percent typed, at 100, amount empty,
+  amount typed, Entire sale, with a reason chosen, with the note filled,
+  with the gift card greying and with the 100% refusal showing), with
+  `scrollHeight - clientHeight` of 0 in all of them. Nothing jumps when a
+  chip is tapped.
+- **The foot, measured, not eyeballed**: Discount and Finalize Sale are
+  **72px and 72px** in both palettes and both orientations, resting, with
+  a discount armed (the long label "Discount $6.40. Tap to remove.", one
+  line box, no wrap), tendered, in flight (Discount inert, still 72), and
+  after the sale (the done foot's segment, still 72). 16px and 22px text,
+  both over the floor.
+- **"Whole sale" appears nowhere**: swept in the browser over every text
+  node and every attribute of the whole document, on the dialog, on a
+  gift card ticket and on the done screen, in each combination.
+- **Entire sale behaves as the old segment did**: greyed on a gift card
+  ticket with "A gift card cannot be given away for nothing" on its
+  title, 100% by percent refused with T102's sentence word for word and
+  Next off, 20% off a $50 card still $10 off.
+- **T106's route driver** (`scratchpad/t106/route.mjs`), 17 checks: 30%
+  and 20% sell and the answer carries the discount; zero, negative, a
+  non-number, over 100 and past the subtotal each refused with their own
+  unchanged sentence and no cart sent; the two reworded comp refusals
+  verbatim; a 100% comp still sells; the teacher token is one shot (the
+  same token twice is 401) and no token is 401.
+- **T102's route driver re-run unchanged**: 15/15, including the comped
+  gift card, the 100%-off card, the shrinking card, the mixed ticket's
+  spread to the cent and the discount past the subtotal.
+- **T103's route driver re-run unchanged**: 48/48, the whole sold-nothing
+  rail.
+- The size and contrast audit over every state: no text under 16px, no
+  tap target under its floor, no horizontal overflow, in both palettes.
+
+#### Could not verify
+
+- **Nothing live.** No server behaviour changed, so nothing was run
+  against Mindbody; every figure above is the mock's.
+- **The part-sold ticket state** (T105's) was not driven for the foot's
+  two heights. The row's height comes from one declaration on `.pay-foot`
+  that no state overrides, and the states that were driven cover both
+  buttons lit, both inert and one inert.
+- **The disabled keypad's contrast under Entire sale** measures 3.11:1.
+  That is T48's `opacity: 0.5` on a disabled `.modal-reason .pad-key`,
+  which predates this ticket and fires in exactly the same state it did
+  before (the old Whole sale turned the same keys off). Recorded, not
+  fixed here.
+- Whether a teacher at the counter reads `5%` as five percent on the
+  first tap is the one thing only Pete can answer.

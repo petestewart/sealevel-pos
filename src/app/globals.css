@@ -4155,7 +4155,8 @@ button.sale-for:disabled {
   align-items: center;
   justify-content: flex-start;
   gap: 14px;
-  min-height: 72px;
+  /* T106: the one height for both foot buttons, declared on .pay-foot. */
+  min-height: var(--pay-btn-h, 72px);
   min-width: 200px;
   padding: 0 22px;
   border: 0;
@@ -4816,6 +4817,16 @@ button.sale-for:disabled {
   margin: 0 20px 16px;
 }
 
+/* T106, Pete: "also the Discount button should be the same height as the
+ * Finalize sale button". They share the foot's row, so ONE declaration on
+ * the row sets both heights and neither can drift from the other again:
+ * Finalize Sale's height is the one that wins (it is the primary, and it
+ * was the taller of the two at 72px). The fallback keeps .comp-hold on
+ * the 64px floor if it is ever used outside the foot. */
+.pay-foot {
+  --pay-btn-h: 72px;
+}
+
 .pay-quiet {
   flex: 1;
   min-width: 0;
@@ -4947,7 +4958,7 @@ button.sale-for:disabled {
 
 /* T102: a disabled chip stays READABLE, which the T99 review asked for
  * on a disabled calendar day and which now matters here too: with a gift
- * card on the ticket the discount dialog's Whole sale segment is greyed
+ * card on the ticket the discount dialog's Entire sale segment is greyed
  * every time it opens. Tokens rather than an opacity, because 0.4 of the
  * ink on the surface measured 2.46:1. */
 .pad-chip:disabled {
@@ -5259,7 +5270,7 @@ button.sale-for:disabled {
   flex: none;
   display: inline-flex;
   align-items: center;
-  min-height: 64px;
+  min-height: var(--pay-btn-h, 64px);
   padding: 0 22px;
   border: 1px solid var(--line);
   border-radius: 0;
@@ -5423,11 +5434,34 @@ button.sale-for:disabled {
   min-height: 36px;
 }
 
-/* The segment (Amount | Percent | Whole sale) and the quick cells:
+/* The segment (Percent | Amount | Entire sale) and the quick cells:
  * equal 64px cells, the chosen segment in the accent pairing (.pad-chip.on). */
 .discount-modes .pad-chip,
 .discount-quick .pad-chip {
   flex: 1 1 0;
+}
+
+/* T106, Pete: "the reasons should be labeled with Reason above them and
+ * seprated more from the dollar amounts." The reason chips and their note
+ * become one GROUP under the word Reason and a hairline, so the six cells
+ * that used to sit in two identical rows read as two things. The rule is
+ * --line, the 1px structural token (radius stays 0, no new treatment),
+ * and the group keeps the column's own 10px rhythm inside itself. */
+.discount-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+/* The label is the head's kicker, so this is the dialog's existing
+ * section idiom and not a second one. It sits on its own line above the
+ * chips; the fixed height keeps the box one size per state. */
+.discount-reason-label {
+  margin: 0;
+  min-height: 20px;
+  line-height: 20px;
 }
 
 /* The running effect: muted while nothing valid is entered (the
