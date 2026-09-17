@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import PasswordInput from "./PasswordInput";
 import PinModal from "./PinModal";
 
 /**
@@ -379,15 +380,12 @@ export default function StaffModal({
               disabled={busy}
               onChange={(e) => setUsername(e.target.value)}
             />
-            <input
-              className="reason-input"
-              type="password"
-              autoComplete="current-password"
+            <PasswordInput
               placeholder="Mindbody password"
-              aria-label="Mindbody password"
+              label="Mindbody password"
               value={password}
               disabled={busy}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={setPassword}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void signIn();
               }}

@@ -11,6 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import PasswordInput from "./PasswordInput";
 import { actorFallbackLine } from "./actornote";
 import CardModal from "./CardModal";
 import { toggleTheme } from "./theme";
@@ -5294,53 +5295,44 @@ function PaymentPanel(props: {
                     setEnroll((v) => ({ ...v, username: e.target.value }))
                   }
                 />
-                <input
-                  className="reason-input"
-                  type="password"
-                  autoComplete="current-password"
+                <PasswordInput
                   placeholder="Mindbody password"
-                  aria-label="Mindbody password"
+                  label="Mindbody password"
                   value={enroll.password}
                   disabled={enrollBusy}
-                  onChange={(e) =>
-                    setEnroll((v) => ({ ...v, password: e.target.value }))
+                  onChange={(password) =>
+                    setEnroll((v) => ({ ...v, password }))
                   }
                 />
-                <input
-                  className="reason-input"
-                  type="password"
+                <PasswordInput
                   inputMode="numeric"
                   autoComplete="off"
                   maxLength={PIN_MAX}
                   placeholder={`New PIN (${PIN_MIN} to ${PIN_MAX} digits)`}
-                  aria-label="New PIN"
+                  label="New PIN"
                   value={enroll.pin}
                   disabled={enrollBusy}
-                  onChange={(e) =>
+                  onChange={(raw) =>
                     setEnroll((v) => ({
                       ...v,
-                      pin: e.target.value.replace(/\D/g, "").slice(0, PIN_MAX),
+                      pin: raw.replace(/\D/g, "").slice(0, PIN_MAX),
                     }))
                   }
                 />
                 {/* T80: the same PIN again, so a typo cannot become the
                     PIN a teacher then cannot guess back. */}
-                <input
-                  className="reason-input"
-                  type="password"
+                <PasswordInput
                   inputMode="numeric"
                   autoComplete="off"
                   maxLength={PIN_MAX}
                   placeholder="Re-enter PIN"
-                  aria-label="Re-enter PIN"
+                  label="Re-enter PIN"
                   value={enroll.confirm}
                   disabled={enrollBusy}
-                  onChange={(e) =>
+                  onChange={(raw) =>
                     setEnroll((v) => ({
                       ...v,
-                      confirm: e.target.value
-                        .replace(/\D/g, "")
-                        .slice(0, PIN_MAX),
+                      confirm: raw.replace(/\D/g, "").slice(0, PIN_MAX),
                     }))
                   }
                   onKeyDown={(e) => {
