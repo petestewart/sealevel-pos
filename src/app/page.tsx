@@ -49,6 +49,7 @@ import { isGuestPass, usableGuestPass } from "@/lib/guestpass";
 import { actorFallbackLine } from "./actornote";
 import { DEFAULT_SETTINGS, useSettings } from "./settings";
 import { toggleTheme, watchSystemTheme } from "./theme";
+import { useVisualViewport } from "./viewport";
 import type { CardOnFile } from "@/lib/clientcard";
 import type { ClientProfile } from "@/lib/clientprofile";
 import { stripSignatures } from "@/lib/notesig";
@@ -8616,6 +8617,11 @@ export default function FrontDeskPage() {
   /* T70: follows the iPad's own light/dark setting until the sun toggle
    * stores a choice (src/app/theme.ts). */
   useEffect(() => watchSystemTheme(), []);
+  /* T98: the one subscription to the visible band, so every modal is
+   * centred and sized inside what the teacher can SEE with the iOS
+   * keyboard up (src/app/viewport.ts). Mounted here, once, never per
+   * modal. */
+  useVisualViewport();
   return (
     <Suspense fallback={null}>
       <AuthGate />

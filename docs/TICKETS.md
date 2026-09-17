@@ -11862,3 +11862,146 @@ the floor) is accurate and both sentences refuse; the browser cannot send
 it. Nothing was run against live Mindbody, so the editable product's
 behaviour rests on Pete's two `Test: true` probes, and the T96 "Not
 verified" list above stands as written.
+
+## T98. Every modal sits above the iPad's keyboard (Pete, 2026-09-17)
+
+Pete, on the counter iPad:
+
+> "the standard iOS keyboard pops up in front of the custom modals like
+> credit card entry. it goes away after the credit card is entered, but it
+> covers up our modal. one useful thing though the 'Scan Card' option
+> appears on that keyboard automatically."
+
+Asked which way to fix it:
+
+> "yes, all modals need to be above the keyboard.
+>
+> btw, the cash entry modal does not bring up the keyboard, presumably
+> because there are no text fields? this is probably ideal, just fyi."
+
+### The diagnosis, corrected
+
+An earlier explanation in this repo's history said the keyboard was a
+leftover: focus sitting in some other field, raising a keyboard that had
+nothing to do with the dialog on screen. **That was wrong**, and it is
+recorded here so nobody spends a second afternoon on focus handling. This
+is not about focus at all. A teacher taps the card number, the keyboard
+opens because it should, and it covers the box because the box never makes
+room:
+
+- iOS shrinks the **visual** viewport when the keyboard opens and leaves
+  the **layout** viewport alone.
+- Our modals are centred inside a `position: fixed` full-height scrim,
+  which is laid out against the layout viewport. So the box does not move,
+  and the keyboard slides over its lower half, which is where the later
+  fields and the primary control live.
+
+`window.visualViewport` is the API that exposes the visible band, and it is
+the fix.
+
+### The design
+
+1. **One hook, one source of truth.** `src/app/viewport.ts`'s
+   `useVisualViewport()` subscribes to `visualViewport`'s `resize` and
+   `scroll` and publishes the visible band to two custom properties on
+   `<html>`: `--vvh` (its height) and `--vv-top` (its offset). Mounted
+   ONCE, at the page root (`FrontDeskPage`), never per modal. Events are
+   coalesced through a timer and one `requestAnimationFrame`, so a
+   keyboard animation does not thrash React; it touches no React state at
+   all, only those two properties.
+2. **No `visualViewport`, no change.** The fallback is in the CSS, not in
+   a runtime branch: `:root` declares `--vvh: 100dvh` and `--vv-top: 0px`,
+   and the hook only ever NARROWS them, and only while the band is at
+   least 120px shorter than the layout viewport (an iPad keyboard takes
+   300px and up; Safari's toolbars take less). An older WebKit, a desktop
+   browser and the Playwright harness never see a change.
+3. **Every modal lives inside the visible band.** `.modal-scrim` is
+   `top: var(--vv-top); height: var(--vvh)` instead of `inset: 0`, so
+   every dialog in the app is centred in what the teacher can SEE. The
+   boxes that carry their own height follow the same band: `.modal`'s
+   floor, `.modal-counter`, `.modal-search`, `.modal-cal`,
+   `.modal-contract`, `.modal-pay`, `.modal-guest` and the reason pad. So
+   do the fixed regions INSIDE them, each by one more term in the
+   `min()` it already had: `.attach-rows`, `.profile-scroll`,
+   `.waiver-scroll`, `.pay-opts` and the card box's `.card-body`. The new
+   term can only win when the band is short, which is why the fallback
+   geometry is untouched.
+4. **Pete's static-size rule holds, and it is the constraint that
+   mattered here** (T52, T68: "all popups must be statically sized", "fix
+   it so it's stationary size"). A modal has one size with the keyboard
+   down and one with it up, each fixed. The hook publishes a band only
+   once it has SETTLED (120ms of quiet), so the box does not resize
+   through the keyboard's slide; it changes once, on the way in and once
+   on the way out.
+5. **The primary control stays reachable, which is the acceptance test.**
+   For a box that fits the band, that follows from 3. For a long form
+   (New client, the card box) the content is taller than what the
+   keyboard leaves, so the box scrolls, and a scrolled action row would
+   put the confirm under the keyboard, which is the bug itself. So
+   `.modal .modal-actions` is stuck to the box's bottom edge
+   (`position: sticky; bottom: -18px`) and the fields scroll under it.
+   With the keyboard down nothing overflows and a sticky element with
+   nothing to stick to sits exactly where it sat: no dialog's geometry
+   changes.
+6. **The focused field scrolls into view inside the modal's own
+   scroller.** `scrollFieldIntoView` is `scrollIntoView({ block:
+   "nearest" })` done by hand, bounded by the `.modal-scrim`: it finds the
+   nearest scrolling ancestor inside the dialog and moves that one
+   element. The real API walks every scrollable ancestor to the document,
+   and the page must never move. It runs on `focusin` and again whenever
+   the band changes, so tabbing or "next" down the card fields never
+   leaves the field being typed into behind the keyboard's edge.
+
+### Scan Card is why the OS keyboard STAYS for card entry
+
+Pete: "one useful thing though the 'Scan Card' option appears on that
+keyboard automatically." It appears because `CardModal`'s number field
+declares `autoComplete="cc-number"`; Apple puts "Scan Credit Card" in the
+QuickType bar for that token and fills the expiry and the name beside it
+from the same scan. So the answer to a keyboard covering the card box is to
+lift the box, NOT to replace the keyboard with an in-app keypad: the OS
+keyboard is the only thing on this screen that can read a card with a
+camera. The five tokens are now named in one `CC_AUTOCOMPLETE` map checked
+against literal types (`as const satisfies ScanTokens`), so weakening one,
+to "off", to a typo, or by dropping a field, fails `npm run typecheck`
+rather than quietly costing the studio the camera.
+
+### A money pad carries no text input
+
+Pete: the cash pad raises no keyboard "presumably because there are no
+text fields? this is probably ideal". It is T35's rule ("no OS keyboard
+anywhere in the payment seam"), it is why the pads were built as pads, and
+it stays: **no money pad gets a text input.** The one recorded exception is
+the gift card's barcode field (T83), which is not an amount: the studio's
+scanner types it like a keyboard and needs somewhere to land. One line of
+CLAUDE.md's conventions now says so.
+
+### Build notes
+
+- New file `src/app/viewport.ts` (the hook and `scrollFieldIntoView`),
+  mounted in `src/app/page.tsx`'s `FrontDeskPage` beside `watchSystemTheme`.
+- `src/app/globals.css`: the two properties on `:root`, the scrim's band,
+  the band term on nine boxes and five inner regions, and the sticky
+  action row. No new colour token; `--surface` is the only one used.
+- `src/app/CardModal.tsx`: the pinned autocomplete tokens. No field, no
+  label and no order changed.
+- Verified with Playwright against `next start` and the T96 mock (:3098 /
+  :4598), 1194x834 light and 834x1194 dark, by overriding
+  `window.visualViewport.height` and dispatching `resize`, which is what
+  iOS does. For the staff sign-in gate, the walk-in search, New client,
+  the client profile, the card box in both modes, the gift card pad and a
+  tender's amount pad: the box and its primary control are fully inside a
+  484 (portrait 844) band, the box holds ONE size through three
+  intermediate bands, holds it once settled, and returns to its exact
+  pre-keyboard box when the keyboard closes. The card box's last field
+  scrolls into view inside `.card-body` with `window.scrollY` and
+  `documentElement.scrollTop` unmoved. The five autocomplete tokens are
+  read back off the DOM. Neither money pad contains an `<input>`.
+- The fallback was measured on a build of the parent commit and compared:
+  every modal's box, to the pixel, at both sizes.
+- `npm run typecheck` and `npm run build` clean.
+- **No real iOS keyboard was involved.** A headless browser has no soft
+  keyboard, so this makes the geometry correct in principle, against the
+  API iOS actually drives; only Pete's counter iPad can confirm it. The
+  dev drawer was left alone deliberately: it is a fixed panel rather than
+  a modal, dev-only, and its settings fields are not a counter path.
