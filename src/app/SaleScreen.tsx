@@ -1978,10 +1978,18 @@ function PaymentPanel(props: {
   /* Source availability. An unavailable source renders greyed WITH the
    * reason, never hidden (PLAN 2.2: "account credit ($12) greyed out
    * beats a failure"). */
+  /* With nobody attached the tile BODY (the card on file) cannot work,
+   * but the keypad beside it can: T93 charges a card handed across the
+   * counter on a walk-in sale. So the line points at the keypad rather
+   * than asking for a client the sale does not need (Pete, 2026-09-17:
+   * "for a walk in sale it appears i can enter a credit card, but under
+   * Card it says 'Attach a client'. that text should be removed if we
+   * can do a walk in sale on cc"). Account still asks for a client,
+   * because account credit really does need one. */
   const cardReason = otherClientWhy
     ? otherClientWhy
     : !client
-    ? "Attach a client"
+    ? "Use the keypad for a card"
     : cardLookup?.loading
       ? "Checking for a card..."
       : cardLookup?.error
