@@ -351,6 +351,16 @@ while `git clone` works, so clone the repo rather than fetching files.
 - No em dashes in user-facing copy.
 - Sized for a hot room and a queue: nothing under 16px, tap targets at least
   64px tall.
+- **An amount is never typed into a text field** (T35, confirmed by Pete at
+  the counter in T98: the cash pad raises no keyboard "because there are no
+  text fields? this is probably ideal"). Every amount, from every source,
+  is entered on a keypad, which is what keeps the OS keyboard out of the
+  money path. Two fields sit beside a pad and are NOT amounts: the gift
+  card's barcode (T83; the studio's scanner types it) and the discount
+  pad's reason note and PIN (T43/T48/T71). Card entry keeps the OS
+  keyboard on purpose, because that is where Apple's "Scan Credit Card"
+  lives; T98 lifts every modal above the keyboard instead (`--vvh`,
+  `--vv-top`, `--vv-bot`, `src/app/viewport.ts`).
 - **Every colour is a token, in both palettes.** `globals.css` defines the
   palette twice, in `:root` (light) and in the `:root[data-theme="dark"]`
   block, and no hex belongs anywhere else in the CSS or in a component. A

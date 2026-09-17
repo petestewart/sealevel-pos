@@ -95,6 +95,40 @@ function CloseIcon() {
   );
 }
 
+/**
+ * T98: the autocomplete tokens, named and pinned.
+ *
+ * Pete, watching the iOS keyboard cover this box: "one useful thing
+ * though the 'Scan Card' option appears on that keyboard automatically."
+ * It appears BECAUSE of these tokens: Apple puts "Scan Credit Card" in
+ * the QuickType bar for a field that declares `cc-number`, and fills the
+ * expiry and the name beside it from the same scan. That is why T98 lifts
+ * the modal above the keyboard instead of replacing the keyboard with an
+ * in-app keypad: the OS keyboard is deliberately KEPT for card entry,
+ * because it is the only thing here that can read a card with the camera.
+ * (T35's no-OS-keyboard rule is about MONEY entry, and the pads keep it:
+ * a money pad carries no text input at all.)
+ *
+ * The literal types are the check. Weaken a token, to "off", to a typo,
+ * or by dropping a field, and `npm run typecheck` fails, rather than the
+ * scan quietly disappearing from an iPad nobody happens to be holding.
+ */
+type ScanTokens = {
+  readonly number: "cc-number";
+  readonly expMonth: "cc-exp-month";
+  readonly expYear: "cc-exp-year";
+  readonly holder: "cc-name";
+  readonly postal: "postal-code";
+};
+
+const CC_AUTOCOMPLETE = {
+  number: "cc-number",
+  expMonth: "cc-exp-month",
+  expYear: "cc-exp-year",
+  holder: "cc-name",
+  postal: "postal-code",
+} as const satisfies ScanTokens;
+
 const MIN_DIGITS = 13;
 const MAX_DIGITS = 19;
 
@@ -353,7 +387,7 @@ export default function CardModal(props: Props) {
               autoFocus
               type="text"
               inputMode="numeric"
-              autoComplete="cc-number"
+              autoComplete={CC_AUTOCOMPLETE.number}
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
@@ -375,7 +409,7 @@ export default function CardModal(props: Props) {
             <span>Expiry month</span>
             <select
               className="reason-input"
-              autoComplete="cc-exp-month"
+              autoComplete={CC_AUTOCOMPLETE.expMonth}
               value={month}
               disabled={busy}
               onChange={(e) => {
@@ -395,7 +429,7 @@ export default function CardModal(props: Props) {
             <span>Expiry year</span>
             <select
               className="reason-input"
-              autoComplete="cc-exp-year"
+              autoComplete={CC_AUTOCOMPLETE.expYear}
               value={year}
               disabled={busy}
               onChange={(e) => {
@@ -416,7 +450,7 @@ export default function CardModal(props: Props) {
             <input
               className="reason-input"
               type="text"
-              autoComplete="cc-name"
+              autoComplete={CC_AUTOCOMPLETE.holder}
               autoCapitalize="words"
               value={holder}
               disabled={busy}
@@ -432,7 +466,7 @@ export default function CardModal(props: Props) {
               className="reason-input"
               type="text"
               inputMode="text"
-              autoComplete="postal-code"
+              autoComplete={CC_AUTOCOMPLETE.postal}
               autoCapitalize="characters"
               value={postal}
               disabled={busy}
