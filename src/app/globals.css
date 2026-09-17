@@ -3814,8 +3814,15 @@ button.sale-for:disabled {
   /* See .shelf-cell: the card may never be wider than its column. */
   min-width: 0;
   min-height: 104px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
+  /* T104 review: the SAME outer edge the in-cart card below reads, less
+     this card's own 1px line. Half of this pair was anchored to the
+     cell's numbers and half was still `14px 16px`, so raising
+     `--cell-edge-y` would have moved the card's outer edge the moment a
+     line landed on the ticket, which is the one thing that pair exists
+     to prevent. */
+  padding: calc(var(--cell-edge-y, 15px) - var(--cell-line, 1px))
+    calc(var(--cell-edge-x, 17px) - var(--cell-line, 1px));
+  border: var(--cell-line, 1px) solid var(--line);
   border-radius: 0;
   background: var(--surface);
   color: var(--ink);
@@ -3936,8 +3943,8 @@ button.sale-for:disabled {
 .shelf-cell {
   position: relative;
   display: grid;
-  /* T104 review: the three numbers the in-cart card and the stepper over
-   * it BOTH read, so that "2px in, 15px up" stays the card's own inner
+  /* T104 review: the numbers the cards and the stepper over them ALL
+   * read, so that "2px in, 15px up" stays the card's own inner
    * corner rather than a pair of literals that happen to agree with it
    * today. The outer edge (15 down the card, 17 across) is the same
    * whatever the border costs; the border is what the strip clears; the
@@ -3946,6 +3953,10 @@ button.sale-for:disabled {
    * card's padding and the strip's corner all follow. */
   --cell-edge-y: 15px;
   --cell-edge-x: 17px;
+  /* T104 review: the idle card's line as well as the in-cart card's
+     border, so both paddings are the one outer edge less their own
+     line. */
+  --cell-line: 1px;
   --cell-border: 2px;
   --strip-w: 126px;
   /* A grid item does not shrink below its min-content width by default,
