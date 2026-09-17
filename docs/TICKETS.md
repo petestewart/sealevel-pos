@@ -13805,3 +13805,148 @@ nothing, and Understood clears the stop while the lock stays.
   product id, and no live confirmation that sales 426536 and 426537
   (which Mindbody still refuses to return) are unaffected by any of
   this; nothing here touches them.
+
+### Review
+
+Reviewed on the branch, against the mock on :4611 and `next start` on
+:3211 (rebuilt first). The rail is right and stays; what changed is what
+it CLAIMS, because the first job of this review was hunting false
+positives. A false refusal here tells a teacher with a customer in front
+of them that the money is gone and nothing was sold. Six legitimate sale
+shapes were refused by the first cut, and one wrong sale could pass.
+
+**Narrowed, each one proved against a built sale** (route driver
+`t103r-route.mjs`, 39 checks; all of these refused before the fix and
+stand after it):
+
+1. **A cart holding a Package line is not asserted at all.** A package
+   "combine[s] multiple services and/or products into a single offering"
+   (sale.yml:511) and `PurchasedItem` has no package field of any kind
+   (sale.yml:2302): a package sale can only come back as its components,
+   whose ids are nowhere in the ticket. The first cut refused such a sale
+   twice over, as a missing line and as unordered items. This is T30's
+   existing carve-out (a package-bearing cart is already outside the
+   strict total assertion, `packagePricing`) one level on, and it is
+   recorded as `unassertable: "package"`, logged `[basket] unverified`.
+   Whether Mindbody expands a package is unproven either way, which is
+   exactly why it must not refuse.
+2. **A line the ticket never ordered is no longer a refusal.** Mindbody
+   files lines of its own in a sale (a tax line, a fee, a bundled
+   component), and an extra line is not evidence that the ordered ones
+   were missed. The ids stay in `unordered`, in the audit and in a log
+   line, and the sale stands.
+3. **A quantity Mindbody did not report is not read as short.**
+   `PurchasedItem.Quantity` is documented "applicable for products only"
+   (sale.yml:2348), so a Service line of two answered by one item with
+   no `Quantity` was being called short on a figure Mindbody never gave.
+   `BasketAudit.quantityReported` now carries whether it said anything,
+   and only a reported shortfall refuses. A product line still is
+   checked, because a product's Quantity is documented present, and a
+   line of three split into three items of one still passes.
+4. **A sale that was READ and holds none of this ticket is not called a
+   sale that sold nothing.** The sale id comes from a dated
+   `/sale/sales` list filtered on the client, not from the answer, so
+   "holds only items we never ordered" is what a mis-identified sale
+   looks like. Recorded as `unassertable: "mismatch"` and logged. The
+   answer's OWN basket is never excused this way: an empty or short
+   basket on the checkout answer is certainly this sale's and still
+   refuses.
+5. **Ids are folded to lower case.** A barcode is a string; the two
+   sides must not disagree over the casing of one.
+
+**Tightened, one thing:** the either-way match on `Id` and `BarcodeId`
+CAN collide. A Product line is sent as the product's barcode and a
+Service line as the pricing option's ProductId, and both namespaces are
+small integers on one site, so a sale holding a PASS could answer for a
+retail product that was never sold. `purchasedMatches` now refuses a
+match whose `IsService` (sale.yml:2314) contradicts the line's type;
+where the flag is absent nothing is contradicted and the match stands.
+Proved both ways against the mock: before the fix a pass whose Id was a
+product line's id passed for that product, after it the product is
+correctly reported missing.
+
+**Two records were being skipped by the stop, and are now written
+before it.** The T95/T102 gift card ticket answered sold-nothing before
+its T79 discount record ran, and the T94 overdraft record (the account
+charged past its balance on a teacher's PIN) sat after `basketStop` on
+the split and credit paths. Both moved: the cart IS a sale and the
+discount and the overdraft are on the studio whatever the sale turned
+out to hold, which is the rule the other paths already followed. The
+gift cards are still never attempted, and the answer now carries the
+discount fields with it.
+
+**The screen shows what else is outstanding.** The route was already
+answering `summary` (the gift cards never attempted, the T90 carts never
+attempted) and the stop was dropping it. It is rendered under the
+sentence now, in the same `pay-split-why` line, since a teacher told to
+escalate has to know what is still unsold.
+
+### What was checked and found sound
+
+- **Only ever reports.** No retry, no rollback, no refund, no second
+  charge on any path: the T90 loop breaks after its record, the gift
+  card ticket never reaches `purchasegiftcard`, T88's gesture returns
+  before the attach and the check-in (`payMoneyMoved` covers
+  `sold-nothing`, so the dialog offers no Charge and no free entry), and
+  the Pay screen clears the tender and locks the ticket. Proved past the
+  browser: exactly one real checkout in the call log on every refusing
+  shape, zero real gift card purchases, and a forced second tap on a
+  disabled Finalize Sale writes nothing.
+- **The gift card line refusal**, extended past what the build tested:
+  refused for a zero-value FIXED product (dropped from the shelf by T96
+  and still refused, which is why `allIds` keeps every id), for a line
+  bought for another client (the T90 path), beside a real gift card
+  sale, and with the list read failing on a cold cache. Always before
+  any Mindbody call.
+- **The record** carries no secret: the `[sold-nothing]` log line holds
+  the target, the sale and cart ids, the client, what was paid, the
+  problem and the per-line audit, and the note on the client is the
+  teacher's own sentence. No PIN, token, card number or gift card
+  barcode. A walk-in sale (the house client) files no note and still
+  stops; a note Mindbody refuses is one log line and never changes the
+  outcome.
+- **"Neither said" is quiet and stands**, as the build intended: a sale
+  list that errors, a sale the list never held, and an earlier unnamed
+  sale for the same client all log `[basket] unverified` and answer a
+  completed sale. Nothing scary reaches the counter for any of them.
+- **The mock's two fixes are in the scratchpad only.** Nothing in `src/`
+  was bent to make a test pass; the review's own shapes are mock knobs
+  too.
+- Both palettes and both orientations, 1180x820 and 820x1180: no text
+  under 16px, no short target, and the only low-contrast text on the
+  screen is the pre-existing disabled payment tile (`--disabled-ink`),
+  untouched here. `npm run typecheck` and `npm run build` clean.
+
+### Still open after the review
+
+- **The rail switches itself off for a client after ONE sale the list
+  could not name, for the life of the process.** T49's `unresolvedSales`
+  counter never ages out: once a client has an unresolved sale, every
+  later lookup for them answers null, so `latestSale` returns no basket
+  and every following sale is `[basket] unverified`. Measured: after one
+  sale the list never held, five consecutive EMPTY baskets for the same
+  client were all reported as completed sales. This is T49's own
+  bookkeeping, not T103's, and fixing it means changing which sale gets
+  NAMED, which can misname a receipt; it is deliberately not touched
+  here. It is the largest remaining hole in this rail and wants its own
+  ticket (age the waiting count out, so a sale that can no longer appear
+  stops blocking the next one).
+- **A site where `/sale/giftcards` does not answer cannot sell anything
+  from the cart.** The guard is fail-closed on purpose (T103's brief:
+  "a read that does not answer means the ticket is refused"), and the
+  mock's own refusal is the plausible one, "Gift cards are not enabled
+  for this site" -- site 471 has exactly that shape of per-site switch
+  on Formula Notes. If it ever bites, the fix is to treat a definite
+  "not enabled" answer as an empty list, not to weaken the rail.
+- **Nothing live still.** Whether a real answer carries
+  `PurchasedItems`, what a real package sale's basket holds, and whether
+  a real product's purchased item echoes its barcode are all unread; the
+  narrowings above are why none of them can produce a false refusal
+  while they stay unread.
+- Two concurrent checkouts for the same client in the same second could
+  still have one assert against the other's sale. The browser's single
+  flight makes it unreachable from the app, and it is not a shape a
+  counter produces.
+- A typed card the teacher asked to keep is still stored on file when a
+  T90 ticket later stops on a sale that holds nothing. Storing a card is
+  not a charge and the teacher asked for it, so it was left alone.
