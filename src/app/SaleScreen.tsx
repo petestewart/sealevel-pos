@@ -9408,8 +9408,19 @@ export default function SaleScreen(props: {
             <>
               <span className="shelf-amt">
                 {money(c.recurringPaymentTotal)}
-              </span>{" "}
-              {frequencyPhrase(c)}
+              </span>
+              {/* T104 review: the tail is an ELEMENT, not a bare text
+                  node. `.shelf-price` became a flex row that does not
+                  wrap, and an anonymous flex item cannot take
+                  `text-overflow`, so "each time the included pass runs
+                  out or expires" (frequencyPhrase's longest branch) was
+                  cut off mid-word at the cell's edge with nothing to say
+                  so: 385px of text in 171px of room. In the tail's own
+                  span it ellipsizes like every other tail, with the whole
+                  of it on the span's title. */}
+              <span className="shelf-bundle-mark" title={frequencyPhrase(c)}>
+                {frequencyPhrase(c)}
+              </span>
             </>
           ) : c.firstPaymentTotal !== null ? (
             <span className="shelf-amt">{money(c.firstPaymentTotal)}</span>
