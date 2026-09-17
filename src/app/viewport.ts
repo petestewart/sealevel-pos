@@ -17,16 +17,26 @@
  * the primary control live.
  *
  * `window.visualViewport` is the API that exposes the visible band, and
- * this is the one place that reads it. It publishes the band to two custom
- * properties on <html>, `--vvh` (its height) and `--vv-top` (its offset),
- * and the CSS centres and sizes every modal inside those instead of the
- * whole viewport. Mounted ONCE, at the page root; never per modal.
+ * this is the one place that reads it. It publishes the band to three
+ * custom properties on <html>: `--vvh` (its height), `--vv-top` (its
+ * offset) and `--vv-bot` (what is covered BELOW it), and the CSS centres
+ * and sizes every modal inside those instead of the whole viewport.
+ * Mounted ONCE, at the page root; never per modal.
+ *
+ * T98 review: `--vv-bot` exists because the scrim must keep covering the
+ * WHOLE layout viewport while only the box moves into the band. The band
+ * is not always the keyboard: an iPad also has a floating keyboard, a
+ * split keyboard and a hardware keyboard whose accessory bar is short, so
+ * the uncovered area under a band-sized scrim can be live page, tappable
+ * behind a dialog that is supposed to be modal. The scrim takes the two
+ * offsets as padding instead, which leaves the box centred in exactly the
+ * same content box it had before.
  *
  * Two rules the implementation turns on:
  *
  * - The fallback is the CSS's, not a branch here. `globals.css` declares
- *   `--vvh: 100dvh` and `--vv-top: 0px` on :root, and this hook only ever
- *   NARROWS them, and only while something keyboard-sized is up. No
+ *   `--vvh: 100dvh`, `--vv-top: 0px` and `--vv-bot: 0px` on :root, and this
+ *   hook only ever NARROWS them, and only while something keyboard-sized is up. No
  *   `visualViewport` (an older WebKit, a headless harness) means the
  *   properties are never touched and the screen renders exactly as it did
  *   before this ticket.
@@ -41,6 +51,7 @@ import { useEffect } from "react";
 
 const H = "--vvh";
 const T = "--vv-top";
+const B = "--vv-bot";
 
 /**
  * A band shorter than the layout viewport by less than this is browser
@@ -121,14 +132,23 @@ export function useVisualViewport(): void {
     const publish = () => {
       raf = 0;
       const band = Math.round(vv.height);
+      const top = Math.round(vv.offsetTop);
       if (window.innerHeight - band >= KEYBOARD_MIN) {
         root.style.setProperty(H, `${band}px`);
-        root.style.setProperty(T, `${Math.round(vv.offsetTop)}px`);
+        root.style.setProperty(T, `${top}px`);
+        /* What the band leaves covered at the BOTTOM. The scrim pads
+         * itself by this rather than ending here, so the covered strip
+         * still belongs to the scrim (T98 review). */
+        root.style.setProperty(
+          B,
+          `${Math.max(0, window.innerHeight - top - band)}px`,
+        );
       } else {
         /* Back to the CSS's own value rather than a second opinion on
          * what the full height is. */
         root.style.removeProperty(H);
         root.style.removeProperty(T);
+        root.style.removeProperty(B);
       }
       /* The band just changed shape, so the field being typed into may
        * now be under the keyboard's edge. */
@@ -159,6 +179,7 @@ export function useVisualViewport(): void {
       if (raf !== 0) window.cancelAnimationFrame(raf);
       root.style.removeProperty(H);
       root.style.removeProperty(T);
+      root.style.removeProperty(B);
     };
   }, []);
 }

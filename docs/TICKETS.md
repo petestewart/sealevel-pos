@@ -11966,15 +11966,19 @@ against literal types (`as const satisfies ScanTokens`), so weakening one,
 to "off", to a typo, or by dropping a field, fails `npm run typecheck`
 rather than quietly costing the studio the camera.
 
-### A money pad carries no text input
+### An amount is never typed into a text field
 
 Pete: the cash pad raises no keyboard "presumably because there are no
 text fields? this is probably ideal". It is T35's rule ("no OS keyboard
 anywhere in the payment seam"), it is why the pads were built as pads, and
-it stays: **no money pad gets a text input.** The one recorded exception is
-the gift card's barcode field (T83), which is not an amount: the studio's
-scanner types it like a keyboard and needs somewhere to land. One line of
-CLAUDE.md's conventions now says so.
+it stays: **every amount, from every source, is entered on a keypad.** Two
+fields do sit beside a pad, and neither is an amount: the gift card's
+barcode (T83), which the studio's scanner types like a keyboard and which
+needs somewhere to land, and the discount pad's reason note and PIN
+(T43/T48/T71), which are a reason and an identity. One line of CLAUDE.md's
+conventions now says so. (This section said "no money pad gets a text
+input" with the barcode as the only exception, which the discount pad's
+note contradicts; corrected in review.)
 
 ### Build notes
 
@@ -12012,3 +12016,112 @@ CLAUDE.md's conventions now says so.
   floor (the reason pad also takes the band term in its own `min()`), but
   their boxes were not measured. Worth a look when someone next has that
   flow open.
+
+### Review
+
+Adversarial review of the branch, driven in a real browser against `next
+start` and the T96 mock at 1194x834 light and 834x1194 dark, with
+`window.visualViewport.height` (and its `offsetTop`) overridden and
+`resize` / `scroll` dispatched, which is what iOS does. Four things
+changed; everything else held.
+
+**1. The scrim left a live strip under the band, and now does not.** The
+scrim was `top: var(--vv-top); height: var(--vvh)`, so with the band short
+the area below it was not covered at all: `elementFromPoint` under the band
+returned page, not scrim, in every state tested, and the screen showed the
+payment column's Discount and Finalize Sale undimmed under an open dialog.
+The builder's assumption is that the uncovered area is always the keyboard.
+It is not: an iPad has a floating keyboard and a split keyboard, and an
+attached hardware keyboard leaves only a short accessory bar, so that strip
+can be real page, tappable behind a dialog that is supposed to be modal,
+and under the sign-in gate (whose scrim is opaque) plainly visible. The
+scrim is `inset: 0` again and the band is its PADDING: `padding-top` takes
+`--vv-top` and a new `--vv-bot` (published by the same hook) takes what is
+covered below. The content box is therefore the same box it was, so the
+boxes do not move: every modal's geometry, keyboard up and keyboard down,
+is identical to the build before this fix, and the fallback is still
+identical to the pre-T98 build at both sizes.
+
+**2. The discount reason pad was clipping its own content.** The box is a
+grid whose middle track is `minmax(0, 1fr)`, and T98 gave the box the band
+term, so a short band compressed that track while its content simply ran
+out of the box. In landscape with the keyboard up this cut off the keypad's
+bottom row and left the note field, the one field that raises the keyboard,
+behind the action row, with the box's own scroll unable to reach it (the
+grid's rows still fitted, so there was nothing to scroll). `.modal-reason
+.reason-body` now scrolls. With the keyboard down the T68 box is 680 tall
+and its content fits, so nothing overflows and the box is pixel-identical.
+
+**3. The sticky row sat two pixels high in every sale dialog, keyboard
+down.** `bottom: -18px` matches `.modal`'s 18px padding and the shared
+row's -18px pull, but the sale shell (`.modal.modal-sale`) has 20px padding
+and its rows pull by -20px. Shot and compared pixel for pixel against the
+same row made static, the discount pad differed by ~4000 pixels along the
+action row in both palettes. The sale rows now set `bottom: -20px`.
+
+**4. The sticky row is scoped to `:last-child`.** The payment dialog keeps
+a line UNDER its actions (T70 review's free-entry line), and a sticky row
+in the middle of a scrollable box is pulled UP into view over the content
+above it: a change to a dialog that has no text field and never sees the
+keyboard. Only a row that is the box's last child sticks now, which is the
+only case the ticket is about.
+
+What was checked and held:
+
+- **The thresholds.** A 119px shrink leaves `--vvh` unset (the CSS
+  fallback, today's behaviour); a 121px shrink narrows it, and the box sits
+  inside the shortened band in both cases. A band that changes by a pixel
+  every frame for 40 frames (iOS does this during scroll momentum) moves
+  the box not at all: one box geometry throughout, and one publish once it
+  goes quiet. The settle timer and the pending frame are both cancelled on
+  unmount.
+- **Rotation with the band short.** Rotating portrait to landscape and back
+  with a short band leaves the box inside the new band and holding one
+  size; it is never left sized for the old orientation.
+- **`--vv-top`.** With the visual viewport scrolled 120px while the band is
+  short, the property follows and the box tracks into the offset band. It
+  follows on the same 120ms settle as the height, so during momentum the
+  box re-centres when the scroll stops rather than on every frame, which is
+  the static-size rule doing its job.
+- **The sticky row changes nothing when nothing overflows.** Six dialogs,
+  both palettes, each shot with the rule as shipped and again with it
+  neutralised, compared pixel for pixel: identical, and at the bottom of a
+  long box's scroll the row hides no content (the fields scroll under it
+  and end above it). One cosmetic residue: desktop Chromium renders the
+  "Cancel" label with greyscale rather than subpixel antialiasing because
+  sticky promotes the row to its own layer, a ~400-pixel fringe difference
+  in New client. iOS antialiases text that way everywhere, so it is not a
+  difference on the iPad.
+- **The two boxes the harness could not reach, reached.** The gift card
+  TENDER box needs a ticket a gift card can pay for, so the harness's own
+  ticket (a gift card) disabled the tile; with a retail line on the ticket
+  the box opens. Its box and its Done column are inside the band, it holds
+  one size, it returns to its exact fallback box, its barcode field is
+  inside the band, and the field still takes typed characters with the band
+  short, which is what the studio's scanner does. The discount reason pad
+  likewise, after fix 2 above, with the note field and the keypad's last
+  key both reachable.
+- **Scan Card.** All five tokens reach the DOM in order in both palettes,
+  and the guard bites: `number: "off"` fails `npm run typecheck` with
+  `Type '"off"' is not assignable to type '"cc-number"'`.
+- **No amount pad has a text input**, and no field was added to one.
+
+What still needs the real iPad, beyond the ticket's own note that no iOS
+keyboard was involved:
+
+- **An attached hardware keyboard's accessory bar.** It is around 55px,
+  which is under the 120px floor, so nothing moves and the bar covers
+  whatever the bottom 55px of the screen holds. Measured in the fallback
+  state, the smallest gap between a dialog's primary control and the bottom
+  of the screen is 68px (New client, landscape), so a bar that size clears
+  every confirm, and the tall search modal (which reaches the bottom edge in
+  portrait) would lose its last row and nothing else. The floor was left at
+  120px deliberately: under it the app behaves exactly as it did before
+  T98, which is known-good, and lowering it trades that for a guess about
+  what iOS reports for toolbars. Worth one look on the counter iPad with a
+  keyboard attached, and with the floating and split keyboards.
+- **That the nav bar stays above a sale-screen scrim.** The sale overlay
+  carries `z-index: 18` and the nav bar 22, so a scrim inside that overlay
+  (every sale dialog) cannot cover the bar, whatever its own z-index says.
+  This predates T98 and is unchanged by it, but it means the nav's four
+  buttons are live under a sale dialog on a real iPad too.

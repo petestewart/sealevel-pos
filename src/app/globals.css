@@ -87,6 +87,10 @@
    * the viewport. */
   --vvh: 100dvh;
   --vv-top: 0px;
+  /* T98 review: what the band leaves covered BELOW it. The scrim pads
+   * itself by --vv-top and --vv-bot rather than shrinking to the band,
+   * so the covered strip still belongs to the scrim. */
+  --vv-bot: 0px;
 }
 
 * {
@@ -2071,20 +2075,28 @@ button.chip.action:active {
 
 .modal-scrim {
   position: fixed;
-  /* T98: the visible band, not `inset: 0`. --vvh and --vv-top are the
-   * whole viewport until the iOS keyboard narrows them (:root,
-   * src/app/viewport.ts), so with the keyboard down this is the same box
-   * it always was, and with it up every modal centred in here is centred
-   * in what the teacher can see. */
-  top: var(--vv-top);
-  left: 0;
-  right: 0;
-  height: var(--vvh);
+  /* T98: the scrim still covers the WHOLE layout viewport; the visible
+   * band is its padding, so the box centres in what the teacher can see
+   * while the covered strip stays behind the scrim.
+   *
+   * T98 review: this was `top: var(--vv-top); height: var(--vvh)`, which
+   * left the covered strip uncovered. The band is not always the
+   * keyboard: an iPad has a floating keyboard and a split keyboard, and a
+   * hardware keyboard leaves only a short accessory bar, so that strip can
+   * be live page, tappable behind a dialog that is supposed to be modal
+   * (and, under the sign-in gate, whose scrim is opaque, visible). As
+   * padding the two offsets change nothing with the keyboard down:
+   * --vv-top and --vv-bot are 0 until the hook narrows the band
+   * (src/app/viewport.ts), so the content box is the same box it always
+   * was, to the pixel. */
+  inset: 0;
   z-index: 30;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
+  padding-top: calc(24px + var(--vv-top));
+  padding-bottom: calc(24px + var(--vv-bot));
   background: var(--scrim);
 }
 
@@ -2428,10 +2440,18 @@ button.chip.action:active {
  * keyboard down nothing overflows, and a sticky element with nothing to
  * stick to sits exactly where it sat, so every dialog's geometry is
  * unchanged. The row's own cells paint --surface or an accent fill end to
- * end; the background is here for the hairline gaps between them. */
-.modal .modal-actions {
+ * end; the background is here for the hairline gaps between them.
+ *
+ * T98 review: only a row that is the box's LAST child. The payment
+ * dialog keeps a line UNDER its actions (T70 review, the free-entry
+ * line), and a sticky row there would be pulled up over the options
+ * above it when that box scrolls, which is a change to a dialog the
+ * keyboard never touches. Sticking is for the row a scroll would
+ * otherwise carry off the bottom. */
+.modal .modal-actions:last-child {
   position: sticky;
-  /* The row's -18px bottom margin, so it sits flush with the edge. */
+  /* The row's -18px bottom margin, so it sits flush with the edge. The
+   * sale shell's own rows pull by -20px and set their own offset. */
   bottom: -18px;
   z-index: 1;
   background: var(--surface);
@@ -5002,6 +5022,19 @@ button.sale-for:disabled {
   min-height: 0;
 }
 
+/* T98 review: the reason pad's body SCROLLS when the band shortens it.
+ * The box is a grid whose middle track is minmax(0, 1fr), so a short band
+ * compresses that track; without this the body's content simply ran out
+ * of the box, and landscape with the keyboard up cut the keypad's bottom
+ * row off and left the note field itself behind the action row, which is
+ * the one field that raised the keyboard. The box's own scroll could not
+ * reach it, because the grid's rows still fitted. With the keyboard down
+ * the T68 box is 680 tall and its content fits inside it, so nothing
+ * overflows and nothing scrolls. */
+.modal-reason .reason-body {
+  overflow-y: auto;
+}
+
 /* T79: the amount step's body. The entry column takes what the keys
  * leave; the keys are the pad's 300px, top-aligned. */
 .reason-body.discount-body {
@@ -6076,6 +6109,11 @@ textarea.reason-note-field:disabled::placeholder {
   top: 12px;
   right: 12px;
   z-index: 1;
+}
+
+.modal-sale > .modal-actions:last-child,
+.modal-sale .reason-body ~ .modal-actions:last-child {
+  bottom: -20px;
 }
 
 .modal-sale > .modal-actions,
