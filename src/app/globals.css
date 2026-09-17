@@ -3881,8 +3881,19 @@ button.sale-for:disabled {
   overflow: hidden;
 }
 
+/* T104 review: the figure never SHRINKS against the tail beside it
+ * (flex-shrink 0, which is what makes the tail give way first), but where
+ * it alone is wider than the room the strip leaves it, it has to say so:
+ * `max-width` caps a non-shrinking flex item at its container, and the
+ * ellipsis is then the difference between a truncated number and a
+ * WRONG one. "$1,250.00" in the 61px of the narrowest in-cart cell drew
+ * "$1,250.0" against the X, which reads as a price rather than as a
+ * figure that did not fit. */
 .shelf-amt {
   flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-weight: 400;
 }
 
