@@ -3826,9 +3826,14 @@ button.sale-for:disabled {
   border-color: var(--accent);
 }
 
+/* The 2px border eats into the card's own padding so its outer edge does
+ * not move when a line lands on the ticket: 13 + 2 is the 14 + 1 above.
+ * T104 review: read from the cell's three numbers (see .shelf-cell) so
+ * the strip that stands on this inner edge cannot drift away from it. */
 .shelf-item.in-cart {
-  padding: 13px 15px;
-  border: 2px solid var(--accent);
+  padding: calc(var(--cell-edge-y, 15px) - var(--cell-border, 2px))
+    calc(var(--cell-edge-x, 17px) - var(--cell-border, 2px));
+  border: var(--cell-border, 2px) solid var(--accent);
 }
 
 .shelf-name {
@@ -3931,6 +3936,18 @@ button.sale-for:disabled {
 .shelf-cell {
   position: relative;
   display: grid;
+  /* T104 review: the three numbers the in-cart card and the stepper over
+   * it BOTH read, so that "2px in, 15px up" stays the card's own inner
+   * corner rather than a pair of literals that happen to agree with it
+   * today. The outer edge (15 down the card, 17 across) is the same
+   * whatever the border costs; the border is what the strip clears; the
+   * strip's own width is three 44px squares less a 40px one's two
+   * collapsed borders. Change one here and the foot's reserve, the
+   * card's padding and the strip's corner all follow. */
+  --cell-edge-y: 15px;
+  --cell-edge-x: 17px;
+  --cell-border: 2px;
+  --strip-w: 126px;
   /* A grid item does not shrink below its min-content width by default,
    * and a nowrap price with the strip's band reserved beside it made that
    * min-content wider than the 208px column: the card grew over its
@@ -3959,7 +3976,9 @@ button.sale-for:disabled {
    * holds "$125.00" (59px at 16px, measured) and "$145.00" (60px) with
    * room to spare. A four-figure price would ellipsize; nothing on this
    * counter's shelf is one, and the ticket carries the real number. */
-  padding-right: 113px;
+  padding-right: calc(
+    var(--strip-w) - var(--cell-edge-x) + var(--cell-border) + 2px
+  );
 }
 
 /* T82 drew this as a full-width strip along the card's bottom edge.
@@ -3981,8 +4000,8 @@ button.sale-for:disabled {
    * it. Flush to the right, because the price needs the 15px of padding
    * on that side: at the narrowest cell in the grid (208px measured) the
    * figure has 59px, which is exactly what "$125.00" takes at 16px. */
-  right: 2px;
-  bottom: 15px;
+  right: var(--cell-border, 2px);
+  bottom: var(--cell-edge-y, 15px);
   z-index: 1;
   display: flex;
   align-items: center;
