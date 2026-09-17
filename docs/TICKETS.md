@@ -12005,3 +12005,10 @@ CLAUDE.md's conventions now says so.
   API iOS actually drives; only Pete's counter iPad can confirm it. The
   dev drawer was left alone deliberately: it is a fixed panel rather than
   a modal, dev-only, and its settings fields are not a counter path.
+- **Two boxes were not reached by the harness**: the gift card TENDER box
+  (its barcode field, T83) and the discount reason pad, neither of which
+  opens from the walk-in ticket the harness builds. Both are covered by
+  the same two rules as everything else, the scrim's band and `.modal`'s
+  floor (the reason pad also takes the band term in its own `min()`), but
+  their boxes were not measured. Worth a look when someone next has that
+  flow open.
