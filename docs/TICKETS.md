@@ -13950,3 +13950,47 @@ escalate has to know what is still unsold.
 - A typed card the teacher asked to keep is still stored on file when a
   T90 ticket later stops on a sale that holds nothing. Storing a card is
   not a charge and the teacher asked for it, so it was left alone.
+
+## T105: a sale the list could not name must not switch a rail off
+
+Found by the T103 review, 2026-09-17, and left untouched by it on
+purpose: the fix changes which sale gets NAMED, which is a T49/T63
+decision rather than a T103 one.
+
+`latestSaleId` (src/lib/sale.ts) counts how many sales for a client are
+still waiting to be named, in `unresolvedSales`, so that two sales in
+quick succession cannot both claim the same id. **That count never ages
+out.** One sale the dated `/sale/sales` read cannot name leaves the
+counter raised for the life of the process, and every later lookup for
+that client answers null.
+
+Measured by the reviewer against the mock: after ONE unnamed sale, five
+consecutive checkouts answering `PurchasedItems: []` for the same client
+were all reported as completed sales. T103's basket assertion depends on
+that read for its evidence whenever the checkout answer carries no
+basket of its own, so an unnamed sale silently switches the rail off for
+that client, and nothing on screen says so. The log does: `[basket]
+unverified`.
+
+### What to build
+
+Age the waiting count out, and nothing more. A sale unnamed after the
+window the sale list needs is a sale that will never be named, so the
+count must come back down rather than standing forever. Keep what the
+counter exists for: two sales seconds apart must still not be given the
+same id, and no sale may be named as another sale's.
+
+Then say in the ticket what a teacher sees in each case, because the
+answer must stay boring: an unnamed sale is not an error at the counter,
+it is a sale whose id we could not report and whose basket we could not
+assert, and the honest posture (T103) is that it stands with the log
+saying so.
+
+### Verified when
+
+A driver proves: one unnamed sale does not blind the next; the sale
+after it is asserted again; two sales in the same second still get
+different ids or none; no sale is ever named as another's; and T103's
+assertion refuses an empty basket on the sale AFTER an unnamed one,
+which is exactly what it fails to do today. Each run needs a fresh
+`next start`, because the counter is process state.
