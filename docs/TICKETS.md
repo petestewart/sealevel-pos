@@ -14108,9 +14108,15 @@ for the rest of the process. `[basket] unverified` 11 times in one run.
 - The ageing is audible: `[sale-id] aged out N unnamed sale(s) for client
   ... so the date floor excludes them); 0 still waiting`.
 
-`npm run typecheck` and `npm run build` clean, before and after merging
-`origin/feature/phase-2` (T104), and the driver was re-run in full on the
-merged tree.
+**T103's own route driver was re-run in full on the same build**, ported
+to these ports, and passes end to end (39 checks): the empty, missing,
+short, unordered and answer-side baskets, the gift card line refusals,
+the gift card ticket and T90 ticket stops, the comp that sold nothing,
+and "an unfindable sale is not refused". Nothing in that rail moved.
+
+`npm run typecheck` and `npm run build` clean. `origin/feature/phase-2`
+was merged before finishing and was already contained in this branch
+(T104 had not landed), and everything above was run on that tree.
 
 ### Not verified
 
