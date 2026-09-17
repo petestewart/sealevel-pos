@@ -12126,6 +12126,183 @@ keyboard was involved:
   This predates T98 and is unchanged by it, but it means the nav's four
   buttons are live under a sale dialog on a real iPad too.
 
+## T100. A refused pass offers itself as a gift card (Pete, 2026-09-16)
+
+Pete, having watched a restricted pass come off the ticket:
+
+> "if a restricted pass is added to the cart, it gets removed with:
+> 'New Student 2 Week Unlimited was removed from the sale: Only new
+> clients qualify for this intro series.'
+>
+> since this CAN be purchased as a gift card, we should swallow the error
+> and pop up an option to add it as a gift card for someone else"
+
+**The second half of that message is not this ticket.** He also asked, in
+the same breath, about crediting a drop-in toward that pass. That depends
+on whether Mindbody will sell the pass at all, which a probe is answering,
+and it is a separate open question: nothing here is designed for it.
+
+### What was already right
+
+`/api/price-cart` turns a 4xx from Mindbody into `refused` lines, the sale
+screen takes those lines out of the ticket and says why in one warn-toned
+note. That is Pete's earlier rule (2026-09-14, "the item should be removed
+from the cart and a clean message should explain why") and it does not
+move. What was missing is the way forward the teacher actually has: the
+studio sells gift cards, a gift card is a bearer instrument, and a pass
+this client may not buy is a perfectly good gift for someone who may.
+
+### The design
+
+- **The note grows one control.** A refused line that is a PASS, at a site
+  with gift cards to sell, puts a 64px "Sell it as a gift card" under the
+  reason. With no gift card products the note is exactly what it is today:
+  no dead control.
+- **It opens the T95/T96 amount box on the refused price.** The box's own
+  rules are untouched, both limits and both assertions included, so a
+  price that matches a fixed product's value to the cent opens with that
+  preset lit and anything else opens as a typed amount the editable
+  product sells. The teacher can change the figure before adding, which is
+  the point of opening a box rather than adding a line.
+- **The refused line still leaves the ticket.** The offer sells nothing by
+  itself. Cancel, Escape and the scrim leave the ticket exactly as the
+  removal left it, and Done adds one ordinary gift card line.
+- **Nothing about the refusal is swallowed.** "Swallow" means do not leave
+  the teacher stuck, not hide the reason: Mindbody's sentence stays on
+  screen, word for word, because a teacher who does not know why the pass
+  was refused cannot explain it to the person at the counter. The way
+  forward goes under it.
+- **Only for a pass.** A refused Product or Package is removed with its
+  note and nothing else. A gift card stands in for a service; it is not a
+  way to sell a t-shirt that this location cannot sell.
+
+### Build notes
+
+`cartNotice` grew from a string to `{ text, offers }` in
+`src/app/SaleScreen.tsx`; `offers` are the refused Service lines, each
+with its name and its unit price in cents. The offers are recorded
+whatever the site sells, and whether a control is drawn is decided at
+RENDER against the live `giftProducts` list, so the state can never
+promise a box the site has nothing to fill, and the pricing effect does
+not have to close over that list. The control sets `giftSell` to the
+refused price, which is the same state the Gift card shelf cell sets: the
+box, its presets, its pad, its assertions and its checkout path are
+reached unchanged, and preselecting the preset falls out of the T96
+resolution rather than being a second rule. Two tokens-only CSS rules,
+`.sale-note-acts` and `.sale-note-act`, both palettes, radius 0, 64px,
+16px, `--surface` ground with the `--warn` rule and ink, and `--bg` for
+text on the pressed `--warn` fill.
+
+Adding the card clears the note, which is what every add to the ticket
+already does. That was left as it is: the card on the ticket is the
+answer to the refusal, and the teacher who wants the sentence again can
+re-add the pass.
+
+**Verified** against `next start` and a mocked Mindbody (the T96 harness,
+extended with two restricted intro passes, priced $49 and $50, refused at
+pricing time with a business-rule 4xx). Route driver: a refused pass
+answers 400 with the line typed `Service` and the reason verbatim; beside
+a good line only the pass is named; what remains prices; a refused product
+comes back typed `Product`. Browser, both palettes and both orientations:
+the pass leaves the ticket, the reason reads exactly as it does today, the
+offer sits under it at 64px and 16px with radius 0; tapping it opens the
+box on $49.00 with no preset lit and on $50.00 with the $50.00 preset lit;
+the amount changes on the pad; Cancel adds nothing and leaves the note and
+the ticket alone; Done puts one "Gift card $49.00" line on and the ticket
+prices; the refused line never comes back; a refused product shows the
+note with no offer; and a site with no gift card products shows the note
+with no offer. `npm run typecheck` and `npm run build` clean.
+
+**Not done, deliberately.** The drop-in credit half of Pete's message, per
+the note at the top. Nothing was run against live Mindbody: the refusal
+shape is the mock's, matched to the sentence Pete saw.
+
+### Review
+
+Reviewed on the branch, 2026-09-17, after merging `origin/feature/phase-2`
+(T98 had landed; nothing else had). The harness is the builder's own
+(`scratchpad/t100`: the mock on :4500, `next start` on :3100 from the
+worktree, rebuilt before every run), plus a review driver and a review
+copy of the mock carrying two passes priced outside the gift card limits
+($1,200.00 and $0.50) behind a knob.
+
+**The decision: the reason outlives the card that answers it.** The
+builder left "adding the gift card clears the note", which is what every
+add does. Followed through at the counter, that is the worst moment to
+lose it: the teacher taps the offer BECAUSE somebody is asking why they
+cannot buy the pass, and Mindbody's sentence left the screen at the
+moment the teacher acted on it, with the customer still asking. So a card
+added FROM the offer puts the sentence back, without its control: the way
+forward has been taken, and the Gift card cell on the shelf sells another
+if a second is wanted. `giftSell` carries the sentence (`keepNote`) while
+the box is open, and `addGiftCard` restores it; a card added from the
+shelf clears the note exactly as before, and the next add of anything
+clears it too. Rejected the alternative of writing the pass's name into
+the gift card LINE: a card is a bearer instrument, its line reads "Gift
+card $49.00" everywhere including the receipt and the done screen, and
+naming a pass on it would say the card is for that pass, which is not
+true of any card Mindbody issues.
+
+**Three things were wrong.**
+
+1. **The same pass drew the same offer twice.** T90 lets one pass sit on
+   the ticket as two lines (one for the payer, one for somebody else) and
+   the refusal takes BOTH, because it names the item. Both lines became
+   offers: two identical controls reading "Sell New Student 2 Week
+   Unlimited as a gift card", sharing a React key, for the one pass there
+   is to gift. The offers are now one per ITEM, keyed by the item's key,
+   and the reason still names every line that went.
+2. **A completed sale left the note and a live control behind.** The sale
+   empties the cart but nothing cleared the notice, so a finished ticket
+   carried "Sell it as a gift card" for a pass refused on the sale just
+   made: one tap and the NEXT customer's ticket would have opened with a
+   gift card on it. Cleared with the cart in `onSold`.
+3. **A client change left the previous client's refusal up.** The reason
+   is about what Mindbody refused THAT client; since T100 it also carries
+   a control. Both now go on every change of attached client, the first
+   attach included, and the pricing loop says so again for the new client
+   if the refusal still stands.
+
+**Found next door, and fixed here.** The Gift cards shelf block listed
+every uncategorised PASS above its one cell ("Drop In $28.00" under the
+Gift cards heading, in the Retail parent view and in the child). It is
+T95's, not T100's: the Gift cards child is not a Mindbody category and so
+carries no category ids, and `categoryShelf` reads an empty id list as
+"the passes filed under nothing". The block is now its cell and nothing
+else. Whether site 471 has passes with no category, and so whether anyone
+would have seen it live, is unverified.
+
+**Checked and found sound.** Opening the offer makes no request at all,
+of this app or of Mindbody (watched at the browser and counted at the
+mock), and adds nothing: Cancel, Escape and the scrim each leave the
+ticket exactly as the removal left it, and the refused line never comes
+back. The box opens on the line's UNIT price, not its total, with two of
+the pass on the ticket (one card for the pass, and the line's stepper is
+how a teacher asks for two). Above the maximum and below the minimum the
+box refuses in words with Done off ($1,200.00: "The largest gift card
+this app sells is $1,000.00."; $0.50: "The smallest ... is $1.00."), so
+an impossible figure is a sentence rather than a dead end. A refused line
+priced at zero offers nothing. Two different passes refused at once are
+two offers, each opening on its own price, and the $50.00 one lights the
+$50.00 preset while $49.00 does not. A pass refused that was bought for
+another client offers the card, and the card carries no recipient into it
+(no Other Client control on the line, T95's rule). The control is decided
+at render against the live list: a refresh that empties the site's gift
+card products takes the control away and leaves the reason, and putting
+them back brings it back; before the list has loaded there is no control.
+Three offers at 64px still fit inside the ticket column and on screen, in
+both palettes and both orientations. The box reached from the note is the
+same box the shelf opens, with the same presets, pad, limits, assertions
+and checkout path: T95's and T96's own route and UI drivers still pass
+unchanged against this branch.
+
+`npm run typecheck` and `npm run build` clean.
+
+**Left alone deliberately.** The note survives a mode change (Buy to Pay
+and back), which is right: the ticket column is unmoved and the reason is
+still about this ticket. And nothing was run against live Mindbody, so
+the refusal shape is still the mock's, matched to the sentence Pete saw.
+
 ## T97. Which gift cards the counter offers, edited from the drawer (Pete, 2026-09-17)
 
 Pete:
@@ -12251,9 +12428,8 @@ call made here.
 
 Adversarial review of `t97-giftcard-presets-b`, driven against `next start`
 with the T96 mock, a scratch Postgres and Playwright at 1194x834 and
-834x1194 in both palettes. `origin/feature/phase-2` had not moved past
-`bf8ede8` (T99 and T100 have not landed), so the merge was a no-op and the
-T100 interplay could not be exercised; see the note at the end. Three
+834x1194 in both palettes. T100 landed on `feature/phase-2` part way
+through and is merged in here, so its interplay was checked; see the end. Three
 things changed, and the mechanism held everywhere else.
 
 **1. A stored hide key naming the custom amount product locked the Shelf
@@ -12345,8 +12521,17 @@ What was hunted and held:
   no text under 16px in the section, no em dashes. `npm run typecheck` and
   `npm run build` clean.
 
-**For whoever lands T100**: its offer of a refused pass as a gift card must
-preselect from the list `/api/gift-cards` serves, which is already the
-filtered one, and never from a product list of its own; a preset the studio
-turned off must not be preselectable, and `/api/checkout` will refuse it if
-it is.
+**T100, merged in and checked.** Its offer of a refused pass as a gift card
+opens the T96 box on the refused pass's own cents, and the box resolves a
+typed amount against `giftPresets`, which is `giftProducts` minus the
+editable one, and `giftProducts` is what `/api/gift-cards` served: the
+filtered list. So a hidden preset cannot be preselected by an offer, and
+the amount goes to the custom amount product instead, which charges exactly
+the figure typed. Driven in the browser with that preset hidden: the offer
+still appears, the box opens on the amount, and the line it adds is the
+pad's product. The offer renders only when the site serves gift cards at
+all, so a site with every card hidden and no editable product offers
+nothing rather than offering something unsellable; a site with visible
+presets but no editable product opens the box on a figure it cannot
+resolve and says so with Done off, which is T96's own behaviour and
+honest.
