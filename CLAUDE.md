@@ -281,6 +281,35 @@ while `git clone` works, so clone the repo rather than fetching files.
   is rehearsed with `Test: true` and both `Value` and `AmountPaid` are
   asserted to the cent before anything is charged; a disagreement, or
   either figure missing, refuses the whole ticket.
+- **A CART will take a gift card's money and sell nothing** (T103,
+  four probes ending in two live comped sales, 2026-09-17). A gift card
+  product prices as a cart line: the editable custom-amount product at
+  **$0.00** (a cart never carries our price, it prices from the
+  product's own SalePrice, and that product has none, so it would hand
+  out a free card), and a fixed product at its face value with a
+  `DiscountAmount` landing correctly ($28.00 / -$10.00 / $18.00). Then
+  the sale itself comes back with **`PurchasedItems: []`**: payment
+  taken, discount applied, nothing sold, nothing visible in Mindbody's
+  UI, and no barcode anywhere. So `purchasegiftcard` is the only route
+  for a gift card, which is also the only one that can SET the barcode
+  a teacher writes on blank stock, and **a gift card product id must
+  never reach a cart line**. A **Comp** payment is refused by
+  `purchasegiftcard` outright ("Invalid payment method"), alone or
+  beside another payment, so a discount there can only mean paying
+  less, and T102's `Test: true` rehearsal of both `Value` and
+  `AmountPaid` is what keeps that safe.
+- **A payment with no purchased items is not a sale, and nothing here
+  checks for one yet** (T103). The checkout path reads the answer's
+  totals and sale id and never asks what the sale HOLDS; `grep -rn
+  PurchasedItems src/` finds one use, in `guestsale.ts`, reading
+  someone else's sale. A pass is caught indirectly by T25's
+  `/client/clientservices` re-read and a contract is its own endpoint,
+  but a retail product is not caught at all. The probe above proves a
+  200 with a priced total, a taken payment and an empty basket is
+  reachable. The assertion belongs at the checkout boundary in T75's
+  shape, and it cannot un-take the payment: it must say that money
+  moved and nothing was sold, which is the one case a teacher escalates
+  rather than retries.
 - **A contract's text arrives as HTML, and a contract can start on a
   chosen day.** `AgreementTerms` and `Description` on `/sale/contracts`
   are written in Mindbody's rich text editor, so they come back with
