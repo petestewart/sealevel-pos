@@ -38,6 +38,12 @@
  * been to a class), <serviceProductId> the intro pass's ProductId as the
  * shelf knows it, [staffId] a teacher to read permissions for.
  *
+ * Do not know the pass's id? Run it with the client id ALONE and it
+ * prints every pricing option the shelf sells with its id, then stops.
+ * The staff id is optional: leave it off to skip the permission read,
+ * or find yours in the dev drawer's Settings tab, where the signed-in
+ * teacher is named.
+ *
  * POS_DRY_RUN does not matter: dry run suppresses writes and there are
  * none here.
  */
@@ -151,13 +157,30 @@ async function rehearse(clientId: string, productId: number): Promise<void> {
 
 async function main(): Promise<void> {
   const [clientId, productRaw, staffId] = process.argv.slice(2);
-  const productId = Number(productRaw);
-  if (!clientId || !Number.isInteger(productId)) {
+  if (!clientId) {
     console.error(
       "Usage: npx tsx --env-file=.env scripts/probe-restricted.ts " +
-        "<clientId> <serviceProductId> [staffId]",
+        "<clientId> [serviceProductId] [staffId]",
     );
     process.exit(1);
+  }
+  const productId = Number(productRaw);
+  if (productRaw === undefined || !Number.isInteger(productId)) {
+    /* The id is the awkward part of this probe's usage, so with none
+     * given it answers the easier question first: what the shelf sells
+     * and what each one's id is. A plain read. */
+    console.log("\n=== the pricing options the shelf sells\n");
+    const options = await pricingOptions();
+    for (const o of options) {
+      console.log(
+        `  id=${String(o.id).padEnd(8)} $${o.price.toFixed(2).padStart(8)}  ${o.name}`,
+      );
+    }
+    console.log(
+      `\n  ${options.length} option(s). Run it again with the id of the pass` +
+        ` the rule refuses,\n  for example the new student intro.\n`,
+    );
+    return;
   }
   if (staffId) await permissions(staffId);
   await rehearse(clientId, productId);
