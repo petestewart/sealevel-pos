@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { mindbody, mindbodyEnv } from "./mindbody";
+import { plainText } from "./richtext";
 
 /**
  * The studio's liability waiver text, with a sha256 of the EXACT text
@@ -25,31 +26,17 @@ let cached: { siteId: string; text: string; sha256: string } | null = null;
 /**
  * The stored waiver is HTML (the sandbox's arrived wrapped in a <div>,
  * and Mindbody's own dialog renders it), so the display copy is derived
- * by stripping markup to plain text: block-ish closers and <br> become
- * newlines, every other tag drops, the basic entities decode, and
- * whitespace collapses. Deliberately NOT rendered as HTML: the waiver
- * body is staff-editable remote content, and a counter app has no
- * business executing it.
+ * by stripping markup to plain text. Deliberately NOT rendered as HTML:
+ * the waiver body is staff-editable remote content, and a counter app
+ * has no business executing it. T99 moved the transform itself to
+ * src/lib/richtext.ts `plainText`, which the contract agreement uses
+ * too: one reading of this text for the whole app, tested directly.
  *
  * The sha256 stays over the RAW text exactly as Mindbody served it. The
  * raw text is the canonical artifact the receipt attests to; this
  * transform is deterministic code in the repo, so what was displayed can
  * always be re-derived from the hashed original.
  */
-function stripHtml(html: string): string {
-  return html
-    .replace(/<\s*(br|\/p|\/div|\/li|\/h[1-6]|\/tr)\s*\/?\s*>/gi, "\n")
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&quot;/gi, '"')
-    .replace(/[ \t]+/g, " ")
-    .replace(/\s*\n\s*/g, "\n\n")
-    .trim();
-}
 
 export async function getWaiver(): Promise<{ text: string; sha256: string }> {
   const siteId = mindbodyEnv().siteId;
@@ -59,7 +46,7 @@ export async function getWaiver(): Promise<{ text: string; sha256: string }> {
     if (typeof raw !== "string" || !raw.trim()) {
       throw new Error("Mindbody returned no waiver text.");
     }
-    const text = stripHtml(raw);
+    const text = plainText(raw);
     if (!text) throw new Error("Mindbody returned no waiver text.");
     cached = {
       siteId,

@@ -281,6 +281,25 @@ while `git clone` works, so clone the repo rather than fetching files.
   is rehearsed with `Test: true` and both `Value` and `AmountPaid` are
   asserted to the cent before anything is charged; a disagreement, or
   either figure missing, refuses the whole ticket.
+- **A contract's text arrives as HTML, and a contract can start on a
+  chosen day.** `AgreementTerms` and `Description` on `/sale/contracts`
+  are written in Mindbody's rich text editor, so they come back with
+  tags and entities in them (Pete: "i am seeing html tags in the
+  modal"). Every bit of this text is rendered as PLAIN TEXT through
+  `src/lib/richtext.ts` `plainText`, which drops `<script>` and
+  `<style>` with their contents, and NEVER through
+  `dangerouslySetInnerHTML`: it is staff-editable remote content and
+  the counter iPad holds a staff session. The waiver goes through the
+  same helper. The contract Description is not served to the browser at
+  all any more (T99). On the same endpoint, `POST /sale/purchasecontract`
+  defers a start: the operation description (sale.yml:1866, NOT the
+  field docs) says `ProrateDate` plus `FirstPaymentOccurs: "StartDate"`
+  returns "pro-rate amount + contract amount requiring instant payment"
+  in the Totals and leaves the rest due on `StartDate`. So the counter
+  sends `StartDate`, `ProrateDate` and `FirstPaymentOccurs` together, as
+  studio wall-clock strings, and shows the rehearsal's own Total: no
+  proration is ever computed here. Starting today sends none of the
+  three.
 - **The checkout answer carries no ClientService.** After selling a
   pass, the purchase instance (the id `updateclientvisit` and
   `addclienttoclass` take) comes from re-reading `/client/clientservices`

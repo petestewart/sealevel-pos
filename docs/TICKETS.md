@@ -11862,3 +11862,162 @@ the floor) is accurate and both sentences refuse; the browser cannot send
 it. Nothing was run against live Mindbody, so the editable product's
 behaviour rests on Pete's two `Test: true` probes, and the T96 "Not
 verified" list above stands as written.
+
+## T99. The membership dialog: clean text, no description, a chosen start date (Pete, 2026-09-17)
+
+Pete, on the monthly memberships:
+
+> the monthly membership items need some work:
+>
+> * i am seeing html tags in the modal where the description and
+>   agreement are
+> * we don't need the description. remove it.
+> * we should add an option to customize the billing date. if a customer
+>   wants to start their contract on a different date, we can do that and
+>   pro-rate their first month. (mindbody lets you do this in the business
+>   app so i assume it's possible in the API)
+
+### The design
+
+**The tags were real.** A contract's `Description` (sale.yml:5511) and
+`AgreementTerms` (5555) are written in Mindbody's rich text editor, so
+both arrive as HTML. The dialog rendered them as plain JSX text, which
+put `<p>` and `&amp;` on screen literally.
+
+1. **The description goes, from the wire and not just the screen.**
+   `ContractSummary` no longer carries a `description` field at all, so
+   the browser never receives it; `.contract-desc` went with it.
+2. **The agreement renders as clean text, never as HTML.**
+   `src/lib/richtext.ts` `plainText(html)` is the one reading of this
+   text for the whole app: `<script>` and `<style>` go with their
+   CONTENTS, `<br>` is a line break, a block element's start or end is a
+   blank line, a list item gets a bullet, comments and every remaining
+   tag drop, named and numeric entities decode, and runs of blank lines
+   collapse. Angle brackets that are not tags survive, so an owner's
+   "Class size < 30" is not eaten. It is applied SERVER SIDE in
+   `contractsFor`, so the markup never reaches the iPad, and the result
+   is rendered as text. **No `dangerouslySetInnerHTML`**, here or
+   anywhere: this text is staff-editable remote content and the counter
+   iPad holds a staff session and drives a card reader. `src/lib/waiver.ts`
+   now shares the helper (it had its own `stripHtml`); the waiver's
+   sha256 is still over the RAW text Mindbody served.
+3. **A chosen start date, with Mindbody doing the arithmetic.** Under the
+   terms, one 64px control reads "Starts Today" and opens the roster's
+   own month-grid idiom (T46's `.modal-cal`, 64px arrows and cells,
+   today ringed, the chosen day filled) titled "Pick a start date". Days
+   before today and more than a year out are shown DISABLED rather than
+   hidden. Choosing a day sends, per the endpoint description
+   (sale.yml:1866): `StartDate` as a studio wall-clock string
+   (`YYYY-MM-DDT00:00:00`, never `toISOString()`), `FirstPaymentOccurs:
+   "StartDate"` instead of `"Instant"`, and `ProrateDate` equal to the
+   start date. **Today is untouched**: no `StartDate`, no `ProrateDate`,
+   `FirstPaymentOccurs: "Instant"`, byte for byte what T30 sent. A
+   teacher who never opens the control cannot change what goes out, and
+   picking today's own day is normalized back to that same request in
+   the route AND in `purchaseContract`.
+4. **The figure on screen is Mindbody's.** Every change of the chosen day
+   re-runs the `Test: true` rehearsal and the first-payment row relabels
+   itself "First payment today (prorated)". With a chosen day the
+   catalog's `FirstPaymentAmountTotal` is NOT a fallback anywhere (it is
+   the un-prorated amount): a rehearsal that answers no figure shows
+   "--", says so in words, and leaves the charge control disabled
+   reading "No prorated figure for that date". Nothing in this codebase
+   computes a proration.
+5. **The money invariants are unchanged.** One explicit tap, single
+   flight, the server rehearses before it charges, the reprice gate
+   still compares the button's figure to a fresh rehearsal, suppression
+   is reported as suppression, a 4xx is a plain refusal and a 5xx or
+   dead socket stays ambiguous in the existing words, nothing retries. A
+   start date in the past, one more than a year ahead, and one that is
+   not a real calendar day are each refused in words on both sides
+   (`contractStartProblem`, shared), and the browser cannot get past the
+   route with any of them.
+6. The confirm button still carries the whole commitment: with a chosen
+   day it reads "Charge $16.97 today, prorated to Mon Sep 28, then
+   $165.00 monthly from Mon Sep 28, renewing automatically." The
+   today-only `chargedOnClause` arithmetic is deliberately not used
+   there, because 1866 says the rest of the contract falls due on the
+   start date.
+
+### The open question
+
+**What `ProrateDate` actually does is documented but unverified.** The
+schema (6291) says only "Optional, date to prorate contract", but the
+operation description (sale.yml:1866) is explicit: "If the date is
+passed, the Totals returned will always include the pro-rate amount for
+instant payment ... `FirstPaymentOccurs` = `StartDate` => returns
+pro-rate amount + contract amount requiring instant payment. The rest of
+the contract will be due on `StartDate`. Pro-rate amount payment on
+`StartDate` is not supported by this endpoint." That reading is what the
+dialog is built on and why the screen shows the rehearsal's `Totals.Total`
+as "the prorated first payment charged today". **Nobody has watched a
+live rehearsal do it.** The first `Test: true` call against site 471 with
+a start date a fortnight out settles it: compare `Totals.Total` against
+the contract's `FirstPaymentAmountTotal`, and check the contract's own
+start date and next autopay on the client's account afterwards. If
+Mindbody prorates differently (or ignores `ProrateDate` for this site's
+contracts), the figure on screen is still Mindbody's own, so nothing is
+mispriced; only the label "prorated" would need re-wording.
+
+### Build notes
+
+- `src/lib/richtext.ts` (new, pure) with `plainText`; `src/lib/waiver.ts`
+  delegates to it, which also fixed a real hole there: its old
+  `stripHtml` dropped `<script>` TAGS but left the script's text in the
+  waiver. One deliberate display difference there: a `<br>` is now a
+  single newline rather than a blank line, so the waiver reads a little
+  tighter; the hash and the receipt are untouched. Driven directly by
+  `scratchpad/t99/richtext.test.mjs` (20
+  cases, all green): nested tags, unclosed tags and a tag truncated at
+  the end of the string, an entity inside an attribute, a `<script>`
+  block and an unclosed one (its text gone both times), `<style>`,
+  comments, angle brackets that are not tags, an escaped `&lt;b&gt;`
+  that must stay text, named and numeric (decimal and hex) entities, an
+  unknown entity left verbatim, bullets, and the empty string.
+- `src/lib/sale.ts`: `description` removed from `ContractSummary` and
+  its mapping; `agreementTerms` cleaned through `plainText`;
+  `studioDayKey`, `CONTRACT_START_MAX_DAYS` and `contractStartProblem`
+  added; `purchaseContract` takes `startDate` and sends the three fields
+  only when the day is a later one.
+- `src/app/api/purchase-contract/route.ts`: validates and normalizes
+  `startDate`, then passes it to BOTH the rehearsal and the purchase.
+- `src/app/SaleScreen.tsx`: `ContractInfo` loses `description`; the
+  `.contract-start` control and the `StartDatePicker` layer (Escape
+  closes the calendar first, then the dialog); `commitmentText` takes
+  the chosen day; the no-figure refusal. Two things the browser run
+  turned up and fixed: a purchase that has landed no longer re-runs the
+  rehearsal (invalidating the card cache moved `cardLookup`, which cost
+  one more metered Test call after the sale was done), and the start
+  control stops taking taps once the membership has started, since the
+  day it started on is a fact rather than a choice. The commitment
+  button reserves four lines so choosing a date cannot change the
+  dialog's height (T68), and the deferred sentence names the day once
+  ("Charge $16.97 today, prorated, then $165.00 monthly from Mon Sep
+  28, renewing automatically.").
+- `src/app/globals.css`: `.contract-desc` deleted; `.contract-start`
+  (64px, `--accent` border when a day other than today is selected),
+  `.cal-day:disabled` and `.cal-nav:disabled`. Tokens only, both
+  palettes, radius 0, 16px floor.
+- Verified with `scratchpad/t99` (mock on :4599, `next start` on :3099,
+  rebuilt before every run). Route driver: 36 checks green, including
+  the catalog's shape (no `description`, no surviving markup tag, the
+  script's text gone, the author's escaped `<b>` still text), today
+  sending no dates, a chosen day sending all three as wall-clock
+  strings, today's own key normalized away, a past day / a day 400 days
+  out / `2026-02-31` / `"tomorrow"` each refused 400 with nothing sent
+  to Mindbody, one tap being one charge with the same dates on both
+  calls, the reprice gate, a rehearsal with no `Totals`, and a refused
+  rehearsal never reaching a real call. Playwright: four passes (light
+  and dark, 1194x834 and 834x1194) over the dialog, the calendar, a
+  cross-month pick through the arrow, two dates giving two figures,
+  Today putting it back, the dialog measuring the same in every state,
+  one tap being one charge, and the no-figure case refused in words. No
+  text under 16px and no contrast below 4.5 in anything this ticket
+  touched.
+- `npm run typecheck` and `npm run build` clean.
+- Deliberately NOT done: no signature pad (T30's reasoning stands), no
+  live Mindbody run from this container, and `FirstPaymentOccurs:
+  "StartDate"` with NO `ProrateDate` (charge nothing today, everything
+  on the start date) is not offered: Pete asked for a prorated first
+  month, and an un-prorated deferred start is a different product
+  decision.

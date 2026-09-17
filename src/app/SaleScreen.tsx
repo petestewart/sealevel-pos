@@ -237,7 +237,6 @@ interface AutopayScheduleInfo {
 interface ContractInfo {
   id: number;
   name: string;
-  description: string | null;
   firstPaymentTotal: number | null;
   recurringPaymentTotal: number | null;
   totalContractTotal: number | null;
@@ -249,6 +248,9 @@ interface ContractInfo {
   actionUponCompletionOfAutopays: string | null;
   clientsChargedOn: string | null;
   clientsChargedOnSpecificDate: string | null;
+  /** T99: already PLAIN TEXT. The server reduces Mindbody's HTML
+   *  through src/lib/richtext.ts before serving it, and it is rendered
+   *  as text here, never injected. */
   agreementTerms: string | null;
   soldOnline: boolean;
 }
@@ -874,6 +876,16 @@ function ChevronIcon() {
 
 function MinusIcon() {
   return <Icon d="M5 12h14" />;
+}
+
+/** T99: the start-date calendar's month arrows, the same glyphs the
+ *  roster calendar uses in page.tsx. */
+function ChevronLeftIcon() {
+  return <Icon d="m15 6-6 6 6 6" size={22} />;
+}
+
+function ChevronRightIcon() {
+  return <Icon d="m9 6 6 6-6 6" size={22} />;
 }
 
 /** T82 (Pete): "in the number pad entry for amounts (discount, cash)
@@ -5420,11 +5432,66 @@ function PaymentPanel(props: {
  * surface, and NOTHING recurring is ever started without the commitment
  * restated on the confirm button itself ("Charge $X today, then $Y
  * monthly ..."). Payment is the stored card (the schema's StoredCardInfo
- * takes only LastFour); the start date is deliberately today-only, since
- * purchasecontract's StartDate/FirstPaymentOccurs/ProrateDate interplay
- * is documented only in prose and the counter sells memberships that
- * start now (recorded on the T30 ticket).
+ * takes only LastFour).
+ *
+ * T99, Pete: "we should add an option to customize the billing date. if
+ * a customer wants to start their contract on a different date, we can
+ * do that and pro-rate their first month." So the terms carry a start
+ * control: today, or a day the teacher picks. The prorated figure is
+ * whatever the Test rehearsal for THOSE dates returns; nothing here
+ * computes a proration, and a rehearsal that answers no figure leaves
+ * the charge refused in words rather than showing a number this app
+ * made up.
  * =================================================================== */
+
+/** T99: today as the studio's `YYYY-MM-DD`. The studio's day, never the
+ *  iPad's: mirrors page.tsx's studioToday and roster.ts's STUDIO_TZ,
+ *  because a membership starts on a studio date. */
+const STUDIO_TZ = "America/Los_Angeles";
+
+function studioToday(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: STUDIO_TZ }).format(
+    new Date(),
+  );
+}
+
+/** A `YYYY-MM-DD` as a local calendar date: the parts are used as
+ *  numbers, so the browser's zone cannot shift the day. */
+function keyToDate(key: string): Date {
+  return new Date(
+    Number(key.slice(0, 4)),
+    Number(key.slice(5, 7)) - 1,
+    Number(key.slice(8, 10)),
+  );
+}
+
+function dateToKey(d: Date): string {
+  return (
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` +
+    `-${String(d.getDate()).padStart(2, "0")}`
+  );
+}
+
+/** "Tue Oct 6" for a day key, the shape the roster's day list uses. */
+function dayKeyLabel(key: string): string {
+  const d = keyToDate(key);
+  return (
+    `${d.toLocaleDateString([], { weekday: "short" })} ` +
+    `${d.toLocaleDateString([], { month: "short", day: "numeric" })}`
+  );
+}
+
+/** Whole days from `from` to `to`, both `YYYY-MM-DD`. */
+function daysBetween(from: string, to: string): number {
+  const a = keyToDate(from).getTime();
+  const b = keyToDate(to).getTime();
+  return Math.round((b - a) / 86400000);
+}
+
+/** How far ahead a membership may be started. Mirrors sale.ts's
+ *  CONTRACT_START_MAX_DAYS, which is the gate that actually holds: this
+ *  copy only greys out the days the server would refuse. */
+const START_MAX_DAYS = 365;
 
 /** How often the autopay charges, in words, from the schema's fields
  *  (AutopaySchedule, sale.yml:4757; AutopayTriggerType, 5494). */
@@ -5572,13 +5639,56 @@ function chargedOnClause(c: ContractInfo): string {
  * THE commitment sentence, shared verbatim by the confirm button and
  * the paid summary: "Charge $X today, then $Y monthly starting DATE".
  * `firstTotal` is the server-rehearsed first payment when available.
+ *
+ * T99: `startKey` is the chosen start day, or null for today. With a
+ * chosen day the catalog's own first-payment figure is NOT a fallback:
+ * it is the un-prorated amount, so a sentence built from it would
+ * promise the wrong charge. Only the rehearsal's number is allowed
+ * there, and the cadence is stated from the start date, because per
+ * sale.yml:1866 what is charged today is the pro-rate amount plus
+ * anything the contract requires instantly and "the rest of the
+ * contract will be due on StartDate" -- which is also why
+ * chargedOnClause, whose arithmetic counts from a sale made today, is
+ * deliberately not used in that case.
  */
-function commitmentText(c: ContractInfo, firstTotal: number | null): string {
-  const first = firstTotal ?? c.firstPaymentTotal;
-  const firstText = first !== null ? money(first) : "the first payment";
+function commitmentText(
+  c: ContractInfo,
+  firstTotal: number | null,
+  startKey: string | null,
+): string {
+  const first = firstTotal ?? (startKey === null ? c.firstPaymentTotal : null);
+  const firstText =
+    first !== null
+      ? money(first)
+      : startKey === null
+        ? "the first payment"
+        : "the prorated first payment";
   const recurring = c.recurringPaymentTotal;
   if (!c.autopayEnabled || recurring === null || recurring <= 0) {
-    return `Charge ${firstText} today. No recurring payments.`;
+    return startKey === null
+      ? `Charge ${firstText} today. No recurring payments.`
+      : `Charge ${firstText} today, starting ${dayKeyLabel(startKey)}. ` +
+        "No recurring payments.";
+  }
+  if (startKey !== null) {
+    /* The day is named ONCE, at the cadence, and the first payment is
+     * marked prorated in a word: the button is the thing a teacher
+     * reads out to a customer, and the row above already labels the
+     * figure. Saying the date twice pushed the label to a fourth line
+     * and grew the dialog. */
+    let deferred =
+      `Charge ${firstText} today${first !== null ? ", prorated" : ""}, ` +
+      `then ${money(recurring)} ${frequencyPhrase(c)} from ` +
+      dayKeyLabel(startKey);
+    if (c.numberOfAutopays !== null && c.numberOfAutopays > 0) {
+      deferred += `, for ${c.numberOfAutopays} payment${c.numberOfAutopays === 1 ? "" : "s"}`;
+    } else if (c.autopaySchedule?.frequencyType === "SetNumberOfAutopays") {
+      deferred += ", for a set number of payments (see the agreement)";
+    }
+    if (c.actionUponCompletionOfAutopays === "ContractAutomaticallyRenews") {
+      deferred += ", renewing automatically";
+    }
+    return deferred + ".";
   }
   let text =
     `Charge ${firstText} today, then ${money(recurring)} ` +
@@ -5654,10 +5764,22 @@ function ContractDialog(props: {
   } = props;
 
   const [rehearsal, setRehearsal] = useState<ContractRehearsal | null>(null);
+  /* T99: the chosen start day as a studio `YYYY-MM-DD`, or null for
+   * today. Null is what a teacher who never opens the control has, and
+   * null sends exactly what T30 sent. */
+  const [startKey, setStartKey] = useState<string | null>(null);
+  const [startOpen, setStartOpen] = useState(false);
   const [purchasing, setPurchasing] = useState(false);
   const [outcome, setOutcome] = useState<ContractOutcome | null>(null);
   const inFlight = useRef(false);
   const rehearseGen = useRef(0);
+  /** T99: set once a purchase has landed. The card cache is invalidated
+   *  on a real purchase, which moves `cardLookup` and would otherwise
+   *  re-run the rehearsal below: one more metered Test call for a sale
+   *  that is already done and whose figures are already on screen. A
+   *  ref rather than a dependency, so a refusal still re-rehearses on
+   *  the Retry and the reprice nonce exactly as before. */
+  const purchased = useRef(false);
   /** Bumped by the Retry button on a failed rehearsal. */
   const [rehearseNonce, setRehearseNonce] = useState(0);
 
@@ -5691,6 +5813,7 @@ function ContractDialog(props: {
    * first-payment total on the confirm is the SERVER's number. Runs
    * whenever the purchasable pair (client, usable card) is in place. */
   useEffect(() => {
+    if (purchased.current) return;
     if (clientId === null || blockReason !== null) {
       setRehearsal(null);
       return;
@@ -5700,7 +5823,14 @@ function ContractDialog(props: {
     fetch("/api/purchase-contract", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ contractId: contract.id, clientId, test: true }),
+      body: JSON.stringify({
+        contractId: contract.id,
+        clientId,
+        test: true,
+        /* T99: the rehearsal is priced for the SAME dates the purchase
+         * will send, so the figure on the button is the figure charged. */
+        ...(startKey !== null ? { startDate: startKey } : {}),
+      }),
     })
       .then(async (r) => {
         const body = await r.json();
@@ -5740,21 +5870,36 @@ function ContractDialog(props: {
           error: e instanceof Error ? e.message : String(e),
         });
       });
-  }, [contract.id, clientId, blockReason, rehearseNonce]);
+  }, [contract.id, clientId, blockReason, startKey, rehearseNonce]);
 
   /* The commitment, restated with the server's first-payment total once
    * the rehearsal lands. Under suppression no server total exists, so
    * the catalog's figure stands with an explicit "as quoted by Mindbody
    * at charge time" note below. */
   const serverTotal = rehearsal?.total ?? null;
-  const commitment = commitmentText(contract, serverTotal);
+  const commitment = commitmentText(contract, serverTotal, startKey);
+
+  /* T99: with a chosen start day the prorated first payment can ONLY be
+   * Mindbody's. The catalog's figure is the un-prorated one, so a
+   * rehearsal that answered no total leaves the charge refused, in
+   * words, rather than showing an amount this app invented. Under
+   * suppression the rehearsal never left the building, and that case
+   * already says so on its own line; it is not a sale either way. */
+  const noProratedFigure =
+    startKey !== null &&
+    rehearsal !== null &&
+    !rehearsal.loading &&
+    rehearsal.error === null &&
+    rehearsal.suppressed === null &&
+    serverTotal === null;
 
   const confirmable =
     blockReason === null &&
     !purchasing &&
     rehearsal !== null &&
     !rehearsal.loading &&
-    rehearsal.error === null;
+    rehearsal.error === null &&
+    !noProratedFigure;
 
   const doPurchase = async () => {
     if (inFlight.current || !confirmable || clientId === null) return;
@@ -5768,13 +5913,17 @@ function ContractDialog(props: {
        * first payment differently: the tap agreed to these words, so a
        * changed price must come back to the screen, never be charged
        * silently. */
-      const shownFirst = serverTotal ?? contract.firstPaymentTotal;
+      /* T99: with a chosen day only the rehearsal's figure may be
+       * restated; the catalog's is the un-prorated amount. */
+      const shownFirst =
+        serverTotal ?? (startKey === null ? contract.firstPaymentTotal : null);
       const res = await fetch("/api/purchase-contract", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           contractId: contract.id,
           clientId,
+          ...(startKey !== null ? { startDate: startKey } : {}),
           ...(shownFirst !== null ? { expectedFirstTotal: shownFirst } : {}),
         }),
       });
@@ -5800,12 +5949,16 @@ function ContractDialog(props: {
          * never produce. */
         const paidTotal =
           typeof body?.total === "number" ? body.total : serverTotal;
+        purchased.current = true;
         onPurchased(clientId);
         setOutcome({
           kind: "paid",
           summary:
             `${contract.name} started for ${client?.name ?? "the client"}. ` +
-            commitmentText(contract, paidTotal).replace(/^Charge/, "Charged"),
+            commitmentText(contract, paidTotal, startKey).replace(
+              /^Charge/,
+              "Charged",
+            ),
           detail: body?.clientContractId
             ? `Contract ${body.clientContractId} on their account.`
             : null,
@@ -5850,11 +6003,18 @@ function ContractDialog(props: {
    * attach search is stacked above (that layer takes the press). */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !purchasing && !modalAbove) onClose();
+      if (e.key !== "Escape" || purchasing || modalAbove) return;
+      /* T99: the start-date calendar is a layer above this dialog, so
+       * Escape closes that first and the dialog stays open. */
+      if (startOpen) {
+        setStartOpen(false);
+        return;
+      }
+      onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [purchasing, modalAbove, onClose]);
+  }, [purchasing, modalAbove, startOpen, onClose]);
 
   return (
     <div
@@ -5872,9 +6032,6 @@ function ContractDialog(props: {
         onClick={(e) => e.stopPropagation()}
       >
         <p className="modal-title">{contract.name}</p>
-        {contract.description ? (
-          <p className="contract-desc">{contract.description}</p>
-        ) : null}
 
         {/* The terms, from the API's own numbers (Contract model,
             sale.yml:5445): first payment, the recurring amount and
@@ -5883,15 +6040,21 @@ function ContractDialog(props: {
             moment the Test call answers. */}
         <div className="contract-rows">
           <div className="contract-row">
-            <span>First payment (today)</span>
+            <span>
+              {startKey === null
+                ? "First payment (today)"
+                : "First payment today (prorated)"}
+            </span>
             <span className="amt">
               {rehearsal?.loading ? (
                 <span className="spinner" aria-label="working" />
               ) : serverTotal !== null ? (
                 money(serverTotal)
-              ) : contract.firstPaymentTotal !== null ? (
+              ) : startKey === null && contract.firstPaymentTotal !== null ? (
                 money(contract.firstPaymentTotal)
               ) : (
+                /* T99: no catalog fallback for a chosen day. The
+                   un-prorated figure is not this charge. */
                 "--"
               )}
             </span>
@@ -5929,15 +6092,6 @@ function ContractDialog(props: {
             </div>
           ) : null}
           <div className="contract-row">
-            <span>Starts</span>
-            {/* Today only, deliberately: purchasecontract's StartDate is
-                omitted (Mindbody defaults it to today) because the
-                StartDate / FirstPaymentOccurs / proration semantics are
-                prose-only in the spec, and the counter sells memberships
-                that start now. Recorded on T30. */}
-            <span>Today</span>
-          </div>
-          <div className="contract-row">
             <span>Payment</span>
             <span>
               {card && !card.expired ? `Stored card ...${card.lastFour}` : "--"}
@@ -5945,7 +6099,35 @@ function ContractDialog(props: {
           </div>
         </div>
 
+        {/* T99: the start control. One 64px row that reads "Starts
+            today" until a teacher opens it; the calendar above it is
+            what changes the dates sent, and every change re-runs the
+            rehearsal so the figure above is always Mindbody's for THESE
+            dates. */}
+        <button
+          className={"contract-start" + (startKey !== null ? " chosen" : "")}
+          /* Once the membership has started, the day it started on is a
+           * fact, not a choice: the row stays on screen and stops
+           * taking taps. */
+          disabled={purchasing || outcome?.kind === "paid"}
+          aria-label={
+            startKey === null
+              ? "Starts today. Choose another start date"
+              : `Starts ${dayKeyLabel(startKey)}. Choose another start date`
+          }
+          onClick={() => setStartOpen(true)}
+        >
+          <span>Starts</span>
+          <span className="contract-start-day">
+            {startKey === null ? "Today" : dayKeyLabel(startKey)}
+            <ChevronIcon />
+          </span>
+        </button>
+
         {contract.agreementTerms ? (
+          /* The terms are PLAIN TEXT by the time they reach here: the
+             server reduced Mindbody's HTML (T99, src/lib/richtext.ts).
+             Rendered as text, never injected. */
           <div className="contract-agree" tabIndex={0}>
             {contract.agreementTerms}
           </div>
@@ -5972,6 +6154,12 @@ function ContractDialog(props: {
             >
               Retry
             </button>
+          </div>
+        ) : noProratedFigure ? (
+          <div className="sale-stop modal-note-gap">
+            Mindbody priced this start date without a first payment
+            figure, so the prorated amount cannot be shown. Start it
+            today, or sell it from Mindbody with that date.
           </div>
         ) : rehearsal?.suppressed ? (
           <p className="pass-note t-suppressed modal-note-gap">
@@ -6038,12 +6226,157 @@ function ContractDialog(props: {
                 /* Never display a commitment the schedule cannot back;
                    the refusal above says why. */
                 "Not sellable here"
+              ) : noProratedFigure ? (
+                /* T99: no invented number on the button either. */
+                "No prorated figure for that date"
               ) : (
                 commitment
               )}
             </button>
           </div>
         ) : null}
+        {startOpen ? (
+          <StartDatePicker
+            chosen={startKey}
+            onPick={(key) => {
+              /* Today's own key IS today: the same null the dialog
+               * opened with, so nothing extra is sent. */
+              setStartKey(key === studioToday() ? null : key);
+              setStartOpen(false);
+            }}
+            onClose={() => setStartOpen(false)}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * T99: the start-date calendar. The roster's month grid idiom (T46,
+ * page.tsx "Pick a day") in the same classes: 64px month arrows, 64px
+ * day cells, today ringed, the chosen day filled. Only today to a year
+ * out is tappable, which is the window the server enforces; a day
+ * outside it is disabled rather than hidden, so a teacher can see why
+ * last Tuesday cannot be picked.
+ */
+function StartDatePicker(props: {
+  chosen: string | null;
+  onPick: (key: string) => void;
+  onClose: () => void;
+}) {
+  const { chosen, onPick, onClose } = props;
+  const todayKey = studioToday();
+  const selected = chosen ?? todayKey;
+  const [month, setMonth] = useState<{ y: number; m: number }>(() => ({
+    y: Number(selected.slice(0, 4)),
+    m: Number(selected.slice(5, 7)),
+  }));
+
+  const firstOfMonth = `${month.y}-${String(month.m).padStart(2, "0")}-01`;
+  /* The last pickable day, the same window the server enforces. */
+  const t = keyToDate(todayKey);
+  const lastKey = dateToKey(
+    new Date(t.getFullYear(), t.getMonth(), t.getDate() + START_MAX_DAYS),
+  );
+  /* A month with no pickable day in it is not worth walking to. */
+  const prevMonthEnd = dateToKey(new Date(month.y, month.m - 1, 0));
+  const nextMonthFirst = dateToKey(new Date(month.y, month.m, 1));
+  const canGoBack = prevMonthEnd >= todayKey;
+  const canGoOn = nextMonthFirst <= lastKey;
+
+  return (
+    <div className="modal-scrim" role="presentation" onClick={onClose}>
+      <div
+        className="modal modal-cal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Pick a start date"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button className="row-icon modal-x" aria-label="Close" onClick={onClose}>
+          <CloseIcon />
+        </button>
+        <div className="cal-head">
+          <button
+            className="cal-nav"
+            aria-label="Previous month"
+            disabled={!canGoBack}
+            onClick={() =>
+              setMonth(({ y, m }) => (m === 1 ? { y: y - 1, m: 12 } : { y, m: m - 1 }))
+            }
+          >
+            <ChevronLeftIcon />
+          </button>
+          <p className="modal-title cal-title">
+            {keyToDate(firstOfMonth).toLocaleDateString([], {
+              month: "long",
+              year: "numeric",
+            })}
+          </p>
+          <button
+            className="cal-nav"
+            aria-label="Next month"
+            disabled={!canGoOn}
+            onClick={() =>
+              setMonth(({ y, m }) => (m === 12 ? { y: y + 1, m: 1 } : { y, m: m + 1 }))
+            }
+          >
+            <ChevronRightIcon />
+          </button>
+        </div>
+        <div className="cal-grid" role="grid" aria-label="Days">
+          {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+            <span key={`wd-${d}`} className="cal-wd" aria-hidden="true">
+              {d}
+            </span>
+          ))}
+          {(() => {
+            const lead = keyToDate(firstOfMonth).getDay();
+            const count = new Date(month.y, month.m, 0).getDate();
+            const cells: ReactNode[] = [];
+            for (let i = 0; i < lead; i++) {
+              cells.push(<span key={`blank-${i}`} className="cal-blank" />);
+            }
+            for (let d = 1; d <= count; d++) {
+              const key =
+                `${month.y}-${String(month.m).padStart(2, "0")}` +
+                `-${String(d).padStart(2, "0")}`;
+              const isToday = key === todayKey;
+              const past = key < todayKey;
+              const tooFar = daysBetween(todayKey, key) > START_MAX_DAYS;
+              cells.push(
+                <button
+                  key={key}
+                  className={
+                    "cal-day" +
+                    (isToday ? " today" : "") +
+                    (key === selected ? " sel" : "")
+                  }
+                  disabled={past || tooFar}
+                  aria-pressed={key === selected}
+                  aria-label={
+                    dayKeyLabel(key) +
+                    (isToday ? ", today" : "") +
+                    (past ? ", in the past" : tooFar ? ", too far ahead" : "")
+                  }
+                  onClick={() => onPick(key)}
+                >
+                  {d}
+                </button>,
+              );
+            }
+            return cells;
+          })()}
+        </div>
+        <div className="modal-actions">
+          <button className="modal-cancel" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="modal-confirm go" onClick={() => onPick(todayKey)}>
+            Today
+          </button>
+        </div>
       </div>
     </div>
   );

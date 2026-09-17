@@ -37,6 +37,7 @@ import {
   type Discount,
 } from "./comp";
 import { mindbody, type Actor } from "./mindbody";
+import { plainText } from "./richtext";
 import { studioWall } from "./roster";
 import type { TypedCard } from "./typedcard";
 
@@ -1591,7 +1592,6 @@ export interface ContractSummary {
   /** Contract.Id (sale.yml:5449). */
   id: number;
   name: string;
-  description: string | null;
   /** What the client pays when signing up today (sale.yml:5577). */
   firstPaymentTotal: number | null;
   /** The ongoing charge per autopay run (sale.yml:5592). */
@@ -1616,7 +1616,9 @@ export interface ContractSummary {
   clientsChargedOn: string | null;
   /** The date when clientsChargedOn is SpecificDate (sale.yml:5506). */
   clientsChargedOnSpecificDate: string | null;
-  /** Business-defined terms and conditions (sale.yml:5555). */
+  /** Business-defined terms and conditions (sale.yml:5555), already
+   *  reduced to plain text (T99): Mindbody serves this as HTML, and it
+   *  is shown as text, never injected. */
   agreementTerms: string | null;
   /** SoldOnline (sale.yml:5471): false means staff-only, which is fine
    *  here -- this IS a staff counter. Kept for display/debug only. */
@@ -1667,7 +1669,6 @@ export async function contractsFor(): Promise<ContractSummary[]> {
       return {
         id,
         name: str(c?.Name) ?? "Membership",
-        description: str(c?.Description),
         firstPaymentTotal,
         recurringPaymentTotal,
         totalContractTotal: num(c?.TotalContractAmountTotal),
@@ -1685,7 +1686,12 @@ export async function contractsFor(): Promise<ContractSummary[]> {
         actionUponCompletionOfAutopays: str(c?.ActionUponCompletionOfAutopays),
         clientsChargedOn: str(c?.ClientsChargedOn),
         clientsChargedOnSpecificDate: str(c?.ClientsChargedOnSpecificDate),
-        agreementTerms: str(c?.AgreementTerms),
+        /* T99: the owner writes these terms in Mindbody's rich text
+         * editor, so the string carries markup. Cleaned HERE so the
+         * browser never holds the markup at all; Contract.Description
+         * is not served at all any more (Pete: "we don't need the
+         * description. remove it."). */
+        agreementTerms: plainText(str(c?.AgreementTerms)) || null,
         soldOnline: c?.SoldOnline === true,
       };
     })
@@ -1695,6 +1701,83 @@ export async function contractsFor(): Promise<ContractSummary[]> {
       seen.add(c.id);
       return true;
     });
+}
+
+/* =====================================================================
+ * T99: a chosen start date for a membership.
+ *
+ * Pete: "we should add an option to customize the billing date. if a
+ * customer wants to start their contract on a different date, we can do
+ * that and pro-rate their first month."
+ *
+ * The arithmetic is MINDBODY'S, never ours. The endpoint description
+ * (sale.yml:1866) is explicit about what the three fields do together:
+ * "If the date is passed, the Totals returned will always include the
+ * pro-rate amount for instant payment ... `FirstPaymentOccurs` =
+ * `StartDate` => returns pro-rate amount + contract amount requiring
+ * instant payment. The rest of the contract will be due on `StartDate`.
+ * Pro-rate amount payment on `StartDate` is not supported by this
+ * endpoint." So a chosen day sends StartDate + ProrateDate +
+ * FirstPaymentOccurs: StartDate, and the Totals that come back ARE what
+ * the card is charged today. No proration is computed in this codebase.
+ * =================================================================== */
+
+/** Today as the studio's `YYYY-MM-DD`. The studio's day, not the
+ *  server's: a container on UTC is already tomorrow at 5pm Seattle. */
+export function studioDayKey(at: Date = new Date()): string {
+  return studioWall(at).slice(0, 10);
+}
+
+/** How far ahead a membership may be started. A year is far past any
+ *  real counter conversation; beyond it a mistyped year is the likelier
+ *  explanation than a customer's intention. */
+export const CONTRACT_START_MAX_DAYS = 365;
+
+/** Midnight UTC for a `YYYY-MM-DD`, or null when the key is not a real
+ *  calendar day (2026-02-31 parses and then rolls over, so the parts are
+ *  checked back out of the Date). */
+function dayKeyUtc(key: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return null;
+  const y = Number(key.slice(0, 4));
+  const m = Number(key.slice(5, 7));
+  const d = Number(key.slice(8, 10));
+  const ms = Date.UTC(y, m - 1, d);
+  const back = new Date(ms);
+  if (
+    back.getUTCFullYear() !== y ||
+    back.getUTCMonth() !== m - 1 ||
+    back.getUTCDate() !== d
+  ) {
+    return null;
+  }
+  return ms;
+}
+
+/**
+ * Why this `YYYY-MM-DD` cannot be a membership's start date, in words
+ * for the screen, or null when it can. Both sides check it: the dialog
+ * so a teacher is told, and the route so a body that never passed
+ * through the dialog is refused too.
+ */
+export function contractStartProblem(key: string): string | null {
+  const chosen = dayKeyUtc(key);
+  if (chosen === null) {
+    return "A start date has to be a real calendar day.";
+  }
+  const todayKey = studioDayKey();
+  const today = dayKeyUtc(todayKey);
+  if (today === null) return null;
+  if (chosen < today) {
+    return "A membership cannot start in the past. Pick today or a later day.";
+  }
+  const days = Math.round((chosen - today) / 86400000);
+  if (days > CONTRACT_START_MAX_DAYS) {
+    return (
+      "A membership cannot be started more than a year ahead. Pick a " +
+      "day within the next " + CONTRACT_START_MAX_DAYS + " days."
+    );
+  }
+  return null;
 }
 
 /** Outcome of a contract purchase (or its Test rehearsal); the same
@@ -1734,13 +1817,22 @@ export interface ContractPurchaseOutcome {
  * - Test (6219): supported, "validates input information, but does not
  *   commit it" -- so the dialog rehearses first and shows the server's
  *   first-payment total, same posture as the cart.
- * - StartDate (6238): "Default: today's date". Deliberately OMITTED so
- *   Mindbody's own today (the site's timezone, not this server's UTC
- *   clock) is the start; the counter sells memberships that start now.
- * - FirstPaymentOccurs (6242): "Instant" or "StartDate". Sent as
- *   Instant: the counter charges today, on the spot. (The endpoint
- *   description at 1866 confirms the semantics: Instant pays now,
- *   StartDate defers the payment to the start date.)
+ * - StartDate (6238): "Default: today's date". OMITTED when the sale
+ *   starts today, so Mindbody's own today (the site's timezone, not
+ *   this server's UTC clock) is the start. T99: when a teacher chooses
+ *   a later day it is sent as a studio WALL-CLOCK string
+ *   ("YYYY-MM-DDT00:00:00"), because Mindbody reads a datetime
+ *   parameter as site-local and ignores any offset or Z.
+ * - FirstPaymentOccurs (6242): "Instant" or "StartDate". Instant for a
+ *   sale starting today: the counter charges now, on the spot. T99: a
+ *   chosen day sends "StartDate" instead, which per the endpoint
+ *   description (1866) charges the pro-rate amount plus whatever the
+ *   contract requires instantly, and leaves the rest due on the start
+ *   date.
+ * - ProrateDate (6291): T99, sent as the chosen start date and only
+ *   then. Per 1866 its presence is what puts the pro-rate amount into
+ *   the Totals, which is the figure the dialog shows. Nothing here
+ *   computes a proration.
  * - Payment: exactly one of CreditCardInfo (6261, "only required if
  *   StoredCardInfo is not passed and both UseDirectDebit and
  *   UseAccountCredit are false"), StoredCardInfo (6264, the mirror
@@ -1760,14 +1852,19 @@ export interface ContractPurchaseOutcome {
  *   unlike the cart's SendEmail: false -- a recurring agreement is
  *   something the client should have in their inbox.
  * - PromotionCode/PromotionCodes (6251/6255), SalesRepId (6270),
- *   ConsumerPresent (6283)/PaymentAuthenticationCallbackUrl (6287, SCA),
- *   ProrateDate (6291): none sent; recorded so nobody re-digs.
+ *   ConsumerPresent (6283)/PaymentAuthenticationCallbackUrl (6287, SCA): none
+ *   sent; recorded so nobody re-digs.
  */
 export async function purchaseContract(opts: {
   contractId: number;
   clientId: string;
   lastFour: string;
   test: boolean;
+  /** T99: the day the membership starts, as a studio `YYYY-MM-DD`.
+   *  Absent, null, or today's own key all mean today's behaviour
+   *  exactly: no StartDate, no ProrateDate, FirstPaymentOccurs
+   *  Instant. */
+  startDate?: string | null;
   /** T49: the signed-in teacher, when there is one. */
   actor?: Actor | null;
 }): Promise<ContractPurchaseOutcome> {
@@ -1781,6 +1878,22 @@ export async function purchaseContract(opts: {
       "purchaseContract needs the stored card's last four digits.",
     );
   }
+  /* T99: a chosen later day, or today. A start date that is today's own
+   * key is today: the request shape does not change, so a teacher who
+   * opened the control and picked today cannot send anything a teacher
+   * who never opened it would not. An unusable date throws here as well
+   * as being refused by the route: this is the last gate before the
+   * write. */
+  const start = opts.startDate ?? null;
+  if (start !== null) {
+    const problem = contractStartProblem(start);
+    if (problem) throw new Error(problem);
+  }
+  const deferred = start !== null && start !== studioDayKey();
+  /* Studio wall clock, no offset and no Z: Mindbody reads the parameter
+   * as site-local either way, and toISOString() would land this seven
+   * hours out (CLAUDE.md, and roster.ts studioWall). */
+  const startWall = deferred ? `${start}T00:00:00` : null;
   const res = await mindbody("/sale/purchasecontract", {
     method: "POST",
     body: {
@@ -1788,7 +1901,10 @@ export async function purchaseContract(opts: {
       ClientId: clientId,
       Test: test,
       LocationId: STUDIO_LOCATION_ID,
-      FirstPaymentOccurs: "Instant",
+      FirstPaymentOccurs: deferred ? "StartDate" : "Instant",
+      ...(startWall !== null
+        ? { StartDate: startWall, ProrateDate: startWall }
+        : {}),
       StoredCardInfo: { LastFour: lastFour },
       SendNotifications: true,
     },
