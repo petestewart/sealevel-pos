@@ -7310,6 +7310,36 @@ export default function SaleScreen(props: {
   /** T101: PaymentPanel's word on whether this ticket may still be
    *  edited (a part-sold ticket, a settled sale), and why. */
   const [ticketLock, setTicketLock] = useState<string | null>(null);
+  const inPay = saleMode === "pay";
+  /**
+   * T101, Pete: "The pay screen should still have the option to change
+   * quantities on the ticket rows like the buy screen."
+   *
+   * T39.6 made a ticket row read-only in pay mode, because a quantity
+   * change moves the total the tender was arranged against. That is
+   * still true, and it is now handled rather than forbidden: every cart
+   * edit already clears the tender lines, re-spreads an armed discount
+   * (or drops it when the smaller subtotal cannot carry it) and drops a
+   * held card or gift card number with its line, and the pricing loop
+   * reprices from Mindbody before anything can be finalised. So the
+   * rule it relaxes is the MODE, not the safety: what locks a row now is
+   * a charge in flight or a ticket this panel says is finished or part
+   * sold.
+   *
+   * T101 review: it is read up HERE, above the hooks that depend on it
+   * (the quantity pad's own, the swipe's), because `if (!open) return
+   * null` below is an early return and no hook may sit after it.
+   */
+  const rowsEditable = !charging && ticketLock === null;
+  /** The same two facts, readable from a handler that is not re-created
+   *  per render: the window-level end of a swipe reads them at RELEASE,
+   *  which is the moment that matters. */
+  const rowsEditableRef = useRef(rowsEditable);
+  const inPayRef = useRef(inPay);
+  useEffect(() => {
+    rowsEditableRef.current = rowsEditable;
+    inPayRef.current = inPay;
+  }, [rowsEditable, inPay]);
   /** T102: the payment panel is holding the teacher on the done screen
    *  (an unwritten gift card id). Every way out of the overlay reads it:
    *  this component's close, its Escape, and the nav bar through
@@ -7582,6 +7612,15 @@ export default function SaleScreen(props: {
     if (qtyPad === null) return;
     if (!cart.some((l) => l.key === qtyPad.key)) setQtyPad(null);
   }, [cart, qtyPad]);
+  /* T101 review: and a pad open when the TICKET stops being editable goes
+     with it. The row's own minus and plus are disabled while a charge is
+     in flight, on a part-sold ticket and on a settled sale, but this pad
+     is a modal of its own and its Done was not: a pad opened a moment
+     before Finalize could still have set a quantity on a ticket being
+     charged. The same test closes it and disables its Done. */
+  useEffect(() => {
+    if (qtyPad !== null && !rowsEditable) setQtyPad(null);
+  }, [qtyPad, rowsEditable]);
   useEffect(() => {
     if (qtyPad === null) return;
     const onKey = (e: KeyboardEvent) => {
@@ -8336,6 +8375,11 @@ export default function SaleScreen(props: {
   const SWIPE_REMOVE = 96;
   const swipeRef = useRef<{
     key: string;
+    /** T101 review: WHICH pointer started it. A second finger's moves were
+     *  measured against the first finger's origin, so a two-finger drag
+     *  dragged the row and could release it past the threshold. One
+     *  gesture belongs to one pointer. */
+    id: number;
     x: number;
     y: number;
     live: boolean;
@@ -8351,6 +8395,52 @@ export default function SaleScreen(props: {
     swipeRef.current = null;
     setSwipe(null);
   }, []);
+  /**
+   * T101 review: the gesture ENDS on the window, not on the row, and the
+   * end re-reads the rules.
+   *
+   * Two things were wrong with ending it on the row. A press begun on the
+   * buy screen and released after pay mode had opened removed the line
+   * anyway (proved in the browser: the tender went with it, but no rule on
+   * that screen allows a gesture to take a row off it), and a release the
+   * row never saw, because the finger left it and the pointer capture
+   * could not be taken, left the row stuck mid-swipe with its Remove hint
+   * showing and no way to finish. A window listener sees every release
+   * wherever the finger is, and asks at that moment whether this ticket
+   * may still be edited.
+   */
+  useEffect(() => {
+    const end = (e: PointerEvent) => {
+      const g = swipeRef.current;
+      if (g === null || g.id !== e.pointerId) return;
+      const go =
+        e.type === "pointerup" &&
+        g.live &&
+        !g.dead &&
+        e.clientX - g.x <= -SWIPE_REMOVE &&
+        /* The facts as they are NOW, not as they were when the finger went
+           down: a charge may have started, the ticket may have been part
+           sold, and pay mode keeps the controls instead. */
+        rowsEditableRef.current &&
+        !inPayRef.current;
+      swipeAte.current = g.live;
+      endSwipe();
+      if (go) removeLine(g.key);
+    };
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    return () => {
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+  }, [endSwipe, removeLine]);
+  /* A line that leaves the cart under a live gesture takes the gesture
+     with it: nothing else would put the row back where it belongs, and a
+     key that comes back (the same item re-added) must not arrive already
+     dragged. */
+  useEffect(() => {
+    if (swipe !== null && !cart.some((l) => l.key === swipe.key)) endSwipe();
+  }, [cart, swipe, endSwipe]);
 
   /**
    * T90: put a line on somebody else's account, or take it off theirs.
@@ -9325,23 +9415,6 @@ export default function SaleScreen(props: {
     recheckReport !== null && recheckReport.forCart === cart
       ? recheckReport
       : null;
-  const inPay = saleMode === "pay";
-  /**
-   * T101, Pete: "The pay screen should still have the option to change
-   * quantities on the ticket rows like the buy screen."
-   *
-   * T39.6 made a ticket row read-only in pay mode, because a quantity
-   * change moves the total the tender was arranged against. That is
-   * still true, and it is now handled rather than forbidden: every cart
-   * edit already clears the tender lines, re-spreads an armed discount
-   * (or drops it when the smaller subtotal cannot carry it) and drops a
-   * held card or gift card number with its line, and the pricing loop
-   * reprices from Mindbody before anything can be finalised. So the
-   * rule it relaxes is the MODE, not the safety: what locks a row now is
-   * a charge in flight or a ticket this panel says is finished or part
-   * sold.
-   */
-  const rowsEditable = !charging && ticketLock === null;
   /** T39.4: the tax row's label carries the rate only when the server
    *  sent one (`/api/config`'s studioTaxRate, T38); never a literal. */
   const taxLabel =
@@ -10130,10 +10203,20 @@ export default function SaleScreen(props: {
                     key={line.key}
                     /* T101: swipe left to remove, buy screen only. */
                     onPointerDown={(e) => {
-                      if (inPay || !rowsEditable || !e.isPrimary) return;
+                      /* T101 review: a new press clears the last one's
+                         click-swallowing flag first, whatever this press
+                         turns out to be. A release that landed off the row
+                         left no click behind to swallow, and the flag must
+                         not eat the NEXT tap. */
                       swipeAte.current = false;
+                      if (inPay || !rowsEditable || !e.isPrimary) return;
+                      /* T101 review: one gesture at a time. A second
+                         finger landing on another row must not take over
+                         the one already in the air. */
+                      if (swipeRef.current !== null) return;
                       swipeRef.current = {
                         key: line.key,
+                        id: e.pointerId,
                         x: e.clientX,
                         y: e.clientY,
                         live: false,
@@ -10143,6 +10226,19 @@ export default function SaleScreen(props: {
                     onPointerMove={(e) => {
                       const g = swipeRef.current;
                       if (!g || g.key !== line.key || g.dead) return;
+                      /* T101 review: only the pointer that started it
+                         moves it. A second finger's moves were measured
+                         against the first finger's origin, which dragged
+                         the row on a two-finger gesture. */
+                      if (g.id !== e.pointerId) return;
+                      /* And a gesture whose screen has changed under it
+                         (pay mode opened, a charge started) is abandoned
+                         where it is. */
+                      if (inPay || !rowsEditable) {
+                        g.dead = true;
+                        setSwipe(null);
+                        return;
+                      }
                       const dx = e.clientX - g.x;
                       const dy = e.clientY - g.y;
                       if (!g.live) {
@@ -10167,16 +10263,10 @@ export default function SaleScreen(props: {
                       }
                       setSwipe({ key: line.key, dx: Math.min(0, dx) });
                     }}
-                    onPointerUp={(e) => {
-                      const g = swipeRef.current;
-                      if (!g || g.key !== line.key) return;
-                      const dx = e.clientX - g.x;
-                      const go = g.live && !g.dead && dx <= -SWIPE_REMOVE;
-                      swipeAte.current = g.live;
-                      endSwipe();
-                      if (go) removeLine(line.key);
-                    }}
-                    onPointerCancel={endSwipe}
+                    /* T101 review: the release is handled on the window
+                       (the effect beside `endSwipe`), so a finger lifted
+                       off the row ends the gesture too, and the rules are
+                       re-read at the moment of release. */
                     onClickCapture={(e) => {
                       /* The press that removed a line, or dragged the row
                          and changed its mind, is not also a tap on it. */
@@ -11226,9 +11316,14 @@ export default function SaleScreen(props: {
             <div className="modal-actions">
               <button
                 className="modal-confirm go"
-                disabled={!qtyOk}
+                /* T101 review: and off whenever the row's own stepper is
+                   off, so this pad cannot be the one control that edits a
+                   ticket being charged, part sold or already settled. The
+                   effect above closes it on the same test; this is the
+                   same rail on the tap itself. */
+                disabled={!qtyOk || !rowsEditable}
                 onClick={() => {
-                  if (qtyValue === null || !qtyOk) return;
+                  if (qtyValue === null || !qtyOk || !rowsEditable) return;
                   setLineQuantity(qtyPad.key, qtyValue);
                   setQtyPad(null);
                 }}
