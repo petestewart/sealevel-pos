@@ -1260,6 +1260,11 @@ type ChargeResult =
       message: string;
       saleId: string | null;
       basket: BasketRow[];
+      /* T103 review: what the rest of the ticket did, when there was a
+         rest: the gift cards never attempted, the carts that stood. It
+         is the route's sentence and it is shown, because a teacher who
+         is told to escalate has to know what else is outstanding. */
+      summary: string | null;
     }
   | { kind: "ambiguous"; message: string }
   | { kind: "error"; message: string };
@@ -3204,6 +3209,7 @@ function PaymentPanel(props: {
           ),
           saleId: typeof body?.saleId === "string" ? body.saleId : null,
           basket: basketRows(body?.basket),
+          summary: typeof body?.summary === "string" ? body.summary : null,
         });
       } else if (body?.partial === true) {
         /* T95 (T90's posture): part of this ticket is SOLD and part is
@@ -4794,6 +4800,9 @@ function PaymentPanel(props: {
                    charge anything. */
                 <div className="sale-stop pay-split" role="alert">
                   <p className="pay-split-head">{result.message}</p>
+                  {result.summary ? (
+                    <p className="pay-split-why">{result.summary}</p>
+                  ) : null}
                   <p className="pay-split-why">
                     Finalize Sale is refused on this ticket now. Do not
                     charge again: this is for the studio to fix in

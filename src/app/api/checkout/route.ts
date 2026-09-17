@@ -1197,12 +1197,33 @@ export async function POST(request: Request) {
     if (outcome.suppressed !== null) return null;
     const verdict =
       outcome.basket ??
-      (fromSale === null ? null : assertBasket(lines, fromSale));
+      (fromSale === null ? null : assertBasket(lines, fromSale, "sale"));
     if (verdict === null) {
       console.warn(
         `[basket] unverified sale=${saleId ?? "unknown"} ` +
           `client=${saleClientId}: neither the checkout answer nor the sale ` +
           "said what it holds",
+      );
+      return verdict;
+    }
+    /* T103 review: asserted, but not against this. Logged in the same
+     * words as the case above, because it is the same posture -- no
+     * evidence, so no refusal -- and the counter is told nothing. */
+    if (verdict.unassertable !== null) {
+      console.warn(
+        `[basket] unverified sale=${saleId ?? "unknown"} ` +
+          `client=${saleClientId}: ` +
+          (verdict.unassertable === "package"
+            ? "a package line has no basket of its own to assert"
+            : "the sale that was read holds none of this ticket " +
+              `(${verdict.unordered.join(", ")}), which is a lookup that ` +
+              "may have found the wrong sale, not a sale that sold nothing"),
+      );
+    } else if (verdict.unordered.length > 0) {
+      /* Recorded, never a refusal: Mindbody files lines of its own. */
+      console.log(
+        `[basket] sale=${saleId ?? "unknown"} holds ${verdict.unordered.length} ` +
+          `line(s) this ticket did not order (${verdict.unordered.join(", ")})`,
       );
     }
     return verdict;
@@ -1798,33 +1819,16 @@ export async function POST(request: Request) {
       }
     }
 
-    /* T103: the cart half took money and sold nothing. Nothing after it
-     * runs, for the same reason a failure stops the ticket: no card is
-     * charged on the strength of a sale that did not happen. The cards
-     * were never attempted, so the answer says so. */
-    if (soldNothing !== null) {
-      return await soldNothingAnswer({
-        verdict: soldNothing.verdict,
-        saleId: soldNothing.saleId,
-        cartId: soldNothing.cartId,
-        onClientId: saleClientId,
-        paid: soldNothing.paid,
-        extra: {
-          summary:
-            units.length > 0
-              ? `${units
-                  .map((u) => `the $${u.cardValue.toFixed(2)} gift card`)
-                  .join(", ")} was not attempted.`
-              : undefined,
-        },
-      });
-    }
-
     /** T95 review: how many cards were actually sent to Mindbody, which
      *  is what the "was not attempted" list is measured from. Zero when
      *  the cart half failed first. */
     let cardsAttempted = 0;
-    if (failure === null && suppressedKind === null) {
+    /* T103: the cart half took money and sold nothing, so no card is
+     * charged on the strength of it, exactly as a failure stops the
+     * ticket. The answer waits until the record below is written (T103
+     * review: the cart IS a sale and its discount is on the studio
+     * either way, which is why every other path records first). */
+    if (failure === null && suppressedKind === null && soldNothing === null) {
       for (const [i, unit] of units.entries()) {
         const id = ids[i] as string;
         cardsAttempted += 1;
@@ -2016,6 +2020,25 @@ export async function POST(request: Request) {
         : []),
       ...sold.map((c) => `a $${c.value.toFixed(2)} gift card`),
     ];
+
+    /* T103: the cart half sold nothing. Answered here, after the record,
+     * naming the cards that were never attempted. */
+    if (soldNothing !== null) {
+      const untried = units
+        .map((u) => `the $${u.cardValue.toFixed(2)} gift card`)
+        .join(", ");
+      return await soldNothingAnswer({
+        verdict: soldNothing.verdict,
+        saleId: soldNothing.saleId,
+        cartId: soldNothing.cartId,
+        onClientId: saleClientId,
+        paid: soldNothing.paid,
+        extra: {
+          ...(untried ? { summary: `${untried} was not attempted.` } : {}),
+          ...discountFields,
+        },
+      });
+    }
 
     if (failure !== null) {
       /* T95 review: what was never attempted. A CARD failed at index
@@ -3247,12 +3270,17 @@ export async function POST(request: Request) {
         shape: "lines",
         onStudio: discounted,
       });
+      /* T103 review: the T94 overdraft record belongs with the discount
+       * record, BEFORE the stop below: the account was charged past its
+       * balance on a teacher's PIN whatever the sale turned out to hold. */
+      const od = await recordOverdraft(ids.saleId, false);
       /* T103: the answer is refused when the sale does not hold what
        * was sent. The money has already moved, so this reports it; it
        * never retries and never claims a sale. */
-      const nothingSold = await basketStop(items, outcome, ids, total);
+      const nothingSold = await basketStop(items, outcome, ids, total, {
+        ...od,
+      });
       if (nothingSold) return nothingSold;
-      const od = await recordOverdraft(ids.saleId, false);
       return NextResponse.json({
         ok: true,
         method: "split",
@@ -3734,10 +3762,16 @@ export async function POST(request: Request) {
         shape: "lines",
         onStudio: discounted,
       });
+      /* T103 review: the T94 record is written before the stop, like the
+       * discount record: the account was charged past its balance on a
+       * teacher's PIN whatever the sale turned out to hold. */
+      const od = await recordOverdraft(ids.saleId, false);
       /* T103: the answer is refused when the sale does not hold what
        * was sent. The money has already moved, so this reports it; it
        * never retries and never claims a sale. */
-      const nothingSold = await basketStop(items, outcome, ids, total);
+      const nothingSold = await basketStop(items, outcome, ids, total, {
+        ...od,
+      });
       if (nothingSold) return nothingSold;
       return NextResponse.json({
         ok: true,
@@ -3748,7 +3782,7 @@ export async function POST(request: Request) {
         receiptRequested: sendEmail,
         emailReceipt: null,
         ...rec,
-        ...(await recordOverdraft(ids.saleId, false)),
+        ...od,
         ...actorFields(run),
       });
     }
