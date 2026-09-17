@@ -4704,8 +4704,15 @@ button.sale-for:disabled {
   color: var(--accent);
 }
 
+/* T102: a disabled chip stays READABLE, which the T99 review asked for
+ * on a disabled calendar day and which now matters here too: with a gift
+ * card on the ticket the discount dialog's Whole sale segment is greyed
+ * every time it opens. Tokens rather than an opacity, because 0.4 of the
+ * ink on the surface measured 2.46:1. */
 .pad-chip:disabled {
-  opacity: 0.4;
+  border-color: var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
   cursor: default;
 }
 
@@ -5324,6 +5331,28 @@ textarea.reason-note-field:disabled::placeholder {
   font-variant-numeric: tabular-nums;
 }
 
+/* T102: the one tap that lets the done screen go, inside the gift card
+ * block it acknowledges. Accent, because while an id is unwritten this
+ * is the only actionable thing on the screen; Done goes quiet under it
+ * (.pay-done-btn.off) until this is tapped, which is the same pair
+ * .pay-primary and .pay-primary.off already read as. */
+.pay-done-gift-ack {
+  min-height: 64px;
+  margin-top: 4px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 17px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.pay-done-gift-ack:active {
+  background: var(--accent-press);
+}
+
 .pay-done-line {
   margin: 0;
   max-width: 34em;
@@ -5350,8 +5379,17 @@ textarea.reason-note-field:disabled::placeholder {
   text-align: left;
 }
 
-.pay-done-btn:active {
+.pay-done-btn:active:not(.off) {
   background: var(--accent-press);
+}
+
+/* T102: inert while a gift card id on this screen has not been written
+ * on the card. Not hidden: the way out stays where it always is, it
+ * just does nothing yet, and its title says what to do first. */
+.pay-done-btn.off {
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: default;
 }
 
 /* A dry run's suppressed outcome takes the canvas's title; still amber,
@@ -5378,6 +5416,16 @@ textarea.reason-note-field:disabled::placeholder {
 .pay-dismiss {
   display: block;
   margin-top: 8px;
+}
+
+/* T102 review: inert while a gift card id on THIS screen has not been
+ * written on the card, which a partial sale can carry. The same pair as
+ * .pay-done-btn.off: tokens, not an opacity, so the label stays readable
+ * for as long as the hold lasts. */
+.pay-dismiss.off {
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: default;
 }
 
 /* --- Pay and check in (T25): the unpaid row's dialog ------------------
@@ -6940,11 +6988,18 @@ textarea.reason-note-field:disabled::placeholder {
 }
 
 /* An item with nothing to do is plainly grey (Pete: "when there is
- * nothing in the cart, make Pay greyed out"): muted, and dimmed, since a
- * control that refuses the tap need not clear the text contrast bar. */
+ * nothing in the cart, make Pay greyed out"): the muted ink, and NO
+ * opacity on top of it.
+ *
+ * T102 review: 0.55 of the muted ink on the bar measured 2.43:1 light
+ * and 2.71:1 dark, and T102's hold can sit on the done screen for as
+ * long as it takes to write six characters on a card, with Sign-in and
+ * Buy greyed the whole time. Tokens rather than an opacity, the same fix
+ * .pad-chip:disabled just took: --muted on --surface is 6.5:1 light and
+ * 5.9:1 dark, and against the --ink of a live item it still plainly
+ * reads as off. */
 .nav-item[aria-disabled="true"] {
   color: var(--muted);
-  opacity: 0.55;
 }
 
 /* The lit item stays FULLY lit while it is inert (mid-charge, or the done
