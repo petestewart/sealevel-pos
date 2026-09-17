@@ -5501,12 +5501,6 @@ textarea.reason-note-field:disabled::placeholder {
   overflow-y: auto;
 }
 
-.contract-desc {
-  margin: 0 0 12px;
-  font-size: 16px;
-  color: var(--muted);
-}
-
 /* The terms, receipt-style label/value rows. */
 .contract-rows {
   margin: 0 0 16px;
@@ -5526,6 +5520,83 @@ textarea.reason-note-field:disabled::placeholder {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   text-align: right;
+}
+
+/* T99: the start-date control. A full-width 64px row in the terms'
+ * own label/value rhythm, bordered so it reads as tappable, and
+ * --accent bordered once a day other than today is SELECTED (the
+ * token's other meaning). The value keeps the tabular alignment the
+ * amounts have. */
+.contract-start {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 64px;
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 17px;
+  text-align: left;
+}
+
+.contract-start:active {
+  background: var(--surface-2);
+}
+
+.contract-start.chosen {
+  border-color: var(--accent);
+}
+
+/* Once the membership has started the row is a record, not a control:
+ * dimmed to --muted rather than faded, so it stays readable in dark
+ * (at opacity 0.5 the pair measured 4.49 against the surface). */
+.contract-start:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.contract-start-day {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+/* The chevron in that row points right, like the rail's closed section
+ * mark, and never turns: it opens a layer, it does not disclose. */
+.contract-start .cat-chev {
+  transform: none;
+}
+
+/* A day outside the pickable window (T99: before today, or more than a
+ * year out) is shown and refused rather than hidden, so it is visible
+ * why it cannot be chosen. Dimmed to --muted ink and NOT faded: --muted
+ * at opacity 0.5 measured 2.21 in light and 2.46 in dark against the
+ * surface, so a whole month of numbers was unreadable in a hot room. The
+ * enabled days are --ink at 600 weight, which is distinction enough. The
+ * same fix the start row above took. */
+.cal-day:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.cal-day:disabled:active {
+  background: transparent;
+}
+
+/* Same for a month arrow at the edge of the window. */
+.cal-nav:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cal-nav:disabled:active {
+  background: transparent;
 }
 
 /* The business's agreement terms, verbatim from the API, in their own
@@ -6227,6 +6298,11 @@ textarea.reason-note-field:disabled::placeholder {
   padding: 10px 20px;
   line-height: 1.3;
   white-space: normal;
+  /* T99: room for four lines whatever the label says, so choosing a
+   * start date (whose commitment sentence is a little longer) cannot
+   * change the dialog's height. The box stays one size as a teacher
+   * works it, which is the T68 rule. */
+  min-height: calc(4 * 1.3em + 20px);
 }
 
 /* The receipt side of the tender (Payment.dc.html): under Total and a
