@@ -6197,12 +6197,31 @@ export default function SaleScreen(props: {
   }, [activeCat, activeChild]);
 
   /** A top-level tap: select it and, for a section, open it (closing
-   *  the other) with no child chosen, which is the section's All view. */
-  const tapTop = useCallback((label: string) => {
-    setActiveCat(label);
-    setActiveChild(null);
-    if (label === PASSES_SECTION || label === RETAIL_SECTION) setExpanded(label);
-  }, []);
+   *  the other) with no child chosen, which is the section's All view.
+   *
+   *  Tapping the section a SECOND time folds it away (Pete, 2026-09-17:
+   *  "when a category in the store is expanded and subcategories are
+   *  visible, clicking on the category name again should collapse it").
+   *  Second means the section is already open AND is the shelf being
+   *  shown: tapping an open section from somewhere else (Passes left
+   *  open while Favorites is on screen) still goes to it, rather than
+   *  folding a list the teacher was reaching for. The shelf keeps
+   *  showing that section's All view while folded, so one tap changes
+   *  the rail and not the goods. */
+  const tapTop = useCallback(
+    (label: string) => {
+      const isSection = label === PASSES_SECTION || label === RETAIL_SECTION;
+      if (isSection && expanded === label && activeCat === label) {
+        setExpanded(null);
+        setActiveChild(null);
+        return;
+      }
+      setActiveCat(label);
+      setActiveChild(null);
+      if (isSection) setExpanded(label);
+    },
+    [activeCat, expanded],
+  );
 
   const tapChild = useCallback((section: RailSection, label: string) => {
     setActiveCat(section);
