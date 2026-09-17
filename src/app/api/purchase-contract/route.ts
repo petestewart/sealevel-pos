@@ -11,9 +11,11 @@ import { dryRunState, mindbodyHttpStatus } from "@/lib/mindbody";
 
 import {
   clientPaymentProfile,
+  contractStartProblem,
   houseClientId,
   purchaseContract,
   roundToCents,
+  studioDayKey,
 } from "@/lib/sale";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +26,7 @@ export const dynamic = "force-dynamic";
  * and NOTHING auto-retries.
  *
  * Body: { contractId: number, clientId: string, test?: boolean,
- *         expectedFirstTotal?: number }
+ *         expectedFirstTotal?: number, startDate?: string }
  *
  * `expectedFirstTotal` is the figure the dialog's confirm button showed;
  * a real purchase whose fresh rehearsal prices differently refuses with
@@ -48,9 +50,16 @@ export const dynamic = "force-dynamic";
  *   sale.yml:5189-5196, is `{ LastFour }` and nothing else). The card
  *   is re-read server-side at purchase time; no card or an expired one
  *   is a refusal with the reason, before any Mindbody write.
- * - FirstPaymentOccurs: Instant, StartDate omitted (defaults to today
- *   on Mindbody's clock). The counter sells memberships that start and
- *   charge now.
+ * - A membership starting TODAY sends FirstPaymentOccurs: Instant with
+ *   StartDate omitted (it defaults to today on Mindbody's clock).
+ * - T99: `startDate` (a studio `YYYY-MM-DD`) is the teacher's chosen
+ *   day. It is refused here, in words, when it is not a real day, is in
+ *   the past, or is more than a year ahead, whatever the browser
+ *   thought; today's own key is normalized away, so the request shape
+ *   for "starts today" is byte for byte what it was before T99. A
+ *   chosen day rides BOTH the rehearsal and the purchase, so the figure
+ *   the dialog shows and the figure charged come from the same dates,
+ *   and the proration is entirely Mindbody's (sale.yml:1866).
  *
  * The response never lies about an outcome (same contract as
  * /api/checkout):
@@ -138,6 +147,26 @@ export async function POST(request: Request) {
     );
   }
   const test = payload?.test === true;
+  /* T99: the chosen start date. Absent, or today's own key, is today's
+   * behaviour exactly. A bad one never reaches Mindbody. */
+  const rawStart = payload?.startDate;
+  let startDate: string | null = null;
+  if (typeof rawStart === "string" && rawStart.trim()) {
+    const key = rawStart.trim();
+    const problem = contractStartProblem(key);
+    if (problem) {
+      return NextResponse.json(
+        { error: problem, stage: "startDate" },
+        { status: 400 },
+      );
+    }
+    startDate = key === studioDayKey() ? null : key;
+  } else if (rawStart !== undefined && rawStart !== null) {
+    return NextResponse.json(
+      { error: "startDate must be a YYYY-MM-DD day." },
+      { status: 400 },
+    );
+  }
   /* The first-payment figure the dialog's confirm button displayed, when
    * the browser had one. Compared against the fresh rehearsal below: a
    * tap agrees to the words on the button, so a price that has moved
@@ -203,6 +232,7 @@ export async function POST(request: Request) {
       clientId,
       lastFour: card.lastFour,
       test: true,
+      startDate,
     });
   } catch (err) {
     return NextResponse.json(
@@ -257,6 +287,7 @@ export async function POST(request: Request) {
         clientId,
         lastFour: card.lastFour,
         test: false,
+        startDate,
         actor,
       }),
     );
