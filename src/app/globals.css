@@ -4704,8 +4704,15 @@ button.sale-for:disabled {
   color: var(--accent);
 }
 
+/* T102: a disabled chip stays READABLE, which the T99 review asked for
+ * on a disabled calendar day and which now matters here too: with a gift
+ * card on the ticket the discount dialog's Whole sale segment is greyed
+ * every time it opens. Tokens rather than an opacity, because 0.4 of the
+ * ink on the surface measured 2.46:1. */
 .pad-chip:disabled {
-  opacity: 0.4;
+  border-color: var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
   cursor: default;
 }
 
