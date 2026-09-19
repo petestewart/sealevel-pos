@@ -14852,9 +14852,10 @@ printed seven times.
 - **The lead got the star's 34px back.** `.shelf-cell .shelf-name` reserves
   34px for the favourite star, and a gift card cell has no star (the
   shared favorites validator admits Product, Service and Package only,
-  T95), so that was 34px of a 142px line spent on nothing. With it back the
-  narrowest landscape cell gives the lead 174px, which is what lets a real
-  name fit the line the glyph leaves it. If a gift card cell ever gains a
+  T95), so that was 34px of the 140px line the narrowest landscape cell
+  leaves, spent on nothing. With it back that cell gives the lead 174px
+  (both measured), which is what lets a real name fit the line the glyph
+  leaves it. If a gift card cell ever gains a
   star, that rule goes with it.
 - **Nothing the glyph replaces is lost.** The cell's `aria-label` and its
   `title` still carry the WHOLE product name as one string ("Add a $80.00
@@ -14995,12 +14996,25 @@ product) and **:3109** (a scratch Postgres on :5437 for the hide list).
   server code changed. The studio's real card names have still never been
   seen in a cell, so the split was exercised on Pete-shaped names in the
   mock rather than his own.
-- **Two of T104's assertions now fail by design**, and they are the only
-  failures anywhere: `ui1.mjs`'s "a typed preset still lights its product"
-  and `ui4.mjs`'s "no way left to the list modal" partner, both of which
-  reach for `.gift-card-chip`. The chip is what this ticket removed, so
-  those two lines are stale, not a regression; everything else in those
-  drivers passes unchanged.
+- **Two of T104's `ui1.mjs` assertions now fail by design**, and they are
+  the only T107 failures anywhere. "cheapest first, custom last" reads the
+  Custom cell's price, which Pete changed to "Any amount"; and "a typed
+  preset still lights its product" waits for `.gift-card-chip.on`, which
+  is the chip this ticket removed. Everything before them in that driver
+  passes on this branch: the cells, the names, the stepper inside the box
+  2px/15px level with the price, the count badge gone, the quantity pad,
+  the minus to the remove, the custom cell opening the PAD and reading the
+  typed figure, and the ticket row. Those two lines are stale, not a
+  regression.
+- **T104's `ui4.mjs` fails on something this ticket did not touch**: it
+  waits for a discount chip called "Whole sale", which **T106** renamed to
+  "Entire sale" before this branch was cut. Everything in it that T107 is
+  near passes: T100's offer on a refused pass still opens the pad on
+  $49.00 and rings up a custom card with Mindbody's reason still on
+  screen; a $60.00 card priced $55.00 names both figures on the cell and
+  reads "Friends and family card, a $60.00 card" on the ticket; the
+  discount dialog names the card once with no doubled figure. `ui5.mjs`
+  passes whole.
 - **The two-minute product cache still applies to the cells and to the
   pad's resolution**, as it did before: a product renamed or repriced in
   Mindbody keeps its old cell for up to two minutes. Every purchase is
