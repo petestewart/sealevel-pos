@@ -114,6 +114,32 @@ or the environment, the dry run and whose it is, and the write guard.
 The cached staff token is keyed by site id, so switching target cannot reuse a
 sandbox token against production.
 
+### One tap charges once, even if its request arrives twice (T113)
+
+The single flight (T22) and the partial lock (T95) both live in the BROWSER,
+so a checkout that reached the server twice used to charge twice: a dropped
+radio and a transport-level retry, a reload mid-charge, a proxy, or two
+iPads on one ticket. So the browser now mints ONE idempotency key per TAP
+(`src/lib/idemkey.ts`, in the charge gesture and never per render) and sends
+it as the `Idempotency-Key` HEADER, which keeps it out of the ticket that
+gets fingerprinted. `beginIdempotent` in `src/lib/idemstore.ts` is the gate,
+after the device and staff sessions and before every validation and every
+Mindbody call: a key never seen runs the checkout unchanged, a key already
+answered returns that FIRST answer verbatim with nothing sent to Mindbody
+(the suppressed, partial and sold-nothing outcomes included, so the screen
+cannot tell a second story), a key still IN FLIGHT waits for the first
+rather than refusing (a refusal would say "not charged" about a charge in
+progress) and after 30 seconds answers ambiguous, and a key arriving with a
+DIFFERENT ticket is refused in words with nothing sent, told apart by a
+SHA-256 of the canonical body plus the teacher's staff id. The digest is
+kept, never the body, which holds card numbers and CVVs. The record is IN
+MEMORY, bounded at 200 keys and 15 minutes (`POS_IDEM_MAX`,
+`POS_IDEM_TTL_MS`): a SECOND SERVER INSTANCE DEFEATS IT. And it is never a
+way to LOSE a sale, which is why the key is not required: no key, an
+over-long key, the store off or full of flights in progress all charge as
+before, loudly in the log. Nothing below the gate moved, and nothing about
+it is settable from the drawer.
+
 ### A teacher's PIN now authorizes three separate things
 
 `CompPurpose` in `src/lib/auth.ts` is `comp` (a discount, T48), `overdraft`
