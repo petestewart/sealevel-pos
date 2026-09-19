@@ -170,6 +170,99 @@ Kiosk posture: Add to Home Screen, then iPadOS Guided Access to pin the
 app and disable the home button. The page itself hides nothing it should
 not, because it holds nothing.
 
+**The idle screen is also where a student starts on their own.** Under
+the greeting, one 64px button: **"New here? Sign up"**. See "Self-serve"
+below: it is what keeps a new student from tying up the teacher during a
+rush, and it changes the display from a screen the teacher drives to one
+the student can drive for the two things that need no teacher decision,
+registering and signing the waiver.
+
+---
+
+## Self-serve: a new student registers without the teacher
+
+**The problem (Pete, 2026-09-19):** "if a teacher has a line of students
+to check in and one of them needs to register a new account, ideally that
+student can do so without tying up the teacher from signing other students
+in." Under the scene model as first written, registration starts from the
+teacher's iPad and the teacher then waits on the result, which is the
+opposite of that. So registration and the waiver, the two scenes with no
+teacher decision in them, become **self-serve**: the student starts them
+from the idle screen, finishes them alone, and the teacher meets the result
+when there is a gap.
+
+**Two kinds of request, one protocol.** A display request now has an
+`initiator`: `teacher` (ticket, approval, contract, and a waiver sent for
+an existing client) or `display` (self-serve sign-up). Same table, same
+hub, same `complete`/`refuse` routes, same rule that the display never
+writes to Mindbody. The one new route is `POST /api/display/start`, which
+the display calls with a kind (`signup` for now), and which the server
+accepts only from a paired display with no request in progress.
+
+**The sign-up flow on the display**, one scene with steps, the student
+holding the iPad the whole way:
+
+1. The four fields and the two opt-in boxes (Scene 3's form, unchanged).
+2. The waiver, scroll to the end, signature pad, "I agree" (Scene 1's
+   screen, unchanged), for a client who does not exist yet. The signature
+   is held in the request's result, not written anywhere.
+3. "Thanks, <first name>. Tell the teacher you're signed up." Then idle.
+
+The result is `{form, consent, signaturePng, agreedAt, waiverSha256}`, one
+request, so the teacher's finalisation is one tap for both.
+
+**The teacher meets it in a tray, not a wait.** The POS header gains a
+**gold count badge** (the `--gold` role: badges and counts) beside the
+display mark: "2 signed up". Tapping it lists the pending self-serve
+results by name and how long ago. Tapping a name opens T59b's New Client
+modal prefilled, exactly as Scene 3 does today, with a line saying the
+waiver is signed and waiting. **Create** runs the existing
+`/api/client-create` (duplicate detection intact: a student who already
+has an account and signs up again is caught here, and the teacher merges
+by searching instead), then, on success and without a second tap,
+`/api/waiver-agree` with the `displayRequestId`, which records the
+release, the receipt row with the signature, the document upload and the
+Notes line for the client id that now exists. The row is then a client
+like any other and the teacher checks them in. One tap for the teacher,
+at a moment of their choosing, and the student was never in the queue.
+
+**The search finds them too.** When a teacher types a name into walk-in
+search and a pending sign-up matches it, it appears above the Mindbody
+results as "signed up on the customer screen, not created yet", and
+tapping it is the same Create. That is the path a teacher actually takes
+when the student says "I just signed up": they search the name, as they
+would for anyone.
+
+**Priority when the teacher needs the screen.** A self-serve sign-up
+holds the display until it finishes, is abandoned (no touch for two
+minutes returns to idle and discards the partial form, so the next
+student never sees the last one's email), or is cleared from the tray.
+While it holds the screen:
+
+- A live ticket mirror is skipped silently and resumes on the next
+  priced change, since it is informational.
+- An approval or a contract signature, which need the screen, tell the
+  teacher "Someone is signing up on the customer screen" with **Wait**
+  and **Take over**. Take over ends the sign-up with a "please start
+  again in a moment" on the display and discards its partial form. The
+  D1/D5 PIN overrides also remain, for a sale that cannot wait.
+
+Nothing here weakens a rule: the write still happens from the teacher's
+iPad, under the teacher's token, after a human read the name back. What
+changed is only WHEN, and that the student's part no longer waits for the
+teacher's.
+
+**Later, and the same mechanism: their own phone.** One display serves
+one student at a time, and a 6pm line can hold three new students. The
+idle screen (and a printed card at the counter) can carry a QR that opens
+the same sign-up as a short-lived signed URL on the student's phone,
+producing the same `display`-initiated request into the same tray, so
+three people register at once while the display shows the ticket. That is
+Phase 3's "customer's own phone" arriving through this door rather than
+through Mindbody-hosted pages, and it costs one route and one token
+format once the tray exists. Not in this phase's build order; recorded so
+the tray is built as the thing it feeds.
+
 ---
 
 ## Scene 1: the waiver
@@ -286,10 +379,14 @@ approval is a precondition the server checks, not an action that charges.
 
 ## Scene 3: registration
 
-**Trigger.** T59b's New Client modal gains "Let them type it", enabled
-when a display is connected. `register` scene with no payload beyond
-what the form needs: which fields are required, from
-`requiredClientFields` as the modal already reads them.
+**Trigger.** Two ways in. The student's own, from the idle screen's
+"New here? Sign up" (the self-serve flow above, which is the one a rush
+uses). And the teacher's: T59b's New Client modal gains "Let them type
+it", enabled when a display is connected, for the case where the teacher
+is already talking to them; it presents `register` with no payload beyond
+what the form needs (which fields are required, from
+`requiredClientFields` as the modal already reads them) and continues
+into the waiver the same way, so both ways produce the same result shape.
 
 **On the display.** First name, last name, email, phone, and two
 consent checkboxes, "Email me" and "Text me", both ticked by default
@@ -322,10 +419,11 @@ create under a human's eye. The consent flags ride the `addclient` body
 itself (see above), not a second `updateclient`, because that is the
 call that can carry the text flags.
 
-**Chained waiver.** A new client has no waiver. On a successful create,
-if a display is connected, the modal offers "Sign the waiver now" which
-presents Scene 1 for the new client id. Two taps for the teacher, and the
-student never hands the iPad back between them.
+**The waiver is part of sign-up, not chained after it.** Both ways in
+collect the signature on the display before the client exists, held in
+the request, and Create finalises the release and the receipt right after
+the client id comes back. One tap for the teacher, and the student never
+hands the iPad back.
 
 ---
 
@@ -386,7 +484,7 @@ Mindbody holds):
 | Table | Holds | Not held |
 |---|---|---|
 | `displays` | id, name, paired_at, last_seen_at | nothing about who used it |
-| `display_requests` | id, display_id, kind, payload, status, result, requesting staff id, timestamps | consumed results past 30 minutes (deleted) |
+| `display_requests` | id, display_id, kind, initiator (teacher or display), payload, status, result, requesting staff id when the teacher started it, timestamps | consumed results past 30 minutes (deleted); an unconsumed self-serve sign-up past four hours (the student did not come back) |
 | `waiver_receipts` (+2 columns) | signature sha256 and PNG beside the existing text hash | any client detail beyond the id |
 | `contract_receipts` | client id, contract id, terms sha256, signature sha256 and PNG (or none plus the overriding staff id), agreed at, outcome | the contract itself (Mindbody's) |
 | `app_settings` (+2 keys) | `customer_confirms_sale`, `contract_requires_signature` | |
@@ -435,7 +533,10 @@ order Pete listed them. Each is one PLAN.md item with its own done-when.
 3. **Waiver.** Scene 1 end to end, including the document upload probe.
 4. **Ticket approval** and the `customer_confirms_sale` setting with the
    server-side gate.
-5. **Registration**, with the chained waiver.
+5. **Sign-up, self-serve.** The idle screen's button, the `display`
+   initiator and `/api/display/start`, the form-then-waiver flow, the
+   tray with its gold badge, Create finalising both, the search hit, and
+   the take-over rule. This is the item that answers the rush.
 6. **Contract**, with the `ClientSignature` probe.
 
 ## Questions for Pete

@@ -189,7 +189,7 @@ Plumbing first, then one scene at a time, in this order.
 - [ ] Ticket, summary mode: live mirror of the priced cart and the post-sale summary. No writes.
 - [ ] Waiver: sign on the display, signature kept in `waiver_receipts` and copied to Mindbody documents (probe D-B1 first).
 - [ ] Ticket approval: `customer_confirms_sale` in `app_settings`, admin-edited, enforced by `/api/checkout` on the server; teacher override by their own PIN (T48 idiom), filed on the client.
-- [ ] Registration on the display, email and text opt-in ticked by default (probe D-B3 first), teacher reviews and taps Create; chained waiver.
+- [ ] Sign-up, self-serve: "New here? Sign up" on the idle screen, form then waiver signature in one request, a tray with a gold count on the POS header, Create finalises client and waiver in one tap, pending sign-ups surface in walk-in search, take-over rule when the teacher needs the screen. Email and text opt-in ticked by default (probe D-B3 first). Answers Pete's rush case (design doc, "Self-serve").
 - [ ] Contract signature on the display, required by `contract_requires_signature` (default on) with the teacher's PIN override, sent as `ClientSignature` (probe D-B2 first), `contract_receipts` row.
 
 Probes owed, both sandbox, `Test: true` where the endpoint takes it:
