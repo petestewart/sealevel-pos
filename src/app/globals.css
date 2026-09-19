@@ -1954,6 +1954,21 @@ button.chip.action:active {
   gap: 8px;
 }
 
+/* T112: one pass substitution row. Two selects, a checkbox and remove,
+   wrapping rather than squeezing, since the drawer is narrow and a pass
+   name is long. No colour of its own: the selects are the tab's own
+   .dev-text and the checkbox takes the block's color-scheme. */
+.dev-sub-row {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dev-sub-match {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .dev-setting button.dev-order-move {
   width: 44px;
   height: 44px;
@@ -3149,6 +3164,14 @@ button.chip.action:active {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
+  /* T112: the notice now offers up to three ways forward per refused
+     pass (buy it for another client, override, sell it as a gift card),
+     so two passes refused at once can put six controls here. The row
+     already wrapped; this caps what that can do to the ticket column,
+     because a notice that pushes the totals off the screen is worse
+     than one that scrolls. Three 64px rows and their gaps. */
+  max-height: 208px;
+  overflow-y: auto;
 }
 
 .sale-note-act {

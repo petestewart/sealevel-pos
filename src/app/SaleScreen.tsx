@@ -42,6 +42,11 @@ import {
   type Discount,
   type DiscountLine,
 } from "@/lib/comp";
+import OverrideDialog, {
+  type OverrideArmed,
+  type OverrideTarget,
+  type SubstituteOffer,
+} from "./OverrideDialog";
 
 /**
  * The sale screen (T23, PLAN 2.1 UI). A full-screen overlay over the
@@ -850,6 +855,74 @@ interface RefusedGiftOffer {
   key: string;
   name: string;
   cents: number;
+  /** T112: the shelf item itself, so the two offers added here can put
+   *  the pass BACK on the ticket (for another client, or on an
+   *  override) rather than only describing it. */
+  item: ShelfItem;
+  /** T112: Mindbody's own sentence for THIS pass, which the override
+   *  dialog shows and the record repeats. The notice's `text` can name
+   *  several lines at once; this is the one that named this one. */
+  reason: string;
+}
+
+/**
+ * T112: an armed override. Pete: "this needs to have the ability to
+ * override, like other things in the app. teacher PIN and reason can be
+ * given", and, for the case where Mindbody refuses anyway: "if that
+ * doesn't work then we can use the 'Returning Student 2-week unlimited'
+ * item and discount it to be at the standard 2-week special price behind
+ * the scenes".
+ *
+ * Like ArmedDiscount, the SHAPE is the rule: there is no way to hold an
+ * armed override with nobody behind it. The token is the one-shot value
+ * /api/teacher/verify signed for purpose "override"; the pricing loop and
+ * the charge both hand it back, and the server spends it once, at the
+ * charge.
+ */
+interface ArmedOverride {
+  mode: "attempt" | "substitute";
+  /** The REFUSED pass's id. The server resolves everything else from it,
+   *  so this is the only id the browser gets to choose. */
+  metadataId: string;
+  /** The refused pass's name and Mindbody's sentence, for the record. */
+  pass: string;
+  refusal: string;
+  reason: CompReason;
+  teacher: StaffChoice;
+  token: string;
+  /** The substitute, when the substitution is what was taken. */
+  substitute: SubstituteOffer | null;
+}
+
+/** The envelope the two routes take. One place, so the cart that was
+ *  priced and the cart that gets charged carry the same authorization. */
+function overrideEnvelope(o: ArmedOverride) {
+  return {
+    token: o.token,
+    reason: o.reason,
+    metadataId: o.metadataId,
+    pass: o.pass,
+    refusal: o.refusal,
+    mode: o.mode,
+  };
+}
+
+/** What the ticket says while an override is armed. Nobody tenders a
+ *  sale without reading which pass is really on it and whose
+ *  authorization put it there. */
+function overrideNotice(o: ArmedOverride): string {
+  if (o.substitute !== null) {
+    return (
+      `${o.substitute.name} is on the ticket in place of ${o.pass}, which ` +
+      `Mindbody refused. ${o.substitute.sentence} Authorized by ` +
+      `${o.teacher.name}.`
+    );
+  }
+  return (
+    `${o.pass} is on the ticket on your override: Mindbody priced it under ` +
+    `${o.teacher.name}'s own login. It can still refuse the sale itself, ` +
+    `and it will say so.`
+  );
 }
 
 /** The cart key: the item's identity, plus whose line it is. */
@@ -1835,6 +1908,17 @@ function PaymentPanel(props: {
    *  the dialog arms it, a tap on the armed control, a client change,
    *  a completed sale, leaving pay mode and an emptied cart clear it. */
   discount: ArmedDiscount | null;
+  /**
+   * T112: the armed override, when the ticket holds an overridden pass or
+   * the substitute that stood in for one. The panel does exactly one
+   * thing with it: hands its envelope to /api/checkout, which verifies
+   * the token, spends it once and files the record. It is SaleScreen's
+   * state because it is cart state (the pricing loop sends it too), and
+   * the panel never sets it: an override is armed in its own dialog, off
+   * the refused-line notice, and nothing on the payment surface can arm
+   * one.
+   */
+  override: ArmedOverride | null;
   onDiscountChange: (next: ArmedDiscount | null) => void;
   /** T53: whether a receipt can be emailed, and where. The toggle
    *  below the tender reads it; the Charge tap sends the toggle. */
@@ -1864,6 +1948,7 @@ function PaymentPanel(props: {
     cartResetNonce,
     discount: comp,
     onDiscountChange: setComp,
+    override: armedOverride,
     receipt,
     pendingResult,
   } = props;
@@ -3273,6 +3358,15 @@ function PaymentPanel(props: {
               }
             : {}),
           ...(clientId ? { clientId } : {}),
+          /* T112: the override's authorization, whichever of its two
+             things it is. The route verifies the token, spends it once,
+             runs the rehearsal under this teacher's own login for an
+             attempt, computes a substitution's discount itself from the
+             live catalog, and files the record. Nothing here sets a
+             price or skips a rail. */
+          ...(armedOverride !== null
+            ? { override: overrideEnvelope(armedOverride) }
+            : {}),
           /* T90: display only, for the route's per-cart sentence; every
              decision there is made on the id. */
           ...(hasOtherClient && client ? { clientName: client.name } : {}),
@@ -7757,6 +7851,16 @@ export default function SaleScreen(props: {
     text: string;
     offers: RefusedGiftOffer[];
   } | null>(null);
+  /** T112: read inside the pricing effect without making the effect
+   *  depend on the object; `overrideKey` below is what reprices. */
+  /** T112: the refused pass the Override dialog is open for, or null. */
+  const [overrideAsk, setOverrideAsk] = useState<OverrideTarget | null>(null);
+  /** T112: the armed override, which the pricing loop and the charge both
+   *  carry. Cleared by anything that makes it untrue: the line leaving
+   *  the ticket, the client changing, the sale completing, Empty cart. */
+  const [override, setOverride] = useState<ArmedOverride | null>(null);
+  const overrideRef = useRef<ArmedOverride | null>(null);
+  overrideRef.current = override;
   /** Stale-response guard, the codebase's activeIdRef pattern: only the
    *  newest generation's answer may write state. */
   const priceGen = useRef(0);
@@ -7966,6 +8070,12 @@ export default function SaleScreen(props: {
        first attach included: the pricing loop reruns on the new client
        and says so again if the refusal still stands. */
     setCartNotice(null);
+    /* T112: and the override goes with it. It was authorized for ONE
+       client's refusal; the next client's eligibility is a different
+       question, and an authorization that outlived the person it was
+       about would sell a pass to somebody nobody typed a PIN for. */
+    setOverride(null);
+    setOverrideAsk(null);
     /* From nobody: keep silently, per the rule above. */
     if (prev === null) return;
     const count = cartRef.current.reduce((n, l) => n + l.quantity, 0);
@@ -7986,6 +8096,8 @@ export default function SaleScreen(props: {
     setPriced(null);
     setPriceError(null);
     setCartNotice(null);
+    /* T112: an emptied ticket holds no overridden pass. */
+    setOverride(null);
     setCartResetNonce((n) => n + 1);
     setCartPrompt(null);
     /* T51: a walk-in was declared for THIS cart; the next one asks again. */
@@ -8357,6 +8469,12 @@ export default function SaleScreen(props: {
     armedDiscount === null
       ? ""
       : `${armedDiscount.discount.mode}:${armedDiscount.discount.value}`;
+  /* T112: the same idea for the override: what the pricing call would
+     say differently, and nothing about the token. */
+  const overrideKey =
+    override === null
+      ? ""
+      : `${override.mode}:${override.metadataId}:${override.substitute?.metadataId ?? ""}`;
   useEffect(() => {
     const gen = ++priceGen.current;
     /* T95: a gift card is not a cart item, so it is not priced here: a
@@ -8407,6 +8525,14 @@ export default function SaleScreen(props: {
             })),
             ...(clientId ? { clientId } : {}),
             ...(cartShare ? { discount: cartShare } : {}),
+            /* T112: the authorization travels with the pricing too, so
+               an overridden pass prices on the ticket instead of being
+               refused off it again on the next keystroke, and a
+               substitution's discount is the server's own figure. The
+               token is not spent by pricing. */
+            ...(overrideRef.current
+              ? { override: overrideEnvelope(overrideRef.current) }
+              : {}),
           }),
         });
         const body = await res.json();
@@ -8452,6 +8578,17 @@ export default function SaleScreen(props: {
                 key,
                 name: l.item.name,
                 cents: Math.round(l.item.price * 100),
+                /* T112: a Service line's item IS a ShelfItem (only a
+                   gift card line is not, and those are held out of the
+                   priced cart entirely), so the two offers that put the
+                   pass back on the ticket have the real item to add. */
+                item: l.item as ShelfItem,
+                reason:
+                  refused.find(
+                    (x) =>
+                      itemKey(x.type, x.metadataId) ===
+                      itemKey(l.item.type, l.item.id),
+                  )?.reason ?? "Mindbody did not accept it.",
               });
             }
             setCart((lines) => lines.filter((l) => !keys.has(of(l))));
@@ -8482,7 +8619,30 @@ export default function SaleScreen(props: {
       }
     }, PRICE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [cart, clientId, armedDiscountKey]);
+    /* T112: `overrideKey` is in the list so arming or dropping an
+       override reprices the ticket at once; the envelope itself is read
+       off a ref, as the discount's value is. */
+  }, [cart, clientId, armedDiscountKey, overrideKey]);
+
+  /**
+   * T112: an override is about ONE line. When that line leaves the ticket
+   * (removed, stepped to zero, or replaced), the authorization stops
+   * being about anything, and a stale one would travel with the next
+   * charge. The refused pass's id for an attempt, the substitute's for a
+   * substitution: in both cases it is the line the teacher's PIN was
+   * typed for.
+   */
+  useEffect(() => {
+    if (override === null) return;
+    const want =
+      override.substitute === null
+        ? override.metadataId
+        : override.substitute.metadataId;
+    const held = cart.some(
+      (l) => !isGiftCardLine(l) && String(l.item.id) === want,
+    );
+    if (!held) setOverride(null);
+  }, [cart, override]);
 
   /**
    * T92 (Pete: "when this is attempted, a popup should appear with an
@@ -10665,6 +10825,9 @@ export default function SaleScreen(props: {
                  pass refused on the sale before: one tap and the next
                  customer's ticket opens with a card on it. */
               setCartNotice(null);
+              /* T112: and the override, for the same reason and one
+                 more: its token is spent, so it authorizes nothing. */
+              setOverride(null);
               /* T51: the walk-in declaration was for the sale just made. */
               setWalkIn(false);
               /* T53: so was the gate's answer; the next sale asks again. */
@@ -10680,6 +10843,7 @@ export default function SaleScreen(props: {
             onClientDataStale={onClientDataStale}
             discount={armedDiscount}
             onDiscountChange={setArmedDiscount}
+            override={override}
             receipt={receipt}
             pendingResult={pendingCheckInResult ?? null}
           />
@@ -10742,32 +10906,114 @@ export default function SaleScreen(props: {
                     the person at the counter. The way forward goes
                     UNDER it. */}
                 <span>{cartNotice.text}</span>
-                {/* Drawn only when the site actually sells gift cards
-                    (the T95 list, read live): with none there is no box
-                    to open, and a dead control is worse than none. */}
-                {giftProducts.length > 0 && cartNotice.offers.length > 0 ? (
+                {/* T112: up to THREE ways forward per refused pass, in
+                    the order a teacher reaches for them.
+
+                    1. Buy it for another client. It is the only one that
+                       sells the pass that was actually asked for, at its
+                       own price, to somebody the rule does not exclude,
+                       with no authorization and no substitution. Pete:
+                       "there should be an option to buy a 2-week new
+                       student package for another client, currently it
+                       doesn't even allow for that" -- the path existed
+                       (T90) and could not be reached, because the
+                       refusal takes the line off the ticket before a
+                       recipient can be put on it.
+                    2. Override. Same pass, same person, and it costs a
+                       PIN, a reason and a question Mindbody may answer
+                       no to.
+                    3. Sell it as a gift card (T100, unchanged). It sells
+                       something ELSE: a bearer instrument, for whoever
+                       ends up holding it.
+
+                    Each is drawn only where it can actually work, which
+                     is T100's rule: no dead controls. */}
+                {cartNotice.offers.length > 0 ? (
                   <div className="sale-note-acts">
-                    {cartNotice.offers.map((offer) => (
-                      <button
-                        key={offer.key}
-                        className="sale-note-act"
-                        onClick={() =>
-                          /* T100: the offer carries a figure, and the
-                             box it opens is the pad (T104: the only state
-                             it has left). */
-                          setGiftSell({
-                            entry: String(offer.cents),
-                            keepNote: cartNotice.text,
-                          })
-                        }
-                      >
-                        {cartNotice.offers.length === 1
-                          ? "Sell it as a gift card"
-                          : `Sell ${offer.name} as a gift card`}
-                      </button>
-                    ))}
+                    {cartNotice.offers.map((offer) => {
+                      const many = cartNotice.offers.length > 1;
+                      return (
+                        <Fragment key={offer.key}>
+                          {/* Always available, walk-in ticket included:
+                              the recipient search does not need a client
+                              attached to this sale, and "an intro pass
+                              for a friend" is the ordinary shape of
+                              this. */}
+                          <button
+                            className="sale-note-act"
+                            onClick={() => {
+                              /* T92's own path, reached from here: the
+                                 item is HELD and the recipient search
+                                 answers with who it is for, which is
+                                 what puts it back on the ticket as a
+                                 T90 line. Nothing is added until the
+                                 answer comes. */
+                              heldPass.current = [
+                                { item: offer.item, quantity: 1 },
+                              ];
+                              heldForNewClient.current = false;
+                              onRequestRecipient?.(PENDING_PASS_KEY, false);
+                            }}
+                          >
+                            {many
+                              ? `Buy ${offer.name} for another client`
+                              : "Buy it for another client"}
+                          </button>
+                          {/* The override asks Mindbody about a CLIENT,
+                              so it needs one attached. On a walk-in
+                              ticket the way forward is the offer above,
+                              which names the person itself. */}
+                          {client !== null ? (
+                            <button
+                              className="sale-note-act"
+                              onClick={() =>
+                                setOverrideAsk({
+                                  metadataId: String(offer.item.id),
+                                  name: offer.name,
+                                  refusal: offer.reason,
+                                })
+                              }
+                            >
+                              {many ? `Override ${offer.name}` : "Override"}
+                            </button>
+                          ) : null}
+                          {/* T100, unchanged: drawn only when the site
+                              actually sells gift cards (the T95 list,
+                              read live). */}
+                          {giftProducts.length > 0 ? (
+                            <button
+                              className="sale-note-act"
+                              onClick={() =>
+                                /* T100: the offer carries a figure, and
+                                   the box it opens is the pad (T104: the
+                                   only state it has left). */
+                                setGiftSell({
+                                  entry: String(offer.cents),
+                                  keepNote: cartNotice.text,
+                                })
+                              }
+                            >
+                              {many
+                                ? `Sell ${offer.name} as a gift card`
+                                : "Sell it as a gift card"}
+                            </button>
+                          ) : null}
+                        </Fragment>
+                      );
+                    })}
                   </div>
                 ) : null}
+              </div>
+            ) : null}
+            {/* T112: while an override is armed the ticket says so, in
+                the note slot the refusal used, and it says which pass is
+                really on it. "Behind the scenes" is the CUSTOMER's
+                experience: a teacher who learned from the receipt that
+                they had sold a different product would never trust the
+                screen again. */}
+            {override !== null ? (
+              <div className="sale-note" role="status">
+                {overrideNotice(override)}
               </div>
             ) : null}
             {cart.length === 0 ? (
@@ -11511,6 +11757,63 @@ export default function SaleScreen(props: {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {/* T112: the Override dialog. T79's shape and T48's authorization;
+          see src/app/OverrideDialog.tsx. It sells nothing itself: it
+          hands back either an armed attempt (Mindbody has agreed to price
+          the pass under this teacher's login) or the substitution Pete
+          asked for, and the ordinary Pay flow does the selling. */}
+      {overrideAsk !== null ? (
+        <OverrideDialog
+          target={overrideAsk}
+          clientId={client?.id ?? null}
+          onCancel={() => setOverrideAsk(null)}
+          onArmed={(armed: OverrideArmed) => {
+            const ask = overrideAsk;
+            setOverrideAsk(null);
+            if (ask === null) return;
+            setOverride({
+              mode: armed.mode,
+              metadataId: ask.metadataId,
+              pass: ask.name,
+              refusal: ask.refusal,
+              reason: armed.reason,
+              teacher: armed.teacher,
+              token: armed.token,
+              substitute: armed.substitute,
+            });
+            /* The line goes on the ticket: the refused pass itself for an
+               attempt, the substitute for a substitution. The substitute
+               is looked up in the LIVE catalog first, so its ticket row,
+               its sub-category and its stepper read like any other pass;
+               the server's own figures stand in when the shelf does not
+               hold it (it may be hidden from the shelf and still
+               sellable). */
+            const sub = armed.substitute;
+            const item: ShelfItem | undefined =
+              sub === null
+                ? (catalog?.passes ?? []).find(
+                    (p) => String(p.id) === ask.metadataId,
+                  ) ??
+                  cartNotice?.offers.find((o) => o.key === itemKey("Service", ask.metadataId))
+                    ?.item
+                : ((catalog?.passes ?? []).find(
+                    (p) => String(p.id) === sub.metadataId,
+                  ) ?? {
+                    id: sub.metadataId,
+                    name: sub.name,
+                    price: sub.price,
+                    taxExempt: sub.taxExempt,
+                    taxRate: sub.taxRate,
+                    type: "Service" as const,
+                    categoryId: null,
+                  });
+            if (item !== undefined) addLines([{ item, quantity: 1 }]);
+            /* addLines clears the notice, as every add does. The armed
+               line above replaces it and says more. */
+          }}
+        />
       ) : null}
 
       {/* T92 (Pete: "when this is attempted, a popup should appear with an
