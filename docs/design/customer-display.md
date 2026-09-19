@@ -247,6 +247,77 @@ While it holds the screen:
   again in a moment" on the display and discards its partial form. The
   D1/D5 PIN overrides also remain, for a sale that cannot wait.
 
+### Walkthrough: the teacher needs the screen (Pete, 2026-09-19)
+
+The situation: a new student, Sam, tapped "New here? Sign up" and is
+halfway through typing their email. The teacher is ringing up Jo, who is
+next in line.
+
+**Case 1, the live ticket mirror.** The teacher adds a drop-in to Jo's
+cart. Normally the display would show Jo's ticket updating line by line.
+Because Sam holds the screen, nothing happens on the display and nothing
+happens on the teacher's iPad either: the mirror is informational, so it
+is skipped without a word. When Sam finishes and the screen goes idle,
+the next change to Jo's cart shows the full ticket as it stands. The
+teacher never has to think about it.
+
+**Case 2, sale approval is on and the teacher taps Charge.** The charge
+needs the display, and the display is busy. So instead of "Waiting for
+the customer to approve", the teacher's screen shows:
+
+    Someone is signing up on the customer screen.
+    [ Wait ]   [ Take over ]   [ Approve sale ]
+
+- **Wait** leaves the charge pending on the teacher's screen. The moment
+  Sam taps their final "I agree", the display goes straight to Jo's
+  ticket with Approve and Not yet, with no further tap from the teacher.
+  Sam's sign-up lands in the tray as usual. Right when Sam looks nearly
+  done.
+- **Take over** interrupts Sam. The display shows a short apology,
+  "Please start again in a moment", for a few seconds, then Jo's ticket.
+  Sam's partial form is discarded on the server, so nothing they typed
+  is shown to Jo. Sam starts over once the screen is free. Right when Sam
+  is still on the first field and Jo is in a hurry.
+- **Approve sale** is the D1 override. The teacher enters their PIN, the
+  charge goes out without the display, and the override is filed on Jo's
+  client record with the teacher's name. Sam is not interrupted at all.
+  Right when the teacher would rather not bother either student.
+
+The teacher can also tap Cancel to go back to the ticket and do
+something else first.
+
+**Case 3, a membership sale needing a contract signature.** Exactly the
+same three-way choice. Wait queues the contract behind Sam's sign-up and
+presents it the moment the screen frees. Take over bumps Sam. The third
+button is D5's "Sell without a signature" with the teacher's PIN, filed
+on the client the same way.
+
+**What Sam sees in each case.**
+
+- Wait: nothing changes. Sam finishes, sees "Thanks, Sam. Tell the
+  teacher you're signed up", and the screen moves on to Jo's ticket.
+- Take over: the form vanishes mid-entry, replaced by "Please start
+  again in a moment", then Jo's ticket. When Jo is done and the screen is
+  idle again, the sign-up button is back.
+- Approve sale / Sell without a signature: nothing changes for Sam.
+
+**Two guards that make this safe.**
+
+- A sign-up can never sit on the screen forever. Two minutes without a
+  touch and it returns to idle, discarding the partial form, so a
+  student who wandered off cannot block Jo's approval, and Take over is
+  rarely needed.
+- Only one thing holds the screen at a time. The server refuses a
+  second self-serve start while any request is in progress, and a
+  teacher's present either waits, takes over, or is overridden. There is
+  no state where two flows both believe they own the display.
+
+**Take over is a plain tap, no PIN and no confirm.** It costs Sam thirty
+seconds rather than moving money or skipping a signature, and in a rush
+one confirm too many is the thing teachers learn to hate. If it proves
+easy to hit by accident, an "Interrupt Sam's sign-up?" confirm is a
+one-line change.
+
 Nothing here weakens a rule: the write still happens from the teacher's
 iPad, under the teacher's token, after a human read the name back. What
 changed is only WHEN, and that the student's part no longer waits for the
@@ -359,7 +430,7 @@ the charge the same way and says why.
 
 **The teacher override (D1, Pete: "Teacher override, they must enter
 their PIN").** Beside "Waiting for the customer to approve" sits
-"Approve for them", which opens T48's PIN dialog: the signed-in
+"Approve sale", which opens T48's PIN dialog: the signed-in
 teacher's own PIN, checked against `teacher_pins`, issuing the same
 short-lived comp token idiom as a comp does. `/api/checkout` accepts
 that token in place of a display approval when the setting is on,
