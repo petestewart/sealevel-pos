@@ -16268,3 +16268,183 @@ and the probe reported "ACCEPTED ... total null" four times and concluded
 the opposite of the truth. That is now impossible: a suppressed call, or
 an answer with no figures in it, voids the verdict. It was the third
 probe in this repo to make that mistake.
+
+## T113: a replayed checkout must not charge twice
+
+Not a change request. A gap that has been on the record for a while and
+is written down here with what was built for it.
+
+### The gap
+
+`POST /api/checkout` had no idempotency. The whole protection against a
+double charge was T22's single flight and T95's partial lock, and **both
+live in the browser**. A request that reached the server twice charged
+twice, and nobody had to do anything foolish for that to happen:
+
+- an iPad's radio drops between the request and the response, and the
+  browser or the OS retries at the transport level;
+- a teacher reloads the page mid-charge and taps again, because the screen
+  came back empty;
+- a proxy or a service worker replays the POST;
+- two iPads are pointed at one ticket.
+
+The money invariants (T22-T24) say a charge happens on an explicit fresh
+tap and is never retried. Until this ticket only the browser could tell a
+fresh tap from the same tap arriving twice, and the browser is exactly the
+part that stops existing when the radio drops.
+
+The partial lock made this WORSE rather than better on the one ticket
+shape where a replay costs the most: a gift card ticket that sold card one
+and failed card two (T95, T102). The lock stops the teacher tapping again;
+it does nothing about the request that is already in the air.
+
+### The design
+
+**One gate in front of an unchanged path.** The single flight, the partial
+lock, the rehearsal, T75's total assertion, T103's basket assertion, the
+gift card sequence and every refusal are untouched. Nothing below the gate
+knows it exists.
+
+**The key is minted per TAP, in the browser** (`src/lib/idemkey.ts`,
+`newIdempotencyKey`), inside the charge gesture and not per render: one
+tap is one key however many times its request reaches the server, and two
+taps are two keys. Both callers of /api/checkout mint one (the Pay screen's
+`doCharge`, and page.tsx's pay-and-check-in gesture). `crypto.randomUUID`
+is deliberately not used: it needs a secure context and the counter iPad
+runs on plain `http://<lan-ip>:3000`, the same reason the drawer's
+clipboard falls back to a textarea. `crypto.getRandomValues` has no such
+restriction.
+
+**It rides as an HTTP header, `Idempotency-Key`**, not as a body field.
+Two reasons. It is metadata about the ATTEMPT and not part of the ticket,
+and the ticket is exactly what gets fingerprinted, so in the body it would
+need a carve-out from that fingerprint and a carve-out is a hole. And
+every transport-level retry of one fetch resends the same headers with the
+same body, which is the case this gate exists for.
+
+**The server remembers what it did with each key** (`src/lib/idemstore.ts`,
+`beginIdempotent`), called after the device session and the staff session
+and before every validation and every Mindbody call. Four answers:
+
+- a key never seen: the checkout runs exactly as before, and its answer is
+  remembered.
+- the same key again: the FIRST answer comes back **verbatim** (the status,
+  the body bytes and the headers as they were sent, never re-serialized)
+  and **nothing reaches Mindbody at all**, not a write and not a read.
+  That includes the suppressed, partial and sold-nothing outcomes: the
+  screen says what it said the first time rather than inventing a second
+  story. A replay carries `x-idempotent-replay`, which is a marker for the
+  drawer and a driver and not part of the answer.
+- the same key, still IN FLIGHT: the second request **waits** for the first
+  and answers with it. It starts no second charge and it does not refuse.
+  Refusing was the other option and it is the wrong one for a teacher with
+  a queue: a refusal here says "that did not go through" about a charge
+  that is at that moment going through, which is the one thing the rails
+  forbid, and the teacher's next move would be a second tap. Waiting hands
+  the true answer to whichever request the browser is still listening on.
+  Only if the wait runs out (30 seconds, longer than the slowest honest
+  sale: a rehearsal, a credit purchase, a charge and T49's sale lookup)
+  does it answer, and then as AMBIGUOUS, in words that say to check rather
+  than tap again.
+- the same key with a DIFFERENT ticket: **refused in words, nothing sent
+  and nothing replayed.** This is the dangerous case, a stale key reused
+  for a new sale, and replaying the old answer would report a sale that
+  never happened while leaving the new one unsold.
+
+**How the two are told apart:** a SHA-256 fingerprint of the ticket, in a
+canonical form (every object's keys sorted, so the same sale written in
+another field order is the same ticket and not a conflict), with the
+signed-in teacher's staff id mixed in, so one key can only ever mean one
+teacher's sale. The **digest** is kept and never the body: a checkout body
+carries card numbers, CVVs and one-shot teacher tokens, and a store of
+them would be a store of card numbers.
+
+**Where the record lives: in memory, in that module.** It is the honest
+first version and covers every shape above on one server. **A second
+server instance defeats it**: two Next processes behind one hostname hold
+two Maps, and a replay that lands on the other instance charges again. The
+studio runs one Railway service with one instance, so it is a real limit
+rather than a present bug; if the service is ever scaled out, this gate
+stops working and the T29 charter would allow a table (state Mindbody has
+no home for). It is deliberately not in Postgres today: a database write
+in front of the money path is a new way for the money path to fail, and a
+dead database would have to degrade to today's behaviour anyway.
+
+**Bounded in size and age.** 200 keys and 15 minutes, both overridable
+(`POS_IDEM_MAX`, `POS_IDEM_TTL_MS`). Sweeping drops anything past its age;
+making room evicts the oldest FINISHED entry and never an in-flight one,
+whose waiter would then be answered by nobody.
+
+**It must never become a way to lose a sale**, and this is said out loud
+because every other rail in this route leans the other way. A key the
+server cannot remember charges as today, unprotected, with a log line
+saying so: no key on the request (an iPad running a bundle cached from
+before a deploy), a key over 200 characters, the store switched off
+(`POS_IDEM_MAX=0`), the store full of charges in progress. **The key is
+therefore NOT required.** Refusing a real sale at the counter is worse
+than the risk this gate reduces. The log lines (`[idem] no key ...`,
+`[idem] store off ...`) are what make a lapse visible rather than silent.
+
+One behaviour did change outside the gate, deliberately: a checkout that
+THROWS now answers 502 `{ ambiguous: true }` in JSON instead of Next's own
+500, and that is the answer a replay of that key reads. A crash is an
+unknown outcome, so a replay must not charge again on the strength of one,
+and the first caller and the replay have to read the same sentence.
+
+**What this is not.** It is not T110. T110 is two DIFFERENT tickets racing
+for one client's balance, and a per-client lock is what that needs; this
+is one ticket arriving twice. Nothing here locks anything per client.
+
+### Build notes
+
+- `src/lib/idemkey.ts` (new): the header name, the length bound, and the
+  browser's mint.
+- `src/lib/idemstore.ts` (new): the store, the fingerprint, the four
+  answers, the bounds, and the reasoning above in full.
+- `src/app/api/checkout/route.ts`: the old `POST` body became
+  `runCheckout(request, session, payload)` unchanged; the new `POST` is
+  the two session checks, the body parse, the gate, and the call. No line
+  of the checkout itself moved.
+- `src/app/SaleScreen.tsx` and `src/app/page.tsx`: one key minted per
+  gesture and sent as the header. No UI, no copy, no token.
+- Nothing was added to the drawer. The gate decides nothing a teacher can
+  set, and a browser that could switch it off would defeat it.
+
+Verified with a route driver (`scratchpad/t113/route.mjs`) against
+`next start` on :3213 and the T103 mock on :4213, patched with a
+`writeDelayMs` knob so a charge can be held open. It preflights that the
+server is this build before it asserts anything. Proved: the same key
+twice sends ONE write and returns the same bytes for a plain cash sale, a
+comp, a discounted sale, a T90 two-recipient ticket (two carts), a gift
+card ticket, a PARTIAL gift card ticket (card one sold, card two refused)
+and T103's sold-nothing outcome, each time with the mock's whole call log
+unmoved by the second request; two different keys charge twice; the same
+key with a different ticket is refused in words with nothing sent, and
+does not damage the stored answer; the same ticket with its fields in
+another order is a replay and not a conflict; a key arriving 400ms into a
+2.5s charge waits 2.5s, joins the first flight and starts no second
+charge; a request with no key, and one with an over-long key, sell exactly
+as they did before; the store bounded at two keys evicts the oldest and
+that ticket SELLS again rather than being refused; the store switched off
+sells twice, which is today's behaviour; and a suppressed write (prod
+target, `POS_DRY_RUN=true`) replays as the same suppression with no write
+either time. A browser driver (`ui.mjs`, both palettes, both orientations)
+proved the other half: a real Finalize Sale tap sends a 32-hex key,
+replaying that exact request from the page sells nothing more and comes
+back as the stored answer, and a second sale mints a different key and
+charges. T102's and T103's route drivers were re-run unchanged apart from
+their ports, each on its own fresh start, both ALL PASS.
+
+Not verified, and worth saying:
+
+- **Nothing about this has been near live Mindbody.** Every run was
+  against the mock.
+- **The second-instance limit is reasoned, not measured.** No two-process
+  run was done.
+- **A real transport-level retry was never observed.** The browser driver
+  replays the request itself, byte for byte, which is what such a retry
+  does, but an actual dropped radio on an iPad was not reproduced.
+- **The 30-second wait is a judgement**, not a measurement of the slowest
+  real sale.
+- `/api/purchase-contract` also moves money and has NO gate. It was out of
+  scope here and is the obvious next one.
