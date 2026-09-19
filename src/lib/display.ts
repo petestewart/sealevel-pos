@@ -10,6 +10,7 @@ import {
   findLiveDisplayRequest,
   insertDisplayRequest,
   latestDisplay,
+  listSelfServeSignups,
   storageMode,
   sweepDisplayRequests,
   touchDisplay,
@@ -132,6 +133,36 @@ export const REQUEST_TTL_MS = 30 * 60 * 1000;
  *  teacher whose tab is closed (or asleep, or reloaded) must not be able
  *  to leave one student's ticket in front of the next one. */
 export const SUMMARY_TTL_MS = 8 * 1000;
+/** T204: a self-serve sign-up the teacher has not created yet. The
+ *  design's number: four hours, after which an unconsumed result is
+ *  deleted with everything in it (the student did not come back). It is
+ *  longer than every other request because it is the only one a teacher
+ *  meets in a tray at a moment of their own choosing. It has the same
+ *  test-only knob the abandon window has (POS_DISPLAY_SIGNUP_TTL_MS),
+ *  read only when it is set. */
+export const SIGNUP_TTL_MS = 4 * 60 * 60 * 1000;
+/** T204: two minutes with no touch and a sign-up in progress returns the
+ *  screen to idle and discards the partial form, so a student who
+ *  wandered off cannot hold the screen against the next sale and the
+ *  next student never sees the last one's email. */
+export const SIGNUP_ABANDON_MS = 2 * 60 * 1000;
+
+/** The two windows, each with a test-only knob read ONLY when it is
+ *  set, and only to shorten a wait in a driver; unset (production,
+ *  always) they are the design's four hours and two minutes. */
+export function signupTtlMs(): number {
+  const raw = process.env.POS_DISPLAY_SIGNUP_TTL_MS;
+  if (raw === undefined || raw.trim() === "") return SIGNUP_TTL_MS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : SIGNUP_TTL_MS;
+}
+
+export function signupAbandonMs(): number {
+  const raw = process.env.POS_DISPLAY_ABANDON_MS;
+  if (raw === undefined || raw.trim() === "") return SIGNUP_ABANDON_MS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : SIGNUP_ABANDON_MS;
+}
 /** Silence past this and the display counts as gone: the POS header's
  *  mark goes amber, and a teacher knows before sending a waiver to a
  *  dead screen. Three heartbeats. */
@@ -204,6 +235,16 @@ interface HubState {
    *  and released synchronously, so there is no await between the
    *  check and the mark. */
   finalising: Set<string>;
+  /** T204: completed self-serve sign-ups this process knows about, by
+   *  request id. `current` holds ONE scene and a later scene replaces
+   *  it, so the tray needs its own place to keep a result that is
+   *  waiting for a teacher; the table is read beside it when there is
+   *  one, and this is all there is without one. */
+  signups: Map<string, DisplayRequest>;
+  /** T204: when the student last touched the sign-up on the screen, and
+   *  the timer that ends it when they stop. */
+  lastTouch: number;
+  abandonTimer: ReturnType<typeof setTimeout> | null;
 }
 
 const G = globalThis as typeof globalThis & { __posDisplay?: HubState };
@@ -222,6 +263,9 @@ const state: HubState = (G.__posDisplay ??= {
   wasConnected: false,
   expiryTimer: null,
   finalising: new Set<string>(),
+  signups: new Map<string, DisplayRequest>(),
+  lastTouch: 0,
+  abandonTimer: null,
 });
 
 /* --- Validation ------------------------------------------------------ */
@@ -472,6 +516,7 @@ export async function pairCode(
   state.paired = display;
   state.current = null;
   clearExpiryTimer();
+  clearAbandonTimer();
   await boundedDb(
     upsertDisplay({ id, name, pairedAt: new Date(now) }),
     TABLE_WAIT_MS,
@@ -572,6 +617,7 @@ export async function unpairDisplay(): Promise<boolean> {
   state.paired = null;
   state.current = null;
   clearExpiryTimer();
+  clearAbandonTimer();
   state.wasConnected = false;
   await boundedDb(deleteDisplay(p.id), TABLE_WAIT_MS, false);
   emit("display", "idle", {});
@@ -581,6 +627,19 @@ export async function unpairDisplay(): Promise<boolean> {
 }
 
 /* --- Requests -------------------------------------------------------- */
+
+/** T204: whether a request is a student's own sign-up, which is what
+ *  makes the screen's busy answer word itself differently. */
+export function isSelfServeSignup(r: DisplayRequest | null): boolean {
+  return r !== null && r.kind === "register" && r.initiator === "display";
+}
+
+function clearAbandonTimer(): void {
+  if (state.abandonTimer !== null) {
+    clearTimeout(state.abandonTimer);
+    state.abandonTimer = null;
+  }
+}
 
 function clearExpiryTimer(): void {
   if (state.expiryTimer !== null) {
@@ -671,6 +730,11 @@ export async function presentRequest(input: {
       status: number;
       error: string;
       reason: "unpaired" | "disconnected" | "busy";
+      /** T204: true when what holds the screen is a student's own
+       *  self-serve sign-up, which is the one case the teacher's screen
+       *  words differently ("Someone is signing up on the customer
+       *  screen") and offers Take over for. */
+      holdingSignup?: boolean;
     }
 > {
   await ensureDisplayLoaded();
@@ -739,11 +803,15 @@ export async function presentRequest(input: {
       emit("display", scene.event, scene.data);
       return { ok: true, request: held, replaced: true };
     }
+    const signupHolds = isSelfServeSignup(held);
     return {
       ok: false,
       status: 409,
       reason: "busy",
-      error: "The customer display is already showing something.",
+      holdingSignup: signupHolds,
+      error: signupHolds
+        ? "Someone is signing up on the customer screen."
+        : "The customer display is already showing something.",
     };
   }
   const request: DisplayRequest = {
@@ -806,7 +874,7 @@ export async function presentRequest(input: {
  */
 export async function cancelRequest(
   now = Date.now(),
-  opts: { takenOver?: boolean } = {},
+  opts: { takenOver?: boolean; abandoned?: boolean } = {},
 ): Promise<{ cancelled: boolean }> {
   await ensureDisplayLoaded();
   expireIfDue(now);
@@ -821,6 +889,7 @@ export async function cancelRequest(
   c.completedAt = now;
   state.current = null;
   clearExpiryTimer();
+  clearAbandonTimer();
   void boundedDb(
     updateDisplayRequest({
       id: c.id,
@@ -834,6 +903,9 @@ export async function cancelRequest(
   emit("display", "cancel", {
     requestId: c.id,
     ...(opts.takenOver === true ? { takenOver: true } : {}),
+    /* T204: an abandoned sign-up is not an apology, it is a screen
+     * going back to Ready with nothing kept. */
+    ...(opts.abandoned === true ? { abandoned: true } : {}),
   });
   emit("display", "idle", {});
   return { cancelled: true };
@@ -862,6 +934,15 @@ export async function completeRequest(
   c.status = "completed";
   c.result = result;
   c.completedAt = now;
+  /* T204: the student finished, so the abandon clock stops; and a
+   * self-serve sign-up goes into the tray's own map, because the next
+   * scene will take `current` and the teacher has not met this one
+   * yet. */
+  clearAbandonTimer();
+  if (isSelfServeSignup(c)) {
+    state.signups.set(c.id, c);
+    emitSignups(now);
+  }
   void boundedDb(
     updateDisplayRequest({
       id: c.id,
@@ -899,6 +980,7 @@ export async function refuseRequest(
   c.status = "refused";
   c.reason = reason;
   c.completedAt = now;
+  clearAbandonTimer();
   void boundedDb(
     updateDisplayRequest({
       id: c.id,
@@ -974,6 +1056,8 @@ export async function consumeRequest(
       );
     }
   }
+  /* T204: spent is spent: it leaves the tray in the same breath. */
+  if (state.signups.delete(c.id)) emitSignups(now);
   /* Only the scene actually on the screen comes down. Finalising a
    * result the hub has already moved past must not blank whatever the
    * display is showing now. */
@@ -1029,6 +1113,256 @@ export async function pendingResultFor(
     return c;
   }
   return null;
+}
+
+/* --- T204: the self-serve sign-up ------------------------------------ */
+
+/** What the tray shows: a name and a moment, and nothing else. The
+ *  student's email and phone are on the request and are served only to
+ *  the one route a signed-in teacher opens a prefilled form from. */
+export interface PendingSignup {
+  requestId: string;
+  firstName: string;
+  lastName: string;
+  completedAt: string | null;
+}
+
+function nameOf(request: DisplayRequest, key: "firstName" | "lastName"): string {
+  const form = request.result?.["form"];
+  if (form === null || typeof form !== "object" || Array.isArray(form)) return "";
+  const v = (form as Record<string, unknown>)[key];
+  return typeof v === "string" ? v.slice(0, 60) : "";
+}
+
+function asPendingSignup(request: DisplayRequest): PendingSignup {
+  return {
+    requestId: request.id,
+    firstName: nameOf(request, "firstName"),
+    lastName: nameOf(request, "lastName"),
+    completedAt:
+      request.completedAt === null
+        ? null
+        : new Date(request.completedAt).toISOString(),
+  };
+}
+
+function liveSignup(r: DisplayRequest, now: number): boolean {
+  return (
+    isSelfServeSignup(r) &&
+    r.status === "completed" &&
+    r.consumedAt === null &&
+    now < r.expiresAt
+  );
+}
+
+/** The teacher's stream hears the count and the names, never a result.
+ *  Memory only: this is the immediate half, and the tray's 30 second
+ *  poll of /api/display/signups is what makes it right after a restart
+ *  or a dropped stream. */
+function emitSignups(now: number): void {
+  const list = memorySignups(now);
+  emit("teacher", "signups", { count: list.length, signups: list });
+}
+
+function memorySignups(now: number): PendingSignup[] {
+  const out: PendingSignup[] = [];
+  for (const [id, r] of state.signups) {
+    if (!liveSignup(r, now)) {
+      state.signups.delete(id);
+      continue;
+    }
+    out.push(asPendingSignup(r));
+  }
+  return out.sort((a, b) => (a.completedAt ?? "").localeCompare(b.completedAt ?? ""));
+}
+
+/**
+ * Every sign-up waiting for a teacher: what the tray lists, what the
+ * badge counts, and what walk-in search matches a typed name against.
+ *
+ * Memory first, the table beside it when there is one, merged by id, so
+ * a result survives a restart (the one reason `display_requests`
+ * exists) and a counter with no database still has its tray for as long
+ * as the process lives. Expired ones are excluded here and swept from
+ * the table by the ordinary sweep.
+ */
+export async function pendingSignups(
+  now = Date.now(),
+): Promise<PendingSignup[]> {
+  await ensureDisplayLoaded();
+  const byId = new Map<string, PendingSignup>();
+  for (const one of memorySignups(now)) byId.set(one.requestId, one);
+  if (dbConfigured()) {
+    const rows = await boundedDb(
+      listSelfServeSignups(new Date(now)),
+      TABLE_WAIT_MS,
+      [] as DisplayRequestRow[],
+    );
+    for (const row of rows) {
+      if (byId.has(row.id)) continue;
+      const r = fromRow(row);
+      if (r === null || !liveSignup(r, now)) continue;
+      /* Back into memory, so the tray keeps working if the table stops
+       * answering a moment later. */
+      state.signups.set(r.id, r);
+      byId.set(r.id, asPendingSignup(r));
+    }
+  }
+  return [...byId.values()].sort((a, b) =>
+    (a.completedAt ?? "").localeCompare(b.completedAt ?? ""),
+  );
+}
+
+/** One waiting sign-up by id, for the route that prefills the teacher's
+ *  form. Null when it is not a completed, unconsumed, unexpired
+ *  self-serve sign-up, which is every case a teacher may not open. */
+export async function signupById(
+  requestId: string,
+  now = Date.now(),
+): Promise<DisplayRequest | null> {
+  await ensureDisplayLoaded();
+  const held = state.signups.get(requestId) ?? (await loadRequest(requestId));
+  if (held === null || !liveSignup(held, now)) return null;
+  return held;
+}
+
+/**
+ * The student started it themselves (`POST /api/display/start`). The
+ * same request, the same table and the same hub as a scene a teacher
+ * puts up; what differs is the initiator, the four hour life of an
+ * unconsumed result, and the abandon clock below.
+ *
+ * Refused when a request is already in progress: only one thing holds
+ * the screen at a time, which is the guard that keeps two flows from
+ * both believing they own the display.
+ */
+export async function startSignup(input: {
+  displayId: string;
+  payload: Record<string, unknown>;
+  private?: Record<string, unknown>;
+  now?: number;
+}): Promise<
+  | { ok: true; request: DisplayRequest }
+  | { ok: false; status: number; error: string; reason: "unpaired" | "busy" }
+> {
+  await ensureDisplayLoaded();
+  const now = input.now ?? Date.now();
+  expireIfDue(now);
+  const p = state.paired;
+  if (p === null || p.id !== input.displayId) {
+    return {
+      ok: false,
+      status: 401,
+      reason: "unpaired",
+      error: "This screen is not paired.",
+    };
+  }
+  const held = state.current;
+  if (held !== null && held.status === "pending") {
+    return {
+      ok: false,
+      status: 409,
+      reason: "busy",
+      error: "The front desk is using this screen. Please try again shortly.",
+    };
+  }
+  const request: DisplayRequest = {
+    id: randomBytes(12).toString("base64url"),
+    displayId: p.id,
+    kind: "register",
+    initiator: "display",
+    payload: input.payload,
+    private: input.private ?? {},
+    status: "pending",
+    result: null,
+    reason: null,
+    /* Nobody put this up, so nobody's staff id is on it. The teacher who
+     * eventually creates the client is named by their own token on the
+     * write, which is the attribution that matters. */
+    requestedByStaffId: null,
+    createdAt: now,
+    completedAt: null,
+    consumedAt: null,
+    expiresAt: now + signupTtlMs(),
+  };
+  state.current = request;
+  clearExpiryTimer();
+  armAbandon(now);
+  void boundedDb(
+    insertDisplayRequest({
+      id: request.id,
+      displayId: request.displayId,
+      kind: request.kind,
+      initiator: request.initiator,
+      payload:
+        Object.keys(request.private).length === 0
+          ? request.payload
+          : { ...request.payload, [PRIVATE_KEY]: request.private },
+      status: request.status,
+      result: null,
+      requestedByStaffId: null,
+      createdAt: new Date(request.createdAt),
+      completedAt: null,
+      consumedAt: null,
+      expiresAt: new Date(request.expiresAt),
+    }),
+    TABLE_WAIT_MS,
+    false,
+  );
+  void boundedDb(sweepDisplayRequests(new Date(now)), TABLE_WAIT_MS, false);
+  const scene = sceneFor(request);
+  emit("display", scene.event, scene.data);
+  console.log(`[display] self-serve sign-up started ${request.id}`);
+  return { ok: true, request };
+}
+
+/** The abandon clock. Re-armed by every touch; it fires once and, when
+ *  the student really has stopped, cancels the sign-up with
+ *  `abandoned: true` so the screen goes back to idle with nothing kept. */
+function armAbandon(now: number): void {
+  clearAbandonTimer();
+  state.lastTouch = now;
+  const window = signupAbandonMs();
+  /* The request this clock belongs to. A timer from an EARLIER sign-up
+   * (a dev recompile, a re-pair, anything that replaced `current`
+   * without going through cancel) must not be able to end a later one:
+   * it checks the id it was armed for and clears only its own handle. */
+  const armedFor = state.current?.id ?? "";
+  const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+    if (state.abandonTimer === timer) state.abandonTimer = null;
+    const c = state.current;
+    if (c === null || c.status !== "pending" || !isSelfServeSignup(c)) return;
+    if (c.id !== armedFor) return;
+    if (Date.now() - state.lastTouch < window) {
+      /* A touch landed while this was in flight; the touch re-arms. */
+      return;
+    }
+    console.log(`[display] self-serve sign-up ${c.id} abandoned`);
+    void cancelRequest(Date.now(), { abandoned: true });
+  }, window);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  state.abandonTimer = timer;
+}
+
+/** The student is still there (`POST /api/display/touch`). Throttled to
+ *  once every 20 seconds by the screen itself; this only re-arms. */
+export function touchSignup(
+  displayId: string,
+  requestId: string,
+  now = Date.now(),
+): boolean {
+  const c = state.current;
+  if (
+    c === null ||
+    c.id !== requestId ||
+    c.displayId !== displayId ||
+    c.status !== "pending" ||
+    !isSelfServeSignup(c)
+  ) {
+    return false;
+  }
+  armAbandon(now);
+  return true;
 }
 
 /* --- What the surfaces read ------------------------------------------ */

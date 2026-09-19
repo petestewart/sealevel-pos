@@ -4,11 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 
 import { plainText } from "@/lib/richtext";
 import { readTicketPayload } from "@/lib/displayticket";
+import { readSignupPayload } from "@/lib/displaysignup";
 import { readWaiverPayload } from "@/lib/displaywaiver";
 
+import SignupScene from "./SignupScene";
 import TicketScene from "./TicketScene";
 import WaiverScene from "./WaiverScene";
 
+import type { SignupPayload } from "@/lib/displaysignup";
 import type { TicketPayload } from "@/lib/displayticket";
 import type { WaiverPayload } from "@/lib/displaywaiver";
 
@@ -43,7 +46,9 @@ type Scene =
   | { kind: "ticket"; requestId: string; payload: TicketPayload }
   /* T202: the waiver carries its request id, because this is the first
    *  scene the STUDENT answers: completing and refusing both name it. */
-  | { kind: "waiver"; requestId: string; payload: WaiverPayload };
+  | { kind: "waiver"; requestId: string; payload: WaiverPayload }
+  /* T204: the self-serve sign-up, the one scene the STUDENT puts up. */
+  | { kind: "register"; requestId: string; payload: SignupPayload };
 
 /** T202: how long "Thank you" stays after a signature, on this screen's
  *  own clock. The hub sends `idle` when the teacher's iPad finalises the
@@ -82,6 +87,36 @@ export default function DisplayScreen() {
   /** T203: the line a "Take over" leaves on the screen for a few seconds
    *  before the next scene, so a student is not simply interrupted. */
   const [notice, setNotice] = useState<string | null>(null);
+  /** T204: the self-serve sign-up's own tap, and what to say when the
+   *  server will not have it (the front desk is using the screen). */
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+
+  const startSignup = useCallback(async () => {
+    setStartError(null);
+    setStarting(true);
+    try {
+      const res = await fetch("/api/display/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "signup" }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setStartError(
+          typeof body?.error === "string"
+            ? body.error
+            : "That did not start. Please ask the front desk.",
+        );
+      }
+      /* The scene arrives on the stream, like every other scene: the
+       * server's picture is the one that wins. */
+    } catch {
+      setStartError("No answer from the front desk. Please try again.");
+    } finally {
+      setStarting(false);
+    }
+  }, []);
 
   /* The banner and the mode, from the answer /api/config gives a browser
    * with no session at all: banner text, dry run and the target. */
@@ -216,6 +251,19 @@ export default function DisplayScreen() {
           setThanks(null);
           setNotice(null);
           setScene({ kind: "waiver", requestId, payload: waiver.value });
+          return;
+        }
+      }
+      if (data?.kind === "register") {
+        const signup = readSignupPayload(data.payload);
+        const requestId =
+          typeof (data as { requestId?: unknown }).requestId === "string"
+            ? String((data as { requestId?: unknown }).requestId)
+            : "";
+        if (signup.ok && requestId.length > 0) {
+          setThanks(null);
+          setNotice(null);
+          setScene({ kind: "register", requestId, payload: signup.value });
           return;
         }
       }
@@ -370,7 +418,19 @@ export default function DisplayScreen() {
       <main className="display">
         {banner.length > 0 ? <p className="display-banner">{banner}</p> : null}
         <div className="display-scene">
-          {scene.kind === "ticket" ? (
+          {scene.kind === "register" ? (
+            <SignupScene
+              requestId={scene.requestId}
+              payload={scene.payload}
+              onDone={(who) => {
+                /* T204: the student is done with the screen the moment
+                 * the server has their sign-up. The thank you is this
+                 * screen's own, for the few seconds before idle. */
+                setScene(null);
+                setThanks(who ?? "");
+              }}
+            />
+          ) : scene.kind === "ticket" ? (
             <TicketScene
               payload={scene.payload}
               requestId={scene.requestId}
@@ -425,6 +485,25 @@ export default function DisplayScreen() {
                 ? "Ready. The front desk will put anything you need to read or sign on this screen."
                 : "Reconnecting to the front desk."}
             </p>
+            {/* T204: the one thing a student may start themselves. It
+                needs no teacher decision, and it is what keeps a new
+                student out of the queue during a rush. Only when the
+                stream is up: a button that cannot reach the server is
+                worse than no button. */}
+            {live ? (
+              <button
+                className="display-start"
+                disabled={starting}
+                onClick={() => void startSignup()}
+              >
+                {starting ? "One moment" : "New here? Sign up"}
+              </button>
+            ) : null}
+            {startError ? (
+              <p className="display-note" role="status">
+                {startError}
+              </p>
+            ) : null}
             {!durable ? (
               <p className="display-note">
                 This pairing is held in memory only, so a server restart will

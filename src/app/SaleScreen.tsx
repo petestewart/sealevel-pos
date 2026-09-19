@@ -2081,7 +2081,10 @@ function PaymentPanel(props: {
   const [approval, setApproval] = useState<
     | null
     | { stage: "waiting"; requestId: string }
-    | { stage: "busy" }
+    /* T204: `signup` means a STUDENT is signing themselves up on that
+     *  screen, which is the one case the wording names and Take over
+     *  interrupts a person rather than a scene. */
+    | { stage: "busy"; signup?: boolean }
     | { stage: "offline" }
     | { stage: "pin"; because: string }
   >(null);
@@ -3420,7 +3423,10 @@ function PaymentPanel(props: {
         return;
       }
       if (body?.reason === "busy") {
-        setApproval({ stage: "busy" });
+        setApproval({
+          stage: "busy",
+          ...(body?.holdingSignup === true ? { signup: true } : {}),
+        });
         return;
       }
       setApproval({ stage: "offline" });
@@ -5696,7 +5702,9 @@ function PaymentPanel(props: {
                     {approval.stage === "waiting"
                       ? "Waiting for the customer to approve"
                       : approval.stage === "busy"
-                        ? "The customer screen is busy."
+                        ? approval.signup === true
+                          ? "Someone is signing up on the customer screen."
+                          : "The customer screen is busy."
                         : approval.stage === "offline"
                           ? "The customer screen is not connected."
                           : "Approving with your PIN"}
@@ -5707,7 +5715,9 @@ function PaymentPanel(props: {
                       : approval.stage === "busy"
                         ? waitingForScreen
                           ? "Waiting for it to come free. The ticket goes up by itself."
-                          : "Wait for it, take it over, or approve the sale with your PIN."
+                          : approval.signup === true
+                            ? "Wait for them to finish, take the screen over, or approve the sale with your PIN."
+                            : "Wait for it, take it over, or approve the sale with your PIN."
                         : approval.stage === "offline"
                           ? "This sale needs your PIN, or a screen to ask on."
                           : "Enter your PIN in the box."}
@@ -5772,7 +5782,9 @@ function PaymentPanel(props: {
                               approval.stage === "offline"
                                 ? "The customer screen is not connected."
                                 : approval.stage === "busy"
-                                  ? "The customer screen is busy."
+                                  ? approval.signup === true
+                                    ? "Someone was signing up on the customer screen."
+                                    : "The customer screen is busy."
                                   : "The customer has not approved on the screen.",
                           });
                         }}

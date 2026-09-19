@@ -10,6 +10,7 @@ import {
   isPairedDisplay,
   readJsonObject,
 } from "@/lib/display";
+import { readSignupResult } from "@/lib/displaysignup";
 import { readWaiverResult } from "@/lib/displaywaiver";
 import { displayIdFrom } from "@/lib/displayauth";
 
@@ -69,6 +70,41 @@ export async function POST(request: Request) {
    * the request, never from the body. */
   let stored: Record<string, unknown> = kept;
   const held = currentRequest();
+  /* T204: a self-serve sign-up is checked here too, and for the same
+   * reason: the form, the two consent answers and the signature are
+   * refused in plain words while the student is still holding the iPad,
+   * rather than stored and found wanting by the create that was meant
+   * to use them. The kind comes from the server's own record. */
+  if (
+    held !== null &&
+    held.id === requestId &&
+    held.kind === "register" &&
+    /* Only a request still waiting for an answer is worth reading one
+     * from: a second tap on a request already completed is "that is
+     * already done" (409), not a validation complaint about a body the
+     * server was never going to keep. */
+    held.status === "pending"
+  ) {
+    const filled = readSignupResult(kept);
+    if (!filled.ok) {
+      return NextResponse.json(
+        { error: `result: ${filled.error}` },
+        { status: filled.status },
+      );
+    }
+    stored = {
+      form: filled.value.form,
+      consent: filled.value.consent,
+      signaturePng: filled.value.signaturePng,
+      agreedAt: filled.value.agreedAt,
+      signatureSha256: createHash("sha256").update(filled.png).digest("hex"),
+    };
+    const done = await completeRequest(id, requestId, stored);
+    if (!done.ok) {
+      return NextResponse.json({ error: done.error }, { status: done.status });
+    }
+    return NextResponse.json({ ok: true });
+  }
   if (held !== null && held.id === requestId && held.kind === "waiver") {
     const signed = readWaiverResult(kept);
     if (!signed.ok) {

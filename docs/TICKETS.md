@@ -17435,3 +17435,227 @@ request bodies in its log and a `__reset`), `routes.mjs`, `dbdrive.mjs`,
 - **Nothing here was run against a database that STOPS answering
   mid-shift.** The env fallback and its once-a-minute warning were read,
   not exercised.
+
+## T204. The student signs themselves up (2026-09-19)
+
+Phase 2.5 item 5, and Pete's rush case: "if a teacher has a line of
+students to check in and one of them needs to register a new account,
+ideally that student can do so without tying up the teacher." So the
+customer display's idle screen gains one 64px button, **"New here? Sign
+up"**, and the student does the whole of it themselves: four fields, the
+two opt-in boxes, the studio's waiver, their signature. The teacher meets
+the result in a **tray**, at a moment of their own choosing, and one tap
+of Create makes the client and files the waiver together.
+
+**The display still writes nothing.** Nothing new under `src/app/display`
+or `src/app/api/display` imports `mindbody()`. The sign-up is a stored
+result on a `display_requests` row; the two writes are the existing
+`/api/client-create` and the waiver finalisation, both from the teacher's
+iPad, under the teacher's token, behind dry run and the write guard.
+
+### 1. The request the DISPLAY starts
+
+`POST /api/display/start` `{kind: "signup"}`, the one route a display may
+put a scene up with, and it takes no scene: it takes a kind and the
+server builds what the screen shows. The display cookie alone guards it
+(the iPad a student holds has no session of any other sort), and it is
+refused unless that display is paired and NOTHING is in progress, which
+is the same "one thing holds the screen at a time" rule `present` has.
+
+The request is `kind: "register"`, `initiator: "display"` (T200 put the
+column there for exactly this), `requestedByStaffId: null` -- nobody put
+it up, and the teacher who creates the client is named by their own token
+on the write, which is the attribution that matters. Its payload is the
+required-field list and the waiver text, both read server-side on the
+service account, the field list cached for ten minutes because a
+STUDENT's tap must not cost a metered call each time somebody prods the
+button. The waiver's sha256 goes on the request's server-only half, like
+T202's, and never reaches the screen.
+
+**Two lives, because a self-serve request has two clocks.** The result
+lives **four hours** unconsumed (the design's number: the student did not
+come back), and the SCENE is ended by an **abandon clock** of two
+minutes: the screen posts `/api/display/touch` on any input, throttled to
+once every twenty seconds, and silence past the window cancels the
+request with `{abandoned: true}`, returns the display to idle and
+discards the partial form, so a student who wandered off cannot hold the
+screen against the next sale and the next student never sees the last
+one's email. Both have a test-only env knob read ONLY when set
+(`POS_DISPLAY_ABANDON_MS`, `POS_DISPLAY_SIGNUP_TTL_MS`).
+
+### 2. The scene, and what comes back
+
+`src/app/display/SignupScene.tsx`: step 1 is the four fields at 64px rows
+with the OS keyboard (text fields are fine here -- the "no amount in a
+text field" rule is about money, and this is the one screen where the
+student types about themselves) and the two boxes **ticked by default**
+(D4). Step 2 is T202's `WaiverScene` itself, given a heading and told
+where to send the PNG: the pad, the scroll-to-the-end rule and the
+self-describing export are one component, not two. Step 3 is "Thanks,
+<first name>", on the display's own clock.
+
+The result is `{form, consent, signaturePng, agreedAt}` and is validated
+at `/api/display/complete` while the student is still standing there: the
+names, the email and phone shapes, the two consent booleans, and T202's
+own PNG reader (magic bytes, 256KB, an `agreedAt` from the last hour). A
+result that fails is a plain sentence on their screen rather than a
+create that fails an hour later.
+
+### 3. The tray, and Create
+
+`GET /api/display/signups` (device session + `requireActor`) lists NAMES
+and a moment. `GET /api/display/signups/<id>` is the one place a
+student's typed email and phone are served to a browser, and it carries
+the form and the consent and **never the PNG**: the signature is the
+server's, and Create pulls it from the server's own store. `DELETE` is
+the tray's "Clear": the handle is spent, nobody is created, the result
+goes. Everything is deleted on consume or at four hours.
+
+`src/app/SignupTray.tsx` is the `--gold` count beside the display mark
+("2 signed up", 64px), fed by a new `signups` event on the teacher's
+stream (count and names only) and a 30 second poll. Tapping a name opens
+T59b's New Client modal prefilled from the server, with the line "Waiver
+signed on the customer screen, waiting for Create". The consent is shown
+as the student answered it and is NOT editable there: the server takes it
+from the request, so an editable box would be a control that does
+nothing. The name IS editable, which is the point of the review tap
+("jon" for "John").
+
+**Create finalises both, in one route and one tap.**
+`/api/client-create` takes `displayRequestId` as a HANDLE: the form is
+the body's (as the teacher corrected it), the consent and the signature
+are the server's. It claims the id with T202's `beginFinalisation` for
+the whole create plus waiver, verifies the request is a completed,
+unconsumed, unexpired self-serve `register`, checks the waiver wording
+has not changed since the student read it, creates the client with the
+six consent flags on the `addclient` body, reads the client back, and
+then runs the waiver finalisation for the id that now exists. A duplicate
+(T59b's `isDuplicateClientError`) leaves the request UNCONSUMED, so the
+sign-up stays in the tray while the teacher searches for the person who
+already has an account.
+
+`src/lib/waiverfinalise.ts` is T18's and T202's finalisation lifted out of
+`/api/waiver-agree` unchanged and called from both: the release under the
+teacher's token, the log line, the `waiver_receipts` row with the PNG,
+the best-effort document upload, the Notes line ("signed on the customer
+screen"), and the handle spent LAST. A suppressed release consumes
+nothing, exactly as before.
+
+### 4. The text opt-in, and D-B3
+
+The three `Send*Texts` flags are documented as ignored on `updateclient`
+(client.yml:5290-5309) and are listed on `AddClientRequest` without that
+caveat (4945-4956), so they ride the CREATE, which is the one call that
+may honour them. **The probe has not run** (no credentials here), so the
+route does not assume: after a real create it reads the client back
+(`readTextOptInStuck`) and, only on EVIDENCE that the flags did not
+stick, files a T62-signed Notes line asking a human to set it by hand.
+A read that cannot answer is `null` and files nothing, because a line
+telling a teacher to go and fix something is worth writing on evidence
+and not on a failed read. `scripts/probe-addclient-texts.ts` is written
+in the house style and is what closes D-B3.
+
+### 5. The search finds them
+
+`/api/search` merges the waiting sign-ups whose first or last name starts
+with the query into its answer as `pendingSignups`, first page only,
+three letters like the search itself, carrying a request id and names and
+never the email or phone. They render ABOVE Mindbody's rows as "signed up
+on the customer screen, not created yet" and tapping one opens the same
+prefilled form. **Deliberate shape**: they are a separate key rather than
+rows inside `results`, because a `results` row is a client id the booking
+path taps; a person who does not exist yet must not be one.
+
+### 6. When the teacher needs the screen
+
+`present` now says `holdingSignup: true` beside `reason: "busy"` when
+what holds the screen is a student's own sign-up. The sale screen's T203
+three-way choice keeps its buttons and changes its words to "Someone is
+signing up on the customer screen", and Take over cancels with
+`takenOver` exactly as it did, so the student gets the apology and the
+partial form is discarded server-side. The waiver dialog gets the same
+sentence and Take over, and nothing else: there is no money on that path,
+so there is no third way out. The live ticket mirror is unchanged and
+still skipped in silence, because a sign-up is a non-live scene and T201
+already drops those without a word.
+
+### Verified
+
+Against a real production server and a mock Mindbody
+(`scratchpad/t204/`), `env -u DATABASE_URL npm run build` and
+`npx tsc --noEmit` clean:
+
+- **Route driver, 65 assertions, twice in a row, 0 failed.** Start from an
+  unpaired browser is 401; a second start and a teacher's `present` are
+  409 `busy` with `holdingSignup` and the student's own sentence; the
+  scene carries `requiredFields` and the waiver and neither the sha256
+  nor the private half; a touch keeps it alive and silence past the
+  (shortened) window cancels with `abandoned: true` and refuses a late
+  complete; a non-PNG, an empty first name, a bad email and a missing
+  consent answer are each refused; the teacher's stream gets `completed`
+  and a `signups` count with no email in it; the tray lists names only
+  and 401s the display itself; the detail route gives the form and the
+  consent and not the PNG; `q=sa` finds nothing and `q=sam` finds the row
+  above the mock's own; a duplicate leaves it in the tray; Create sends
+  all six flags, reads back, reports `textOptInStuck: false` under the
+  mock's drop knob and files the Notes line, releases with
+  `LiabilityRelease: true`, uploads the PNG, writes both Notes lines and
+  empties the tray; a second create with the same handle is 409 and only
+  one client was ever created; Clear consumes with nothing reaching
+  Mindbody; take-over discards the partial form; the (shortened) four
+  hour expiry empties the tray and refuses a create naming it.
+- **T200 (52), T201 (27), T202 (43), T203 (7 off + 45 on) all pass.** One
+  assertion of T200's driver was updated in a copy
+  (`t204/t200-regress.mjs`): it completed a placeholder `register`
+  request with a placeholder result, which the server now validates.
+- **Postgres**: the row carries `kind=register`, `initiator=display`, a
+  four hour life and a `form` object in its result; after a server
+  restart the tray still holds it, the detail comes back from the table,
+  and the create finalises it (waiver receipt row with the PNG and its
+  hash, request marked consumed).
+- **Playwright, 41 assertions, 0 failed**, both palettes: pair, tap "New
+  here? Sign up", fill the form with the keyboard, both boxes ticked,
+  every row at least 64px and nothing under 16px, Next, agree dead until
+  the waiver is scrolled and the pad has ink, sign, agree, "Thank you,
+  Sam"; the gold "1 signed up" in the POS header at 64px, the list with
+  no email in it, the prefilled modal with the waiver line and the
+  consent as answered, Create closes it and the badge clears; the search
+  hit in dark; and, from the sale screen with the setting on, "Someone is
+  signing up on the customer screen" with Wait, Take over and Approve
+  sale, Take over apologising on the display and nothing typed surviving.
+
+### Fixed in review
+
+- A sign-up older than an hour could never be created: Create re-read the
+  stored result with T202's one-hour `agreedAt` window, while the tray
+  holds a sign-up for four hours. The re-read is now anchored to the
+  moment the result was stored, when it was already checked as fresh.
+  Proven against an aged Postgres row across a restart.
+- A consumed sign-up's row kept the student's email, phone and signature
+  until the four-hour sweep. `consumeDisplayRequest` now nulls `result`
+  with `consumed_at`; every reader already required an unconsumed row.
+- The required-fields cache is dropped on a T89 target switch, beside
+  the catalog cache.
+- Driver note: `POS_DISPLAY_SIGNUP_TTL_MS` must exceed the touch plus
+  abandon window in the route driver, or the touch assertion fails for
+  the wrong reason (the request expires first).
+- Recorded, not changed: when the create lands and the waiver release is
+  suppressed or throws, the request stays unconsumed so the signature is
+  not lost; a retry relies on Mindbody's duplicate rule, which keys on
+  first, last and email, so a student who gave no email could be created
+  twice in that rehearsal-only case.
+
+### Could not verify
+
+- **D-B3 has not run.** No Mindbody credentials in this environment, so
+  whether `addclient` keeps the text flags is still open; the probe is
+  written and the read-back plus Notes fallback is what makes shipping it
+  safe either way.
+- **D-B1 is still unrun**, so the signature's document upload is exercised
+  only against the mock, here as in T202.
+- The staff session is faked in the driver harness (T200's idiom), so
+  T49/T50 attribution is exercised as shape, not against Mindbody.
+- No real iPad: the keyboard was Playwright's, so T98's viewport
+  behaviour under the iOS keyboard is reasoned, not measured.
+- Nothing was driven against a real class, a real client or a real
+  waiver.

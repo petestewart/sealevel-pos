@@ -5,24 +5,17 @@ import { NextResponse } from "next/server";
 import {
   actorFields,
   requireActor,
-  runAsActor,
   staffSessionEndedResponse,
 } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 
 import {
-  recordLiabilityRelease,
-  updateClientNotes,
-  uploadClientDocument,
-} from "@/lib/clients";
-import { insertWaiverReceipt } from "@/lib/db";
-import {
   beginFinalisation,
-  consumeRequest,
   loadRequest,
   releaseFinalisation,
 } from "@/lib/display";
-import { readWaiverResult, waiverDocumentName } from "@/lib/displaywaiver";
+import { readWaiverResult } from "@/lib/displaywaiver";
+import { finaliseWaiver } from "@/lib/waiverfinalise";
 import { getWaiver } from "@/lib/waiver";
 
 export const dynamic = "force-dynamic";
@@ -201,134 +194,43 @@ export async function POST(request: Request) {
       );
     }
 
-    const run = await runAsActor(session, "/api/waiver-agree", (actor) =>
-      recordLiabilityRelease(clientId, actor),
-    );
-    const release = run.result;
-    if (release.suppressed) {
-      /* T202: the request is deliberately NOT consumed here. Nothing was
-       * written, so the signature is still good; a real run later (dry
-       * run off, or the client added to POS_WRITE_CLIENT_IDS) can still
-       * spend it, and nothing was uploaded either. */
+    /* T204: the release, the receipt row, the document copy, the Notes
+     * append and the consume are all in src/lib/waiverfinalise.ts now,
+     * because /api/client-create finishes the SAME waiver for a client
+     * who did not exist when the signature was taken. Every rule above
+     * is unchanged and lives there. */
+    const done = await finaliseWaiver({
+      clientId,
+      session,
+      route: "/api/waiver-agree",
+      waiverSha256: waiver.sha256,
+      signed,
+      currentNotes: typeof notes === "string" ? notes : "",
+    });
+    if (!done.agreed) {
+      /* Nothing was written, so the request is deliberately NOT
+       * consumed: a real run later can still spend the signature. */
       return NextResponse.json({
         agreed: false,
-        suppressed: release.suppressed,
+        suppressed: done.suppressed,
         ...(signed === null ? {} : { signed: true }),
-        ...actorFields(run),
+        ...actorFields(done.run),
       });
     }
-    /* The actor the release actually landed under: the teacher, or the
-     * service account after a fallback (or a dead token). */
-    const noteActor =
-      session && run.actorFallback === null && !run.staffSessionEnded
-        ? { token: session.token, staffId: session.staffId, name: session.name }
-        : null;
-
-    /* The release is real. The structured receipt line goes out first:
-     * even if the Notes append below fails, the server log holds the
-     * client, the moment, and the hash of the exact wording agreed to. */
-    /* Signed on the display: the moment is the student's tap, not this
-     * server's clock, because that is when they agreed. */
-    const at = signed?.agreedAt ?? new Date().toISOString();
-    console.log(
-      JSON.stringify({
-        event: "waiver-agreed",
-        clientId,
-        at,
-        textSha256: waiver.sha256,
-        ...(signed === null
-          ? {}
-          : { via: "customer-display", signatureSha256: signed.sha256 }),
-      }),
-    );
-
-    /* T29: the durable receipt row, with the FULL sha256 (Notes truncates
-     * to 12 chars for staff readability). Only on a real release, like
-     * everything below this point. Best effort by design: with no
-     * database, or a failed insert, the helper returns false and the
-     * behavior is exactly pre-T29 -- the log line above already holds the
-     * receipt, and the Notes append still runs. receiptNoted keeps
-     * meaning what it always meant: the Mindbody Notes copy. */
-    await insertWaiverReceipt(
-      clientId,
-      at,
-      waiver.sha256,
-      /* T202: our artifact, captured on our screen. The row is the
-       * ORIGINAL; the Mindbody document below is the copy. */
-      signed === null ? null : { sha256: signed.sha256, png: signed.png },
-    );
-
-    /* T202: the copy, best effort exactly like the Notes append below.
-     * A failed upload reports `documentFiled: false` with the reason and
-     * the agreement STANDS: the release is real, the receipt row already
-     * holds the image, and un-standing a release over a file transfer
-     * would be worse than the missing copy. Suppression (dry run, the
-     * write guard) is reported as itself, never as filed. */
-    let documentFiled = false;
-    let documentReason: string | null = null;
-    if (signed !== null) {
-      try {
-        const up = await uploadClientDocument(
-          clientId,
-          {
-            fileName: waiverDocumentName(at, signed.sha256),
-            mediaType: "png",
-            buffer: signed.png,
-          },
-          noteActor,
-        );
-        if (up.suppressed) {
-          documentReason = `document upload suppressed by ${up.suppressed}`;
-        } else {
-          documentFiled = true;
-        }
-      } catch (err) {
-        documentReason = err instanceof Error ? err.message : String(err);
-      }
-    }
-
-    const receiptLine =
-      signed === null
-        ? `Waiver agreed at the counter ${at}, text sha256:${waiver.sha256.slice(0, 12)}`
-        : `Waiver signed on the customer screen ${at}, text sha256:${waiver.sha256.slice(0, 12)}, signature sha256:${signed.sha256.slice(0, 12)}`;
-    const current = typeof notes === "string" ? notes : "";
-    const newNotes = current ? `${current}\n${receiptLine}` : receiptLine;
-    let receiptNoted = false;
-    let receiptReason: string | null = null;
-    try {
-      const noted = await updateClientNotes(clientId, newNotes, noteActor);
-      if (noted.suppressed) {
-        /* Expected in rehearsal under the write guard; reported honestly
-         * rather than as a landed note. */
-        receiptReason = `notes append suppressed by ${noted.suppressed}`;
-      } else {
-        receiptNoted = true;
-      }
-    } catch (err) {
-      receiptReason = err instanceof Error ? err.message : String(err);
-    }
-
-    /* The handle is spent LAST, after the release, the row, the upload
-     * and the note: everything above may be retried from the same
-     * signature, and nothing above can be undone by failing here. */
-    if (signed !== null) await consumeRequest(signed.requestId);
-
     return NextResponse.json({
       agreed: true,
-      receiptNoted,
-      receiptReason,
+      receiptNoted: done.receiptNoted,
+      receiptReason: done.receiptReason,
       ...(signed === null
         ? {}
         : {
             signed: true,
-            documentFiled,
-            documentReason,
-            signatureSha256: signed.sha256,
+            documentFiled: done.documentFiled,
+            documentReason: done.documentReason,
+            signatureSha256: done.signatureSha256,
           }),
-      /* The notes as written, so the row's local state can match what a
-       * roster reload would show. Only meaningful when receiptNoted. */
-      notes: receiptNoted ? newNotes : null,
-      ...actorFields(run),
+      notes: done.notes,
+      ...actorFields(done.run),
     });
   } catch (err) {
     /* T50 review: the teacher's token died under this write (the

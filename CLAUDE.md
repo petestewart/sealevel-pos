@@ -270,14 +270,14 @@ tightens in only one direction too: with it on the server refuses MORE
 charges and never fewer, it is admin-only in BOTH directions (turning it
 off is the dangerous one), and the log names the staff id who moved it.
 
-## Customer display (T200, T201, T202, T203; Phase 2.5)
+## Customer display (T200, T201, T202, T203, T204; Phase 2.5)
 
 A second iPad on the counter, facing the student, at `/display`. Design:
 `docs/design/customer-display.md`. Built: the plumbing (idle screen,
 pairing, the hub in `src/lib/display.ts`, the two SSE routes and
 present/cancel/complete/refuse), the ticket scene (T201), the waiver
-scene (T202) and the ticket approval (T203). The sign-up and the
-contract are items 5 and 6.
+scene (T202), the ticket approval (T203) and the self-serve sign-up
+(T204). The contract is item 6.
 
 **The display adds zero write paths to Mindbody, and must keep adding
 none.** Nothing in `src/lib/display.ts` or under `src/app/api/display/`
@@ -329,6 +329,47 @@ T48's PIN with its own purpose, spent once, and filed on the client the
 way T45/T62 file a comp's reason ("Sale approved by <teacher> at the
 counter, customer screen not used"). With the setting off, both fields
 are ignored rather than refused: a stale dialog must not stop a sale.
+
+**A student can sign themselves up** (T204, Phase 2.5 item 5). The idle
+screen's "New here? Sign up" calls `POST /api/display/start`, the one
+route the DISPLAY may put a scene up with: a `register` request with
+`initiator: "display"`, no staff id, a payload the SERVER builds (the
+required-field list, cached, and the waiver text) and the waiver's
+sha256 on the private half. The student types their four fields, ticks
+or unticks the two opt-in boxes (both ticked by default, D4) and signs
+the same waiver scene T202 built, and the whole of it is ONE result:
+form, consent, signature. It has two clocks: the result waits **four
+hours** for a teacher, and the SCENE ends after **two minutes with no
+touch** (`/api/display/touch`, throttled to 20s by the screen), which
+returns the display to idle and discards the partial form so the next
+student never sees the last one's email. Only one thing holds the screen
+at a time, so a second start is refused and a teacher's `present` answers
+409 `busy` with `holdingSignup: true`, which is what makes the sale
+screen and the waiver dialog say "Someone is signing up on the customer
+screen" and offer Take over.
+
+The teacher meets it in a **tray**, not a wait: a `--gold` count beside
+the display mark, fed by a `signups` event and a 30 second poll of
+`GET /api/display/signups`, which carries NAMES and a moment and nothing
+else. `GET /api/display/signups/<id>` is the one place the student's
+typed email and phone reach a browser (a signed-in teacher's, behind the
+device session), and it never carries the PNG; everything is deleted on
+consume or at four hours. The same person appears above walk-in search's
+results as "signed up on the customer screen, not created yet".
+**The only writes are `/api/client-create` and the waiver finalisation**,
+both under the teacher's own token: Create takes the request id as a
+handle, takes the FORM from the teacher's corrected body and the consent
+and signature from the server's store, creates the client with all six
+consent flags on the `addclient` body, and continues into
+`src/lib/waiverfinalise.ts` (T18's and T202's release, receipt row,
+document upload, Notes line and consume-last, now shared with
+`/api/waiver-agree`) for the client id that now exists, under one
+`beginFinalisation` claim. A duplicate leaves the sign-up in the tray.
+**The text opt-in is unverified live** (D-B3): the flags ride the create
+because `AddClientRequest` lists them without `updateclient`'s "ignored"
+caveat, the route reads the client back, and only on evidence that they
+did not stick does it file a T62-signed Notes line asking a human to set
+it by hand.
 
 **A result is spent BY ID, once** (T202). `consumeRequest` finds a
 completed, unconsumed request by its id even when the hub has moved on to
@@ -698,6 +739,13 @@ while `git clone` works, so clone the repo rather than fetching files.
   spec's `{FileName, MediaType, Buffer}` shape or seen the file appear on
   a client's Documents page. The signature itself is kept in
   `waiver_receipts`, so a refused upload loses the copy, not the record.
+- **The text opt-in is unverified live (T204, probe D-B3).** The
+  self-serve sign-up sends the three `Send*Texts` flags on
+  `/client/addclient`, which is the one call the spec does not document
+  as ignoring them, and reads the client back; whether site 471 keeps
+  them is unknown until `scripts/probe-addclient-texts.ts` runs against
+  the sandbox. Until then a dropped opt-in becomes a signed Notes line
+  for a human to act on, never a silent loss.
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It

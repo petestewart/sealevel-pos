@@ -40,6 +40,8 @@ import {
 import StaffModal, { type Teacher } from "./StaffModal";
 import PinModal from "./PinModal";
 import NewClientModal from "./NewClientModal";
+import SignupTray, { ago as signupAgo } from "./SignupTray";
+import type { PendingSignupRow } from "./SignupTray";
 import CardModal from "./CardModal";
 import GuestModal, {
   type ClassStanding,
@@ -893,6 +895,14 @@ function FrontDesk({
   const [entries, setEntries] = useState<RosterEntry[]>([]);
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<SearchResult[]>([]);
+  /** T204: the people who signed themselves up on the customer screen
+   *  and match the typed query. They are not in Mindbody yet, so
+   *  Mindbody's own search cannot find them; the server merges them
+   *  into the answer and they render ABOVE the results. */
+  const [foundSignups, setFoundSignups] = useState<PendingSignupRow[]>([]);
+  /** Bumped when a sign-up is created or cleared, so the header tray is
+   *  right without waiting for its poll. */
+  const [signupRefresh, setSignupRefresh] = useState(0);
   /** T71: the query `found` answers, for the bold match in each row. Set
    *  with the first page, so a query typed after the search stays out
    *  of the rows until it is searched. */
@@ -917,6 +927,16 @@ function FrontDesk({
   const [newClient, setNewClient] = useState<{
     first: string;
     last: string;
+    /** T204: a self-serve sign-up's own typed details, read back from
+     *  the server, and the handle that holds their signature. */
+    email?: string;
+    phone?: string;
+    signup?: {
+      requestId: string;
+      consentEmail: boolean;
+      consentText: boolean;
+      completedAt: string | null;
+    };
     /** T59c: who asked for the form. "search" hands the new person to
      *  the walk-in results; "guest" selects them as the guest. T91 adds
      *  "sale": the new person is attached to the open sale. */
@@ -1318,6 +1338,9 @@ function FrontDesk({
   const [waiverDisplayNote, setWaiverDisplayNote] = useState<string | null>(
     null,
   );
+  /** T204: the customer screen is busy with a student's own sign-up,
+   *  so the dialog offers Take over beside the counter path. */
+  const [waiverDisplayBusy, setWaiverDisplayBusy] = useState(false);
   /** T202: whether a customer display is paired AND connected right now,
    *  which is what decides whether "Sign on the customer screen" exists
    *  at all. Same two sources as the header's mark. */
@@ -2116,6 +2139,15 @@ function FrontDesk({
             return;
           }
           const page: SearchResult[] = d.results ?? [];
+          /* T204: first page only; a scroll for page two is a scroll
+           * through Mindbody's list. */
+          if (first) {
+            setFoundSignups(
+              Array.isArray(d.pendingSignups)
+                ? (d.pendingSignups as PendingSignupRow[])
+                : [],
+            );
+          }
           const total = typeof d.total === "number" ? d.total : null;
           const apply = () => {
             if (ctl.signal.aborted) return;
@@ -2171,6 +2203,49 @@ function FrontDesk({
     },
     [],
   );
+
+  /**
+   * T204: open the New Client form on a waiting self-serve sign-up.
+   *
+   * The form comes from the SERVER (`/api/display/signups/<id>`), never
+   * from anything a display sent this browser, and the signature does
+   * not travel with it: the request id is a handle, and Create pulls the
+   * PNG from the server's own store. Both doors in -- the header tray
+   * and a search hit -- come through here, so they cannot drift.
+   */
+  const openSignup = useCallback(async (requestId: string) => {
+    try {
+      const res = await fetch(
+        `/api/display/signups/${encodeURIComponent(requestId)}`,
+      );
+      const body = await res.json().catch(() => null);
+      if (!res.ok || typeof body?.requestId !== "string") {
+        setError(
+          typeof body?.error === "string"
+            ? body.error
+            : "That sign-up could not be opened.",
+        );
+        setSignupRefresh((n) => n + 1);
+        return;
+      }
+      setNewClient({
+        first: String(body.form?.firstName ?? ""),
+        last: String(body.form?.lastName ?? ""),
+        email: typeof body.form?.email === "string" ? body.form.email : "",
+        phone: typeof body.form?.phone === "string" ? body.form.phone : "",
+        signup: {
+          requestId: body.requestId,
+          consentEmail: body.consent?.email === true,
+          consentText: body.consent?.text === true,
+          completedAt:
+            typeof body.completedAt === "string" ? body.completedAt : null,
+        },
+        for: "search",
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
 
   /** Abort the in-flight search and drop the held results: the X, the
    *  close, and the attach modal's Class cell all mean the same thing,
@@ -4384,8 +4459,19 @@ function FrontDesk({
       });
       const body = await res.json().catch(() => null);
       if (!res.ok || typeof body?.requestId !== "string") {
+        /* T204: a student is signing themselves up on that screen. The
+         * design's choice, minus the sale's third way out (there is no
+         * money here): wait, or take it over. */
+        if (body?.holdingSignup === true) {
+          setWaiverDisplayBusy(true);
+          setWaiverDisplayNote(
+            "Someone is signing up on the customer screen. Wait for them, or take the screen over.",
+          );
+          return;
+        }
         throw new Error(body?.error ?? `HTTP ${res.status}`);
       }
+      setWaiverDisplayBusy(false);
       setWaiverOnDisplay({ requestId: body.requestId });
     } catch (err) {
       /* Said in the dialog, because the teacher DID ask for this: the
@@ -5673,6 +5759,13 @@ function FrontDesk({
           teacher pairs one, which is every counter today. */}
       <DisplayMark />
 
+      {/* T204: the self-serve sign-ups waiting for a teacher. Absent
+          when there are none, which is most of the day. */}
+      <SignupTray
+        refreshKey={signupRefresh}
+        onPick={(row) => void openSignup(row.requestId)}
+      />
+
       {error ? <p className="note">{error}</p> : null}
 
       {/* Quiet on purpose: waiver state failing open must not read like the
@@ -6583,10 +6676,31 @@ function FrontDesk({
         <NewClientModal
           initialFirst={newClient.first}
           initialLast={newClient.last}
-          onClose={() => setNewClient(null)}
+          {...(newClient.email === undefined
+            ? {}
+            : { initialEmail: newClient.email })}
+          {...(newClient.phone === undefined
+            ? {}
+            : { initialPhone: newClient.phone })}
+          {...(newClient.signup === undefined
+            ? {}
+            : { signup: newClient.signup })}
+          onClose={() => {
+            setNewClient(null);
+            /* T204: a sign-up the teacher backed out of is still
+               waiting; the tray says so on its next read. */
+            if (newClient.signup) setSignupRefresh((n) => n + 1);
+          }}
           onCreated={(client, note) => {
             const target = newClient.for;
+            const wasSignup = newClient.signup !== undefined;
             setNewClient(null);
+            if (wasSignup) {
+              /* Created: the handle is spent, the tray loses the row and
+                 the search list drops the "not created yet" line. */
+              setSignupRefresh((n) => n + 1);
+              setFoundSignups([]);
+            }
             if (target === "guest") {
               /* T59c: the new person is the guest. They have no release
                * yet, so pickGuest opens the waiver dialog first. */
@@ -6911,6 +7025,34 @@ function FrontDesk({
                 Mindbody...
               </p>
             ) : null}
+            {/* T204: somebody who signed themselves up on the customer
+                screen, above Mindbody's own results because they are not
+                in Mindbody yet. Tapping one opens the same prefilled
+                form the header tray opens, with the waiver already
+                signed and waiting for Create. */}
+            {foundSignups.length > 0 ? (
+              <ul className="signup-hits">
+                {foundSignups.map((row) => (
+                  <li key={`signup-${row.requestId}`}>
+                    <button
+                      className="signup-hit"
+                      onClick={() => void openSignup(row.requestId)}
+                    >
+                      <span className="signup-hit-name">
+                        <Hit
+                          text={`${row.firstName} ${row.lastName}`.trim()}
+                          q={foundFor}
+                        />
+                      </span>
+                      <span className="signup-hit-sub">
+                        Signed up on the customer screen {signupAgo(row.completedAt)},
+                        not created yet. Tap to create them.
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             {searchError ? (
               <p className="note">{searchError}</p>
             ) : null}
@@ -6923,7 +7065,12 @@ function FrontDesk({
                 Type at least {settings.minQueryLength} letters.
               </p>
             ) : null}
-            {!searching && !searchError && searchTitle && shownResults.length === 0 ? (
+            {!searching &&
+            !searchError &&
+            searchTitle &&
+            shownResults.length === 0 &&
+            /* T204: a pending sign-up IS somebody found. */
+            foundSignups.length === 0 ? (
               <>
                 <p className="muted">
                   Nobody found. Check the spelling, or try fewer letters.
@@ -7917,8 +8064,36 @@ function FrontDesk({
                     disabled={waiverSaving}
                     onClick={() => void sendWaiverToDisplay()}
                   >
-                    Sign on the customer screen
+                    {waiverDisplayBusy
+                      ? "Try the customer screen again"
+                      : "Sign on the customer screen"}
                   </button>
+                  {/* T204: take the screen off the student signing up.
+                      A plain tap, no PIN and no confirm: it costs them
+                      thirty seconds and moves no money. */}
+                  {waiverDisplayBusy ? (
+                    <button
+                      className="waiver-display-button"
+                      disabled={waiverSaving}
+                      onClick={() => {
+                        setWaiverDisplayNote(
+                          "Taking the screen over. It goes up in a moment.",
+                        );
+                        void (async () => {
+                          await fetch("/api/display/cancel", {
+                            method: "POST",
+                            headers: { "content-type": "application/json" },
+                            body: JSON.stringify({ takenOver: true }),
+                          }).catch(() => undefined);
+                          await new Promise((r) => setTimeout(r, 3_000));
+                          setWaiverDisplayBusy(false);
+                          await sendWaiverToDisplay();
+                        })();
+                      }}
+                    >
+                      Take over
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
             {waiverText ? (

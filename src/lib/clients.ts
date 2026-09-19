@@ -479,6 +479,43 @@ export async function requiredClientFields(): Promise<{
   return { required, missing };
 }
 
+/**
+ * T204: the same read, cached for the customer display's sign-up scene.
+ * The teacher's modal reads it fresh on every open (once per form, a
+ * teacher's own tap); the display's idle button is a STUDENT's tap and
+ * must not cost a metered call each time somebody prods it, so the
+ * answer is held like the catalog's and refreshed every ten minutes. A
+ * read that fails is not an error here: the form asks for the four
+ * fields it has, and Mindbody's refusal at Create is the authoritative
+ * answer and comes back in words.
+ */
+let requiredFieldsCache: { at: number; value: string[] } | null = null;
+
+/** T204 review: the list belongs to a site, so a T89 target switch drops
+ *  it beside the catalog cache. */
+export function clearRequiredFieldsCache(): void {
+  requiredFieldsCache = null;
+}
+const REQUIRED_FIELDS_TTL_MS = 10 * 60 * 1000;
+
+export async function cachedRequiredClientFields(
+  now = Date.now(),
+): Promise<string[]> {
+  if (
+    requiredFieldsCache !== null &&
+    now - requiredFieldsCache.at < REQUIRED_FIELDS_TTL_MS
+  ) {
+    return requiredFieldsCache.value;
+  }
+  try {
+    const { required } = await requiredClientFields();
+    requiredFieldsCache = { at: now, value: required };
+    return required;
+  } catch {
+    return requiredFieldsCache?.value ?? [];
+  }
+}
+
 export interface NewClientInput {
   firstName: string;
   lastName: string;
@@ -486,7 +523,27 @@ export interface NewClientInput {
   phone: string | null;
   sendAccountEmails: boolean;
   sendPromotionalEmails: boolean;
+  /** T204: the self-serve sign-up asks the two consent questions as
+   *  channels, not as three flags each, and sends all six on the
+   *  CREATE. The schedule email flag and the three text flags are
+   *  omitted entirely when undefined, so T59b's counter form is one
+   *  unchanged payload. `AddClientRequest` lists the text flags without
+   *  `updateclient`'s "cannot be updated by developers" caveat
+   *  (client.yml:4945-4956 against :5290-5309), which is the whole
+   *  reason they ride the create; whether Mindbody keeps them is probe
+   *  D-B3 and is read back by /api/client-create. */
+  sendScheduleEmails?: boolean;
+  sendAccountTexts?: boolean;
+  sendPromotionalTexts?: boolean;
+  sendScheduleTexts?: boolean;
 }
+
+/** T204: the three text flags, in Mindbody's own names. */
+export const CONSENT_TEXT_FLAGS = [
+  "SendAccountTexts",
+  "SendPromotionalTexts",
+  "SendScheduleTexts",
+] as const;
 
 /**
  * T59b: create a client at the counter. `POST /client/addclient`
@@ -529,6 +586,18 @@ export async function createClient(
       ...(input.phone ? { MobilePhone: input.phone } : {}),
       SendAccountEmails: input.sendAccountEmails,
       SendPromotionalEmails: input.sendPromotionalEmails,
+      ...(input.sendScheduleEmails === undefined
+        ? {}
+        : { SendScheduleEmails: input.sendScheduleEmails }),
+      ...(input.sendAccountTexts === undefined
+        ? {}
+        : { SendAccountTexts: input.sendAccountTexts }),
+      ...(input.sendPromotionalTexts === undefined
+        ? {}
+        : { SendPromotionalTexts: input.sendPromotionalTexts }),
+      ...(input.sendScheduleTexts === undefined
+        ? {}
+        : { SendScheduleTexts: input.sendScheduleTexts }),
     },
     /* Deliberately absent: a create has no client id to name. See above. */
     clientId: undefined,
@@ -544,6 +613,42 @@ export async function createClient(
     );
   }
   return { suppressed: null, client };
+}
+
+/**
+ * T204 / probe D-B3: did the three text flags STICK?
+ *
+ * `updateclient` documents them as "cannot be updated by developers,
+ * ignored" (client.yml:5290-5309) and `AddClientRequest` lists them
+ * without that caveat, so the sign-up sends them on the create and this
+ * reads the client back to see what Mindbody kept. True when all three
+ * came back set, false when any did not, and NULL when the read failed
+ * or the answer carried none of the fields at all, which is "no
+ * evidence" rather than "dropped": a Notes line saying a teacher must
+ * set it by hand is worth filing on evidence, not on a failed read.
+ *
+ * A read on the service account like every other read, and it never
+ * throws: the client already exists by the time this runs.
+ */
+export async function readTextOptInStuck(
+  clientId: string,
+): Promise<boolean | null> {
+  try {
+    const body = await mindbody(
+      `/client/clients?clientIds=${encodeURIComponent(clientId)}&limit=1`,
+    );
+    const row = (body?.Clients ?? []).find(
+      (c: { Id?: unknown }) => String(c?.Id ?? "") === clientId,
+    );
+    if (!row) return null;
+    const seen = CONSENT_TEXT_FLAGS.filter(
+      (f) => typeof row[f] === "boolean",
+    );
+    if (seen.length === 0) return null;
+    return CONSENT_TEXT_FLAGS.every((f) => row[f] === true);
+  } catch {
+    return null;
+  }
 }
 
 /**

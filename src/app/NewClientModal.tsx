@@ -45,6 +45,20 @@ interface Props {
   /** Prefill from the search box when it looked like a name. */
   initialFirst: string;
   initialLast: string;
+  /** T204: a self-serve sign-up's own typed contact details and the two
+   *  consent answers, read back from the server (never from the
+   *  display's browser), with the request id that holds the signature.
+   *  The teacher may still fix the spelling of a name: the form is the
+   *  body's, and only the consent and the signature come from the
+   *  stored request. */
+  initialEmail?: string;
+  initialPhone?: string;
+  signup?: {
+    requestId: string;
+    consentEmail: boolean;
+    consentText: boolean;
+    completedAt: string | null;
+  };
   onClose: () => void;
   /** The created person, and the amber line when the write ran as the
    *  studio account (T49's one loud fallback), else null. */
@@ -89,15 +103,22 @@ function readable(field: string): string {
 export default function NewClientModal({
   initialFirst,
   initialLast,
+  initialEmail,
+  initialPhone,
+  signup,
   onClose,
   onCreated,
 }: Props) {
   const [firstName, setFirstName] = useState(initialFirst);
   const [lastName, setLastName] = useState(initialLast);
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [account, setAccount] = useState(false);
-  const [promo, setPromo] = useState(false);
+  const [email, setEmail] = useState(initialEmail ?? "");
+  const [phone, setPhone] = useState(initialPhone ?? "");
+  /* T204: a sign-up's boxes are the STUDENT's answer, shown as they
+   *  were given and not editable here: the server takes the consent
+   *  from the request, not from this form, so an editable box would be
+   *  a control that does nothing. */
+  const [account, setAccount] = useState(signup?.consentEmail ?? false);
+  const [promo, setPromo] = useState(signup?.consentEmail ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /* The amber notices: a suppressed write, and what Mindbody requires
@@ -171,6 +192,7 @@ export default function NewClientModal({
           phone: values.phone || null,
           sendAccountEmails: account,
           sendPromotionalEmails: promo,
+          ...(signup ? { displayRequestId: signup.requestId } : {}),
         }),
       });
       const body = await res.json().catch(() => null);
@@ -196,10 +218,33 @@ export default function NewClientModal({
         setError("Mindbody answered without a client. Search for the name.");
         return;
       }
-      onCreated(
-        client,
-        body.actorFallback ? actorFallbackLine(body.actorFallback) : null,
-      );
+      /* T204: the two things a teacher must hear about a sign-up's
+       * Create, said in the amber line the caller already shows: a
+       * waiver that did not land, and a text opt-in Mindbody dropped. */
+      const extra: string[] = [];
+      if (signup) {
+        if (body.waiver && body.waiver.agreed !== true) {
+          extra.push(
+            body.waiver.suppressed
+              ? `The waiver was not recorded: ${body.waiver.suppressed === "dry-run" ? "dry run is on" : "the write guard is on"}.`
+              : "The waiver was not recorded. Open their profile and use the waiver dialog.",
+          );
+        } else if (body.waiver && body.waiver.documentFiled === false) {
+          extra.push(
+            "The waiver is recorded; the signature image did not reach Mindbody.",
+          );
+        }
+        if (body.textOptInStuck === false) {
+          extra.push(
+            "Mindbody did not keep the text opt-in; it is noted on their profile to set by hand.",
+          );
+        }
+      }
+      const fallback = body.actorFallback
+        ? actorFallbackLine(body.actorFallback)
+        : null;
+      const note = [fallback, ...extra].filter(Boolean).join(" ");
+      onCreated(client, note.length > 0 ? note : null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -270,8 +315,9 @@ export default function NewClientModal({
           <p className="modal-title">New client</p>
         </div>
         <p className="reason-sub nc-sub">
-          Makes their Mindbody account. The waiver comes up when they are
-          added to a class.
+          {signup
+            ? "Waiver signed on the customer screen, waiting for Create. Check the spelling of the name, then Create makes their account and files the waiver together."
+            : "Makes their Mindbody account. The waiver comes up when they are added to a class."}
         </p>
         <div className="nc-fields">
           {field("firstName", "First name", firstName, setFirstName, {
@@ -291,26 +337,36 @@ export default function NewClientModal({
             wide: true,
           })}
         </div>
-        <div className="consent-opts">
-          <label className="consent-opt">
-            <input
-              type="checkbox"
-              checked={account}
-              disabled={busy}
-              onChange={(e) => setAccount(e.target.checked)}
-            />
-            <span>Emails about my account</span>
-          </label>
-          <label className="consent-opt">
-            <input
-              type="checkbox"
-              checked={promo}
-              disabled={busy}
-              onChange={(e) => setPromo(e.target.checked)}
-            />
-            <span>News and offers</span>
-          </label>
-        </div>
+        {signup ? (
+          <div className="consent-opts">
+            <p className="reason-sub nc-sub">
+              They asked for email: {signup.consentEmail ? "yes" : "no"}. They
+              asked for texts: {signup.consentText ? "yes" : "no"}. Both go out
+              with the account as they answered them.
+            </p>
+          </div>
+        ) : (
+          <div className="consent-opts">
+            <label className="consent-opt">
+              <input
+                type="checkbox"
+                checked={account}
+                disabled={busy}
+                onChange={(e) => setAccount(e.target.checked)}
+              />
+              <span>Emails about my account</span>
+            </label>
+            <label className="consent-opt">
+              <input
+                type="checkbox"
+                checked={promo}
+                disabled={busy}
+                onChange={(e) => setPromo(e.target.checked)}
+              />
+              <span>News and offers</span>
+            </label>
+          </div>
+        )}
         {missing.length > 0 ? (
           <p className="modal-warn" role="status">
             Mindbody also asks new clients here for{" "}

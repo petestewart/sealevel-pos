@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
 import {
@@ -10,9 +12,19 @@ import { requireSession } from "@/lib/auth";
 import {
   createClient,
   isDuplicateClientError,
+  readTextOptInStuck,
   requiredClientFields,
   type NewClientInput,
 } from "@/lib/clients";
+import {
+  beginFinalisation,
+  loadRequest,
+  releaseFinalisation,
+} from "@/lib/display";
+import { readSignupResult } from "@/lib/displaysignup";
+import { fileFormulaNote } from "@/lib/formulanote";
+import { getWaiver } from "@/lib/waiver";
+import { finaliseWaiver } from "@/lib/waiverfinalise";
 
 export const dynamic = "force-dynamic";
 
@@ -35,10 +47,23 @@ export const dynamic = "force-dynamic";
  * first, last and email) is answered in plain words with a 409, so the
  * teacher searches for the existing person instead of making a second.
  *
+ * T204: the same route finishes a SELF-SERVE sign-up. The body may
+ * carry a `displayRequestId`, which is a HANDLE and nothing else: the
+ * form is still the body's (the teacher may fix "jon" to "John" before
+ * tapping Create, and reading the name back is the whole point of the
+ * tap), while the consent as the student answered it and the signature
+ * they drew come from the server's own store. On success, and with no
+ * second tap, the same route continues into the waiver finalisation for
+ * the client id that now exists (src/lib/waiverfinalise.ts, shared with
+ * /api/waiver-agree). A duplicate leaves the request UNCONSUMED, so the
+ * sign-up stays in the tray while the teacher searches for the person
+ * who already exists.
+ *
  * Body: { firstName, lastName: string (1..60); email?: string;
  *         phone?: string; sendAccountEmails, sendPromotionalEmails:
- *         boolean }
- * Answer: { ok, clientId, client, suppressed, ...actorFields }
+ *         boolean; displayRequestId?: string }
+ * Answer: { ok, clientId, client, suppressed, waiver?, textOptInStuck?,
+ *           ...actorFields }
  */
 
 const NAME_MAX = 60;
@@ -133,15 +158,174 @@ export async function POST(request: Request) {
     sendPromotionalEmails: payload.sendPromotionalEmails,
   };
 
+  /* T204: the sign-up the customer screen took, when this Create is
+   * finishing one. Claimed synchronously for the WHOLE create plus
+   * waiver (T202 review's rule: no await between the check and the
+   * mark), and released in the finally below whatever happens. */
+  let claimed: string | null = null;
+  const handle =
+    typeof payload?.displayRequestId === "string"
+      ? payload.displayRequestId.trim()
+      : "";
+  let signed:
+    | { requestId: string; png: Buffer; sha256: string; agreedAt: string }
+    | null = null;
+  let waiverSha = "";
+  let textWanted = false;
+
   try {
+    if (handle.length > 0) {
+      if (!beginFinalisation(handle)) {
+        return NextResponse.json(
+          { error: "That sign-up is already being created.", inFlight: true },
+          { status: 409 },
+        );
+      }
+      claimed = handle;
+      const held = await loadRequest(handle);
+      if (
+        held === null ||
+        held.kind !== "register" ||
+        held.initiator !== "display" ||
+        held.status !== "completed" ||
+        held.consumedAt !== null ||
+        Date.now() >= held.expiresAt
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "That sign-up is no longer waiting. Ask them to sign up again on the customer screen, or create them here.",
+          },
+          { status: 409 },
+        );
+      }
+      /* Review fix (T204): the stored result is re-read against the
+       * moment it was STORED, not now. Its `agreedAt` window is an
+       * hour (T202's reader) and a sign-up waits in the tray for four,
+       * so anchoring this to Date.now() made every sign-up older than
+       * an hour unfinishable while it still showed in the tray and in
+       * search. It was already validated as fresh when the student
+       * tapped agree; what is checked here is the shape. */
+      const stored = readSignupResult(
+        held.result ?? {},
+        held.completedAt ?? Date.now(),
+      );
+      if (!stored.ok) {
+        return NextResponse.json(
+          { error: `That sign-up could not be read (${stored.error}).` },
+          { status: 409 },
+        );
+      }
+      /* The wording the student actually read, against the wording the
+       * studio serves NOW. An edit in between means nobody agreed to
+       * what is on file, so nothing is written -- the same rule
+       * /api/waiver-agree applies to a signature from the display. */
+      const waiver = await getWaiver();
+      if (held.private.textSha256 !== waiver.sha256) {
+        return NextResponse.json(
+          {
+            error:
+              "The waiver text changed while they were signing up. Ask them to read and sign it again.",
+          },
+          { status: 409 },
+        );
+      }
+      waiverSha = waiver.sha256;
+      signed = {
+        requestId: held.id,
+        png: stored.png,
+        /* Hashed from the BYTES here, never read off the stored
+         * result: the receipt's figure names what was actually filed. */
+        sha256: createHash("sha256").update(stored.png).digest("hex"),
+        agreedAt: stored.value.agreedAt,
+      };
+      /* The consent is the STUDENT's answer, as recorded, not whatever
+       * the teacher's browser sent back with the form. Each box sets
+       * all three flags of its channel; the text ones ride the create
+       * because that is the one call that may honour them (D-B3). */
+      textWanted = stored.value.consent.text;
+      input.sendAccountEmails = stored.value.consent.email;
+      input.sendPromotionalEmails = stored.value.consent.email;
+      input.sendScheduleEmails = stored.value.consent.email;
+      input.sendAccountTexts = textWanted;
+      input.sendPromotionalTexts = textWanted;
+      input.sendScheduleTexts = textWanted;
+    }
+
     const run = await runAsActor(session, "/api/client-create", (actor) =>
       createClient(input, actor),
     );
+    const client = run.result.client;
+    if (signed === null || client === null) {
+      /* T59b's answer, unchanged. A suppressed create has no client id,
+       * so there is nothing to release a waiver against and the
+       * sign-up is deliberately left unconsumed. */
+      return NextResponse.json({
+        ok: true,
+        clientId: client?.id ?? null,
+        client,
+        suppressed: run.result.suppressed,
+        ...actorFields(run),
+      });
+    }
+
+    /* D-B3, as far as it can be answered without the probe having run:
+     * did the text flags stick? A read back of the client we just made,
+     * on the service account like every read. */
+    const textOptInStuck = textWanted
+      ? await readTextOptInStuck(client.id)
+      : null;
+
+    /* The waiver, for the client who now exists, with no second tap.
+     * Every rule is waiverfinalise.ts's and is shared with
+     * /api/waiver-agree: the release under the teacher's token, the
+     * receipt row with the signature, the best-effort document upload,
+     * the Notes line, and the handle spent LAST. */
+    const waiver = await finaliseWaiver({
+      clientId: client.id,
+      session,
+      route: "/api/client-create",
+      waiverSha256: waiverSha,
+      signed,
+      currentNotes: client.notes ?? "",
+    });
+
+    /* The text opt-in Mindbody did not keep is never silently dropped:
+     * it becomes a T62-signed entry in the client's Notes so a human can
+     * set it. Only on EVIDENCE (`false`, read back), never on a read
+     * that could not answer. Filed after the waiver's own Notes append,
+     * since the helper reads the field before writing it whole. */
+    let textNoted = false;
+    if (textWanted && textOptInStuck === false) {
+      const note = await fileFormulaNote({
+        session,
+        clientId: client.id,
+        note:
+          "Asked for text messages when signing up on the customer screen. " +
+          "Mindbody did not keep the text opt-in, so please set it by hand on their profile.",
+        route: "/api/client-create",
+        logTag: "[signup]",
+      });
+      textNoted = note.via !== null;
+    }
+
     return NextResponse.json({
       ok: true,
-      clientId: run.result.client?.id ?? null,
-      client: run.result.client,
+      clientId: client.id,
+      client: waiver.notes === null ? client : { ...client, notes: waiver.notes },
       suppressed: run.result.suppressed,
+      textOptInStuck,
+      textNoted,
+      waiver: {
+        signed: true,
+        agreed: waiver.agreed,
+        suppressed: waiver.suppressed,
+        documentFiled: waiver.documentFiled,
+        documentReason: waiver.documentReason,
+        receiptNoted: waiver.receiptNoted,
+        receiptReason: waiver.receiptReason,
+        signatureSha256: waiver.signatureSha256,
+      },
       ...actorFields(run),
     });
   } catch (err) {
@@ -164,5 +348,7 @@ export async function POST(request: Request) {
       { error: err instanceof Error ? err.message : String(err) },
       { status: 502 },
     );
+  } finally {
+    if (claimed !== null) releaseFinalisation(claimed);
   }
 }

@@ -43,8 +43,24 @@ export default function WaiverScene(props: {
   /** Told when this scene has finished with the screen, so the display
    *  can show its thank you while the server catches up. */
   onDone: (name: string | null) => void;
+  /**
+   * T204: the sign-up's second step is this same screen, for a client
+   * who does not exist yet, and its signature goes back inside a bigger
+   * result (the form and the two consent answers beside it). So the
+   * SCENE keeps the pad, the scroll rule and the export exactly as they
+   * are and the caller says what to do with the PNG. Absent, this
+   * completes the request itself, which is T202 unchanged.
+   */
+  onSubmit?: (signaturePng: string, agreedAt: string) => Promise<void>;
+  /** T204: "Not now" on a sign-up goes back to the form rather than
+   *  refusing the request outright. */
+  onNotNow?: () => void | Promise<void>;
+  /** T204: the sign-up greets by the name the student just typed. */
+  heading?: string;
+  notNowLabel?: string;
 }) {
   const { requestId, payload, onDone } = props;
+  const { onSubmit, onNotNow } = props;
   const name = plainText(payload.clientFirstName ?? "");
   const text = plainText(payload.text);
 
@@ -195,6 +211,13 @@ export default function WaiverScene(props: {
     setSaving(true);
     setError(null);
     try {
+      if (onSubmit) {
+        /* T204: the caller owns the result. It throws for the same
+         * reasons the POST below does, and is reported the same way. */
+        await onSubmit(png, new Date().toISOString());
+        onDone(name || null);
+        return;
+      }
       const res = await fetch("/api/display/complete", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -214,10 +237,14 @@ export default function WaiverScene(props: {
       );
       setSaving(false);
     }
-  }, [saving, scrolled, inked, exportPng, requestId, onDone, name]);
+  }, [saving, scrolled, inked, exportPng, requestId, onDone, name, onSubmit]);
 
   const notNow = useCallback(async () => {
     if (saving) return;
+    if (onNotNow) {
+      await onNotNow();
+      return;
+    }
     setSaving(true);
     try {
       await fetch("/api/display/refuse", {
@@ -232,12 +259,12 @@ export default function WaiverScene(props: {
       /* The teacher's screen has the dialog either way. */
     }
     setSaving(false);
-  }, [saving, requestId]);
+  }, [saving, requestId, onNotNow]);
 
   return (
     <section className="dwaiver" aria-label="Liability waiver">
       <h1 className="dwaiver-heading">
-        {name ? `Hello, ${name}` : "Welcome"}
+        {props.heading ?? (name ? `Hello, ${name}` : "Welcome")}
       </h1>
       <p className="dwaiver-lead">
         Please read the studio&apos;s liability waiver, then sign below.
@@ -282,7 +309,7 @@ export default function WaiverScene(props: {
 
       <div className="dwaiver-actions">
         <button className="dwaiver-button" onClick={notNow} disabled={saving}>
-          Not now
+          {props.notNowLabel ?? "Not now"}
         </button>
         <button className="dwaiver-button" onClick={clear} disabled={saving}>
           Clear

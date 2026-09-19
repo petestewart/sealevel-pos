@@ -1466,13 +1466,21 @@ export async function updateDisplayRequestPayload(
 
 /** Spends a result: the one finalisation. False when no row moved (it
  *  was consumed already, or there is no database), which the caller
- *  reads as "not mine to spend" only alongside its own memory. */
+ *  reads as "not mine to spend" only alongside its own memory.
+ *
+ *  Review fix (T204): the result is CLEARED in the same statement. A
+ *  result is a handle for one finalisation and not a record (the design
+ *  doc's rule), and a spent sign-up's row otherwise kept the student's
+ *  email, phone and signature until the sweep, which for a sign-up is
+ *  four hours away. Nothing reads a result after it is spent: every
+ *  reader (liveSignup, pendingSignups, the create route) requires
+ *  consumed_at to be null. */
 export async function consumeDisplayRequest(id: string): Promise<boolean> {
   try {
     const p = await ready();
     if (!p) return false;
     const res = await p.query(
-      `UPDATE display_requests SET consumed_at = now()
+      `UPDATE display_requests SET consumed_at = now(), result = NULL
        WHERE id = $1 AND consumed_at IS NULL`,
       [id],
     );
@@ -1540,6 +1548,54 @@ export async function sweepDisplayRequests(
   } catch (err) {
     logDbError("display-request-sweep", err);
     return false;
+  }
+}
+
+/**
+ * T204: every self-serve sign-up waiting for a teacher, newest last.
+ * Completed, unconsumed and inside its four hours; anything else is
+ * either spent, refused or gone. The tray reads this beside the hub's
+ * own memory, which is what makes a signature and a typed name survive
+ * a restart between the student tapping agree and the teacher creating
+ * them.
+ */
+export async function listSelfServeSignups(
+  now = new Date(),
+  limit = 50,
+): Promise<DisplayRequestRow[]> {
+  try {
+    const p = await ready();
+    if (!p) return [];
+    const res = await p.query(
+      `SELECT id, display_id, kind, initiator, payload, status, result,
+              requested_by_staff_id, created_at, completed_at, consumed_at,
+              expires_at
+         FROM display_requests
+        WHERE kind = 'register' AND initiator = 'display'
+          AND status = 'completed' AND consumed_at IS NULL
+          AND expires_at > $1
+        ORDER BY completed_at ASC
+        LIMIT $2`,
+      [now, limit],
+    );
+    return res.rows.map((r) => ({
+      id: String(r.id),
+      displayId: String(r.display_id),
+      kind: String(r.kind),
+      initiator: String(r.initiator),
+      payload: r.payload ?? null,
+      status: String(r.status),
+      result: r.result ?? null,
+      requestedByStaffId:
+        r.requested_by_staff_id === null ? null : String(r.requested_by_staff_id),
+      createdAt: new Date(r.created_at),
+      completedAt: r.completed_at === null ? null : new Date(r.completed_at),
+      consumedAt: r.consumed_at === null ? null : new Date(r.consumed_at),
+      expiresAt: new Date(r.expires_at),
+    }));
+  } catch (err) {
+    logDbError("display-signups-read", err);
+    return [];
   }
 }
 

@@ -178,7 +178,14 @@ export async function POST(request: Request) {
      * screen (a waiver, a sign-up, a summary), which the design says is
      * skipped silently and resumes on the next priced change. */
     return NextResponse.json(
-      { error: presented.error, reason: presented.reason },
+      {
+        error: presented.error,
+        reason: presented.reason,
+        /* T204: a busy screen says WHAT is on it when it is a student's
+         * own sign-up, because that is the one case the teacher's screen
+         * words differently and offers Take over for. */
+        ...(presented.holdingSignup === true ? { holdingSignup: true } : {}),
+      },
       { status: presented.status },
     );
   }
