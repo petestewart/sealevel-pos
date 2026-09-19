@@ -15246,7 +15246,7 @@ a mock that answers 404 is the reason this bug shipped.
   real 20-second timeout) each refuse before any purchase, each with one
   "Nothing was charged."; three cards on one ticket get three ids.
 - **T109's devlog driver** (`scratchpad/t109/devlog.mjs`, with
-  `POS_DEVTOOLS=true`), 16 checks over three tickets on one buffer: a
+  `POS_DEVTOOLS=true`), 17 checks over three tickets on one buffer: a
   discounted gift card sold under a teacher's PIN, a $49 service paid
   with a card TYPED at the counter, and a ticket paid WITH a gift card.
   It reads `/api/devlog` and proves the barcode appears in full in the
