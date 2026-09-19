@@ -5407,6 +5407,10 @@ function FrontDesk({
           mistaken for the dry-run/live line above it. */}
       {config?.banner ? <p className="studio-banner">{config.banner}</p> : null}
 
+      {/* T112: the customer display, when there is one. Absent until a
+          teacher pairs one, which is every counter today. */}
+      <DisplayMark />
+
       {error ? <p className="note">{error}</p> : null}
 
       {/* Quiet on purpose: waiver state failing open must not read like the
@@ -8643,6 +8647,116 @@ function AuthGate() {
       initialFlash={pinFlash}
       onInitialFlashShown={() => setPinFlash(null)}
     />
+  );
+}
+
+/**
+ * The customer display's connection mark (T112).
+ *
+ * Small and quiet: T111 took the top of the screen back, and a second
+ * screen being fine is not news. It is absent when nothing is paired,
+ * accent when the display is connected, and amber the moment it has been
+ * silent for 45 seconds or said it went away, which is what a teacher
+ * needs to know BEFORE sending a waiver to a dead screen.
+ *
+ * Two sources, deliberately: the `/api/display/events` stream, which is
+ * what makes it immediate, and a 30 second poll of /api/admin/display,
+ * which is what makes it right when the stream is refused (nobody signed
+ * in) or dropped. Neither calls Mindbody.
+ */
+function DisplayMark() {
+  const [state, setState] = useState<{
+    paired: boolean;
+    connected: boolean;
+    name: string | null;
+  } | null>(null);
+
+  const read = useCallback(() => {
+    fetch("/api/admin/display")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!body) return;
+        setState({
+          paired: body.paired === true,
+          connected: body.connected === true,
+          name: body.name ?? null,
+        });
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    read();
+    const timer = setInterval(read, 30_000);
+    return () => clearInterval(timer);
+  }, [read]);
+
+  useEffect(() => {
+    let source: EventSource | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+    const open = () => {
+      if (stopped) return;
+      try {
+        source = new EventSource("/api/display/events");
+      } catch {
+        return;
+      }
+      const mark = (connected: boolean) => (ev: MessageEvent) => {
+        let paired = true;
+        try {
+          const data = JSON.parse(ev.data);
+          if (typeof data?.paired === "boolean") paired = data.paired;
+        } catch {
+          /* An event with no body still says which it was. */
+        }
+        setState((prev) => ({
+          paired,
+          connected,
+          name: prev?.name ?? null,
+        }));
+      };
+      source.addEventListener("connected", mark(true));
+      source.addEventListener("disconnected", mark(false));
+      /* A completed or refused scene is a later item's to act on; here it
+       * is only evidence that the screen is alive. */
+      source.addEventListener("completed", () => read());
+      source.addEventListener("refused", () => read());
+      source.addEventListener("error", () => {
+        /* Refused (nobody signed in) or dropped. Close and try again in
+         * fifteen seconds rather than letting EventSource hammer a 401
+         * every three. */
+        source?.close();
+        source = null;
+        if (!stopped && retry === null) {
+          retry = setTimeout(() => {
+            retry = null;
+            open();
+          }, 15_000);
+        }
+      });
+    };
+    open();
+    return () => {
+      stopped = true;
+      if (retry !== null) clearTimeout(retry);
+      source?.close();
+    };
+  }, [read]);
+
+  if (state === null || !state.paired) return null;
+  return (
+    <p
+      className={state.connected ? "display-mark-row" : "display-mark-row away"}
+      role="status"
+    >
+      <span className="display-dot" aria-hidden="true" />
+      <span>
+        {state.connected
+          ? `Customer display connected${state.name ? `: ${state.name}` : ""}`
+          : "Customer display is not responding"}
+      </span>
+    </p>
   );
 }
 

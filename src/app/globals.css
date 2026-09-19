@@ -7657,3 +7657,139 @@ textarea.reason-note-field:disabled::placeholder {
   font-weight: 600;
   color: var(--ink);
 }
+
+/* --- The customer display (T112) -------------------------------------
+ * The second iPad's own screen, and nothing else's: no bars, no rows, no
+ * drawer. Sized for a student reading it at arm's length across a
+ * counter, so everything here is well above the 16px floor and the
+ * pairing code is the largest type in the app. Tokens only, both
+ * palettes, radius 0, like everywhere else. */
+
+.display {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+  /* The mode mark sits in the bottom corner. */
+  position: relative;
+  overflow-x: hidden;
+}
+
+.display-banner {
+  margin: 0;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+  border-left: 6px solid var(--accent);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.display-middle {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+  padding: 32px 16px 64px;
+  text-align: center;
+}
+
+.display-greeting {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.display-lead {
+  margin: 0;
+  max-width: 28ch;
+  font-size: 20px;
+  color: var(--muted);
+}
+
+/* The one number a teacher reads off this screen from a metre away. */
+.display-code {
+  margin: 0;
+  padding: 16px 24px;
+  border: 2px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 64px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+}
+
+.display-note {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Sandbox or dry run, quietly, in the corner. Nothing at all on a live
+ * studio that is writing for real. */
+.display-mark {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  margin: 0;
+  padding: 6px 10px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* --- The POS header's connection mark (T112) -------------------------
+ * Small on purpose: T111 took the top of the screen back, and a second
+ * screen being fine is not news. It is absent when nothing is paired,
+ * quiet when the display is connected, and amber the moment it has been
+ * silent for 45 seconds, which is the state a teacher has to know about
+ * before sending a waiver to a dead screen. */
+
+.display-mark-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.display-dot {
+  width: 10px;
+  height: 10px;
+  /* A status, not an action, so not --accent (token roles, CLAUDE.md). */
+  background: var(--ink);
+}
+
+.display-mark-row.away {
+  color: var(--warn);
+}
+
+.display-mark-row.away .display-dot {
+  background: var(--warn);
+}
+
+/* --- Customer display block, dev drawer settings tab (T112) ---------- */
+
+.dev-display-code {
+  font-size: 20px;
+  letter-spacing: 0.1em;
+  font-variant-numeric: tabular-nums;
+  padding: 12px;
+  min-height: 48px;
+  width: 8em;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 0;
+}

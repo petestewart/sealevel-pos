@@ -15798,3 +15798,227 @@ refuses to run otherwise.
   actually answers his complaint. If it still does not read as a gift on
   the counter iPad, the shape to try next is a wider bow rather than a
   bigger box: the box is what carries at 20px.
+
+## T112. The customer display, plumbing (2026-09-19)
+
+Phase 2.5 item 1, the first of the six in
+`docs/design/customer-display.md`: a second iPad on the counter that
+faces the student. This item builds nothing a student can act on. It
+builds the pipe every later scene runs through, and stops there: the
+idle screen, the pairing, the cookie, the two tables, the hub, both SSE
+streams, present / cancel / complete / refuse, the header's connection
+mark and the drawer's pair control. The waiver, the ticket, the sign-up
+and the contract are items 2 to 6 and nothing here consumes them.
+
+The rule the whole thing rests on, written once here so the next agent
+cannot miss it: **the display adds zero write paths to Mindbody.**
+Nothing in `src/lib/display.ts` or under `src/app/api/display/` imports
+`mindbody()`. A completed request is a stored result; the write happens
+later, from the teacher's iPad, under the teacher's token, through a
+write route that already exists. That is what keeps dry run, the write
+guard, T49 attribution and T50's "no sign-in, no write" applying
+unchanged.
+
+### 1. The display's identity: its own cookie, and only four routes
+
+A student holds this iPad, so it does not hold the device session. It
+holds `pos_display` (`src/lib/displayauth.ts`): httpOnly, SameSite=Lax
+(same origin as the POS), Secure in production, `d1.<display id>.<hmac>`
+in the device token's shape, carrying the display id and nothing else.
+The key follows the staff cookie's posture (T78): derived from
+`POS_SESSION_SECRET` when it is set, random per process when it is not,
+in which case a restart means re-pairing and the display says so on its
+own screen.
+
+`requireSession` never looks at that cookie, which is the point and is
+asserted route by route in the driver: a browser holding only
+`pos_display` is refused by `/api/roster`, `/api/checkin`, `/api/devlog`,
+`/api/search` and `/api/admin/display`, and gets only the LOCK SCREEN's
+trimmed answer from `/api/config` (banner, dry run, target), which is
+open to everyone by design.
+
+### 2. Pairing: six digits, plus a secret the screen never shows
+
+`/display` opens with no session at all and asks `/api/display/state`
+for a code. The server mints six crypto-random digits AND a random
+secret: the digits go on the screen for a teacher to read, the secret
+stays in the page's memory. A teacher types the digits into the drawer
+(`POST /api/admin/display/pair`, device session plus a signed-in
+teacher, deliberately NOT admin-gated and NOT devtools-gated, because
+"a teacher setting up the counter is the point"), and the display's next
+poll presents code AND secret and is handed the cookie.
+
+So the code alone is worth nothing. Somebody who reads it over the
+counter cannot turn it into a cookie, because they do not hold the
+secret the screen never displayed. A wrong code, or a right code with
+the wrong secret, is counted by a new `makeLimiter` counter in
+`auth.ts` (five, then 30 seconds, its own door as every other one is).
+A code that a teacher has not paired yet polls as "waiting" and is
+deliberately NOT counted: a display polling its own valid code every two
+seconds would otherwise lock the pairing door in ten seconds.
+
+Codes live five minutes; a code is good for exactly one cookie.
+
+### 3. The tables, and what happens without them
+
+Migration 12 adds `displays` (id, name, paired_at, last_seen_at) and
+`display_requests` (id, display_id, kind, initiator, payload, status,
+result, requested_by_staff_id, created_at, completed_at, consumed_at,
+expires_at). Both are charter-clean: the pairing of a studio iPad with
+this counter, and the scene a teacher put on it, exist nowhere else.
+Nothing Mindbody holds is stored, and a payload carries only what the
+student can already see on the screen in front of them.
+
+With no `DATABASE_URL` the app runs exactly as it does today: the hub is
+memory only, the idle screen says a restart will need re-pairing, and
+the drawer's block says the same thing to the teacher. `durable` means
+BOTH halves, a row and a derivable cookie key, because either one
+missing makes "paired" stop meaning it after a deploy.
+
+Requests expire after 30 minutes, result and all: a result is a handle
+for one finalisation, not a record. `consumeRequest` is the spend, and
+with a database the `UPDATE ... WHERE consumed_at IS NULL` is what
+decides, so one signature cannot be spent twice. Nothing calls it yet;
+item 3 is its first caller.
+
+### 4. The hub and the two streams
+
+`src/lib/display.ts` is an in-process hub on globalThis, the `calllog.ts`
+idiom: the paired display, the one request in progress, the subscriber
+set for each stream, and a bounded buffer of recent events per stream so
+a reconnecting `EventSource` can be handed what it missed by
+`Last-Event-ID`. Railway runs one instance, which is what makes that
+honest; LISTEN/NOTIFY slots in behind the same API if that changes.
+
+`GET /api/display/stream` (display cookie) replays the buffer, then the
+scene as it stands, then pushes `present`, `cancel` and `idle`, with a
+15s heartbeat comment. Each heartbeat stamps `last_seen_at` in memory
+and, at most once a minute, in the row. `GET /api/display/events`
+(device session AND a signed-in teacher) carries `completed`, `refused`,
+`connected` and `disconnected` the same way. The state replayed on
+connect is sent with `id: 0`, so a reconnect's `Last-Event-ID` is never
+moved past an event it has not seen.
+
+Only one thing holds the screen at a time: a second `present` while one
+is pending is 409, as is a present with nothing paired or nothing
+connected. `complete` and `refuse` take the display cookie only, must
+name the display's OWN current request, and the server strips any client
+id, staff id or price the display sends, because the display is never
+the source of those.
+
+### 5. What the counter sees
+
+The POS header gains one small line (`DisplayMark` in `page.tsx`):
+absent when nothing is paired, which is every counter today; `--accent`
+when the display is connected; `--warn` the moment it has been silent
+for 45 seconds or said it went away. It is driven by the events stream
+and by a 30 second poll of `/api/admin/display`, so it is immediate when
+the stream is up and still right when it is refused (nobody signed in)
+or dropped. T111 had just quietened the top of the screen; this is one
+16px line with a 10px square, and nothing at all until there is a second
+screen.
+
+The drawer's Settings tab gains a "customer display" block under the
+T89 controls: the state in a sentence, a numeric code field at 48px with
+a 64px Pair button, and Unpair behind one confirm. Anybody who can open
+the drawer may use it. The code field is a text field and the "no amount
+in a text field" rule is untouched: it is not an amount, and the OS
+keyboard is the right tool for six digits typed once.
+
+`/api/config` gains `display: {paired, connected}` on the authenticated
+answer only.
+
+### Build notes
+
+- `/display` is its own route with its own tree: no NavBar, no
+  DevDrawer, no lock screen, no POS. The theme boot script in
+  `layout.tsx` applies unchanged. The banner goes through T99's
+  `plainText` and never `dangerouslySetInnerHTML`, which is stricter
+  here than anywhere else because this iPad is in a student's hands.
+- The mode mark in the corner appears in the sandbox or under dry run
+  and is absent on a live studio writing for real, matching T111's
+  reasoning on the teacher's banner.
+- Every colour is a token that already existed in both palette blocks;
+  no hex was added anywhere.
+
+#### Verified
+
+Drivers in the scratchpad (not in the repo): `server.mjs` (a real
+production Next server with one thing faked, see "Could not verify"),
+`routes.mjs`, `restart.mjs`, `dbrows.mjs`, `ui.mjs`.
+
+- `npm run build` with no `DATABASE_URL` and no Mindbody credentials:
+  clean, and `/display` prerenders as a dynamic route. `npx tsc
+  --noEmit` clean throughout.
+- **54 route assertions passed with no database** and **53 with
+  Postgres**: the pairing exchange end to end (code and secret issued,
+  wrong secret refused, valid unpaired code waits, wrong code refused,
+  pairing succeeds, cookie issued, a spent code cannot be replayed);
+  the display cookie refused by `/api/roster`, `/api/checkin`,
+  `/api/devlog`, `/api/search` and `/api/admin/display`, and given only
+  the banner answer by `/api/config`; both streams' headers, their
+  replay on connect, and a 15 second heartbeat actually arriving on
+  both; `present` refused for a browser with no staff session (401
+  `reason: "staff"`), for an unknown kind, for a payload that is not an
+  object, for one over 64KB, and for a second scene while one is up;
+  `complete` and `refuse` refused for a teacher's browser and for a
+  stale id, accepted once and 409 the second time, with the client id,
+  staff id and price the display sent dropped on the floor; `cancel`
+  taking a scene down and the display receiving it; `/api/admin/display`
+  and `/api/config` agreeing; unpair, after which the old display cookie
+  opens nothing.
+- **With Postgres** (a local 16 cluster, since Docker has no daemon
+  here): migration 12 applied (schema_version 12), the `displays` row
+  written and read back, a presented `contract` scene and its result
+  landing in `display_requests` with `initiator=teacher`,
+  `requested_by_staff_id`, the payload and the result as jsonb and
+  `consumed_at` null; a **server restart with the pairing intact**, the
+  row reloaded lazily, the display's own cookie still opening its
+  stream; and `last_seen_at` moving on a heartbeat past the one minute
+  write throttle (14:49:08 to 14:50:18) and deliberately not moving
+  inside it.
+- **A restart with no database** leaves nothing paired, the old display
+  cookie names nobody, and the display is handed a fresh code and told
+  the pairing is not durable.
+- **32 Playwright assertions passed**: the idle screen in both palettes
+  at 1180px and at 390px, with the banner, the code, the sandbox mark,
+  the boot script's `data-theme`, its own background, nothing under
+  16px and no horizontal overflow; no drawer and no nav bar on
+  `/display`; no header mark on the POS while nothing is paired; the
+  drawer's block, its 64px Pair button, a wrong code refused in it, a
+  real pairing done through the UI, the display leaving its code behind
+  and saying it is ready; the header mark appearing and reading as
+  connected; and the mark going amber after the display's browser was
+  closed.
+
+#### Could not verify
+
+- **No Mindbody call was made, deliberately**, and none should be: this
+  item adds no write path. Nothing was run against a live or sandbox
+  site.
+- **The staff session was faked in the driver.** `present`, `pair` and
+  `unpair` sit behind `requireActor`, which can only be satisfied by a
+  real Mindbody sign-in, so the harness seeded the session Map on
+  globalThis and computed the cookie from `POS_SESSION_SECRET`. The
+  routes ran their own guards unchanged (the 401 `reason: "staff"`
+  cases were driven with no seeded session at all), but **no teacher has
+  signed in against Mindbody and then paired a display**.
+- **Docker was unavailable**, so the Postgres runs used a local
+  PostgreSQL 16 cluster rather than `docker-compose.yml`. The SQL is the
+  same; a deployed Railway database has not run migration 12.
+- **No real iPad.** Everything was driven in headless Chromium at iPad
+  and phone widths. Safari's `EventSource` behaviour behind Railway's
+  proxy, Add to Home Screen, and Guided Access are all unexercised, and
+  the 15 second heartbeat exists precisely for a proxy nobody has tested
+  this against yet.
+- **The request expiry (30 minutes) and the code expiry (five minutes)
+  were not waited out**, only read; the 45 second connection window and
+  the one minute row throttle were.
+- **`consumeRequest` has no caller yet**, so the one-finalisation rule is
+  exercised only by its own unit-level behaviour through the completed
+  request's 409 on a second complete. The review also found that it
+  can only spend the display's CURRENT request, and `presentRequest`
+  replaces a completed-but-unconsumed one, so a result waiting for a
+  sleeping teacher iPad (the design's 30 minutes) is stranded in memory
+  by the next scene. Item 3, its first caller, must look the request up
+  by id or refuse a present that would strand a result.
