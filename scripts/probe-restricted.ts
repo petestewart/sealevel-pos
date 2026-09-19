@@ -188,7 +188,7 @@ async function rehearse(
   clientId: string,
   line: Awaited<ReturnType<typeof passLine>>["line"],
   actor: Actor | null,
-): Promise<{ accepted: boolean; message: string }> {
+): Promise<{ accepted: boolean; suppressed: boolean; message: string }> {
   console.log(
     `\n=== pricing the pass ${line.metadataId} for client ${clientId},` +
       ` Test: true, ` +
@@ -198,15 +198,42 @@ async function rehearse(
   );
   try {
     const priced = await priceCart([line], clientId, actor, null);
+    /* A SUPPRESSED call is not an answer. A Test cart is still a POST, so
+     * dry run and the write guard each stop it before it leaves, and
+     * Mindbody never sees the question. The first live run of this probe
+     * (2026-09-19) reported four suppressed calls as "ACCEPTED ... total
+     * null" and concluded the rule does not bite, which was worth
+     * nothing. Every probe in this repo has now made this mistake once;
+     * it is the null totals that give it away. */
+    if (priced.suppressed) {
+      console.log(
+        "  SUPPRESSED. Mindbody never saw this call, so it answers\n" +
+          "  nothing. This client is not in POS_WRITE_CLIENT_IDS, or\n" +
+          "  POS_DRY_RUN is on. Use a client the guard allows and set\n" +
+          "  POS_DRY_RUN=false, then run it again.",
+      );
+      return { accepted: false, suppressed: true, message: "suppressed" };
+    }
+    if (
+      priced.subTotal === null &&
+      priced.grandTotal === null &&
+      priced.taxTotal === null
+    ) {
+      console.log(
+        "  NO FIGURES. Mindbody answered without pricing anything, which\n" +
+          "  settles nothing either way. Treat this run as void.",
+      );
+      return { accepted: false, suppressed: true, message: "no figures" };
+    }
     console.log(
       `  ACCEPTED. Mindbody priced it: subtotal ${priced.subTotal}, tax ` +
         `${priced.taxTotal}, total ${priced.grandTotal}.`,
     );
-    return { accepted: true, message: "accepted" };
+    return { accepted: true, suppressed: false, message: "accepted" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.log(`  REFUSED: ${message}`);
-    return { accepted: false, message };
+    return { accepted: false, suppressed: false, message };
   }
 }
 
@@ -301,7 +328,15 @@ async function main(): Promise<void> {
   } else {
     const asTeacher = await rehearse(clientId, line, teacher.actor);
     console.log(`\n=== the answer\n`);
-    if (!asStudio.accepted && asTeacher.accepted) {
+    if (asStudio.suppressed || asTeacher.suppressed) {
+      console.log(
+        `  VOID. At least one of the two calls never reached Mindbody, so\n` +
+          `  there is nothing to compare. Run it with a client that\n` +
+          `  POS_WRITE_CLIENT_IDS allows, POS_DRY_RUN=false, and a client\n` +
+          `  the rule actually refuses. A run that settles nothing must not\n` +
+          `  be read as a run that settled something.`,
+      );
+    } else if (!asStudio.accepted && asTeacher.accepted) {
       console.log(
         `  THE TEACHER'S TOKEN GETS THROUGH and the service account does\n` +
           `  not. An Override can really sell this pass: rehearse and charge\n` +
@@ -344,7 +379,13 @@ async function main(): Promise<void> {
     const subTeacher =
       teacher === null ? null : await rehearse(clientId, subLine, teacher.actor);
     console.log(`\n=== the substitute's answer\n`);
-    if (subStudio.accepted || subTeacher?.accepted === true) {
+    if (subStudio.suppressed || subTeacher?.suppressed === true) {
+      console.log(
+        `  VOID. At least one of these calls never reached Mindbody, so the\n` +
+          `  substitute has not been asked anything. Do not configure a\n` +
+          `  mapping on the strength of this run.`,
+      );
+    } else if (subStudio.accepted || subTeacher?.accepted === true) {
       console.log(
         `  THE SUBSTITUTE PRICES for this client` +
           `${subStudio.accepted ? " on the service account" : " under the teacher's token only"}.\n` +
