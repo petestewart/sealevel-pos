@@ -53,6 +53,7 @@ import { useVisualViewport } from "./viewport";
 import type { CardOnFile } from "@/lib/clientcard";
 import type { ClientProfile } from "@/lib/clientprofile";
 import { stripSignatures } from "@/lib/notesig";
+import { IDEMPOTENCY_HEADER, newIdempotencyKey } from "@/lib/idemkey";
 
 /**
  * The counter screen. One class selector, one roster, one search box.
@@ -4644,7 +4645,13 @@ function FrontDesk({
       try {
         chargeRes = await fetch("/api/checkout", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            /* T113: one key for this one gesture, so a retry the browser
+             * makes below us cannot charge a second time. payFlight above
+             * is still what stops a second tap. */
+            [IDEMPOTENCY_HEADER]: newIdempotencyKey(),
+          },
           body: JSON.stringify({
             items: [
               {

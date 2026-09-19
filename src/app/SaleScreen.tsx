@@ -16,6 +16,7 @@ import { actorFallbackLine } from "./actornote";
 import CardModal from "./CardModal";
 import { toggleTheme } from "./theme";
 import type { TypedCard } from "@/lib/typedcard";
+import { IDEMPOTENCY_HEADER, newIdempotencyKey } from "@/lib/idemkey";
 
 import {
   COMP_DETAIL_MAX,
@@ -3312,10 +3313,20 @@ function PaymentPanel(props: {
     setCharging(true);
     onBusyChange(true);
     setResult(null);
+    /* T113: ONE key for THIS tap, minted here and nowhere else. Every
+     * transport-level retry of the fetch below carries it unchanged, so
+     * the server can tell that retry from a second tap, which mints its
+     * own. The single flight above still refuses a second tap while this
+     * one runs; the key is what protects the request the browser no
+     * longer controls. */
+    const idemKey = newIdempotencyKey();
     try {
       const res = await fetch("/api/checkout", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          [IDEMPOTENCY_HEADER]: idemKey,
+        },
         body: JSON.stringify({
           items: saleLines.map((line) => ({
             type: line.item.type,
