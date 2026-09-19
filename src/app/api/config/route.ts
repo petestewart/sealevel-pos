@@ -115,7 +115,7 @@ export async function GET(request: Request) {
      * Dry run and the write guard have no equivalent: they are env only,
      * always, and that is the rail T89 kept. */
     targetSource: targetSource(),
-    /* T112: whether a customer display is paired and awake. Two booleans
+    /* T113: whether a customer display is paired and awake. Two booleans
      * and no id, because this is what the header's connection mark and
      * the buttons that need a screen read; the drawer's block reads the
      * fuller answer from /api/admin/display. Only on the authenticated

@@ -1,5 +1,5 @@
 /**
- * The Server-Sent Events shape both display streams use (T112).
+ * The Server-Sent Events shape both display streams use (T113).
  *
  * Deliberately small and dependency-free: a ReadableStream, an `id:` on
  * every event so a reconnecting EventSource can say `Last-Event-ID`, and

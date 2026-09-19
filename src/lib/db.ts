@@ -385,7 +385,7 @@ const MIGRATIONS: { version: number; sql: string }[] = [
     `,
   },
   {
-    /* T112: the customer-facing display (docs/design/customer-display.md).
+    /* T113: the customer-facing display (docs/design/customer-display.md).
      * Both tables are charter-clean: they hold what Mindbody has no home
      * for and never a copy of what it does. `displays` is the pairing of
      * a studio-owned iPad with this counter, which exists nowhere else;
@@ -1232,7 +1232,7 @@ export async function setSetting(
   }
 }
 
-/* --- The customer display (T112) ------------------------------------- */
+/* --- The customer display (T113) ------------------------------------- */
 
 export interface DisplayRow {
   id: string;

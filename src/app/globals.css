@@ -7658,7 +7658,7 @@ textarea.reason-note-field:disabled::placeholder {
   color: var(--ink);
 }
 
-/* --- The customer display (T112) -------------------------------------
+/* --- The customer display (T113) -------------------------------------
  * The second iPad's own screen, and nothing else's: no bars, no rows, no
  * drawer. Sized for a student reading it at arm's length across a
  * counter, so everything here is well above the 16px floor and the
@@ -7745,7 +7745,7 @@ textarea.reason-note-field:disabled::placeholder {
   font-weight: 600;
 }
 
-/* --- The POS header's connection mark (T112) -------------------------
+/* --- The POS header's connection mark (T113) -------------------------
  * Small on purpose: T111 took the top of the screen back, and a second
  * screen being fine is not news. It is absent when nothing is paired,
  * quiet when the display is connected, and amber the moment it has been
@@ -7779,7 +7779,7 @@ textarea.reason-note-field:disabled::placeholder {
   background: var(--warn);
 }
 
-/* --- Customer display block, dev drawer settings tab (T112) ---------- */
+/* --- Customer display block, dev drawer settings tab (T113) ---------- */
 
 .dev-display-code {
   font-size: 20px;

@@ -18,7 +18,7 @@ import {
 import { displayCookieDurable } from "./displayauth";
 
 /**
- * The customer display's hub (T112, docs/design/customer-display.md).
+ * The customer display's hub (T113, docs/design/customer-display.md).
  *
  * In-process, on globalThis like the call log (a dev recompile must not
  * unpair the counter), holding: which display is paired, the one request

@@ -185,7 +185,7 @@ it there. The display never writes to Mindbody: every result is finalised
 from the teacher's iPad through the write routes that already exist.
 Plumbing first, then one scene at a time, in this order.
 
-- [x] Plumbing: `/display`, pairing code, `pos_display` cookie, `displays` and `display_requests` tables, the hub, both SSE routes, present/cancel/complete/refuse, header connection mark, drawer pair/unpair. Done when a paired iPad survives a restart on the idle screen. **T112** (the pairing survives a restart with a database; with none it re-pairs and says so).
+- [x] Plumbing: `/display`, pairing code, `pos_display` cookie, `displays` and `display_requests` tables, the hub, both SSE routes, present/cancel/complete/refuse, header connection mark, drawer pair/unpair. Done when a paired iPad survives a restart on the idle screen. **T113** (the pairing survives a restart with a database; with none it re-pairs and says so).
 - [ ] Ticket, summary mode: live mirror of the priced cart and the post-sale summary. No writes.
 - [ ] Waiver: sign on the display, signature kept in `waiver_receipts` and copied to Mindbody documents (probe D-B1 first).
 - [ ] Ticket approval: `customer_confirms_sale` in `app_settings`, admin-edited, enforced by `/api/checkout` on the server; teacher override by their own PIN (T48 idiom), filed on the client.

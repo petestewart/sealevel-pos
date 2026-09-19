@@ -5407,7 +5407,7 @@ function FrontDesk({
           mistaken for the dry-run/live line above it. */}
       {config?.banner ? <p className="studio-banner">{config.banner}</p> : null}
 
-      {/* T112: the customer display, when there is one. Absent until a
+      {/* T113: the customer display, when there is one. Absent until a
           teacher pairs one, which is every counter today. */}
       <DisplayMark />
 
@@ -8651,7 +8651,7 @@ function AuthGate() {
 }
 
 /**
- * The customer display's connection mark (T112).
+ * The customer display's connection mark (T113).
  *
  * Small and quiet: T111 took the top of the screen back, and a second
  * screen being fine is not news. It is absent when nothing is paired,

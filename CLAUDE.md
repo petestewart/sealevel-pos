@@ -211,7 +211,7 @@ Under it, the write guard in words (T111: read only, a line and no
 control, because with the banner gone in the ordinary production state
 this tab is the only place an unrestricted live counter is written down),
 and "dry run on this iPad", which turns on a suppression for this browser
-only. Under those, since T112, "customer display": whether a second
+only. Under those, since T113, "customer display": whether a second
 screen is paired and connected, a six-digit code field with a Pair
 button, and Unpair behind one confirm. Anybody who can open the drawer
 may use it; pairing decides which SCREEN a waiver appears on, never
@@ -226,7 +226,7 @@ exceptions, and both are safe in only one direction: the target switch is
 admin-only, audited in the log and refuses an incomplete credential set,
 and the local dry run can only make this iPad safer.
 
-## Customer display (T112, Phase 2.5 item 1)
+## Customer display (T113, Phase 2.5 item 1)
 
 A second iPad on the counter, facing the student, at `/display`. Design:
 `docs/design/customer-display.md`; today only the plumbing exists, which

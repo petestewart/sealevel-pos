@@ -215,10 +215,10 @@ const deviceLimiter = makeLimiter();
 const verifyLimiter = makeLimiter();
 const enrollLimiter = makeLimiter();
 const signinLimiter = makeLimiter();
-/** T112: the customer display's pairing code. Its own counter, like every
+/** T113: the customer display's pairing code. Its own counter, like every
  *  other door here: a display fumbling a six-digit code must not lock a
  *  teacher out of the iPad, and the reverse. TWO counters, one per side
- *  (T112 review): the teacher's Pair button sits behind the device
+ *  (T113 review): the teacher's Pair button sits behind the device
  *  session, while the display's own poll is reachable by any browser at
  *  all, and one shared counter let an anonymous browser burn five bad
  *  codes and lock the teacher's button for thirty seconds, on repeat. */
@@ -273,7 +273,7 @@ export function recordSigninSuccess(): void {
   signinLimiter.success();
 }
 
-/** The display pairing's counter (T112). Six crypto-random digits live
+/** The display pairing's counter (T113). Six crypto-random digits live
  *  for five minutes, and a wrong code (or a right code with the wrong
  *  secret) gets the same five-then-30s, so guessing a code before it
  *  expires is not a loop anybody can run. */

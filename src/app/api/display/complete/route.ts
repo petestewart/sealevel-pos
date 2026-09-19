@@ -12,7 +12,7 @@ import { displayIdFrom } from "@/lib/displayauth";
 export const dynamic = "force-dynamic";
 
 /**
- * The student finished (T112). The display cookie alone, and the request
+ * The student finished (T113). The display cookie alone, and the request
  * id must be THIS display's current one, so a stale id (a scene the
  * teacher cancelled, a result already sent) is refused with 409 rather
  * than overwriting something.

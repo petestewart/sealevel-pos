@@ -15799,7 +15799,7 @@ refuses to run otherwise.
   the counter iPad, the shape to try next is a wider bow rather than a
   bigger box: the box is what carries at 20px.
 
-## T112. The customer display, plumbing (2026-09-19)
+## T113. The customer display, plumbing (2026-09-19)
 
 Phase 2.5 item 1, the first of the six in
 `docs/design/customer-display.md`: a second iPad on the counter that

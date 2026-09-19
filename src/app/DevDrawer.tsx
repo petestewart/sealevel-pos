@@ -516,7 +516,7 @@ function SettingsPanel({
   );
 }
 
-/* --- Customer display (T112) ------------------------------------------
+/* --- Customer display (T113) ------------------------------------------
  *
  * Pair and unpair the second iPad. Anyone who can open the drawer may use
  * it, and it is gated by the device session and a signed-in teacher and
