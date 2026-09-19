@@ -2882,9 +2882,11 @@ function PaymentPanel(props: {
    * T95: the one thing a teacher MUST take off this screen. The card
    * Mindbody sold is blank card stock in their hand, and this id is what
    * ties the two together, so it is the largest thing here after the
-   * total. The id is a bearer secret everywhere else (the call log
-   * strikes it out, the sale history does not carry it); this screen and
-   * the emailed receipt are the two places it is meant to be read.
+   * total. The id is a bearer secret everywhere else (the sale history
+   * does not carry it, and nothing answers with it); this screen and the
+   * emailed receipt are the two places it is meant to be READ. T109: the
+   * dev drawer shows it too, on Pete's call, which is a place to debug
+   * from rather than a place to read it off.
    *
    * T102: and the screen holds until the confirmation is tapped. One tap
    * for the whole sale, however many cards are on it; Done, Escape and

@@ -162,7 +162,18 @@ one.
 It is recorded server-side in `src/lib/calllog.ts`, which matters: it shows
 what Mindbody actually received and returned, not what our API routes chose
 to forward. A call that ran under a signed-in teacher's token (T49) shows
-`actor=<staff id>`; the token itself is never recorded. Enabled by
+`actor=<staff id>`, and **since T109 the token itself as well**, in full,
+in the expanded record and in what `copy` lifts (Pete, told it is the one
+live credential on the list: "log staff session tokens. keep card numbers,
+CVVs, teacher PINs redacted."). **The gift card barcode id is no longer
+struck either** (Pete, same day: "no redactions at all. these are all
+things the teacher can see already and i am not worried about it."), which
+is what makes three `giftcardbalance` calls tellable apart; T83's
+redaction of it, in the query, in a payment's Metadata and in a quoted
+refusal, is gone, and so is its half of `scrubSecrets`, so a suppressed
+write's server log line names the barcode too. Still struck, deliberately:
+card numbers (by key, by 13-to-19-digit shape, either direction), CVVs,
+and teacher PINs with their one-shot tokens. Enabled by
 `POS_DEVTOOLS=true` or a dev build; `/api/devlog`
 404s otherwise, because the records carry client names and booking details
 and must not be reachable from the counter iPad.
@@ -281,6 +292,21 @@ while `git clone` works, so clone the repo rather than fetching files.
   is rehearsed with `Test: true` and both `Value` and `AmountPaid` are
   asserted to the cent before anything is charged; a disagreement, or
   either figure missing, refuses the whole ticket.
+- **`GET /sale/giftcardbalance` answers 200 with `RemainingBalance: 0.0`
+  for a barcode id Mindbody has NEVER HEARD OF.** Not a 404, not a 4xx
+  (Pete's live counter, 2026-09-19, T109: three reads of three ids
+  invented seconds earlier, each a 200 under 120ms). T95 recorded this as
+  an open question and guessed the cautious way round, which made every
+  id the app generated read as taken and refused every gift card sale,
+  100% of the time. So **zero is FREE and anything above zero is taken**,
+  and an answer that settles nothing (a 5xx, a timeout, a 200 with no
+  balance or a balance that is not a number) still refuses the sale.
+  The price of the rule: that endpoint cannot tell "no such card" from "a
+  card spent down to zero", and `purchasegiftcard` RELOADS an existing
+  barcode, so a long-dead card could in principle be reloaded. 32^6 is a
+  billion ids against a few thousand a studio will ever issue, which puts
+  it near one in a million; the alternative was a feature that could not
+  be used at all. The full weighing is in T109.
 - **A CART will take a gift card's money and sell nothing** (T103,
   four probes ending in two live comped sales, 2026-09-17). A gift card
   product prices as a cart line: the editable custom-amount product at

@@ -286,7 +286,9 @@ export function forgetToken(): void {
  * Who a call runs as (T49). When present, the Authorization header is
  * this teacher's token instead of the service account's, on that call
  * only, so Mindbody attributes the write to them. `staffId` goes in the
- * call log as `actor`; the token goes nowhere but the header.
+ * call log as `actor`, and since T109 the TOKEN goes there too, in full
+ * (Pete: "log staff session tokens. keep card numbers, CVVs, teacher
+ * PINs redacted."); see CallRecord.actorToken for the trade.
  */
 export interface Actor {
   token: string;
@@ -531,6 +533,7 @@ export async function mindbody<T = any>(
         ms: 0,
         outcome: "dry-run",
         actor: null,
+        actorToken: null,
         requestBody: opts.body ?? null,
         responseBody: byBrowser
           ? "suppressed: dry run is on for this browser"
@@ -552,6 +555,7 @@ export async function mindbody<T = any>(
         ms: 0,
         outcome: "write-guard",
         actor: null,
+        actorToken: null,
         requestBody: opts.body ?? null,
         responseBody:
           `suppressed: client ${client ?? "(none named)"} is not in ` +
@@ -578,6 +582,7 @@ export async function mindbody<T = any>(
         ms: 0,
         outcome: "target-switch",
         actor: null,
+        actorToken: null,
         requestBody: opts.body ?? null,
         responseBody:
           "refused: the studio target just changed; this write was not sent",
@@ -616,6 +621,11 @@ export async function mindbody<T = any>(
     ms: Date.now() - started,
     outcome: "sent",
     actor: opts.actor?.staffId ?? null,
+    /* T109: the token this call actually authenticated with, when it was
+     * a teacher's. It is the same string the Authorization header above
+     * carried, so the record and the wire agree. The service account's
+     * own token is a different credential and is not named here. */
+    actorToken: opts.actor?.token ?? null,
     requestBody: opts.body ?? null,
     responseBody: text,
   });
@@ -660,6 +670,7 @@ export async function mindbody<T = any>(
         ms: Date.now() - retryStarted,
         outcome: "sent",
         actor: null,
+        actorToken: null,
         requestBody: opts.body ?? null,
         responseBody: retryText,
       });
