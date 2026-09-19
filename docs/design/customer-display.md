@@ -1,0 +1,401 @@
+# The customer-facing iPad
+
+Architecture for a second iPad at the counter that faces the student. The
+teacher's iPad stays the master: nothing starts on the customer display
+except because a teacher put it there, and nothing the student does on it
+reaches Mindbody except through the teacher's own write routes. Four
+things it will do, built one at a time in the order at the end:
+
+1. **Sign the waiver** with a finger, and keep the signature.
+2. **See the ticket** during a sale, and, when a studio-wide setting says
+   so, approve it before the charge goes out.
+3. **Register** as a new client by typing their own name, email and phone.
+4. **Sign a contract** when a monthly autopay is sold, and keep that too.
+
+This document is the reasoning. The build items land in `docs/PLAN.md`
+under "Phase 2.5" and the usual ticket record in `docs/TICKETS.md`.
+Read `front-desk-pos.md` "Waiver status" and CLAUDE.md's safety section
+first: every rule there still holds, and this design is shaped by them.
+
+---
+
+## What it is not
+
+- **Not a second POS.** The customer iPad has no roster, no search, no
+  catalog, no drawer, no teacher session. It renders exactly one thing at
+  a time, chosen by the teacher, and otherwise shows an idle screen. If
+  someone walks off with it they hold a signed-in nothing.
+- **Not the QR-on-their-phone flow.** Phase 3 (the student's own phone,
+  Mindbody-hosted card capture, Apple Pay) is unchanged and still the
+  better end state for card storage. This is a studio-owned device on
+  the counter, which means a bigger screen, no pairing per student, and
+  no dependence on the student's phone or on Mindbody hosting anything.
+  The two share the "put something in front of the student" idea and
+  nothing else; the waiver text, receipt and release write are already
+  built (T18, T29) and are reused as-is.
+- **Not a payment surface.** No card is ever typed on it (the design
+  doc's "we can never build our own add-a-card form" rule), and it never
+  calls `/api/checkout`. Approving a ticket is a yes/no; the charge still
+  goes out from the teacher's iPad under the teacher's token.
+
+---
+
+## Shape
+
+```
+teacher iPad  ──HTTPS──▶  server (Railway, one instance)  ◀──HTTPS──  customer iPad
+  /  (the POS)             src/lib/display.ts                          /display
+  pos_session cookie       in-memory hub + display_requests table       pos_display cookie
+  staff session            SSE fan-out, per display                    SSE subscriber
+```
+
+Everything goes through the server. The two iPads never talk to each
+other directly: no WebRTC, no LAN discovery, no Bluetooth. That is the
+whole reason it can be a web app, and it means the customer display works
+wherever the POS works, over the same Railway URL, with the same TLS.
+
+One new concept, the **display request**: a teacher puts a *scene* on a
+display, the student acts, and the result comes back keyed by the
+request id. Four scene kinds (`waiver`, `ticket`, `register`,
+`contract`), one at a time per display. The teacher's iPad can cancel it,
+and the display can complete it or refuse it. That is the entire protocol;
+each feature is one scene kind plus what the teacher's iPad does with the
+result.
+
+### The display's identity: paired, minimal, its own cookie
+
+The customer iPad does NOT hold the device session (`pos_session`) and
+never sees the teacher sign-in gate. A student holds this device; a
+cookie that opens the POS must not be on it. Instead:
+
+- `/display` opens without any session and shows a **six-digit pairing
+  code** with the studio banner. The code lives in server memory for
+  five minutes.
+- A signed-in teacher types the code into the dev drawer's Settings tab
+  ("Customer display"). `POST /api/admin/display/pair` (device session +
+  staff session; not admin-gated, a teacher setting up the counter is the
+  point) binds that display to a `display_id`, and the display's next
+  poll receives its `pos_display` cookie: httpOnly, HMAC-signed like the
+  device token (`src/lib/auth.ts` idiom, same `POS_SESSION_SECRET`
+  pepper), carrying only the display id. It grants exactly the
+  `/api/display/*` routes and nothing else; `requireSession` still 401s
+  everything real.
+- The binding is a row in `displays` (id, name, paired_at, last_seen_at)
+  when a database is configured, and memory otherwise, in which case a
+  restart means re-pairing, which the display says on screen. Same
+  posture as the T78 staff sessions. Unpair from the same drawer control.
+- There is **one counter**, so the POS talks to "the display" rather than
+  choosing one. The table allows more so a second counter is a pairing,
+  not a redesign; until then the newest paired display is the display.
+
+### Transport: SSE down, POST up, memory hub, table for durability
+
+- **Server to display**: `GET /api/display/stream`, a Server-Sent Events
+  response the display holds open. On connect the server replays the
+  display's current request (so a reload or a Safari tab resume lands on
+  the right scene), then pushes `present`, `cancel` and `idle` events. A
+  15s heartbeat comment keeps Railway's proxy and Safari from closing it,
+  and `EventSource` reconnects on its own. `last_seen_at` is stamped on
+  each heartbeat; the POS header shows a small "display" mark that goes
+  amber after 45s of silence, so a teacher knows before sending a waiver
+  to a dead screen.
+- **Server to teacher**: the POS already fetches; it gains
+  `GET /api/display/events`, the same SSE shape, delivering `completed`,
+  `refused` and `disconnected` for the requests this counter made. SSE
+  rather than polling because the waiver case needs "the student signed,
+  the release went out" to show up on the teacher's screen with no tap,
+  and 350ms polling for an hour is more calls than a queue makes.
+- **Display to server**: `POST /api/display/complete` with the request id
+  and the result; `POST /api/display/refuse` with a reason. The display
+  never sends a client id, a staff id or a price; it echoes the request
+  id and the server looks up what the request was.
+- **The hub** (`src/lib/display.ts`): an in-process map of display id to
+  current request plus subscriber sets, the same idiom as `calllog.ts`.
+  Railway runs one instance and the deploy doc says so; if that ever
+  changes, Postgres `LISTEN/NOTIFY` slots in behind the same hub API. Not
+  built until needed.
+- **`display_requests` table** (id, display_id, kind, payload jsonb,
+  status, result jsonb, requested_by_staff_id, created_at, completed_at,
+  expires_at). It exists for one reason: a signature or a typed
+  registration must survive the server restarting between the student
+  tapping Done and the teacher's iPad consuming it. With no database the
+  hub is memory-only and the display says "re-pair after a restart"; the
+  charter's "runs fully without DATABASE_URL" holds because every scene
+  degrades to the counter flow that already exists (the T18 dialog on the
+  teacher's iPad, the T59b form, the contract purchase without a
+  signature). A request that is never consumed expires after 30 minutes
+  and its result is deleted; results are handles for one finalisation,
+  not a record.
+
+### Who writes to Mindbody, and under whose token
+
+**The display never writes to Mindbody, and the server never writes on
+the display's behalf.** A completed request is a stored result; the write
+happens when the teacher's iPad, which is subscribed and awake, receives
+`completed` and calls the existing write route with a `displayRequestId`
+instead of the payload. The route pulls the signature or the form from
+the stored request (never trusting the teacher's browser to relay it),
+verifies it belongs to this counter and is unconsumed, runs the write
+under `requireActor` exactly as today, then marks the request consumed.
+
+This keeps every rule in one place. Dry run, the write guard, T49
+attribution, the T50 "no sign-in, no write" refusal and the dead-token
+handling all apply unchanged because the write route is unchanged in its
+auth posture. It also means the audit is honest: the drawer's call log
+shows the write with `actor=<staff id>` of the teacher who put the scene
+up, which is who Mindbody should name as `ReleasedBy` or the sales rep.
+
+The one cost is that finalisation waits for the teacher's iPad. It is
+awake at the counter (it has an SSE stream open) and the write goes out
+without a tap, so in practice the student sees "Thank you" and the
+teacher's row updates in the same second. If the teacher's iPad IS
+asleep, the result waits in the table for up to 30 minutes, and the
+teacher's screen finalises it on wake and says so. That is the right
+failure: a write that needs a teacher present rather than one that
+happens because a student tapped a screen nobody was watching.
+
+### What the display shows when idle
+
+The studio banner (`app_settings` `banner_text`, or `POS_BANNER_TEXT`), a
+greeting, and the theme the iPad is set to (T70's `data-theme` boot
+script works unchanged). In the sandbox, or under dry run, a small mode
+mark in the corner: the "never remove that banner" rule is for the
+teacher, but a display that a teacher glances at should not lie either,
+and a live studio shows nothing there. The display renders every
+Mindbody-sourced text through `plainText` (T99) and none of it through
+`dangerouslySetInnerHTML`: it is now in a student's hands, which makes
+the rule stricter, not looser.
+
+Kiosk posture: Add to Home Screen, then iPadOS Guided Access to pin the
+app and disable the home button. The page itself hides nothing it should
+not, because it holds nothing.
+
+---
+
+## Scene 1: the waiver
+
+**Trigger.** The T18 waiver dialog on the teacher's iPad gains one 64px
+button beside "They have read it and agree": **"Sign on the customer
+screen"**, enabled only when a display is paired and connected. Tapping
+it POSTs `/api/display/present` `{kind: "waiver", clientId}`; the server
+builds the payload from its own `getWaiver()` (text and sha256; the
+display is never sent a hash to echo, the server already holds it on the
+request) plus the student's first name for the greeting.
+
+**On the display.** The full waiver text, scroll-to-end required exactly
+as T18 requires it, a signature pad, "Clear", and "I have read it and
+agree" at 64px, disabled until the scroll reached the end and the pad has
+ink. The pad is a `<canvas>` driven by pointer events (finger or Apple
+Pencil), exported as a PNG with a transparent background at roughly
+800x300 and a typed name line beneath it drawn into the same image, so the
+artifact is self-describing. A "Not now" refuses the request.
+
+**Result.** `{signaturePng: base64, agreedAt}` stored on the request.
+
+**Finalisation.** The teacher's iPad receives `completed` and calls
+`/api/waiver-agree` with `{clientId, notes, displayRequestId}`. The route
+does what it does today (verify the server's hash, release under the
+teacher's token, log line, `waiver_receipts` row, Notes append) and adds:
+
+- The receipt row gains `signature_sha256` and `signature_png` (bytea).
+  This is OUR artifact, captured on our screen, so the charter permits
+  it: the database is the original and Mindbody receives a copy. A
+  signature PNG is 10 to 30KB; a year of new students is a few megabytes.
+- The copy: `POST /client/uploadclientdocument` (client.yml:3633, 4MB
+  cap) with `FileName` `waiver-<agreedAt>-<sha12>.png`, through
+  `mindbody()` with the client id in the options so dry run and the write
+  guard apply. Best effort like the Notes append: a failed upload reports
+  `documentFiled: false` with the reason and the agreement stands, because
+  the release is real and the receipt row already holds the image. The
+  `ClientDocument` request shape (client.yml:7417, `FileName`,
+  `MediaType`, and a bytes field) needs one sandbox probe to confirm the
+  encoding before this ships; it is B-numbered in PLAN.md.
+- The Notes line says "signed on the customer screen" rather than "agreed
+  at the counter".
+
+**Without a display** (unpaired, disconnected, no database), the button
+is absent and T18's flow is exactly as it is now.
+
+---
+
+## Scene 2: the ticket, and the confirming tap
+
+**Trigger.** The sale screen mirrors the ticket to the display as it is
+built: every change to the priced cart (`/api/price-cart`'s answer, which
+is Mindbody's own pricing, never the screen's arithmetic) is sent as a
+`ticket` scene with `mode: "live"`. Lines, quantities, unit and line
+prices, discounts as amounts, tax, total, and the client's first name. No
+client id, no pricing option ids, no tender details. Re-presenting a live
+ticket replaces the previous one; it is the one scene kind that is
+updated in place rather than completed.
+
+**The setting.** `app_settings` `customer_confirms_sale`, `"true"` or
+`"false"`, default off. Global, because it is a studio policy, not a
+per-iPad tunable: the drawer's localStorage settings are for numbers
+that are wrong on one iPad, and this one must be the same on every
+counter. It is edited from the drawer's Settings tab by a teacher whose
+staff id is in `POS_ADMIN_STAFF_IDS`, the T89 idiom, and shown to
+everyone. `/api/config` reports it. With no database it falls back to
+`POS_CUSTOMER_CONFIRMS_SALE` in the environment.
+
+**Off:** the Charge tap charges, as today, and the display then shows a
+`ticket` with `mode: "summary"`: what was bought, what was charged, how,
+and "Thank you" for a few seconds before returning to idle. Emailed
+receipt state (T53) is shown when Mindbody confirmed one.
+
+**On:** the Charge tap first presents `ticket` with `mode: "approve"`:
+the same ticket with **Approve** and **Not yet** at 64px. The teacher's
+screen shows "Waiting for the customer to approve" with Cancel. Approve
+completes the request; the server records `{approved: true, cartSha256}`
+where the hash is over the priced cart it presented. The teacher's iPad
+then calls `/api/checkout` with `displayApprovalId`, and **the server
+enforces the setting**: when `customer_confirms_sale` is on, a checkout
+without a fresh, unconsumed approval whose cart hash matches the cart
+being charged is refused with 409 and a plain sentence. A teacher cannot
+skip it from the POS; only an admin turning the setting off can, and
+that is logged. "Not yet" refuses the request with the reason shown to
+the teacher ("Customer did not approve"), the ticket stays as built, and
+the teacher fixes it and charges again. A disconnected display while the
+setting is on refuses the charge the same way and says why, so the
+setting cannot be silently bypassed by unplugging the screen; the
+override is the admin control, deliberately.
+
+**Rule preserved.** Nothing here is optimistic and nothing auto-charges:
+approval is a precondition the server checks, not an action that charges.
+
+---
+
+## Scene 3: registration
+
+**Trigger.** T59b's New Client modal gains "Let them type it", enabled
+when a display is connected. `register` scene with no payload beyond
+what the form needs: which fields are required, from
+`requiredClientFields` as the modal already reads them.
+
+**On the display.** First name, last name, email, phone, and T53's two
+consent checkboxes, with the OS keyboard, at 16px minimum and 64px rows.
+Text fields are fine here: the "no amount in a text field" rule is about
+money, and this is the one screen where the student, not a teacher, is
+typing about themselves. Done validates locally (an email shape, a phone
+with enough digits) and completes with the four fields and the flags.
+
+**Finalisation.** The teacher's iPad receives the result and fills the
+modal with it. **The teacher taps Create**, and the existing
+`/api/client-create` runs as today, with duplicate detection (T59b's
+`isDuplicateClientError`) intact. A review tap is deliberate: the
+teacher reads the name back, catches "jon" for "john", and it keeps the
+create under a human's eye. The consent flags go with it through
+`/api/client-consent` as they do now.
+
+**Chained waiver.** A new client has no waiver. On a successful create,
+if a display is connected, the modal offers "Sign the waiver now" which
+presents Scene 1 for the new client id. Two taps for the teacher, and the
+student never hands the iPad back between them.
+
+---
+
+## Scene 4: the contract
+
+**Trigger.** T30's contract purchase on the sale screen, which today
+rehearses with `Test: true` and shows the server's first-payment Total,
+gains "Sign on the customer screen". `contract` scene: the contract name,
+`AgreementTerms` as plain text (T99's helper; the Description stays
+unserved), the start date, the first-payment total and the autopay line
+in words, the client's first name, and the server's sha256 of the raw
+terms held on the request.
+
+**On the display.** Terms, scroll to the end, the same signature pad as
+the waiver, "I agree to these terms" at 64px. Refuse with "Not now".
+
+**Result.** `{signaturePng, agreedAt}`.
+
+**Finalisation.** `/api/purchase-contract` accepts `displayRequestId`.
+The server pulls the PNG from the request and sends it as
+`ClientSignature` on `POST /sale/purchasecontract` (sale.yml:6246, a
+Base64 PNG that Mindbody files itself under the client's documents as
+`clientContractSignature-...`). So unlike the waiver, the contract's copy
+to Mindbody rides the purchase itself and needs no second call. The
+receipt is ours: a `contract_receipts` row (client id, contract id, terms
+sha256, signature sha256, signature png, agreed at, sale outcome), for
+the same reason as the waiver receipt: Mindbody stores that a contract
+was bought, not which wording was signed.
+
+**Whether a signature is required at all** stays as T30 recorded it: it
+is optional in the spec, the counter does not force a pad between a
+teacher and a queue, and a membership can still be sold without one from
+the teacher's iPad. The display makes it cheap to collect, so the default
+becomes "offer it when a display is connected". One `Test: true` probe
+with a real PNG confirms Mindbody accepts the field before it ships;
+B-numbered.
+
+---
+
+## Data, in one place
+
+New tables, all charter-clean (ours, captured on our screen, nothing
+Mindbody holds):
+
+| Table | Holds | Not held |
+|---|---|---|
+| `displays` | id, name, paired_at, last_seen_at | nothing about who used it |
+| `display_requests` | id, display_id, kind, payload, status, result, requesting staff id, timestamps | consumed results past 30 minutes (deleted) |
+| `waiver_receipts` (+2 columns) | signature sha256 and PNG beside the existing text hash | any client detail beyond the id |
+| `contract_receipts` | client id, contract id, terms sha256, signature sha256 and PNG, agreed at, outcome | the contract itself (Mindbody's) |
+| `app_settings` (+1 key) | `customer_confirms_sale` | |
+
+`display_requests.payload` carries names and ticket lines for up to 30
+minutes. That is the same class of data `calllog.ts` already holds in
+memory, and it is why `/api/display/*` results are readable only by the
+counter that made the request and only once.
+
+---
+
+## Security, plainly
+
+- The customer iPad holds a cookie that opens four routes, none of which
+  read Mindbody or name a client by id. Its scene payload is what the
+  student may see anyway (their own name, their own ticket, the studio's
+  waiver).
+- Every write is the teacher's, under the teacher's token, from the
+  teacher's iPad, through the write routes that already exist. Adding the
+  display added zero write paths.
+- The approval setting is enforced on the server, so the POS cannot
+  bypass it, and it degrades closed (a missing display refuses the
+  charge) rather than open.
+- The pairing code is short-lived and typed by a signed-in teacher; an
+  unpaired `/display` shows a code and the banner, nothing else.
+- Signatures are stored as the images captured, hashed, and copied to
+  Mindbody. They are never rendered back into the POS from Mindbody's
+  URL; the profile card shows "signed on <date>" from our receipt.
+
+---
+
+## Order of work
+
+Plumbing first, because every scene needs it, then the scenes in the
+order Pete listed them. Each is one PLAN.md item with its own done-when.
+
+1. **Plumbing.** `/display` route with the idle screen and pairing code;
+   `pos_display` cookie; `displays` and `display_requests` migrations;
+   the hub; the two SSE routes; present/cancel/complete/refuse; the
+   header connection mark; the drawer's pair/unpair control. Done when a
+   teacher can pair an iPad, see it connected, and put the idle screen
+   through a restart.
+2. **Ticket, summary mode only.** The live mirror and the post-sale
+   summary. No approval, no writes: the cheapest scene and the one that
+   proves the transport with real sale traffic.
+3. **Waiver.** Scene 1 end to end, including the document upload probe.
+4. **Ticket approval** and the `customer_confirms_sale` setting with the
+   server-side gate.
+5. **Registration**, with the chained waiver.
+6. **Contract**, with the `ClientSignature` probe.
+
+## Questions for Pete
+
+| # | Question | Blocks | Default if unanswered |
+|---|---|---|---|
+| D1 | When approval is on and the customer taps "Not yet" or the display is down, is there any teacher override, or is switching the setting off (admin) the only way? | item 4 | No override. The setting means what it says. |
+| D2 | Should the signature image live in our database as well as Mindbody's documents, or Mindbody only? | item 3 | Both. Ours is the original and the receipt; Mindbody's is where staff look. |
+| D3 | Does the display show the ticket live as it is built, or only at Charge? | item 2 | Live. It is what a customer display is for and it costs nothing. |
+| D4 | Registration: should the customer also pick a referral source or birthday, or stay at the four fields plus consent? | item 5 | Four fields, per T59b. |
+| D5 | Should a contract signature be required on the display when one is connected, or offered? | item 6 | Offered; the T30 posture stands. |

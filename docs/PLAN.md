@@ -177,6 +177,33 @@ pack in the same gesture.
 
 ---
 
+## Phase 2.5 — the customer-facing iPad
+
+Design: `docs/design/customer-display.md`. A second iPad on the counter,
+paired to the POS, that shows one scene at a time because a teacher put
+it there. The display never writes to Mindbody: every result is finalised
+from the teacher's iPad through the write routes that already exist.
+Plumbing first, then one scene at a time, in this order.
+
+- [ ] Plumbing: `/display`, pairing code, `pos_display` cookie, `displays` and `display_requests` tables, the hub, both SSE routes, present/cancel/complete/refuse, header connection mark, drawer pair/unpair. Done when a paired iPad survives a restart on the idle screen.
+- [ ] Ticket, summary mode: live mirror of the priced cart and the post-sale summary. No writes.
+- [ ] Waiver: sign on the display, signature kept in `waiver_receipts` and copied to Mindbody documents (probe D-B1 first).
+- [ ] Ticket approval: `customer_confirms_sale` in `app_settings`, admin-edited, enforced by `/api/checkout` on the server.
+- [ ] Registration on the display, teacher reviews and taps Create; chained waiver.
+- [ ] Contract signature on the display, sent as `ClientSignature` (probe D-B2 first), `contract_receipts` row.
+
+Probes owed, both sandbox, `Test: true` where the endpoint takes it:
+
+| # | Probe | Answers |
+|---|---|---|
+| D-B1 | `POST /client/uploadclientdocument` with a small PNG | The `ClientDocument` bytes field and encoding, and that the file shows on the client's Documents page |
+| D-B2 | `POST /sale/purchasecontract` `Test: true` with `ClientSignature` set | That the field is accepted and does not change the rehearsed Total |
+
+Questions D1 to D5 are in the design doc's last table, with the default
+each one takes if unanswered.
+
+---
+
 ## Phase 3 — the customer's own phone
 
 One QR mechanism, three outcomes. These were three ideas and are one piece of
