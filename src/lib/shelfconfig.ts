@@ -454,6 +454,19 @@ export function validateShelfConfig(
           error: "every substitution needs a refusedId and a substituteId",
         };
       }
+      /* T112 review: both are Service ids, and `parseOverride` already
+       * refuses an override envelope whose pass id is not digits, so a
+       * mapping in any other shape could never be reached from the
+       * counter at all. Caught at the save, where a teacher is looking at
+       * the drawer, rather than as a mapping that silently offers
+       * nothing. */
+      if (!/^[0-9]{1,12}$/.test(from) || !/^[0-9]{1,12}$/.test(to)) {
+        return {
+          error:
+            "a substitution's refusedId and substituteId are pass ids, up " +
+            "to 12 digits each",
+        };
+      }
       if (from === to) {
         return {
           error: `substitution ${from} names itself as its own substitute`,

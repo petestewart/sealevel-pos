@@ -354,7 +354,9 @@ export default function OverrideDialog(props: {
           step === "pin"
             ? "Who is overriding this?"
             : step === "refused"
-              ? "Mindbody refused the pass again"
+              ? attemptError !== null
+                ? "The question was not answered"
+                : "Mindbody refused the pass again"
               : "Override this pass"
         }
         onClick={(e) => e.stopPropagation()}
@@ -570,7 +572,18 @@ export default function OverrideDialog(props: {
 
         {step === "refused" ? (
           <>
-            <p className="modal-title">Mindbody refused it again</p>
+            {/* T112 review: only Mindbody's own refusal may be called
+                one. A suppressed write, a permission gap or a dead
+                transport all land on this step too, and a teacher told
+                "Mindbody refused it again" about a dry run would go and
+                fix the client's record in Mindbody over a flag on this
+                iPad. The sentence under it already says which it was;
+                the title must not disagree with it. */}
+            <p className="modal-title">
+              {attemptError !== null
+                ? "The question was not answered"
+                : "Mindbody refused it again"}
+            </p>
             {attemptError !== null ? (
               <p className="reason-sub">{attemptError}</p>
             ) : (
