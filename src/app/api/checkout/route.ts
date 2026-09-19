@@ -725,6 +725,35 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
+    /* T112 review: an ATTEMPT must be about a pass that is actually on
+     * this ticket. A substitution's own line is checked further down
+     * (against the mapping, which is the only thing that says which line
+     * that is), and this is the same check for the mode that has none:
+     * without it an override envelope could ride on any ticket at all,
+     * spending the teacher's PIN, running the rehearsal under their
+     * token, and filing "<pass> sold past Mindbody's refusal" on a
+     * client for a sale that never held the pass. A record that names a
+     * sale nothing was overridden in is worse than no record. Refused
+     * before the token is spent and before any Mindbody call. */
+    if (
+      override.mode === "attempt" &&
+      !items.some(
+        (line) =>
+          line.type === "Service" &&
+          String(line.metadataId) === override?.metadataId,
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "That pass is not on this ticket, so there is nothing to " +
+            "override. Put it back on the ticket and try again. Nothing " +
+            "was charged and your PIN was not used.",
+          stage: "method",
+        },
+        { status: 409 },
+      );
+    }
   }
 
   /* T79: the discount, checked before the token, the reason and the
@@ -1136,6 +1165,23 @@ export async function POST(request: Request) {
       );
     }
     if (substitution.discount > 0) {
+      /* T112 review: the check the browser's own discount gets at the top
+       * of its branch, applied to this one too (as /api/price-cart
+       * already does). Mindbody ignores DiscountAmount on a Package, so
+       * the rehearsal's strict check would catch it a metered call later
+       * and tell a teacher "this is a bug to report" about a ticket they
+       * can simply split. Refused here instead, in T79's own words,
+       * before the token is spent and before any Mindbody call. */
+      const refusal = discountRefusal(items);
+      if (refusal !== null) {
+        return NextResponse.json(
+          {
+            error: `${refusal} Nothing was charged and your PIN was not used.`,
+            stage: "method",
+          },
+          { status: 400 },
+        );
+      }
       /* Per UNIT times the quantity on the line, then through
        * parseDiscount so the bound and the whole-cents rule are T79's
        * and not a second copy of them. */
