@@ -114,6 +114,19 @@ or the environment, the dry run and whose it is, and the write guard.
 The cached staff token is keyed by site id, so switching target cannot reuse a
 sandbox token against production.
 
+### A teacher's PIN now authorizes three separate things
+
+`CompPurpose` in `src/lib/auth.ts` is `comp` (a discount, T48), `overdraft`
+(charging an account past its balance, T94) and, since T112, `override`
+(selling a pass Mindbody's own rules refused). The purpose is SIGNED into the
+one-shot token and the reader names the one purpose it will accept, so a PIN
+typed to discount a sale cannot authorize an override and none of the three
+can stand in for another. Two request fields are not a separation while one
+value fits both, which is the lesson T94's review paid for; do not add a
+fourth purpose by reusing an existing one. Each token is verified before any
+Mindbody call and spent once, at `/api/checkout`, before the rehearsal, so a
+refusal that reached no cart costs no PIN.
+
 ## Locked decisions
 
 - **Web app, not Swift.** Card-present is 0.4% of counter transactions (25
@@ -211,7 +224,7 @@ Under it, the write guard in words (T111: read only, a line and no
 control, because with the banner gone in the ordinary production state
 this tab is the only place an unrestricted live counter is written down),
 and "dry run on this iPad", which turns on a suppression for this browser
-only. Under those, since T112, "customer display": whether a second
+only. Under those, since T113, "customer display": whether a second
 screen is paired and connected, a six-digit code field with a Pair
 button, and Unpair behind one confirm. Anybody who can open the drawer
 may use it; pairing decides which SCREEN a waiver appears on, never
@@ -226,7 +239,7 @@ exceptions, and both are safe in only one direction: the target switch is
 admin-only, audited in the log and refuses an incomplete credential set,
 and the local dry run can only make this iPad safer.
 
-## Customer display (T112, Phase 2.5 item 1)
+## Customer display (T113, Phase 2.5 item 1)
 
 A second iPad on the counter, facing the student, at `/display`. Design:
 `docs/design/customer-display.md`; today only the plumbing exists, which
@@ -447,6 +460,36 @@ while `git clone` works, so clone the repo rather than fetching files.
   `addclienttoclass` take) comes from re-reading `/client/clientservices`
   and matching by ProductId (T25) or by what was not there before and the
   newest `PaymentDate` (T63).
+- **Mindbody refuses a pass for the CLIENT, not for a permission, and
+  nobody has established that any token escapes it** (T112). "Only new
+  clients qualify for this intro series" is the studio's own business rule
+  inside Mindbody; the permissions that sound relevant
+  (`OverrideAssignedPricing`, `EditSalePriceCountOnRetailScreen`,
+  `ApplyCustomDiscountsOnRetailScreen`) are about PRICE, not eligibility.
+  `scripts/probe-restricted.ts` asks both halves side by side, the service
+  account and a teacher's own token (`POS_PROBE_STAFF_USER` /
+  `POS_PROBE_STAFF_PASS`, the environment and never argv), and says which of
+  four worlds this is. **It has not been run against the live studio, so the
+  answer is still open.** Until it is, the counter's Override is an ATTEMPT
+  and never a promise: `POST /api/override-pass` asks ONE `Test: true`
+  question under the teacher's token with T49's service-account fallback
+  deliberately off, sells nothing, and reports Mindbody's own sentence when
+  the answer is no. The flag it arms may only mean "attempt this line under
+  the teacher's token"; it never sets a price and never skips a rehearsal,
+  T75's total assertion, T103's basket assertion or any other money rail.
+  The refused-line notice carries three ways forward, in this order: buy it
+  for another client (T90's path, which the refusal used to hide), Override,
+  and T100's gift card. **Pete's fallback when no token gets through is a
+  SUBSTITUTION**: a different pass, discounted to the refused one's price,
+  on the teacher's same PIN. The mapping is shelf configuration
+  (`substitutes` in `src/lib/shelfconfig.ts`, edited in the drawer's shelf
+  tab), ids only per the T29 charter, and BOTH prices come from the live
+  catalog at the moment of the offer (`src/lib/substitute.ts`); matching
+  prices can only bring a price DOWN, and either pass missing from the
+  catalog means no offer at all. The screen names the substitute and both
+  figures before the tap and on the ticket after it, because the receipt and
+  Mindbody will say the substitute's name. The whole story is filed on the
+  client the way T45/T62 file a comp's reason.
 - **Categories live in `site.yml`, not `sale.yml`.** `GET /site/categories`
   exists; grepping only the Sale tag missed it once. `/site/liabilitywaiver`
   (the waiver's actual text) and `/site/paymenttypes` are next to it.

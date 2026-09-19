@@ -6,7 +6,7 @@ import { cancelRequest } from "@/lib/display";
 
 export const dynamic = "force-dynamic";
 
-/** The teacher takes the scene back down (T112). Same auth as present,
+/** The teacher takes the scene back down (T113). Same auth as present,
  *  and the same rule: no Mindbody call anywhere in it. Cancelling
  *  something that is not there still answers 200 and still pushes the
  *  display to idle, because the server's picture is the one that wins. */

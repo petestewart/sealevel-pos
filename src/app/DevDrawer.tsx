@@ -516,7 +516,7 @@ function SettingsPanel({
   );
 }
 
-/* --- Customer display (T112) ------------------------------------------
+/* --- Customer display (T113) ------------------------------------------
  *
  * Pair and unpair the second iPad. Anyone who can open the drawer may use
  * it, and it is gated by the device session and a signed-in teacher and
@@ -1467,6 +1467,13 @@ interface ShelfAdminGroup {
   ids: string[];
 }
 
+/** T112: mirrors shelfconfig.ts PassSubstitute. */
+interface ShelfAdminSubstitute {
+  refusedId: string;
+  substituteId: string;
+  matchPrice: boolean;
+}
+
 interface ShelfAdminConfig {
   hidden: string[];
   groups: ShelfAdminGroup[];
@@ -1474,6 +1481,8 @@ interface ShelfAdminConfig {
   groupOrder?: string[];
   /** T86: retail products moved to another counter category. */
   products?: { key: string; categoryId: number }[];
+  /** T112: the substitute a refused pass may be sold as. */
+  substitutes?: ShelfAdminSubstitute[];
 }
 
 /** T76: the rail's fixed pass sub-categories, mirrored from
@@ -1554,6 +1563,8 @@ function ShelfPanel() {
    * derives the EFFECTIVE order from this plus the labels that exist. */
   const [groupOrder, setGroupOrder] = useState<string[]>([]);
   const [moves, setMoves] = useState<Record<string, number>>({});
+  /* T112: the pass substitutions, edited as rows. */
+  const [subs, setSubs] = useState<ShelfAdminSubstitute[]>([]);
   const [newLabel, setNewLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [outcome, setOutcome] = useState<
@@ -1600,6 +1611,7 @@ function ShelfPanel() {
           (config.products ?? []).map((o) => [o.key, o.categoryId]),
         ),
       );
+      setSubs((config.substitutes ?? []).map((x) => ({ ...x })));
       setLoadError(null);
       setLoaded(true);
     } catch (err) {
@@ -1764,6 +1776,12 @@ function ShelfPanel() {
           key,
           categoryId,
         })),
+        /* T112: only the complete rows. A half-filled row is a teacher
+         * mid-thought, not a mapping, and the route would refuse the
+         * whole config over it and take the hide list with it. */
+        substitutes: subs.filter(
+          (x) => x.refusedId !== "" && x.substituteId !== "" && x.refusedId !== x.substituteId,
+        ),
       };
       const res = await fetch("/api/admin/shelf", {
         method: "PUT",
@@ -1924,6 +1942,102 @@ function ShelfPanel() {
           </button>
         </div>
       ))}
+
+      {/* T112: the pass substitutions. Pete, on a pass Mindbody's own
+          rules refuse: "if that doesn't work then we can use the
+          'Returning Student 2-week unlimited' item and discount it to be
+          at the standard 2-week special price behind the scenes". It is
+          configuration rather than a constant in the code for the reason
+          everything else on this tab is: the studio changes its passes.
+          Ids only; both prices are read from the live catalog at the
+          moment the offer is made, so nothing here can go stale into a
+          price. */}
+      <div className="dev-label">pass substitutions</div>
+      <p className="muted">
+        When Mindbody refuses a pass for a client, the Override dialog
+        offers to sell another pass in its place. &quot;Match the refused
+        pass&apos;s price&quot; discounts the substitute down to what the
+        refused pass costs today, so the customer pays the same money for
+        the same thing; the ticket, the receipt and Mindbody all say the
+        substitute&apos;s name, and the teacher is told so before they tap.
+        A row naming a pass the site no longer sells is ignored, loudly, in
+        the server log.
+      </p>
+      {subs.map((row, index) => (
+        <div key={index} className="dev-setting dev-sub-row">
+          <select
+            className="dev-text"
+            aria-label="The pass Mindbody refuses"
+            value={row.refusedId}
+            onChange={(e) =>
+              setSubs((prev) =>
+                prev.map((r, i) =>
+                  i === index ? { ...r, refusedId: e.target.value } : r,
+                ),
+              )
+            }
+          >
+            <option value="">refused pass</option>
+            {byKind("Service").map((item) => (
+              <option key={item.key} value={String(item.id)}>
+                {item.name} ${item.price.toFixed(2)}
+              </option>
+            ))}
+          </select>
+          <span className="muted">sells as</span>
+          <select
+            className="dev-text"
+            aria-label="The pass to sell instead"
+            value={row.substituteId}
+            onChange={(e) =>
+              setSubs((prev) =>
+                prev.map((r, i) =>
+                  i === index ? { ...r, substituteId: e.target.value } : r,
+                ),
+              )
+            }
+          >
+            <option value="">substitute pass</option>
+            {byKind("Service").map((item) => (
+              <option key={item.key} value={String(item.id)}>
+                {item.name} ${item.price.toFixed(2)}
+              </option>
+            ))}
+          </select>
+          <label className="dev-sub-match">
+            <input
+              type="checkbox"
+              checked={row.matchPrice}
+              onChange={(e) =>
+                setSubs((prev) =>
+                  prev.map((r, i) =>
+                    i === index ? { ...r, matchPrice: e.target.checked } : r,
+                  ),
+                )
+              }
+            />
+            match the refused pass&apos;s price
+          </label>
+          <button
+            onClick={() => setSubs((prev) => prev.filter((_, i) => i !== index))}
+            aria-label="Remove this substitution"
+          >
+            remove
+          </button>
+        </div>
+      ))}
+      <div className="dev-setting">
+        <button
+          onClick={() =>
+            setSubs((prev) => [
+              ...prev,
+              { refusedId: "", substituteId: "", matchPrice: true },
+            ])
+          }
+        >
+          add substitution
+        </button>
+      </div>
 
       {SHELF_KINDS.map(({ type, heading }) => {
         const list = byKind(type);

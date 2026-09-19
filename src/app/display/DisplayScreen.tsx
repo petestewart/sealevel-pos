@@ -10,7 +10,7 @@ import TicketScene from "./TicketScene";
 import type { TicketPayload } from "@/lib/displayticket";
 
 /**
- * The idle screen and the pairing exchange (T112).
+ * The idle screen and the pairing exchange (T113).
  *
  * Unpaired, it asks /api/display/state for a six-digit code and the
  * SECRET that goes with it. The code is on the screen for a teacher to

@@ -14,7 +14,7 @@ import { readTicketPayload } from "@/lib/displayticket";
 export const dynamic = "force-dynamic";
 
 /**
- * A teacher puts a scene on the customer display (T112).
+ * A teacher puts a scene on the customer display (T113).
  *
  * The device session AND a signed-in teacher, exactly like every write
  * route here: with nobody signed in this answers 401 `reason: "staff"`

@@ -15,7 +15,7 @@ import { lastEventId, sseResponse } from "@/lib/sse";
 export const dynamic = "force-dynamic";
 
 /**
- * What the customer display holds open (T112). The display cookie and
+ * What the customer display holds open (T113). The display cookie and
  * nothing else guards it: the device session is deliberately not on that
  * iPad.
  *
