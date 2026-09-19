@@ -24,8 +24,39 @@ export interface CallRecord {
   outcome: string;
   /** T49: the staff id whose token the call went out under, when a
    *  signed-in teacher's rather than the service account's; null for
-   *  the service account and for suppressed calls. Never the token. */
+   *  the service account and for suppressed calls. */
   actor: number | null;
+  /**
+   * T109: THE TOKEN ITSELF, in full, beside the staff id it belongs to.
+   *
+   * Pete, 2026-09-19, told in one sentence that this is the one live
+   * credential on the list (a staff token acts as that teacher against
+   * Mindbody for two hours, from anywhere, and the drawer's "copy all"
+   * makes it portable), and deciding with that in hand: "log staff
+   * session tokens. keep card numbers, CVVs, teacher PINs redacted."
+   *
+   * So this is a decision, not an oversight. What it buys is that a call
+   * made under a teacher's token can be replayed and its permission
+   * refusal reproduced, which is the thing T49's `actor=<staff id>` alone
+   * could never do. What guards it is unchanged and is the same thing
+   * that guards the client names in every other record here: the buffer
+   * is memory only, and /api/devlog 404s unless POS_DEVTOOLS is on.
+   *
+   * There is exactly ONE path by which a token reaches this buffer, and
+   * it is this field: `mindbody()` puts the Authorization header and this
+   * record from the same `Actor`, so the record and the wire cannot
+   * disagree. No request HEADERS are recorded at all, and the sign-in
+   * that MINTS a token (`signInAsStaff`, the one Mindbody call that
+   * deliberately does not go through `mindbody()`) is not recorded
+   * either, which stays as it is for a reason of its own: its request
+   * body carries the teacher's Mindbody PASSWORD, and a password is not
+   * on Pete's list.
+   *
+   * Null for the service account (a different credential, and nobody
+   * asked for that one) and for suppressed calls, which went out under
+   * no token at all.
+   */
+  actorToken: string | null;
   requestBody: string | null;
   responseBody: string | null;
 }
@@ -115,45 +146,38 @@ export function scrubCardDigits(text: string): string {
   return text.replace(CARD_SHAPED, REDACTED);
 }
 
-/**
- * T83: a GIFT CARD number, which the digit pattern above cannot be
- * trusted to catch.
+/*
+ * T83 struck the GIFT CARD barcode id out of every record here, in the
+ * query of `GET /sale/giftcardbalance`, inside the GiftCard payment's
+ * stringified Metadata and inside Mindbody's own free-text refusals.
+ * **T109 removed all of it, on Pete's call** (2026-09-19, asked why the
+ * log redacted the id): "no redactions at all. these are all things the
+ * teacher can see already and i am not worried about it."
  *
- * A gift card is a bearer instrument -- the number alone spends the
- * balance -- so it is a secret exactly like a PAN. But Mindbody types
- * the barcode id as a plain string with no documented format
- * (sale.yml:361), so it may be shorter than thirteen characters and may
- * carry letters or dashes, which CARD_SHAPED matches none of. It is
- * struck out by WHERE IT SITS instead:
+ * His reasoning stands on its own. The id is printed on the done screen
+ * and written on the card by hand, so the drawer is not where it leaks,
+ * and the drawer is already gated behind POS_DEVTOOLS and 404s
+ * otherwise. The cost of hiding it was real and immediate: T109 is a
+ * live failure Pete could not diagnose from the drawer, because three
+ * `giftcardbalance` calls that differed only by the id read as three
+ * identical calls.
  *
- * - `?barcodeId=...`, the query of GET /sale/giftcardbalance. The number
- *   travels in the URL, and `path` is a call-log field of its own, so
- *   the body redaction never sees it.
- * - `"cardNumber": "..."` and `"barcodeId": "..."` inside a JSON string.
- *   The GiftCard payment's Metadata is a STRING of JSON (the spec's
- *   type), so the number is not an object value any key rule could
- *   reach, and Mindbody's refusals are free text that can quote it back.
+ * FOUR THINGS STAY STRUCK, and that is a different case, not an
+ * oversight: a card number (SECRET_KEY plus CARD_SHAPED, either
+ * direction and whatever key), a CVV (SECRET_KEY plus CVV_IN_TEXT), a
+ * teacher PIN and its one-shot token (T48, which never reach this
+ * buffer), and a staff session token (T49/T50, recorded as
+ * `actor=<staff id>` and never as itself). A teacher never sees any of
+ * those on a screen, and a PAN at rest in a server-side log is a
+ * liability the studio carries.
  *
- * The key names are Mindbody's own, in either casing.
+ * Note which key names that leaves: `cardNumber` is the GiftCard
+ * payment's Metadata key for the barcode AND, in any casing, the card on
+ * file's own PAN field, so SECRET_KEY still strikes it as an object key
+ * and the barcode is visible where it actually travels, inside the
+ * stringified Metadata. A PAN inside a stringified body is still struck
+ * by CARD_SHAPED, which needs no key at all.
  */
-const GIFT_IN_QUERY = /([?&](?:barcodeId|cardNumber|giftCardBarcodeId)=)[^&\s"'\\]+/gi;
-const GIFT_IN_JSON =
-  /("(?:cardNumber|barcodeId|giftCardBarcodeId)"\s*:\s*")[^"]*"/gi;
-/* T83 review: the same pair of keys with their quotes ESCAPED, which is
- * how the GiftCard Metadata reads once it has been stringified INSIDE
- * another JSON document -- a response body echoing the payment back, for
- * instance. The rule above sees a quote where that text has a backslash
- * and matches nothing at all. */
-const GIFT_IN_ESCAPED_JSON =
-  /(\\"(?:cardNumber|barcodeId|giftCardBarcodeId)\\"\s*:\s*\\")(?:[^"\\]|\\[^"])*(\\")/gi;
-
-/** Gift card numbers wherever text can carry one, struck out. */
-export function scrubGiftCard(text: string): string {
-  return text
-    .replace(GIFT_IN_QUERY, `$1${REDACTED}`)
-    .replace(GIFT_IN_JSON, `$1${REDACTED}"`)
-    .replace(GIFT_IN_ESCAPED_JSON, `$1${REDACTED}$2`);
-}
 
 /**
  * T93: a CVV quoted in FREE TEXT, which is how Mindbody hands one back
@@ -184,21 +208,19 @@ export function scrubCvv(text: string): string {
 
 /** Every number-shaped secret this app's traffic can carry, in one
  *  pass: use THIS anywhere a string is about to be recorded or thrown,
- *  so a new endpoint carrying either kind is covered by default. */
+ *  so a new endpoint carrying either kind is covered by default. T109
+ *  dropped the gift card pass from it, which also means a suppressed
+ *  write's `[dry-run]`/`[write-guard]` server log line now names the
+ *  barcode it would have used: the same audience, and the same call of
+ *  Pete's. */
 export function scrubSecrets(text: string): string {
-  return scrubCvv(scrubGiftCard(scrubCardDigits(text)));
+  return scrubCvv(scrubCardDigits(text));
 }
 
 /** Whether a TEXT body mentions a card at all, so that the 99% of
  *  records that do not are passed through untouched. */
 const CARD_KEY_IN_TEXT =
   /"(ClientCreditCard|CardNumber|CreditCardNumber|CVV|CVC|CardCode|SecurityCode)"/i;
-
-/** T83: keys whose VALUE is a gift card number, wherever they appear as
- *  an object key. Unlike SECRET_KEY this does not mark its object as a
- *  card object: the gift card balance answer is `{ BarcodeId,
- *  RemainingBalance }`, and the balance is the diagnostic half of it. */
-const GIFT_KEY = /^(BarcodeId|GiftCardBarcodeId|cardNumber)$/i;
 
 /** What survives from a card object, per direction. T93 added the four
  *  non-secret fields a CreditCard payment's Metadata carries besides the
@@ -221,13 +243,12 @@ function redactCard(
   keep: string[],
   key: string | null = null,
 ): unknown {
-  /* A string value anywhere: struck out if it is shaped like a number,
-   * or if it carries a gift card number in a query or in JSON. The key
-   * it sits under is deliberately not consulted -- except that a key
-   * NAMING a gift card number strikes the whole value (below), since a
-   * bare barcode id looks like nothing in particular. */
+  /* A string value anywhere: struck out if it is shaped like a card
+   * number, or if it carries a CVV in text. The key it sits under is
+   * deliberately not consulted; T109 removed the one rule that did look
+   * at it, which struck a whole value for naming a gift card barcode. */
   if (typeof value === "string") {
-    return key !== null && GIFT_KEY.test(key) ? REDACTED : scrubSecrets(value);
+    return scrubSecrets(value);
   }
   /* The key rides into an array, so a card object inside one is still
    * recognised as a card object. */
@@ -237,15 +258,14 @@ function redactCard(
   if (isCardObject(key, obj)) {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(obj)) {
-      if (SECRET_KEY.test(k) || GIFT_KEY.test(k)) out[k] = REDACTED;
+      if (SECRET_KEY.test(k)) out[k] = REDACTED;
       else if (keep.includes(k)) out[k] = v;
     }
     return out;
   }
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
-    out[k] =
-      SECRET_KEY.test(k) || GIFT_KEY.test(k) ? REDACTED : redactCard(v, keep, k);
+    out[k] = SECRET_KEY.test(k) ? REDACTED : redactCard(v, keep, k);
   }
   return out;
 }
@@ -298,33 +318,34 @@ export interface CallInput extends Omit<CallRecord, "id" | "at" | "requestBody" 
 }
 
 /**
- * T83 review: the gift card numbers THIS call is known to carry.
+ * The CARD NUMBER this call is known to carry, lifted from the request so
+ * the literal can be struck out of the answer too.
  *
- * The rules above strike a number out by where it sits, and that covers
- * a request, whose shape we build. It cannot cover a REFUSAL: Mindbody
- * quotes the barcode back in free text ("The gift card number GC-9X7 is
- * invalid."), and a barcode need not be card-shaped, so the digit rule
- * misses it and no key rule reaches inside a sentence. But for one
- * record the number is not a guess: it went out in this very call's
- * query or body. Lift it from there and strike the literal out of
- * everything recorded, the response included.
+ * T83 review built this for GIFT CARD barcodes, because a barcode need
+ * not be card-shaped and Mindbody quotes it back in free text ("The gift
+ * card number GC-9X7 is invalid."), which no digit rule and no key rule
+ * reaches. **T109 took the barcode out of it** (see the T109 note above:
+ * Pete, "no redactions at all"), and what is left is T93's card number,
+ * kept as belt-and-braces beside CARD_SHAPED: a PAN is 13 to 19 digits
+ * and so is already struck wherever it appears, in either direction.
+ *
+ * The key alternation here is deliberately case-SENSITIVE, which is the
+ * one rule in this file that is. `CardNumber` (the card on file) and
+ * `cardNumber` (the GiftCard payment's Metadata key for the BARCODE, the
+ * spelling sale.ts itself sends) differ by nothing else, and a lift is
+ * exact-substring: lifting the lowercase spelling would strike the
+ * barcode out of the record again through the back door. Nothing is lost
+ * by leaving it out, because a card number under any spelling is
+ * card-shaped.
+ *
+ * No query form is read any more: a PAN never travels in a query string,
+ * and the three keys that did were all the barcode's.
  */
 function knownSecrets(entry: CallInput): string[] {
   const found = new Set<string>();
   const fromText = (text: string) => {
     for (const m of text.matchAll(
-      /[?&](?:barcodeId|cardNumber|giftCardBarcodeId)=([^&\s"'\\]+)/gi,
-    )) {
-      const raw = m[1] ?? "";
-      found.add(raw);
-      try {
-        found.add(decodeURIComponent(raw));
-      } catch {
-        /* a half-escaped value is still covered by the raw form */
-      }
-    }
-    for (const m of text.matchAll(
-      /\\?"(?:cardNumber|creditCardNumber|barcodeId|giftCardBarcodeId)\\?"\s*:\s*\\?"([^"\\]*)/gi,
+      /\\?"(?:CardNumber|CreditCardNumber|creditCardNumber)\\?"\s*:\s*\\?"([^"\\]*)/g,
     )) {
       found.add(m[1] ?? "");
     }
@@ -377,9 +398,11 @@ export function record(entry: CallInput): void {
     ...entry,
     id: state.nextId++,
     at: new Date().toISOString(),
-    /* T83: the PATH is a secret too when it carries a gift card's
-     * barcode id in its query. The record still shows which endpoint
-     * was called and that a number went with it. */
+    /* The PATH goes through the same pass as a body: a card number has
+     * no business in a query string, and if one ever appears in one it is
+     * struck. T83 struck the gift card barcode here too, and T109 does
+     * not: `?barcodeId=` is the query Pete could not tell three calls
+     * apart by. */
     path: strike(scrubSecrets(entry.path), secrets) as string,
     /* T84: never the card number, in either direction. T83 review: and
      * never a number this call is known to carry, wherever it is quoted

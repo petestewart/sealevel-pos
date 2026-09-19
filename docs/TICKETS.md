@@ -14755,3 +14755,271 @@ clean.
   fixed here.
 - Whether a teacher at the counter reads `5%` as five percent on the
   first tap is the one thing only Pete can answer.
+
+## T109. Every gift card id read as taken, so no gift card could be sold (Pete, 2026-09-19)
+
+A live production failure, found by Pete at the real counter. Every gift
+card sale was refused, 100% of the time, before any POST went out:
+
+> Not charged: Could not generate an unused gift card id in 3 tries.
+> Nothing was charged. Nothing was charged.
+
+The dev drawer showed three `GET /sale/giftcardbalance?barcodeId=...`
+calls, each a 200 in under 120ms, each answering:
+
+```
+{"BarcodeId":"<redacted>","RemainingBalance":0.0}
+```
+
+That settles the question T95 left open and wrote down as open, and which
+`giftCardIdState` in `src/lib/giftcardsale.ts` was built around the wrong
+way: **Mindbody does not 4xx for a barcode id it has never heard of. It
+answers 200 with a balance of 0.0.** So `num(res?.RemainingBalance) !==
+null` was true for every id the app invented, every id read as `"taken"`,
+`freshGiftCardId` burned its three tries, and the feature was dead.
+
+### The rule
+
+**A balance of ZERO means the id is free. A balance ABOVE zero means it
+is taken.** Nothing else moved. A non-answer still refuses the sale, and
+that posture was right and is not what broke: a 5xx, a dead transport, a
+timeout, a 200 with no balance field, a 200 with a balance that is not a
+number. The not-found 4xx branch stays too, since a site could answer
+that way and keeping it costs nothing.
+
+One thing had to change with it. The balance is now read with `figure`
+rather than `num`. `num` is deliberately lenient (`Number(null)` is 0),
+and that used to be the SAFE direction here, because anything that parsed
+at all meant "taken". Once zero means FREE, a lenient read turns
+`RemainingBalance: null` into 0, calls it free, and sells a card against
+an answer Mindbody never gave. A balance BELOW zero is not a documented
+shape and settles nothing, so it refuses like a missing one.
+
+### The residual risk, in full
+
+`/sale/giftcardbalance` cannot tell "no such card" from "a card that
+exists and has been spent down to zero". They are the same answer. And
+`purchasegiftcard`'s own documentation says that an EXISTING barcode id
+RELOADS that card rather than issuing a new one. So the new rule admits a
+case the old one did not: a card sold years ago, spent to nothing, and
+still in somebody's wallet could have its id drawn again, and the money
+paid for the new card would land on the old plastic. The customer holding
+the old card would hold the new balance, and the customer who paid would
+have a blank card with the same number written on it.
+
+The odds. The alphabet is 32 characters (no I, O, 0 or 1, because the id
+is written on a card by hand) and the id is 6 long, so there are 32^6 =
+1,073,741,824 ids. A studio that sells a few hundred gift cards a year
+will have issued a few thousand over its whole life. A few thousand
+against a billion is roughly one in a million per sale, and only the
+spent-to-zero fraction of those is reachable at all: a card with money
+still on it reads as taken and is skipped, exactly as before.
+
+Weighed against the alternative, which is that no gift card can be sold
+at all, one in a million is the trade to take. It is written here rather
+than left to be rediscovered: the check is no longer a guarantee, it is a
+filter that still catches every LIVE card, and what it no longer catches
+is a dead one.
+
+### The better discriminator, looked for and not found
+
+`/sale/giftcardbalance` is the only gift card LOOKUP in the vendored spec
+(`grep -n "giftcard" docs/mindbody-openapi/*.yml`: three paths, and the
+other two are `/sale/giftcards`, the product list, and
+`/sale/purchasegiftcard`). There is no "does this barcode exist"
+endpoint and no way to list issued cards.
+
+`PurchasedItem.GiftCardBarcodeId` does exist (sale.yml:2421), so past
+SALES carry the ids they issued, and reading recent sales was considered.
+It was rejected, and not only on cost:
+
+- It cannot be complete. `/sale/sales` filters by date, and only by date
+  (CLAUDE.md), so knowing every id the studio ever issued means paging
+  the studio's entire sale history on every gift card sale. That is
+  hundreds of metered calls per ticket at a counter that is measured in
+  hundreds of milliseconds.
+- An INCOMPLETE read is worth nothing here. A window that says "not in
+  the last ninety days" does not make an id free; only "not anywhere"
+  would, and that is the read we cannot afford. So a partial read would
+  add latency and calls without letting the rule be any stronger.
+- It does not cover the gap anyway. Cards issued through Mindbody's own
+  UI, or on pre-printed stock before this app existed, may carry ids no
+  sale of ours ever recorded.
+
+So the balance read stays the only check, with the rule above and the
+risk above.
+
+### The two sentences
+
+The refusal doubled itself: `freshGiftCardId` ended its message with
+"Nothing was charged." and `/api/checkout` appends " Nothing was
+charged." to whatever it caught. The sentence came out of the thrown
+message, not the route: the route's is the one that covers every error
+this path can throw, including the balance read's own, which never
+carried it.
+
+And the surviving refusal named our retry count, which is a number a
+teacher can do nothing with. It now reads:
+
+> Mindbody says every gift card id this app generated is already in use,
+> which should not happen. Try the sale again to draw new ids, and if it
+> happens a second time, sell the card in Mindbody itself. Nothing was
+> charged.
+
+It deliberately names no button: the control is "Finalize Sale" on the
+pay pane and "Pay" on the nav bar, and a sentence that names the wrong
+one is worse than one that names neither.
+
+### The call log stops hiding the gift card id
+
+Asked in the same conversation why the drawer redacted the id, Pete:
+**"no redactions at all. these are all things the teacher can see already
+and i am not worried about it."**
+
+So T83's gift card redaction is gone from `src/lib/calllog.ts`: the
+`?barcodeId=` query, the `"cardNumber"` and `"barcodeId"` keys inside a
+stringified Metadata (escaped and not), the `BarcodeId` /
+`GiftCardBarcodeId` key rule, and the lifter that pulled a barcode out of
+a request to strike it out of the answer. It is also gone from
+`scrubSecrets`, which means a suppressed write's `[dry-run]` /
+`[write-guard]` server log line now names the barcode too: the same
+audience and the same decision.
+
+His reasoning stands on its own. The id is printed on the done screen in
+the largest type on it and written on the card by hand, so the drawer is
+not where it leaks, and the drawer is already gated behind
+`POS_DEVTOOLS` and 404s otherwise. The cost of hiding it was this very
+ticket: Pete could not diagnose a live failure because three
+`giftcardbalance` calls that differed only by the id read as three
+identical calls.
+
+**What stays struck, deliberately**: credit card numbers (by key, by
+13-to-19-digit shape, in either direction, and `TrackData` should one
+ever appear), CVVs (by key and by the words that introduce one in free
+text), and teacher PINs and their one-shot tokens (T48, which never reach
+this buffer at all: they travel to our own API, not to Mindbody). A
+teacher never sees any of those on a screen, and a PAN at rest in a
+server-side log is a liability the studio carries.
+
+One key name needed care. `cardNumber` is the GiftCard payment's Metadata
+key for the BARCODE and, in any casing, the card on file's own PAN field.
+As an OBJECT key it is still struck, by the card rule, which loses
+nothing: the barcode travels inside a stringified Metadata string, where
+it is now visible. The lifter's key list is the one case-sensitive rule in
+the file, for the same reason, and it says so.
+
+### The staff session token is logged too
+
+Then, told in one sentence that the staff token is the one live
+credential on that list (it acts as that teacher against Mindbody for two
+hours, from anywhere, and the drawer's "copy all" makes it portable),
+Pete: **"log staff session tokens. keep card numbers, CVVs, teacher PINs
+redacted."**
+
+He decided with the risk in hand, so it is recorded here and in
+`CallRecord.actorToken` as a decision rather than an oversight. T49 put
+`actor=<staff id>` on every call that ran under a teacher's token and
+said "never the token"; the record now carries the token itself, beside
+the id it belongs to. What it buys is a call that can be replayed and a
+permission refusal that can be reproduced, which the staff id alone never
+allowed. What guards it is unchanged, and is the same thing that guards
+the client names and booking details already in every record: the buffer
+is memory only, and `/api/devlog` 404s unless `POS_DEVTOOLS` is on.
+
+There is exactly one path by which a token reaches the buffer, so the two
+cannot disagree: `mindbody()` fills the Authorization header and this
+field from the same `Actor`. No request HEADERS are recorded at all, and
+`signInAsStaff`, the call that MINTS a token, is still not recorded, for
+a reason of its own: its request body carries the teacher's Mindbody
+password, and a password is not on Pete's list.
+
+In the drawer the collapsed row is unchanged (`actor=100`, since a token
+is longer than the path it would push off the screen); the expanded
+record grows an "actor token (staff 100)" block, and `copy` and `copy
+all` carry `token=` on the same line as `actor=`.
+
+### Build notes
+
+Changed: `src/lib/giftcardsale.ts` (the balance rule, `figure` instead of
+`num`, the refusal's words, the doubled sentence), `src/lib/calllog.ts`
+(the gift card redaction removed, the lifter narrowed, `actorToken`),
+`src/lib/mindbody.ts` (fills `actorToken`), `src/app/DevDrawer.tsx` (the
+token in the expanded record and in the copy text). No API route changed:
+`/api/checkout`'s wrapper already said "Nothing was charged." and is the
+one that stays.
+
+Deliberately NOT done:
+
+- **`logGiftCardSale` still omits the id.** It was never a redaction, it
+  is a log line that was written without one, and the sale id plus the
+  value identify the sale in Mindbody, which holds the barcode. Nobody
+  asked for it and it is not in the drawer's path.
+- **The service account's own token is not logged.** Pete named the staff
+  session token; the service account's is a different credential and a
+  different question.
+- Nothing in the gift card sale itself moved: one purchase per card,
+  every card rehearsed `Test: true` before anything is charged, `Value`
+  and `AmountPaid` asserted to the cent, the partial honesty, no retry
+  and no rollback, the hidden-card refusal, T103's rule that a gift card
+  product id never reaches a cart line, the done screen's hold behind
+  "Written on the card", and the money invariants.
+
+#### Verified
+
+The mock's balance endpoint grew an `unknown` knob: how it answers an id
+it has never heard of. The DEFAULT is now `zero`, the live shape, because
+a mock that answers 404 is the reason this bug shipped.
+
+- **T109's route driver** (`scratchpad/t109/route.mjs`, next start on
+  :3109 against the mock on :4109), 22 checks: a custom-amount card and a
+  fixed card each SELL against the live 200/0.0 answer, with exactly one
+  balance read and a rehearsal before the purchase; two ids carrying
+  money are skipped and the third is used; every id taken refuses 502
+  with no `purchasegiftcard` call at all, in the new words, with
+  "Nothing was charged." exactly once; a not-found 4xx is still free; and
+  a 500, a 200 with no balance, a 200 with a null balance, a 200 with a
+  negative balance, a dead transport and a read that never answers (a
+  real 20-second timeout) each refuse before any purchase, each with one
+  "Nothing was charged."; three cards on one ticket get three ids.
+- **T109's devlog driver** (`scratchpad/t109/devlog.mjs`, with
+  `POS_DEVTOOLS=true`), 16 checks over three tickets on one buffer: a
+  discounted gift card sold under a teacher's PIN, a $49 service paid
+  with a card TYPED at the counter, and a ticket paid WITH a gift card.
+  It reads `/api/devlog` and proves the barcode appears in full in the
+  `purchasegiftcard` request, in the balance read's query string and in
+  its answer, and that the TENDERED barcode appears in full inside the
+  payment's stringified Metadata; that the staff session token is on the
+  calls that used it and equals the session's real token, while a
+  service-account call carries none; and that the card number, its CVV,
+  the teacher's PIN and the PIN's one-shot token appear nowhere in the
+  log, with the record still showing that a card WAS sent and its expiry.
+- **T109's UI driver** (`scratchpad/t109/ui109.mjs`), both palettes and
+  both orientations (1180x820 and 820x1180), 12 checks each: the card
+  sells end to end on the live answer and the done screen holds behind
+  "Written on the card" with one six-character id; and with every id
+  reading as taken the screen shows the new refusal, names no retry
+  count, says "Nothing was charged." once, shows no done screen, and
+  sends no purchase. No em dashes on either screen. The size and contrast
+  audit ran over every state.
+- **T102's route driver re-run unchanged**: 15/15.
+- **T103's route driver re-run unchanged**: 48/48.
+- `npm run typecheck` and `npm run build` clean.
+
+#### Could not verify
+
+- **Nothing live.** The evidence this ticket is built on is Pete's live
+  drawer, quoted above; the fix itself was driven only against the mock.
+  The first live gift card sale is what proves the rule, and it is worth
+  watching the drawer on it, which is now possible.
+- **The reload case has not been made to happen.** Nobody has watched
+  `purchasegiftcard` reload a real spent-to-zero card, because doing so
+  needs a real card on the real site, spent to zero, whose id is then
+  drawn deliberately. The behaviour is Mindbody's documentation, not an
+  observation. What was driven is the arithmetic of the risk, not the
+  risk.
+- **Whether Mindbody EVER answers a not-found 4xx for a barcode.** The
+  branch is kept on the grounds that it costs nothing, not on evidence
+  that any site uses it.
+- **The staff token in the drawer has not been read off a real iPad**, so
+  whether the expanded record's token block is comfortable to select and
+  copy at the counter is Pete's to say.
