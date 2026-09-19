@@ -109,7 +109,14 @@ interface Entry {
   /** SHA-256 of the canonical ticket. The body itself is NEVER kept: it
    *  carries card numbers, CVVs and one-shot teacher tokens. */
   fingerprint: string;
-  /** When the slot was taken, for the age bound. */
+  /** When the ANSWER landed, for the age bound; while the charge runs it
+   *  is when the slot was taken and the bound does not apply (see
+   *  `sweep`). T113 review: measured from the answer, because the window
+   *  this bound exists for is the one AFTER a teacher has been told
+   *  something. Taken from the request's start, a charge slower than the
+   *  bound answered into an entry that was already sweepable, and the
+   *  very next replay charged again (proved: a 4.5 second charge under
+   *  POS_IDEM_TTL_MS=3000). */
   at: number;
   /** The answer, or null while the first request is still running. */
   answer: Answer | null;
@@ -121,18 +128,43 @@ interface Entry {
 
 const store = new Map<string, Entry>();
 
+/** File an entry's answer: stamp the age bound from THIS moment, move the
+ *  entry to the back of the Map (eviction walks it in insertion order, and
+ *  that order has to track the same age the bound does), and release
+ *  whoever is waiting. Only if the entry is still the one this key holds:
+ *  a key evicted meanwhile must not be resurrected by its own flight
+ *  finishing. */
+function settle(key: string, entry: Entry, answer: Answer): void {
+  entry.answer = answer;
+  entry.at = Date.now();
+  if (store.get(key) === entry) {
+    store.delete(key);
+    store.set(key, entry);
+  }
+  entry.resolve();
+}
+
 /** An entry's answer, read fresh. A function so the reading is not
  *  narrowed by whatever the caller knew before it waited. */
 function answerOf(entry: Entry): Answer | null {
   return entry.answer;
 }
 
-/** Drop everything past its age bound. An entry still in flight past the
- *  bound has leaked (the request died without recording); dropping it is
- *  the same as never having seen the key, which is today's behaviour. */
+/** Drop every ANSWERED entry past its age bound.
+ *
+ *  T113 review: an entry still IN FLIGHT is never swept, however old. It
+ *  used to be, on the reading that such an entry had leaked, and that
+ *  made the age bound a way to CHARGE TWICE: with a charge still
+ *  running, the same key arriving after the bound found no entry,
+ *  created a new one and started a second charge (proved with
+ *  POS_IDEM_TTL_MS=3000 against a 6 second charge: two writes for one
+ *  tap). A flight always ends in `record` or `recordThrow`, so its entry
+ *  settles; the worst an unsettled one can now do is hold its own key,
+ *  which costs a waiter the wait and then an ambiguous answer, and never
+ *  a second charge. */
 function sweep(now: number, ttl: number): void {
   for (const [key, entry] of store) {
-    if (now - entry.at > ttl) store.delete(key);
+    if (entry.answer !== null && now - entry.at > ttl) store.delete(key);
   }
 }
 
@@ -177,11 +209,15 @@ function fingerprint(payload: unknown, actorId: string): string {
 
 /** The key off the request, or null when there is none. A key is NOT
  *  required: see `begin`. */
-function keyOf(request: Request): string | null {
+function keyOf(request: Request): string | null | "malformed" {
   const raw = request.headers.get(IDEMPOTENCY_HEADER);
   if (raw === null) return null;
   const key = raw.trim();
-  if (key === "" || key.length > IDEMPOTENCY_KEY_MAX) return null;
+  /* T113 review: an empty or over-long key is told apart from no key at
+   * all in the log. Both charge, which is rule 4, but they are different
+   * faults: no key is an iPad on a bundle from before the deploy, a
+   * malformed one is a caller to go and fix. */
+  if (key === "" || key.length > IDEMPOTENCY_KEY_MAX) return "malformed";
   return key;
 }
 
@@ -215,6 +251,16 @@ export const IDEM_CONFLICT_ERROR =
   "This charge arrived with the tap id of a different sale, so it was " +
   "not sent. Nothing was charged. Close this and start the sale again.";
 
+/** The sentence for a checkout that THREW, or whose answer could not be
+ *  kept. Ambiguous on purpose: the charge may have reached Mindbody
+ *  before the crash, so the one wrong move is a second tap. T113 review:
+ *  its own sentence, because the in-flight one below says "already being
+ *  charged", which is not what happened to a request that crashed. */
+export const IDEM_UNKNOWN_ERROR =
+  "This charge did not finish and the server reported no outcome for it. " +
+  "It MAY have gone through. Do not charge again: check the dev drawer or " +
+  "Mindbody first.";
+
 /** And when the first flight never answered. Ambiguous on purpose: that
  *  charge may be completing right now, so the one wrong move is a second
  *  tap. */
@@ -241,7 +287,7 @@ function throwAnswer(): Answer {
   return {
     status: 502,
     body: JSON.stringify({
-      error: IDEM_INFLIGHT_ERROR,
+      error: IDEM_UNKNOWN_ERROR,
       stage: "checkout",
       ambiguous: true,
     }),
@@ -283,9 +329,11 @@ export async function beginIdempotent(
   actorId: string,
 ): Promise<IdemGate> {
   const key = keyOf(request);
-  if (key === null) {
+  if (key === null || key === "malformed") {
     console.warn(
-      "[idem] no key on a checkout: this charge is not replay-protected",
+      key === null
+        ? "[idem] no key on a checkout: this charge is not replay-protected"
+        : "[idem] an empty or over-long key on a checkout: ignored, so this charge is not replay-protected",
     );
     return passthrough;
   }
@@ -376,16 +424,31 @@ export async function beginIdempotent(
   return {
     replay: null,
     record: async (res) => {
-      entry.answer = await capture(res);
-      entry.resolve();
+      /* T113 review: KEEPING the answer must never change it. This ran
+       * inside the route's own try, so a `capture` that threw (a response
+       * whose body cannot be cloned) was caught as a failed CHECKOUT and
+       * answered 502 ambiguous over the top of a 200 that had already
+       * sold. The sale's own answer now goes back untouched whatever
+       * happens here. What a REPLAY reads is then the ambiguous record:
+       * an answer nobody kept is an answer nobody can repeat, and the
+       * safe reading of one is "it may have gone through". */
+      let answer: Answer;
+      try {
+        answer = await capture(res);
+      } catch (err) {
+        console.error(
+          `[idem] key=${key} answered HTTP ${res.status} but the answer could not be kept: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        answer = throwAnswer();
+      }
+      settle(key, entry, answer);
       return res;
     },
     recordThrow: (err) => {
       /* A throw escaping the route is an UNKNOWN outcome, so the record
        * kept is an ambiguous one: a replay must not charge again on the
        * strength of a crash. */
-      entry.answer = throwAnswer();
-      entry.resolve();
+      settle(key, entry, throwAnswer());
       return throwResponse(err);
     },
   };
