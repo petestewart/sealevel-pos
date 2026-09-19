@@ -16238,3 +16238,33 @@ rehearsal (502 `stage: "rehearsal"`), and the `[override]` log line is
 written when the charge RESOLVES, so a sale that fails before that
 resolution logs nothing about the override, which is correct (there was
 no override to record) but is not the "always" the build notes claim.
+
+### T112: the live answer, 2026-09-19
+
+Pete ran `scripts/probe-restricted.ts` against production, client
+100041277, pass 414, substitute 555. **The evidence question is closed.**
+
+- **414 is refused under both tokens**, word for word: "Only new clients
+  qualify for this intro series." So the Override cannot sell the intro
+  pass to a client the rule excludes, and T112's attempt-and-report
+  posture is the right one. It will always report that sentence.
+- **555 prices for the same client**: subtotal $79.00, tax $0.00, on the
+  service account and under the token. So **the substitution is the real
+  path**, not the backstop: map 414 to 555 with the price matched, and
+  the counter sells the two weeks for the intro's $49.00, a $30.00
+  discount on the teacher's PIN with a reason.
+
+One caveat, recorded rather than glossed: the "teacher's token" in both
+runs was the studio's own API user (`sealevelapiuser@gmail.com`, staff
+100000140), because that is the login in the probe's environment. A rule
+about which CLIENT qualifies is not one a permission group plausibly
+escapes, and both halves answered identically, but a real teacher's own
+login has never been asked. If it is ever worth closing, it is one more
+run of the same probe with a different `POS_PROBE_STAFF_USER`.
+
+The first attempt at this run, earlier the same day, was VOID: the client
+used was not in `POS_WRITE_CLIENT_IDS`, every Test cart was suppressed,
+and the probe reported "ACCEPTED ... total null" four times and concluded
+the opposite of the truth. That is now impossible: a suppressed call, or
+an answer with no figures in it, voids the verdict. It was the third
+probe in this repo to make that mistake.
