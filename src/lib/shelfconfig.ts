@@ -60,6 +60,35 @@ export interface ShelfProductOverride {
   categoryId: number;
 }
 
+/**
+ * T112: one refused pass and the pass to offer instead of it.
+ *
+ * Pete, 2026-09-19, having asked for an Override on a pass Mindbody's own
+ * rules refuse: "if that doesn't work then we can use the 'Returning
+ * Student 2-week unlimited' item and discount it to be at the standard
+ * 2-week special price behind the scenes". On site 471 that is 555,
+ * "Returning Student 2-wk Unlimited (1+ Years Away)" at $79.00, sold at
+ * the New Student Intro's $59.00. The customer gets the same two weeks
+ * for the same money and Mindbody records a different product.
+ *
+ * It is CONFIGURATION and not a constant in the code, for the reason
+ * every other shelf decision is: the studio changes its passes, and a
+ * mapping compiled into a deploy would be wrong the first time it did.
+ * Ids only, as the T29 charter requires, with both prices read from the
+ * live catalog at the moment of the offer (`resolveSubstitute` in
+ * src/lib/substitute.ts): no price is ever stored here.
+ */
+export interface PassSubstitute {
+  /** The pass Mindbody refused, as a Service id string. */
+  refusedId: string;
+  /** The pass to sell instead, as a Service id string. */
+  substituteId: string;
+  /** Discount the substitute to the refused pass's own live price. False
+   *  sells the substitute at its own price, which is the honest shape for
+   *  a mapping between two passes that already cost the same. */
+  matchPrice: boolean;
+}
+
 export interface ShelfConfig {
   /** Items that never reach the shelf, as "<Type>:<id>" keys, the type
    *  being the catalog item's `type` ("Product" | "Service" | "Package"),
@@ -78,6 +107,9 @@ export interface ShelfConfig {
   groupOrder?: string[];
   /** T86: retail products moved to another counter category. */
   products?: ShelfProductOverride[];
+  /** T112: the substitute a refused pass may be sold as. Absent (every
+   *  config before T112) means no substitution is ever offered. */
+  substitutes?: PassSubstitute[];
 }
 
 /** The code default: nothing hidden, no groups. What the shelf is
@@ -174,7 +206,7 @@ export function validateShelfConfig(
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     return { error: "config must be an object with hidden and groups" };
   }
-  const { hidden, groups, groupOrder, products } = input as Record<
+  const { hidden, groups, groupOrder, products, substitutes } = input as Record<
     string,
     unknown
   >;
@@ -382,11 +414,71 @@ export function validateShelfConfig(
     }
   }
 
-  /* The two new fields are added only when they were sent, so a config
-   * from before T86 round-trips through the table byte for byte. */
+  /* T112: the pass substitutions. Strict like the product overrides
+   * above and unlike the group order: a mapping whose two ids are the
+   * same pass, or that sends one refused pass to two different
+   * substitutes, is not a thing a teacher could have meant, and a
+   * substitution offered on a guess is a sale of the wrong product. A
+   * mapping naming a pass the site no longer sells is NOT refused here:
+   * ids are resolved against the live catalog at the moment of the offer,
+   * which is where a stale id is dropped and said so out loud
+   * (resolveSubstitute). */
+  let cleanSubs: PassSubstitute[] | undefined;
+  if (substitutes !== undefined && substitutes !== null) {
+    if (!Array.isArray(substitutes)) {
+      return {
+        error:
+          "substitutes must be an array of { refusedId, substituteId, matchPrice }",
+      };
+    }
+    if (substitutes.length > MAX_ENTRIES) {
+      return { error: `at most ${MAX_ENTRIES} pass substitutions` };
+    }
+    cleanSubs = [];
+    const seenRefused = new Set<string>();
+    for (const raw of substitutes) {
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        return {
+          error:
+            "every substitution must be { refusedId, substituteId, matchPrice }",
+        };
+      }
+      const { refusedId, substituteId, matchPrice } = raw as Record<
+        string,
+        unknown
+      >;
+      const from = typeof refusedId === "string" ? refusedId.trim() : "";
+      const to = typeof substituteId === "string" ? substituteId.trim() : "";
+      if (from.length === 0 || to.length === 0) {
+        return {
+          error: "every substitution needs a refusedId and a substituteId",
+        };
+      }
+      if (from === to) {
+        return {
+          error: `substitution ${from} names itself as its own substitute`,
+        };
+      }
+      if (typeof matchPrice !== "boolean") {
+        return {
+          error: `substitution ${from} needs matchPrice true or false`,
+        };
+      }
+      if (seenRefused.has(from)) {
+        return { error: `pass ${from} has two substitutes` };
+      }
+      seenRefused.add(from);
+      cleanSubs.push({ refusedId: from, substituteId: to, matchPrice });
+    }
+  }
+
+  /* The new fields are added only when they were sent, so a config
+   * from before T86 or T112 round-trips through the table byte for
+   * byte. */
   const clean: ShelfConfig = { hidden: cleanHidden, groups: cleanGroups };
   if (cleanOrder !== undefined) clean.groupOrder = cleanOrder;
   if (cleanProducts !== undefined) clean.products = cleanProducts;
+  if (cleanSubs !== undefined) clean.substitutes = cleanSubs;
   return clean;
 }
 

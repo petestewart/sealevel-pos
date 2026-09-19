@@ -57,10 +57,12 @@ export async function POST(request: Request) {
   /* T94 review: what this PIN authorizes, signed into the token. A
    * discount is the default because it is what every caller before T94
    * asked for; an overdraft says so, and /api/checkout will not take
-   * one for the other. */
+   * one for the other. T112 adds "override", which authorizes either
+   * asking Mindbody for a refused pass again under this teacher's own
+   * token or selling the configured substitute in its place. */
   if (purposeRaw !== undefined && !isCompPurpose(purposeRaw)) {
     return NextResponse.json(
-      { error: "purpose must be comp or overdraft" },
+      { error: "purpose must be comp, overdraft or override" },
       { status: 400 },
     );
   }

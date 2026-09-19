@@ -1610,8 +1610,23 @@ export async function rehearseCheckout(
   clientId?: string,
   /** T79: rehearsed WITH the discount the real call will carry. */
   discount?: Discount | null,
+  /**
+   * T112: who to rehearse AS. Null, and by default absent, is the
+   * service account, which is what every rehearsal has always been and
+   * what every rehearsal should stay: the teacher's token is for the
+   * charge, and running the rehearsal under it would quietly make a
+   * teacher's permission gap look like a cart Mindbody would not price.
+   *
+   * The ONE caller that passes one is /api/checkout with an "attempt"
+   * override on the ticket, where the service account is precisely the
+   * account whose refusal the teacher is trying to get past, so
+   * rehearsing as it would fail the sale before the question was asked.
+   * Nothing else about the rehearsal changes: same `Test: true`, same
+   * Comp stub, same strict total and discount assertions.
+   */
+  actor?: Actor | null,
 ): Promise<PricedCart> {
-  return priceCart(items, clientId, null, discount);
+  return priceCart(items, clientId, actor ?? null, discount);
 }
 
 /** Outcome of buying account credit; same suppression posture. */

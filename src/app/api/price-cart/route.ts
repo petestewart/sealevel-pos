@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 
-import { requireSession } from "@/lib/auth";
-import { mindbodyHttpStatus } from "@/lib/mindbody";
+import { requireActor } from "@/lib/actor";
+import { requireSession, verifyCompToken } from "@/lib/auth";
+import { mindbodyHttpStatus, type Actor } from "@/lib/mindbody";
+import {
+  OVERRIDE_PURPOSE,
+  parseOverride,
+  type OverrideAsk,
+} from "@/lib/override";
+import { resolveSubstitute } from "@/lib/substitute";
 import {
   discountCents,
   discountRefusal,
@@ -60,6 +67,24 @@ export const dynamic = "force-dynamic";
  * Validation lives in parseCartLines (src/lib/sale.ts), shared with
  * /api/checkout: the cart that gets charged obeys the same bounds as the
  * cart that got priced.
+ *
+ * T112: an optional `override`, the same envelope /api/checkout takes and
+ * verified the same way (purpose "override", this teacher's own id, never
+ * spent here). It does exactly two things and may never do more:
+ *
+ *  - "attempt": the Test call runs under the TEACHER'S token instead of
+ *    the service account, so a pass the studio account refuses but the
+ *    teacher's login sells prices on the ticket instead of dropping off
+ *    it again on the next keystroke. The ticket's total is still
+ *    Mindbody's own and still asserted.
+ *  - "substitute": the discount that brings the substitute pass down to
+ *    the refused pass's price is computed HERE, from the stored mapping
+ *    and the live catalog, so the number under the ticket is the number
+ *    the charge will use. The browser cannot send it and is refused if it
+ *    sends a discount of its own beside it.
+ *
+ * With no override the route is byte-for-byte what it was: reads stay on
+ * the service account, and no sign-in is required to price a cart.
  */
 export async function POST(request: Request) {
   const denied = requireSession(request);
@@ -78,6 +103,31 @@ export async function POST(request: Request) {
     typeof payload?.clientId === "string" && payload.clientId.trim()
       ? payload.clientId.trim()
       : undefined;
+  /* T112: the override, before anything that could reach Mindbody. */
+  let override: OverrideAsk | null = null;
+  let overrideActor: Actor | null = null;
+  if (payload?.override !== undefined && payload?.override !== null) {
+    const asked = parseOverride(payload.override);
+    if (typeof asked === "string") {
+      return NextResponse.json({ error: asked }, { status: 400 });
+    }
+    /* An override names a teacher, so pricing one needs the sign-in that
+     * every write needs (T50): the token below can only have been minted
+     * for the teacher this session names. */
+    const staff = await requireActor(request);
+    if (staff.denied) return staff.denied;
+    const teacher = verifyCompToken(asked.token, OVERRIDE_PURPOSE);
+    if (teacher === null || teacher.id !== staff.session.staffId) {
+      return NextResponse.json(
+        { error: "Enter your PIN to override this pass.", reason: "teacher" },
+        { status: 401 },
+      );
+    }
+    override = asked;
+    /* Only the attempt changes who asks. A substitution prices normally:
+     * it is a different pass with a discount on it. */
+    if (override.mode === "attempt") overrideActor = staff.actor;
+  }
   /* T92: a pass with no home never reaches Mindbody. On a cart with
    * nobody attached, a Service or Package line must carry a T90
    * recipient; the house client is for retail and is deliberately not a
@@ -89,7 +139,54 @@ export async function POST(request: Request) {
   }
   /* T79: the discount, checked before any Mindbody call. */
   let discount: Discount | null = null;
-  if (payload?.discount !== undefined && payload?.discount !== null) {
+  /* T112: the substitution's own discount, computed from the live
+   * catalog, never taken from the browser. Refused beside a discount of
+   * the browser's own, exactly as /api/checkout refuses it, so the
+   * ticket and the charge cannot disagree about which one applies. */
+  if (override?.mode === "substitute") {
+    if (payload?.discount !== undefined && payload?.discount !== null) {
+      return NextResponse.json(
+        {
+          error:
+            "A substituted pass is already discounted to the refused " +
+            "pass's price, so this ticket cannot take another discount.",
+        },
+        { status: 409 },
+      );
+    }
+    const substitution = await resolveSubstitute(override.metadataId);
+    const subLine =
+      substitution === null
+        ? undefined
+        : parsed.items.find(
+            (line) =>
+              line.type === "Service" &&
+              String(line.metadataId) === substitution.metadataId,
+          );
+    if (substitution === null || subLine === undefined) {
+      return NextResponse.json(
+        {
+          error:
+            "There is no substitute pass configured for that one, or this " +
+            "ticket does not hold it.",
+        },
+        { status: 409 },
+      );
+    }
+    if (substitution.discount > 0) {
+      const d = parseDiscount(
+        {
+          mode: "amount",
+          value: roundToCents(substitution.discount * subLine.quantity),
+        },
+        subtotalCents(parsed.items),
+      );
+      if (typeof d === "string") {
+        return NextResponse.json({ error: d }, { status: 409 });
+      }
+      discount = d;
+    }
+  } else if (payload?.discount !== undefined && payload?.discount !== null) {
     const refusal = discountRefusal(parsed.items);
     if (refusal !== null) {
       return NextResponse.json({ error: refusal }, { status: 400 });
@@ -99,6 +196,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: d }, { status: 400 });
     }
     discount = d;
+  }
+  /* T112: a refusal check the browser's discount got at the top of its
+   * own branch, applied to the substitution's too: Mindbody ignores a
+   * discount on a package line, so a ticket holding one cannot carry
+   * either kind. */
+  if (discount !== null) {
+    const refusal = discountRefusal(parsed.items);
+    if (refusal !== null) {
+      return NextResponse.json({ error: refusal }, { status: 400 });
+    }
   }
   /* No client attached: price as the house client when one is configured;
    * otherwise answer needsClient without touching Mindbody (the call is
@@ -142,7 +249,7 @@ export async function POST(request: Request) {
       const priced = await priceCart(
         parsed.items,
         effectiveClientId,
-        null,
+        overrideActor,
         discount,
       );
       return NextResponse.json(priced);
@@ -160,7 +267,7 @@ export async function POST(request: Request) {
         priced: await priceCart(
           group.items,
           cartClientId,
-          null,
+          overrideActor,
           perGroupDiscount[i] ?? null,
         ),
       });

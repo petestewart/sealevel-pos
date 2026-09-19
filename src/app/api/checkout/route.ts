@@ -49,6 +49,18 @@ import {
   type GiftCardUnit,
 } from "@/lib/giftcardsale";
 import { fileFormulaNote } from "@/lib/formulanote";
+import {
+  OVERRIDE_PURPOSE,
+  overrideRecordLine,
+  parseOverride,
+  type OverrideAsk,
+} from "@/lib/override";
+import { actorOf } from "@/lib/staffsession";
+import {
+  resolveSubstitute,
+  substituteSentence,
+  type ResolvedSubstitute,
+} from "@/lib/substitute";
 import { dryRunState, mindbodyHttpStatus, target } from "@/lib/mindbody";
 
 import {
@@ -201,6 +213,42 @@ export const dynamic = "force-dynamic";
  *         CreditCard payment and appear in NO log line, note, receipt
  *         row or response: those carry `typedCard: { lastFour }` and
  *         nothing more.
+ *         -- T112: `override` is the authorization to sell a pass
+ *         Mindbody's own business rules refused (Pete: "this needs to
+ *         have the ability to override, like other things in the app.
+ *         teacher PIN and reason can be given"). It is
+ *         `{ token, reason, metadataId, pass, refusal, mode }`, the token
+ *         a one-shot from /api/teacher/verify signed for purpose
+ *         "override" and the reason T43/T45/T67's own kinds, both refused
+ *         without the other. Two modes, and neither of them may set a
+ *         price, skip a rehearsal, skip the total assertion (T75), skip
+ *         the basket assertion (T103) or turn any money rail off:
+ *           "attempt"    -- the refused pass itself is on the ticket, and
+ *                           the REHEARSAL runs under the teacher's own
+ *                           token instead of the service account, which
+ *                           is the one difference the flag makes. The
+ *                           charge already ran under that token since
+ *                           T49. Mindbody may refuse it again, and then
+ *                           the sale fails with Mindbody's sentence.
+ *           "substitute" -- Pete's fallback ("if that doesn't work then
+ *                           we can use the 'Returning Student 2-week
+ *                           unlimited' item and discount it to be at the
+ *                           standard 2-week special price behind the
+ *                           scenes"). A DIFFERENT pass is on the ticket,
+ *                           named by the stored mapping and not by the
+ *                           browser, and the discount that brings it to
+ *                           the refused pass's price is computed HERE
+ *                           from the live catalog (resolveSubstitute)
+ *                           and rides T79's path: the same spread, the
+ *                           same bound, the same comp receipt. A
+ *                           `discount` from the browser is refused
+ *                           beside it, and so is a gift card on the
+ *                           ticket or a line bought for someone else,
+ *                           because one ticket then means two carts and
+ *                           "which one was overridden" would be a guess.
+ *         The token is spent once here, before the rehearsal, exactly as
+ *         a discount's and an overdraft's are. The whole story is filed
+ *         on the client (T45/T62's note path) and logged once.
  *   or, since T28, `split` instead of `method`:
  *       { items, clientId, split: { legs: [{method, amount}, {method,
  *         amount}] } } -- exactly two legs, methods from the whitelist
@@ -615,6 +663,70 @@ export async function POST(request: Request) {
     }
   }
 
+  /**
+   * T112: the override, read and VERIFIED before any Mindbody call and
+   * before the discount, because everything it can do is refused without
+   * a good token and a refusal that costs a metered call is a refusal
+   * that could have been free.
+   */
+  const overrideRaw: unknown = payload?.override;
+  let override: OverrideAsk | null = null;
+  let overrideTeacher: TeacherIdentity | null = null;
+  if (overrideRaw !== undefined && overrideRaw !== null) {
+    const asked = parseOverride(overrideRaw);
+    if (typeof asked === "string") {
+      return NextResponse.json({ error: asked }, { status: 400 });
+    }
+    override = asked;
+    /* T94 review's rule: the token's own purpose and this teacher's own
+     * id. A PIN typed to discount a sale or to overdraw an account does
+     * not authorize this, and a token carried across a sign-out names
+     * somebody who is not behind the tap. */
+    overrideTeacher = verifyCompToken(override.token, OVERRIDE_PURPOSE);
+    if (overrideTeacher !== null && overrideTeacher.id !== session.staffId) {
+      overrideTeacher = null;
+    }
+    if (overrideTeacher === null) {
+      return NextResponse.json(
+        {
+          error: "Enter your PIN to override this pass.",
+          reason: "teacher",
+        },
+        { status: 401 },
+      );
+    }
+    /* One ticket, one cart, so that "which cart was overridden" is never
+     * a guess. A gift card is its own /sale/purchasegiftcard call beside
+     * the cart (T95) and a T90 line is its own cart under another
+     * client's id, and an override that silently applied to all of them
+     * would be a rail we could not describe. Refused in words, before
+     * the token is spent, so nothing is lost by selling them separately.
+     */
+    if (giftLines.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Sell the overridden pass on its own ticket, without gift " +
+            "cards on it. Nothing was charged and your PIN was not used.",
+          stage: "method",
+        },
+        { status: 409 },
+      );
+    }
+    if (items.some((line) => line.forClientId)) {
+      return NextResponse.json(
+        {
+          error:
+            "An overridden pass cannot share a ticket with a line bought " +
+            "for someone else. Sell them one after the other. Nothing was " +
+            "charged and your PIN was not used.",
+          stage: "method",
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   /* T79: the discount, checked before the token, the reason and the
    * client, and before any Mindbody call. A package-bearing cart is
    * refused (Mindbody ignores DiscountAmount on a package, so the sale
@@ -640,6 +752,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: d }, { status: 400 });
     }
     discount = d;
+  }
+  /* T112: a substitution IS a discount, computed below from the live
+   * catalog. A second one from the browser would have to be merged with
+   * it into the one whole-cart figure Mindbody's cart takes, and the
+   * merge is exactly the arithmetic nobody should be doing at a counter.
+   * Take the discount off, or sell the substitute on its own ticket. */
+  if (override?.mode === "substitute" && discount !== null) {
+    return NextResponse.json(
+      {
+        error:
+          "A substituted pass is already discounted to the refused pass's " +
+          "price, so this ticket cannot take another discount. Take the " +
+          "discount off, or sell the substitute on its own. Nothing was " +
+          "charged and your PIN was not used.",
+        stage: "method",
+      },
+      { status: 409 },
+    );
   }
   /* T102: `full` is the CART's 100% case, the one that sends method comp
    * and no tender. A gift card ticket never reaches it: method comp is
@@ -931,6 +1061,106 @@ export async function POST(request: Request) {
     };
   });
 
+  /** T48: whether the discount is the BROWSER's (and so has a comp token
+   *  to spend for it) or T112's substitution, computed below. Captured
+   *  before the injection, because the one-shot spend further down must
+   *  not reach for a token that was never sent. */
+  const browserDiscount = discount !== null;
+
+  /**
+   * T112: the substitution, priced. Pete: "if that doesn't work then we
+   * can use the 'Returning Student 2-week unlimited' item and discount it
+   * to be at the standard 2-week special price behind the scenes."
+   *
+   * Everything that decides what gets sold and for how much is read
+   * HERE, from the stored mapping and the live catalog: which pass is the
+   * substitute, what it costs today, what the refused pass costs today,
+   * and so what the discount is. The browser names the REFUSED pass and
+   * nothing else, so a browser cannot choose the product or the figure;
+   * a request whose cart does not hold the substitute the mapping names
+   * is refused rather than quietly discounted, which is what stops a
+   * discount being applied to some other line by asking for it.
+   *
+   * The discount itself then rides T79's path exactly: parseDiscount's
+   * own bound, spreadDiscount's spread, the rehearsal's strict
+   * DiscountTotal check, the comp receipt and the log line. One
+   * consequence, recorded rather than hidden: a whole-cart discount is
+   * SPREAD over the cart's lines in proportion to their prices (T79),
+   * so on a ticket holding other lines Mindbody files part of the
+   * substitution's discount against them. The total charged and the
+   * amount discounted are exact to the cent either way, and the note
+   * filed on the client names both passes and both prices.
+   */
+  let substitution: ResolvedSubstitute | null = null;
+  if (override?.mode === "substitute") {
+    try {
+      substitution = await resolveSubstitute(override.metadataId);
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error:
+            "Could not read the catalog to price the substitute pass: " +
+            `${errMessage(err)} Nothing was charged and your PIN was not used.`,
+          stage: "method",
+        },
+        { status: 502 },
+      );
+    }
+    if (substitution === null) {
+      return NextResponse.json(
+        {
+          error:
+            "There is no substitute pass configured for that one, or the " +
+            "catalog cannot price one today. Nothing was charged and your " +
+            "PIN was not used.",
+          stage: "method",
+        },
+        { status: 409 },
+      );
+    }
+    const subLine = items.find(
+      (line) =>
+        line.type === "Service" &&
+        String(line.metadataId) === substitution?.metadataId,
+    );
+    if (subLine === undefined) {
+      return NextResponse.json(
+        {
+          error:
+            `This ticket does not hold ${substitution.name}, which is the ` +
+            "pass configured to stand in for the refused one. Nothing was " +
+            "charged and your PIN was not used.",
+          stage: "method",
+        },
+        { status: 409 },
+      );
+    }
+    if (substitution.discount > 0) {
+      /* Per UNIT times the quantity on the line, then through
+       * parseDiscount so the bound and the whole-cents rule are T79's
+       * and not a second copy of them. */
+      const want = roundToCents(substitution.discount * subLine.quantity);
+      const d = parseDiscount({ mode: "amount", value: want }, subtotalCents(items));
+      if (typeof d === "string") {
+        return NextResponse.json(
+          {
+            error:
+              `The substitute's discount cannot be applied to this ticket: ${d}. ` +
+              "Nothing was charged and your PIN was not used.",
+            stage: "method",
+          },
+          { status: 409 },
+        );
+      }
+      discount = d;
+      /* The reason and the teacher are the override's own: the PIN that
+       * authorized the substitution is the PIN behind its discount, and
+       * the comp record names them exactly as T79's does. */
+      compReason = override.reason;
+      teacher = overrideTeacher;
+    }
+  }
+
   /* T92: the same rule the pricing route applies, at the last gate
    * before a client id is chosen. A Service or a Package with neither an
    * attached client nor a T90 recipient is refused in words and NEVER
@@ -1052,9 +1282,21 @@ export async function POST(request: Request) {
    * before the rehearsal, which is the first Mindbody call: a second
    * charge on the same token, however it got here, goes back to the PIN
    * step and costs no call. */
-  if (discount !== null && !spendCompToken(teacherTokenRaw as string)) {
+  if (browserDiscount && !spendCompToken(teacherTokenRaw as string)) {
     return NextResponse.json(
       { error: "Enter your PIN to discount this sale.", reason: "teacher" },
+      { status: 401 },
+    );
+  }
+
+  /* T112: the override's token, spent in the same place and for the same
+   * reason. It is spent HERE, at the ticket that will be charged, and
+   * deliberately NOT by /api/override-pass: that route reaches no cart,
+   * so a pass Mindbody refused again must not cost the teacher their one
+   * authorization. Whichever mode it authorized, it is spent once. */
+  if (override !== null && !spendCompToken(override.token)) {
+    return NextResponse.json(
+      { error: "Enter your PIN to override this pass.", reason: "teacher" },
       { status: 401 },
     );
   }
@@ -2843,7 +3085,20 @@ export async function POST(request: Request) {
    * bought, and the failure costs nothing. */
   let priced;
   try {
-    priced = await rehearseCheckout(items, saleClientId, discount);
+    /* T112: the ONE thing an "attempt" override changes. The rehearsal
+     * has always run on the service account (rehearseCheckout), and the
+     * service account is the one whose refusal put the teacher here, so
+     * asking it again would fail the sale before the teacher's own token
+     * was ever asked. The charge below already runs under that token
+     * (T49). Every other rail is untouched: this is still a `Test: true`
+     * call, its total is still the only one that may be charged, and
+     * T75's assertion still runs against it. */
+    priced = await rehearseCheckout(
+      items,
+      saleClientId,
+      discount,
+      override?.mode === "attempt" ? actorOf(session) : null,
+    );
   } catch (err) {
     return NextResponse.json(
       { error: errMessage(err), stage: "rehearsal" },
@@ -3095,9 +3350,91 @@ export async function POST(request: Request) {
     };
   };
 
+  /**
+   * T112: the record of an override, once the charge it describes has
+   * resolved. This matters more than the button does: an override is
+   * exactly the thing the studio will go looking for months later, and
+   * the whole story has to be in one sentence rather than spread over a
+   * log nobody keeps. ALWAYS one server log line, and on a real sale for
+   * a named client the same sentence filed on the client the way a
+   * comp's reason is (T45, with T62's Notes fallback), through
+   * mindbody() with the client id so dry run and the write guard apply
+   * to it as to any write.
+   *
+   * It runs AFTER the money moved and can never change that outcome. It
+   * is idempotent, because it is reached from recordDiscount, which the
+   * paths below call once each: a second call would file a second note
+   * for one sale.
+   */
+  let overrideRecorded = false;
+  const recordOverride = async (
+    saleId: string | null,
+    suppressed: boolean,
+  ): Promise<Record<string, unknown>> => {
+    if (override === null || overrideRecorded) return {};
+    overrideRecorded = true;
+    const note = overrideRecordLine({
+      ask: override,
+      teacherName: overrideTeacher?.name ?? null,
+      saleId: suppressed ? null : saleId,
+      substitute:
+        substitution === null
+          ? null
+          : {
+              name: substitution.name,
+              price: substitution.price,
+              sellAt: substitution.sellAt,
+              discount: substitution.discount,
+            },
+    });
+    console.log(
+      `[override] ${target()} mode=${override.mode} ` +
+        `sale=${suppressed ? "suppressed" : (saleId ?? "unknown")} ` +
+        `client=${clientId ?? "house"} pass=${override.metadataId} ` +
+        `substitute=${substitution?.metadataId ?? "none"} ` +
+        `reason=${JSON.stringify(note)} kind=${override.reason.kind} ` +
+        teacherLogTag(overrideTeacher),
+    );
+    let via: "formula" | "notes" | null = null;
+    const house = houseClientId();
+    const onHouse = clientId !== undefined && house !== null && clientId === house;
+    if (onHouse) console.log(`[override] note skipped: house client`);
+    if (!suppressed && clientId !== undefined && !onHouse) {
+      const filed = await fileFormulaNote({
+        session,
+        clientId,
+        note,
+        route: "/api/checkout override-note",
+        logTag: "[override]",
+      });
+      via = filed.via;
+    }
+    return {
+      override: {
+        mode: override.mode,
+        pass: override.pass || override.metadataId,
+        teacher: overrideTeacher?.name ?? null,
+        noteVia: via,
+        ...(substitution === null
+          ? {}
+          : {
+              substitute: {
+                name: substitution.name,
+                price: substitution.price,
+                sellAt: substitution.sellAt,
+                discount: substitution.discount,
+                sentence: substituteSentence(substitution),
+              },
+            }),
+      },
+    };
+  };
+
   /** After any path's write resolved: the note (real sales only), the
    *  log line and the receipt row. Answers the fields the response
-   *  carries for a discounted sale, or nothing when there is none. */
+   *  carries for a discounted sale, or nothing when there is none.
+   *  T112: and the override's own record, which every path reaches
+   *  through here. */
   const recordDiscount = async (o: {
     saleId: string | null;
     cartId: string | null;
@@ -3108,10 +3445,19 @@ export async function POST(request: Request) {
      *  included; that is the amount on the studio for that shape. */
     onStudio: number;
   }): Promise<Record<string, unknown>> => {
-    if (discount === null || compReason === null) return {};
-    const filed = o.suppressed
-      ? { id: null, via: null }
-      : await fileDiscountNote(o.saleId, o.paid);
+    const over = await recordOverride(o.saleId, o.suppressed);
+    if (discount === null || compReason === null) return over;
+    /* T112: a substitution's discount is already written down in full by
+     * the override's own note, which names both passes, both prices and
+     * the discount between them. A second note saying "Discount $20.00
+     * on $79.00: Trade" would be the same sale twice on the client's
+     * record, so the note is the override's and the comp RECEIPT row
+     * below is still written: the studio's discount reporting must not
+     * lose a discount for being filed under another name. */
+    const filed =
+      o.suppressed || substitution !== null
+        ? { id: null, via: null }
+        : await fileDiscountNote(o.saleId, o.paid);
     console.log(
       `[comp] ${target()} sale=${o.suppressed ? "suppressed" : (o.saleId ?? "unknown")} ` +
         `client=${clientId ?? "house"} total=${o.onStudio.toFixed(2)} ` +
@@ -3137,6 +3483,7 @@ export async function POST(request: Request) {
       saleTotal: o.paid,
     });
     return {
+      ...over,
       noteVia: filed.via,
       discountShape: o.shape,
       discount: {
@@ -3503,7 +3850,13 @@ export async function POST(request: Request) {
         );
         let plain;
         try {
-          plain = await rehearseCheckout(items, saleClientId);
+          /* T112: as the rehearsal above, for the same reason. */
+          plain = await rehearseCheckout(
+            items,
+            saleClientId,
+            null,
+            override?.mode === "attempt" ? actorOf(session) : null,
+          );
         } catch (err) {
           return NextResponse.json(
             { error: errMessage(err), stage: "rehearsal" },
