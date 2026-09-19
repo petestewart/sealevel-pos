@@ -186,7 +186,7 @@ from the teacher's iPad through the write routes that already exist.
 Plumbing first, then one scene at a time, in this order.
 
 - [x] Plumbing: `/display`, pairing code, `pos_display` cookie, `displays` and `display_requests` tables, the hub, both SSE routes, present/cancel/complete/refuse, header connection mark, drawer pair/unpair. Done when a paired iPad survives a restart on the idle screen. **T112** (the pairing survives a restart with a database; with none it re-pairs and says so).
-- [ ] Ticket, summary mode: live mirror of the priced cart and the post-sale summary. No writes.
+- [x] Ticket, summary mode: live mirror of the priced cart and the post-sale summary. No writes. **T114** (a live ticket is replaced in place; a busy display skips the mirror in silence; the summary leaves the screen on the hub's own clock).
 - [ ] Waiver: sign on the display, signature kept in `waiver_receipts` and copied to Mindbody documents (probe D-B1 first).
 - [ ] Ticket approval: `customer_confirms_sale` in `app_settings`, admin-edited, enforced by `/api/checkout` on the server; teacher override by their own PIN (T48 idiom), filed on the client.
 - [ ] Sign-up, self-serve: "New here? Sign up" on the idle screen, form then waiver signature in one request, a tray with a gold count on the POS header, Create finalises client and waiver in one tap, pending sign-ups surface in walk-in search, take-over rule when the teacher needs the screen. Email and text opt-in ticked by default (probe D-B3 first). Answers Pete's rush case (design doc, "Self-serve").

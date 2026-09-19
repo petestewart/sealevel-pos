@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { plainText } from "@/lib/richtext";
+import { readTicketPayload } from "@/lib/displayticket";
+
+import TicketScene from "./TicketScene";
+
+import type { TicketPayload } from "@/lib/displayticket";
 
 /**
  * The idle screen and the pairing exchange (T112).
@@ -25,6 +30,12 @@ interface Config {
   target: string;
 }
 
+/** T114: what the stream put on this screen, or null for idle. Only the
+ *  ticket exists today; the waiver, the sign-up and the contract are
+ *  items 3 to 6 and an unknown kind deliberately renders the idle screen
+ *  rather than guessing. */
+type Scene = { kind: "ticket"; payload: TicketPayload };
+
 type Pairing =
   | { state: "loading" }
   | { state: "unpaired"; code: string; secret: string; error: string | null }
@@ -42,6 +53,8 @@ export default function DisplayScreen() {
   /** Whether the stream is up, so a display that lost the server says so
    *  rather than sitting there looking fine. */
   const [live, setLive] = useState(false);
+  /** T114: the scene the server says is up. */
+  const [scene, setScene] = useState<Scene | null>(null);
 
   /* The banner and the mode, from the answer /api/config gives a browser
    * with no session at all: banner text, dry run and the target. */
@@ -149,8 +162,44 @@ export default function DisplayScreen() {
       return;
     }
     const onOpen = () => setLive(true);
+    /* T114: one place that turns a `present` into a scene. An unknown
+     * kind is the idle screen and ONE log line: a student must never be
+     * shown a half-rendered guess at something this build does not know
+     * how to draw, and a teacher must not be left wondering why the
+     * screen did not change. */
+    let warned = "";
+    const onPresent = (ev: MessageEvent) => {
+      setLive(true);
+      let data: { kind?: unknown; payload?: unknown } | null = null;
+      try {
+        const parsed: unknown = JSON.parse(ev.data);
+        if (parsed && typeof parsed === "object") {
+          data = parsed as { kind?: unknown; payload?: unknown };
+        }
+      } catch {
+        return;
+      }
+      if (data?.kind === "ticket") {
+        const ticket = readTicketPayload(data.payload);
+        if (ticket.ok) {
+          setScene({ kind: "ticket", payload: ticket.value });
+          return;
+        }
+      }
+      const kind = String(data?.kind ?? "unknown");
+      if (warned !== kind) {
+        warned = kind;
+        console.warn(`[display] nothing here renders a ${kind} scene yet`);
+      }
+      setScene(null);
+    };
+    const onIdle = () => {
+      setLive(true);
+      setScene(null);
+    };
     const onError = () => {
       setLive(false);
+      setScene(null);
       /* A 401 means this cookie names nobody any more. Ask the server
        * what it thinks: it will hand back a fresh pairing code. */
       void fetch("/api/display/state")
@@ -170,12 +219,16 @@ export default function DisplayScreen() {
     };
     source.addEventListener("open", onOpen);
     source.addEventListener("error", onError);
-    source.addEventListener("idle", onOpen);
+    source.addEventListener("idle", onIdle);
+    source.addEventListener("present", onPresent);
+    source.addEventListener("cancel", onIdle);
     return () => {
       stopped = true;
       source?.removeEventListener("open", onOpen);
       source?.removeEventListener("error", onError);
-      source?.removeEventListener("idle", onOpen);
+      source?.removeEventListener("idle", onIdle);
+      source?.removeEventListener("present", onPresent);
+      source?.removeEventListener("cancel", onIdle);
       source?.close();
     };
   }, [pairing.state]);
@@ -197,6 +250,21 @@ export default function DisplayScreen() {
         : config.dryRun
           ? "Dry run"
           : null;
+
+  /* T114: a scene owns the middle of the screen; the banner and the mode
+   * mark stay where they are, because what this iPad is pointed at is as
+   * true during a sale as it is at rest. */
+  if (pairing.state === "paired" && scene !== null) {
+    return (
+      <main className="display">
+        {banner.length > 0 ? <p className="display-banner">{banner}</p> : null}
+        <div className="display-scene">
+          <TicketScene payload={scene.payload} />
+        </div>
+        {mark ? <p className="display-mark">{mark}</p> : null}
+      </main>
+    );
+  }
 
   return (
     <main className="display">

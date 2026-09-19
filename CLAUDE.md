@@ -243,6 +243,23 @@ iPad, under the teacher's token, through a write route that already
 exists, which is what keeps dry run, the write guard, T49 attribution
 and T50's refusal applying unchanged.
 
+**A live ticket is the one scene that is REPLACED in place** (T114,
+Phase 2.5 item 2). The sale screen mirrors the priced cart as it is
+built, so a second `present` of a live ticket while one is up updates it
+under the same request id: the display gets one `present` and no
+`cancel`, and the post-sale summary takes over the same way. Anything
+else holding the screen (a waiver, a sign-up, a contract, a summary
+still thanking the last student) wins, and `present` answers 409
+`reason: "busy"`, which the sale screen drops WITHOUT telling the
+teacher: the mirror is informational and resumes on the next priced
+change. The summary's few seconds are enforced by the hub, not by the
+teacher's tab, so a closed tab cannot leave one student's ticket in
+front of the next. Every figure on that screen is Mindbody's, from
+`/api/price-cart` or the checkout answer, and `readTicketPayload`
+rebuilds the payload field by field so no client, product or pricing
+option id and no card detail beyond the tender's WORD can reach a screen
+a student is holding.
+
 **The `pos_display` cookie grants exactly `/api/display/*`.** It is
 HMAC-signed like the device token (`src/lib/displayauth.ts`), carries
 only the display id, and `requireSession` never looks at it, so a

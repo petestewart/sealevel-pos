@@ -13,9 +13,11 @@ import {
   sweepDisplayRequests,
   touchDisplay,
   updateDisplayRequest,
+  updateDisplayRequestPayload,
   upsertDisplay,
 } from "./db";
 import { displayCookieDurable } from "./displayauth";
+import { isLiveTicket } from "./displayticket";
 
 /**
  * The customer display's hub (T112, docs/design/customer-display.md).
@@ -114,6 +116,11 @@ type Subscriber = (ev: HubEvent) => void;
 export const PAIR_CODE_TTL_MS = 5 * 60 * 1000;
 /** A request expires after 30 minutes, result and all. */
 export const REQUEST_TTL_MS = 30 * 60 * 1000;
+/** T114: how long the post-sale summary holds the screen before the hub
+ *  itself sends the display back to idle. Server-side deliberately: a
+ *  teacher whose tab is closed (or asleep, or reloaded) must not be able
+ *  to leave one student's ticket in front of the next one. */
+export const SUMMARY_TTL_MS = 8 * 1000;
 /** Silence past this and the display counts as gone: the POS header's
  *  mark goes amber, and a teacher knows before sending a waiver to a
  *  dead screen. Three heartbeats. */
@@ -168,6 +175,12 @@ interface HubState {
   /** Whether the display was counted as connected at the last check, so
    *  connected/disconnected is an edge and not a per-request answer. */
   wasConnected: boolean;
+  /** T114: the timer that takes a short-lived scene (the post-sale
+   *  summary) down on its own. `expireIfDue` is lazy and only runs when
+   *  something asks the hub a question; a summary has to clear itself
+   *  with nobody asking. One timer at a time, replaced on every present
+   *  and cleared on every cancel. */
+  expiryTimer: ReturnType<typeof setTimeout> | null;
 }
 
 const G = globalThis as typeof globalThis & { __posDisplay?: HubState };
@@ -184,6 +197,7 @@ const state: HubState = (G.__posDisplay ??= {
   loading: null,
   lastTouchWrite: 0,
   wasConnected: false,
+  expiryTimer: null,
 });
 
 /* --- Validation ------------------------------------------------------ */
@@ -415,6 +429,7 @@ export async function pairCode(
   const previous = state.paired;
   state.paired = display;
   state.current = null;
+  clearExpiryTimer();
   await boundedDb(
     upsertDisplay({ id, name, pairedAt: new Date(now) }),
     TABLE_WAIT_MS,
@@ -514,6 +529,7 @@ export async function unpairDisplay(): Promise<boolean> {
   if (p === null) return false;
   state.paired = null;
   state.current = null;
+  clearExpiryTimer();
   state.wasConnected = false;
   await boundedDb(deleteDisplay(p.id), TABLE_WAIT_MS, false);
   emit("display", "idle", {});
@@ -524,10 +540,37 @@ export async function unpairDisplay(): Promise<boolean> {
 
 /* --- Requests -------------------------------------------------------- */
 
+function clearExpiryTimer(): void {
+  if (state.expiryTimer !== null) {
+    clearTimeout(state.expiryTimer);
+    state.expiryTimer = null;
+  }
+}
+
+/** T114: arm the hub's own clock for a scene that ends by itself (the
+ *  post-sale summary). Lazy expiry is enough for a 30 minute request
+ *  nobody is watching; a summary has to leave the screen with nobody
+ *  asking the hub anything at all. */
+function armExpiry(request: DisplayRequest, now: number): void {
+  clearExpiryTimer();
+  const wait = request.expiresAt - now;
+  /* Only short-lived scenes get a timer: a 30 minute one would be a
+   * process-lifetime handle for no gain, and `expireIfDue` covers it. */
+  if (wait <= 0 || wait > 5 * 60 * 1000) return;
+  const timer = setTimeout(() => {
+    state.expiryTimer = null;
+    expireIfDue(Date.now());
+  }, wait);
+  /* A pending summary must never hold a shutdown open. */
+  (timer as unknown as { unref?: () => void }).unref?.();
+  state.expiryTimer = timer;
+}
+
 function expireIfDue(now: number): void {
   const c = state.current;
   if (c !== null && now >= c.expiresAt) {
     state.current = null;
+    clearExpiryTimer();
     emit("display", "idle", {});
   }
 }
@@ -570,10 +613,19 @@ export async function presentRequest(input: {
   payload: Record<string, unknown>;
   initiator: DisplayInitiator;
   requestedByStaffId: string | null;
+  /** T114: how long this scene may hold the screen. The default is the
+   *  30 minute request TTL; the post-sale summary passes SUMMARY_TTL_MS
+   *  and the hub takes it down itself. */
+  ttlMs?: number;
   now?: number;
 }): Promise<
-  | { ok: true; request: DisplayRequest }
-  | { ok: false; status: number; error: string }
+  | { ok: true; request: DisplayRequest; replaced: boolean }
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      reason: "unpaired" | "disconnected" | "busy";
+    }
 > {
   await ensureDisplayLoaded();
   const now = input.now ?? Date.now();
@@ -583,6 +635,7 @@ export async function presentRequest(input: {
     return {
       ok: false,
       status: 409,
+      reason: "unpaired",
       error: "No customer display is paired. Pair one in Settings first.",
     };
   }
@@ -590,15 +643,47 @@ export async function presentRequest(input: {
     return {
       ok: false,
       status: 409,
+      reason: "disconnected",
       error:
         "The customer display is paired but not connected. Check the iPad " +
         "is awake and on this page.",
     };
   }
-  if (state.current !== null && state.current.status === "pending") {
+  const held = state.current;
+  if (held !== null && held.status === "pending") {
+    /* T114: the ONE scene that is updated in place rather than completed.
+     * A live ticket mirrors a cart the teacher is still building, so a
+     * second present of one while a live ticket is up REPLACES it: the
+     * display gets one `present` and no `cancel`, and the request keeps
+     * its id so nothing downstream sees a new scene per keystroke.
+     *
+     * The post-sale SUMMARY takes over a live ticket the same way, and
+     * for the same reason: it is the end of the ticket that is already on
+     * the screen, so the student watches their own ticket become a
+     * receipt rather than seeing it vanish and something else arrive.
+     *
+     * Anything else holding the screen (a waiver, a sign-up, a contract,
+     * a summary still thanking the last student) wins, and the mirror is
+     * skipped silently: it is informational, and `reason: "busy"` is what
+     * lets the sale screen drop it without telling the teacher about a
+     * decision they did not make. */
+    if (input.kind === "ticket" && isLiveTicket(held.kind, held.payload)) {
+      held.payload = input.payload;
+      held.expiresAt = now + (input.ttlMs ?? REQUEST_TTL_MS);
+      armExpiry(held, now);
+      void boundedDb(
+        updateDisplayRequestPayload(held.id, held.payload, new Date(held.expiresAt)),
+        TABLE_WAIT_MS,
+        false,
+      );
+      const scene = sceneFor(held);
+      emit("display", scene.event, scene.data);
+      return { ok: true, request: held, replaced: true };
+    }
     return {
       ok: false,
       status: 409,
+      reason: "busy",
       error: "The customer display is already showing something.",
     };
   }
@@ -615,9 +700,10 @@ export async function presentRequest(input: {
     createdAt: now,
     completedAt: null,
     consumedAt: null,
-    expiresAt: now + REQUEST_TTL_MS,
+    expiresAt: now + (input.ttlMs ?? REQUEST_TTL_MS),
   };
   state.current = request;
+  armExpiry(request, now);
   void boundedDb(
     insertDisplayRequest({
       id: request.id,
@@ -639,7 +725,7 @@ export async function presentRequest(input: {
   void boundedDb(sweepDisplayRequests(new Date(now)), TABLE_WAIT_MS, false);
   const scene = sceneFor(request);
   emit("display", scene.event, scene.data);
-  return { ok: true, request };
+  return { ok: true, request, replaced: false };
 }
 
 /** The teacher takes the scene back down. */
@@ -658,6 +744,7 @@ export async function cancelRequest(
   c.status = "cancelled";
   c.completedAt = now;
   state.current = null;
+  clearExpiryTimer();
   void boundedDb(
     updateDisplayRequest({
       id: c.id,
@@ -775,6 +862,7 @@ export async function consumeRequest(
   }
   c.consumedAt = now;
   state.current = null;
+  clearExpiryTimer();
   emit("display", "idle", {});
   return c;
 }

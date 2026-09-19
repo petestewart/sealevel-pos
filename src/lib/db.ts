@@ -1408,6 +1408,34 @@ export async function updateDisplayRequest(update: {
   }
 }
 
+/**
+ * T114: a live ticket's payload is REPLACED in place as the cart changes,
+ * so the row follows the scene rather than growing one row per keystroke.
+ * Charter-clean for the same reason the insert is: the payload is what a
+ * student can already read on the screen in front of them, and nothing
+ * Mindbody holds.
+ */
+export async function updateDisplayRequestPayload(
+  id: string,
+  payload: unknown,
+  expiresAt: Date,
+): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `UPDATE display_requests
+         SET payload = $2, expires_at = $3
+       WHERE id = $1 AND status = 'pending'`,
+      [id, JSON.stringify(payload), expiresAt],
+    );
+    return true;
+  } catch (err) {
+    logDbError("display-request-payload", err);
+    return false;
+  }
+}
+
 /** Spends a result: the one finalisation. False when no row moved (it
  *  was consumed already, or there is no database), which the caller
  *  reads as "not mine to spend" only alongside its own memory. */

@@ -16022,3 +16022,175 @@ production Next server with one thing faked, see "Could not verify"),
   sleeping teacher iPad (the design's 30 minutes) is stranded in memory
   by the next scene. Item 3, its first caller, must look the request up
   by id or refuse a present that would strand a result.
+
+## T114. The customer display's ticket, live and after the sale (2026-09-19)
+
+Phase 2.5 item 2, the first scene to run through T113's plumbing: the
+sale screen mirrors the priced cart to the customer iPad as a teacher
+builds it (D3, Pete: "Live"), and puts a thank-you summary up for a few
+seconds when the charge lands. No approval, no `customer_confirms_sale`,
+no PIN override (that is item 4), no waiver and no contract. **No write
+path was added**: nothing in `src/lib/displayticket.ts`, the hook or the
+scene component imports `mindbody()`, and `/api/checkout`'s money logic,
+`assertBasket`, the discount spread, the gift card rails and
+`/api/price-cart`'s pricing are all untouched.
+
+### 1. What travels, and what deliberately does not
+
+`src/lib/displayticket.ts` is the payload: `mode` (`live` or `summary`),
+the client's FIRST name, the lines (name, quantity, unit price, line
+price, a discount when there is one), Mindbody's subtotal, discount, tax
+and total, and for a summary the tender in WORDS ("Cash", "Card ending
+4242", "Account credit", "Gift card", "Comp"), what was charged and
+whether a receipt was confirmed emailed.
+
+`readTicketPayload` builds a NEW object field by field rather than
+forwarding what the body carried, and `/api/display/present` runs it for
+every `ticket`. So a client id, a pricing option id, a product id, a
+card number or anything else is dropped at the server rather than
+travelling to a screen a student is holding. The generic 64KB
+object check T113 already had says only "a JSON object"; this says what
+a ticket IS.
+
+**No figure on that screen is the browser's arithmetic standing in for
+Mindbody's.** The totals come from `/api/price-cart`'s answer or the
+checkout answer, and a cart that is being priced, that was suppressed or
+whose total Mindbody disagreed with carries NO totals at all: the
+display draws the lines and shows "Pricing". The two derived numbers are
+a line's extended price and the gift cards' own prices added to the
+cart's total, which are exactly the two the teacher's own ticket already
+derives, and `/api/checkout` rehearses every card with `Test: true`
+before a cent moves.
+
+### 2. Replace in place, and busy means silence
+
+A live ticket is **the one scene kind that is updated rather than
+completed** (design doc). `presentRequest` now replaces a held live
+ticket with the next `ticket` present, keeping the same request id: the
+display receives one `present` and no `cancel`, and the row's payload is
+updated rather than a row written per cart tap. The post-sale summary
+takes over a live ticket the same way, so the student watches their own
+ticket become a receipt instead of seeing it vanish and something else
+arrive.
+
+Anything ELSE holding the screen wins, and `present` answers 409 with
+`reason: "busy"`. The sale screen drops that without a word: the mirror
+is informational (the design's walkthrough, case 1) and resumes on the
+next priced change. The teacher is never told about a decision they did
+not make.
+
+`src/app/useDisplayMirror.ts` holds the traffic rules in one place:
+nothing is sent unless a display is paired AND connected (which is every
+counter today, so the common case sends nothing at all), one present in
+flight at a time with the newest payload queued and the intermediates
+dropped, and the queue cleared when the summary goes up so a cart tap
+from a second ago cannot land on top of the thank you.
+
+### 3. The summary ends on the SERVER's clock
+
+A `summary` present carries an eight second TTL and the hub arms its own
+timer, which emits `idle` when it fires. Deliberately server-side: lazy
+expiry only runs when something asks the hub a question, and a teacher
+whose tab is closed, asleep or reloaded must not be able to leave one
+student's ticket in front of the next person in the queue.
+
+The summary is presented for the two outcomes the teacher's own screen
+reads as done, a completed sale and one suppressed by dry run or the
+write guard, and for NO other: a refused, partial, ambiguous or
+sold-nothing charge never thanks a student for a sale that did not
+happen. Under suppression the display's own corner mark already says
+Sandbox or Dry run, which is why that case can show the ticket without
+lying about the mode.
+
+### 4. The two screens
+
+`src/app/display/TicketScene.tsx` renders it: the greeting ("Hello,
+Sam" / "Thank you, Sam"), the lines at 22px with quantity and line
+price, the totals, and the total itself at 40px. Every item name and
+the client's name go through T99's `plainText`, never
+`dangerouslySetInnerHTML`. `DisplayScreen` routes `present` by kind and
+renders the idle screen for a kind this build does not know, with one
+console line per kind rather than a guess in front of a student. Radius
+0, tokens only, both palettes, no hex added.
+
+On the teacher's side, one quiet 16px line in the ticket head,
+"Showing on the customer screen", present only while the last live
+present landed. Nothing modal, no new tap target.
+
+#### Verified
+
+Drivers in the scratchpad (not in the repo): `server.mjs` (T113's
+harness, unchanged), `mockmb.mjs` (a new minimal Mindbody stand-in),
+`routes.mjs`, `ui.mjs`.
+
+- `env -u DATABASE_URL npm run build` clean, `npx tsc --noEmit` clean.
+- **27 route assertions passed**, with no database: a live ticket
+  presented and then replaced in place under the SAME request id, with
+  the display seeing two `present` events and zero `cancel` and the
+  second carrying the new line and the new total; a live present while a
+  `waiver` is pending answering 409 `reason: "busy"` with the waiver
+  still holding the screen; a summary present whose window is seconds
+  rather than thirty minutes, arriving with its tender, and then
+  expiring to `idle` with nobody asking the hub anything for nine
+  seconds, after which the hub holds nothing; a payload carrying
+  `clientId`, `productId`, `pricingOptionId`, a full card number and a
+  per-line `metadataId` accepted and STRIPPED, with the stream's own
+  event body asserted to contain none of them and to contain the item
+  name, the total and the first name; a ticket with no lines and one
+  with an unknown mode refused 400 with a plain sentence; the display
+  cookie still refused by `/api/roster`, `/api/catalog`,
+  `/api/price-cart`, `/api/checkout`, `/api/display/present` and
+  `/api/devlog`; and `present` with nobody signed in 401
+  `reason: "staff"`.
+- **25 Playwright assertions passed** against the real sale screen and a
+  mock Mindbody: a display paired and ready, a client attached, two items
+  rung up, and the display rendering "Hello, Sam", both lines, both line
+  prices and the mock server's own subtotal ($225.00), tax ($23.29) and
+  total ($248.29); the teacher's "Showing on the customer screen" line
+  present; a line removed and the display following to $27.59; a cash
+  sale finalised and the display showing "Thank you, Sam", the tender in
+  words and the charged figure; the summary leaving the screen on the
+  server's clock with the display back on Ready; the summary in the dark
+  palette with an emailed-receipt line shown only because the answer
+  confirmed one; nothing under 16px, the total measured at 40px or more,
+  and no horizontal overflow in either palette or at phone width.
+  Screenshots: `ticket-live-light.png`, `ticket-summary-light.png`,
+  `ticket-summary-dark.png`.
+- **T113's plumbing driver passes again: 52 passed, 0 failed.** It had
+  used `{kind: "ticket", payload: {}}` as a placeholder scene, and a
+  ticket payload is now validated before the busy check, so that
+  placeholder is refused 400 ("mode must be live or summary") and the
+  three assertions resting on it (a second present being 409, cancel
+  taking it down, and the cancel reaching the display's stream) had
+  nothing to stand on. The placeholder is now a `waiver` scene with a
+  minimal object payload, which is what those assertions always meant:
+  a scene that holds the screen and is not a ticket. No product code
+  changed for it. The ticket-specific behaviour is asserted in T114's
+  own driver.
+
+#### Could not verify
+
+- **No Mindbody call was made, and none should be.** Every figure in the
+  UI pass is the MOCK's, not the studio's: the mock prices a cart at a
+  flat 10.35% and invents its own sale answer. Nothing was run against a
+  live or sandbox site, so this proves the transport and the shapes and
+  says nothing about Mindbody's real pricing of these items.
+- **The staff session was faked**, exactly as T113's driver fakes it: the
+  session Map was seeded on globalThis and the cookie derived from
+  `POS_SESSION_SECRET`. No teacher signed in against Mindbody and then
+  mirrored a ticket.
+- **No real iPad, and no second physical screen.** Both browsers were
+  headless Chromium contexts at 1180px. Safari's `EventSource` behind
+  Railway's proxy, the two devices on a real counter, and what the
+  mirror feels like at a queue are all unexercised.
+- **No database.** The whole pass ran with `DATABASE_URL` unset, so the
+  live ticket's payload UPDATE (`updateDisplayRequestPayload`) has been
+  exercised only as a no-op fallback; the SQL has not run against
+  Postgres.
+- **The suppressed (dry run / write guard) summary was not driven.** The
+  UI pass ran with `POS_DRY_RUN=false` against the mock, so the
+  completed-sale branch is the one that was exercised; the suppressed
+  branch is the same two lines of code beside it and was read, not run.
+- **A comp, a split tender, a gift card and a discount** all produce
+  their own tender words and discount lines, and none of them was driven
+  end to end; only cash was.

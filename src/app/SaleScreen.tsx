@@ -15,7 +15,13 @@ import PasswordInput from "./PasswordInput";
 import { actorFallbackLine } from "./actornote";
 import CardModal from "./CardModal";
 import { toggleTheme } from "./theme";
+import { useDisplayMirror } from "./useDisplayMirror";
 import type { TypedCard } from "@/lib/typedcard";
+import type {
+  TicketLine,
+  TicketMode,
+  TicketPayload,
+} from "@/lib/displayticket";
 
 import {
   COMP_DETAIL_MAX,
@@ -925,6 +931,77 @@ function lineSubName(line: CartEntry): string | null {
   const name = cut === -1 ? item.subName : item.subName.slice(0, cut);
   const rest = cut === -1 ? "" : item.subName.slice(cut);
   return `${giftCardNameLead(name) ?? name}${rest}`;
+}
+
+/**
+ * T114: the ticket as the CUSTOMER DISPLAY renders it (Phase 2.5 item 2,
+ * design "Scene 2"). The same lines the teacher's ticket shows, named the
+ * way the ticket names them, with no id of any kind on them: the payload
+ * carries no client id, no pricing option id, no product id and nothing
+ * about a card, and /api/display/present rebuilds it field by field
+ * besides.
+ */
+function displayTicketLines(cart: readonly CartEntry[]): TicketLine[] {
+  return cart.map((line) => ({
+    name: lineNameOnly(line),
+    quantity: line.quantity,
+    unitPrice: line.item.price,
+    /* The line's extended price, derived exactly as the teacher's ticket
+     * derives it from the catalog's unit price. Every TOTAL below is
+     * Mindbody's own. */
+    linePrice: roundToCents(line.item.price * line.quantity),
+  }));
+}
+
+/** The greeting's name, and only that: a first name is the most this
+ *  screen ever learns about the person standing at the counter. */
+function displayFirstName(name: string | null): string | null {
+  if (name === null) return null;
+  const first = name.trim().split(/\s+/)[0];
+  return first === undefined || first.length === 0 ? null : first;
+}
+
+/**
+ * T114: one ticket payload, built the same way for the live mirror and
+ * for the post-sale summary.
+ *
+ * The rule that shapes it: **no figure here is this screen's arithmetic
+ * standing in for Mindbody's.** A cart that is being priced, that was
+ * suppressed, or whose total Mindbody disagreed with carries NO totals at
+ * all, and the display draws the lines and waits. The one addition is the
+ * gift cards' own prices, which is the addition the teacher's ticket
+ * already makes and which /api/checkout rehearses with `Test: true`
+ * before a cent moves.
+ */
+function displayTicketPayload(input: {
+  mode: TicketMode;
+  cart: readonly CartEntry[];
+  priced: PricedResult | null;
+  pricing: boolean;
+  clientName: string | null;
+  giftCardsCharged: number;
+  giftDiscountOff: number;
+}): TicketPayload {
+  const saleLines = input.cart.filter((line) => !isGiftCardLine(line));
+  const priced = input.pricing ? null : input.priced;
+  const usable =
+    priced !== null && !priced.suppressed && !priced.disagrees;
+  const cartTotal = saleLines.length === 0 ? 0 : usable ? priced.grandTotal : null;
+  const discountTotal = roundToCents(
+    (usable ? (priced.discountTotal ?? 0) : 0) + input.giftDiscountOff,
+  );
+  return {
+    mode: input.mode,
+    clientFirstName: displayFirstName(input.clientName),
+    lines: displayTicketLines(input.cart),
+    subtotal: usable ? priced.subTotal : null,
+    ...(discountTotal > 0 ? { discountTotal } : {}),
+    tax: usable ? priced.taxTotal : null,
+    total:
+      cartTotal === null
+        ? null
+        : roundToCents(cartTotal + input.giftCardsCharged),
+  };
 }
 
 /** Mirrors src/lib/sale.ts PricedCart, as /api/price-cart returns it. */
@@ -1843,6 +1920,16 @@ function PaymentPanel(props: {
    *  page.tsx's words. Shown on the done screen: the sale stands either
    *  way, and a failed check-in must be read where the teacher is. */
   pendingResult: { ok: boolean; text: string } | null;
+  /**
+   * T114: put the post-sale summary on the customer display. Called for
+   * the two outcomes the teacher's own screen reads as done -- a
+   * completed sale, and a suppressed one under dry run or the write
+   * guard -- and for NO other: a refused, partial, ambiguous or
+   * sold-nothing charge must never thank a student for a sale that did
+   * not happen. The panel builds it at the TAP, because the cart is
+   * cleared in the same commit the sale lands in.
+   */
+  onDisplaySummary: (payload: TicketPayload) => void;
 }) {
   const {
     cart,
@@ -3223,6 +3310,41 @@ function PaymentPanel(props: {
      * lands, and the done block needs both after it has. */
     const typedLastFourAtTap = typedCard?.lastFour ?? null;
     const typedKeepAtTap = typedCard?.card.keep === true;
+    /* T114: the ticket as it stands at the tap, for the customer
+     * display's summary. Built here for the same reason the count and
+     * the receipt address are: the cart is cleared in the commit the
+     * sale lands in, and a summary built after it would be empty. */
+    const displaySummaryAtTap = displayTicketPayload({
+      mode: "summary",
+      cart,
+      priced,
+      pricing: false,
+      clientName: client?.name ?? null,
+      giftCardsCharged,
+      giftDiscountOff: roundToCents(armedParts.giftCents / 100),
+    });
+    /* The tender in WORDS, which is all a student's screen ever learns
+     * about how a sale was paid: a card's last four and nothing else of
+     * a card, and nothing at all of a gift card's number. */
+    const displayTender = comped
+      ? "Comp"
+      : lines.length === 2
+        ? "Two payments"
+        : soleLine === undefined
+          ? "Payment"
+          : soleLine.source === "storedcard"
+            ? card
+              ? `Card ending ${card.lastFour}`
+              : "Card"
+            : soleLine.source === "typedcard"
+              ? typedLastFourAtTap
+                ? `Card ending ${typedLastFourAtTap}`
+                : "Card"
+              : soleLine.source === "credit"
+                ? "Account credit"
+                : soleLine.source === "giftcard"
+                  ? "Gift card"
+                  : "Cash";
     inFlight.current = true;
     setCharging(true);
     onBusyChange(true);
@@ -3464,6 +3586,18 @@ function PaymentPanel(props: {
             .filter(Boolean)
             .join(" ") || null,
         });
+        /* T114: and the student's screen says thank you, with what was
+           bought, what was charged and how. The hub takes it down by
+           itself after a few seconds, so a teacher who walks away cannot
+           leave this ticket in front of the next person in the queue. */
+        props.onDisplaySummary({
+          ...displaySummaryAtTap,
+          tender: displayTender,
+          charged: typeof body?.total === "number" ? body.total : (total ?? 0),
+          /* T53's rule, on the student's screen too: only a receipt
+             Mindbody CONFIRMED is one this screen promises. */
+          emailedReceipt: body?.emailReceipt === true ? true : null,
+        });
         /* The sale is over: the tender goes with it. */
         resetTender();
       } else if (res.ok && body?.suppressed) {
@@ -3475,6 +3609,16 @@ function PaymentPanel(props: {
           kind: "suppressed",
           mode: String(body.suppressed),
           summary: typeof body?.summary === "string" ? body.summary : null,
+        });
+        /* T114: what the teacher's screen shows as done, the display
+           shows. Nothing moved, and the display says so in its own
+           corner: the dry run and sandbox mark is on this screen exactly
+           so a scene here never has to lie about the mode. */
+        props.onDisplaySummary({
+          ...displaySummaryAtTap,
+          tender: displayTender,
+          charged: total ?? 0,
+          emailedReceipt: null,
         });
       } else if (body?.stage === "checkout-after-credit") {
         /* THE seam, rendered verbatim and prominent: the credit exists,
@@ -9340,6 +9484,50 @@ export default function SaleScreen(props: {
   const giftDiscountOff = roundToCents(ticketParts.giftCents / 100);
   const giftCardsCharged = roundToCents(giftCardsTotal - giftDiscountOff);
 
+  /* ---------------- T114: the customer display's ticket ---------------
+   * The live mirror (D3, Pete: "Live"): every time a FRESH price answer
+   * lands, the ticket as it now stands goes to the display. The hook
+   * owns the traffic rules -- nothing sent without a connected display,
+   * one present in flight, latest wins, and a display that is busy with
+   * a waiver or a sign-up is skipped in silence.
+   *
+   * The dependency is the priced answer and the cart, so a cart tap
+   * mirrors once the price settles rather than on every tap: the figures
+   * on a student's screen are Mindbody's, and a ticket that showed lines
+   * from this tap beside a total from the last one would be worse than
+   * one that waits. */
+  const mirror = useDisplayMirror(props.open);
+  const livePayload =
+    cart.length === 0
+      ? null
+      : displayTicketPayload({
+          mode: "live",
+          cart,
+          priced,
+          pricing,
+          clientName: client?.name ?? null,
+          giftCardsCharged,
+          giftDiscountOff,
+        });
+  const liveKey = livePayload === null ? "" : JSON.stringify(livePayload);
+  const mirrorLive = mirror.live;
+  useEffect(() => {
+    /* A closed sale screen shows nothing: the overlay going away is the
+     * teacher moving on, and the last ticket must not outlive it. */
+    if (!props.open) {
+      mirrorLive(null);
+      return;
+    }
+    mirrorLive(liveKey === "" ? null : (JSON.parse(liveKey) as TicketPayload));
+  }, [liveKey, props.open, mirrorLive]);
+
+  /** T114: the summary, built by the payment panel at the tap (the cart
+   *  is cleared in the same commit as the sale lands) and sent here. */
+  const onDisplaySummary = useCallback(
+    (payload: TicketPayload) => mirror.summary(payload),
+    [mirror],
+  );
+
   const payWhy: string | null = charging
     ? "Charging..."
     : cart.length === 0
@@ -10645,6 +10833,7 @@ export default function SaleScreen(props: {
               the outcomes are PaymentPanel's; the cart and the pricing
               loop stay here. */}
           <PaymentPanel
+            onDisplaySummary={onDisplaySummary}
             cart={cart}
             priced={priced}
             pricing={pricing}
@@ -10724,6 +10913,18 @@ export default function SaleScreen(props: {
                 </span>
               </span>
             </div>
+
+            {/* T114: the one thing a teacher needs to know about the
+                second screen while ringing up -- that the student can see
+                this. Quiet (T111 took the top of the screen back), not a
+                control, and absent entirely when there is no display or
+                when something else is holding it. */}
+            {mirror.showing ? (
+              <p className="sale-display-line" role="status">
+                <span className="display-dot" aria-hidden="true" />
+                Showing on the customer screen
+              </p>
+            ) : null}
 
             {/* T91: the New client create's amber line, in the ticket's
                 note slot because that is where the teacher is looking
