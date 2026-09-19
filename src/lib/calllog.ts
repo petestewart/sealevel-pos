@@ -162,14 +162,15 @@ export function scrubCardDigits(text: string): string {
  * `giftcardbalance` calls that differed only by the id read as three
  * identical calls.
  *
- * FOUR THINGS STAY STRUCK, and that is a different case, not an
+ * THREE THINGS STAY STRUCK, and that is a different case, not an
  * oversight: a card number (SECRET_KEY plus CARD_SHAPED, either
- * direction and whatever key), a CVV (SECRET_KEY plus CVV_IN_TEXT), a
- * teacher PIN and its one-shot token (T48, which never reach this
- * buffer), and a staff session token (T49/T50, recorded as
- * `actor=<staff id>` and never as itself). A teacher never sees any of
- * those on a screen, and a PAN at rest in a server-side log is a
- * liability the studio carries.
+ * direction and whatever key), a CVV (SECRET_KEY plus CVV_IN_TEXT), and
+ * a teacher PIN with its one-shot token (T48, which never reach this
+ * buffer at all: they travel to our own API, not to Mindbody). A teacher
+ * never sees any of those on a screen, and a PAN at rest in a
+ * server-side log is a liability the studio carries. The staff session
+ * token was on that list for one message and is not any more: see
+ * CallRecord.actorToken, which carries it in full.
  *
  * Note which key names that leaves: `cardNumber` is the GiftCard
  * payment's Metadata key for the barcode AND, in any casing, the card on

@@ -39,12 +39,19 @@
  * charged (see /api/checkout): a card worth more than was paid for it is
  * money out of the studio's till.
  *
- * THE BARCODE ID IS A SECRET, exactly as in T83: a gift card is a bearer
- * instrument, so the id generated here is treated like a card number.
- * The call log strikes it out of the request body (`BarcodeId` is one of
- * calllog.ts's GIFT_KEYs) and out of anything Mindbody quotes back. The
- * two places it is deliberately shown are teacher-facing and necessary:
- * the done screen ("Write this on the card") and the emailed receipt.
+ * THE BARCODE ID IS A BEARER INSTRUMENT: whoever has the number can
+ * spend the balance, so nothing here stores it or answers with more of
+ * it than a screen needs. The two places it is shown whole are
+ * teacher-facing and necessary: the done screen ("Write this on the
+ * card") and the emailed receipt.
+ *
+ * T83 also struck it out of the dev call log, and **T109 stopped**
+ * (Pete: "no redactions at all. these are all things the teacher can see
+ * already and i am not worried about it."). The drawer now shows the id
+ * in the balance read's query, in this file's request body and in
+ * anything Mindbody quotes back, which is what makes three
+ * `giftcardbalance` calls tellable apart; see src/lib/calllog.ts for
+ * what still is struck and why.
  */
 
 import {
