@@ -239,14 +239,13 @@ exceptions, and both are safe in only one direction: the target switch is
 admin-only, audited in the log and refuses an incomplete credential set,
 and the local dry run can only make this iPad safer.
 
-## Customer display (T113, Phase 2.5 item 1)
+## Customer display (T113, T114, T115; Phase 2.5)
 
 A second iPad on the counter, facing the student, at `/display`. Design:
-`docs/design/customer-display.md`; today only the plumbing exists, which
-is the idle screen, the pairing, the hub in `src/lib/display.ts`, the two
-SSE routes and present/cancel/complete/refuse. The scenes (waiver,
-ticket, sign-up, contract) are items 2 to 6 and nothing consumes a scene
-kind yet.
+`docs/design/customer-display.md`. Built: the plumbing (idle screen,
+pairing, the hub in `src/lib/display.ts`, the two SSE routes and
+present/cancel/complete/refuse), the ticket scene (T114) and the waiver
+scene (T115). The sign-up and the contract are items 5 and 6.
 
 **The display adds zero write paths to Mindbody, and must keep adding
 none.** Nothing in `src/lib/display.ts` or under `src/app/api/display/`
@@ -272,6 +271,25 @@ front of the next. Every figure on that screen is Mindbody's, from
 rebuilds the payload field by field so no client, product or pricing
 option id and no card detail beyond the tender's WORD can reach a screen
 a student is holding.
+
+**A result is spent BY ID, once** (T115). `consumeRequest` finds a
+completed, unconsumed request by its id even when the hub has moved on to
+another scene or the process restarted, reloading it from
+`display_requests`, which is the one reason that table exists. A request
+also carries a SERVER-ONLY half (`private`: the client id and the
+waiver's sha256) that is stored under a reserved key in the payload
+column and never reaches `sceneFor`, so it cannot travel down the
+display's stream.
+
+**The waiver signature's copy to Mindbody is best effort** (T115, Phase
+2.5 item 3). The `waiver_receipts` row holds the PNG and its hash and is
+the ORIGINAL; `POST /client/uploadclientdocument` files a copy from
+`/api/waiver-agree` under the teacher's token, with the client id in the
+options so dry run and the write guard apply, and a failure reports
+`documentFiled: false` with the reason while the agreement stands. A
+SUPPRESSED release does not consume the signature, so a real run later
+can still spend it. A waiver the studio edited between the student
+reading it and the teacher's iPad recording it is refused outright.
 
 **The `pos_display` cookie grants exactly `/api/display/*`.** It is
 HMAC-signed like the device token (`src/lib/displayauth.ts`), carries
@@ -607,6 +625,12 @@ while `git clone` works, so clone the repo rather than fetching files.
   expired staff token (`isActorTokenDead` reads a 401), and that the
   sales report actually shows the token's staff member. The probe is
   `GET /api/teacher/probe` (the sign-in modal and the dev drawer run it).
+- **The waiver document upload is unverified live (T115).** Probe D-B1
+  (`scripts/probe-upload-document.ts`) is written and has not been run:
+  nobody has watched `POST /client/uploadclientdocument` accept the
+  spec's `{FileName, MediaType, Buffer}` shape or seen the file appear on
+  a client's Documents page. The signature itself is kept in
+  `waiver_receipts`, so a refused upload loses the copy, not the record.
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It

@@ -6,6 +6,7 @@ import {
   consumeDisplayRequest,
   dbConfigured,
   deleteDisplay,
+  findDisplayRequestById,
   findLiveDisplayRequest,
   insertDisplayRequest,
   latestDisplay,
@@ -16,6 +17,7 @@ import {
   updateDisplayRequestPayload,
   upsertDisplay,
 } from "./db";
+import type { DisplayRequestRow } from "./db";
 import { displayCookieDurable } from "./displayauth";
 import { isLiveTicket } from "./displayticket";
 
@@ -83,6 +85,15 @@ export interface DisplayRequest {
   /** What the display renders. A plain JSON object, size-capped, and
    *  only ever what the student may see anyway. */
   payload: Record<string, unknown>;
+  /**
+   * T115: what the SERVER knows about this request and the display must
+   * never be told: the client id the scene is about, and the sha256 of
+   * the waiver text as it was served. It never reaches `sceneFor`, so it
+   * cannot travel down the display's stream; the finalising write route
+   * reads it back here and checks the browser's claim against it. Stored
+   * in the row under a reserved key and split back off on reload.
+   */
+  private: Record<string, unknown>;
   status: DisplayRequestStatus;
   result: Record<string, unknown> | null;
   /** The reason a refusal gave, as the student's screen worded it. */
@@ -147,6 +158,10 @@ const EVENT_BUFFER = 50;
  *  cannot fill the server's memory or a jsonb column. */
 export const PAYLOAD_LIMIT_BYTES = 64 * 1024;
 export const RESULT_LIMIT_BYTES = 512 * 1024;
+/** T115: where the server-only half of a request lives inside the stored
+ *  payload column. Split off on the way in and on the way out, so a
+ *  scene the display receives can never carry it. */
+const PRIVATE_KEY = "__private";
 
 /* --- State ----------------------------------------------------------- */
 
@@ -181,6 +196,14 @@ interface HubState {
    *  with nobody asking. One timer at a time, replaced on every present
    *  and cleared on every cancel. */
   expiryTimer: ReturnType<typeof setTimeout> | null;
+  /** T115 review: request ids a write route is finalising RIGHT NOW.
+   *  `consumeRequest` runs last, after the release and the upload, so
+   *  without this two finalisations of one signature (the `completed`
+   *  event replayed on an SSE reconnect, beside the pending check on
+   *  dialog open) would both pass their checks and both write. Taken
+   *  and released synchronously, so there is no await between the
+   *  check and the mark. */
+  finalising: Set<string>;
 }
 
 const G = globalThis as typeof globalThis & { __posDisplay?: HubState };
@@ -198,6 +221,7 @@ const state: HubState = (G.__posDisplay ??= {
   lastTouchWrite: 0,
   wasConnected: false,
   expiryTimer: null,
+  finalising: new Set<string>(),
 });
 
 /* --- Validation ------------------------------------------------------ */
@@ -238,6 +262,47 @@ export function readJsonObject(
  * which after a restart is nothing, and the display's own screen says a
  * re-pair is needed.
  */
+/**
+ * One stored row, as the hub holds it. Shared by the restart reload and
+ * T115's by-id lookup, so the two cannot read the same row differently.
+ * The payload column carries the server-only half under PRIVATE_KEY and
+ * it is split back off here, which is the only place it is ever read.
+ */
+function fromRow(row: DisplayRequestRow): DisplayRequest | null {
+  if (!isDisplayRequestKind(row.kind)) return null;
+  const stored = readJsonObject(row.payload, PAYLOAD_LIMIT_BYTES);
+  const result = readJsonObject(row.result, RESULT_LIMIT_BYTES);
+  const all = stored.ok ? { ...stored.value } : {};
+  const rawPrivate = all[PRIVATE_KEY];
+  delete all[PRIVATE_KEY];
+  return {
+    id: row.id,
+    displayId: row.displayId,
+    kind: row.kind,
+    initiator: row.initiator === "display" ? "display" : "teacher",
+    payload: all,
+    private:
+      rawPrivate !== null &&
+      typeof rawPrivate === "object" &&
+      !Array.isArray(rawPrivate)
+        ? (rawPrivate as Record<string, unknown>)
+        : {},
+    status:
+      row.status === "completed" ||
+      row.status === "refused" ||
+      row.status === "cancelled"
+        ? row.status
+        : "pending",
+    result: result.ok ? result.value : null,
+    reason: null,
+    requestedByStaffId: row.requestedByStaffId,
+    createdAt: row.createdAt.getTime(),
+    completedAt: row.completedAt === null ? null : row.completedAt.getTime(),
+    consumedAt: row.consumedAt === null ? null : row.consumedAt.getTime(),
+    expiresAt: row.expiresAt.getTime(),
+  };
+}
+
 export async function ensureDisplayLoaded(): Promise<void> {
   if (state.loaded) return;
   if (state.loading) return state.loading;
@@ -258,30 +323,7 @@ export async function ensureDisplayLoaded(): Promise<void> {
         null,
       );
       if (live && isDisplayRequestKind(live.kind)) {
-        const payload = readJsonObject(live.payload, PAYLOAD_LIMIT_BYTES);
-        const result = readJsonObject(live.result, RESULT_LIMIT_BYTES);
-        state.current = {
-          id: live.id,
-          displayId: live.displayId,
-          kind: live.kind,
-          initiator: live.initiator === "display" ? "display" : "teacher",
-          payload: payload.ok ? payload.value : {},
-          status:
-            live.status === "completed" ||
-            live.status === "refused" ||
-            live.status === "cancelled"
-              ? live.status
-              : "pending",
-          result: result.ok ? result.value : null,
-          reason: null,
-          requestedByStaffId: live.requestedByStaffId,
-          createdAt: live.createdAt.getTime(),
-          completedAt:
-            live.completedAt === null ? null : live.completedAt.getTime(),
-          consumedAt:
-            live.consumedAt === null ? null : live.consumedAt.getTime(),
-          expiresAt: live.expiresAt.getTime(),
-        };
+        state.current = fromRow(live);
       }
     } catch {
       /* Memory only, then. Never an outage. */
@@ -611,6 +653,10 @@ export function sceneFor(request: DisplayRequest | null): {
 export async function presentRequest(input: {
   kind: DisplayRequestKind;
   payload: Record<string, unknown>;
+  /** T115: the server-only half (the client id, the waiver's sha256).
+   *  Never sent to the display; read back by the write route that
+   *  finalises the result. */
+  private?: Record<string, unknown>;
   initiator: DisplayInitiator;
   requestedByStaffId: string | null;
   /** T114: how long this scene may hold the screen. The default is the
@@ -693,6 +739,7 @@ export async function presentRequest(input: {
     kind: input.kind,
     initiator: input.initiator,
     payload: input.payload,
+    private: input.private ?? {},
     status: "pending",
     result: null,
     reason: null,
@@ -710,7 +757,13 @@ export async function presentRequest(input: {
       displayId: request.displayId,
       kind: request.kind,
       initiator: request.initiator,
-      payload: request.payload,
+      /* The server-only half rides the same column under a reserved key
+       * and is split back off on read; it is never in `payload` as the
+       * display's stream carries it. */
+      payload:
+        Object.keys(request.private).length === 0
+          ? request.payload
+          : { ...request.payload, [PRIVATE_KEY]: request.private },
       status: request.status,
       result: null,
       requestedByStaffId: request.requestedByStaffId,
@@ -843,28 +896,113 @@ export async function refuseRequest(
  * what decides, so two tabs cannot both spend one signature; without
  * one, memory decides, which is the same answer on one instance.
  */
+/**
+ * T115 review: claim a request for finalisation, synchronously. True
+ * means this caller owns it and must call `releaseFinalisation` when it
+ * is done (consumed or not); false means another call is already
+ * writing this one and this caller must do nothing at all. A duplicate
+ * write is worse than a missed one here: the release already stands.
+ */
+export function beginFinalisation(requestId: string): boolean {
+  state.finalising ??= new Set<string>();
+  if (state.finalising.has(requestId)) return false;
+  state.finalising.add(requestId);
+  return true;
+}
+
+export function releaseFinalisation(requestId: string): void {
+  state.finalising?.delete(requestId);
+}
+
 export async function consumeRequest(
   requestId: string,
   now = Date.now(),
 ): Promise<DisplayRequest | null> {
   await ensureDisplayLoaded();
-  const c = state.current;
-  if (c === null || c.id !== requestId) return null;
+  /* T115 (T113 review): BY ID, not "is it the current one". The teacher's
+   * iPad names the request it was told about, and by the time it does,
+   * the hub's `current` may be a later scene, or the process may have
+   * restarted and hold nothing at all. The row is the reason this table
+   * exists, so a completed result is looked up there when memory has
+   * lost it; with no database, memory is all there is and the answer is
+   * the same on one instance. */
+  const c = state.current?.id === requestId ? state.current : await loadRequest(requestId);
+  if (c === null) return null;
   if (c.status !== "completed" || c.consumedAt !== null) return null;
   if (now >= c.expiresAt) return null;
+  /* Memory is spent FIRST (T115 review): the release, the receipt and
+   * the upload have already happened by the time this runs, so a table
+   * that does not answer must not leave the handle spendable for a retry
+   * in this process. The row is marked best effort behind it; a miss is
+   * logged, and the residual is one restart inside the 30 minutes. */
+  c.consumedAt = now;
   if (dbConfigured()) {
     const spent = await boundedDb(
       consumeDisplayRequest(requestId),
       TABLE_WAIT_MS,
-      true,
+      false,
     );
-    if (!spent) return null;
+    if (!spent) {
+      console.warn(
+        `[display] request ${requestId} consumed in memory; the row was not marked`,
+      );
+    }
   }
-  c.consumedAt = now;
-  state.current = null;
-  clearExpiryTimer();
-  emit("display", "idle", {});
+  /* Only the scene actually on the screen comes down. Finalising a
+   * result the hub has already moved past must not blank whatever the
+   * display is showing now. */
+  if (state.current !== null && state.current.id === c.id) {
+    state.current = null;
+    clearExpiryTimer();
+    emit("display", "idle", {});
+  }
   return c;
+}
+
+/** One request by id, from memory or from the table (T115). Never
+ *  throws; null is "there is nothing here to finalise". */
+export async function loadRequest(
+  requestId: string,
+): Promise<DisplayRequest | null> {
+  await ensureDisplayLoaded();
+  if (state.current !== null && state.current.id === requestId) {
+    return state.current;
+  }
+  if (!dbConfigured()) return null;
+  const row = await boundedDb(
+    findDisplayRequestById(requestId),
+    TABLE_WAIT_MS,
+    null,
+  );
+  return row === null ? null : fromRow(row);
+}
+
+/**
+ * T115: a completed, unconsumed request of this kind for this client,
+ * whether or not it is still the scene on the screen. This is what the
+ * teacher's iPad asks after being asleep through the `completed` event:
+ * the result waited in the hub (or the table) and is finalised on wake.
+ * The client id is read from the request's SERVER-side half, never from
+ * anything a browser sent.
+ */
+export async function pendingResultFor(
+  kind: DisplayRequestKind,
+  clientId: string,
+  now = Date.now(),
+): Promise<DisplayRequest | null> {
+  await ensureDisplayLoaded();
+  const c = state.current;
+  if (
+    c !== null &&
+    c.kind === kind &&
+    c.status === "completed" &&
+    c.consumedAt === null &&
+    now < c.expiresAt &&
+    c.private.clientId === clientId
+  ) {
+    return c;
+  }
+  return null;
 }
 
 /* --- What the surfaces read ------------------------------------------ */

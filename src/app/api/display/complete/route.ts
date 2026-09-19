@@ -1,12 +1,16 @@
+import { createHash } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
 import {
   RESULT_LIMIT_BYTES,
   completeRequest,
+  currentRequest,
   ensureDisplayLoaded,
   isPairedDisplay,
   readJsonObject,
 } from "@/lib/display";
+import { readWaiverResult } from "@/lib/displaywaiver";
 import { displayIdFrom } from "@/lib/displayauth";
 
 export const dynamic = "force-dynamic";
@@ -56,7 +60,32 @@ export async function POST(request: Request) {
   void clientId;
   void staffId;
   void price;
-  const done = await completeRequest(id, requestId, kept);
+  /* T115: a waiver's result is CHECKED here, not when the write route
+   * comes to file it. A signature that is not a PNG, one too big for a
+   * signature, or a moment that is not from the last hour is refused
+   * with a plain sentence while the student is still standing there,
+   * rather than stored and found to be useless by the release it was
+   * meant to accompany. The kind comes from the server's own record of
+   * the request, never from the body. */
+  let stored: Record<string, unknown> = kept;
+  const held = currentRequest();
+  if (held !== null && held.id === requestId && held.kind === "waiver") {
+    const signed = readWaiverResult(kept);
+    if (!signed.ok) {
+      return NextResponse.json(
+        { error: `result: ${signed.error}` },
+        { status: signed.status },
+      );
+    }
+    stored = {
+      signaturePng: signed.value.signaturePng,
+      agreedAt: signed.value.agreedAt,
+      /* Recorded here for the log and the drawer; the write route hashes
+       * the bytes again itself rather than trusting a stored figure. */
+      signatureSha256: createHash("sha256").update(signed.png).digest("hex"),
+    };
+  }
+  const done = await completeRequest(id, requestId, stored);
   if (!done.ok) {
     return NextResponse.json({ error: done.error }, { status: done.status });
   }

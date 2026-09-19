@@ -1,5 +1,6 @@
 import { cardOnFileOf, type CardOnFile } from "./clientcard";
 import { fetchPasses, type PassInfo } from "./clientcontext";
+import { boundedDb, latestSignedWaiverReceipt } from "./db";
 import { mindbody } from "./mindbody";
 import { studioWall } from "./roster";
 
@@ -71,6 +72,13 @@ export interface ClientProfile {
   /** True when a membership icon rides the name (client.yml:5152). */
   member: boolean;
   waiver: { released: boolean; agreedAt: string | null } | null;
+  /** T115: when the waiver was signed ON OUR CUSTOMER DISPLAY, from OUR
+   *  own `waiver_receipts` row (the row is ours, so the charter permits
+   *  reading it). One line on the profile card and nothing more: the
+   *  signature image itself is never rendered back into the POS. Null
+   *  with no database, no receipt, or a receipt with no signature, which
+   *  is every agreement taken at the counter. */
+  signedOnDisplayAt: string | null;
   redAlert: string | null;
   yellowAlert: string | null;
   notes: string | null;
@@ -131,6 +139,7 @@ type ClientFields = Pick<
   | "status"
   | "member"
   | "waiver"
+  | "signedOnDisplayAt"
   | "redAlert"
   | "yellowAlert"
   | "notes"
@@ -165,6 +174,9 @@ async function fetchClientFields(clientId: string): Promise<ClientFields> {
             agreedAt: str(liability.AgreementDate),
           }
         : null,
+    /* Ours, not Mindbody's: filled in by the assembly below from our own
+     * receipt row, because it is a fact about OUR screen. */
+    signedOnDisplayAt: null,
     redAlert: str(c?.RedAlert),
     yellowAlert: str(c?.YellowAlert),
     notes: str(c?.Notes),
@@ -273,6 +285,7 @@ export async function clientProfile(
           status: null,
           member: false,
           waiver: null,
+          signedOnDisplayAt: null,
           redAlert: null,
           yellowAlert: null,
           notes: null,
@@ -281,9 +294,20 @@ export async function clientProfile(
         });
   if (visits.status === "rejected") errors.visits = reason(visits.reason);
   if (passes.status === "rejected") errors.passes = reason(passes.reason);
+  /* T115: our own receipt, when it carries a signature. Bounded and
+   * best effort like every table touch here: no database, a dead one or
+   * no row simply means the line is absent, never a slower or failed
+   * profile. */
+  const signature = await boundedDb(
+    latestSignedWaiverReceipt(clientId),
+    750,
+    null,
+  );
   return {
     clientId,
     ...fields,
+    signedOnDisplayAt:
+      signature === null ? null : signature.agreedAt.toISOString(),
     visits: visits.status === "fulfilled" ? visits.value : null,
     passes: passes.status === "fulfilled" ? passes.value : null,
     errors,

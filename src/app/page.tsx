@@ -1302,6 +1302,25 @@ function FrontDesk({
   const [waiverReceiptWarn, setWaiverReceiptWarn] = useState<string | null>(
     null,
   );
+  /** T115: the signature is being collected on the customer display.
+   *  Holds the request id the display was given, so a Cancel takes the
+   *  right scene down and a `completed` event finalises the right one.
+   *  The counter's own "They have read it and agree" stays live beside
+   *  it as the fallback. */
+  const [waiverOnDisplay, setWaiverOnDisplay] = useState<{
+    requestId: string;
+  } | null>(null);
+  /** A quiet line inside the waiver dialog about the customer screen: a
+   *  refusal ("Customer tapped Not now"), a present that failed, or the
+   *  "recording it now" while a signature that arrived while this iPad
+   *  was asleep is finalised. */
+  const [waiverDisplayNote, setWaiverDisplayNote] = useState<string | null>(
+    null,
+  );
+  /** T115: whether a customer display is paired AND connected right now,
+   *  which is what decides whether "Sign on the customer screen" exists
+   *  at all. Same two sources as the header's mark. */
+  const [displayLive, setDisplayLive] = useState(false);
   /** The scrollable waiver text region, for the fits-without-scrolling
    *  check once the text renders. */
   const waiverScrollRef = useRef<HTMLDivElement | null>(null);
@@ -3461,7 +3480,15 @@ function FrontDesk({
     setWaiverFetchError(null);
     setWaiverScrolled(false);
     setWaiverMsg(null);
-  }, [waiverSaving]);
+    /* T115: a dialog closed while the student still has the waiver on
+     * the customer screen takes that scene down with it. Leaving it up
+     * would put one student's waiver in front of the next person. */
+    if (waiverOnDisplay !== null) {
+      void fetch("/api/display/cancel", { method: "POST" });
+      setWaiverOnDisplay(null);
+    }
+    setWaiverDisplayNote(null);
+  }, [waiverSaving, waiverOnDisplay]);
 
   /**
    * Fetch the waiver text and swap the dialog into its reading state. One
@@ -4146,9 +4173,17 @@ function FrontDesk({
    * pass, and the single-flight booking lock all still applying (T19).
    * The next roster load confirms from Mindbody.
    */
-  const agreeWaiver = useCallback(async () => {
+  const agreeWaiver = useCallback(async (displayRequestId?: string) => {
     const subject = waiverPrompt;
-    if (!subject || !waiverText || !waiverScrolled || waiverSaving) return;
+    if (!subject || waiverSaving) return;
+    /* T115: two ways in. The counter's own confirm needs the text read
+     * on THIS screen, exactly as it always did. A signature collected on
+     * the customer display needs no text here at all: the student read
+     * the server's own copy on the other screen, and the server holds
+     * the hash of what it served. */
+    if (displayRequestId === undefined && (!waiverText || !waiverScrolled)) {
+      return;
+    }
     const person =
       subject.source === "roster"
         ? {
@@ -4179,11 +4214,33 @@ function FrontDesk({
            * A stale value loses at most a concurrent edit from another
            * surface; the roster refetches notes on every load. */
           notes: person.notes,
-          textSha256: waiverText.sha256,
+          /* T115: with a display request the SERVER takes the hash from
+           * its own record of what the student was shown; the browser's
+           * copy is not part of that path. */
+          ...(displayRequestId === undefined
+            ? { textSha256: waiverText?.sha256 }
+            : { displayRequestId }),
         }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      if (!res.ok) {
+        /* T115 review: a duplicate finalisation is not an error a
+         * teacher should see. The `completed` event can arrive twice
+         * (an SSE reconnect replays the buffer) and the dialog's own
+         * pending check can name the same signature; the server lets
+         * exactly one through and answers 409 for the rest. The one
+         * that won did the writing, so this one says nothing louder
+         * than a quiet line. */
+        if (displayRequestId !== undefined && res.status === 409) {
+          setWaiverDisplayNote(
+            body?.inFlight === true
+              ? "Recording the signature."
+              : String(body?.error ?? "That signature is no longer waiting."),
+          );
+          return;
+        }
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
       noteActor(body);
       if (body.suppressed) {
         setWaiverMsg(
@@ -4197,12 +4254,25 @@ function FrontDesk({
         body.receiptNoted && typeof body.notes === "string"
           ? body.notes.trim() || null
           : person.notes;
-      setWaiverReceiptWarn(
-        body.receiptNoted
-          ? null
-          : `Waiver recorded for ${person.name}, but the receipt note did not save` +
-              `${body.receiptReason ? ` (${body.receiptReason})` : ""}. The agreement stands; the server log holds the receipt.`,
-      );
+      setWaiverOnDisplay(null);
+      /* Two bookkeeping copies can fail without touching the agreement:
+       * the Notes append (T18) and, since T115, the signature's copy to
+       * Mindbody's documents. Both are said the same quiet way, because
+       * both leave the release real and the record held here. */
+      const warnings: string[] = [];
+      if (!body.receiptNoted) {
+        warnings.push(
+          `Waiver recorded for ${person.name}, but the receipt note did not save` +
+            `${body.receiptReason ? ` (${body.receiptReason})` : ""}. The agreement stands; the server log holds the receipt.`,
+        );
+      }
+      if (body.signed === true && body.documentFiled === false) {
+        warnings.push(
+          `The signature was not filed on their Mindbody documents` +
+            `${body.documentReason ? ` (${body.documentReason})` : ""}. The agreement stands; the signature is kept here.`,
+        );
+      }
+      setWaiverReceiptWarn(warnings.length === 0 ? null : warnings.join(" "));
       /* The roster updates for both flows: a walk-in who somehow already
        * has a roster row (booked from another surface mid-search) must
        * not keep a stale block on that row. */
@@ -4269,6 +4339,191 @@ function FrontDesk({
     tapWalkIn,
     tapPromote,
   ]);
+
+  /* T115: the customer display's half of the waiver, all of it here so
+   * the rules sit together. Nothing in this block calls Mindbody: it
+   * POSTs /api/display/present and /api/display/cancel, listens on
+   * /api/display/events, and finalises through the SAME
+   * /api/waiver-agree the counter confirm uses. */
+
+  /** The client the open dialog is about, whichever flow opened it. */
+  const waiverClientId =
+    waiverPrompt === null
+      ? null
+      : waiverPrompt.source === "roster"
+        ? waiverPrompt.entry.clientId
+        : waiverPrompt.source === "walkin" || waiverPrompt.source === "guest"
+          ? waiverPrompt.client.id
+          : waiverPrompt.row.clientId;
+
+  /* The handlers below run from an SSE listener that is mounted once, so
+   * they read the LATEST callback through a ref rather than closing over
+   * the one that existed when the stream opened. */
+  const agreeWaiverRef = useRef(agreeWaiver);
+  const waiverClientRef = useRef(waiverClientId);
+  useEffect(() => {
+    agreeWaiverRef.current = agreeWaiver;
+    waiverClientRef.current = waiverClientId;
+  });
+
+  /** Put the waiver on the customer screen. The browser sends the client
+   *  id and nothing else that matters: the server fetches its own copy
+   *  of the text, looks the first name up itself, and keeps the client
+   *  id and the text's hash where the display cannot see them. */
+  const sendWaiverToDisplay = useCallback(async () => {
+    if (waiverClientId === null || waiverSaving || waiverOnDisplay !== null) {
+      return;
+    }
+    setWaiverDisplayNote(null);
+    try {
+      const res = await fetch("/api/display/present", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "waiver", clientId: waiverClientId }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || typeof body?.requestId !== "string") {
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      setWaiverOnDisplay({ requestId: body.requestId });
+    } catch (err) {
+      /* Said in the dialog, because the teacher DID ask for this: the
+       * counter confirm beside it is still the way through. */
+      setWaiverDisplayNote(
+        `The customer screen could not be used (${err instanceof Error ? err.message : String(err)}). Read it here instead.`,
+      );
+    }
+  }, [waiverClientId, waiverSaving, waiverOnDisplay]);
+
+  /** Take it back down without recording anything. */
+  const cancelWaiverOnDisplay = useCallback(async () => {
+    if (waiverSaving) return;
+    setWaiverOnDisplay(null);
+    setWaiverDisplayNote(null);
+    try {
+      await fetch("/api/display/cancel", { method: "POST" });
+    } catch {
+      /* The hub expires it either way. */
+    }
+  }, [waiverSaving]);
+
+  /** A signature is waiting: record it, with no tap from the teacher. */
+  /** T115 review: request ids this browser has already sent to
+   *  /api/waiver-agree. The `completed` event replays on an SSE
+   *  reconnect and the dialog's pending check asks on open, so the same
+   *  signature can be named twice within a second; the server refuses
+   *  the second, and this stops it being sent at all. */
+  const finalisedRef = useRef<Set<string>>(new Set());
+  const finaliseWaiverFromDisplay = useCallback((requestId: string) => {
+    if (finalisedRef.current.has(requestId)) return;
+    finalisedRef.current.add(requestId);
+    setWaiverOnDisplay({ requestId });
+    setWaiverDisplayNote("Signed on the customer screen, recording it now.");
+    void agreeWaiverRef.current(requestId);
+  }, []);
+  const finaliseRef = useRef(finaliseWaiverFromDisplay);
+  useEffect(() => {
+    finaliseRef.current = finaliseWaiverFromDisplay;
+  });
+
+  /* Whether a display is paired AND connected, which is the only thing
+   * that puts the button on the dialog. Two sources, like the header's
+   * mark: the events stream for immediacy, a 30 second poll for when the
+   * stream is refused or dropped. */
+  useEffect(() => {
+    const read = () => {
+      fetch("/api/admin/display")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body) => {
+          if (!body) return;
+          setDisplayLive(body.paired === true && body.connected === true);
+        })
+        .catch(() => undefined);
+    };
+    read();
+    const timer = setInterval(read, 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  /* The stream: `completed` finalises with no tap (the design's whole
+   * point), `refused` puts the dialog back as it was with one quiet
+   * line. A `completed` for a client whose dialog is no longer open is
+   * left alone: the result waits in the hub for 30 minutes and the
+   * pending check below picks it up when the dialog reopens. */
+  useEffect(() => {
+    let source: EventSource | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+    const open = () => {
+      if (stopped) return;
+      try {
+        source = new EventSource("/api/display/events");
+      } catch {
+        return;
+      }
+      const parse = (ev: MessageEvent): Record<string, unknown> | null => {
+        try {
+          const data: unknown = JSON.parse(ev.data);
+          return data && typeof data === "object"
+            ? (data as Record<string, unknown>)
+            : null;
+        } catch {
+          return null;
+        }
+      };
+      source.addEventListener("connected", () => setDisplayLive(true));
+      source.addEventListener("disconnected", () => setDisplayLive(false));
+      source.addEventListener("completed", (ev) => {
+        const data = parse(ev as MessageEvent);
+        if (data?.kind !== "waiver") return;
+        if (typeof data.requestId !== "string") return;
+        if (waiverClientRef.current === null) return;
+        finaliseRef.current(data.requestId);
+      });
+      source.addEventListener("refused", (ev) => {
+        const data = parse(ev as MessageEvent);
+        if (data?.kind !== "waiver") return;
+        setWaiverOnDisplay(null);
+        setWaiverDisplayNote("Customer tapped Not now.");
+      });
+      source.addEventListener("error", () => {
+        source?.close();
+        source = null;
+        if (!stopped && retry === null) {
+          retry = setTimeout(() => {
+            retry = null;
+            open();
+          }, 15_000);
+        }
+      });
+    };
+    open();
+    return () => {
+      stopped = true;
+      if (retry !== null) clearTimeout(retry);
+      source?.close();
+    };
+  }, []);
+
+  /* The iPad was asleep, or the tab reloaded, and the `completed` event
+   * went by unheard. Asked once when the dialog opens for someone: is
+   * there a signature waiting for THIS client? */
+  useEffect(() => {
+    if (waiverClientId === null) return;
+    let stopped = false;
+    fetch(`/api/display/pending?clientId=${encodeURIComponent(waiverClientId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (stopped || !body?.pending || typeof body.requestId !== "string") {
+          return;
+        }
+        finaliseRef.current(body.requestId);
+      })
+      .catch(() => undefined);
+    return () => {
+      stopped = true;
+    };
+  }, [waiverClientId]);
 
   /** The waiver dialog's subject, flattened for its rendering. */
   const waiverName =
@@ -7624,6 +7879,41 @@ function FrontDesk({
                   : "Has not signed the waiver."}
               </span>
             </div>
+              {/* T115: the customer screen. The button exists only when
+                  a display is paired AND connected, so a counter with
+                  no second iPad sees T18's dialog exactly as before.
+                  While the student has it, the teacher sees what they
+                  are waiting for and can take it back; the counter
+                  confirm below stays live the whole time as the
+                  fallback, because a student who walked off must not
+                  strand a teacher with a queue. */}
+              {waiverDisplayNote ? (
+                <p className="muted modal-note-gap">{waiverDisplayNote}</p>
+              ) : null}
+              {waiverOnDisplay !== null ? (
+                <div className="waiver-display-row">
+                  <p className="waiver-waiting">
+                    Waiting for the customer to sign.
+                  </p>
+                  <button
+                    className="waiver-display-button"
+                    disabled={waiverSaving}
+                    onClick={() => void cancelWaiverOnDisplay()}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : displayLive ? (
+                <div className="waiver-display-row">
+                  <button
+                    className="waiver-display-button"
+                    disabled={waiverSaving}
+                    onClick={() => void sendWaiverToDisplay()}
+                  >
+                    Sign on the customer screen
+                  </button>
+                </div>
+              ) : null}
             {waiverText ? (
               <>
                 <div

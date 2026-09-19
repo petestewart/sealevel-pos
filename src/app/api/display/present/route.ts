@@ -10,6 +10,9 @@ import {
   readJsonObject,
 } from "@/lib/display";
 import { readTicketPayload } from "@/lib/displayticket";
+import { readWaiverPayload } from "@/lib/displaywaiver";
+import { readClientFirstName } from "@/lib/clients";
+import { getWaiver } from "@/lib/waiver";
 
 export const dynamic = "force-dynamic";
 
@@ -75,6 +78,51 @@ export async function POST(request: Request) {
      * one in the queue. */
     if (ticket.value.mode === "summary") ttlMs = SUMMARY_TTL_MS;
   }
+  /* T115: a WAIVER's payload is built here, not forwarded. The browser
+   * sends a client id and nothing that matters; the server fetches its
+   * own copy of the waiver text (the same cache /api/waiver and
+   * /api/waiver-agree read, so the hash the receipt names is the hash of
+   * what was shown), looks the first name up itself, and keeps the
+   * client id and that hash on the request's SERVER-side half. The
+   * display is told neither: it has no use for an identifier, and a
+   * screen in a student's hands is the last place to put one. */
+  let privateHalf: Record<string, unknown> | undefined;
+  if (input.kind === "waiver") {
+    const clientId =
+      typeof input.clientId === "string" ? input.clientId.trim() : "";
+    if (clientId.length === 0) {
+      return NextResponse.json(
+        { error: "clientId is required for a waiver" },
+        { status: 400 },
+      );
+    }
+    let waiver: { text: string; sha256: string };
+    try {
+      waiver = await getWaiver();
+    } catch (err) {
+      /* No text, no scene: a student must never be asked to agree to a
+       * blank screen, and the counter dialog is still there. */
+      return NextResponse.json(
+        {
+          error: `The waiver text could not be fetched (${err instanceof Error ? err.message : String(err)}).`,
+        },
+        { status: 502 },
+      );
+    }
+    const built = readWaiverPayload({
+      text: waiver.text,
+      clientFirstName: await readClientFirstName(clientId),
+    });
+    if (!built.ok) {
+      return NextResponse.json(
+        { error: `payload: ${built.error}` },
+        { status: 502 },
+      );
+    }
+    scene = built.value as unknown as Record<string, unknown>;
+    privateHalf = { clientId, textSha256: waiver.sha256 };
+  }
+
   /* The one thing a scene may carry about the person in front of it: a
    * first name, for the greeting. Trimmed and bounded here so a payload
    * cannot smuggle a paragraph in through it. */
@@ -88,8 +136,13 @@ export async function POST(request: Request) {
     kind: input.kind,
     payload: {
       ...scene,
-      ...(clientFirstName === null ? {} : { clientFirstName }),
+      /* A waiver's first name is the SERVER's, looked up above; a hint
+       * from the browser does not get to overwrite it. */
+      ...(clientFirstName === null || input.kind === "waiver"
+        ? {}
+        : { clientFirstName }),
     },
+    ...(privateHalf === undefined ? {} : { private: privateHalf }),
     initiator: "teacher",
     requestedByStaffId: String(actor.session.staffId),
     ...(ttlMs === undefined ? {} : { ttlMs }),

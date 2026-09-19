@@ -427,6 +427,23 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       );
     `,
   },
+  {
+    /* T115: the waiver signature, beside the text hash it already
+     * carries. Charter-clean, and the reasoning is worth stating: this
+     * image is OUR artifact, captured on OUR screen, which Mindbody has
+     * no field for (a waiver has no signature anywhere on the client;
+     * only a contract does). So the database is the ORIGINAL and the
+     * copy uploaded to the client's documents is the copy. Additive,
+     * nullable, and every row written before this one stays exactly as
+     * it is: a counter agreement carries no signature and never will. */
+    version: 13,
+    sql: `
+      ALTER TABLE waiver_receipts
+        ADD COLUMN IF NOT EXISTS signature_sha256 text;
+      ALTER TABLE waiver_receipts
+        ADD COLUMN IF NOT EXISTS signature_png bytea;
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -504,14 +521,25 @@ export async function insertWaiverReceipt(
   clientId: string,
   agreedAtIso: string,
   textSha256: string,
+  /** T115: the signature captured on the customer display, when there
+   *  was one. Absent for a counter agreement, which has no signature to
+   *  keep and must keep reading exactly as it did. */
+  signature?: { sha256: string; png: Buffer } | null,
 ): Promise<boolean> {
   try {
     const p = await ready();
     if (!p) return false;
     await p.query(
-      `INSERT INTO waiver_receipts (client_id, agreed_at, text_sha256)
-       VALUES ($1, $2, $3)`,
-      [clientId, agreedAtIso, textSha256],
+      `INSERT INTO waiver_receipts
+         (client_id, agreed_at, text_sha256, signature_sha256, signature_png)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        clientId,
+        agreedAtIso,
+        textSha256,
+        signature?.sha256 ?? null,
+        signature?.png ?? null,
+      ],
     );
     return true;
   } catch (err) {
@@ -1512,5 +1540,88 @@ export async function sweepDisplayRequests(
   } catch (err) {
     logDbError("display-request-sweep", err);
     return false;
+  }
+}
+
+/* --- T115: reading our own waiver receipts --------------------------- */
+
+/**
+ * The newest waiver receipt for a client that carries a SIGNATURE, for
+ * the profile card's one line ("signed on the customer screen on ...").
+ * Reading our own row is exactly what the charter permits: the row is
+ * ours, Mindbody has no home for it, and nothing about Mindbody's own
+ * state is inferred from it. The PNG itself is deliberately NOT selected
+ * and is never rendered back into the POS.
+ */
+export async function latestSignedWaiverReceipt(
+  clientId: string,
+): Promise<{ agreedAt: Date; signatureSha256: string } | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT agreed_at, signature_sha256
+         FROM waiver_receipts
+        WHERE client_id = $1 AND signature_sha256 IS NOT NULL
+        ORDER BY agreed_at DESC LIMIT 1`,
+      [clientId],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      agreedAt: new Date(r.agreed_at),
+      signatureSha256: String(r.signature_sha256),
+    };
+  } catch (err) {
+    logDbError("waiver-receipt-read", err);
+    return null;
+  }
+}
+
+/**
+ * One display request BY ID (T115). T113's reload only ever looked up
+ * the display's newest live request, which is right for a restart and
+ * wrong for a finalisation: the teacher's iPad names the request it was
+ * told about, and that one may no longer be the hub's `current` (a
+ * later scene took the screen) or may not be in memory at all (the
+ * server restarted between the student tapping Done and the teacher's
+ * iPad consuming it, which is the ONE reason this table exists).
+ */
+export async function findDisplayRequestById(
+  id: string,
+): Promise<DisplayRequestRow | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT id, display_id, kind, initiator, payload, status, result,
+              requested_by_staff_id, created_at, completed_at, consumed_at,
+              expires_at
+         FROM display_requests
+        WHERE id = $1`,
+      [id],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      id: String(r.id),
+      displayId: String(r.display_id),
+      kind: String(r.kind),
+      initiator: String(r.initiator),
+      payload: r.payload ?? null,
+      status: String(r.status),
+      result: r.result ?? null,
+      requestedByStaffId:
+        r.requested_by_staff_id === null
+          ? null
+          : String(r.requested_by_staff_id),
+      createdAt: new Date(r.created_at),
+      completedAt: r.completed_at === null ? null : new Date(r.completed_at),
+      consumedAt: r.consumed_at === null ? null : new Date(r.consumed_at),
+      expiresAt: new Date(r.expires_at),
+    };
+  } catch (err) {
+    logDbError("display-request-find", err);
+    return null;
   }
 }

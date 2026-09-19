@@ -7978,3 +7978,144 @@ textarea.reason-note-field:disabled::placeholder {
   border: 1px solid var(--line);
   border-radius: 0;
 }
+
+/* --- The waiver scene on the customer display (T115) ------------------
+ * Scene 1 of docs/design/customer-display.md: the studio's real waiver,
+ * scrolled to the end, and the signature pad. Read and signed at arm's
+ * length across a counter, so the floor here is well above the app's
+ * 16px and every control is at least 64px. Tokens only, both palettes
+ * (the pad's ink is the element's own `color`, read at draw time, so it
+ * follows the theme with no hex of its own), radius 0. */
+
+.dwaiver {
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dwaiver-heading {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.dwaiver-lead {
+  margin: 0;
+  font-size: 20px;
+  color: var(--muted);
+}
+
+.dwaiver-text {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: min(38vh, 380px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.dwaiver-note {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.dwaiver-error {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--stop-bg);
+  color: var(--stop);
+  font-size: 16px;
+}
+
+.dwaiver-pad-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dwaiver-pad {
+  width: 100%;
+  height: 220px;
+  border: 2px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink);
+  touch-action: none;
+}
+
+.dwaiver-pad-label {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.dwaiver-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.dwaiver-button {
+  flex: 1 1 180px;
+  min-height: 64px;
+  padding: 0 20px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.dwaiver-agree {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.dwaiver-button:disabled {
+  opacity: 0.45;
+}
+
+/* T115: the waiver dialog's customer-screen row, above the counter's own
+ * actions. One 64px control, and while the student has the waiver the
+ * line says what is being waited for beside the way out of it. */
+.waiver-display-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+.waiver-waiting {
+  flex: 1;
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.waiver-display-button {
+  flex: 1;
+  min-height: 64px;
+  padding: 0 16px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.waiver-display-button:disabled {
+  opacity: 0.45;
+}

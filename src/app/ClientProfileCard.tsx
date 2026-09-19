@@ -359,6 +359,16 @@ export function ClientProfileCard({
           ) : (
             <Missing why={errors.client} />
           )}
+          {/* T115: our own receipt, one line, only when the signature
+              was captured on the customer screen. The image itself is
+              never rendered back into the POS. */}
+          {profile.signedOnDisplayAt ? (
+            <span className="profile-sub">
+              {" "}
+              signed on the customer screen on{" "}
+              {wallDate(profile.signedOnDisplayAt)}
+            </span>
+          ) : null}
         </Row>
         <Row label="Status">
           {statusLine || <Missing why={errors.client} />}

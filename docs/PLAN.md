@@ -187,7 +187,7 @@ Plumbing first, then one scene at a time, in this order.
 
 - [x] Plumbing: `/display`, pairing code, `pos_display` cookie, `displays` and `display_requests` tables, the hub, both SSE routes, present/cancel/complete/refuse, header connection mark, drawer pair/unpair. Done when a paired iPad survives a restart on the idle screen. **T113** (the pairing survives a restart with a database; with none it re-pairs and says so).
 - [x] Ticket, summary mode: live mirror of the priced cart and the post-sale summary. No writes. **T114** (a live ticket is replaced in place; a busy display skips the mirror in silence; the summary leaves the screen on the hub's own clock).
-- [ ] Waiver: sign on the display, signature kept in `waiver_receipts` and copied to Mindbody documents (probe D-B1 first).
+- [x] Waiver: sign on the display, signature kept in `waiver_receipts` and copied to Mindbody documents. **T115** (the scene is built server-side and carries no client id or hash; the signature is consumed BY ID, once, across a restart; the document copy is best effort and never fails the agreement). Probe D-B1 is written and not run, so the upload is unverified live.
 - [ ] Ticket approval: `customer_confirms_sale` in `app_settings`, admin-edited, enforced by `/api/checkout` on the server; teacher override by their own PIN (T48 idiom), filed on the client.
 - [ ] Sign-up, self-serve: "New here? Sign up" on the idle screen, form then waiver signature in one request, a tray with a gold count on the POS header, Create finalises client and waiver in one tap, pending sign-ups surface in walk-in search, take-over rule when the teacher needs the screen. Email and text opt-in ticked by default (probe D-B3 first). Answers Pete's rush case (design doc, "Self-serve").
 - [ ] Contract signature on the display, required by `contract_requires_signature` (default on) with the teacher's PIN override, sent as `ClientSignature` (probe D-B2 first), `contract_receipts` row.
@@ -196,7 +196,7 @@ Probes owed, both sandbox, `Test: true` where the endpoint takes it:
 
 | # | Probe | Answers |
 |---|---|---|
-| D-B1 | `POST /client/uploadclientdocument` with a small PNG | The `ClientDocument` bytes field and encoding, and that the file shows on the client's Documents page |
+| D-B1 | `POST /client/uploadclientdocument` with a small PNG | The `ClientDocument` bytes field and encoding, and that the file shows on the client's Documents page. **Probe written (`scripts/probe-upload-document.ts`), not run** (T115: no credentials in the build environment) |
 | D-B2 | `POST /sale/purchasecontract` `Test: true` with `ClientSignature` set | That the field is accepted and does not change the rehearsed Total |
 | D-B3 | `POST /client/addclient` in the sandbox with the three `Send*Texts` flags, then read the client back | Whether `addclient` honours text opt-in, which `updateclient` documents as ignored |
 

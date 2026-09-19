@@ -4,10 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 
 import { plainText } from "@/lib/richtext";
 import { readTicketPayload } from "@/lib/displayticket";
+import { readWaiverPayload } from "@/lib/displaywaiver";
 
 import TicketScene from "./TicketScene";
+import WaiverScene from "./WaiverScene";
 
 import type { TicketPayload } from "@/lib/displayticket";
+import type { WaiverPayload } from "@/lib/displaywaiver";
 
 /**
  * The idle screen and the pairing exchange (T113).
@@ -34,7 +37,18 @@ interface Config {
  *  ticket exists today; the waiver, the sign-up and the contract are
  *  items 3 to 6 and an unknown kind deliberately renders the idle screen
  *  rather than guessing. */
-type Scene = { kind: "ticket"; payload: TicketPayload };
+type Scene =
+  | { kind: "ticket"; payload: TicketPayload }
+  /* T115: the waiver carries its request id, because this is the first
+   *  scene the STUDENT answers: completing and refusing both name it. */
+  | { kind: "waiver"; requestId: string; payload: WaiverPayload };
+
+/** T115: how long "Thank you" stays after a signature, on this screen's
+ *  own clock. The hub sends `idle` when the teacher's iPad finalises the
+ *  release, which is usually within the second; this is what keeps the
+ *  student from watching the screen blink back to Ready before they have
+ *  looked up. Eight seconds, the same window the summary gets. */
+const THANKS_MS = 8_000;
 
 type Pairing =
   | { state: "loading" }
@@ -55,6 +69,9 @@ export default function DisplayScreen() {
   const [live, setLive] = useState(false);
   /** T114: the scene the server says is up. */
   const [scene, setScene] = useState<Scene | null>(null);
+  /** T115: the thank you after a signature. Held on this screen so the
+   *  student sees it whatever the server does next. */
+  const [thanks, setThanks] = useState<string | null>(null);
 
   /* The banner and the mode, from the answer /api/config gives a browser
    * with no session at all: banner text, dry run and the target. */
@@ -179,9 +196,22 @@ export default function DisplayScreen() {
       } catch {
         return;
       }
+      if (data?.kind === "waiver") {
+        const waiver = readWaiverPayload(data.payload);
+        const requestId =
+          typeof (data as { requestId?: unknown }).requestId === "string"
+            ? String((data as { requestId?: unknown }).requestId)
+            : "";
+        if (waiver.ok && requestId.length > 0) {
+          setThanks(null);
+          setScene({ kind: "waiver", requestId, payload: waiver.value });
+          return;
+        }
+      }
       if (data?.kind === "ticket") {
         const ticket = readTicketPayload(data.payload);
         if (ticket.ok) {
+          setThanks(null);
           setScene({ kind: "ticket", payload: ticket.value });
           return;
         }
@@ -233,6 +263,14 @@ export default function DisplayScreen() {
     };
   }, [pairing.state]);
 
+  /* T115: the thank you leaves on its own, whether or not the server has
+   * anything to say. */
+  useEffect(() => {
+    if (thanks === null) return;
+    const timer = setTimeout(() => setThanks(null), THANKS_MS);
+    return () => clearTimeout(timer);
+  }, [thanks]);
+
   /* The banner is studio text, and the waiver and a contract's terms will
    * arrive on this screen later as Mindbody's own HTML, so everything
    * remote goes through plainText here as a matter of course. Never
@@ -254,12 +292,41 @@ export default function DisplayScreen() {
   /* T114: a scene owns the middle of the screen; the banner and the mode
    * mark stay where they are, because what this iPad is pointed at is as
    * true during a sale as it is at rest. */
+  if (pairing.state === "paired" && thanks !== null && scene === null) {
+    return (
+      <main className="display">
+        {banner.length > 0 ? <p className="display-banner">{banner}</p> : null}
+        <div className="display-middle">
+          <h1 className="display-greeting">
+            {thanks.length > 0 ? `Thank you, ${thanks}` : "Thank you"}
+          </h1>
+          <p className="display-lead">That is all we need.</p>
+        </div>
+        {mark ? <p className="display-mark">{mark}</p> : null}
+      </main>
+    );
+  }
+
   if (pairing.state === "paired" && scene !== null) {
     return (
       <main className="display">
         {banner.length > 0 ? <p className="display-banner">{banner}</p> : null}
         <div className="display-scene">
-          <TicketScene payload={scene.payload} />
+          {scene.kind === "ticket" ? (
+            <TicketScene payload={scene.payload} />
+          ) : (
+            <WaiverScene
+              requestId={scene.requestId}
+              payload={scene.payload}
+              onDone={(who) => {
+                /* The scene is done with the screen the moment the
+                 * server has the signature; the hub's own `idle` (when
+                 * the teacher's iPad finalises) arrives behind this. */
+                setScene(null);
+                setThanks(who ?? "");
+              }}
+            />
+          )}
         </div>
         {mark ? <p className="display-mark">{mark}</p> : null}
       </main>

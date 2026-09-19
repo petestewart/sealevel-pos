@@ -170,6 +170,79 @@ export async function readClientNotes(clientId: string): Promise<string> {
 }
 
 /**
+ * T115: the client's FIRST name, for the greeting on the customer
+ * display. Read on the server from the same `/client/clients` call
+ * `readClientNotes` uses, because the display's scene is built server
+ * side: the teacher's browser may pass a hint, and the server decides.
+ * Null when Mindbody has no first name on the row, and never throws --
+ * a greeting is not worth failing a waiver over, and the scene reads
+ * "Welcome" without one.
+ */
+export async function readClientFirstName(
+  clientId: string,
+): Promise<string | null> {
+  try {
+    const body = await mindbody(
+      `/client/clients?clientIds=${encodeURIComponent(clientId)}&limit=1`,
+    );
+    const row = (body?.Clients ?? []).find(
+      (c: { Id?: unknown }) => String(c?.Id ?? "") === clientId,
+    );
+    const first = typeof row?.FirstName === "string" ? row.FirstName.trim() : "";
+    return first.length > 0 ? first.slice(0, 40) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * T115: file a document on the client's Documents page,
+ * `POST /client/uploadclientdocument` (docs/mindbody-openapi/client.yml:
+ * 3633; `UploadClientDocumentRequest` is `{ClientId, File}` and
+ * `ClientDocument` is `{FileName, MediaType, Buffer}` where Buffer is a
+ * Base64 string of the file's bytes, 4MB cap).
+ *
+ * This is how the waiver signature reaches Mindbody: a waiver has no
+ * signature field anywhere on the client (only a contract does), so the
+ * image travels as a document or not at all. BEST EFFORT by contract --
+ * the caller files it after the release has already landed and reports
+ * a failure rather than failing the agreement, because the database row
+ * is the original and this is the copy.
+ *
+ * Through mindbody() with the client id in the options, so dry run and
+ * the write guard apply to it as to any write, and under the teacher's
+ * own token like the release it follows.
+ *
+ * UNVERIFIED LIVE: the encoding is the vendored spec's, and probe D-B1
+ * (scripts/probe-upload-document.ts) is written and has not been run.
+ */
+export async function uploadClientDocument(
+  clientId: string,
+  file: { fileName: string; mediaType: string; buffer: Buffer },
+  actor?: Actor | null,
+): Promise<{ suppressed: "dry-run" | "write-guard" | null; fileName: string | null }> {
+  const res = await mindbody("/client/uploadclientdocument", {
+    method: "POST",
+    body: {
+      ClientId: clientId,
+      File: {
+        FileName: file.fileName,
+        MediaType: file.mediaType,
+        Buffer: file.buffer.toString("base64"),
+      },
+    },
+    clientId,
+    ...(actor ? { actor } : {}),
+  });
+  if (res?.DryRun) return { suppressed: "dry-run", fileName: null };
+  if (res?.WriteSuppressed) return { suppressed: "write-guard", fileName: null };
+  return {
+    suppressed: null,
+    fileName: typeof res?.FileName === "string" ? res.FileName : file.fileName,
+  };
+}
+
+/**
  * Record a liability release: `POST /client/updateclient` with
  * `LiabilityRelease: true` (T18, Pete's recorded reversal of the T6 "no
  * tap path marks a waiver signed" rule -- Mindbody's own POS shows the

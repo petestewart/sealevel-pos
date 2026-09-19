@@ -16634,3 +16634,220 @@ harness, unchanged), `mockmb.mjs` (a new minimal Mindbody stand-in),
 - **A comp, a split tender, a gift card and a discount** all produce
   their own tender words and discount lines, and none of them was driven
   end to end; only cash was.
+
+---
+
+## T115. The waiver, signed on the customer display (2026-09-19)
+
+Phase 2.5 item 3, Scene 1 of `docs/design/customer-display.md`: the
+student reads the studio's real waiver on the customer iPad, signs it
+with a finger, and the teacher's iPad records the release with no tap.
+The signature is kept in `waiver_receipts` and copied, best effort, to
+the client's Mindbody documents.
+
+**The display still writes nothing.** The only new Mindbody call in the
+whole ticket is `POST /client/uploadclientdocument`, and it is made from
+`/api/waiver-agree`, under the teacher's token, with the client id in
+the options so dry run and the write guard apply. No file under
+`src/app/api/display/` or `src/app/display/` imports `mindbody()`.
+
+### 1. What travels, and what does not
+
+`/api/display/present` builds a `waiver` scene ITSELF. The browser sends
+`{kind: "waiver", clientId}` and nothing that matters: the server reads
+its own `getWaiver()` (the same cache `/api/waiver` and
+`/api/waiver-agree` share, so the hash on the receipt is the hash of
+what was shown), looks the first name up with `readClientFirstName`, and
+puts the client id and that hash on the request's SERVER-side half.
+
+That half is new: `DisplayRequest.private`, stored in the row's payload
+column under a reserved `__private` key and split back off on read. It
+never reaches `sceneFor`, so it cannot travel down the display's stream.
+The display is told a text and a first name, and is never told who the
+student is or what the wording hashes to.
+
+### 2. The scene, and what makes the agree button live
+
+`src/app/display/WaiverScene.tsx`: the greeting, the full text in a
+scrollable region with T18's scroll-to-end rule (a waiver short enough
+to need no scrolling counts as read the moment it renders, the same
+carve-out the counter dialog makes), a `<canvas>` signature pad driven
+by pointer events so a finger and an Apple Pencil are one code path, and
+three 64px controls: **Not now**, **Clear**, and **I have read it and
+agree**, the last disabled until the text has been scrolled AND the pad
+has ink. The exported PNG is transparent, device-pixel-ratio aware, and
+carries a typed line beneath the signature with the first name and the
+moment drawn INTO the same image, so the artifact is self-describing
+wherever it ends up. The ink is the element's own `color`, read at draw
+time, so the pad has no hex of its own in either palette.
+
+`/api/display/complete` validates a waiver result before storing it
+(`src/lib/displaywaiver.ts`, the payload-validator idiom T114 set):
+base64 that decodes to something starting with PNG's 8-byte signature,
+at most 256KB (413 over that), and an `agreedAt` that parses and is from
+the last hour. A result that fails is refused while the student is still
+standing there rather than found useless by the release it was meant to
+accompany.
+
+### 3. Finalisation, with no tap, and the by-id consume
+
+The teacher's iPad holds `/api/display/events` open; a `completed`
+waiver event calls `/api/waiver-agree` with `{clientId, notes,
+displayRequestId}` and no hash, because the server takes the hash from
+its own record.
+
+The route keeps every guard it had (device session, `requireActor`, T50
+no sign-in no write) and adds: the request is looked up **by id**, and
+must be a `waiver`, completed, unconsumed, unexpired, for THIS client,
+whose stored sha256 still equals `getWaiver().sha256` NOW. A waiver the
+studio edited while the student was reading it is refused with a plain
+sentence and nothing is written.
+
+That by-id lookup is the T113 review finding, fixed: `consumeRequest`
+no longer means "is this the hub's current request" but "is this request
+spendable", reloading it from `display_requests` when memory has lost it
+(the one reason that table exists). Consuming a request the hub has
+already moved past no longer blanks whatever is on the screen now.
+
+A suppressed release (dry run, the write guard) is reported exactly as
+before and **does not consume** the request, so a real run later can
+still spend the same signature, and nothing is uploaded either.
+
+On a real release: the `waiver_receipts` row gains `signature_sha256`
+and `signature_png` (bytea) through **migration 13**, additive and
+nullable, our artifact captured on our screen, the database holding the
+original and Mindbody receiving a copy. Then the copy itself, best
+effort like the Notes append: `documentFiled: false` with the reason
+never fails the agreement, and the teacher's screen says it the same
+quiet amber way. The Notes line reads "Waiver signed on the customer
+screen <at>, text sha256:..., signature sha256:...". The handle is
+spent LAST, after everything that could be retried from it.
+
+If the teacher's iPad was asleep and missed the event, the dialog asks
+`GET /api/display/pending?clientId=` on open (device session + a
+signed-in teacher; it answers a request id and a moment, never the PNG)
+and finalises with "Signed on the customer screen, recording it now."
+
+### 4. The teacher's dialog
+
+T18's dialog gains one 64px **Sign on the customer screen**, rendered
+only when a display is paired AND connected, in both the "waiver needed"
+and the reading state (the student reads on their own screen, so making
+the teacher read it first on theirs would be theatre). While the student
+has it, the dialog says "Waiting for the customer to sign" with a 64px
+Cancel, and the counter's own confirm stays live throughout as the
+fallback. "Not now" from the display returns the dialog with one quiet
+line. Closing the dialog cancels the scene, so one student's waiver is
+never left in front of the next person.
+
+**With no display paired the button is absent and T18's flow is exactly
+as it was.** The profile card gains one line, "signed on the customer
+screen on <date>", read from our own receipt row; the PNG is never
+rendered back into the POS.
+
+#### Verified
+
+Drivers in the scratchpad (not in the repo): `server.mjs` (T113's
+harness), `mockmb.mjs` (T114's mock, extended with the waiver text, the
+client read, `updateclient`, `uploadclientdocument`, a class and a
+roster visit, and a record of every request body and authorization
+header), `routes.mjs`, `dbdrive.mjs`, `ui.mjs`.
+
+- `env -u DATABASE_URL npm run build` clean, `npx tsc --noEmit` clean.
+- **43 route assertions passed** with no database: the scene built
+  server-side, with the stream's own event body asserted to contain the
+  waiver text and "Sam" and NOT the client id, any 64-hex hash or the
+  private half; a waiver present with no client id refused 400; a second
+  present refused 409; a non-PNG signature 400, an oversized one 413, a
+  stale `agreedAt` 400, a missing one 400; `pending` finding the waiting
+  signature for that client and nothing for another; the agreement
+  recorded, with the mock asserting `LiabilityRelease: true` sent under
+  the faked STAFF token, the upload's `FileName` matching
+  `waiver-<compact>-<sha12>.png`, `MediaType: "png"`, the client id on
+  the request, the Buffer decoding to PNG's magic, and the Notes line
+  reading "signed on the customer screen" with both hashes and the row's
+  existing note kept; the same signature refused 409 on a second
+  finalisation, a signature for another client refused, an unknown id
+  refused; the counter path unchanged (still records, still says "agreed
+  at the counter", uploads nothing, still 409s a wrong hash and 400s a
+  missing one); and the display cookie and a signed-out iPad both
+  refused by `/api/display/pending`.
+- **19 more with dry run on** (target prod, since the sandbox forces dry
+  run off): the agreement reported suppressed, and the signature NOT
+  consumed, so the same request finalises again.
+- **15 assertions against real Postgres**: the request row holding the
+  result and the private half in `payload.__private` and NOT among the
+  display's payload keys; the receipt row holding `signature_sha256` and
+  `signature_png` whose bytes compare equal to the PNG signed, matching
+  the hash the answer reported; the request marked consumed; a signature
+  completed, the server RESTARTED, and the finalisation then finding it
+  by id and landing its receipt; and, after a restart with the studio's
+  waiver text changed underneath, that finalisation refused 409 with
+  "changed while they were reading it" and no new receipt row.
+- **26 Playwright assertions passed** across two browser contexts: a
+  paired display and the real roster; the dialog opened from a row with
+  no waiver; the 64px button measured; the display showing the greeting
+  by name and the real text; agree disabled before scrolling, still
+  disabled scrolled with no ink, live once signed with real pointer
+  events, and disabled again after Clear; the signature agreed, the
+  display thanking them and returning to idle on its own, and the
+  teacher's dialog closing with no tap and the row no longer reading "no
+  waiver"; "Not now" returning the dialog with its quiet line and the
+  counter path still offered; the dark palette; nothing under 16px and
+  no control under 64px on the display, and no horizontal overflow in
+  either palette. Screenshots: `waiver-display-light.png`,
+  `waiver-display-dark.png`, `waiver-pos-after.png`,
+  `waiver-pos-notnow-dark.png`.
+- **T113's driver passes again (52) and T114's passes again (27).** Both
+  used `{kind: "waiver", payload: {...}}` as a placeholder for "a scene
+  that holds the screen and is not a ticket"; a waiver's payload is now
+  built by the server, so the placeholder is `register` instead. No
+  product code changed for it.
+
+#### Fixed in review
+
+- **Two finalisations of one signature could both write.** `consumeRequest`
+  runs LAST, after the release, the receipt row, the upload and the note,
+  so two calls naming one request both passed their checks and both wrote
+  (the review's own re-run of the driver found two `waiver-agreed` lines
+  35ms apart, and two uploads). Two triggers reach it: the `completed`
+  event replayed from the teacher stream's buffer on an SSE reconnect,
+  and the dialog's pending check on open. Three small changes:
+  `beginFinalisation`/`releaseFinalisation` in `src/lib/display.ts`, a
+  synchronous claim on the request id taken before the first await in
+  `/api/waiver-agree` and released in a `finally` (the loser answers 409
+  with `inFlight: true` and writes nothing); a `finalisedRef` in
+  `page.tsx` so one browser never sends the same request id twice; and a
+  409 on the display path rendering as the dialog's quiet line rather
+  than an error. Re-driven: two concurrent finalisations of one signature
+  now answer 200 and 409 with ONE document upload.
+
+#### Could not verify
+
+- **Probe D-B1 was not run.** There are no Mindbody credentials in this
+  environment. `scripts/probe-upload-document.ts` is written for Pete to
+  run against the sandbox; until it does, the upload's shape is the
+  vendored spec's reading and nothing more, and whether the file appears
+  on the client's Documents page is unknown. The posture is why this is
+  shippable anyway: a failed upload is reported and the agreement
+  stands, with the image kept in our own row.
+- **Every Mindbody answer was the MOCK's.** It accepts the upload and
+  answers `{FileSize, FileName}` because the spec says that is the
+  shape; a real site may refuse a MediaType, a file name or a size, and
+  nothing here would know.
+- **The staff session was faked**, as in T113 and T114: seeded on
+  globalThis with a cookie derived from `POS_SESSION_SECRET`. "Ran under
+  the teacher's token" means the driver asserted that token on the
+  outgoing request, not that Mindbody attributed anything.
+- **No real iPad, no finger and no Apple Pencil.** Both browsers were
+  headless Chromium at 1180px and the signature was drawn with synthetic
+  mouse-as-pointer events. Palm rejection, Pencil pressure, Safari's
+  `touch-action` behaviour and what a canvas feels like to sign on are
+  all unexercised.
+- **The 30 minute expiry and the events-stream reconnect replay** were
+  not driven; the pending route was, which is the same path a missed
+  event takes.
+- **A suppressed UPLOAD** (dry run or the write guard stopping the
+  document while the release went out) is the same two lines as the
+  suppressed Notes append beside it and was read, not run: the dry-run
+  pass stops at the release, which is where it should stop.
