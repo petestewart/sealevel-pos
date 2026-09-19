@@ -120,23 +120,79 @@ export const NEEDS_HOUSE_CLIENT_LINE =
  * overlay: a teacher mid-sale must not have to leave the screen to know
  * whether the counter is live.
  */
-/** The mode line's text, which is also the key its dismissal is stored
- *  under: any change of mode (dry run, target, site, the guard) brings a
- *  hidden banner back. */
-function modeLine(config: ModeConfig): string {
-  return (
-    (config.dryRun
-      ? /* T89: a dry run this browser asked for says so, since the
+/**
+ * What the counter has to be TOLD about the mode, or null for nothing.
+ *
+ * T111, Pete with the live shelf on screen: "let's also get rid of the
+ * LIVE. Taps check real students in. Production site 471. banner at this
+ * point. The settings pop up should show that info enough without
+ * polluting the main screen."
+ *
+ * So the rule is no longer "always say where we are", it is "say it
+ * whenever a tap would NOT do what a teacher expects". The reason the
+ * banner was put here has always been the second one: a teacher must
+ * never believe a tap was real when it was suppressed, and never believe
+ * it was suppressed when it was real. In ordinary production, live and
+ * writing, a tap does exactly what it looks like, so there is nothing to
+ * say and the screen stays clean; that is the state the counter is in all
+ * day. Every other state still says so, in the same banner in the same
+ * place, and the drawer's Settings tab carries the full detail (studio,
+ * site, where the target came from, dry run, the write guard) for the
+ * quiet case.
+ *
+ * `live` picks the amber treatment: green for a dry run (nothing reaches
+ * Mindbody at all) and amber for a state where writes DO go out but not
+ * where a teacher would assume, which is the sandbox or the write guard.
+ *
+ * The text is also the key its dismissal is stored under, so any change
+ * of mode brings a hidden banner back.
+ */
+export function modeNotice(config: {
+  dryRun: boolean;
+  dryRunSource?: string | null;
+  target: string;
+  siteId?: string | null;
+  writeClientIds?: string[];
+}): { text: string; live: boolean } | null {
+  /* The site is named on every one of these lines: which studio a
+     suppressed or sandboxed tap belonged to is half the answer. The id is
+     absent from the lock screen's trimmed config, and then the word alone
+     stands. */
+  const where =
+    `${config.target === "prod" ? "Production" : "Sandbox"} site` +
+    (config.siteId ? ` ${config.siteId}.` : ".");
+  if (config.dryRun) {
+    return {
+      text:
+        /* T89: a dry run this browser asked for says so, since the
            counter beside it may be writing for real. */
-        config.dryRunSource === "browser"
-        ? "Dry run on this iPad. Nothing is written to Mindbody."
-        : "Dry run. Nothing is written to Mindbody."
-      : "LIVE. Taps check real students in.") +
-    ` ${config.target === "prod" ? "Production" : "Sandbox"} site ${config.siteId}.` +
-    (!config.dryRun && config.writeClientIds.length > 0
-      ? ` Writes limited to client ${config.writeClientIds.join(", ")}.`
-      : "")
-  );
+        (config.dryRunSource === "browser"
+          ? "Dry run on this iPad. Nothing is written to Mindbody."
+          : "Dry run. Nothing is written to Mindbody.") + ` ${where}`,
+      live: false,
+    };
+  }
+  if (config.target !== "prod") {
+    /* Writes go out here, and they land on a site with none of the
+       studio's students on it: the one thing a teacher must not read as a
+       check-in. */
+    return {
+      text: `SANDBOX. Taps check nobody in at the studio. ${where}`,
+      live: true,
+    };
+  }
+  const ids = config.writeClientIds ?? [];
+  if (ids.length > 0) {
+    return {
+      text:
+        `LIVE for client ${ids.join(", ")} only. Every other tap is ` +
+        `suppressed. ${where}`,
+      live: true,
+    };
+  }
+  /* Live, writing, unrestricted production: a tap does what it says, so
+     the screen says nothing (Pete, T111). */
+  return null;
 }
 
 /** The mode line a teacher hid, shared by the banner's three homes (the
@@ -148,9 +204,11 @@ const bannerListeners = new Set<() => void>();
 /** The mode banner, with an X (Pete: "have an X on the right so I can
  *  hide it"). Hiding lasts until the page reloads or the line changes
  *  (dry run, target, site, the guard), so a counter that switched to
- *  sandbox or dry run cannot keep a stale dismissal. */
+ *  sandbox or dry run cannot keep a stale dismissal. Since T111 there is
+ *  no banner at all in ordinary production; see modeNotice. */
 export function ModeBanner({ config }: { config: ModeConfig | null }) {
-  const line = config && !config.configError ? modeLine(config) : null;
+  const notice = config && !config.configError ? modeNotice(config) : null;
+  const line = notice?.text ?? null;
   const [, bump] = useState(0);
   useEffect(() => {
     const l = () => bump((n) => n + 1);
@@ -159,9 +217,9 @@ export function ModeBanner({ config }: { config: ModeConfig | null }) {
       bannerListeners.delete(l);
     };
   }, []);
-  if (line === null || hiddenModeLine === line) return null;
+  if (notice === null || hiddenModeLine === line) return null;
   return (
-    <p className={config!.dryRun ? "banner" : "banner live"}>
+    <p className={notice.live ? "banner live" : "banner"}>
       <span className="banner-text">{line}</span>
       <button
         type="button"
@@ -1167,12 +1225,36 @@ function CashIcon() {
   );
 }
 
-/** The gift card tile (T83): a card with a ribbon, so it reads as a
- *  card at a glance and not as the stored card beside it. */
+/**
+ * The gift glyph (T83's tender tile, T104/T107's gift card cells).
+ *
+ * T111, Pete with a screenshot of the shelf: "gift icon looks like a one
+ * row table, not a gift." It was drawn in T83 for the payment tile, as a
+ * card with a ribbon across it, and at the ~20px a cell's second line
+ * gives it (T107) a rectangle with one horizontal line in it is exactly a
+ * one row table. So it is a WRAPPED BOX now: the lid band, the body under
+ * it, the ribbon down the middle and a two loop bow on top, which is the
+ * shape a person recognises as a gift without reading anything.
+ *
+ * ONE glyph for both homes, deliberately. A gift card tender and a gift
+ * card product are the same object to a teacher, and the tile's old card
+ * shape was a rectangle with a stripe sitting two tiles from the Card
+ * tile's rectangle with a stripe; the box tells them apart at a glance,
+ * which is what the tile's icon is for.
+ *
+ * Geometry for the size it is really drawn at: the bow's loops are 6 of
+ * the 24 units tall, not 5, so they survive the cell's ~20px, and the
+ * body is a path rather than a rect so no stroke doubles along the lid.
+ * currentColor as every icon here, so both palettes and the pressed
+ * accent come for free.
+ */
 function GiftCardIcon() {
   return (
-    <Icon d="M12 5v14M2 10h20" size={24}>
-      <rect x="2" y="5" width="20" height="14" />
+    <Icon
+      d="M12 9v12M5 13v8h14v-8M7 9a3 3 0 0 1 0-6 5 8 0 0 1 5 6 5 8 0 0 1 5-6 3 3 0 0 1 0 6"
+      size={24}
+    >
+      <rect x="3" y="9" width="18" height="4" />
     </Icon>
   );
 }
@@ -9906,9 +9988,14 @@ export default function SaleScreen(props: {
             on the pad' to 'Any amount'". The same glyph in the same place
             at the same size as a product cell's, so the whole gift card
             shelf reads as one family; the glyph is decorative and the
-            aria-label above still says what the cell does in words. */}
+            aria-label above still says what the cell does in words.
+
+            T111, Pete: 'change "Custom amount" to "Custom"'. The cell is
+            one word and the glyph under it now; "Any amount" in the foot
+            says the rest, and the aria-label is untouched, since a screen
+            reader gets no help from a glyph. */}
         <span className="shelf-name shelf-gift-name shelf-gift-split">
-          <span className="shelf-gift-lead">Custom amount</span>
+          <span className="shelf-gift-lead">Custom</span>
           <span className="shelf-gift-mark">
             <GiftCardIcon />
           </span>

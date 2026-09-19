@@ -387,6 +387,10 @@ function SettingsPanel({
     dryRun: boolean;
     dryRunSource: string | null;
     targetAdmin: boolean;
+    /** T111: the write guard's list, because this tab is now the ONLY
+     *  place the quiet (live, writing, unrestricted) case is written
+     *  down: the main screen's banner is gone in that state. */
+    writeClientIds: string[];
   } | null>(null);
   const readMode = useCallback(() => {
     fetch("/api/config")
@@ -404,6 +408,9 @@ function SettingsPanel({
           dryRun: body.dryRun === true,
           dryRunSource: body.dryRunSource ?? null,
           targetAdmin: body.targetAdmin === true,
+          writeClientIds: Array.isArray(body.writeClientIds)
+            ? body.writeClientIds.map((id: unknown) => String(id))
+            : [],
         });
       })
       .catch(() => undefined);
@@ -427,6 +434,20 @@ function SettingsPanel({
               : "From MINDBODY_TARGET in the server environment."}
           </p>
         </>
+      ) : null}
+      {/* T111: the write guard, in words, in the tab. Pete took the mode
+          banner off the main screen for the ordinary production state
+          ("The settings pop up should show that info enough without
+          polluting the main screen"), so the counter's only written
+          record of an UNRESTRICTED live counter is here. A guard that is
+          narrowing writes still raises the banner on the main screen; this
+          line is what says "no guard" when nothing else does. */}
+      {mode !== null ? (
+        <p className="muted">
+          {mode.writeClientIds.length > 0
+            ? `Write guard: POS_WRITE_CLIENT_IDS limits writes to client ${mode.writeClientIds.join(", ")}. A write for anybody else is logged and suppressed.`
+            : "Write guard: off (POS_WRITE_CLIENT_IDS empty), so writes are allowed for every client."}
+        </p>
       ) : null}
       <BrowserDryRun
         mode={mode}
@@ -515,6 +536,9 @@ interface TargetInfo {
   targetSource: string;
   siteId: string | null;
   dryRun: boolean;
+  /** T111: "env" or "browser", so the panel can say WHOSE dry run it is.
+   *  /api/admin/target has served it since T89. */
+  dryRunSource?: string | null;
   configured: boolean;
   available: boolean;
   targets: { target: string; siteId: string | null; missing: string[] }[];
@@ -619,7 +643,15 @@ function TargetPanel({
           : "From MINDBODY_TARGET in the server environment."}
       </p>
       <p className="muted">
-        Dry run is {info.dryRun ? "on" : "off"}. Dry run and the write guard
+        {/* T111: the source too, not just on or off, since the banner that
+            used to name it is gone in the ordinary production state. */}
+        Dry run is{" "}
+        {info.dryRun
+          ? info.dryRunSource === "browser"
+            ? "on for this iPad only"
+            : "on for the whole server"
+          : "off"}
+        . Dry run and the write guard
         stay in the server environment and this switch cannot change them, so
         a switch to production still writes nothing until POS_DRY_RUN=false is
         deployed.

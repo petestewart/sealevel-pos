@@ -92,9 +92,24 @@ it**: staff accounts belong to a site, so the studio's own API login
 else. If the sandbox returns "Site is deactivated" or "Staff identity
 authentication failed", that is the credentials, not the site being down.
 
-The screen shows which mode it is in at all times, and `GET /api/config`
-reports it. Never remove that banner: a teacher must not have to wonder
-whether the tap they just made was real.
+**The screen says so whenever a tap would not do what a teacher expects**,
+and `GET /api/config` always reports the mode in full. The rail is not "always
+say where we are", it is that a teacher must never believe a tap was real when
+it was suppressed, and never believe it was suppressed when it was real. So
+`modeNotice` in `src/app/SaleScreen.tsx` raises the banner, in the same place
+and the same treatment it has always had, for exactly four states: the target
+is the SANDBOX, the server's dry run is on, this browser's dry run is on
+(T89's cookie), and `POS_WRITE_CLIENT_IDS` is narrowing writes to a list. In
+ordinary production, live and writing and unrestricted, there is NO banner
+(T111, Pete: "let's also get rid of the LIVE. Taps check real students in.
+Production site 471. banner at this point. The settings pop up should show
+that info enough without polluting the main screen."), which is the state the
+counter is in all day. The lock screen follows the same rule from the same
+function, so the two screens cannot disagree. Do not add a fifth quiet state:
+anything that changes what a tap does belongs in that function, loudly, not in
+the drawer alone. The drawer's Settings tab is where the quiet case is written
+down: the studio and site in words, whether the target came from the setting
+or the environment, the dry run and whose it is, and the write guard.
 
 The cached staff token is keyed by site id, so switching target cannot reuse a
 sandbox token against production.
@@ -192,7 +207,10 @@ Since T89 the tab opens on the Mindbody target: the studio and site in
 words, whether that came from the setting or the environment, and, for a
 teacher whose staff id is in `POS_ADMIN_STAFF_IDS`, one 64px control that
 asks once before switching. Everybody else sees the line and no control.
-Under it, "dry run on this iPad" turns on a suppression for this browser
+Under it, the write guard in words (T111: read only, a line and no
+control, because with the banner gone in the ordinary production state
+this tab is the only place an unrestricted live counter is written down),
+and "dry run on this iPad", which turns on a suppression for this browser
 only.
 
 Anything that decides whether a write reaches Mindbody in the LOOSER

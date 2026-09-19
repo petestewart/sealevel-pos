@@ -15615,3 +15615,186 @@ above the balance (T94's open question, answerable with one `Test:
 true` probe against the dummy client), then the race can only produce
 an honest refusal and this ticket is a tidiness fix rather than a money
 fix. Run that probe before building the lock.
+
+## T111. A gift icon that looks like a gift, and a quieter top of screen (Pete, 2026-09-19)
+
+Pete, with a screenshot of the live gift card shelf:
+
+> "gift icon looks like a one row table, not a gift.
+>
+> let's also get rid of the LIVE. Taps check real students in. Production
+> site 471. banner at this point. The settings pop up should show that
+> info enough without polluting the main screen.
+>
+> And change "Custom amount" to "Custom""
+
+### 1. The glyph is a gift box now, in both of its homes
+
+`GiftCardIcon` was drawn in T83 for the PAYMENT TILE, where it is 24px
+beside the word "Gift card": a card with a ribbon across it, so it would
+read as a card and not as the stored card two tiles away. T107 then put
+that same component on the second line of every gift card CELL, at the
+~20px a name's line gives it, and at 20px a rectangle with one horizontal
+line through it is a one row table. Pete is describing the drawing
+exactly.
+
+It is a wrapped box now: a lid band, the body under it, the ribbon down
+the middle and a two loop bow on top. Same idiom as every other icon in
+the file, `currentColor` on the shared `Icon` (so both palettes and the
+pressed accent come for free, and no hex moved), `aria-hidden`, sized by
+the line it sits on rather than by a magic number.
+
+Two things were drawn for the size it is really used at rather than for a
+64px preview: the bow's loops are 6 of the 24 units tall instead of the 5
+the common drawing uses, so they survive 20px as two loops rather than
+four hairlines; and the body is a path (`M5 13v8h14v-8`) rather than a
+second rect, so no stroke doubles along the lid.
+
+**Decision on the tile: ONE glyph for both**, which the brief left open. A
+gift card tender and a gift card product are the same object to a teacher,
+and the tile's old drawing was a rectangle with a stripe sitting two tiles
+from the Card tile's rectangle with a stripe. The box tells them apart at
+a glance, which is what a tile's icon is for. Both places were looked at
+at 6x in both palettes, and at their real size on a real screen.
+
+### 2. The banner: the rail is kept, the sentence is not
+
+The banner was NOT simply deleted, because what it is for is not "you are
+live". It is: a teacher must never believe a tap was real when it was
+suppressed, and never believe it was suppressed when it was real. In
+ordinary production, live and writing and unrestricted, a tap does exactly
+what it looks like, so there is nothing to say, and that is the state the
+counter is in all day.
+
+So `modeNotice` (`src/app/SaleScreen.tsx`, replacing `modeLine`) returns
+the line for exactly four states and null for the fifth:
+
+- the target is the SANDBOX: "SANDBOX. Taps check nobody in at the studio.
+  Sandbox site -99.", amber;
+- the server's dry run: "Dry run. Nothing is written to Mindbody.
+  Production site 471.", green;
+- this browser's dry run (T89's cookie): "Dry run on this iPad. Nothing is
+  written to Mindbody. Production site 471.", green;
+- the write guard: "LIVE for client 100000777 only. Every other tap is
+  suppressed. Production site 471.", amber;
+- ordinary production: no banner.
+
+Nothing about the banner's VISIBILITY moved: same component, same place at
+the top of the screen, same 16px, same 44px, same X that hides it until a
+reload or a change of mode, same copy on the roster and inside the sale
+overlay. The green/amber split is now meaningful rather than incidental:
+green means nothing can reach Mindbody at all, amber means writes DO go
+out but not where a teacher would assume.
+
+The LOCK SCREEN follows the same rule from the same function. It had its
+own hand-written copy of the sentence, which is how two screens drift; now
+they cannot disagree. Its trimmed pre-auth config carries no site id and
+no guard list, so it can only ever show the two dry run lines, and the
+site id is left off the sentence rather than printed as "null".
+
+**The Settings tab was checked, not assumed.** It already named the studio
+and the site in words, where the target came from, and (through T89's "dry
+run on this iPad" block) the dry run in full, including whose it is. Two
+things were missing and were added: the WRITE GUARD, in words, for both
+the admin and the non-admin branch, and the SOURCE of the dry run in the
+admin panel's own sentence ("Dry run is on for this iPad only" rather than
+just "on"). The guard line is read only, a line and no control: everything
+that decides in the LOOSER direction still lives in the server
+environment.
+
+CLAUDE.md's Safety section was rewritten accordingly. "Never remove that
+banner" is gone, and what replaces it is the rail plus the four states, so
+the file does not contradict the code.
+
+### 3. "Custom"
+
+The custom amount cell's lead reads "Custom". "Any amount" stays under it,
+and its `aria-label` is untouched ("Custom amount gift card, type the
+amount on the number pad"): a screen reader gets no help from a glyph, so
+the cell still says what it does in full.
+
+### Build notes
+
+- `src/app/SaleScreen.tsx`: `GiftCardIcon` redrawn; `modeLine` replaced by
+  the exported `modeNotice`; `ModeBanner` renders from it and picks its
+  own class; the custom cell's lead.
+- `src/app/LockScreen.tsx`: its inline copy of the sentence replaced by
+  `modeNotice`.
+- `src/app/DevDrawer.tsx`: `writeClientIds` read from `/api/config` into
+  the tab's mode state; the write guard line; the dry run's source in the
+  admin panel's sentence.
+- `src/app/globals.css` did NOT change, and neither did `/api/config`,
+  any route, any lib, or anything on the money path. No server code
+  changed at all.
+
+Deliberately not done:
+
+- **No new indicator was invented for the quiet state.** A teacher with a
+  queue does not notice a subtle one, which is why the brief's fallback
+  was "keep the banner rather than invent something quieter". Four states
+  keep the banner; the fifth has nothing to say.
+- **The X was kept.** The banner is no less dismissible than it was, and
+  in the states that still raise it a dismissal still dies at the next
+  reload or change of mode.
+- **The glyph is still not on the ticket row** (T107's reason, unchanged:
+  the row says "Gift card" in words).
+
+### Verified by the builder
+
+`npm run typecheck` and `npm run build` clean. Rebuilt before every
+browser run. Ports, none of them claimed by another agent: mock **:4151**,
+apps on **:3151** (sandbox), **:3152** (prod, live, writing, devtools),
+**:3153** (prod, `POS_DRY_RUN=true`), **:3154** (prod, live,
+`POS_WRITE_CLIENT_IDS=100000777`, devtools, admin) and **:3155** (prod,
+live, `POS_PIN` set, for the lock screen). Every driver preflights that
+the port is serving THIS build (`.next/BUILD_ID` in the served HTML) and
+refuses to run otherwise.
+
+- `names.mjs` on :3151, T107's own driver plus T111's assertions, light
+  and dark at 1194x834 and 834x1194, screenshots LOOKED AT: the glyph is
+  the gift box (the old `M2 10h20` card line is gone), decorative, in the
+  name's own ink, 20x20 rendered with a 2px stroke, on the second line, in
+  the same box on every cell and on the Custom cell. **The cell geometry
+  is unchanged from T107**: a split row is 123px, the same as a row whose
+  longest name already wrapped; the stepper is still level with the price
+  to the pixel; the cell does not change height when the line lands and
+  the glyph does not move. The names still split as T107 left them, the
+  whole name is still on the title, the label and the stepper's labels,
+  and the ticket row still reads "Gift card / Single Class" with no glyph.
+- The drawing itself was looked at at 6x, both palettes: one gift card
+  cell, and the gift card TENDER tile with a retail line on the ticket so
+  the tile is live rather than greyed.
+- `banner.mjs`, each state on its own server, set for real (the server's
+  target, the server's dry run, T89's cookie, `POS_WRITE_CLIENT_IDS`),
+  never by faking a prop, light and dark, both orientations: no banner
+  anywhere in the live writing state, on the roster or in the sale
+  overlay; the right sentence in each of the other four, at the top of the
+  screen, 16px, 44px tall, in the treatment its state deserves; the X
+  still hides it and a reload still brings it back; the sale overlay's
+  copy always agrees with the roster's.
+- `settings.mjs` on :3152 (non-admin) and :3154 (admin, with a guard
+  list), light and dark, and once with the T89 cookie set: the tab names
+  "Production site 471", "From MINDBODY_TARGET in the server environment",
+  the dry run and whose it is, and the write guard either as the client id
+  it is limited to or as off with the variable named. The switch control
+  is drawn for the admin and absent for everybody else, as T89 left it.
+- `lock.mjs` on :3155, both palettes and orientations: no banner on a live
+  production lock screen, and with the cookie set, "Dry run on this iPad.
+  Nothing is written to Mindbody. Production site." with no site id and no
+  "null".
+
+### Not verified
+
+- **Nothing was run against live Mindbody**, and nothing needed to be: no
+  server code changed and the money path was not touched.
+- **The studio's real card names have still never been seen in a cell**
+  (T107's gap, unchanged): the glyph was exercised on Pete-shaped names in
+  the mock.
+- **A stored target (`app_settings.mindbody_target`) was not exercised**,
+  because these runs had no database, so the Settings tab was only seen
+  saying "From MINDBODY_TARGET in the server environment". The other
+  branch of that sentence is T89's and did not change.
+- **Pete has not seen the new glyph**, which is the only test that
+  actually answers his complaint. If it still does not read as a gift on
+  the counter iPad, the shape to try next is a wider bow rather than a
+  bigger box: the box is what carries at 20px.
