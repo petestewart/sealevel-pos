@@ -15568,3 +15568,50 @@ a mock that answers 404 is the reason this bug shipped.
 - **The staff token in the drawer has not been read off a real iPad**, so
   whether the expanded record's token block is comfortable to select and
   copy at the counter is Pete's to say.
+
+## T110: two checkouts for one client can both pass the balance check
+
+Found by the T108 review, 2026-09-19, and deliberately not closed there:
+it is not account credit's bug, it is the checkout route's, and it was
+found because T108 went looking for it.
+
+Nothing holds a Mindbody balance. `/api/checkout` reads the client's
+balance at charge time and then charges the parts one after another, so
+between the read and the last charge the same account can be spent
+somewhere else. **Two checkouts for the same client fired at once both
+pass the check**: T22's single flight is the BROWSER's and is per
+browser, and the route has no per-client lock. Two iPads, or one iPad
+and Mindbody's own web app, is all it takes.
+
+What is not in doubt: against an account Mindbody enforces, the outcome
+is honest. Either nothing is sold, or T95's partial says exactly what
+was and what was not, with no retry and no refund. The review's driver
+proved that with a mock that actually holds the money.
+
+What is in doubt is the shape T94 left open: whether Mindbody accepts a
+`DebitAccount` ABOVE the balance. If it does, a race can leave an
+account negative, which is precisely what T108's overdraft refusal
+stops a teacher doing on purpose.
+
+### What to build, if this is built
+
+A per-client lock on the checkout route, held from the balance read to
+the last charge, so two tickets for one client queue rather than race.
+In-memory is enough for one server and is the honest first version:
+say in the ticket that a second instance defeats it, and decide then
+whether the database charter (T29) stretches to a lock row, which is
+state Mindbody has no home for rather than a copy of what Mindbody
+holds.
+
+The lock must never become a way to lose money: a lock that cannot be
+taken refuses the ticket before anything is charged, a lock is released
+on every path including a thrown error, and nothing waits on it long
+enough for a teacher to tap twice.
+
+### Worth knowing first
+
+The cheaper answer may be evidence. If Mindbody REFUSES a `DebitAccount`
+above the balance (T94's open question, answerable with one `Test:
+true` probe against the dummy client), then the race can only produce
+an honest refusal and this ticket is a tidiness fix rather than a money
+fix. Run that probe before building the lock.
