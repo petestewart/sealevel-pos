@@ -1652,14 +1652,27 @@ export async function POST(request: Request) {
           { status: 502 },
         );
       }
-      if (profile.balance === null || profile.balance < ticketTotal) {
+      /* T108 review: to the CENT, and never rounded UP. A balance that
+       * arrives with more precision than a cent made the refusal name the
+       * same figure twice ("Account credit is 50.00, which does not cover
+       * the 50.00 ticket", off a balance of 49.999), which reads like a
+       * bug to whoever is holding the queue up. Flooring names the figure
+       * that can actually be spent and keeps the refusal on the safe
+       * side: a fraction of a cent never counts as covering anything.
+       * `creditBalance` below stays the figure Mindbody gave, because
+       * that is what the screen puts back on the tile. */
+      const spendable =
+        profile.balance === null
+          ? null
+          : Math.floor(profile.balance * 100 + 1e-6) / 100;
+      if (spendable === null || spendable < ticketTotal) {
         return NextResponse.json(
           {
             error:
-              profile.balance === null
+              spendable === null
                 ? "Mindbody reports no account balance for this client. " +
                   "Nothing was charged."
-                : `Account credit is ${profile.balance.toFixed(2)}, which ` +
+                : `Account credit is ${spendable.toFixed(2)}, which ` +
                   `does not cover the ${ticketTotal.toFixed(2)} ticket. A ` +
                   "gift card takes one form of payment and an account " +
                   "cannot be charged past its balance for one, so take cash " +
