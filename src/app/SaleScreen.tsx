@@ -2378,6 +2378,30 @@ function PaymentPanel(props: {
             : null;
   const cardDetail = card && !card.expired ? `Card ...${card.lastFour}` : null;
 
+  /** T108: what account credit cannot do on a ticket holding a gift card.
+   *
+   *  Pete: "Account credit for gift cards should be allowed." It is, up
+   *  to the balance. Past the balance it is not, and that is the
+   *  COORDINATOR'S call rather than Pete's instruction (the same refusal
+   *  and the same note sit in /api/checkout's gift card shapes block):
+   *  T94's "Charge full amount" knowingly leaves a negative balance on a
+   *  teacher's PIN, and spending money a client does not have to create a
+   *  bearer instrument is cash extraction rather than a purchase. Lifting
+   *  it is deleting this and the route's refusal.
+   *
+   *  A gift card ticket also takes ONE form of payment (the route refuses
+   *  a split on one), so there is no second tender to cover a shortfall:
+   *  a balance short of the whole ticket cannot pay for it at all, and
+   *  saying so on the tile is the whole of what a teacher can act on.
+   *
+   *  The sentence is short on purpose: the tile is 96px tall and about
+   *  two lines wide in portrait, the whole of it is on the tile's title,
+   *  and Cash and Card sit live beside it, which is the action. */
+  const giftCreditWhy =
+    hasGiftCard && totalCents !== null && (balanceCents ?? 0) < totalCents
+      ? `Only ${money(balance ?? 0)} on account, no overdraft`
+      : null;
+
   /* Credit's own gate is the client and the balance EXISTING. Whether the
    * balance covers the whole total is no longer a blocker: a credit line
    * clamps to min(balance, due) and a second line pays the rest, which is
@@ -2388,12 +2412,13 @@ function PaymentPanel(props: {
    * only thing Account still needs is somebody to charge. T90's refusal
    * stays FIRST and is not something a PIN can move: a line bought for
    * another client cannot be paid from this one's account at all, so
-   * there is no overdraft to authorize there either. */
+   * there is no overdraft to authorize there either. T108's refusal is
+   * LAST: it is the only one of the three a gift card puts there. */
   const creditReason = otherClientWhy
     ? otherClientWhy
     : !client
       ? "Attach a client"
-      : null;
+      : giftCreditWhy;
   const creditLabel =
     balance !== null && balance > 0
       ? `Account (${money(balance)})`
@@ -2582,9 +2607,10 @@ function PaymentPanel(props: {
      * route will certainly refuse. */
     if (hasGiftCard) {
       if (source === "giftcard") return "A gift card cannot buy a gift card";
-      if (source === "credit") {
-        return "Account credit cannot buy a gift card";
-      }
+      /* T108: account credit is no longer one of them (Pete: "Account
+       * credit for gift cards should be allowed."). It falls through to
+       * `creditReason` below, which carries the one thing still refused:
+       * a balance that does not reach the whole ticket. */
       if (lines.length >= 1) {
         return "One tender only while a gift card is on the ticket";
       }
@@ -2657,10 +2683,16 @@ function PaymentPanel(props: {
        * lets the balance be exceeded. The id and the cents are both
        * checked, so a figure changed after the PIN is refused here and
        * the effect below has already dropped the token anyway. */
+      /* T108: and never on a ticket holding a gift card. Unreachable as
+       * built (a cart edit clears the tender, so the authorization is
+       * dropped the moment a card joins the ticket, and `creditReason`
+       * above already refuses a short balance there), and checked in the
+       * same render that enables the button rather than relied on. */
       if (
         overdraft !== null &&
         overdraft.lineId === line.id &&
-        overdraft.cents === line.cents
+        overdraft.cents === line.cents &&
+        !hasGiftCard
       ) {
         return null;
       }
@@ -3830,6 +3862,12 @@ function PaymentPanel(props: {
     padDueCents !== null &&
     padDueCents > 0 &&
     overdraft === null &&
+    /* T108: not on a ticket holding a gift card. The PIN must not even be
+     * asked for there: the route refuses an overdraftToken on such a
+     * ticket outright, so a PIN typed here would be spent on a refusal
+     * nothing could satisfy. The tile is greyed with `giftCreditWhy`
+     * before a line exists, so this is the second of the two sides. */
+    !hasGiftCard &&
     (balanceCents ?? 0) < padDueCents;
 
   /** What the overdraft leaves on the account, in cents and negative:

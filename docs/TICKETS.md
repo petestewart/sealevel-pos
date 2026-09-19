@@ -14755,3 +14755,176 @@ clean.
   fixed here.
 - Whether a teacher at the counter reads `5%` as five percent on the
   first tap is the one thing only Pete can answer.
+
+
+## T108. Account credit buys a gift card, up to the balance (Pete, 2026-09-19)
+
+Pete:
+
+> "Account credit for gift cards should be allowed."
+
+### The design
+
+**It is allowed now, and the reason it was not is gone.** T95 refused
+`method === "credit"` on a gift card ticket in words that said the reason
+was ignorance: "Account credit cannot buy a gift card yet: whether
+Mindbody allows it has not been established." That is no longer true. A
+live `Test: true` probe on 2026-09-17 paid the editable custom-amount
+product (282, "Gift Card (Custom Amount)") with
+`{ type: "DebitAccount", amount }` and Mindbody answered `Value` and
+`AmountPaid` equal to the amount, at $37.00 and at $63.50. The technical
+half was the only thing outstanding; the studio-policy half is Pete's,
+and he has decided it.
+
+So account credit is a tender for a gift card exactly as cash and the
+card on file are:
+
+1. `/api/checkout` takes `method: "credit"` on a ticket holding
+   `giftCards`, and sends one `DebitAccount` payment per PART of the
+   ticket: the cart half through the cart, each card through
+   `/sale/purchasegiftcard`, which is the T95 shape unchanged.
+2. **The balance is re-read here, at charge time**, from the same
+   `clientPaymentProfile` the card path reads, and it has to cover the
+   **whole ticket**. Not a part of it: the parts are charged one after
+   another off the same account, so a balance that covers the cart and
+   not the cards would run out half way through, with cards already sold
+   and no retry, no rollback and no refund anywhere in this path. A gift
+   card ticket also takes one form of payment (T95's split refusal), so
+   there is no second tender to carry a shortfall. A balance short of the
+   whole ticket is therefore a plain 409 with nothing sent, naming both
+   figures.
+3. There is **no $10 floor** on this path. That floor is a card
+   processing minimum and an account debit is not a card charge.
+4. Nothing else about selling a gift card moved: one purchase per card,
+   every card rehearsed with `Test: true` before anything is charged,
+   both `Value` and `AmountPaid` asserted to the cent, the partial-sale
+   honesty, the id generated server side and shown behind "Written on the
+   card", the call log striking the id out, and T103's rule that a gift
+   card product id never reaches a cart line.
+
+On the screen, `SaleScreen.tsx`'s tender reason "Account credit cannot
+buy a gift card" is gone; Account is an ordinary tile on a gift card
+ticket, badged with the balance.
+
+### The one thing still refused, and whose call it was
+
+**Charging an account PAST its balance to buy a gift card.** T94 added
+"Charge full amount", which takes a teacher's PIN and knowingly leaves a
+negative balance. Spending money a client does not have in order to
+create a bearer instrument is not a purchase, it is cash extraction, and
+it is the one shape of this a studio would not want a teacher to be able
+to do alone.
+
+**This line is the coordinator's call, not Pete's instruction.** Pete
+asked for account credit; he did not ask for an overdraft into a gift
+card, and he did not rule one out either. It is two refusals and lifting
+it is deleting both:
+
+- `/api/checkout`: an `overdraftToken` on a ticket holding a gift card is
+  refused 409 in the gift card **shapes block**, which runs before the
+  token is verified and long before it is spent, so the refusal never
+  costs a teacher their one-shot PIN. Nothing has called Mindbody at that
+  point.
+- `SaleScreen.tsx`: with a balance short of the ticket the Account tile
+  is greyed with "Only $10.00 on account, no overdraft", so there is no
+  line, no keypad, no "Charge full amount" and no PIN pad to reach.
+  `overdraftOffered` also carries `!hasGiftCard`, and `lineReason`
+  refuses an armed authorization on such a ticket, both of which are
+  unreachable as built (a cart edit clears the tender, so a card joining
+  the ticket drops the authorization) and checked in the render that
+  enables the button rather than relied on.
+
+The tile's sentence is short because the tile is 96px tall and about two
+lines wide in portrait; the whole of it is on the tile's `title`, and
+Cash and Card sit live beside it, which is the action a teacher takes.
+
+### What a mixed ticket does
+
+A gift card ticket takes ONE form of payment, so "partly from the
+account" is not a shape this app can build: a split on a gift card ticket
+is refused by `/api/checkout` and by the tile ("One tender only while a
+gift card is on the ticket"), unchanged since T95. The only mixed case is
+`method: "credit"` paying the whole ticket, and the balance has to reach
+the cart half and the card half together. A balance that covers one and
+not the other refuses the WHOLE ticket before anything goes out, rather
+than selling the half the money reaches. T102's discount still spreads
+over the cart lines and the cards in one list, to the cent, and the
+balance is checked against the DISCOUNTED ticket, so a $45 balance buys a
+$50 card discounted to $40.
+
+### Build notes
+
+- `src/app/api/checkout/route.ts`: the T95 credit refusal replaced by the
+  T108 overdraft refusal; `credit` added to the gift card ticket's method
+  whitelist (whose sentence now reads "cash, a card on file, or account
+  credit"); the balance read and the whole-ticket check beside the
+  storedcard block; `paymentFor` answers `DebitAccount`; the route header
+  documents all of it.
+- `src/app/SaleScreen.tsx`: `giftCreditWhy`, folded into `creditReason`
+  last (T90's refusal still stands first); the tender reason removed from
+  the `hasGiftCard` block; `!hasGiftCard` on `overdraftOffered` and on
+  `lineReason`'s overdraft allowance.
+- No CSS, no new tokens, no new copy anywhere else.
+
+Verified on this ticket's own harness (the T106 mock on :4158, `next
+start` on :3158, scratch `t108/`), with a **preflight** on both drivers
+that fetches the served page chunk and refuses to run unless it is this
+build: this environment has other agents' servers in it, and a port
+collision on :3108 made a UI driver pass against another branch's app
+once before the preflight existed.
+
+- **Route driver, 27 checks, all green**: a $50 fixed card and the
+  editable custom-amount card at the probe's $63.50 both sell on the
+  account, rehearsal first then the charge, `DebitAccount` both times and
+  the same figure both times; a balance exactly equal to the ticket
+  sells; a cent short, a zero balance and a balance re-read smaller at
+  charge time each refuse 409 with both figures named and NOTHING sent;
+  an `overdraftToken` on a gift card ticket is refused with nothing sent
+  AND the token is not spent (the same token then overdraws an ordinary
+  ticket, and only then is one shot); a discount's token in that field is
+  refused there too; a gift card still cannot buy a gift card and still
+  cannot be comped; a split with a credit leg is still refused; a mixed
+  ticket charges one cart and one card, both `DebitAccount`, summing to
+  the ticket total to the cent; a balance covering the cart but not the
+  card refuses the whole ticket with nothing sold; a discounted card
+  rehearses once and charges once at $40; two cards are both rehearsed
+  before either is charged and the SUM is what the balance is checked
+  against; credit with nobody attached is refused; cash and the card on
+  file still sell a card.
+- **UI driver, both palettes and both orientations, all green**: the
+  Account tile is on and badged on a gift card ticket, with the retired
+  sentence nowhere in the document; the tap adds one line at the whole
+  ticket and Finalize sends ONE request with `method: "credit"` and no
+  `overdraftToken`; the done screen still holds the barcode behind
+  "Written on the card" and says "Paid $50.00 by account balance"; a $10
+  balance greys the tile with the refusal, a forced tap opens nothing,
+  and "Charge full amount" and "negative account balance" appear nowhere
+  on the screen; the gift card tile and the discount dialog's "Entire
+  sale" are refused in their own unchanged words; a mixed ticket is on at
+  $100 and refused at $40; tiles at 96px with 20px labels, the refusal
+  fits its tile in both orientations, no em dashes.
+- **T102's and T103's route drivers re-run**, verbatim apart from their
+  two port constants (this environment's other agents hold :3210, :3211,
+  :4610 and :4611, so they ran on :3260/:4660 and :3261/:4661, each with
+  its own `next start`). Both ALL PASS.
+- `npm run typecheck` and `npm run build` clean.
+
+### Not verified, and left alone
+
+- **Whether the LIVE Mindbody takes a `DebitAccount` payment on
+  `/sale/purchasegiftcard` for real.** The 2026-09-17 probe was
+  `Test: true`, which is what prices a purchase without moving money, and
+  it answered both figures correctly at two amounts. Everything in this
+  ticket beyond that probe is against the mock. If the live call refuses,
+  that is a plain refusal with nothing charged and it is never retried in
+  another shape.
+- T94's own open question is untouched: whether Mindbody accepts a
+  `DebitAccount` above the balance at all. This ticket makes that
+  question unreachable on a gift card ticket rather than answering it.
+- A disabled Account tile that still carries a balance badge reads 2.12
+  (light) and 2.94 (dark) against its surface: that is T94's
+  `opacity: 0.5` on `.pay-tile.off .pay-tile-badge`, reachable before this
+  ticket (T90's refusal greys the same tile with the same badge) and not
+  this ticket's to change. Recorded, not fixed here.
+- Whether "no overdraft" is the phrase a teacher at the counter reads
+  correctly on the first look is the one thing only Pete can answer.

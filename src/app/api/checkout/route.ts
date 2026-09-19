@@ -170,6 +170,16 @@ export const dynamic = "force-dynamic";
  *         whether Mindbody itself accepts a DebitAccount above the
  *         balance is an OPEN QUESTION for a live probe, and its refusal
  *         is a plain refusal, never retried in another shape.
+ *         -- T108: `method: "credit"` also buys a GIFT CARD now (Pete:
+ *         "Account credit for gift cards should be allowed."), as one
+ *         DebitAccount payment per part of the ticket. The balance is
+ *         re-read here and has to cover the WHOLE ticket, cart and cards
+ *         together, because the parts are charged one after another off
+ *         the same account and a gift card ticket takes one form of
+ *         payment. An `overdraftToken` on a ticket holding a gift card is
+ *         refused before it is verified or spent: charging an account
+ *         past its balance to create a bearer instrument is the one shape
+ *         of this a teacher may not authorize alone.
  *         -- T93: `method: "typedcard"` charges a card TYPED at the
  *         counter (Pete: "this will open a credit card manual entry
  *         modal ... If it is a walk in sale, they can just use it for
@@ -543,9 +553,9 @@ export async function POST(request: Request) {
      * A discount that takes the whole ticket is still refused: a card
      * comped to nothing is a bearer instrument handed over for free,
      * which is not a comp and is not something Pete asked for. Refused
-     * HERE because the generic "a gift card is paid for with cash or a
-     * card on file" below is true and is not what a teacher needs to
-     * read. */
+     * HERE because the generic "a gift card is paid for with cash, a card
+     * on file, or account credit" below is true and is not what a teacher
+     * needs to read. */
     if (method === "comp") {
       return refuse(
         "A gift card cannot be comped: a card given away for nothing is " +
@@ -559,22 +569,48 @@ export async function POST(request: Request) {
           "was charged.",
       );
     }
-    if (method === "credit") {
-      /* Whether Mindbody lets account credit buy a gift card is unknown:
-       * the spec says nothing, and an account balance turning into a
-       * bearer instrument is exactly the conversion a studio would want
-       * to decide on deliberately. Refused until probed (T95's open
-       * questions), never attempted and then read back from the error. */
+    /* T108 (Pete: "Account credit for gift cards should be allowed.").
+     * T95 refused it for want of knowing: "whether Mindbody allows it has
+     * not been established". It is established now. A live `Test: true`
+     * probe on 2026-09-17 paid the editable custom-amount product (282)
+     * with `{ type: "DebitAccount", amount }` and Mindbody answered
+     * `Value` and `AmountPaid` equal to the amount, at $37.00 and at
+     * $63.50. So account credit is a tender for a gift card like cash and
+     * a card on file, and the balance check further down is the same one
+     * every other credit charge gets.
+     *
+     * What stays refused is charging an account PAST its balance to buy
+     * one. T94's "Charge full amount" knowingly leaves a negative balance
+     * on a teacher's PIN; spending money a client does not have in order
+     * to create a bearer instrument is cash extraction rather than a
+     * purchase, and it is the one shape of this a studio would not want a
+     * teacher to be able to do alone. Pete asked for account credit, not
+     * for an overdraft into a gift card, so THIS LINE IS THE
+     * COORDINATOR'S CALL AND NOT PETE'S INSTRUCTION: it is two refusals,
+     * here and in the screen's tender reason, and lifting it is deleting
+     * both.
+     *
+     * Refused here, in the shapes block, because the token is verified at
+     * line ~720 and SPENT at ~1032: a refusal that came later would cost
+     * a teacher their one-shot authorization on a ticket that could never
+     * have been charged. Nothing above has called Mindbody. */
+    if (method === "credit" && payload?.overdraftToken !== undefined) {
       return refuse(
-        "Account credit cannot buy a gift card yet: whether Mindbody allows " +
-          "it has not been established. Take cash or a card. Nothing was " +
-          "charged.",
+        "An account cannot be charged past its balance to buy a gift card: " +
+          "a card bought with money that is not on the account is still " +
+          "worth its face value to whoever holds it. Take cash or a card " +
+          "for the card, or sell the card on its own and spend the account " +
+          "on the rest of the ticket. Nothing was charged.",
       );
     }
-    if (method !== "cash" && method !== "storedcard") {
+    if (
+      method !== "cash" &&
+      method !== "storedcard" &&
+      method !== "credit"
+    ) {
       return refuse(
-        "A gift card is paid for with cash or a card on file. Nothing was " +
-          "charged.",
+        "A gift card is paid for with cash, a card on file, or account " +
+          "credit. Nothing was charged.",
       );
     }
   }
@@ -1584,6 +1620,57 @@ export async function POST(request: Request) {
       }
       cardOnFile = { lastFour: profile.card.lastFour };
     }
+    /* T108: the account balance, read HERE at charge time exactly as the
+     * card on file is, so the figure the browser held decides nothing.
+     *
+     * What has to be covered is the WHOLE ticket, not a part of it: every
+     * part is its own DebitAccount payment and they are charged one after
+     * another off the same account, so a balance that covers the cart but
+     * not the cards would leave the account short half way through, with
+     * cards already sold and no way back (there is no retry and no
+     * rollback here). A gift card ticket also takes ONE form of payment
+     * (the split refusal above), so there is no second tender to carry
+     * the rest, and the overdraft that could have carried it is refused
+     * above. So the one question is whether the balance reaches the whole
+     * ticket, and a balance that does not is a plain refusal with nothing
+     * charged.
+     *
+     * No $10 floor: that is a card processing minimum and an account
+     * debit is not a card charge. */
+    if (method === "credit") {
+      let profile;
+      try {
+        profile = await clientPaymentProfile(clientId as string);
+      } catch (err) {
+        return NextResponse.json(
+          {
+            error:
+              "Could not read the client's account balance: " +
+              `${errMessage(err)} Nothing was charged.`,
+            stage: "method",
+          },
+          { status: 502 },
+        );
+      }
+      if (profile.balance === null || profile.balance < ticketTotal) {
+        return NextResponse.json(
+          {
+            error:
+              profile.balance === null
+                ? "Mindbody reports no account balance for this client. " +
+                  "Nothing was charged."
+                : `Account credit is ${profile.balance.toFixed(2)}, which ` +
+                  `does not cover the ${ticketTotal.toFixed(2)} ticket. A ` +
+                  "gift card takes one form of payment and an account " +
+                  "cannot be charged past its balance for one, so take cash " +
+                  "or a card. Nothing was charged.",
+            stage: "method",
+            creditBalance: profile.balance,
+          },
+          { status: 409 },
+        );
+      }
+    }
     const paymentFor = (amount: number): CheckoutPayment =>
       method === "storedcard"
         ? {
@@ -1591,7 +1678,11 @@ export async function POST(request: Request) {
             amount,
             lastFour: (cardOnFile as { lastFour: string }).lastFour,
           }
-        : { type: "Cash", amount };
+        : method === "credit"
+          ? /* T108: one DebitAccount per part, the same shape the cart's
+             *  own credit payment has used since T24. */
+            { type: "DebitAccount", amount }
+          : { type: "Cash", amount };
 
     /* An id per CARD, each checked against Mindbody before it is used.
      * A read, so nothing has been charged if this fails, and it fails
