@@ -75,7 +75,7 @@ export async function POST(request: Request) {
   const staff = await requireActor(request);
   if (staff.denied) return staff.denied;
   const { session } = staff;
-  /* T115 review: the id this call is finalising, released in the
+  /* T202 review: the id this call is finalising, released in the
    * `finally` below whatever happens. */
   let claimed: string | null = null;
   try {
@@ -87,7 +87,7 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    /* T115: the display path names a REQUEST, and the hash comes from
+    /* T202: the display path names a REQUEST, and the hash comes from
      * the server's own record of what that request showed. The counter
      * path is unchanged and still echoes the hash it was served. */
     const signedOnDisplay =
@@ -116,7 +116,7 @@ export async function POST(request: Request) {
      * receipt below then records the server's hash, never the browser's. */
     const waiver = await getWaiver();
 
-    /* T115: the display's half. The browser hands over a HANDLE and
+    /* T202: the display's half. The browser hands over a HANDLE and
      * nothing else: the signature is pulled from the server's own store,
      * never accepted from the teacher's browser, and every guard above
      * this point (device session, requireActor, T50's no sign-in no
@@ -125,7 +125,7 @@ export async function POST(request: Request) {
       | { requestId: string; png: Buffer; sha256: string; agreedAt: string }
       | null = null;
     if (signedOnDisplay) {
-      /* T115 review: `consumeRequest` runs LAST, after the release, the
+      /* T202 review: `consumeRequest` runs LAST, after the release, the
        * row, the upload and the note, so two calls naming one signature
        * (the `completed` event replayed on an SSE reconnect, beside the
        * pending check the dialog makes on open) would otherwise both
@@ -206,7 +206,7 @@ export async function POST(request: Request) {
     );
     const release = run.result;
     if (release.suppressed) {
-      /* T115: the request is deliberately NOT consumed here. Nothing was
+      /* T202: the request is deliberately NOT consumed here. Nothing was
        * written, so the signature is still good; a real run later (dry
        * run off, or the client added to POS_WRITE_CLIENT_IDS) can still
        * spend it, and nothing was uploaded either. */
@@ -253,12 +253,12 @@ export async function POST(request: Request) {
       clientId,
       at,
       waiver.sha256,
-      /* T115: our artifact, captured on our screen. The row is the
+      /* T202: our artifact, captured on our screen. The row is the
        * ORIGINAL; the Mindbody document below is the copy. */
       signed === null ? null : { sha256: signed.sha256, png: signed.png },
     );
 
-    /* T115: the copy, best effort exactly like the Notes append below.
+    /* T202: the copy, best effort exactly like the Notes append below.
      * A failed upload reports `documentFiled: false` with the reason and
      * the agreement STANDS: the release is real, the receipt row already
      * holds the image, and un-standing a release over a file transfer

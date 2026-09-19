@@ -359,7 +359,7 @@ export function ClientProfileCard({
           ) : (
             <Missing why={errors.client} />
           )}
-          {/* T115: our own receipt, one line, only when the signature
+          {/* T202: our own receipt, one line, only when the signature
               was captured on the customer screen. The image itself is
               never rendered back into the POS. */}
           {profile.signedOnDisplayAt ? (

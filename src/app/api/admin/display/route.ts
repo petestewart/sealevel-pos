@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * Where the customer display stands, for the drawer's block and for the
- * POS header's fallback poll (T113).
+ * POS header's fallback poll (T200).
  *
  * The device session and a signed-in teacher, and deliberately NOT the
  * admin list and NOT the devtools gate that /api/admin/target carries: a

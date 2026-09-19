@@ -72,7 +72,7 @@ export interface ClientProfile {
   /** True when a membership icon rides the name (client.yml:5152). */
   member: boolean;
   waiver: { released: boolean; agreedAt: string | null } | null;
-  /** T115: when the waiver was signed ON OUR CUSTOMER DISPLAY, from OUR
+  /** T202: when the waiver was signed ON OUR CUSTOMER DISPLAY, from OUR
    *  own `waiver_receipts` row (the row is ours, so the charter permits
    *  reading it). One line on the profile card and nothing more: the
    *  signature image itself is never rendered back into the POS. Null
@@ -294,7 +294,7 @@ export async function clientProfile(
         });
   if (visits.status === "rejected") errors.visits = reason(visits.reason);
   if (passes.status === "rejected") errors.passes = reason(passes.reason);
-  /* T115: our own receipt, when it carries a signature. Bounded and
+  /* T202: our own receipt, when it carries a signature. Bounded and
    * best effort like every table touch here: no database, a dead one or
    * no row simply means the line is absent, never a slower or failed
    * profile. */

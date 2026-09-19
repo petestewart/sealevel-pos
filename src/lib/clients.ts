@@ -170,7 +170,7 @@ export async function readClientNotes(clientId: string): Promise<string> {
 }
 
 /**
- * T115: the client's FIRST name, for the greeting on the customer
+ * T202: the client's FIRST name, for the greeting on the customer
  * display. Read on the server from the same `/client/clients` call
  * `readClientNotes` uses, because the display's scene is built server
  * side: the teacher's browser may pass a hint, and the server decides.
@@ -196,7 +196,7 @@ export async function readClientFirstName(
 }
 
 /**
- * T115: file a document on the client's Documents page,
+ * T202: file a document on the client's Documents page,
  * `POST /client/uploadclientdocument` (docs/mindbody-openapi/client.yml:
  * 3633; `UploadClientDocumentRequest` is `{ClientId, File}` and
  * `ClientDocument` is `{FileName, MediaType, Buffer}` where Buffer is a

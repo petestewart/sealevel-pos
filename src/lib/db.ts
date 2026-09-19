@@ -385,7 +385,7 @@ const MIGRATIONS: { version: number; sql: string }[] = [
     `,
   },
   {
-    /* T113: the customer-facing display (docs/design/customer-display.md).
+    /* T200: the customer-facing display (docs/design/customer-display.md).
      * Both tables are charter-clean: they hold what Mindbody has no home
      * for and never a copy of what it does. `displays` is the pairing of
      * a studio-owned iPad with this counter, which exists nowhere else;
@@ -428,7 +428,7 @@ const MIGRATIONS: { version: number; sql: string }[] = [
     `,
   },
   {
-    /* T115: the waiver signature, beside the text hash it already
+    /* T202: the waiver signature, beside the text hash it already
      * carries. Charter-clean, and the reasoning is worth stating: this
      * image is OUR artifact, captured on OUR screen, which Mindbody has
      * no field for (a waiver has no signature anywhere on the client;
@@ -521,7 +521,7 @@ export async function insertWaiverReceipt(
   clientId: string,
   agreedAtIso: string,
   textSha256: string,
-  /** T115: the signature captured on the customer display, when there
+  /** T202: the signature captured on the customer display, when there
    *  was one. Absent for a counter agreement, which has no signature to
    *  keep and must keep reading exactly as it did. */
   signature?: { sha256: string; png: Buffer } | null,
@@ -1260,7 +1260,7 @@ export async function setSetting(
   }
 }
 
-/* --- The customer display (T113) ------------------------------------- */
+/* --- The customer display (T200) ------------------------------------- */
 
 export interface DisplayRow {
   id: string;
@@ -1437,7 +1437,7 @@ export async function updateDisplayRequest(update: {
 }
 
 /**
- * T114: a live ticket's payload is REPLACED in place as the cart changes,
+ * T201: a live ticket's payload is REPLACED in place as the cart changes,
  * so the row follows the scene rather than growing one row per keystroke.
  * Charter-clean for the same reason the insert is: the payload is what a
  * student can already read on the screen in front of them, and nothing
@@ -1543,7 +1543,7 @@ export async function sweepDisplayRequests(
   }
 }
 
-/* --- T115: reading our own waiver receipts --------------------------- */
+/* --- T202: reading our own waiver receipts --------------------------- */
 
 /**
  * The newest waiver receipt for a client that carries a SIGNATURE, for
@@ -1579,7 +1579,7 @@ export async function latestSignedWaiverReceipt(
 }
 
 /**
- * One display request BY ID (T115). T113's reload only ever looked up
+ * One display request BY ID (T202). T200's reload only ever looked up
  * the display's newest live request, which is right for a restart and
  * wrong for a finalisation: the teacher's iPad names the request it was
  * told about, and that one may no longer be the hub's `current` (a

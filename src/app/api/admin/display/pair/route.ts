@@ -7,7 +7,7 @@ import { pairCode } from "@/lib/display";
 export const dynamic = "force-dynamic";
 
 /**
- * A teacher types the six digits the display is showing (T113).
+ * A teacher types the six digits the display is showing (T200).
  *
  * Device session plus a signed-in teacher, and nothing else: not the
  * admin list, not the devtools gate. Pairing decides which screen a

@@ -3,7 +3,7 @@
  * `POST /client/uploadclientdocument` take the encoding the vendored
  * spec describes, and does the file land where staff can see it?
  *
- * The waiver signature (T115) is copied to Mindbody as a client
+ * The waiver signature (T202) is copied to Mindbody as a client
  * document, because a waiver has no signature field anywhere on the
  * client (only a contract does). The shape here is the spec's and
  * nothing else: `UploadClientDocumentRequest` is `{ClientId, File}` and

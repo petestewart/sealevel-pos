@@ -16,7 +16,7 @@ import { displayIdFrom } from "@/lib/displayauth";
 export const dynamic = "force-dynamic";
 
 /**
- * The student finished (T113). The display cookie alone, and the request
+ * The student finished (T200). The display cookie alone, and the request
  * id must be THIS display's current one, so a stale id (a scene the
  * teacher cancelled, a result already sent) is refused with 409 rather
  * than overwriting something.
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
   void clientId;
   void staffId;
   void price;
-  /* T115: a waiver's result is CHECKED here, not when the write route
+  /* T202: a waiver's result is CHECKED here, not when the write route
    * comes to file it. A signature that is not a PNG, one too big for a
    * signature, or a moment that is not from the last hour is refused
    * with a plain sentence while the student is still standing there,

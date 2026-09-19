@@ -224,7 +224,7 @@ Under it, the write guard in words (T111: read only, a line and no
 control, because with the banner gone in the ordinary production state
 this tab is the only place an unrestricted live counter is written down),
 and "dry run on this iPad", which turns on a suppression for this browser
-only. Under those, since T113, "customer display": whether a second
+only. Under those, since T200, "customer display": whether a second
 screen is paired and connected, a six-digit code field with a Pair
 button, and Unpair behind one confirm. Anybody who can open the drawer
 may use it; pairing decides which SCREEN a waiver appears on, never
@@ -239,13 +239,13 @@ exceptions, and both are safe in only one direction: the target switch is
 admin-only, audited in the log and refuses an incomplete credential set,
 and the local dry run can only make this iPad safer.
 
-## Customer display (T113, T114, T115; Phase 2.5)
+## Customer display (T200, T201, T202; Phase 2.5)
 
 A second iPad on the counter, facing the student, at `/display`. Design:
 `docs/design/customer-display.md`. Built: the plumbing (idle screen,
 pairing, the hub in `src/lib/display.ts`, the two SSE routes and
-present/cancel/complete/refuse), the ticket scene (T114) and the waiver
-scene (T115). The sign-up and the contract are items 5 and 6.
+present/cancel/complete/refuse), the ticket scene (T201) and the waiver
+scene (T202). The sign-up and the contract are items 5 and 6.
 
 **The display adds zero write paths to Mindbody, and must keep adding
 none.** Nothing in `src/lib/display.ts` or under `src/app/api/display/`
@@ -255,7 +255,7 @@ iPad, under the teacher's token, through a write route that already
 exists, which is what keeps dry run, the write guard, T49 attribution
 and T50's refusal applying unchanged.
 
-**A live ticket is the one scene that is REPLACED in place** (T114,
+**A live ticket is the one scene that is REPLACED in place** (T201,
 Phase 2.5 item 2). The sale screen mirrors the priced cart as it is
 built, so a second `present` of a live ticket while one is up updates it
 under the same request id: the display gets one `present` and no
@@ -272,7 +272,7 @@ rebuilds the payload field by field so no client, product or pricing
 option id and no card detail beyond the tender's WORD can reach a screen
 a student is holding.
 
-**A result is spent BY ID, once** (T115). `consumeRequest` finds a
+**A result is spent BY ID, once** (T202). `consumeRequest` finds a
 completed, unconsumed request by its id even when the hub has moved on to
 another scene or the process restarted, reloading it from
 `display_requests`, which is the one reason that table exists. A request
@@ -281,7 +281,7 @@ waiver's sha256) that is stored under a reserved key in the payload
 column and never reaches `sceneFor`, so it cannot travel down the
 display's stream.
 
-**The waiver signature's copy to Mindbody is best effort** (T115, Phase
+**The waiver signature's copy to Mindbody is best effort** (T202, Phase
 2.5 item 3). The `waiver_receipts` row holds the PNG and its hash and is
 the ORIGINAL; `POST /client/uploadclientdocument` files a copy from
 `/api/waiver-agree` under the teacher's token, with the client id in the
@@ -634,7 +634,7 @@ while `git clone` works, so clone the repo rather than fetching files.
   expired staff token (`isActorTokenDead` reads a 401), and that the
   sales report actually shows the token's staff member. The probe is
   `GET /api/teacher/probe` (the sign-in modal and the dev drawer run it).
-- **The waiver document upload is unverified live (T115).** Probe D-B1
+- **The waiver document upload is unverified live (T202).** Probe D-B1
   (`scripts/probe-upload-document.ts`) is written and has not been run:
   nobody has watched `POST /client/uploadclientdocument` accept the
   spec's `{FileName, MediaType, Buffer}` shape or seen the file appear on

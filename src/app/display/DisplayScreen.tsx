@@ -13,7 +13,7 @@ import type { TicketPayload } from "@/lib/displayticket";
 import type { WaiverPayload } from "@/lib/displaywaiver";
 
 /**
- * The idle screen and the pairing exchange (T113).
+ * The idle screen and the pairing exchange (T200).
  *
  * Unpaired, it asks /api/display/state for a six-digit code and the
  * SECRET that goes with it. The code is on the screen for a teacher to
@@ -33,17 +33,17 @@ interface Config {
   target: string;
 }
 
-/** T114: what the stream put on this screen, or null for idle. Only the
+/** T201: what the stream put on this screen, or null for idle. Only the
  *  ticket exists today; the waiver, the sign-up and the contract are
  *  items 3 to 6 and an unknown kind deliberately renders the idle screen
  *  rather than guessing. */
 type Scene =
   | { kind: "ticket"; payload: TicketPayload }
-  /* T115: the waiver carries its request id, because this is the first
+  /* T202: the waiver carries its request id, because this is the first
    *  scene the STUDENT answers: completing and refusing both name it. */
   | { kind: "waiver"; requestId: string; payload: WaiverPayload };
 
-/** T115: how long "Thank you" stays after a signature, on this screen's
+/** T202: how long "Thank you" stays after a signature, on this screen's
  *  own clock. The hub sends `idle` when the teacher's iPad finalises the
  *  release, which is usually within the second; this is what keeps the
  *  student from watching the screen blink back to Ready before they have
@@ -67,9 +67,9 @@ export default function DisplayScreen() {
   /** Whether the stream is up, so a display that lost the server says so
    *  rather than sitting there looking fine. */
   const [live, setLive] = useState(false);
-  /** T114: the scene the server says is up. */
+  /** T201: the scene the server says is up. */
   const [scene, setScene] = useState<Scene | null>(null);
-  /** T115: the thank you after a signature. Held on this screen so the
+  /** T202: the thank you after a signature. Held on this screen so the
    *  student sees it whatever the server does next. */
   const [thanks, setThanks] = useState<string | null>(null);
 
@@ -179,7 +179,7 @@ export default function DisplayScreen() {
       return;
     }
     const onOpen = () => setLive(true);
-    /* T114: one place that turns a `present` into a scene. An unknown
+    /* T201: one place that turns a `present` into a scene. An unknown
      * kind is the idle screen and ONE log line: a student must never be
      * shown a half-rendered guess at something this build does not know
      * how to draw, and a teacher must not be left wondering why the
@@ -263,7 +263,7 @@ export default function DisplayScreen() {
     };
   }, [pairing.state]);
 
-  /* T115: the thank you leaves on its own, whether or not the server has
+  /* T202: the thank you leaves on its own, whether or not the server has
    * anything to say. */
   useEffect(() => {
     if (thanks === null) return;
@@ -289,7 +289,7 @@ export default function DisplayScreen() {
           ? "Dry run"
           : null;
 
-  /* T114: a scene owns the middle of the screen; the banner and the mode
+  /* T201: a scene owns the middle of the screen; the banner and the mode
    * mark stay where they are, because what this iPad is pointed at is as
    * true during a sale as it is at rest. */
   if (pairing.state === "paired" && thanks !== null && scene === null) {

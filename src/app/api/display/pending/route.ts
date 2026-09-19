@@ -7,7 +7,7 @@ import { pendingResultFor } from "@/lib/display";
 export const dynamic = "force-dynamic";
 
 /**
- * Is there a signature waiting for this client (T115)?
+ * Is there a signature waiting for this client (T202)?
  *
  * The teacher's iPad normally finalises a waiver the moment the
  * `completed` event arrives on its stream. This is the other case: the

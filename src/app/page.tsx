@@ -1302,7 +1302,7 @@ function FrontDesk({
   const [waiverReceiptWarn, setWaiverReceiptWarn] = useState<string | null>(
     null,
   );
-  /** T115: the signature is being collected on the customer display.
+  /** T202: the signature is being collected on the customer display.
    *  Holds the request id the display was given, so a Cancel takes the
    *  right scene down and a `completed` event finalises the right one.
    *  The counter's own "They have read it and agree" stays live beside
@@ -1317,7 +1317,7 @@ function FrontDesk({
   const [waiverDisplayNote, setWaiverDisplayNote] = useState<string | null>(
     null,
   );
-  /** T115: whether a customer display is paired AND connected right now,
+  /** T202: whether a customer display is paired AND connected right now,
    *  which is what decides whether "Sign on the customer screen" exists
    *  at all. Same two sources as the header's mark. */
   const [displayLive, setDisplayLive] = useState(false);
@@ -3480,7 +3480,7 @@ function FrontDesk({
     setWaiverFetchError(null);
     setWaiverScrolled(false);
     setWaiverMsg(null);
-    /* T115: a dialog closed while the student still has the waiver on
+    /* T202: a dialog closed while the student still has the waiver on
      * the customer screen takes that scene down with it. Leaving it up
      * would put one student's waiver in front of the next person. */
     if (waiverOnDisplay !== null) {
@@ -4176,7 +4176,7 @@ function FrontDesk({
   const agreeWaiver = useCallback(async (displayRequestId?: string) => {
     const subject = waiverPrompt;
     if (!subject || waiverSaving) return;
-    /* T115: two ways in. The counter's own confirm needs the text read
+    /* T202: two ways in. The counter's own confirm needs the text read
      * on THIS screen, exactly as it always did. A signature collected on
      * the customer display needs no text here at all: the student read
      * the server's own copy on the other screen, and the server holds
@@ -4214,7 +4214,7 @@ function FrontDesk({
            * A stale value loses at most a concurrent edit from another
            * surface; the roster refetches notes on every load. */
           notes: person.notes,
-          /* T115: with a display request the SERVER takes the hash from
+          /* T202: with a display request the SERVER takes the hash from
            * its own record of what the student was shown; the browser's
            * copy is not part of that path. */
           ...(displayRequestId === undefined
@@ -4224,7 +4224,7 @@ function FrontDesk({
       });
       const body = await res.json();
       if (!res.ok) {
-        /* T115 review: a duplicate finalisation is not an error a
+        /* T202 review: a duplicate finalisation is not an error a
          * teacher should see. The `completed` event can arrive twice
          * (an SSE reconnect replays the buffer) and the dialog's own
          * pending check can name the same signature; the server lets
@@ -4256,7 +4256,7 @@ function FrontDesk({
           : person.notes;
       setWaiverOnDisplay(null);
       /* Two bookkeeping copies can fail without touching the agreement:
-       * the Notes append (T18) and, since T115, the signature's copy to
+       * the Notes append (T18) and, since T202, the signature's copy to
        * Mindbody's documents. Both are said the same quiet way, because
        * both leave the release real and the record held here. */
       const warnings: string[] = [];
@@ -4340,7 +4340,7 @@ function FrontDesk({
     tapPromote,
   ]);
 
-  /* T115: the customer display's half of the waiver, all of it here so
+  /* T202: the customer display's half of the waiver, all of it here so
    * the rules sit together. Nothing in this block calls Mindbody: it
    * POSTs /api/display/present and /api/display/cancel, listens on
    * /api/display/events, and finalises through the SAME
@@ -4408,7 +4408,7 @@ function FrontDesk({
   }, [waiverSaving]);
 
   /** A signature is waiting: record it, with no tap from the teacher. */
-  /** T115 review: request ids this browser has already sent to
+  /** T202 review: request ids this browser has already sent to
    *  /api/waiver-agree. The `completed` event replays on an SSE
    *  reconnect and the dialog's pending check asks on open, so the same
    *  signature can be named twice within a second; the server refuses
@@ -5662,7 +5662,7 @@ function FrontDesk({
           mistaken for the dry-run/live line above it. */}
       {config?.banner ? <p className="studio-banner">{config.banner}</p> : null}
 
-      {/* T113: the customer display, when there is one. Absent until a
+      {/* T200: the customer display, when there is one. Absent until a
           teacher pairs one, which is every counter today. */}
       <DisplayMark />
 
@@ -7879,7 +7879,7 @@ function FrontDesk({
                   : "Has not signed the waiver."}
               </span>
             </div>
-              {/* T115: the customer screen. The button exists only when
+              {/* T202: the customer screen. The button exists only when
                   a display is paired AND connected, so a counter with
                   no second iPad sees T18's dialog exactly as before.
                   While the student has it, the teacher sees what they
@@ -8941,7 +8941,7 @@ function AuthGate() {
 }
 
 /**
- * The customer display's connection mark (T113).
+ * The customer display's connection mark (T200).
  *
  * Small and quiet: T111 took the top of the screen back, and a second
  * screen being fine is not news. It is absent when nothing is paired,

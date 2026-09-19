@@ -7,7 +7,7 @@ export const metadata = {
 };
 
 /**
- * The customer-facing iPad (T113, docs/design/customer-display.md).
+ * The customer-facing iPad (T200, docs/design/customer-display.md).
  *
  * Deliberately its own route and its own tree: no POS, no roster, no
  * search, no dev drawer, no lock screen, no teacher session. A student

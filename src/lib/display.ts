@@ -22,7 +22,7 @@ import { displayCookieDurable } from "./displayauth";
 import { isLiveTicket } from "./displayticket";
 
 /**
- * The customer display's hub (T113, docs/design/customer-display.md).
+ * The customer display's hub (T200, docs/design/customer-display.md).
  *
  * In-process, on globalThis like the call log (a dev recompile must not
  * unpair the counter), holding: which display is paired, the one request
@@ -86,7 +86,7 @@ export interface DisplayRequest {
    *  only ever what the student may see anyway. */
   payload: Record<string, unknown>;
   /**
-   * T115: what the SERVER knows about this request and the display must
+   * T202: what the SERVER knows about this request and the display must
    * never be told: the client id the scene is about, and the sha256 of
    * the waiver text as it was served. It never reaches `sceneFor`, so it
    * cannot travel down the display's stream; the finalising write route
@@ -127,7 +127,7 @@ type Subscriber = (ev: HubEvent) => void;
 export const PAIR_CODE_TTL_MS = 5 * 60 * 1000;
 /** A request expires after 30 minutes, result and all. */
 export const REQUEST_TTL_MS = 30 * 60 * 1000;
-/** T114: how long the post-sale summary holds the screen before the hub
+/** T201: how long the post-sale summary holds the screen before the hub
  *  itself sends the display back to idle. Server-side deliberately: a
  *  teacher whose tab is closed (or asleep, or reloaded) must not be able
  *  to leave one student's ticket in front of the next one. */
@@ -158,7 +158,7 @@ const EVENT_BUFFER = 50;
  *  cannot fill the server's memory or a jsonb column. */
 export const PAYLOAD_LIMIT_BYTES = 64 * 1024;
 export const RESULT_LIMIT_BYTES = 512 * 1024;
-/** T115: where the server-only half of a request lives inside the stored
+/** T202: where the server-only half of a request lives inside the stored
  *  payload column. Split off on the way in and on the way out, so a
  *  scene the display receives can never carry it. */
 const PRIVATE_KEY = "__private";
@@ -190,13 +190,13 @@ interface HubState {
   /** Whether the display was counted as connected at the last check, so
    *  connected/disconnected is an edge and not a per-request answer. */
   wasConnected: boolean;
-  /** T114: the timer that takes a short-lived scene (the post-sale
+  /** T201: the timer that takes a short-lived scene (the post-sale
    *  summary) down on its own. `expireIfDue` is lazy and only runs when
    *  something asks the hub a question; a summary has to clear itself
    *  with nobody asking. One timer at a time, replaced on every present
    *  and cleared on every cancel. */
   expiryTimer: ReturnType<typeof setTimeout> | null;
-  /** T115 review: request ids a write route is finalising RIGHT NOW.
+  /** T202 review: request ids a write route is finalising RIGHT NOW.
    *  `consumeRequest` runs last, after the release and the upload, so
    *  without this two finalisations of one signature (the `completed`
    *  event replayed on an SSE reconnect, beside the pending check on
@@ -264,7 +264,7 @@ export function readJsonObject(
  */
 /**
  * One stored row, as the hub holds it. Shared by the restart reload and
- * T115's by-id lookup, so the two cannot read the same row differently.
+ * T202's by-id lookup, so the two cannot read the same row differently.
  * The payload column carries the server-only half under PRIVATE_KEY and
  * it is split back off here, which is the only place it is ever read.
  */
@@ -589,7 +589,7 @@ function clearExpiryTimer(): void {
   }
 }
 
-/** T114: arm the hub's own clock for a scene that ends by itself (the
+/** T201: arm the hub's own clock for a scene that ends by itself (the
  *  post-sale summary). Lazy expiry is enough for a 30 minute request
  *  nobody is watching; a summary has to leave the screen with nobody
  *  asking the hub anything at all. */
@@ -653,13 +653,13 @@ export function sceneFor(request: DisplayRequest | null): {
 export async function presentRequest(input: {
   kind: DisplayRequestKind;
   payload: Record<string, unknown>;
-  /** T115: the server-only half (the client id, the waiver's sha256).
+  /** T202: the server-only half (the client id, the waiver's sha256).
    *  Never sent to the display; read back by the write route that
    *  finalises the result. */
   private?: Record<string, unknown>;
   initiator: DisplayInitiator;
   requestedByStaffId: string | null;
-  /** T114: how long this scene may hold the screen. The default is the
+  /** T201: how long this scene may hold the screen. The default is the
    *  30 minute request TTL; the post-sale summary passes SUMMARY_TTL_MS
    *  and the hub takes it down itself. */
   ttlMs?: number;
@@ -697,7 +697,7 @@ export async function presentRequest(input: {
   }
   const held = state.current;
   if (held !== null && held.status === "pending") {
-    /* T114: the ONE scene that is updated in place rather than completed.
+    /* T201: the ONE scene that is updated in place rather than completed.
      * A live ticket mirrors a cart the teacher is still building, so a
      * second present of one while a live ticket is up REPLACES it: the
      * display gets one `present` and no `cancel`, and the request keeps
@@ -897,7 +897,7 @@ export async function refuseRequest(
  * one, memory decides, which is the same answer on one instance.
  */
 /**
- * T115 review: claim a request for finalisation, synchronously. True
+ * T202 review: claim a request for finalisation, synchronously. True
  * means this caller owns it and must call `releaseFinalisation` when it
  * is done (consumed or not); false means another call is already
  * writing this one and this caller must do nothing at all. A duplicate
@@ -919,7 +919,7 @@ export async function consumeRequest(
   now = Date.now(),
 ): Promise<DisplayRequest | null> {
   await ensureDisplayLoaded();
-  /* T115 (T113 review): BY ID, not "is it the current one". The teacher's
+  /* T202 (T200 review): BY ID, not "is it the current one". The teacher's
    * iPad names the request it was told about, and by the time it does,
    * the hub's `current` may be a later scene, or the process may have
    * restarted and hold nothing at all. The row is the reason this table
@@ -930,7 +930,7 @@ export async function consumeRequest(
   if (c === null) return null;
   if (c.status !== "completed" || c.consumedAt !== null) return null;
   if (now >= c.expiresAt) return null;
-  /* Memory is spent FIRST (T115 review): the release, the receipt and
+  /* Memory is spent FIRST (T202 review): the release, the receipt and
    * the upload have already happened by the time this runs, so a table
    * that does not answer must not leave the handle spendable for a retry
    * in this process. The row is marked best effort behind it; a miss is
@@ -959,7 +959,7 @@ export async function consumeRequest(
   return c;
 }
 
-/** One request by id, from memory or from the table (T115). Never
+/** One request by id, from memory or from the table (T202). Never
  *  throws; null is "there is nothing here to finalise". */
 export async function loadRequest(
   requestId: string,
@@ -978,7 +978,7 @@ export async function loadRequest(
 }
 
 /**
- * T115: a completed, unconsumed request of this kind for this client,
+ * T202: a completed, unconsumed request of this kind for this client,
  * whether or not it is still the scene on the screen. This is what the
  * teacher's iPad asks after being asleep through the `completed` event:
  * the result waited in the hub (or the table) and is finalised on wake.

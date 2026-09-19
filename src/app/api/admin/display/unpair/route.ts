@@ -6,7 +6,7 @@ import { unpairDisplay } from "@/lib/display";
 
 export const dynamic = "force-dynamic";
 
-/** Unpair the customer display (T113). Same auth as pairing. The row and
+/** Unpair the customer display (T200). Same auth as pairing. The row and
  *  the request go, the display's cookie then names nobody, and its own
  *  screen falls back to a fresh pairing code. No Mindbody call. */
 export async function POST(request: Request) {

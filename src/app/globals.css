@@ -7681,7 +7681,7 @@ textarea.reason-note-field:disabled::placeholder {
   color: var(--ink);
 }
 
-/* --- The customer display (T113) -------------------------------------
+/* --- The customer display (T200) -------------------------------------
  * The second iPad's own screen, and nothing else's: no bars, no rows, no
  * drawer. Sized for a student reading it at arm's length across a
  * counter, so everything here is well above the 16px floor and the
@@ -7768,7 +7768,7 @@ textarea.reason-note-field:disabled::placeholder {
   font-weight: 600;
 }
 
-/* --- The ticket scene on the customer display (T114) ------------------
+/* --- The ticket scene on the customer display (T201) ------------------
  * Scene 2 of docs/design/customer-display.md: the live mirror of the
  * priced cart, and the post-sale summary. Read across a counter, so the
  * floor here is well above the app's 16px and the total is the largest
@@ -7910,7 +7910,7 @@ textarea.reason-note-field:disabled::placeholder {
   color: var(--muted);
 }
 
-/* --- The sale screen's "showing on the customer screen" line (T114) ---
+/* --- The sale screen's "showing on the customer screen" line (T201) ---
  * T111 had just quietened the top of the screen, so this is one muted
  * 16px line under the ticket's heading and nothing else: a teacher needs
  * to know the student can see the ticket, and does not need to be told
@@ -7930,7 +7930,7 @@ textarea.reason-note-field:disabled::placeholder {
   background: var(--accent);
 }
 
-/* --- The POS header's connection mark (T113) -------------------------
+/* --- The POS header's connection mark (T200) -------------------------
  * Small on purpose: T111 took the top of the screen back, and a second
  * screen being fine is not news. It is absent when nothing is paired,
  * quiet when the display is connected, and amber the moment it has been
@@ -7964,7 +7964,7 @@ textarea.reason-note-field:disabled::placeholder {
   background: var(--warn);
 }
 
-/* --- Customer display block, dev drawer settings tab (T113) ---------- */
+/* --- Customer display block, dev drawer settings tab (T200) ---------- */
 
 .dev-display-code {
   font-size: 20px;
@@ -7979,7 +7979,7 @@ textarea.reason-note-field:disabled::placeholder {
   border-radius: 0;
 }
 
-/* --- The waiver scene on the customer display (T115) ------------------
+/* --- The waiver scene on the customer display (T202) ------------------
  * Scene 1 of docs/design/customer-display.md: the studio's real waiver,
  * scrolled to the end, and the signature pad. Read and signed at arm's
  * length across a counter, so the floor here is well above the app's
@@ -8086,7 +8086,7 @@ textarea.reason-note-field:disabled::placeholder {
   opacity: 0.45;
 }
 
-/* T115: the waiver dialog's customer-screen row, above the counter's own
+/* T202: the waiver dialog's customer-screen row, above the counter's own
  * actions. One 64px control, and while the student has the waiver the
  * line says what is being waited for beside the way out of it. */
 .waiver-display-row {

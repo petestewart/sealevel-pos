@@ -5,7 +5,7 @@ import { plainText } from "@/lib/richtext";
 import type { TicketPayload } from "@/lib/displayticket";
 
 /**
- * The ticket, as the student sees it (T114, Phase 2.5 item 2; design
+ * The ticket, as the student sees it (T201, Phase 2.5 item 2; design
  * "Scene 2").
  *
  * Two modes, one layout. `live` mirrors the cart the teacher is building,

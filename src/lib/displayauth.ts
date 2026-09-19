@@ -3,7 +3,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { cookieValue, safeEqual } from "./auth";
 
 /**
- * The customer display's cookie (T113, docs/design/customer-display.md).
+ * The customer display's cookie (T200, docs/design/customer-display.md).
  *
  * A student holds this iPad, so it does NOT hold the device session: a
  * cookie that opens the POS must not be on a device somebody could walk
@@ -11,7 +11,7 @@ import { cookieValue, safeEqual } from "./auth";
  * way the device token is signed, and it opens exactly `/api/display/*`.
  * `requireSession` never looks at it, so a browser holding only this
  * cookie is refused by every real route, which is the whole point and is
- * what the T113 driver asserts route by route.
+ * what the T200 driver asserts route by route.
  *
  * The key follows the staff cookie's posture (T78): derived from
  * POS_SESSION_SECRET when it is set, so a pairing survives a restart

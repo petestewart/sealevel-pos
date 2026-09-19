@@ -1,9 +1,9 @@
 /**
- * The waiver scene's payload and its result (T115, Phase 2.5 item 3;
+ * The waiver scene's payload and its result (T202, Phase 2.5 item 3;
  * design docs/design/customer-display.md "Scene 1").
  *
  * Two shapes and the rules that go with them, in one file for the same
- * reason T114's ticket has one:
+ * reason T201's ticket has one:
  *
  * 1. **The payload is built by the SERVER**, never forwarded from the
  *    teacher's browser: the waiver text as `getWaiver()` served it and

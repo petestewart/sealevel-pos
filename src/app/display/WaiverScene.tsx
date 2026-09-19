@@ -7,7 +7,7 @@ import { plainText } from "@/lib/richtext";
 import type { WaiverPayload } from "@/lib/displaywaiver";
 
 /**
- * The waiver, as the student signs it (T115, Phase 2.5 item 3; design
+ * The waiver, as the student signs it (T202, Phase 2.5 item 3; design
  * "Scene 1").
  *
  * The same discipline T18 put on the counter dialog, on a screen a

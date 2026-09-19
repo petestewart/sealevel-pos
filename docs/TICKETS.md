@@ -16269,7 +16269,13 @@ the opposite of the truth. That is now impossible: a suppressed call, or
 an answer with no figures in it, voids the verdict. It was the third
 probe in this repo to make that mistake.
 
-## T113. The customer display, plumbing (2026-09-19)
+> Phase 2.5 tickets (the customer display, branch `feature/customer-display`)
+> are numbered from T200 while the branch lives: main kept taking the
+> next number while this branch was open (T112, then T113), and every
+> collision cost a renumber across thirty files. The block is deliberate,
+> not a gap; renumber at merge if a single series matters.
+
+## T200. The customer display, plumbing (2026-09-19)
 
 Phase 2.5 item 1, the first of the six in
 `docs/design/customer-display.md`: a second iPad on the counter that
@@ -16493,9 +16499,9 @@ production Next server with one thing faked, see "Could not verify"),
   by the next scene. Item 3, its first caller, must look the request up
   by id or refuse a present that would strand a result.
 
-## T114. The customer display's ticket, live and after the sale (2026-09-19)
+## T201. The customer display's ticket, live and after the sale (2026-09-19)
 
-Phase 2.5 item 2, the first scene to run through T113's plumbing: the
+Phase 2.5 item 2, the first scene to run through T200's plumbing: the
 sale screen mirrors the priced cart to the customer iPad as a teacher
 builds it (D3, Pete: "Live"), and puts a thank-you summary up for a few
 seconds when the charge lands. No approval, no `customer_confirms_sale`,
@@ -16519,7 +16525,7 @@ forwarding what the body carried, and `/api/display/present` runs it for
 every `ticket`. So a client id, a pricing option id, a product id, a
 card number or anything else is dropped at the server rather than
 travelling to a screen a student is holding. The generic 64KB
-object check T113 already had says only "a JSON object"; this says what
+object check T200 already had says only "a JSON object"; this says what
 a ticket IS.
 
 **No figure on that screen is the browser's arithmetic standing in for
@@ -16589,7 +16595,7 @@ present landed. Nothing modal, no new tap target.
 
 #### Verified
 
-Drivers in the scratchpad (not in the repo): `server.mjs` (T113's
+Drivers in the scratchpad (not in the repo): `server.mjs` (T200's
 harness, unchanged), `mockmb.mjs` (a new minimal Mindbody stand-in),
 `routes.mjs`, `ui.mjs`.
 
@@ -16626,7 +16632,7 @@ harness, unchanged), `mockmb.mjs` (a new minimal Mindbody stand-in),
   and no horizontal overflow in either palette or at phone width.
   Screenshots: `ticket-live-light.png`, `ticket-summary-light.png`,
   `ticket-summary-dark.png`.
-- **T113's plumbing driver passes again: 52 passed, 0 failed.** It had
+- **T200's plumbing driver passes again: 52 passed, 0 failed.** It had
   used `{kind: "ticket", payload: {}}` as a placeholder scene, and a
   ticket payload is now validated before the busy check, so that
   placeholder is refused 400 ("mode must be live or summary") and the
@@ -16635,7 +16641,7 @@ harness, unchanged), `mockmb.mjs` (a new minimal Mindbody stand-in),
   nothing to stand on. The placeholder is now a `waiver` scene with a
   minimal object payload, which is what those assertions always meant:
   a scene that holds the screen and is not a ticket. No product code
-  changed for it. The ticket-specific behaviour is asserted in T114's
+  changed for it. The ticket-specific behaviour is asserted in T201's
   own driver.
 
 #### Could not verify
@@ -16645,7 +16651,7 @@ harness, unchanged), `mockmb.mjs` (a new minimal Mindbody stand-in),
   flat 10.35% and invents its own sale answer. Nothing was run against a
   live or sandbox site, so this proves the transport and the shapes and
   says nothing about Mindbody's real pricing of these items.
-- **The staff session was faked**, exactly as T113's driver fakes it: the
+- **The staff session was faked**, exactly as T200's driver fakes it: the
   session Map was seeded on globalThis and the cookie derived from
   `POS_SESSION_SECRET`. No teacher signed in against Mindbody and then
   mirrored a ticket.
@@ -16667,7 +16673,7 @@ harness, unchanged), `mockmb.mjs` (a new minimal Mindbody stand-in),
 
 ---
 
-## T115. The waiver, signed on the customer display (2026-09-19)
+## T202. The waiver, signed on the customer display (2026-09-19)
 
 Phase 2.5 item 3, Scene 1 of `docs/design/customer-display.md`: the
 student reads the studio's real waiver on the customer iPad, signs it
@@ -16712,7 +16718,7 @@ wherever it ends up. The ink is the element's own `color`, read at draw
 time, so the pad has no hex of its own in either palette.
 
 `/api/display/complete` validates a waiver result before storing it
-(`src/lib/displaywaiver.ts`, the payload-validator idiom T114 set):
+(`src/lib/displaywaiver.ts`, the payload-validator idiom T201 set):
 base64 that decodes to something starting with PNG's 8-byte signature,
 at most 256KB (413 over that), and an `agreedAt` that parses and is from
 the last hour. A result that fails is refused while the student is still
@@ -16733,7 +16739,7 @@ whose stored sha256 still equals `getWaiver().sha256` NOW. A waiver the
 studio edited while the student was reading it is refused with a plain
 sentence and nothing is written.
 
-That by-id lookup is the T113 review finding, fixed: `consumeRequest`
+That by-id lookup is the T200 review finding, fixed: `consumeRequest`
 no longer means "is this the hub's current request" but "is this request
 spendable", reloading it from `display_requests` when memory has lost it
 (the one reason that table exists). Consuming a request the hub has
@@ -16777,8 +16783,8 @@ rendered back into the POS.
 
 #### Verified
 
-Drivers in the scratchpad (not in the repo): `server.mjs` (T113's
-harness), `mockmb.mjs` (T114's mock, extended with the waiver text, the
+Drivers in the scratchpad (not in the repo): `server.mjs` (T200's
+harness), `mockmb.mjs` (T201's mock, extended with the waiver text, the
 client read, `updateclient`, `uploadclientdocument`, a class and a
 roster visit, and a record of every request body and authorization
 header), `routes.mjs`, `dbdrive.mjs`, `ui.mjs`.
@@ -16828,7 +16834,7 @@ header), `routes.mjs`, `dbdrive.mjs`, `ui.mjs`.
   either palette. Screenshots: `waiver-display-light.png`,
   `waiver-display-dark.png`, `waiver-pos-after.png`,
   `waiver-pos-notnow-dark.png`.
-- **T113's driver passes again (52) and T114's passes again (27).** Both
+- **T200's driver passes again (52) and T201's passes again (27).** Both
   used `{kind: "waiver", payload: {...}}` as a placeholder for "a scene
   that holds the screen and is not a ticket"; a waiver's payload is now
   built by the server, so the placeholder is `register` instead. No
@@ -16865,7 +16871,7 @@ header), `routes.mjs`, `dbdrive.mjs`, `ui.mjs`.
   answers `{FileSize, FileName}` because the spec says that is the
   shape; a real site may refuse a MediaType, a file name or a size, and
   nothing here would know.
-- **The staff session was faked**, as in T113 and T114: seeded on
+- **The staff session was faked**, as in T200 and T201: seeded on
   globalThis with a cookie derived from `POS_SESSION_SECRET`. "Ran under
   the teacher's token" means the driver asserted that token on the
   outgoing request, not that Mindbody attributed anything.

@@ -1007,7 +1007,7 @@ function lineSubName(line: CartEntry): string | null {
 }
 
 /**
- * T114: the ticket as the CUSTOMER DISPLAY renders it (Phase 2.5 item 2,
+ * T201: the ticket as the CUSTOMER DISPLAY renders it (Phase 2.5 item 2,
  * design "Scene 2"). The same lines the teacher's ticket shows, named the
  * way the ticket names them, with no id of any kind on them: the payload
  * carries no client id, no pricing option id, no product id and nothing
@@ -1035,7 +1035,7 @@ function displayFirstName(name: string | null): string | null {
 }
 
 /**
- * T114: one ticket payload, built the same way for the live mirror and
+ * T201: one ticket payload, built the same way for the live mirror and
  * for the post-sale summary.
  *
  * The rule that shapes it: **no figure here is this screen's arithmetic
@@ -2005,7 +2005,7 @@ function PaymentPanel(props: {
    *  way, and a failed check-in must be read where the teacher is. */
   pendingResult: { ok: boolean; text: string } | null;
   /**
-   * T114: put the post-sale summary on the customer display. Called for
+   * T201: put the post-sale summary on the customer display. Called for
    * the two outcomes the teacher's own screen reads as done -- a
    * completed sale, and a suppressed one under dry run or the write
    * guard -- and for NO other: a refused, partial, ambiguous or
@@ -3395,7 +3395,7 @@ function PaymentPanel(props: {
      * lands, and the done block needs both after it has. */
     const typedLastFourAtTap = typedCard?.lastFour ?? null;
     const typedKeepAtTap = typedCard?.card.keep === true;
-    /* T114: the ticket as it stands at the tap, for the customer
+    /* T201: the ticket as it stands at the tap, for the customer
      * display's summary. Built here for the same reason the count and
      * the receipt address are: the cart is cleared in the commit the
      * sale lands in, and a summary built after it would be empty. */
@@ -3680,7 +3680,7 @@ function PaymentPanel(props: {
             .filter(Boolean)
             .join(" ") || null,
         });
-        /* T114: and the student's screen says thank you, with what was
+        /* T201: and the student's screen says thank you, with what was
            bought, what was charged and how. The hub takes it down by
            itself after a few seconds, so a teacher who walks away cannot
            leave this ticket in front of the next person in the queue. */
@@ -3704,7 +3704,7 @@ function PaymentPanel(props: {
           mode: String(body.suppressed),
           summary: typeof body?.summary === "string" ? body.summary : null,
         });
-        /* T114: what the teacher's screen shows as done, the display
+        /* T201: what the teacher's screen shows as done, the display
            shows. Nothing moved, and the display says so in its own
            corner: the dry run and sandbox mark is on this screen exactly
            so a scene here never has to lie about the mode. */
@@ -9644,7 +9644,7 @@ export default function SaleScreen(props: {
   const giftDiscountOff = roundToCents(ticketParts.giftCents / 100);
   const giftCardsCharged = roundToCents(giftCardsTotal - giftDiscountOff);
 
-  /* ---------------- T114: the customer display's ticket ---------------
+  /* ---------------- T201: the customer display's ticket ---------------
    * The live mirror (D3, Pete: "Live"): every time a FRESH price answer
    * lands, the ticket as it now stands goes to the display. The hook
    * owns the traffic rules -- nothing sent without a connected display,
@@ -9681,7 +9681,7 @@ export default function SaleScreen(props: {
     mirrorLive(liveKey === "" ? null : (JSON.parse(liveKey) as TicketPayload));
   }, [liveKey, props.open, mirrorLive]);
 
-  /** T114: the summary, built by the payment panel at the tap (the cart
+  /** T201: the summary, built by the payment panel at the tap (the cart
    *  is cleared in the same commit as the sale lands) and sent here. */
   const onDisplaySummary = useCallback(
     (payload: TicketPayload) => mirror.summary(payload),
@@ -11078,7 +11078,7 @@ export default function SaleScreen(props: {
               </span>
             </div>
 
-            {/* T114: the one thing a teacher needs to know about the
+            {/* T201: the one thing a teacher needs to know about the
                 second screen while ringing up -- that the student can see
                 this. Quiet (T111 took the top of the screen back), not a
                 control, and absent entirely when there is no display or

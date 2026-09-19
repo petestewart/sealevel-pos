@@ -17,7 +17,7 @@ import { getWaiver } from "@/lib/waiver";
 export const dynamic = "force-dynamic";
 
 /**
- * A teacher puts a scene on the customer display (T113).
+ * A teacher puts a scene on the customer display (T200).
  *
  * The device session AND a signed-in teacher, exactly like every write
  * route here: with nobody signed in this answers 401 `reason: "staff"`
@@ -56,7 +56,7 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  /* T114: a ticket's payload is rebuilt field by field rather than
+  /* T201: a ticket's payload is rebuilt field by field rather than
    * forwarded. The generic check above only says "a JSON object under
    * 64KB"; this one says what a ticket IS, and everything else the body
    * carried (a client id, a pricing option id, a product id, a card
@@ -78,7 +78,7 @@ export async function POST(request: Request) {
      * one in the queue. */
     if (ticket.value.mode === "summary") ttlMs = SUMMARY_TTL_MS;
   }
-  /* T115: a WAIVER's payload is built here, not forwarded. The browser
+  /* T202: a WAIVER's payload is built here, not forwarded. The browser
    * sends a client id and nothing that matters; the server fetches its
    * own copy of the waiver text (the same cache /api/waiver and
    * /api/waiver-agree read, so the hash the receipt names is the hash of
@@ -148,7 +148,7 @@ export async function POST(request: Request) {
     ...(ttlMs === undefined ? {} : { ttlMs }),
   });
   if (!presented.ok) {
-    /* T114: `reason` is what lets the live mirror drop a refusal the
+    /* T201: `reason` is what lets the live mirror drop a refusal the
      * teacher never asked for. "busy" means something else holds the
      * screen (a waiver, a sign-up, a summary), which the design says is
      * skipped silently and resumes on the next priced change. */

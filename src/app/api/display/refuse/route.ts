@@ -9,7 +9,7 @@ import { displayIdFrom } from "@/lib/displayauth";
 
 export const dynamic = "force-dynamic";
 
-/** The student said "Not now" (T113). Display cookie, this display's
+/** The student said "Not now" (T200). Display cookie, this display's
  *  current request id, a short reason, and no Mindbody call. */
 export async function POST(request: Request) {
   await ensureDisplayLoaded();

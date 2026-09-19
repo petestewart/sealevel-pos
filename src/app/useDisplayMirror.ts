@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { TicketPayload } from "@/lib/displayticket";
 
 /**
- * The teacher's half of the ticket scene (T114, Phase 2.5 item 2).
+ * The teacher's half of the ticket scene (T201, Phase 2.5 item 2).
  *
  * The sale screen mirrors the priced cart to the customer display as it
  * is built (D3, Pete: "Live"), and puts the post-sale summary up when the
@@ -55,7 +55,7 @@ export function useDisplayMirror(active: boolean): DisplayMirror {
   const [showing, setShowing] = useState(false);
 
   /* Paired and connected, from the same two sources the header's mark
-   * reads (T113): the events stream when it is up, and a 30 second poll
+   * reads (T200): the events stream when it is up, and a 30 second poll
    * so the answer is still right when the stream is refused or dropped. */
   const read = useCallback(() => {
     fetch("/api/admin/display")

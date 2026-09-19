@@ -1,5 +1,5 @@
 /**
- * The ticket scene's payload (T114, Phase 2.5 item 2; design
+ * The ticket scene's payload (T201, Phase 2.5 item 2; design
  * docs/design/customer-display.md "Scene 2").
  *
  * Two modes on one shape. `live` is the mirror of the priced cart as the

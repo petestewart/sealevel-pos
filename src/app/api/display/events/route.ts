@@ -15,7 +15,7 @@ import { lastEventId, sseResponse } from "@/lib/sse";
 export const dynamic = "force-dynamic";
 
 /**
- * What the TEACHER's iPad holds open (T113): `completed`, `refused`,
+ * What the TEACHER's iPad holds open (T200): `completed`, `refused`,
  * `connected` and `disconnected`. The device session and a signed-in
  * teacher both, because these events name what a student just did at
  * this counter, and nobody else's browser has any business holding the

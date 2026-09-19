@@ -19,7 +19,7 @@ import {
 export const dynamic = "force-dynamic";
 
 /**
- * The display's own poll (T113). Three answers, and no Mindbody call in
+ * The display's own poll (T200). Three answers, and no Mindbody call in
  * any of them:
  *
  * - With a valid `pos_display` cookie naming the paired display: paired,
