@@ -188,8 +188,8 @@ Plumbing first, then one scene at a time, in this order.
 - [ ] Plumbing: `/display`, pairing code, `pos_display` cookie, `displays` and `display_requests` tables, the hub, both SSE routes, present/cancel/complete/refuse, header connection mark, drawer pair/unpair. Done when a paired iPad survives a restart on the idle screen.
 - [ ] Ticket, summary mode: live mirror of the priced cart and the post-sale summary. No writes.
 - [ ] Waiver: sign on the display, signature kept in `waiver_receipts` and copied to Mindbody documents (probe D-B1 first).
-- [ ] Ticket approval: `customer_confirms_sale` in `app_settings`, admin-edited, enforced by `/api/checkout` on the server.
-- [ ] Registration on the display, teacher reviews and taps Create; chained waiver.
+- [ ] Ticket approval: `customer_confirms_sale` in `app_settings`, admin-edited, enforced by `/api/checkout` on the server; teacher override by their own PIN (T48 idiom), filed on the client.
+- [ ] Registration on the display, email and text opt-in ticked by default (probe D-B3 first), teacher reviews and taps Create; chained waiver.
 - [ ] Contract signature on the display, sent as `ClientSignature` (probe D-B2 first), `contract_receipts` row.
 
 Probes owed, both sandbox, `Test: true` where the endpoint takes it:
@@ -198,9 +198,10 @@ Probes owed, both sandbox, `Test: true` where the endpoint takes it:
 |---|---|---|
 | D-B1 | `POST /client/uploadclientdocument` with a small PNG | The `ClientDocument` bytes field and encoding, and that the file shows on the client's Documents page |
 | D-B2 | `POST /sale/purchasecontract` `Test: true` with `ClientSignature` set | That the field is accepted and does not change the rehearsed Total |
+| D-B3 | `POST /client/addclient` in the sandbox with the three `Send*Texts` flags, then read the client back | Whether `addclient` honours text opt-in, which `updateclient` documents as ignored |
 
-Questions D1 to D5 are in the design doc's last table, with the default
-each one takes if unanswered.
+D1 to D4 are answered (2026-09-19) and folded into the design doc; D5 is
+still open there, with its default.
 
 ---
 

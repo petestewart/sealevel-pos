@@ -201,6 +201,13 @@ teacher's token, log line, `waiver_receipts` row, Notes append) and adds:
   This is OUR artifact, captured on our screen, so the charter permits
   it: the database is the original and Mindbody receives a copy. A
   signature PNG is 10 to 30KB; a year of new students is a few megabytes.
+  (D2, Pete: "Do we know if Mindbody actually stores signatures? If so,
+  both." It does, in two different ways: a contract signature has its
+  own field, `ClientSignature`, which Mindbody files under the client's
+  documents itself; a waiver has no signature field anywhere on the
+  client, so its image is stored only because we upload it as a client
+  document. Both are kept here; probe D-B1 confirms the upload lands
+  where staff can see it.)
 - The copy: `POST /client/uploadclientdocument` (client.yml:3633, 4MB
   cap) with `FileName` `waiver-<agreedAt>-<sha12>.png`, through
   `mindbody()` with the client id in the options so dry run and the write
@@ -221,7 +228,7 @@ is absent and T18's flow is exactly as it is now.
 ## Scene 2: the ticket, and the confirming tap
 
 **Trigger.** The sale screen mirrors the ticket to the display as it is
-built: every change to the priced cart (`/api/price-cart`'s answer, which
+built (D3, Pete: "Live"): every change to the priced cart (`/api/price-cart`'s answer, which
 is Mindbody's own pricing, never the screen's arithmetic) is sent as a
 `ticket` scene with `mode: "live"`. Lines, quantities, unit and line
 prices, discounts as amounts, tax, total, and the client's first name. No
@@ -251,14 +258,26 @@ where the hash is over the priced cart it presented. The teacher's iPad
 then calls `/api/checkout` with `displayApprovalId`, and **the server
 enforces the setting**: when `customer_confirms_sale` is on, a checkout
 without a fresh, unconsumed approval whose cart hash matches the cart
-being charged is refused with 409 and a plain sentence. A teacher cannot
-skip it from the POS; only an admin turning the setting off can, and
-that is logged. "Not yet" refuses the request with the reason shown to
-the teacher ("Customer did not approve"), the ticket stays as built, and
-the teacher fixes it and charges again. A disconnected display while the
-setting is on refuses the charge the same way and says why, so the
-setting cannot be silently bypassed by unplugging the screen; the
-override is the admin control, deliberately.
+being charged is refused with 409 and a plain sentence. "Not yet"
+refuses the request with the reason shown to the teacher ("Customer did
+not approve"), the ticket stays as built, and the teacher fixes it and
+charges again. A disconnected display while the setting is on refuses
+the charge the same way and says why.
+
+**The teacher override (D1, Pete: "Teacher override, they must enter
+their PIN").** Beside "Waiting for the customer to approve" sits
+"Approve for them", which opens T48's PIN dialog: the signed-in
+teacher's own PIN, checked against `teacher_pins`, issuing the same
+short-lived comp token idiom as a comp does. `/api/checkout` accepts
+that token in place of a display approval when the setting is on,
+verifies it the way the comp route does, and files the override the way
+T45/T62 file a comp's reason: a Notes entry on the client ("Sale
+approved by <teacher> at the counter, customer screen not used") and
+the staff id in the structured log line. So the setting is still
+enforced on the server and cannot be waved through by a tap, but a
+customer who walked off or a display that died does not stop a sale; it
+costs the teacher their PIN and leaves their name on it. Turning the
+setting off stays admin-only.
 
 **Rule preserved.** Nothing here is optimistic and nothing auto-charges:
 approval is a precondition the server checks, not an action that charges.
@@ -272,8 +291,23 @@ when a display is connected. `register` scene with no payload beyond
 what the form needs: which fields are required, from
 `requiredClientFields` as the modal already reads them.
 
-**On the display.** First name, last name, email, phone, and T53's two
-consent checkboxes, with the OS keyboard, at 16px minimum and 64px rows.
+**On the display.** First name, last name, email, phone, and two
+consent checkboxes, "Email me" and "Text me", both ticked by default
+(D4, Pete: "Four fields. Include opt-in to text & emails (checked by
+default)"), with the OS keyboard, at 16px minimum and 64px rows.
+Each box sets all three of its channel's flags: email is T53's
+`SendAccountEmails`, `SendPromotionalEmails`, `SendScheduleEmails`, and
+text is `SendAccountTexts`, `SendPromotionalTexts`, `SendScheduleTexts`.
+**Text is the one to watch**: on `updateclient` those three are
+documented "cannot be updated by developers, ignored"
+(client.yml:5290-5309), which is why T53 never sends them, but
+`AddClientRequest` (client.yml:4709, flags at 4945-4956) lists them
+without that caveat. So the registration sends them on the CREATE, the
+one call that may honour them, and probe D-B3 reads the client back to
+see whether they stuck. If they do not, the text opt-in is still shown
+and still recorded, as a line in the client's Notes through the T62
+signed-entry helper, so a human can set it in Mindbody; the box is never
+silently dropped.
 Text fields are fine here: the "no amount in a text field" rule is about
 money, and this is the one screen where the student, not a teacher, is
 typing about themselves. Done validates locally (an email shape, a phone
@@ -284,8 +318,9 @@ modal with it. **The teacher taps Create**, and the existing
 `/api/client-create` runs as today, with duplicate detection (T59b's
 `isDuplicateClientError`) intact. A review tap is deliberate: the
 teacher reads the name back, catches "jon" for "john", and it keeps the
-create under a human's eye. The consent flags go with it through
-`/api/client-consent` as they do now.
+create under a human's eye. The consent flags ride the `addclient` body
+itself (see above), not a second `updateclient`, because that is the
+call that can carry the text flags.
 
 **Chained waiver.** A new client has no waiver. On a successful create,
 if a display is connected, the modal offers "Sign the waiver now" which
@@ -394,8 +429,8 @@ order Pete listed them. Each is one PLAN.md item with its own done-when.
 
 | # | Question | Blocks | Default if unanswered |
 |---|---|---|---|
-| D1 | When approval is on and the customer taps "Not yet" or the display is down, is there any teacher override, or is switching the setting off (admin) the only way? | item 4 | No override. The setting means what it says. |
-| D2 | Should the signature image live in our database as well as Mindbody's documents, or Mindbody only? | item 3 | Both. Ours is the original and the receipt; Mindbody's is where staff look. |
-| D3 | Does the display show the ticket live as it is built, or only at Charge? | item 2 | Live. It is what a customer display is for and it costs nothing. |
-| D4 | Registration: should the customer also pick a referral source or birthday, or stay at the four fields plus consent? | item 5 | Four fields, per T59b. |
-| D5 | Should a contract signature be required on the display when one is connected, or offered? | item 6 | Offered; the T30 posture stands. |
+| D1 | Teacher override when approval is on and the customer taps "Not yet" or the display is down? | item 4 | **Answered 2026-09-19: yes, with the teacher's own PIN.** Folded into Scene 2. |
+| D2 | Signature in our database as well as Mindbody's documents? | item 3 | **Answered 2026-09-19: both.** Mindbody stores a contract signature natively and a waiver signature only as the document we upload. Folded into Scene 1. |
+| D3 | Ticket live as it is built, or only at Charge? | item 2 | **Answered 2026-09-19: live.** |
+| D4 | Registration fields? | item 5 | **Answered 2026-09-19: four fields plus email and text opt-in, both ticked by default.** Text flags depend on probe D-B3; folded into Scene 3. |
+| D5 | When a display is connected and a membership is sold, should the sale REFUSE to go through until the customer has signed on the display ("required"), or should the teacher still be able to complete it without a signature, as today, with the display signature as an extra step they can skip ("offered")? | item 6 | Offered; the T30 posture stands, and a membership can still be sold when the customer screen is down. |
