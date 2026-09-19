@@ -4707,10 +4707,18 @@ button.sale-for:disabled {
   cursor: default;
 }
 
-.pay-tile.off .pay-tile-name,
-.pay-tile.off .pay-tile-badge {
+.pay-tile.off .pay-tile-name {
   opacity: 0.5;
 }
+
+/* T108 review: the BADGE keeps its own two tokens on a greyed tile. Half
+ * opacity put --ok on --ok-bg at 2.12 (light) and 2.94 (dark), and T108
+ * makes that state common: a balance too small for a gift card ticket
+ * greys the tile while the badge carries the very figure the refusal is
+ * about, so the number a teacher has to read was the least readable
+ * thing on the screen. Full strength it reads 5.61 and 7.54, and the
+ * tile still says it is off through the greyed name and the reason
+ * under it. */
 
 .pay-tile.in {
   background: var(--accent-bg);
