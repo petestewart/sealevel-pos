@@ -469,9 +469,18 @@ while `git clone` works, so clone the repo rather than fetching files.
   `scripts/probe-restricted.ts` asks both halves side by side, the service
   account and a teacher's own token (`POS_PROBE_STAFF_USER` /
   `POS_PROBE_STAFF_PASS`, the environment and never argv), and says which of
-  four worlds this is. **It has not been run against the live studio, so the
-  answer is still open.** Until it is, the counter's Override is an ATTEMPT
-  and never a promise: `POST /api/override-pass` asks ONE `Test: true`
+  four worlds this is. **Run live 2026-09-19 (Pete, client 100041277, pass
+  414): REFUSED under both, in the same sentence.** So no token escapes this
+  rule through the API, and the Override is an attempt that will report
+  Mindbody's refusal rather than a way through. The one caveat on the record:
+  the login used was the studio's own API user (staff 100000140), so
+  "a teacher's token" was that account twice; a rule about which CLIENT
+  qualifies is not one a permission group plausibly escapes, but a real
+  teacher's login has still never been asked. **The SUBSTITUTE priced in the
+  same run: pass 555 at $79.00, tax $0.00, for the client 414 refuses.** That
+  is what makes Pete's fallback the real path, 414 -> 555 with the price
+  matched down to $49.00. The counter's Override is therefore an ATTEMPT and
+  never a promise: `POST /api/override-pass` asks ONE `Test: true`
   question under the teacher's token with T49's service-account fallback
   deliberately off, sells nothing, and reports Mindbody's own sentence when
   the answer is no. The flag it arms may only mean "attempt this line under
