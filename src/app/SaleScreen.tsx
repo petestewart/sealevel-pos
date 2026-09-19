@@ -697,6 +697,41 @@ function giftCardTitle(p: GiftCardProduct): string {
     : GIFT_CARD_TITLE;
 }
 
+/**
+ * T107, Pete: "I will rename the items, but let's improve the display of
+ * this. Make it so "Gift Card" is automatically put on the second line of
+ * the button's text", then: "change it so there is a gift icon on that
+ * second line where 'Gift Card' would be. So, essentially, replace 'Gift
+ * Card' with the gift icon."
+ *
+ * The studio is renaming its cards in Mindbody so most end in "Gift
+ * Card", and today they wrap wherever the box happens to break, so "1
+ * Week Unlimited Gift / Card" and "1 month Unlimited Yoga / Gift Card"
+ * read differently from each other. A name that ENDS with those two words
+ * is split here: the LEAD is drawn on the first line and the second line
+ * carries the gift glyph in place of the words, so every cell breaks in
+ * the same place and the words the whole shelf shares are not repeated
+ * seven times.
+ *
+ * A name that does not end that way ("5 Class Pack") returns null and is
+ * drawn exactly as it is today, with no icon. So is a product called only
+ * "Gift Card", because the pattern wants a lead: a glyph with nothing
+ * above it names nothing.
+ *
+ * This is for a NAME on a control and nothing else. The cell's own
+ * aria-label and title still carry the WHOLE name as one string, the
+ * glyph is decorative, and every sentence and every server-side refusal
+ * is untouched: a teacher on a screen reader hears exactly what they
+ * heard before.
+ *
+ * Only the LEAD comes back. The two words it matched are not needed by
+ * anyone: the cell draws the glyph in their place and the ticket row
+ * (the only other caller) drops them too.
+ */
+function giftCardNameLead(name: string): string | null {
+  return /^(.*\S)\s+gift\s+card\s*$/i.exec(name)?.[1] ?? null;
+}
+
 /** T96: the product the pad sells through, or null when the site has
  *  none. Mirrors editableGiftCardProduct in src/lib/giftcardsale.ts,
  *  including the lowest-id rule. */
@@ -809,9 +844,29 @@ function lineNameOnly(line: CartEntry): string {
 }
 
 /** T104: the line under a row's title, or null when it has none. Only a
- *  gift card has one today. */
+ *  gift card has one today.
+ *
+ *  T107: a trailing "Gift Card" comes OFF this line, so a product the
+ *  studio called "Single Class Gift Card" reads "Gift card" over "Single
+ *  Class" rather than saying those words twice in two type sizes (the
+ *  coordinator proposed it and Pete agreed: "I was tralking only about
+ *  the button. GO aheard and do the gift icon on the button and do your
+ *  choice on the ticket"). Display only, and only here: `item.subName` is
+ *  still the whole name, which is what `lineText` and `lineNameOnly`
+ *  build the row's title, its spoken label, the quantity pad's line and
+ *  the recheck's sentences from. Trimming `subName` itself took the words
+ *  off the title too, which is the opposite of the point.
+ *
+ *  A card whose value is not its price carries that value in this line
+ *  ("Single Class Gift Card, a $60.00 card"), so the words are trimmed
+ *  from the NAME part and the rest of the line is left alone. */
 function lineSubName(line: CartEntry): string | null {
-  return line.item.type === "GiftCard" ? line.item.subName : null;
+  const item = line.item;
+  if (item.type !== "GiftCard") return null;
+  const cut = item.subName.indexOf(", a ");
+  const name = cut === -1 ? item.subName : item.subName.slice(0, cut);
+  const rest = cut === -1 ? "" : item.subName.slice(cut);
+  return `${giftCardNameLead(name) ?? name}${rest}`;
 }
 
 /** Mirrors src/lib/sale.ts PricedCart, as /api/price-cart returns it. */
@@ -9496,22 +9551,25 @@ export default function SaleScreen(props: {
    * T95, amended by T96: what the amount box has typed, in cents, and
    * what it resolves to.
    *
-   * The PRESETS are the site's fixed products, which sell at their own
-   * two figures. The PAD is free whenever the site has an editable
-   * product: Mindbody prices that one from the amount paid, so any figure
-   * between the two constants sells through it.
+   * The FIXED products sell at their own two figures, from their own
+   * cells in the grid (T104). The PAD is free whenever the site has an
+   * editable product: Mindbody prices that one from the amount paid, so
+   * any figure between the two constants sells through it.
    *
-   * A typed amount that IS a preset resolves to the preset, deliberately:
-   * typing $50.00 and tapping the $50.00 chip are the same sale, and a
-   * studio that configured a fixed product for an amount meant that
-   * product to be the one sold at it. T96 review: only while that
-   * product's price IS its value, though, because a typed figure has to
-   * be the figure charged; see giftPresetMatch below. Everything else
-   * goes to the editable product.
+   * A typed amount that IS a fixed product's value resolves to THAT
+   * product, deliberately: typing $50.00 and tapping the $50.00 cell have
+   * to be the same sale, and a studio that configured a fixed product for
+   * an amount meant that product to be the one sold at it. T96 review:
+   * only while that product's price IS its value, though, because a typed
+   * figure has to be the figure charged; see giftPresetMatch below.
+   * Everything else goes to the editable product. T107 removed the pad's
+   * chips and changed none of this: the resolution is money and
+   * reporting, not decoration, so it survived the chips it used to light.
    */
   const giftEntryCents = giftSell === null ? 0 : Number(giftSell.entry || "0");
-  /** The chips: fixed products only. The editable one has no amount of
-   *  its own to put on a chip. */
+  /** The fixed products: what the grid draws a cell for (T104), and what
+   *  a typed figure can resolve to. The editable one has no amount of its
+   *  own, so it is never one of them. */
   const giftPresets = giftProducts.filter((p) => !p.editable);
   const giftEditableProduct = editableGiftCard(giftProducts);
   const giftTypedPreset = giftPresets.find(
@@ -9554,15 +9612,26 @@ export default function SaleScreen(props: {
             amount: giftEntryCents / 100,
           }
         : null;
-  /** The live list, for the refusal line: "$25, $50, $100". */
+  /**
+   * The live list of the site's set amounts: "$25.00, $50.00, $100.00".
+   *
+   * T107 removed the chips and KEPT this line. With no chips the pad no
+   * longer shows what the site sells anywhere, and a teacher who reaches
+   * this state (a site with no editable product, so only T100's offer can
+   * open the pad at all) has a figure the studio has no product for and
+   * no other way to learn which figures it does have: the cells that
+   * would say so are behind the modal. So the amounts stay in words, and
+   * they are said at an empty entry too, where "Tap an amount" used to
+   * point at the chips.
+   */
   const giftAmountList = giftPresets.map((p) => money(p.cardValue)).join(", ");
-  /** The one line under the chips, in words. It says what Done would do,
-   *  or why it will not. */
+  /** The one effect line, in words. Since T107 it is the ONLY thing that
+   *  says what Done would do, or why it will not. */
   const giftNote = (): string => {
     if (giftEntryCents === 0) {
       return giftEditableProduct !== null
-        ? "Tap an amount, or type any amount on the pad."
-        : "Tap an amount, or type one on the pad.";
+        ? "Type any amount on the pad."
+        : `Mindbody sells gift cards in set amounts here: ${giftAmountList}.`;
     }
     if (giftPresetMatch !== undefined) {
       return giftPresetMatch.salePrice === giftPresetMatch.cardValue
@@ -9676,6 +9745,8 @@ export default function SaleScreen(props: {
        T104 review: the same helper the pad's chips read, so one product
        cannot be called two things on two surfaces. */
     const title = giftCardTitle(product);
+    /* T107: null unless the studio's name ends in "Gift Card". */
+    const nameLead = giftCardNameLead(title);
     return (
       <div
         className={count > 0 ? "shelf-cell has-qty" : "shelf-cell"}
@@ -9697,8 +9768,27 @@ export default function SaleScreen(props: {
         >
           {/* A studio name can be long, so it wraps to two lines and then
               ellipsizes, exactly as T101's chip did, with the whole of it
-              on the title. The cell never grows past its neighbours. */}
-          <span className="shelf-name shelf-gift-name">{title}</span>
+              on the title. The cell never grows past its neighbours.
+              T107: a name ENDING in "Gift Card" breaks before those two
+              words instead, and the second line carries the gift glyph in
+              place of them (Pete: "replace 'Gift Card' with the gift
+              icon"), so every cell breaks in the same place. The lead
+              takes the first line and ellipsizes there rather than
+              wrapping, which is what keeps the box two lines tall: the
+              cell's height and the grid's rhythm were measured in T104
+              and a third line would move both. The whole name is on the
+              title and on the aria-label either way, so the glyph costs
+              a screen reader nothing. */}
+          {nameLead === null ? (
+            <span className="shelf-name shelf-gift-name">{title}</span>
+          ) : (
+            <span className="shelf-name shelf-gift-name shelf-gift-split">
+              <span className="shelf-gift-lead">{nameLead}</span>
+              <span className="shelf-gift-mark">
+                <GiftCardIcon />
+              </span>
+            </span>
+          )}
           <span className="shelf-foot">
             <span className="shelf-price">
               <span className="shelf-amt">{money(product.cardValue)}</span>
@@ -9745,10 +9835,21 @@ export default function SaleScreen(props: {
         onClick={() => setGiftSell({ entry: "" })}
         aria-label="Custom amount gift card, type the amount on the number pad"
       >
-        <span className="shelf-name">Custom amount</span>
+        {/* T107, Pete: "since we are doing that, make sure the Custom
+            amount one has the gift icon as well. and change 'any amount,
+            on the pad' to 'Any amount'". The same glyph in the same place
+            at the same size as a product cell's, so the whole gift card
+            shelf reads as one family; the glyph is decorative and the
+            aria-label above still says what the cell does in words. */}
+        <span className="shelf-name shelf-gift-name shelf-gift-split">
+          <span className="shelf-gift-lead">Custom amount</span>
+          <span className="shelf-gift-mark">
+            <GiftCardIcon />
+          </span>
+        </span>
         <span className="shelf-foot">
           <span className="shelf-price">
-            <span className="shelf-bundle-mark">any amount, on the pad</span>
+            <span className="shelf-bundle-mark">Any amount</span>
           </span>
         </span>
       </button>
@@ -10706,7 +10807,15 @@ export default function SaleScreen(props: {
                       {lineSubName(line) !== null ? (
                         <div
                           className="t-sub-line t-sub-name"
-                          title={lineSubName(line) ?? undefined}
+                          /* T107: the whole name, including a trailing
+                             "Gift Card" the line itself trims, exactly as
+                             this title carries a name the line had to
+                             ellipsize. */
+                          title={
+                            line.item.type === "GiftCard"
+                              ? line.item.subName
+                              : undefined
+                          }
                         >
                           {lineSubName(line)}
                         </div>
@@ -11455,17 +11564,17 @@ export default function SaleScreen(props: {
           pops up where the teacher must enter the amount (there should be
           preset buttons as well as a number pad)."
 
-          The presets are the site's FIXED gift card products, each sold
-          through its own product id. T96: the pad is FREE, because the
-          site has one product Mindbody prices from the amount paid, so
-          any figure from $1.00 to $1,000.00 is a card it can sell, cents
-          and all; the line under the chips says what Done would do or why
-          it will not, and both limits are refused in words. A site with
-          no editable product keeps T95's behaviour exactly: Done resolves
-          to a preset, or the box names the amounts this studio sells and
-          adds nothing. One fixed size, the T82 keypad idiom, the T36
-          modal shape. Scrim, Cancel and Escape leave the ticket exactly
-          as it was. */}
+          T96: the pad is FREE, because the site has one product Mindbody
+          prices from the amount paid, so any figure from $1.00 to
+          $1,000.00 is a card it can sell, cents and all; the effect line
+          says what Done would do or why it will not, and both limits are
+          refused in words. A site with no editable product keeps T95's
+          behaviour exactly: Done resolves to a fixed product of exactly
+          the typed value, or the box names the amounts this studio sells
+          and adds nothing. T107 took the preset buttons out (the products
+          are cells in the grid since T104), so the pad is the pad. One
+          fixed size, the T82 keypad idiom, the T36 modal shape. Scrim,
+          Cancel and Escape leave the ticket exactly as it was. */}
       {/* T104, Pete: "the individual gift card types should be in the
           grid, not in a pop up modal. there is no need for the modal."
           T101's LIST state is gone: the products are cells in the grid
@@ -11490,48 +11599,22 @@ export default function SaleScreen(props: {
                   {money(giftEntryCents / 100)}
                 </span>
               </p>
-              <div className="gift-card-list gift-card-list-pad">
-                {giftPresets.map((product) => (
-                  <button
-                    key={product.id}
-                    className={
-                      /* T96 review: lit when the typed figure is THIS
-                         cell's sale, which a mispriced product's is not
-                         (it routes to the editable product instead). */
-                      giftPresetMatch?.id === product.id
-                        ? "gift-card-chip on"
-                        : "gift-card-chip"
-                    }
-                    onClick={() => addGiftCard(product)}
-                    /* T104 review: `giftCardTitle`, not `giftCardName`.
-                       The amount is drawn on the chip and said again in
-                       the label, so a product with no description read
-                       "$40.00 gift card / $40.00" and a title saying it
-                       a third time. The cell in the grid now says "Gift
-                       card" for that product; the chip says the same. */
-                    title={
-                      giftCardTitle(product) === GIFT_CARD_TITLE
-                        ? product.salePrice === product.cardValue
-                          ? `A ${money(product.cardValue)} gift card`
-                          : `A ${money(product.cardValue)} gift card, ${money(product.salePrice)} to buy`
-                        : product.salePrice === product.cardValue
-                          ? `${giftCardTitle(product)}: a ${money(product.cardValue)} gift card`
-                          : `${giftCardTitle(product)}: a ${money(product.cardValue)} gift card, ${money(product.salePrice)} to buy`
-                    }
-                    aria-label={`${giftCardTitle(product)}, ${money(product.cardValue)}`}
-                  >
-                    <span className="gift-card-name">
-                      {giftCardTitle(product)}
-                    </span>
-                    <span className="gift-card-amt">
-                      {money(product.cardValue)}
-                      {product.salePrice !== product.cardValue
-                        ? ` (${money(product.salePrice)} to buy)`
-                        : ""}
-                    </span>
-                  </button>
-                ))}
-              </div>
+              {/* T107, Pete: "gift card presets after i press Custom
+                  look awful. why are they even there? the custom modal is
+                  for custom amounts. not preset amounts. remove them."
+                  The chips were here from T95, when this modal was the
+                  only way to sell a gift card. T104 gave every product
+                  its own cell in the grid, so the chips became a second,
+                  worse copy of the shelf squeezed into a keypad dialog,
+                  with the studio's long names wrapping and clipping. What
+                  is left is the pad: the kicker, the figure, the keys,
+                  one effect line, Done and Cancel. The RESOLUTION rule
+                  did not move (giftPresetMatch): a typed figure that
+                  equals a fixed product's value still sells through THAT
+                  product while its price is its value, so Mindbody still
+                  records the product the studio configured. It just has
+                  no lit chip to show for it, which makes the effect line
+                  the only thing that says what Done will do. */}
               <p
                 className={
                   giftEntryCents > 0 && giftResolved === null
