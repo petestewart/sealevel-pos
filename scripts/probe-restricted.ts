@@ -210,6 +210,23 @@ async function rehearse(
   }
 }
 
+/**
+ * T112 review: the teacher's token, held here so it is revoked whether
+ * the probe finishes or throws. A token left live because a read failed
+ * half way through is a credential this script created and did not clean
+ * up, on the one run that goes against the live studio. It is never
+ * printed, here or anywhere.
+ */
+let issuedToken: string | null = null;
+
+async function revokeIssued(): Promise<void> {
+  if (issuedToken === null) return;
+  const token = issuedToken;
+  issuedToken = null;
+  await revokeStaffToken(token);
+  console.log("\n  the teacher's token was revoked.");
+}
+
 /** T112: a teacher's own token, from one `/usertoken/issue` with their
  *  Mindbody login out of the environment. Null when no login is set, or
  *  when Mindbody refused it (which is its own finding, and not the
@@ -229,6 +246,7 @@ async function teacherActor(): Promise<
     );
     return null;
   }
+  issuedToken = signed.token;
   const name = `${signed.user.firstName} ${signed.user.lastName}`.trim();
   console.log(
     `  signed in: ${name || "(unnamed)"}, staff id ${signed.user.id},` +
@@ -347,11 +365,15 @@ async function main(): Promise<void> {
       );
     }
   }
-  if (teacher !== null) await revokeStaffToken(teacher.token);
+  await revokeIssued();
   console.log("\nReads only: nothing was sold and nothing was changed.\n");
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main()
+  .catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  })
+  /* T112 review: and on the way out either way, so a throw between the
+   * sign-in and the end does not leave the teacher's token live. */
+  .finally(() => revokeIssued().catch(() => {}));
