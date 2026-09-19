@@ -55,12 +55,13 @@ import {
   parseOverride,
   type OverrideAsk,
 } from "@/lib/override";
-import { actorOf } from "@/lib/staffsession";
+import { actorOf, type StaffSession } from "@/lib/staffsession";
 import {
   resolveSubstitute,
   substituteSentence,
   type ResolvedSubstitute,
 } from "@/lib/substitute";
+import { beginIdempotent } from "@/lib/idemstore";
 import { dryRunState, mindbodyHttpStatus, target } from "@/lib/mindbody";
 
 import {
@@ -441,6 +442,30 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+
+  /* T113: the one new gate, and everything below it is unchanged. The
+   * tap's own key decides whether this is a fresh tap or the same tap
+   * arriving twice; a key already answered replays that answer and sends
+   * nothing to Mindbody. It sits after the two session checks, so an
+   * unauthenticated request can neither read the store nor put a key in
+   * it, and before every validation and every Mindbody call, so a replay
+   * costs nothing at all. See src/lib/idemstore.ts. */
+  const gate = await beginIdempotent(request, payload, String(session.staffId));
+  if (gate.replay !== null) return gate.replay;
+  try {
+    return await gate.record(await runCheckout(request, session, payload));
+  } catch (err) {
+    return gate.recordThrow(err);
+  }
+}
+
+/** The checkout itself: exactly what it was before T113, apart from
+ *  taking its session and its already-parsed body as arguments. */
+async function runCheckout(
+  request: Request,
+  session: StaffSession,
+  payload: any,
+) {
 
   /* T95: the gift card lines, read before the cart lines because they
    * change what an EMPTY cart means. A ticket holding only gift cards
