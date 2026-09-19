@@ -2451,11 +2451,37 @@ function PaymentPanel(props: {
    *
    *  The sentence is short on purpose: the tile is 96px tall and about
    *  two lines wide in portrait, the whole of it is on the tile's title,
-   *  and Cash and Card sit live beside it, which is the action. */
+   *  and Cash and Card sit live beside it, which is the action.
+   *
+   *  T108 review, two things:
+   *
+   *  The word "overdraft" appeared nowhere else a teacher can see it
+   *  (T94's control says "Charge full amount" and its note says "This
+   *  will result in a negative account balance"), so the sentence said
+   *  the one thing it had to say in a word the counter never uses. It
+   *  now borrows T94's own words. It is no longer than what it replaced
+   *  because it cannot be: the tile holds ONE 16px line under the name,
+   *  and the plainer "and a gift card cannot go past it" took a third
+   *  line and hung 15px below the 96px tile in portrait. The balance is
+   *  on the badge beside it, so "on account" is what gave way.
+   *
+   *  And an UNKNOWN balance is not a small one. With no figure at all
+   *  (the profile read has not answered, or failed, and the attach
+   *  snapshot carried none) the old sentence read "Only $0.00 on
+   *  account", which states as fact something nobody has been told. The
+   *  tile stays off either way, since the route would refuse; it just
+   *  stops naming a figure it does not have, exactly as the Card tile
+   *  says "Checking for a card..." rather than "No card on file". */
   const giftCreditWhy =
-    hasGiftCard && totalCents !== null && (balanceCents ?? 0) < totalCents
-      ? `Only ${money(balance ?? 0)} on account, no overdraft`
-      : null;
+    !hasGiftCard || totalCents === null
+      ? null
+      : balanceCents === null
+        ? cardLookup?.clientId === (client?.id ?? null) && cardLookup.loading
+          ? "Checking the balance..."
+          : "No account balance to spend"
+        : balanceCents < totalCents
+          ? `Only ${money(balance ?? 0)}, and no negative balance`
+          : null;
 
   /* Credit's own gate is the client and the balance EXISTING. Whether the
    * balance covers the whole total is no longer a blocker: a credit line
