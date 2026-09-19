@@ -7910,6 +7910,135 @@ textarea.reason-note-field:disabled::placeholder {
   color: var(--muted);
 }
 
+/* --- The approve ticket on the customer display (T203) ---------------
+ * Phase 2.5 item 4: the same ticket, with the two taps a student makes
+ * when the studio has turned `customer_confirms_sale` on. Read across a
+ * counter, so both controls are 64px and nothing is under 16px; tokens
+ * only, both palettes, radius 0. --accent means actionable or selected
+ * and is on Approve alone; Not yet is an ordinary surface control and
+ * NOT --stop, because declining is not destructive. */
+
+.dticket-approve {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dticket-ask {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.dticket-error {
+  margin: 0;
+  font-size: 18px;
+  color: var(--stop);
+}
+
+.dticket-approve-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.dscene-btn {
+  flex: 1 1 180px;
+  min-height: 64px;
+  padding: 0 20px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.dscene-go {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.dscene-btn:disabled {
+  opacity: 0.45;
+}
+
+/* T203: the apology a "Take over" leaves on the customer screen for a
+ * few seconds, so a student half way through something is not simply
+ * interrupted by the next person's ticket. */
+
+.display-notice {
+  margin: 0;
+  font-size: 22px;
+  color: var(--muted);
+}
+
+/* --- Waiting for the customer to approve, on the TEACHER's screen
+ * (T203) -------------------------------------------------------------
+ * Shown in place of the tender while an approval is on the customer
+ * screen, and for the busy case (something else holds that screen) with
+ * its three ways forward. Every control is 64px; --accent is on the one
+ * that moves the sale on, and nothing here is --stop: cancelling an
+ * approval destroys nothing, the ticket stays as built. */
+
+.approve-wait {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 2px solid var(--rule);
+  background: var(--surface);
+}
+
+.approve-wait-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.approve-wait-sub {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.approve-wait-error {
+  margin: 0;
+  font-size: 16px;
+  color: var(--stop);
+}
+
+.approve-wait-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.approve-wait-btn {
+  flex: 1 1 140px;
+  min-height: 64px;
+  padding: 0 16px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.approve-wait-btn.go {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.approve-wait-btn:disabled {
+  opacity: 0.45;
+}
+
 /* --- The sale screen's "showing on the customer screen" line (T201) ---
  * T111 had just quietened the top of the screen, so this is one muted
  * 16px line under the ticket's heading and nothing else: a teacher needs

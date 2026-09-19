@@ -1,5 +1,7 @@
 "use client";
 
+import { useCallback, useState } from "react";
+
 import { plainText } from "@/lib/richtext";
 
 import type { TicketPayload } from "@/lib/displayticket";
@@ -8,11 +10,19 @@ import type { TicketPayload } from "@/lib/displayticket";
  * The ticket, as the student sees it (T201, Phase 2.5 item 2; design
  * "Scene 2").
  *
- * Two modes, one layout. `live` mirrors the cart the teacher is building,
- * line by line, and is replaced in place as it changes. `summary` is the
- * same ticket after the charge, plus how it was paid and a thank you, for
- * the few seconds the hub gives it before it sends the screen back to
- * idle by itself.
+ * Three modes, one layout. `live` mirrors the cart the teacher is
+ * building, line by line, and is replaced in place as it changes.
+ * `summary` is the same ticket after the charge, plus how it was paid and
+ * a thank you, for the few seconds the hub gives it before it sends the
+ * screen back to idle by itself. `approve` (T203) is the same ticket with
+ * Approve and Not yet on it, for the studio that has turned
+ * `customer_confirms_sale` on.
+ *
+ * THIS COMPONENT CHARGES NOTHING and writes nothing. Approve stores an
+ * answer on the request (`/api/display/complete`), Not yet refuses it
+ * (`/api/display/refuse`), and /api/checkout treats that stored answer as
+ * a PRECONDITION it checks before it charges. A tap here never moves
+ * money; the teacher's own Charge does.
  *
  * THIS COMPONENT DOES NO ARITHMETIC. Every figure on it was priced by
  * Mindbody and arrived on the payload; a subtotal, a tax line or a total
@@ -26,9 +36,18 @@ function money(n: number): string {
   return n.toLocaleString([], { style: "currency", currency: "USD" });
 }
 
-export default function TicketScene(props: { payload: TicketPayload }) {
+export default function TicketScene(props: {
+  payload: TicketPayload;
+  /** T203: the request this ticket is, for the approve mode's two taps.
+   *  Absent for a live mirror and a summary, which nobody answers. */
+  requestId?: string;
+  /** Told when the student has answered, so the screen can move on while
+   *  the server catches up. */
+  onAnswered?: (approved: boolean) => void;
+}) {
   const t = props.payload;
   const summary = t.mode === "summary";
+  const approve = t.mode === "approve";
   const name = plainText(t.clientFirstName ?? "");
   const heading = summary
     ? name.length > 0
@@ -37,6 +56,42 @@ export default function TicketScene(props: { payload: TicketPayload }) {
     : name.length > 0
       ? `Hello, ${name}`
       : "Your ticket";
+
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { requestId, onAnswered } = props;
+
+  const answer = useCallback(
+    async (approved: boolean) => {
+      if (busy || !requestId) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await fetch(
+          approved ? "/api/display/complete" : "/api/display/refuse",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(
+              approved
+                ? { requestId, result: { approved: true } }
+                : { requestId, reason: "Customer did not approve" },
+            ),
+          },
+        );
+        if (!res.ok) {
+          setError("That did not go through. Please tell the front desk.");
+          return;
+        }
+        onAnswered?.(approved);
+      } catch {
+        setError("That did not go through. Please tell the front desk.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, requestId, onAnswered],
+  );
 
   return (
     <section className="dticket" aria-label="Your ticket">
@@ -97,6 +152,31 @@ export default function TicketScene(props: { payload: TicketPayload }) {
           </div>
         )}
       </dl>
+
+      {approve ? (
+        <div className="dticket-approve">
+          <p className="dticket-ask">Does this look right?</p>
+          {error !== null ? <p className="dticket-error">{error}</p> : null}
+          <div className="dticket-approve-buttons">
+            <button
+              type="button"
+              className="dscene-btn"
+              disabled={busy}
+              onClick={() => void answer(false)}
+            >
+              Not yet
+            </button>
+            <button
+              type="button"
+              className="dscene-btn dscene-go"
+              disabled={busy}
+              onClick={() => void answer(true)}
+            >
+              {busy ? "One moment" : "Approve"}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {summary ? (
         <div className="dticket-paid">

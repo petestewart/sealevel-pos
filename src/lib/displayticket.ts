@@ -25,7 +25,13 @@
  * Nothing in this file calls Mindbody, and nothing in it may.
  */
 
-export type TicketMode = "live" | "summary";
+/**
+ * T203 adds `approve` (Phase 2.5 item 4): the same priced ticket, plus
+ * nothing, with Approve and Not yet on it. It is the one mode the student
+ * ANSWERS, and the answer is a precondition /api/checkout checks, never
+ * an action that charges.
+ */
+export type TicketMode = "live" | "summary" | "approve";
 
 export interface TicketLine {
   /** The item's name as the catalog gave it. Rendered through plainText. */
@@ -90,8 +96,8 @@ export function readTicketPayload(
   }
   const raw = value as Record<string, unknown>;
   const mode = raw.mode;
-  if (mode !== "live" && mode !== "summary") {
-    return { ok: false, error: "mode must be live or summary" };
+  if (mode !== "live" && mode !== "summary" && mode !== "approve") {
+    return { ok: false, error: "mode must be live, summary or approve" };
   }
   if (!Array.isArray(raw.lines)) {
     return { ok: false, error: "lines must be an array" };
@@ -149,6 +155,15 @@ export function readTicketPayload(
       typeof raw.emailedReceipt === "boolean" ? raw.emailedReceipt : null;
   }
   return { ok: true, value: out as TicketPayload & Record<string, unknown> };
+}
+
+/** Whether a stored request is an APPROVE ticket, which is the scene
+ *  /api/checkout looks the customer's answer up on (T203). */
+export function isApproveTicket(
+  kind: string,
+  payload: Record<string, unknown>,
+): boolean {
+  return kind === "ticket" && payload.mode === "approve";
 }
 
 /** Whether a stored request is a live ticket, which is the one scene a

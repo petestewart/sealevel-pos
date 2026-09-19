@@ -59,10 +59,12 @@ export async function POST(request: Request) {
    * asked for; an overdraft says so, and /api/checkout will not take
    * one for the other. T112 adds "override", which authorizes either
    * asking Mindbody for a refused pass again under this teacher's own
-   * token or selling the configured substitute in its place. */
+   * token or selling the configured substitute in its place. T203 adds
+   * "approve", which authorizes charging a sale the customer screen did
+   * not approve, and is filed on the client with this teacher's name. */
   if (purposeRaw !== undefined && !isCompPurpose(purposeRaw)) {
     return NextResponse.json(
-      { error: "purpose must be comp, overdraft or override" },
+      { error: "purpose must be comp, overdraft, override or approve" },
       { status: 400 },
     );
   }

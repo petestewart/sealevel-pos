@@ -457,6 +457,7 @@ function SettingsPanel({
         }}
       />
       <DisplayPanel open={open} />
+      <ConfirmSalePanel open={open} admin={mode?.targetAdmin === true} />
       <p className="muted">
         The rest is stored in this browser. Applies immediately, no restart.
         The server's own dry run and the write guard stay in the server
@@ -710,6 +711,171 @@ function DisplayPanel({ open }: { open: boolean }) {
               }}
             >
               Unpair
+            </button>
+          </div>
+        )
+      ) : null}
+    </>
+  );
+}
+
+/* --- Customer approves each sale (T203) -------------------------------
+ *
+ * Phase 2.5 item 4's setting, in the drawer for the reason T89's target
+ * is: it is a studio-wide policy with nowhere else to live, and a
+ * redeploy is the wrong price for changing one. It is shown to everyone
+ * and switched only by a named admin (POS_ADMIN_STAFF_IDS), because
+ * turning it OFF stays admin-only (design doc, Scene 2).
+ *
+ * It is the THIRD recorded exception to "nothing in this drawer may
+ * loosen a write rail", and like the other two it is safe in only one
+ * direction: with it on, /api/checkout refuses MORE charges, never
+ * fewer. Dry run and the write guard are still not here.
+ */
+
+interface ConfirmInfo {
+  customerConfirmsSale: boolean;
+  customerConfirmsSaleSource: string;
+  envVar: string;
+  configured: boolean;
+  available: boolean;
+}
+
+function ConfirmSalePanel({
+  open,
+  admin,
+}: {
+  open: boolean;
+  admin: boolean;
+}) {
+  const [info, setInfo] = useState<ConfirmInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      /* Everyone reads the line from /api/config, which needs no admin;
+       * an admin reads the fuller answer, which says whether there is a
+       * store to write to. */
+      const res = await fetch(admin ? "/api/admin/customer-confirms" : "/api/config");
+      if (!res.ok) return;
+      const body = await res.json();
+      setInfo({
+        customerConfirmsSale: body.customerConfirmsSale === true,
+        customerConfirmsSaleSource: String(
+          body.customerConfirmsSaleSource ?? "env",
+        ),
+        envVar: String(body.envVar ?? "POS_CUSTOMER_CONFIRMS_SALE"),
+        configured: body.configured !== false,
+        available: body.available !== false,
+      });
+    } catch {
+      /* The block stays quiet; nothing else depends on it. */
+    } finally {
+      setLoaded(true);
+    }
+  }, [admin]);
+
+  useEffect(() => {
+    if (!open) return;
+    void load();
+  }, [load, open]);
+
+  const setTo = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/customer-confirms", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: next }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setAsking(false);
+      setDone(
+        next
+          ? "On. Every sale now waits for the customer to approve it, or for a teacher's PIN."
+          : "Off. Charge charges, as before.",
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!loaded || info === null) return null;
+  const on = info.customerConfirmsSale;
+  const stored = info.customerConfirmsSaleSource === "setting";
+  return (
+    <>
+      <div className="dev-label">customer approves each sale</div>
+      <p className="muted">
+        {on ? "On" : "Off"}.{" "}
+        {stored
+          ? "Stored setting."
+          : `From ${info.envVar} in the server environment.`}{" "}
+        {on
+          ? "The Charge tap puts the ticket on the customer screen first, and the server refuses a charge the customer has not approved. A teacher's PIN stands in when the screen cannot be used."
+          : "Charge charges, and the customer screen shows the ticket and the thank you only."}
+      </p>
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      {admin ? (
+        !info.configured || !info.available ? (
+          <p className="muted">
+            {info.configured
+              ? `The database is not answering, so ${info.envVar} in the server environment decides and this cannot be changed here.`
+              : `No database configured (DATABASE_URL unset), so ${info.envVar} in the server environment decides and this cannot be changed here.`}
+          </p>
+        ) : asking ? (
+          <div className="dev-target-ask">
+            <p className="dev-target-question">
+              {on
+                ? "Stop asking the customer to approve each sale?"
+                : "Ask the customer to approve every sale on their screen?"}
+            </p>
+            <div className="dev-target-buttons">
+              <button
+                type="button"
+                className="dev-target-btn"
+                disabled={busy}
+                onClick={() => setAsking(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dev-target-btn dev-target-go"
+                disabled={busy}
+                onClick={() => void setTo(!on)}
+              >
+                {busy ? "Saving" : on ? "Yes, turn it off" : "Yes, turn it on"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="dev-target-buttons">
+            <button
+              type="button"
+              className="dev-target-btn"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setDone(null);
+                setAsking(true);
+              }}
+            >
+              {on ? "Turn off approvals" : "Turn on approvals"}
             </button>
           </div>
         )

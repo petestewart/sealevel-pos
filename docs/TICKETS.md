@@ -17182,3 +17182,256 @@ header), `routes.mjs`, `dbdrive.mjs`, `ui.mjs`.
   document while the release went out) is the same two lines as the
   suppressed Notes append beside it and was read, not run: the dry-run
   pass stops at the release, which is where it should stop.
+
+---
+
+## T203. The customer approves the sale (2026-09-19)
+
+Phase 2.5 item 4: the studio can ask the person in front of the counter
+to approve their own ticket before a cent moves, and **the server is what
+enforces it**. The setting is `customer_confirms_sale`; the Charge tap
+puts the priced ticket on the customer iPad with Approve and Not yet; the
+charge follows the customer's own tap; and a teacher whose screen is
+busy, dark or being ignored can approve it themselves with their PIN,
+which is filed on the client with their name (D1, Pete: "Teacher
+override, they must enter their PIN").
+
+**No money logic changed.** The diff in `/api/checkout` is additive: one
+precondition checked before any Mindbody call, one token spent beside the
+two that were already spent there, and one record filed after the charge
+resolved. Pricing, `assertBasket`, the discount spread, the gift card
+rails and T113's idempotency are untouched.
+
+### 1. The setting, and which way it fails
+
+`app_settings.customer_confirms_sale`, `"true"` or `"false"`, default
+off, read per checkout through `readSetting` (`src/lib/approval.ts`).
+Global rather than a drawer localStorage tunable because it is a studio
+policy: the localStorage settings are for numbers that are wrong on one
+iPad, and this must be the same on every counter. With no database,
+`POS_CUSTOMER_CONFIRMS_SALE` in the environment decides (`.env.example`
+carries it).
+
+A store that does not ANSWER falls back to the environment and says so
+once a minute in the log. That is the opposite of T89's target, on
+purpose: there, forgetting a stored sandbox would point a counter at the
+real studio, so a blip must change nothing. Here the two answers are "ask
+the customer" and "do not", and the setting can only ever ADD a
+precondition to Charge. Falling back to the environment cannot make a
+charge easier than the deployment's own default.
+
+`GET /api/config` reports `customerConfirmsSale` and
+`customerConfirmsSaleSource` on the authenticated answer.
+`PUT /api/admin/customer-confirms` writes it behind ALL of: the device
+session, the devtools gate, `requireActor`, that teacher's staff id in
+`POS_ADMIN_STAFF_IDS` (`isTargetAdmin`, reused as is), and a database
+that answers (503 with the sentence otherwise). Turning it OFF is
+admin-only too, which is the design's rule and is the whole reason the
+admin gate is there. One log line: `[customer-confirms] off -> on by
+staff=<id>`.
+
+The drawer's Settings tab shows the line to everyone, under the Customer
+display block, and draws one 64px control that asks once for an admin.
+**It is the third recorded exception to "nothing in this drawer may
+loosen a write rail"**, and like the T89 pair it is safe in one
+direction only: with it on, `/api/checkout` refuses MORE charges, never
+fewer.
+
+### 2. The hash: what "the same ticket" means
+
+`src/lib/cartsha.ts` is one helper used by BOTH `/api/display/present`
+and `/api/checkout`, because two canonicalisations would refuse every
+approval they issued. The browser never sends a hash: a promise that the
+ticket has not changed, made by the thing that changes it, is not a
+promise. Each route hashes the cart itself from the same
+`items`/`giftCards`/`discount`/`clientId` shape the browser already sends
+to `/api/price-cart`.
+
+INSIDE the hash: the client id; each cart line's type, metadata id,
+quantity, unit price in cents and T90 `forClientId`; each gift card
+line's product id, quantity and chosen amount; and the whole-cart
+discount's mode and value. Lines are sorted by their own canonical text,
+so the order a cart was built in is not a change.
+
+NOT inside it, and this is the one place the ticket's wording could not
+be followed: **tax and the total**. `/api/checkout` is never sent them --
+they are Mindbody's, read from `/api/price-cart` -- so hashing them would
+make the two hashes unequal by construction. What DETERMINES them is all
+in the hash, and T75's own `Test: true` rehearsal is what already refuses
+a total that moved. The tender is out too: a customer approves what is
+being sold, not which card pays for it.
+
+### 3. The gate, in `/api/checkout`
+
+Beside the T112 override and the T79 discount, before any Mindbody call,
+so a refusal costs no metered call. With the setting on the request must
+carry EITHER `displayApprovalId` -- a completed, unconsumed, unexpired
+`ticket`/`approve` request for THIS client whose stored hash equals the
+hash of the cart being charged -- OR `approvalOverride: {token}`. The
+sentences are plain and each says what to do:
+
+- nothing, with a screen connected: "The customer has not approved this
+  sale on the customer screen."
+- nothing, with no screen: "The customer screen is not connected, so the
+  sale needs your PIN."
+- a hash that moved: "The ticket changed after the customer approved it.
+  Ask them again."
+- an approval already spent: "That approval has already been used on a
+  sale. Ask the customer again."
+- somebody else's approval: "That approval was for a different customer.
+  Ask them again."
+
+**The approval is consumed AFTER the charge resolved**, in
+`recordApproval`, built above every write path and called from each of
+them: from `recordDiscount` on the single-cart paths (exactly as T112's
+override record is), directly on the gift card ticket and the T90
+ticket once their writes resolved (those two answer without reaching
+`recordDiscount`), from the sold-nothing answer (money moved), and from
+the card-credit seam (the $10 credit was charged). Claimed
+synchronously through T202's `beginFinalisation`, so two answers
+arriving together cannot both spend it, and idempotent, so a path may
+reach it twice. A refused charge leaves it spendable for a retry of the
+SAME cart, which is the point: a different cart hashes differently and
+is refused anyway. Review found the first cut spent it only through
+`recordDiscount`, which left it unspent after a real gift card or T90
+charge: one approval could then have carried a second charge of the
+same cart under a fresh idempotency key. Fixed before commit and driven
+(the T90 case below). What still leaves it unspent: an exit where no
+write was attempted, and a single-cart write that THREW (an ambiguous
+"MAY have gone through" answer), where the teacher is told to check
+Mindbody before charging again.
+
+With the setting OFF both fields are **ignored, never an error**: a stale
+dialog on a browser must not refuse a sale.
+
+### 4. The override (D1)
+
+`src/app/ApprovalDialog.tsx` is T48's PIN and nothing new: one step, the
+signed-in teacher's own PIN, `/api/teacher/verify` with the new purpose
+`approve` (`CompPurpose`, `isCompPurpose`), and the one-shot token the
+sale hands to `/api/checkout`. The route verifies the purpose and that
+the token's staff id is the session's (T94's rule, T112's block copied),
+spends it once, cancels a pending approval on the display, and files the
+sentence on the client the way T45/T62 file a comp's reason: "Sale
+approved by <teacher> at the counter, customer screen not used." The
+staff id is in the structured log line either way. No reason is asked
+for: the sentence is fixed, and a teacher standing in front of somebody
+whose screen just died should be asked for as little as the record
+allows.
+
+### 5. The two screens
+
+`TicketScene` gains `approve`: the same ticket, "Does this look right?",
+and **Not yet** and **Approve** at 64px. Approve completes the request
+with `{approved: true}`; Not yet refuses it with "Customer did not
+approve". The scene writes nothing and charges nothing.
+
+The teacher's screen, in the payment column above the foot: "Waiting for
+the customer to approve" with **Cancel** (the ticket stays as built) and
+**Approve sale**. A poll on `GET /api/display/approval` is what closes
+the wait -- a poll rather than the SSE stream because it runs for the few
+seconds of one approval and survives a stream that was never opened -- and
+an approval turns straight into the charge with no further tap. A refusal
+or a screen that went dark leaves one quiet line and the ticket exactly as
+it was.
+
+**A busy screen** gets the design's three-way choice in its minimal form:
+"The customer screen is busy." with Wait (re-present every 2s), Take over
+(cancel with `takenOver: true`, wait three seconds, present) and Approve
+sale. `cancelRequest` carries `takenOver` to the display, which shows
+"Please start again in a moment" for four seconds rather than blinking
+back to Ready in front of a student who was half way through something.
+Item 5 will refine this; it is deliberately small.
+
+`presentRequest`'s in-place replacement of a live ticket now carries the
+new request's PRIVATE half with it. Without that, an approve ticket that
+replaced a live mirror would have been recorded against the hash of the
+ticket that was on the screen before it.
+
+#### Verified
+
+Drivers in the scratchpad (not in the repo): `server.mjs` (T200's
+harness, one name changed), `mockmb.mjs` (T202's, plus `/staff/staff`,
+request bodies in its log and a `__reset`), `routes.mjs`, `dbdrive.mjs`,
+`ui.mjs`.
+
+- `env -u DATABASE_URL npm run build` clean, `npx tsc --noEmit` clean.
+- **7 route assertions with the setting OFF**: a plain charge goes
+  through and reaches Mindbody exactly once, and both
+  `approvalOverride` (a forged token) and `displayApprovalId` (a name
+  that does not exist) are ignored rather than refused.
+- **36 route assertions with the setting ON** (env, no database): the
+  two refusal sentences, word for word, with the mock's log asserted to
+  hold NO checkout for either; an approve scene presented, the display's
+  own stream asserted to carry `"mode":"approve"` and neither the hash,
+  the private half nor the client id; the display completing it; the
+  charge with that id going through with exactly one checkout at
+  Mindbody; the same id again refused with still one checkout; a cart
+  with a line ADDED refused as "The ticket changed after the customer
+  approved it"; the same cart in another ORDER accepted; a changed
+  QUANTITY refused; another client's approval refused; "Not yet" read
+  back by the teacher's poll with its reason and then refused at the
+  charge; a forged token 401 `reason: "teacher"`; the take-over cancel
+  carrying `takenOver` to the display; and an unpaired display back to
+  the PIN sentence. Review added nine (45 in all): a T90 line under
+  approval charges once, answers `approvedOnDisplay`, and the same
+  approval again is 409 with still one checkout at Mindbody; and a
+  replay under the SAME idempotency key with a CHANGED cart is refused
+  rather than replayed, with one checkout at Mindbody.
+- **22 assertions with Postgres**: no row reads as off from the env; a
+  PUT with nobody signed in is 401 `reason: "staff"`; an admin turns it
+  on, the answer says `source: "setting"`, `/api/config` agrees and the
+  log line names the staff id; a PIN enrolled for staff 4242 mints a
+  token whose purpose field reads `approve`; a **comp**-purpose token is
+  refused for an approval (401); the approve token charges the sale, the
+  answer names the teacher, and the mock's `/client/updateclient` body
+  is asserted to carry "Sale approved by Dana Rivers at the counter,
+  customer screen not used." with T58's `[by ...]` signature; the same
+  token a second time is 401; a display approval spent once is refused
+  the second time in its own words (which needs the row); and the admin
+  turns it back off.
+- **3 assertions for a non-admin**: a signed-in teacher whose id is not
+  in `POS_ADMIN_STAFF_IDS` gets 403 on both verbs and still reads the
+  setting on `/api/config`.
+- **T200's driver passes again (52), T201's (27) and T202's (43)**, all
+  unchanged.
+- **28 Playwright assertions**: the setting on, a display paired, a Drop
+  In rung up for Sam, Charge showing "Waiting for the customer to
+  approve" with Cancel and Approve sale; the customer screen holding the
+  ticket with Approve and Not yet measured at 64px or more; Approve
+  completing the sale with NO further tap on the teacher's iPad and the
+  thank you following; "Not yet" leaving the quiet line, no done screen
+  and the ticket as built; the PIN path opening the dialog, taking the
+  digits on the pad and charging; nothing under 16px, no horizontal
+  overflow, both palettes and phone width. Screenshots:
+  `approve-display-light.png`, `approve-pos-light.png`,
+  `approve-notyet-light.png`, `approve-pin-dark.png`,
+  `approve-display-dark.png`.
+
+#### Could not verify
+
+- **No Mindbody call was made against a real site.** Every figure is the
+  mock's; the sale ids it answers do not resolve through `/sale/sales`,
+  so the override's log line reads `sale=unknown` here. Against the
+  studio it would name the sale, as the comp and override records do.
+- **The staff session was faked** exactly as T200's driver fakes it, so
+  no teacher signed in against Mindbody and approved anything under
+  their own token. The PIN itself is real: it was enrolled through
+  `/api/admin/teacher-pins` into Postgres and checked by
+  `/api/teacher/verify`.
+- **No real iPad and no second physical screen.** Two headless Chromium
+  contexts at 1180px.
+- **A gift card ticket, a split tender and account credit under
+  approval were NOT driven.** Their fields are in the hash and were
+  read, not run; a cash sale, a T90 line and the PIN override are what
+  was driven end to end. The gift card path's spend of the approval is
+  the same call the T90 path makes, placed the same way, and was read.
+- **The busy three-way choice was not driven in the UI.** The
+  `takenOver` cancel reaching the display is asserted in the route
+  driver; Wait, Take over and the apology screen were read, not clicked.
+- **The suppressed (dry run / write guard) charge under an approval**
+  was not driven: `recordApproval` is called with `suppressed` from the
+  same place T112's record is, and was read.
+- **Nothing here was run against a database that STOPS answering
+  mid-shift.** The env fallback and its once-a-minute warning were read,
+  not exercised.

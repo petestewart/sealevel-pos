@@ -326,14 +326,21 @@ const COMP_TOKEN_TTL_MS = 10 * 60 * 1000;
 const COMP_TOKEN_PREFIX = "c2";
 
 /** What a teacher's PIN authorized: a discount, charging an account past
- *  its balance (T94), or overriding a pass Mindbody's own rules refused
- *  (T112). Each is its own value for T94 review's reason: a PIN typed for
- *  one of them must not pass as the authorization for another, and two
- *  request fields are not a separation while one value fits both. */
-export type CompPurpose = "comp" | "overdraft" | "override";
+ *  its balance (T94), overriding a pass Mindbody's own rules refused
+ *  (T112), or approving a sale at the counter when the customer screen
+ *  could not (T203's D1 override). Each is its own value for T94
+ *  review's reason: a PIN typed for one of them must not pass as the
+ *  authorization for another, and two request fields are not a
+ *  separation while one value fits both. */
+export type CompPurpose = "comp" | "overdraft" | "override" | "approve";
 
 export function isCompPurpose(value: unknown): value is CompPurpose {
-  return value === "comp" || value === "overdraft" || value === "override";
+  return (
+    value === "comp" ||
+    value === "overdraft" ||
+    value === "override" ||
+    value === "approve"
+  );
 }
 
 export interface TeacherIdentity {

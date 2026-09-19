@@ -265,13 +265,19 @@ exceptions, and both are safe in only one direction: the target switch is
 admin-only, audited in the log and refuses an incomplete credential set,
 and the local dry run can only make this iPad safer.
 
-## Customer display (T200, T201, T202; Phase 2.5)
+T203's "customer approves each sale" is the THIRD recorded exception and
+tightens in only one direction too: with it on the server refuses MORE
+charges and never fewer, it is admin-only in BOTH directions (turning it
+off is the dangerous one), and the log names the staff id who moved it.
+
+## Customer display (T200, T201, T202, T203; Phase 2.5)
 
 A second iPad on the counter, facing the student, at `/display`. Design:
 `docs/design/customer-display.md`. Built: the plumbing (idle screen,
 pairing, the hub in `src/lib/display.ts`, the two SSE routes and
-present/cancel/complete/refuse), the ticket scene (T201) and the waiver
-scene (T202). The sign-up and the contract are items 5 and 6.
+present/cancel/complete/refuse), the ticket scene (T201), the waiver
+scene (T202) and the ticket approval (T203). The sign-up and the
+contract are items 5 and 6.
 
 **The display adds zero write paths to Mindbody, and must keep adding
 none.** Nothing in `src/lib/display.ts` or under `src/app/api/display/`
@@ -297,6 +303,32 @@ front of the next. Every figure on that screen is Mindbody's, from
 rebuilds the payload field by field so no client, product or pricing
 option id and no card detail beyond the tender's WORD can reach a screen
 a student is holding.
+
+**The customer can be made to APPROVE each sale** (T203, Phase 2.5 item
+4). `app_settings.customer_confirms_sale` (with
+`POS_CUSTOMER_CONFIRMS_SALE` as the no-database fallback) is a
+studio-wide policy an admin edits from the drawer, and **`/api/checkout`
+is the only place it is enforced**: with it on, a charge must carry
+either a `displayApprovalId` naming a completed, unconsumed, unexpired
+`ticket`/`approve` request for this client, or a PIN token of the new
+`approve` purpose, and it is refused with a plain sentence before any
+Mindbody call otherwise. What ties the approval to the ticket is one
+sha256 both `/api/display/present` and `/api/checkout` compute
+themselves with `src/lib/cartsha.ts` over the cart as sent (the client,
+each line's type, id, quantity, unit price and T90 recipient, the gift
+card lines, the discount; sorted, so order is not a change). Tax and the
+total are NOT in it, because the checkout body never carries them, and
+T75's rehearsal already refuses a total that moved. The browser never
+sends a hash. The approval is spent only AFTER the charge resolved
+(`recordApproval`, built above every write path and called from each:
+`recordDiscount` on the single-cart paths, the gift card and T90
+tickets directly, the sold-nothing answer and the card-credit seam;
+claimed through T202's `beginFinalisation`), so a refused charge can be
+retried on the same cart and a spent one is refused twice over. The D1 override is
+T48's PIN with its own purpose, spent once, and filed on the client the
+way T45/T62 file a comp's reason ("Sale approved by <teacher> at the
+counter, customer screen not used"). With the setting off, both fields
+are ignored rather than refused: a stale dialog must not stop a sale.
 
 **A result is spent BY ID, once** (T202). `consumeRequest` finds a
 completed, unconsumed request by its id even when the hub has moved on to

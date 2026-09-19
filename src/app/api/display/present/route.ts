@@ -9,6 +9,7 @@ import {
   presentRequest,
   readJsonObject,
 } from "@/lib/display";
+import { cartSha256 } from "@/lib/cartsha";
 import { readTicketPayload } from "@/lib/displayticket";
 import { readWaiverPayload } from "@/lib/displaywaiver";
 import { readClientFirstName } from "@/lib/clients";
@@ -64,6 +65,7 @@ export async function POST(request: Request) {
    * is holding. */
   let scene = payload.value;
   let ttlMs: number | undefined;
+  let privateHalf: Record<string, unknown> | undefined;
   if (input.kind === "ticket") {
     const ticket = readTicketPayload(payload.value);
     if (!ticket.ok) {
@@ -77,6 +79,30 @@ export async function POST(request: Request) {
      * reloads must not leave one student's ticket in front of the next
      * one in the queue. */
     if (ticket.value.mode === "summary") ttlMs = SUMMARY_TTL_MS;
+    /* T203: an APPROVE ticket is the one the student answers, and the
+     * answer is only worth anything if the server knows WHICH ticket was
+     * approved. So the request's SERVER-ONLY half records the client the
+     * sale is for and the sha256 of the cart as presented, computed HERE
+     * from the cart the browser sends beside the payload -- the same
+     * `items`/`giftCards`/`discount`/`clientId` it sends to
+     * /api/price-cart and /api/checkout. The browser never sends a hash:
+     * a promise that the ticket has not changed, made by the thing that
+     * changes it, is not a promise. /api/checkout hashes the cart it is
+     * about to charge with the same helper and refuses a mismatch.
+     *
+     * Neither figure reaches the display: `private` never passes through
+     * sceneFor, so the student's screen still carries only the ticket. */
+    if (ticket.value.mode === "approve") {
+      const cart =
+        input.cart !== null && typeof input.cart === "object"
+          ? (input.cart as Record<string, unknown>)
+          : {};
+      privateHalf = {
+        clientId:
+          typeof cart["clientId"] === "string" ? cart["clientId"].trim() : "",
+        cartSha256: cartSha256(cart),
+      };
+    }
   }
   /* T202: a WAIVER's payload is built here, not forwarded. The browser
    * sends a client id and nothing that matters; the server fetches its
@@ -86,7 +112,6 @@ export async function POST(request: Request) {
    * client id and that hash on the request's SERVER-side half. The
    * display is told neither: it has no use for an identifier, and a
    * screen in a student's hands is the last place to put one. */
-  let privateHalf: Record<string, unknown> | undefined;
   if (input.kind === "waiver") {
     const clientId =
       typeof input.clientId === "string" ? input.clientId.trim() : "";

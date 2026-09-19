@@ -715,10 +715,23 @@ export async function presentRequest(input: {
      * decision they did not make. */
     if (input.kind === "ticket" && isLiveTicket(held.kind, held.payload)) {
       held.payload = input.payload;
+      /* T203: the SERVER-ONLY half moves with the payload. An approve
+       * ticket replaces a live one in place (the design's rule for every
+       * non-live scene that follows a mirror), and its private half
+       * carries the cart's sha256 and the client id that /api/checkout
+       * checks the approval against. Left behind, the approval would
+       * name the ticket that was on the screen before it. */
+      held.private = input.private ?? {};
       held.expiresAt = now + (input.ttlMs ?? REQUEST_TTL_MS);
       armExpiry(held, now);
       void boundedDb(
-        updateDisplayRequestPayload(held.id, held.payload, new Date(held.expiresAt)),
+        updateDisplayRequestPayload(
+          held.id,
+          Object.keys(held.private).length === 0
+            ? held.payload
+            : { ...held.payload, [PRIVATE_KEY]: held.private },
+          new Date(held.expiresAt),
+        ),
         TABLE_WAIT_MS,
         false,
       );
@@ -781,9 +794,19 @@ export async function presentRequest(input: {
   return { ok: true, request, replaced: false };
 }
 
-/** The teacher takes the scene back down. */
+/**
+ * The teacher takes the scene back down.
+ *
+ * T203: `takenOver` rides the cancel event to the display. It means the
+ * teacher needed the screen for something else (the design's "Take
+ * over"), so the display shows "Please start again in a moment" for a few
+ * seconds instead of blinking straight back to Ready in front of a
+ * student who was half way through something. It changes nothing on the
+ * server: the request is cancelled either way.
+ */
 export async function cancelRequest(
   now = Date.now(),
+  opts: { takenOver?: boolean } = {},
 ): Promise<{ cancelled: boolean }> {
   await ensureDisplayLoaded();
   expireIfDue(now);
@@ -808,7 +831,10 @@ export async function cancelRequest(
     TABLE_WAIT_MS,
     false,
   );
-  emit("display", "cancel", { requestId: c.id });
+  emit("display", "cancel", {
+    requestId: c.id,
+    ...(opts.takenOver === true ? { takenOver: true } : {}),
+  });
   emit("display", "idle", {});
   return { cancelled: true };
 }

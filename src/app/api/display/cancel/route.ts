@@ -15,6 +15,21 @@ export async function POST(request: Request) {
   if (denied) return denied;
   const actor = await requireActor(request);
   if (actor.denied) return actor.denied;
-  const { cancelled } = await cancelRequest();
+  /* T203: `takenOver` says the teacher needed the screen for something
+   * else, so the display apologises for a few seconds instead of
+   * blinking back to Ready in front of a student who was half way
+   * through something. A body is optional; anything unreadable is a
+   * plain cancel, because a cancel must never fail for want of JSON. */
+  let takenOver = false;
+  try {
+    const body: unknown = await request.json();
+    takenOver =
+      body !== null &&
+      typeof body === "object" &&
+      (body as Record<string, unknown>)["takenOver"] === true;
+  } catch {
+    /* No body: a plain cancel. */
+  }
+  const { cancelled } = await cancelRequest(Date.now(), { takenOver });
   return NextResponse.json({ ok: true, cancelled });
 }

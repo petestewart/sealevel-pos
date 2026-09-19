@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { customerConfirmsSale } from "@/lib/approval";
 import { authRequired, isAuthenticated } from "@/lib/auth";
 import { BANNER_SETTING_KEY, getSetting, storageMode } from "@/lib/db";
 import { displayState } from "@/lib/display";
@@ -125,5 +126,18 @@ export async function GET(request: Request) {
       const d = await displayState();
       return { paired: d.paired, connected: d.connected };
     })(),
+    /* T203: whether the customer must approve each sale on that screen,
+     * and whether that answer came from the stored setting or from
+     * POS_CUSTOMER_CONFIRMS_SALE in the server environment. The browser's
+     * copy is for the UI only: /api/checkout reads the setting itself on
+     * every charge, so a browser that lies about it is refused. On the
+     * authenticated answer only, like the display above. */
+    ...(await (async () => {
+      const confirm = await customerConfirmsSale();
+      return {
+        customerConfirmsSale: confirm.on,
+        customerConfirmsSaleSource: confirm.source,
+      };
+    })()),
   });
 }

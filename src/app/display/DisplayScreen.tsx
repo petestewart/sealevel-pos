@@ -38,7 +38,9 @@ interface Config {
  *  items 3 to 6 and an unknown kind deliberately renders the idle screen
  *  rather than guessing. */
 type Scene =
-  | { kind: "ticket"; payload: TicketPayload }
+  /* T203: the ticket carries its request id now, because the APPROVE
+   *  mode is answered from this screen; live and summary ignore it. */
+  | { kind: "ticket"; requestId: string; payload: TicketPayload }
   /* T202: the waiver carries its request id, because this is the first
    *  scene the STUDENT answers: completing and refusing both name it. */
   | { kind: "waiver"; requestId: string; payload: WaiverPayload };
@@ -49,6 +51,11 @@ type Scene =
  *  student from watching the screen blink back to Ready before they have
  *  looked up. Eight seconds, the same window the summary gets. */
 const THANKS_MS = 8_000;
+
+/** T203: how long "Please start again in a moment" stands after a
+ *  teacher took the screen over. A little longer than the three seconds
+ *  their iPad waits before presenting, so the apology never blinks. */
+const TAKEOVER_MS = 4_000;
 
 type Pairing =
   | { state: "loading" }
@@ -72,6 +79,9 @@ export default function DisplayScreen() {
   /** T202: the thank you after a signature. Held on this screen so the
    *  student sees it whatever the server does next. */
   const [thanks, setThanks] = useState<string | null>(null);
+  /** T203: the line a "Take over" leaves on the screen for a few seconds
+   *  before the next scene, so a student is not simply interrupted. */
+  const [notice, setNotice] = useState<string | null>(null);
 
   /* The banner and the mode, from the answer /api/config gives a browser
    * with no session at all: banner text, dry run and the target. */
@@ -204,6 +214,7 @@ export default function DisplayScreen() {
             : "";
         if (waiver.ok && requestId.length > 0) {
           setThanks(null);
+          setNotice(null);
           setScene({ kind: "waiver", requestId, payload: waiver.value });
           return;
         }
@@ -212,7 +223,15 @@ export default function DisplayScreen() {
         const ticket = readTicketPayload(data.payload);
         if (ticket.ok) {
           setThanks(null);
-          setScene({ kind: "ticket", payload: ticket.value });
+          setNotice(null);
+          setScene({
+            kind: "ticket",
+            requestId:
+              typeof (data as { requestId?: unknown }).requestId === "string"
+                ? String((data as { requestId?: unknown }).requestId)
+                : "",
+            payload: ticket.value,
+          });
           return;
         }
       }
@@ -226,6 +245,25 @@ export default function DisplayScreen() {
     const onIdle = () => {
       setLive(true);
       setScene(null);
+    };
+    /* T203: a cancel that says `takenOver` is the teacher needing this
+     * screen for somebody else. The apology stands for a few seconds and
+     * the next `present` clears it; an ordinary cancel is still idle. */
+    const onCancel = (ev: MessageEvent) => {
+      let takenOver = false;
+      try {
+        const parsed: unknown = JSON.parse(ev.data);
+        takenOver =
+          parsed !== null &&
+          typeof parsed === "object" &&
+          (parsed as Record<string, unknown>).takenOver === true;
+      } catch {
+        /* An unreadable cancel is still a cancel. */
+      }
+      setLive(true);
+      setScene(null);
+      setThanks(null);
+      setNotice(takenOver ? "Please start again in a moment." : null);
     };
     const onError = () => {
       setLive(false);
@@ -251,17 +289,24 @@ export default function DisplayScreen() {
     source.addEventListener("error", onError);
     source.addEventListener("idle", onIdle);
     source.addEventListener("present", onPresent);
-    source.addEventListener("cancel", onIdle);
+    source.addEventListener("cancel", onCancel);
     return () => {
       stopped = true;
       source?.removeEventListener("open", onOpen);
       source?.removeEventListener("error", onError);
       source?.removeEventListener("idle", onIdle);
       source?.removeEventListener("present", onPresent);
-      source?.removeEventListener("cancel", onIdle);
+      source?.removeEventListener("cancel", onCancel);
       source?.close();
     };
   }, [pairing.state]);
+
+  /* T203: and so does the take-over apology. */
+  useEffect(() => {
+    if (notice === null) return;
+    const timer = setTimeout(() => setNotice(null), TAKEOVER_MS);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   /* T202: the thank you leaves on its own, whether or not the server has
    * anything to say. */
@@ -292,6 +337,19 @@ export default function DisplayScreen() {
   /* T201: a scene owns the middle of the screen; the banner and the mode
    * mark stay where they are, because what this iPad is pointed at is as
    * true during a sale as it is at rest. */
+  if (pairing.state === "paired" && notice !== null && scene === null) {
+    return (
+      <main className="display">
+        {banner.length > 0 ? <p className="display-banner">{banner}</p> : null}
+        <div className="display-middle">
+          <h1 className="display-greeting">One moment</h1>
+          <p className="display-notice">{notice}</p>
+        </div>
+        {mark ? <p className="display-mark">{mark}</p> : null}
+      </main>
+    );
+  }
+
   if (pairing.state === "paired" && thanks !== null && scene === null) {
     return (
       <main className="display">
@@ -313,7 +371,18 @@ export default function DisplayScreen() {
         {banner.length > 0 ? <p className="display-banner">{banner}</p> : null}
         <div className="display-scene">
           {scene.kind === "ticket" ? (
-            <TicketScene payload={scene.payload} />
+            <TicketScene
+              payload={scene.payload}
+              requestId={scene.requestId}
+              onAnswered={(approved) => {
+                /* The scene is done with the screen the moment the
+                 * server has the answer; the hub's own idle (when the
+                 * teacher's iPad charges, or drops the approval) comes
+                 * in behind this. */
+                setScene(null);
+                if (approved) setThanks(plainText(scene.payload.clientFirstName ?? ""));
+              }}
+            />
           ) : (
             <WaiverScene
               requestId={scene.requestId}
