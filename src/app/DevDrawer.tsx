@@ -27,6 +27,12 @@ interface CallRecord {
   outcome: string;
   /** T49: the staff id the call ran as, when a signed-in teacher's. */
   actor: number | null;
+  /** T109: that teacher's session token, in full, on the call that used
+   *  it (Pete: "log staff session tokens"). Shown next to the staff id in
+   *  the expanded record and in what `copy` puts on the clipboard, which
+   *  is where someone debugging one call looks. Not on the collapsed row:
+   *  a token is longer than the path it would push off the screen. */
+  actorToken: string | null;
   requestBody: string | null;
   responseBody: string | null;
 }
@@ -159,7 +165,8 @@ export default function DevDrawer({
     [
       `${call.method} ${call.path}`,
       `${call.outcome} ${call.status ?? ""} ${call.ms}ms  ${call.at}` +
-        (call.actor !== null ? `  actor=${call.actor}` : ""),
+        (call.actor !== null ? `  actor=${call.actor}` : "") +
+        (call.actorToken ? `  token=${call.actorToken}` : ""),
       call.requestBody ? `\n--- request ---\n${call.requestBody}` : "",
       `\n--- response ---\n${call.responseBody ?? "(empty)"}`,
     ]
@@ -281,6 +288,18 @@ export default function DevDrawer({
                         {copied === call.id ? "copied" : "copy"}
                       </button>
                     </div>
+                    {call.actorToken ? (
+                      <>
+                        {/* T109: the token this call ran under, beside the
+                            staff id the row already names. It wraps, since
+                            a token is long and the point is reading it
+                            whole. */}
+                        <div className="dev-label">
+                          actor token (staff {call.actor})
+                        </div>
+                        <pre>{call.actorToken}</pre>
+                      </>
+                    ) : null}
                     {call.requestBody ? (
                       <>
                         <div className="dev-label">request</div>

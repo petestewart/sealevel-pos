@@ -1378,9 +1378,10 @@ export type CheckoutPayment =
   | { type: "Cash"; amount: number }
   | { type: "Comp"; amount: number }
   /** T83: a gift card, spent by its barcode id. The number is a bearer
-   *  secret: it is built into the payload here and exists nowhere else
-   *  -- not in a log line, not in a response, not in the call log,
-   *  where calllog.ts strikes it out of the Metadata string. */
+   *  secret: it is built into the payload here and goes nowhere else,
+   *  not into a response and not into a record. T109: it is no longer
+   *  struck out of the dev call log's copy of this Metadata string, on
+   *  Pete's call; see src/lib/calllog.ts. */
   | { type: "GiftCard"; amount: number; cardNumber: string }
   /** T93: a card TYPED at the counter for this one sale. The whole card
    *  is a secret and lives in this payload only; calllog.ts strikes

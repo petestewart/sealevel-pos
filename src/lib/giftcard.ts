@@ -11,10 +11,14 @@
  *
  * THE NUMBER IS A SECRET. A gift card is a bearer instrument: whoever
  * has the number can spend the balance, so it is treated like a card
- * number throughout -- never logged, never stored, never returned to the
- * browser, and struck out of the dev call log in both directions
- * (src/lib/calllog.ts). Only the last four ever reach a screen or a
- * record.
+ * number throughout -- never stored, never returned to the browser, and
+ * only the last four ever reach a screen or a record.
+ *
+ * It is NOT struck out of the dev call log any more (T109, Pete: "no
+ * redactions at all. these are all things the teacher can see already
+ * and i am not worried about it."). The teacher typed it off the card in
+ * their hand, the drawer is gated behind POS_DEVTOOLS, and a balance
+ * read whose id cannot be seen is a call that cannot be diagnosed.
  */
 
 import { mindbody } from "./mindbody";

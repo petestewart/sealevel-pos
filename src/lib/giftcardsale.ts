@@ -39,12 +39,19 @@
  * charged (see /api/checkout): a card worth more than was paid for it is
  * money out of the studio's till.
  *
- * THE BARCODE ID IS A SECRET, exactly as in T83: a gift card is a bearer
- * instrument, so the id generated here is treated like a card number.
- * The call log strikes it out of the request body (`BarcodeId` is one of
- * calllog.ts's GIFT_KEYs) and out of anything Mindbody quotes back. The
- * two places it is deliberately shown are teacher-facing and necessary:
- * the done screen ("Write this on the card") and the emailed receipt.
+ * THE BARCODE ID IS A BEARER INSTRUMENT: whoever has the number can
+ * spend the balance, so nothing here stores it or answers with more of
+ * it than a screen needs. The two places it is shown whole are
+ * teacher-facing and necessary: the done screen ("Write this on the
+ * card") and the emailed receipt.
+ *
+ * T83 also struck it out of the dev call log, and **T109 stopped**
+ * (Pete: "no redactions at all. these are all things the teacher can see
+ * already and i am not worried about it."). The drawer now shows the id
+ * in the balance read's query, in this file's request body and in
+ * anything Mindbody quotes back, which is what makes three
+ * `giftcardbalance` calls tellable apart; see src/lib/calllog.ts for
+ * what still is struck and why.
  */
 
 import {
@@ -133,9 +140,14 @@ function num(v: unknown): number | null {
  * T102 review: a FIGURE that is not a number is ABSENT, not zero.
  *
  * `num` is deliberately lenient (`Number(null)` is 0, `Number(true)` is
- * 1), and for the balance read at giftCardTaken that leniency is the safe
- * direction: anything that parses at all means the id is taken. On the
- * purchase answer it is the wrong direction. T96's rehearsal promises
+ * 1). That used to be the SAFE direction for the balance read (anything
+ * that parsed at all meant the id was taken), and T109 took that
+ * safety away: once a balance of zero means the id is FREE, a lenient
+ * read calls `RemainingBalance: null` zero, calls zero free, and sells a
+ * card against an answer Mindbody never gave. So the balance read uses
+ * `figure` too, and an absent balance refuses the sale exactly as it
+ * did before. On the purchase answer it was always the wrong
+ * direction. T96's rehearsal promises
  * that a MISSING figure refuses because "silence is not agreement where
  * a bearer instrument is", and `Value: null` is silence: read as 0 it
  * slipped past that refusal and came out as T102's "the card would be
@@ -320,24 +332,51 @@ const NOT_FOUND = /not found|no gift ?card|does not exist|doesn'?t exist|invalid
  * Is this id free? A READ, so it goes out under dry run like every other
  * read and charges nothing whatever it answers.
  *
- * Throws when the answer does not settle the question. That is the
- * deliberate posture: the sale is refused rather than risk RELOADING a
- * card someone is already holding. Exactly what Mindbody answers for an
- * unknown barcode id is unverified against the live API (the T95 ticket
- * records it as an open question); a not-found-shaped 4xx reads as free,
- * and anything else -- a 5xx, a timeout, a 200 with no balance in it --
- * refuses.
+ * **T109: a balance of ZERO means free, and this is what Mindbody
+ * actually answers for an id it has never heard of.** Pete hit it on the
+ * live counter on 2026-09-19 and no gift card could be sold at all: three
+ * `GET /sale/giftcardbalance` calls, each a 200 in under 120ms, each
+ * `{"BarcodeId":"...","RemainingBalance":0.0}`, for three ids invented a
+ * moment earlier. T95 had recorded what an unknown id answers as an open
+ * question and this function had guessed the cautious way round, reading
+ * "a balance came back" as "the id is taken", which made every id taken
+ * and refused every sale. So zero, and only zero, is free; anything ABOVE
+ * zero is a card with money on it and the id is taken.
+ *
+ * That cannot tell "no such card" from "a card spent down to zero", and
+ * the residual reload risk is written out in full in the T109 ticket. It
+ * is one in a million against a feature that is otherwise dead.
+ *
+ * Throws when the answer does not settle the question, unchanged: the
+ * sale is refused rather than risk RELOADING a card someone is already
+ * holding. A not-found-shaped 4xx still reads as free (a site could
+ * answer that way and keeping the branch costs nothing), and a 5xx, a
+ * timeout, a 200 with no balance in it or a balance BELOW zero all
+ * refuse. The balance is read with `figure`, not `num`: a lenient read
+ * turns `RemainingBalance: null` into 0, and 0 now sells.
  */
 async function giftCardIdState(id: string): Promise<IdState> {
   try {
     const res = await mindbody<{ RemainingBalance?: unknown }>(
       `/sale/giftcardbalance?barcodeId=${encodeURIComponent(id)}`,
     );
-    if (num(res?.RemainingBalance) !== null) return "taken";
-    throw new Error(
-      "Mindbody answered the gift card balance read without a balance, so " +
-        "whether that id is already in use is unknown.",
-    );
+    const balance = figure(res?.RemainingBalance);
+    if (balance === null) {
+      throw new Error(
+        "Mindbody answered the gift card balance read without a balance, so " +
+          "whether that id is already in use is unknown.",
+      );
+    }
+    if (balance > 0) return "taken";
+    if (balance < 0) {
+      /* Not a shape Mindbody documents, so it settles nothing. Refusing
+       * is the same posture as a missing balance. */
+      throw new Error(
+        "Mindbody reported a negative balance for that gift card id, so " +
+          "whether it is already in use is unknown.",
+      );
+    }
+    return "free";
   } catch (err) {
     const status = mindbodyHttpStatus(err);
     const message = err instanceof Error ? err.message : String(err);
@@ -349,8 +388,9 @@ async function giftCardIdState(id: string): Promise<IdState> {
   }
 }
 
-/** How many ids to try before giving up. A collision is a one-in-a-billion
- *  event, so three failures in a row is a broken read, not bad luck. */
+/** How many ids to try before giving up. A collision is a one-in-a-million
+ *  event even after T109's rule, so three in a row is a broken read, not
+ *  bad luck. */
 const ID_TRIES = 3;
 
 /**
@@ -376,9 +416,15 @@ export async function freshGiftCardId(
       `[giftcard] generated id ${i + 1} of ${ID_TRIES} is already in use; regenerating`,
     );
   }
+  /* T109: the sentence a TEACHER reads. It used to name our retry count,
+   * which tells them nothing they can do; and it ended in "Nothing was
+   * charged." of its own, which the route appends too, so Pete read it
+   * twice. One sentence, one thing to try, and one thing to do if it
+   * happens again. */
   throw new Error(
-    `Could not generate an unused gift card id in ${ID_TRIES} tries. ` +
-      "Nothing was charged.",
+    "Mindbody says every gift card id this app generated is already in " +
+      "use, which should not happen. Try the sale again to draw new ids, " +
+      "and if it happens a second time, sell the card in Mindbody itself.",
   );
 }
 

@@ -23,9 +23,10 @@ export const dynamic = "force-dynamic";
  *
  * The number comes in and nothing goes back out with it. The answer is
  * `{ balance }` and nothing else -- no barcode echo, not even the last
- * four (the browser typed the number and already knows it) -- and the
- * call log strikes the barcode out of the recorded Mindbody path
- * (src/lib/calllog.ts). Nothing is cached: /api/checkout re-reads the
+ * four (the browser typed the number and already knows it). The dev call
+ * log does show the barcode in the Mindbody path it recorded, since T109
+ * (src/lib/calllog.ts); that buffer is memory only and behind
+ * POS_DEVTOOLS. Nothing is cached: /api/checkout re-reads the
  * balance server-side at charge time and never trusts this answer.
  */
 export async function POST(request: Request) {
