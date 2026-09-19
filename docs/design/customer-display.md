@@ -355,13 +355,26 @@ sha256, signature sha256, signature png, agreed at, sale outcome), for
 the same reason as the waiver receipt: Mindbody stores that a contract
 was bought, not which wording was signed.
 
-**Whether a signature is required at all** stays as T30 recorded it: it
-is optional in the spec, the counter does not force a pad between a
-teacher and a queue, and a membership can still be sold without one from
-the teacher's iPad. The display makes it cheap to collect, so the default
-becomes "offer it when a display is connected". One `Test: true` probe
-with a real PNG confirms Mindbody accepts the field before it ships;
-B-numbered.
+**A signature is required, with the teacher override** (D5, Pete:
+"required but with override option"). This supersedes T30's "optional"
+posture for the counter. When a display is paired, "Buy" on a contract
+presents Scene 4 first, and `/api/purchase-contract` refuses the
+live purchase (409, plain sentence) unless the request carries a fresh,
+unconsumed contract signature for THIS contract and client, or the same
+PIN token Scene 2's override issues. The override sits beside "Waiting
+for the customer to sign" as "Sell without a signature", takes the
+signed-in teacher's own PIN, and is filed on the client the same way:
+a Notes line ("Membership <name> sold by <teacher> without a customer
+signature") and the staff id in the log line, so the contract receipt
+row records `signature: none, overridden_by: <staff id>`. The rule is
+`contract_requires_signature` in `app_settings`, default on, admin-edited
+beside `customer_confirms_sale` and reported by `/api/config`, so the
+two customer-screen rules read and behave alike. With no display paired
+at all the rule cannot be met, so the purchase asks for the PIN every
+time and says why, which is deliberate: a studio that wants signatures
+should notice when the screen that collects them is gone. One `Test:
+true` probe with a real PNG confirms Mindbody accepts the field before
+it ships (D-B2).
 
 ---
 
@@ -375,8 +388,8 @@ Mindbody holds):
 | `displays` | id, name, paired_at, last_seen_at | nothing about who used it |
 | `display_requests` | id, display_id, kind, payload, status, result, requesting staff id, timestamps | consumed results past 30 minutes (deleted) |
 | `waiver_receipts` (+2 columns) | signature sha256 and PNG beside the existing text hash | any client detail beyond the id |
-| `contract_receipts` | client id, contract id, terms sha256, signature sha256 and PNG, agreed at, outcome | the contract itself (Mindbody's) |
-| `app_settings` (+1 key) | `customer_confirms_sale` | |
+| `contract_receipts` | client id, contract id, terms sha256, signature sha256 and PNG (or none plus the overriding staff id), agreed at, outcome | the contract itself (Mindbody's) |
+| `app_settings` (+2 keys) | `customer_confirms_sale`, `contract_requires_signature` | |
 
 `display_requests.payload` carries names and ticket lines for up to 30
 minutes. That is the same class of data `calllog.ts` already holds in
@@ -433,4 +446,4 @@ order Pete listed them. Each is one PLAN.md item with its own done-when.
 | D2 | Signature in our database as well as Mindbody's documents? | item 3 | **Answered 2026-09-19: both.** Mindbody stores a contract signature natively and a waiver signature only as the document we upload. Folded into Scene 1. |
 | D3 | Ticket live as it is built, or only at Charge? | item 2 | **Answered 2026-09-19: live.** |
 | D4 | Registration fields? | item 5 | **Answered 2026-09-19: four fields plus email and text opt-in, both ticked by default.** Text flags depend on probe D-B3; folded into Scene 3. |
-| D5 | When a display is connected and a membership is sold, should the sale REFUSE to go through until the customer has signed on the display ("required"), or should the teacher still be able to complete it without a signature, as today, with the display signature as an extra step they can skip ("offered")? | item 6 | Offered; the T30 posture stands, and a membership can still be sold when the customer screen is down. |
+| D5 | Contract signature on the display: required or offered? | item 6 | **Answered 2026-09-19: required, with the teacher's PIN override.** Folded into Scene 4 as `contract_requires_signature`. |
