@@ -4087,11 +4087,69 @@ button.sale-for:disabled {
   overflow: hidden;
 }
 
+/* T107, Pete: "Make it so "Gift Card" is automatically put on the second
+ * line of the button's text", then "change it so there is a gift icon on
+ * that second line where 'Gift Card' would be. So, essentially, replace
+ * 'Gift Card' with the gift icon." A name ending in those two words is
+ * drawn as a block lead with the glyph on the line below, so the break is
+ * always in the same place rather than wherever the box happens to run
+ * out, and the words the whole shelf shares are not printed on every
+ * cell.
+ *
+ * The lead takes ONE line and ellipsizes there instead of wrapping,
+ * which is what keeps the name box two lines tall: T104 measured the
+ * cell's height, its 44px foot and the stepper's corner against each
+ * other, and a third line would move all three. The whole name is on the
+ * button's title and its aria-label, as it is for any clamped name. No
+ * clamp is needed here (each part is one line by construction), so this
+ * block is plain `block` rather than the -webkit-box above it. */
+.shelf-gift-split {
+  display: block;
+  /* Two lines, never three: the lead is one line and the glyph is one
+     line, and this caps anything that tried to be more. */
+  max-height: calc(2 * 1.2em);
+  overflow: hidden;
+}
+
+.shelf-gift-lead {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The glyph stands on the name's own second line, so it is exactly one
+ * line tall and no colour of its own: the shared Icon draws in
+ * currentColor, which is the name's ink in both palettes and the accent
+ * while the cell is under a finger. */
+.shelf-gift-mark {
+  display: block;
+  height: 1.2em;
+}
+
+.shelf-gift-mark svg {
+  display: block;
+  width: 1.2em;
+  height: 1.2em;
+}
+
 /* Room for the star so a long name never runs under it. Only the name
  * gives way: the price row sits below the star's 44px and the count pill
  * keeps the card's own corner (T39.3). */
 .shelf-cell .shelf-name {
   padding-right: 34px;
+}
+
+/* T107: a gift card cell has no STAR (the shared favorites validator
+ * admits Product, Service and Package only, T95), so the 34px the rule
+ * above reserves for one is 34px of the 140px line the narrowest cell
+ * leaves, spent on nothing. The lead gets it back (140 measured, 174
+ * after), which is what lets a real studio name ("1 Week Unlimited") fit
+ * the one line the glyph leaves it on that cell. It has to come AFTER the rule it undoes: the two selectors carry
+ * the same specificity, so order is the only thing deciding it. If a gift
+ * card cell ever gains a star, this rule goes with it. */
+.shelf-cell .shelf-gift-name {
+  padding-right: 0;
 }
 
 /* The star: quiet at rest, filled with the gold token when starred
@@ -4968,78 +5026,6 @@ button.sale-for:disabled {
   cursor: default;
 }
 
-/* T101, Pete: "The gift card section was supposed to have a list of
- * items but instead it has dollar amounts as the button labels. List the
- * items names and the dollar amount for each one." Each cell carries the
- * product's NAME over its amount, on the .pad-chip surface at the same
- * 64px. A name can be long, so it wraps to two lines and then ellipsizes,
- * with the whole of it on the title; it never overflows the cell and the
- * cell never grows. */
-.gift-card-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-/* Inside the keypad state the cells share the entry column, so they are
- * one per row and the list scrolls rather than stretching the box: one
- * size whatever the site sells. */
-.gift-card-list-pad {
-  grid-template-columns: minmax(0, 1fr);
-  max-height: 176px;
-  overflow-y: auto;
-}
-
-.gift-card-chip {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 2px;
-  min-width: 0;
-  min-height: 64px;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  background: var(--surface);
-  color: var(--ink);
-  text-align: left;
-}
-
-.gift-card-chip:active:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* T96 review: lit when the typed figure is THIS product's sale. */
-.gift-card-chip.on {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-
-.gift-card-name {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  max-width: 100%;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.gift-card-amt {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 16px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
-
 /* T101: the quantity pad. The line it is about, under the figure, and
  * the zero key filling the row the "00" key does not belong on: a
  * quantity is counted in whole units. */
@@ -5209,9 +5195,13 @@ button.sale-for:disabled {
   font-weight: 600;
 }
 
-/* T96: the line now has more to say (a card the pad priced itself, or one
- * of the two limits refused in words), and the box must not resize as it
- * changes: two lines of room, always, whichever sentence is in it. */
+/* T96: the line has a lot to say (a card the pad priced itself, or one of
+ * the two limits refused in words), and the box must not resize as it
+ * changes: two lines of room, always, whichever sentence is in it.
+ * T107 made it the only sentence in the pad, so the reserve matters more,
+ * not less: with the chips gone nothing else holds the left column open.
+ * The .gift-card-* rules that drew those chips are deleted; the gift card
+ * CELLS in the grid are .shelf-* and never used them. */
 .pad-change.gift-note {
   min-height: 45px;
 }

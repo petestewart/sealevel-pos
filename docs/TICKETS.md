@@ -14757,6 +14757,272 @@ clean.
   first tap is the one thing only Pete can answer.
 
 
+## T107. The custom pad is for custom amounts; a gift card cell breaks at the glyph (Pete, 2026-09-19)
+
+Pete, with a screenshot of the pad:
+
+> "gift card presets after i press Custom look awful. why are they even
+> there? the custom modal is for custom amounts. not preset amounts.
+> remove them."
+
+Then, on the cells beside it:
+
+> "I will rename the items, but let's improve the display of this. Make it
+> so "Gift Card" is automatically put on the second line of the button's
+> text (if it already is on the second line, then leave it where it is)."
+
+and, a moment later:
+
+> "change it so there is a gift icon on that second line where 'Gift Card'
+> would be. So, essentially, replace 'Gift Card' with the gift icon."
+
+and:
+
+> "since we are doing that, make sure the Custom amount one has the gift
+> icon as well. and change 'any amount, on the pad' to 'Any amount'"
+
+### 1. The chips are gone
+
+They were right in T95, when this modal was the ONLY way to sell a gift
+card: the pad could not resolve an arbitrary figure then, so the site's
+fixed products had to be tappable somewhere, and the chips were that
+somewhere. T101 gave them the studio's names. T104 then put one CELL per
+product in the grid, which made the chips a second, worse copy of the
+shelf squeezed into a keypad dialog: the same products, the same sale, in
+a 176px scrolling column where a 51 character studio name wraps to two
+lines and clips. T104 recorded leaving them as "the price of leaving
+T95/T96's pad unchanged". Pete read the price and declined it.
+
+What is left is the T82 pad idiom and nothing else: the kicker, the
+entered figure, twelve keys, ONE effect line, Done and Cancel. Measured
+760x306 in every state, the same size the box has been since T95.
+
+**The resolution rule did not move**, and that is the point of this
+ticket rather than a footnote. `giftTypedPreset` / `giftPresetMatch` still
+send a typed figure that equals a fixed product's value through THAT
+product while its price IS its value (T96's review: a typed figure has to
+be the figure charged, so a $50.00 card costing $45.00 gets the editable
+product instead). That is money and reporting: the studio configured a
+product for that amount and Mindbody should record that product as sold.
+It simply has no lit chip to show for it any more.
+
+Which makes **the effect line the only thing on screen that says what Done
+will do**, so every one of its sentences was re-read:
+
+- nothing typed, with an editable product: "Type any amount on the pad."
+  (it used to say "Tap an amount, or ..." and there is nothing to tap);
+- a figure that resolves: "A $50.00 gift card. Done puts it on the
+  ticket.";
+- the two-figure case, which only a site with no editable product can
+  reach: "A $60.00 gift card, $55.00 to buy. Done puts it on the ticket.";
+- either limit: "The smallest gift card this app sells is $1.00." /
+  "The largest gift card this app sells is $1,000.00.", in `--stop`, Done
+  off;
+- no editable product and a figure no product carries: "Mindbody sells
+  gift cards in set amounts here: $25.00, $50.00, $60.00."
+
+**That last line was kept, deliberately, and it is now said at an empty
+entry too.** The brief asked whether removing the chips left it without
+context. It did the opposite: it made it the only context there is. A site
+with no editable product has no Custom amount cell (T104), so the pad is
+reachable there ONLY through T100's offer of a refused pass, which arrives
+carrying a figure the studio probably has no product for. With the chips
+gone, nothing else on that screen says which figures exist, and the cells
+that would say so are behind the modal. So the amounts stay, in words.
+
+### 2. A gift card cell breaks at the glyph
+
+The studio is renaming its cards in Mindbody so most will end in "Gift
+Card". Those names are Mindbody's own `Description`, read live, and today
+they wrap wherever the box happens to run out, so "1 Week Unlimited Gift /
+Card" and "1 month Unlimited Yoga / Gift Card" break in different places
+on cells sitting next to each other.
+
+A name that ENDS with those two words (case-insensitive, extra spaces
+tolerated) is now split: the LEAD takes the first line and the second line
+carries the app's own `GiftCardIcon` in place of the words. Every cell
+breaks in the same place, and the two words the whole shelf shares are not
+printed seven times.
+
+- **The lead takes ONE line and ellipsizes**, rather than wrapping to two
+  with the glyph on a third. T104 measured the cell's height, its 44px
+  foot and the stepper's corner against each other; a third line moves all
+  three and the grid's rhythm with them. Measured: a row of split names is
+  123px, exactly what a row whose longest name already wrapped to two
+  lines was before this ticket.
+- **The lead got the star's 34px back.** `.shelf-cell .shelf-name` reserves
+  34px for the favourite star, and a gift card cell has no star (the
+  shared favorites validator admits Product, Service and Package only,
+  T95), so that was 34px of the 140px line the narrowest landscape cell
+  leaves, spent on nothing. With it back that cell gives the lead 174px
+  (both measured), which is what lets a real name fit the line the glyph
+  leaves it. If a gift card cell ever gains a
+  star, that rule goes with it.
+- **Nothing the glyph replaces is lost.** The cell's `aria-label` and its
+  `title` still carry the WHOLE product name as one string ("Add a $80.00
+  gift card, New Student Intro 2 Weeks (new students only) Gift Card"),
+  the glyph is `aria-hidden` (the shared `Icon` already is), and the
+  stepper's spoken labels are unchanged. A teacher on a screen reader
+  hears exactly what they heard before.
+- **A name that does not end that way is untouched**, with no glyph: "5
+  Class Pack" renders as it did. So does a product called only "Gift
+  Card": the pattern wants a lead, and a glyph with nothing above it names
+  nothing.
+- **The Custom amount cell joins the family**: the same glyph in the same
+  place at the same size, and "Any amount" in place of "any amount, on the
+  pad". Its `aria-label` still says what it does in words ("Custom amount
+  gift card, type the amount on the number pad"), it still opens the pad,
+  it still has no stepper, and it is still drawn only where the site has
+  an editable product.
+
+### 3. The ticket row's sub-line trims the words
+
+Proposed by the coordinator, put to Pete, and approved: "Ah I didn't
+understand you meant the ticket line. In that case I agree with your
+choice. I was tralking only about the button. GO aheard and do the gift
+icon on the button and do your choice on the ticket".
+
+Since T104 the row's TITLE is "Gift card" with the product's name under
+it, so a product called "Single Class Gift Card" read "Gift card / Single
+Class Gift Card": Pete's own complaint ("so it looks like 'Gift card $123
+$123'. this is redundant") in words instead of figures. The trailing two
+words come off that line, so it reads "Gift card / Single Class". No glyph
+there: the row's title already says it in words.
+
+**Display only.** The first attempt trimmed `GiftCardItem.subName` itself
+and the driver caught what that cost: `lineText` builds the row's own
+`title`, its spoken labels, the quantity pad's line and the price
+recheck's sentences from that field, and all of them lost the words too
+("Gift card $20.00, Single Class"). The trim lives in `lineSubName`, which
+is the rendered line and nothing else; `subName` is still the whole name,
+the sub-line's own `title` attribute carries the whole name, and every
+sentence and label is byte-for-byte what T104 left. A card worth more than
+it costs keeps its value clause: "Two Month Unlimited, a $110.00 card".
+
+### Build notes
+
+- `src/app/SaleScreen.tsx`: the chip list deleted from the gift card pad;
+  `giftNote`'s empty-entry sentences reworded; `giftCardNameLead`;
+  `giftProductCell` and `giftCustomCell` drawing the split name and the
+  glyph; `lineSubName`'s display-only trim and the sub-line's own title.
+  `giftPresets`, `giftTypedPreset`, `giftPresetMatch`, `giftResolved` and
+  `giftAmountList` all stay: the first still builds the CELLS and the rest
+  are the resolution rule and its wording.
+- `src/app/globals.css`: `.gift-card-list`, `.gift-card-list-pad`,
+  `.gift-card-chip` (with `:active` and `.on`), `.gift-card-name` and
+  `.gift-card-amt` deleted, because the chips were their only users and
+  T104's cells are `.shelf-*`; `.shelf-gift-split`, `.shelf-gift-lead`,
+  `.shelf-gift-mark` and the padding reclaim added. No colour moved: the
+  glyph draws in `currentColor`, which is the name's ink in both palettes
+  and the accent under a finger, so both palettes are covered by
+  construction. Radius 0, no hex, no em dash.
+- **Nothing server-side changed at all.** No route, no lib, no payload,
+  no money path.
+
+Deliberately not done:
+
+- **The two words are not forced to a house capitalisation.** A name
+  ending "gift card" splits the same way and the lead keeps whatever the
+  studio wrote; the glyph replaces the tail, so its case never shows.
+- **No glyph on the ticket row or the pay screen's rows.** The row already
+  says "Gift card" in words and that is the string a teacher reads down a
+  ticket of three.
+- **No star on a gift card cell** (T95's reason, unchanged), which is what
+  makes the 34px reclaim safe.
+
+### Verified by the builder
+
+`npm run typecheck` and `npm run build` clean. Rebuilt before every
+browser run, and each scenario got its OWN `next start`, because the gift
+card list is cached two minutes per process and T105's unnamed-sale count
+is process state.
+
+Harness in `scratchpad/t107`: the T104 mock on **:4107** with one product
+added, id 2005, "Friends and family card", a $60.00 card priced $55.00,
+which is the case T96's review settled and the default list had no example
+of. Apps on **:3107** (no database), **:3108** (a site with no editable
+product) and **:3109** (a scratch Postgres on :5437 for the hide list).
+
+- `ui.mjs`, light and dark at 1194x834 and 834x1194, screenshots looked
+  at: the pad carries NO product list in any state (a query for
+  `.gift-card-list`, `.gift-card-list-pad`, `.modal-gift-list`,
+  `.gift-card-chip`, `.pad-chips` and `.pad-chip` returns zero at every
+  figure typed), and is exactly a kicker, a figure, one effect line,
+  twelve keys, Done and Cancel: 14 buttons, every one at least 44px, the
+  box 760x306 in all five states. Every sentence above, word for word.
+  Escape adds nothing. Then, checked at the WIRE rather than on the
+  screen: a typed $50.00 sells through fixed product **2002** (one
+  rehearsal, one charge, PaymentInfo $50.00), a typed $60.00 (product
+  2005's value, but its price is $55.00) goes to the EDITABLE product
+  **2000** at $60.00, and tapping 2005's own CELL sells **2005** at
+  $55.00 with the row reading "Friends and family card, a $60.00 card".
+  The grid is untouched: six cells, cheapest first, Custom last.
+- `names.mjs`, same four combinations: the split, the glyph on the second
+  line at the same box on every cell, the glyph decorative, a long lead
+  ellipsized with the whole name on the title and the label, "5 Class
+  Pack" and a card called only "Gift Card" untouched with no glyph, the
+  Custom cell's glyph identical and its "Any amount", no cell over two
+  lines, nothing overflowing, every cell in a row the same height, a split
+  row no taller than a two-line row already was, the stepper still level
+  with the price on a split cell and the glyph not moving when the line
+  lands, and the ticket row reading "Gift card / Single Class" with the
+  whole name on both titles and the stepper's label.
+- `noedit.mjs` on :3108, all four combinations: a site with NO editable
+  product has no Custom cell, so T100's offer is the only way in; it still
+  opens the pad on $49.00; the pad names the studio's amounts at that
+  figure and at an empty entry; $50.00 still resolves; $60.00 gives the
+  two-figure sentence and Done rings up product 2005 at $55.00; one size
+  in every state.
+- `route.mjs` past the browser, on :3107 and again on :3109 with the hide
+  list: the two resolutions at the wire; $0.99, $0, -$5, $1,000.01 and
+  half a cent each refused in words with NOTHING sent; an amount on a
+  fixed product and no amount on the editable one refused with nothing
+  sent; a stale product id refused; a gift card id in a CART line refused
+  before any Mindbody call (T103); a rehearsed `Value` that disagrees and
+  an answer carrying neither figure each refusing with only the rehearsal
+  ever sent; and, with one `app_settings` row hiding `GiftCard:2002`, that
+  card gone from `/api/gift-cards` and refused past the browser with "That
+  gift card is turned off at this counter" and zero `purchasegiftcard`
+  calls, while a visible card still sells.
+- **T102's route driver and T103's two route drivers, unchanged**, each on
+  its own fresh `next start` of this branch (T102 on :3210/:4610, T103 on
+  :3211/:4611): all green. The money path did not move.
+- T104's own `ui1.mjs`, `ui4.mjs` and `ui5.mjs` were re-run unchanged as
+  the regression test for the cells. See below for the two assertions in
+  them that this ticket deliberately invalidates.
+
+### Not verified
+
+- **Nothing was run against live Mindbody**, and nothing needed to be: no
+  server code changed. The studio's real card names have still never been
+  seen in a cell, so the split was exercised on Pete-shaped names in the
+  mock rather than his own.
+- **Two of T104's `ui1.mjs` assertions now fail by design**, and they are
+  the only T107 failures anywhere. "cheapest first, custom last" reads the
+  Custom cell's price, which Pete changed to "Any amount"; and "a typed
+  preset still lights its product" waits for `.gift-card-chip.on`, which
+  is the chip this ticket removed. Everything before them in that driver
+  passes on this branch: the cells, the names, the stepper inside the box
+  2px/15px level with the price, the count badge gone, the quantity pad,
+  the minus to the remove, the custom cell opening the PAD and reading the
+  typed figure, and the ticket row. Those two lines are stale, not a
+  regression.
+- **T104's `ui4.mjs` fails on something this ticket did not touch**: it
+  waits for a discount chip called "Whole sale", which **T106** renamed to
+  "Entire sale" before this branch was cut. Everything in it that T107 is
+  near passes: T100's offer on a refused pass still opens the pad on
+  $49.00 and rings up a custom card with Mindbody's reason still on
+  screen; a $60.00 card priced $55.00 names both figures on the cell and
+  reads "Friends and family card, a $60.00 card" on the ticket; the
+  discount dialog names the card once with no doubled figure. `ui5.mjs`
+  passes whole.
+- **The two-minute product cache still applies to the cells and to the
+  pad's resolution**, as it did before: a product renamed or repriced in
+  Mindbody keeps its old cell for up to two minutes. Every purchase is
+  still rehearsed with `Test: true` and both figures asserted, which is
+  what catches a drift that matters.
+
+
 ## T108. Account credit buys a gift card, up to the balance (Pete, 2026-09-19)
 
 Pete:
