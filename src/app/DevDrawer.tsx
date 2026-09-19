@@ -456,6 +456,7 @@ function SettingsPanel({
           onConfigChanged();
         }}
       />
+      <DisplayPanel open={open} />
       <p className="muted">
         The rest is stored in this browser. Applies immediately, no restart.
         The server's own dry run and the write guard stay in the server
@@ -512,6 +513,208 @@ function SettingsPanel({
       <ThemeSetting />
       <TeacherPanel />
     </div>
+  );
+}
+
+/* --- Customer display (T113) ------------------------------------------
+ *
+ * Pair and unpair the second iPad. Anyone who can open the drawer may use
+ * it, and it is gated by the device session and a signed-in teacher and
+ * nothing else: pairing decides which SCREEN a waiver appears on, never
+ * whether a write happens or which studio it lands in, and "a teacher
+ * setting up the counter is the point" (docs/design/customer-display.md).
+ *
+ * The code entry is a plain numeric field, which the "no amount in a text
+ * field" rule does not touch: it is not an amount, it is six digits read
+ * off a screen once, and the OS keyboard is the right tool for that.
+ */
+
+interface DisplayInfo {
+  paired: boolean;
+  name: string | null;
+  pairedAt: string | null;
+  lastSeenAt: string | null;
+  connected: boolean;
+  busy: boolean;
+  storage: string;
+  durable: boolean;
+}
+
+/** "12 seconds ago", for the last heartbeat. Plain and approximate: the
+ *  question this answers is only "is that screen awake". */
+function ago(iso: string | null): string {
+  if (iso === null) return "never";
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return "never";
+  const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins} min ago`;
+  return `${Math.round(mins / 60)}h ago`;
+}
+
+function DisplayPanel({ open }: { open: boolean }) {
+  const [info, setInfo] = useState<DisplayInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/display");
+      if (!res.ok) return;
+      setInfo((await res.json()) as DisplayInfo);
+    } catch {
+      /* The block stays quiet; nothing else depends on it. */
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    void load();
+    /* While the drawer is open, often enough that "connected" is true
+     * rather than remembered. */
+    const timer = setInterval(() => void load(), 10_000);
+    return () => clearInterval(timer);
+  }, [load, open]);
+
+  const pair = async () => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/display/pair", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code: code.trim() }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || body?.ok !== true) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setCode("");
+      setDone("Paired. The customer screen goes to its welcome screen.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unpair = async () => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/display/unpair", { method: "POST" });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setAsking(false);
+      setDone("Unpaired. That iPad shows a new pairing code.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!loaded) return null;
+
+  return (
+    <>
+      <div className="dev-label">customer display</div>
+      <p className="muted">
+        {info === null
+          ? "The display cannot be read here."
+          : info.paired
+            ? `Paired${info.name ? `: ${info.name}` : ""}. ` +
+              (info.connected
+                ? `Connected, last seen ${ago(info.lastSeenAt)}.`
+                : `Not connected, last seen ${ago(info.lastSeenAt)}.`) +
+              (info.durable
+                ? ""
+                : " No database, so a server restart needs it paired again.")
+            : "Not paired. Open /display on the customer iPad and enter the six digits it shows."}
+      </p>
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      <div className="dev-target-buttons">
+        <input
+          className="dev-display-code"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          autoComplete="off"
+          maxLength={7}
+          placeholder="000000"
+          aria-label="Pairing code from the customer display"
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ""))}
+        />
+        <button
+          type="button"
+          className="dev-target-btn dev-target-go"
+          disabled={busy || code.trim().length !== 6}
+          onClick={() => void pair()}
+        >
+          {busy ? "Pairing" : "Pair"}
+        </button>
+      </div>
+      {info?.paired ? (
+        asking ? (
+          <div className="dev-target-ask">
+            <p className="dev-target-question">
+              Unpair the customer display? It shows a new code and anything on
+              it goes away.
+            </p>
+            <div className="dev-target-buttons">
+              <button
+                type="button"
+                className="dev-target-btn"
+                disabled={busy}
+                onClick={() => setAsking(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dev-target-btn dev-target-go stop"
+                disabled={busy}
+                onClick={() => void unpair()}
+              >
+                Yes, unpair
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="dev-target-buttons">
+            <button
+              type="button"
+              className="dev-target-btn"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setDone(null);
+                setAsking(true);
+              }}
+            >
+              Unpair
+            </button>
+          </div>
+        )
+      ) : null}
+    </>
   );
 }
 

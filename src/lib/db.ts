@@ -384,6 +384,49 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         DROP CONSTRAINT IF EXISTS teacher_pins_pin_lookup_key;
     `,
   },
+  {
+    /* T113: the customer-facing display (docs/design/customer-display.md).
+     * Both tables are charter-clean: they hold what Mindbody has no home
+     * for and never a copy of what it does. `displays` is the pairing of
+     * a studio-owned iPad with this counter, which exists nowhere else;
+     * `display_requests` is the scene a teacher put on it and the result
+     * the student handed back, which lives only long enough for the
+     * teacher's iPad to finalise it (30 minutes) and is then expired. No
+     * client, class, pass, price or visit is stored here: a request's
+     * payload carries a first name and what the student may already see
+     * on the screen in front of them, and nothing is ever read back out
+     * of it as a fact about Mindbody.
+     *
+     * `initiator` is "teacher" or "display" (the self-serve sign-up,
+     * built later); `status` is pending / completed / refused /
+     * cancelled / expired. `consumed_at` is the one-finalisation handle:
+     * a result may be spent once, by the teacher's iPad, and never
+     * again. Nullable and additive throughout, and a deployed database
+     * at 11 runs only this block. */
+    version: 12,
+    sql: `
+      CREATE TABLE IF NOT EXISTS displays (
+        id            text PRIMARY KEY,
+        name          text,
+        paired_at     timestamptz NOT NULL DEFAULT now(),
+        last_seen_at  timestamptz
+      );
+      CREATE TABLE IF NOT EXISTS display_requests (
+        id                      text PRIMARY KEY,
+        display_id              text NOT NULL,
+        kind                    text NOT NULL,
+        initiator               text NOT NULL,
+        payload                 jsonb,
+        status                  text NOT NULL,
+        result                  jsonb,
+        requested_by_staff_id   text,
+        created_at              timestamptz NOT NULL DEFAULT now(),
+        completed_at            timestamptz,
+        consumed_at             timestamptz,
+        expires_at              timestamptz NOT NULL
+      );
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -1185,6 +1228,289 @@ export async function setSetting(
     return true;
   } catch (err) {
     logDbError("settings-write", err);
+    return false;
+  }
+}
+
+/* --- The customer display (T113) ------------------------------------- */
+
+export interface DisplayRow {
+  id: string;
+  name: string | null;
+  pairedAt: Date;
+  lastSeenAt: Date | null;
+}
+
+/** A display request as a row: the scene a teacher put up and the result
+ *  the student handed back. `payload` and `result` are jsonb, validated
+ *  on the way IN (a plain JSON object, size-capped, in src/lib/display.ts)
+ *  and trusted on the way out, the bundles idiom. */
+export interface DisplayRequestRow {
+  id: string;
+  displayId: string;
+  kind: string;
+  initiator: string;
+  payload: unknown;
+  status: string;
+  result: unknown;
+  requestedByStaffId: string | null;
+  createdAt: Date;
+  completedAt: Date | null;
+  consumedAt: Date | null;
+  expiresAt: Date;
+}
+
+/** Records a pairing. Upsert on the id so a re-pair of the same iPad is
+ *  one row. False is "no database", never a failure of the pairing: the
+ *  hub holds it in memory either way and a restart then costs a re-pair,
+ *  which the display says on its own screen. */
+export async function upsertDisplay(row: {
+  id: string;
+  name: string | null;
+  pairedAt: Date;
+}): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `INSERT INTO displays (id, name, paired_at, last_seen_at)
+       VALUES ($1, $2, $3, $3)
+       ON CONFLICT (id) DO UPDATE
+         SET name = excluded.name, paired_at = excluded.paired_at`,
+      [row.id, row.name, row.pairedAt],
+    );
+    return true;
+  } catch (err) {
+    logDbError("display-upsert", err);
+    return false;
+  }
+}
+
+/** The newest paired display, which IS the display (one counter). Null
+ *  for none and for a store that did not answer alike: both mean "this
+ *  process knows of no paired display but what is in memory". */
+export async function latestDisplay(): Promise<DisplayRow | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT id, name, paired_at, last_seen_at
+       FROM displays ORDER BY paired_at DESC LIMIT 1`,
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      id: String(r.id),
+      name: r.name === null ? null : String(r.name),
+      pairedAt: r.paired_at as Date,
+      lastSeenAt: (r.last_seen_at as Date | null) ?? null,
+    };
+  } catch (err) {
+    logDbError("display-read", err);
+    return null;
+  }
+}
+
+/** Stamps the heartbeat. Throttled by the caller, since a heartbeat is
+ *  every 15s and a row write is not free. */
+export async function touchDisplay(id: string, at: Date): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(`UPDATE displays SET last_seen_at = $2 WHERE id = $1`, [
+      id,
+      at,
+    ]);
+    return true;
+  } catch (err) {
+    logDbError("display-touch", err);
+    return false;
+  }
+}
+
+/** Unpair: the row goes, and with it any request that named it. A
+ *  display nobody paired holds nothing anybody needs back. */
+export async function deleteDisplay(id: string): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(`DELETE FROM display_requests WHERE display_id = $1`, [id]);
+    await p.query(`DELETE FROM displays WHERE id = $1`, [id]);
+    return true;
+  } catch (err) {
+    logDbError("display-delete", err);
+    return false;
+  }
+}
+
+export async function insertDisplayRequest(
+  row: DisplayRequestRow,
+): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `INSERT INTO display_requests
+         (id, display_id, kind, initiator, payload, status, result,
+          requested_by_staff_id, created_at, completed_at, consumed_at,
+          expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        row.id,
+        row.displayId,
+        row.kind,
+        row.initiator,
+        row.payload === null ? null : JSON.stringify(row.payload),
+        row.status,
+        row.result === null ? null : JSON.stringify(row.result),
+        row.requestedByStaffId,
+        row.createdAt,
+        row.completedAt,
+        row.consumedAt,
+        row.expiresAt,
+      ],
+    );
+    return true;
+  } catch (err) {
+    logDbError("display-request-insert", err);
+    return false;
+  }
+}
+
+/** The outcome of a request: its status, its result, and when it
+ *  finished. Separate from the insert so the hot path (present) writes
+ *  once and the answer writes once. */
+export async function updateDisplayRequest(update: {
+  id: string;
+  status: string;
+  result: unknown;
+  completedAt: Date | null;
+}): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `UPDATE display_requests
+         SET status = $2, result = $3, completed_at = $4
+       WHERE id = $1`,
+      [
+        update.id,
+        update.status,
+        update.result === null ? null : JSON.stringify(update.result),
+        update.completedAt,
+      ],
+    );
+    return true;
+  } catch (err) {
+    logDbError("display-request-update", err);
+    return false;
+  }
+}
+
+/**
+ * T114: a live ticket's payload is REPLACED in place as the cart changes,
+ * so the row follows the scene rather than growing one row per keystroke.
+ * Charter-clean for the same reason the insert is: the payload is what a
+ * student can already read on the screen in front of them, and nothing
+ * Mindbody holds.
+ */
+export async function updateDisplayRequestPayload(
+  id: string,
+  payload: unknown,
+  expiresAt: Date,
+): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `UPDATE display_requests
+         SET payload = $2, expires_at = $3
+       WHERE id = $1 AND status = 'pending'`,
+      [id, JSON.stringify(payload), expiresAt],
+    );
+    return true;
+  } catch (err) {
+    logDbError("display-request-payload", err);
+    return false;
+  }
+}
+
+/** Spends a result: the one finalisation. False when no row moved (it
+ *  was consumed already, or there is no database), which the caller
+ *  reads as "not mine to spend" only alongside its own memory. */
+export async function consumeDisplayRequest(id: string): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    const res = await p.query(
+      `UPDATE display_requests SET consumed_at = now()
+       WHERE id = $1 AND consumed_at IS NULL`,
+      [id],
+    );
+    return (res.rowCount ?? 0) > 0;
+  } catch (err) {
+    logDbError("display-request-consume", err);
+    return false;
+  }
+}
+
+/** The display's live request after a restart: the newest one still
+ *  inside its 30 minutes that nobody has finalised. */
+export async function findLiveDisplayRequest(
+  displayId: string,
+  now = new Date(),
+): Promise<DisplayRequestRow | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT id, display_id, kind, initiator, payload, status, result,
+              requested_by_staff_id, created_at, completed_at, consumed_at,
+              expires_at
+       FROM display_requests
+       WHERE display_id = $1 AND expires_at > $2 AND consumed_at IS NULL
+         AND status IN ('pending', 'completed', 'refused')
+       ORDER BY created_at DESC LIMIT 1`,
+      [displayId, now],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      id: String(r.id),
+      displayId: String(r.display_id),
+      kind: String(r.kind),
+      initiator: String(r.initiator),
+      payload: r.payload ?? null,
+      status: String(r.status),
+      result: r.result ?? null,
+      requestedByStaffId:
+        r.requested_by_staff_id === null
+          ? null
+          : String(r.requested_by_staff_id),
+      createdAt: r.created_at as Date,
+      completedAt: (r.completed_at as Date | null) ?? null,
+      consumedAt: (r.consumed_at as Date | null) ?? null,
+      expiresAt: r.expires_at as Date,
+    };
+  } catch (err) {
+    logDbError("display-request-read", err);
+    return null;
+  }
+}
+
+/** Expired rows go, results and all: a result is a handle for one
+ *  finalisation, not a record (the design doc's rule). */
+export async function sweepDisplayRequests(
+  now = new Date(),
+): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(`DELETE FROM display_requests WHERE expires_at <= $1`, [now]);
+    return true;
+  } catch (err) {
+    logDbError("display-request-sweep", err);
     return false;
   }
 }

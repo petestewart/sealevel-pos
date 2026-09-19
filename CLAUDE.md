@@ -224,7 +224,11 @@ Under it, the write guard in words (T111: read only, a line and no
 control, because with the banner gone in the ordinary production state
 this tab is the only place an unrestricted live counter is written down),
 and "dry run on this iPad", which turns on a suppression for this browser
-only.
+only. Under those, since T113, "customer display": whether a second
+screen is paired and connected, a six-digit code field with a Pair
+button, and Unpair behind one confirm. Anybody who can open the drawer
+may use it; pairing decides which SCREEN a waiver appears on, never
+whether a write happens.
 
 Anything that decides whether a write reaches Mindbody in the LOOSER
 direction -- the server's dry run, the write guard -- is still
@@ -234,6 +238,53 @@ would defeat the point of dry run. The two T89 controls are the recorded
 exceptions, and both are safe in only one direction: the target switch is
 admin-only, audited in the log and refuses an incomplete credential set,
 and the local dry run can only make this iPad safer.
+
+## Customer display (T113, Phase 2.5 item 1)
+
+A second iPad on the counter, facing the student, at `/display`. Design:
+`docs/design/customer-display.md`; today only the plumbing exists, which
+is the idle screen, the pairing, the hub in `src/lib/display.ts`, the two
+SSE routes and present/cancel/complete/refuse. The scenes (waiver,
+ticket, sign-up, contract) are items 2 to 6 and nothing consumes a scene
+kind yet.
+
+**The display adds zero write paths to Mindbody, and must keep adding
+none.** Nothing in `src/lib/display.ts` or under `src/app/api/display/`
+imports `mindbody()`. A student's answer is a stored result on a
+`display_requests` row; the write happens afterwards from the TEACHER's
+iPad, under the teacher's token, through a write route that already
+exists, which is what keeps dry run, the write guard, T49 attribution
+and T50's refusal applying unchanged.
+
+**A live ticket is the one scene that is REPLACED in place** (T114,
+Phase 2.5 item 2). The sale screen mirrors the priced cart as it is
+built, so a second `present` of a live ticket while one is up updates it
+under the same request id: the display gets one `present` and no
+`cancel`, and the post-sale summary takes over the same way. Anything
+else holding the screen (a waiver, a sign-up, a contract, a summary
+still thanking the last student) wins, and `present` answers 409
+`reason: "busy"`, which the sale screen drops WITHOUT telling the
+teacher: the mirror is informational and resumes on the next priced
+change. The summary's few seconds are enforced by the hub, not by the
+teacher's tab, so a closed tab cannot leave one student's ticket in
+front of the next. Every figure on that screen is Mindbody's, from
+`/api/price-cart` or the checkout answer, and `readTicketPayload`
+rebuilds the payload field by field so no client, product or pricing
+option id and no card detail beyond the tender's WORD can reach a screen
+a student is holding.
+
+**The `pos_display` cookie grants exactly `/api/display/*`.** It is
+HMAC-signed like the device token (`src/lib/displayauth.ts`), carries
+only the display id, and `requireSession` never looks at it, so a
+browser holding it is 401 everywhere real. A student holds this device;
+a cookie that opens the POS must not be on it. Pairing is six
+crypto-random digits on the display's screen PLUS a secret it keeps in
+memory and never shows, so reading the code over the counter is not
+enough to take the cookie. Pairing and unpairing are behind the device
+session and a signed-in teacher and deliberately nothing else: a teacher
+setting up the counter is the point. The pairing survives a restart only
+with both `DATABASE_URL` and `POS_SESSION_SECRET`; without either the
+display says on screen that a restart needs re-pairing.
 
 ## The API spec is vendored. Use it.
 

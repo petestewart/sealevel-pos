@@ -7680,3 +7680,301 @@ textarea.reason-note-field:disabled::placeholder {
   font-weight: 600;
   color: var(--ink);
 }
+
+/* --- The customer display (T113) -------------------------------------
+ * The second iPad's own screen, and nothing else's: no bars, no rows, no
+ * drawer. Sized for a student reading it at arm's length across a
+ * counter, so everything here is well above the 16px floor and the
+ * pairing code is the largest type in the app. Tokens only, both
+ * palettes, radius 0, like everywhere else. */
+
+.display {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+  /* The mode mark sits in the bottom corner. */
+  position: relative;
+  overflow-x: hidden;
+}
+
+.display-banner {
+  margin: 0;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+  border-left: 6px solid var(--accent);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.display-middle {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+  padding: 32px 16px 64px;
+  text-align: center;
+}
+
+.display-greeting {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.display-lead {
+  margin: 0;
+  max-width: 28ch;
+  font-size: 20px;
+  color: var(--muted);
+}
+
+/* The one number a teacher reads off this screen from a metre away. */
+.display-code {
+  margin: 0;
+  padding: 16px 24px;
+  border: 2px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 64px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+}
+
+.display-note {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Sandbox or dry run, quietly, in the corner. Nothing at all on a live
+ * studio that is writing for real. */
+.display-mark {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  margin: 0;
+  padding: 6px 10px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* --- The ticket scene on the customer display (T114) ------------------
+ * Scene 2 of docs/design/customer-display.md: the live mirror of the
+ * priced cart, and the post-sale summary. Read across a counter, so the
+ * floor here is well above the app's 16px and the total is the largest
+ * thing on the screen after the greeting. Tokens only, both palettes,
+ * radius 0. */
+
+.display-scene {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 32px 16px 64px;
+  overflow-y: auto;
+}
+
+.dticket {
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.dticket-heading {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.dticket-lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 2px solid var(--rule);
+}
+
+.dticket-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 8px 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 22px;
+}
+
+.dticket-line-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.dticket-line-qty {
+  font-size: 18px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.dticket-line-price {
+  font-variant-numeric: tabular-nums;
+  min-width: 5em;
+  text-align: right;
+}
+
+.dticket-line-discount {
+  grid-column: 1 / -1;
+  font-size: 18px;
+  color: var(--ok);
+  font-variant-numeric: tabular-nums;
+}
+
+.dticket-line-empty {
+  grid-template-columns: 1fr;
+  color: var(--muted);
+  font-size: 20px;
+  font-weight: 400;
+}
+
+.dticket-totals {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dticket-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  font-size: 20px;
+  color: var(--muted);
+}
+
+.dticket-total-row dt,
+.dticket-total-row dd {
+  margin: 0;
+}
+
+.dticket-total-row dd {
+  font-variant-numeric: tabular-nums;
+}
+
+.dticket-grand {
+  padding-top: 12px;
+  border-top: 2px solid var(--rule);
+  color: var(--ink);
+  font-size: 40px;
+  font-weight: 800;
+}
+
+/* Mindbody has not priced this cart yet. The lines stand and the figure
+ * waits: a total this screen invented is a total nobody can stand
+ * behind. */
+.dticket-pending {
+  padding-top: 12px;
+  border-top: 2px solid var(--rule);
+  font-size: 24px;
+}
+
+.dticket-paid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: var(--accent-bg);
+  color: var(--ink);
+}
+
+.dticket-charged {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.dticket-receipt {
+  margin: 0;
+  font-size: 18px;
+  color: var(--muted);
+}
+
+/* --- The sale screen's "showing on the customer screen" line (T114) ---
+ * T111 had just quietened the top of the screen, so this is one muted
+ * 16px line under the ticket's heading and nothing else: a teacher needs
+ * to know the student can see the ticket, and does not need to be told
+ * about it twice. */
+
+.sale-display-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.sale-display-line .display-dot {
+  background: var(--accent);
+}
+
+/* --- The POS header's connection mark (T113) -------------------------
+ * Small on purpose: T111 took the top of the screen back, and a second
+ * screen being fine is not news. It is absent when nothing is paired,
+ * quiet when the display is connected, and amber the moment it has been
+ * silent for 45 seconds, which is the state a teacher has to know about
+ * before sending a waiver to a dead screen. */
+
+.display-mark-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.display-dot {
+  width: 10px;
+  height: 10px;
+  /* A status, not an action, so not --accent (token roles, CLAUDE.md). */
+  background: var(--ink);
+}
+
+.display-mark-row.away {
+  color: var(--warn);
+}
+
+.display-mark-row.away .display-dot {
+  background: var(--warn);
+}
+
+/* --- Customer display block, dev drawer settings tab (T113) ---------- */
+
+.dev-display-code {
+  font-size: 20px;
+  letter-spacing: 0.1em;
+  font-variant-numeric: tabular-nums;
+  padding: 12px;
+  min-height: 48px;
+  width: 8em;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 0;
+}

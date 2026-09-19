@@ -215,6 +215,15 @@ const deviceLimiter = makeLimiter();
 const verifyLimiter = makeLimiter();
 const enrollLimiter = makeLimiter();
 const signinLimiter = makeLimiter();
+/** T113: the customer display's pairing code. Its own counter, like every
+ *  other door here: a display fumbling a six-digit code must not lock a
+ *  teacher out of the iPad, and the reverse. TWO counters, one per side
+ *  (T113 review): the teacher's Pair button sits behind the device
+ *  session, while the display's own poll is reachable by any browser at
+ *  all, and one shared counter let an anonymous browser burn five bad
+ *  codes and lock the teacher's button for thirty seconds, on repeat. */
+const pairLimiter = makeLimiter();
+const displayPollLimiter = makeLimiter();
 
 /** Milliseconds of device-login lockout remaining, 0 when allowed. */
 export function lockoutRemainingMs(now = Date.now()): number {
@@ -262,6 +271,29 @@ export function claimSigninAttempt(now = Date.now()): number {
 
 export function recordSigninSuccess(): void {
   signinLimiter.success();
+}
+
+/** The display pairing's counter (T113). Six crypto-random digits live
+ *  for five minutes, and a wrong code (or a right code with the wrong
+ *  secret) gets the same five-then-30s, so guessing a code before it
+ *  expires is not a loop anybody can run. */
+export function claimPairAttempt(now = Date.now()): number {
+  return pairLimiter.claim(now);
+}
+
+export function recordPairSuccess(): void {
+  pairLimiter.success();
+}
+
+/** The display side of the same exchange (`/api/display/state`, no
+ *  session): its own five-then-30s, so a stranger's wrong codes cost the
+ *  teacher's Pair button nothing. */
+export function claimDisplayPollAttempt(now = Date.now()): number {
+  return displayPollLimiter.claim(now);
+}
+
+export function recordDisplayPollSuccess(): void {
+  displayPollLimiter.success();
 }
 
 /* --- The comp token (T48) ---------------------------------------------

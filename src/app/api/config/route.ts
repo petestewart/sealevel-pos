@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { authRequired, isAuthenticated } from "@/lib/auth";
 import { BANNER_SETTING_KEY, getSetting, storageMode } from "@/lib/db";
+import { displayState } from "@/lib/display";
 import {
   allowedWriteClientIds,
   dryRunState,
@@ -114,5 +115,15 @@ export async function GET(request: Request) {
      * Dry run and the write guard have no equivalent: they are env only,
      * always, and that is the rail T89 kept. */
     targetSource: targetSource(),
+    /* T113: whether a customer display is paired and awake. Two booleans
+     * and no id, because this is what the header's connection mark and
+     * the buttons that need a screen read; the drawer's block reads the
+     * fuller answer from /api/admin/display. Only on the authenticated
+     * answer: the lock screen's banner has no business naming the
+     * counter's second iPad. */
+    display: await (async () => {
+      const d = await displayState();
+      return { paired: d.paired, connected: d.connected };
+    })(),
   });
 }
