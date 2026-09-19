@@ -15798,3 +15798,443 @@ refuses to run otherwise.
   actually answers his complaint. If it still does not read as a gift on
   the counter iPad, the shape to try next is a wider bow rather than a
   bigger box: the box is what carries at 20px.
+
+## T112. Override a pass Mindbody's rules refused, and the two other ways forward (Pete, 2026-09-19)
+
+Pete, reading the T100 notice on the ticket:
+
+> "'New Student 2 Week Unlimited was removed from the sale: Only new
+> clients qualify for this intro series.'
+>
+> this needs to have the ability to override, like other things in the
+> app. teacher PIN and reason can be given.
+>
+> in addition to 'Sell as gift card' add an 'Override' button."
+
+Then, for the case where Mindbody will not be overridden:
+
+> "if that doesn't work then we can use the 'Returning Student 2-week
+> unlimited' item and discount it to be at the standard 2-week special
+> price behind the scenes"
+
+And, the case the refusal was hiding:
+
+> "also, there should be an option to buy a 2-week new student package
+> for another client, currently it doesn't even allow for that"
+
+### The honest problem, settled as far as it can be here
+
+That sentence is MINDBODY'S business rule, not ours, and **nobody has
+established that any token escapes it**. What was known: `priceCart` (and
+so the checkout rehearsal) runs on the SERVICE ACCOUNT by design; since
+T49 a checkout WRITE runs under the signed-in teacher's own token; and
+the 2026-09-17 probe that produced this sentence
+(`scripts/probe-restricted.ts`, pass 414 for client 100041277) only ever
+asked the service account. The refusal names the CLIENT, not a
+permission, so it may well be a rule no token escapes: the permissions
+that sound relevant (`OverrideAssignedPricing`,
+`EditSalePriceCountOnRetailScreen`,
+`ApplyCustomDiscountsOnRetailScreen`) are about PRICE, not eligibility.
+
+**The probe now asks both halves side by side, and a live run is what
+answers it.** `scripts/probe-restricted.ts` takes the teacher's own
+Mindbody login from `POS_PROBE_STAFF_USER` / `POS_PROBE_STAFF_PASS` (the
+environment, not argv, so it stays out of shell history), signs in with
+`signInAsStaff` exactly as the counter does, Test-prices the SAME cart
+under the service account and under that token, prints both answers and
+then says in words which of the four worlds this is. A fourth argument
+asks the same two questions of the SUBSTITUTE pass, because "Returning
+Student (1+ Years Away)" sounds like it carries an eligibility rule of
+its own, and if it does Pete's fallback fails for the same reason as the
+thing it rescues:
+
+    POS_PROBE_STAFF_USER=... POS_PROBE_STAFF_PASS=... \
+    MINDBODY_TARGET=prod npx tsx --env-file=.env \
+      scripts/probe-restricted.ts <clientId> 414 <staffId> 555
+
+**It has not been run.** This environment has no Mindbody credentials, so
+**the evidence question is still open on both counts**: whether a
+teacher's token is answered differently for 414, and whether 555 prices
+for a client 414 refuses. It is Pete's to run.
+
+So everything below is built to be honest in **both** worlds, and the
+button never promises an outcome: it ATTEMPTS, and reports what Mindbody
+said.
+
+### The design
+
+**Three offers on the refused-line notice, in this order:**
+
+1. **Buy it for another client.** It is the only one that sells the pass
+   that was actually asked for, at its own price, to somebody the rule
+   does not exclude, with no authorization and no substitution. It is
+   also the one Pete found missing: T90 built buying a line for another
+   client and the refusal takes the line off the ticket before a
+   recipient can be put on it, so the path existed and could not be
+   reached. The offer holds the item and opens T92's own recipient
+   search (`PENDING_PASS_KEY`); the pick puts it back as an ordinary T90
+   line, and `groupByRecipient` prices that line's cart under the
+   RECIPIENT'S client id. A recipient the rule also excludes is refused
+   exactly as the buyer was, in Mindbody's words, with the line removed.
+2. **Override.** Same pass, same person, and it costs a PIN, a reason
+   and a question Mindbody may answer no to. Drawn only with a client
+   attached, because the question it asks is about a client.
+3. **Sell it as a gift card** (T100, untouched). It sells something
+   ELSE, a bearer instrument for whoever holds it, so it is last.
+
+Each is drawn only where it can work, which is T100's own rule: no dead
+controls.
+
+**The Override dialog is T79's shape and T48's authorization**, not a
+second way of proving who is at the counter
+(`src/app/OverrideDialog.tsx`): a reason KIND from the existing stored
+list with T67's note rule (no new kind), then the teacher's own PIN to
+`/api/teacher/verify`, then "Overriding as <name>" and the tap that
+asks. The PIN is verified for a new PURPOSE, `"override"` (T94 review's
+rule: a PIN typed to discount a sale or to overdraw an account must not
+authorize this, and the reverse).
+
+**What the flag means on the server, and the whole of what it may ever
+mean**: attempt this line under the TEACHER'S token, and do not
+pre-refuse it from our own copy of the rule. It never sets a price, never
+skips a rehearsal, never skips T75's total assertion or T103's basket
+assertion, never turns a money rail off. Everything in T22-T24 holds:
+one explicit fresh tap, single flight, the server's rehearsal
+authoritative, browser numbers never charged, suppression never success,
+no auto-retry.
+
+- `POST /api/override-pass` is the ATTEMPT and nothing else: one
+  `Test: true` cart, one line, built from the LIVE catalog (the request
+  carries an id and nothing about price), run under the teacher's token
+  with T49's fallback deliberately OFF, since the service account is
+  precisely the account whose refusal put the teacher here. It sells
+  nothing and moves no money. A suppressed call (dry run, write guard)
+  is reported as suppressed, never as a yes.
+- The PIN token is **verified there and deliberately NOT SPENT**: that
+  route reaches no cart that could be charged, so a pass Mindbody
+  refuses again must not cost the teacher their one authorization. It is
+  spent once, at `/api/checkout`, beside the discount's and the
+  overdraft's, before the rehearsal.
+- `/api/price-cart` takes the same envelope so an overridden pass prices
+  on the ticket instead of dropping off it again on the next keystroke.
+- At `/api/checkout` the ONE thing an `"attempt"` override changes is
+  that the rehearsal runs under the teacher's token instead of the
+  service account (`rehearseCheckout` gained an optional actor, null and
+  absent everywhere else). The charge already ran under that token since
+  T49.
+
+**Pete's fallback, when Mindbody refuses under every token.** The refusal
+step offers the configured SUBSTITUTE, and the same PIN token authorizes
+it, because a substitution is a discount and a discount has needed
+exactly that since T48.
+
+- **The mapping is configuration** (`shelfconfig.ts` `PassSubstitute`,
+  edited in the drawer's shelf tab beside T74/T86's), not a constant:
+  the studio changes its passes. Ids only, per the T29 charter, and
+  `matchPrice` says whether to discount the substitute down to the
+  refused pass's price.
+- **Both prices come from the LIVE catalog, every time**
+  (`src/lib/substitute.ts` `resolveSubstitute`), and the discount is
+  their difference, computed server side at the pricing AND at the
+  charge. No stored price, no browser price. Either pass missing from
+  the live catalog, or either price absent, and there is NO offer: the
+  mapping is dropped loudly in the server log rather than guessed
+  around. Matching prices can only bring a price DOWN.
+- The browser names the REFUSED pass and the mode, and nothing else: not
+  the substitute, not either figure. A ticket that does not hold the
+  substitute the mapping names is refused rather than quietly
+  discounted.
+- The discount then rides T79's path exactly: `parseDiscount`'s bound,
+  `spreadDiscount`'s spread, the strict `DiscountTotal` check, the comp
+  receipt row and the `[comp]` log line.
+- **The screen is not coy.** "Behind the scenes" is the CUSTOMER's
+  experience, not the teacher's: the refusal step says, before the tap,
+  `The ticket, the receipt and Mindbody will all say "Returning Student
+  2-wk Unlimited (1+ Years Away)", at $79.00 discounted by $30.00 to
+  $49.00, not "New Student 2 Week Unlimited".` and the ticket keeps
+  saying it, with the teacher's name on it, while the line is there.
+
+**The record**, which matters more than the button. One `[override]`
+server log line always, and on a real sale for a named client the whole
+story filed on the client the way T45/T62 file a comp's reason:
+
+    Override: New Student 2 Week Unlimited sold past Mindbody's refusal
+    "Only new clients qualify for this intro series." Reason: Trade,
+    intro for a returning student. Authorized by Pete Stewart. Sale 777001.
+
+    Substitution: Mindbody refused New Student 2 Week Unlimited: "Only new
+    clients qualify for this intro series." Sold Returning Student 2-wk
+    Unlimited (1+ Years Away) instead at $49.00 ($79.00 less a $30.00
+    discount). Reason: Trade, intro for a returning student. Authorized by
+    Pete Stewart. Sale 777002.
+
+A substitution's discount files the comp RECEIPT row as any discount
+does, so the studio's discount reporting does not lose it, but not a
+second client note: the override's note already names both passes, both
+prices and the discount, and two notes for one sale is the same sale
+twice on somebody's record.
+
+**Refused outright, in words, before the token is spent**: an override on
+a ticket holding a gift card, or beside a line bought for someone else
+(one ticket then means two or three separate Mindbody calls and "which
+one was overridden" would be a guess), and a browser discount beside a
+substitution (the merge of two discounts into the one figure Mindbody's
+cart takes is arithmetic nobody should do at a counter).
+
+### Build notes
+
+New: `src/lib/override.ts` (the envelope, the record's wording, the
+refusal advice; pure, read by the screen and three routes),
+`src/lib/substitute.ts` (the live resolution),
+`src/app/OverrideDialog.tsx`, `src/app/api/override-pass/route.ts`.
+Changed: `auth.ts` (`CompPurpose` gains `"override"`),
+`/api/teacher/verify`, `/api/price-cart`, `/api/checkout`,
+`sale.ts` (`rehearseCheckout`'s optional actor), `shelfconfig.ts`,
+`DevDrawer.tsx` (the substitutions editor), `SaleScreen.tsx` (the three
+offers, the armed override, the ticket's line about it),
+`globals.css` (two rules: a height cap with a scroll on
+`.sale-note-acts`, since three offers per refused pass can be six
+controls, and the drawer's substitution row; no new colour, no hex).
+`scripts/probe-restricted.ts` gained the teacher's-token half and the
+substitute half.
+
+**Verified** against `next start` on :3112 from this worktree, the T109
+mock on :4112 (patched with `refusePrice.exceptAuth`, which models "the
+teacher's token gets through and the service account does not", and
+`refusePrice.forClients`, which makes it a rule about WHO the pass is
+for, which is what it actually is), and a scratch Postgres on :5612
+because the mapping lives in the shelf config. Every driver preflights
+that `/api/override-pass` does not 404, so a green run is this branch's
+build on this branch's port. Rebuilt before every browser run.
+
+Route driver (36 checks, all pass): T100's refusal is unchanged; no
+token, a forged token, a malformed token, a comp-purpose token and a
+Trade with no note are each refused by BOTH routes with nothing sent to
+Mindbody; in world one the attempt is accepted under the teacher's token
+with `Test: true`, the cart then prices, and the sale goes out as one
+rehearsal plus one real call, both under that token; the record is filed
+on the client; the token is one shot (a second charge is refused); in
+world two the attempt is refused with Mindbody's sentence verbatim, no
+`Test: false` call goes out at all, the advice names whose rule it is
+and the ways out, and **the PIN token is still unspent, proved by
+spending it afterwards**; with no mapping a substitution is refused; the
+mapping saves through `/api/admin/shelf`; the refusal then offers the
+substitute with both live prices and the plain sentence; `price-cart`
+and `checkout` both compute the same $30 discount; a browser discount
+beside it is refused by both; a browser sending a different price is
+refused with nothing charged; a ticket not holding the substitute is
+refused; a mapping naming a pass the site no longer sells offers
+nothing; an override on a gift card ticket or beside another client's
+line is refused and the token survives all three refusals; a T90 line is
+Test-priced under THAT client's id and prices, a recipient the rule also
+excludes is refused in Mindbody's words, and a walk-in ticket with no
+client attached prices the line for the recipient; and an ordinary cart
+still prices on the service account and sells with no override fields on
+the answer. T102's and T103's own route drivers were re-run unchanged
+against this build on free ports (:3113/:4113 and :3114/:4114): both ALL
+PASS.
+
+Browser, both palettes and both orientations, screenshots looked at: the
+notice draws the three offers in Pete's order at 64px and 16px; the
+dialog repeats Mindbody's sentence, Next is off until a reason is chosen
+and still off for a Trade with no note; the PIN step is the app's own;
+the ready step names the teacher; the refusal step shows Mindbody's
+words, then whose rule it is, then the substitution naming both prices;
+taking it puts the SUBSTITUTE on the ticket under its own name at
+$79.00, the ticket totals $49.00, and the ticket says in words what is
+being sold and who authorized it; in world one the refused pass comes
+back on the ticket, the ticket says whose override put it there, and it
+prices. No em dashes anywhere; no text under 16px; no contrast failure
+introduced.
+
+`npm run typecheck` and `npm run build` clean.
+
+**What could not be verified, and is not claimed.**
+
+- **The evidence question itself.** Nothing was run against live
+  Mindbody. Whether a teacher's token is answered differently for pass
+  414, and whether 555 prices for a client 414 refuses, are both open,
+  and the probe above is what closes them. If 555 turns out to be
+  restricted too, **do not configure the mapping**: the Override would
+  offer a sale that cannot complete. The mock's `exceptAuth` knob is a
+  model of the world where a teacher's token gets through, not evidence
+  that it does.
+- **The spread's attribution on a mixed ticket.** A substitution's
+  discount is a WHOLE-CART discount (T79), so on a ticket holding other
+  lines Mindbody files part of it against them. The total charged and
+  the amount discounted are exact to the cent either way, and the note
+  names both passes and both prices; per-line attribution on a mixed
+  ticket is the recorded cost of riding T79's path rather than building
+  a second per-line discount.
+- **An attempt that Mindbody accepts and then refuses at the
+  rehearsal** answers 502 `stage: "rehearsal"` with Mindbody's message,
+  which is the route's existing shape for a refused rehearsal and not a
+  new sentence. It should be rare (the attempt just proved the same
+  cart prices) but it has not been exercised live.
+- **The Override dialog has no "set up or change your PIN" link.** The
+  discount dialog's does; here a teacher with no PIN gets
+  `/api/teacher/verify`'s own "You have no PIN yet" and sets one at
+  sign-in (T80) or from the discount dialog. Left out deliberately
+  rather than duplicating the enrollment form a third time.
+- **The notice's three offers need a client attached**, because a pass
+  cannot reach the ticket without one (T92), so the Override's
+  `client !== null` guard does not hide a control in practice today. The
+  walk-in case is T92's own "Who is this pass for?", which already
+  offers another client; the route-level proof that a walk-in cart
+  prices for the recipient is above.
+
+### Review
+
+Adversarial pass over the ticket as built. Own harness, own ports,
+nobody else's: `next start` on **:3212** from this worktree, the T112
+mock on **:4212**, a scratch Postgres on **:5712**, and the two
+regression harnesses on **:3213/:4213** (T102) and **:3214/:4214**
+(T103), each on its own fresh start. Every driver preflights that
+`/api/override-pass` does not 404 before it runs a check, and the build
+was rebuilt before every browser run. The builder's own route driver
+(40 checks) and UI driver (68 checks, both palettes, both orientations)
+were re-run first, green, before anything was touched, and again after
+every fix.
+
+**The scratch cluster dies for a reason, and it is not Postgres.** The
+brief warned it had died twice and silently turns the substitution
+checks into no-ops. `pg.log` says why: something resets the scratchpad
+path chain to `o-rx`, the checkpointer can then no longer stat its own
+data directory, and it PANICs. It took one UI run down mid-flight here
+too, which showed up as "no substitution offered" and looked exactly
+like a bug in `resolveSubstitute`. The review harness puts the cluster
+outside the scratchpad (`/var/tmp/t112r-pgdata`) and it stayed up after
+that. **Anyone running a driver that touches the shelf config should
+check the cluster is up first**, because down it reads as "no mapping
+configured" and every substitution check passes vacuously.
+
+**Three fixes, all rails, none of them behaviour Pete asked for.**
+
+1. **An `"attempt"` override did not check that the pass was on the
+   ticket.** The substitution checks its own line (against the mapping,
+   which is the only thing that knows which line that is); the attempt
+   checked nothing. Proved past the browser: an override envelope for
+   pass 1010 riding on a ticket holding one $28 retail product SOLD,
+   spent the teacher's PIN, ran the rehearsal under their token instead
+   of the service account, and filed `Override: New Student 2 Week
+   Unlimited sold past Mindbody's refusal ...` on the client for a sale
+   that never held the pass. A record naming a sale nothing was
+   overridden in is worse than no record. Now refused in words with
+   nothing sent and the token intact, beside the gift card and T90
+   refusals.
+2. **A substitution's discount skipped `discountRefusal`.** The
+   browser's own discount gets it at the top of its branch and
+   `/api/price-cart` applies it to the substitution too; `/api/checkout`
+   did not. A ticket holding the substitute and a Package spent the PIN,
+   reached Mindbody, and came back with T79's strict check firing:
+   "The discount disagrees: ours $30.00, Mindbody's $10.58 ... this is a
+   bug to report, not a state to charge from", about a ticket the
+   teacher could simply split. Now refused before the token is spent,
+   in T79's own sentence.
+3. **The refused step said "Mindbody refused it again" when it had not.**
+   A suppressed write, a permission gap and a dead transport all land on
+   that step, with the right sentence under a title that contradicted
+   it: a teacher told Mindbody refused would go and fix a client record
+   in Mindbody over a dry run flag on this iPad. The title and the
+   dialog's label now read "The question was not answered" for those
+   three.
+
+Plus one hardening: a substitution's two ids are now checked as pass ids
+(up to 12 digits) at the save, matching `parseOverride`'s own rule for
+the same ids, so a typo in the drawer is caught while a teacher is
+looking at it rather than becoming a mapping that silently offers
+nothing.
+
+**What held, proved past the browser.** The PIN's three purposes are not
+interchangeable in any direction: a comp token and an overdraft token
+are each refused as an override by both routes, and an override token is
+refused as the discount's (`"Enter your PIN to discount this sale."`)
+and as the overdraft's. A token that outlives its teacher's session is
+401 `reason: "staff"` at both routes. A forged token, a malformed one
+and no token at all are refused with nothing sent. The one-shot spend
+holds: a second charge on a spent token is refused and costs no Mindbody
+call. **`/api/override-pass` verifies and does not spend, and the
+refusals above do not spend either**, proved by spending the same token
+afterwards on the real ticket. Two overrides on one ticket is not
+expressible (one envelope, and an array fails `parseOverride`). A
+recipient line prices AND charges under the recipient's id, never the
+buyer's. A substitute cheaper than the refused pass sells at its own
+price with no discount and never a negative one; a mapping naming itself
+is refused, two substitutes for one pass are refused, and a two-step
+cycle is harmless because resolution is one hop and never recurses.
+
+**The PIN oracle question, answered plainly: `/api/override-pass` cannot
+be one, because it never sees a PIN.** It takes a token, and the only
+thing that turns a PIN into a token is `/api/teacher/verify`, which is
+behind the device session, behind a signed-in teacher, and rate limited
+at five misses to thirty seconds. What the route DOES allow is replaying
+one live token: the same one answered four attempts in a row here, each
+costing one `Test: true` call under that teacher's own token. That is
+deliberate (a refusal must not cost the teacher their authorization) and
+it is bounded by the token's ten minutes, by the session it must match,
+and by the fact that the route sells nothing and moves nothing. The one
+real cost is metered calls, by somebody who is already signed in at the
+counter. Acceptable, and recorded rather than rate limited.
+
+**The attribution on a mixed ticket: acceptable, and the teacher does
+not need to be told.** A substitution's discount is a whole-cart T79
+discount, so on a ticket holding other lines Mindbody files part of it
+against them. What a teacher is answerable for at the counter is the
+money, and the money is exact to the cent on both sides: the total
+charged and the amount discounted. The per-line split is a reporting
+detail inside Mindbody, and the record that matters, the note on the
+client, names both passes, both prices and the difference, so the
+question "what happened here" is answerable months later from the
+client's own record. Saying it on the screen would spend a teacher's
+attention, in a queue, on something they cannot act on. It stays written
+down here and in the build notes, and nowhere else.
+
+**A browser discount BESIDE an attempt is allowed, deliberately.** The
+brief asked for it to be refused with the other combinations; it is not,
+and should not be. A substitution IS a discount, which is why a second
+one is refused there (two figures merged into the one a Mindbody cart
+takes is arithmetic nobody should do at a counter). An attempt is not a
+discount: it changes who asks Mindbody and nothing about the money. The
+two authorizations stay separate all the way through, two tokens of two
+purposes, each spent once, each with its own note on the client. Proved:
+that ticket sells and files both records.
+
+**UI.** Three offers per refused pass at 64px and 16px, in Pete's order,
+in both palettes and both orientations, with the Override drawn only
+with a client attached. Two passes refused at once puts SIX controls in
+the notice: the box caps at 208px and scrolls, with no horizontal
+overflow and the ticket's totals still on screen (measured, landscape:
+Total at 673 against a pane bottom of 754). The substitution notice on
+the ticket is 266px in landscape and the Total stays visible under it
+(top 629, bottom 673). In PORTRAIT, two refused passes plus a third line
+put the Total below the fold of a page that was already taller than the
+viewport in that layout, which is the ticket column's normal portrait
+behaviour and not something T112 introduced; the page scrolls to it.
+Nothing is hidden behind an opaque layer. No em dashes, no text under
+16px, no contrast regression: the only low reading in any state is the
+pre-existing disabled "Empty cart".
+
+**The probe, read as the person running it against production.** The
+password is read from the environment, never argv, and `signInAsStaff`
+is the one Mindbody call that deliberately bypasses `mindbody()` and the
+call log, so the password reaches Mindbody and nothing else: it is not
+printed, not logged, not recorded. The token is never printed either.
+One fix: it was revoked only on the happy path, at the end of `main()`,
+so a throw anywhere after the sign-in left a live staff token behind on
+exactly the run that goes against the live studio. The token is now held
+at module scope and revoked from a `finally`, on the way out either way,
+and the probe says so. The four worlds it reports read clearly and each
+names what to DO with the answer; the substitute's half says plainly
+that a substitute the rule also refuses means "do not configure the
+mapping".
+
+**Still open, and unchanged by this review.** The evidence question
+itself: nothing has been asked of live Mindbody, so whether a teacher's
+token is answered differently for pass 414, and whether 555 prices for a
+client 414 refuses, are both Pete's to run. The mock's `exceptAuth` knob
+is a model of one of the four worlds, not evidence of it. Also
+unverified: an attempt Mindbody accepts and then refuses at the
+rehearsal (502 `stage: "rehearsal"`), and the `[override]` log line is
+written when the charge RESOLVES, so a sale that fails before that
+resolution logs nothing about the override, which is correct (there was
+no override to record) but is not the "always" the build notes claim.
