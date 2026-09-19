@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { modeNotice } from "./SaleScreen";
+
 /**
  * The lock screen (T21). When POS_PIN is set and the browser has no valid
  * session, this is ALL the page renders: the studio name, the mode banner,
@@ -63,6 +65,9 @@ export default function LockScreen() {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [lockedUntil]);
+
+  /** T111: what the mode banner has to say here, or null for nothing. */
+  const notice = config === null ? null : modeNotice(config);
 
   const lockedFor =
     lockedUntil !== null ? Math.max(0, Math.ceil((lockedUntil - now) / 1000)) : 0;
@@ -132,14 +137,16 @@ export default function LockScreen() {
       {/* T70: the banners sit at the top of the screen, full width, like
           the roster's and the staff gate's; the card stays centred. */}
       <div className="lock-banners">
-        {config ? (
-          <p className={config.dryRun ? "banner" : "banner live"}>
-            {config.dryRun
-              ? config.dryRunSource === "browser"
-                ? "Dry run on this iPad. Nothing is written to Mindbody."
-                : "Dry run. Nothing is written to Mindbody."
-              : "LIVE. Taps check real students in."}{" "}
-            {config.target === "prod" ? "Production" : "Sandbox"} site.
+        {/* T111: the same rule as the counter's banner, from the same
+            function, so the lock screen cannot say one thing while the
+            screen behind it says another. Ordinary production shows
+            nothing; a dry run, the sandbox or the write guard still say
+            so here, before anybody has even unlocked. The trimmed
+            pre-auth config carries no site id and no guard list, so this
+            screen can only ever show the first two. */}
+        {notice !== null ? (
+          <p className={notice.live ? "banner live" : "banner"}>
+            {notice.text}
           </p>
         ) : null}
         {config?.banner ? <p className="studio-banner">{config.banner}</p> : null}
