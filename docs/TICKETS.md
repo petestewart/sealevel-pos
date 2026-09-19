@@ -17659,3 +17659,189 @@ Against a real production server and a mock Mindbody
   behaviour under the iOS keyboard is reasoned, not measured.
 - Nothing was driven against a real class, a real client or a real
   waiver.
+
+---
+
+## T205. The membership contract, signed on the customer screen (2026-09-19)
+
+Phase 2.5 item 6, and D5 (Pete: "required but with override option").
+The membership dialog can put the contract on the customer screen; the
+student reads the terms, signs with a finger and taps **"I agree to these
+terms"**, and the membership starts with no further tap from the teacher.
+A studio-wide rule, **`contract_requires_signature`, default ON**, makes
+that the way a membership is sold here, with one way past it: the
+signed-in teacher's own PIN, filed on the client with their name.
+
+**The display still writes nothing.** Nothing under `src/app/display` or
+`src/app/api/display` writes to Mindbody. The `present` route does READ
+it, and says so in its own comment: `GET /sale/contracts` for the name,
+the terms and the autopay line, `GET /client/clients` for the stored card
+the rehearsal's schema demands, and the same `POST /sale/purchasecontract`
+`Test: true` rehearsal the teacher's dialog already runs, so the figure in
+front of the student is the server's own. A rehearsal commits nothing.
+The one write that changed is `/api/purchase-contract`'s existing live
+call, which now carries `ClientSignature`.
+
+### 1. The scene
+
+`kind: "contract"`, built entirely in `src/lib/contractscene.ts`. The
+payload is WORDS: the contract's name, the terms as plain text (T99's
+`plainText` over the raw `AgreementTerms`), "Starts today" or the day in
+words, "$189.00 today", "Then $189.00 monthly." and the student's first
+name. The SERVER-only half carries the client id, the contract id, the
+normalized start day, the **sha256 of the RAW terms** and the rehearsed
+total in cents, and never passes through `sceneFor`. The driver asserts
+the wire itself: no client id, no contract id, no hash, no `__private`,
+no tags in the terms.
+
+On the display, `ContractScene` is `WaiverScene` with different words
+above it. That is deliberate: the scroll-to-the-end rule, the pointer
+pad, Clear and the PNG export with its typed name line are ONE
+implementation (T202, made reusable by T204) and stay one. What is added
+is the summary block above the terms, and every line of it was worded by
+the server.
+
+### 2. The rule, and where it is enforced
+
+`contract_requires_signature` in `app_settings`, admin-edited through
+`PUT /api/admin/contract-signature` (the T203 route, line for line: device
+session, devtools gate, `requireActor`, `isTargetAdmin`, a database that
+answers, one log line), reported by `/api/config`, shown in the drawer
+beside "customer approves each sale". Its fallback is
+`POS_CONTRACT_REQUIRES_SIGNATURE`, and **unset means ON**, which is the
+one place this setting differs from T203's: the unsafe direction for a
+sale is "charge as before", and for a membership it is "start a recurring
+commitment nobody signed".
+
+Enforced in `/api/purchase-contract` and nowhere else, before any
+Mindbody call. A live purchase must carry EITHER `displayRequestId`,
+naming a completed, unconsumed, unexpired `contract` request for THIS
+client, THIS contract and THIS start day whose recorded terms hash still
+equals the hash of the terms as read now ("The contract wording changed
+while they were reading it. Ask them again."), OR `signatureOverride:
+{token}` with purpose `contract` (a new `CompPurpose`, minted by
+`/api/teacher/verify`), the token's staff id equal to the session's, spent
+once. Neither, and it is 409 in a plain sentence; with no display paired
+at all, 409 "No customer screen is paired, so this membership needs your
+PIN to sell without a signature", which the design asks for on purpose.
+With the rule OFF both fields are ignored and never an error.
+
+The signature is claimed synchronously (`beginFinalisation`) and CONSUMED
+only after the purchase answered, completed or suppressed. A refused or
+thrown purchase leaves it spendable, because the student signed THIS
+contract and a retry must not need them again.
+
+### 3. What is kept
+
+`contract_receipts` (migration 14, additive): client id, contract id,
+name, terms sha256, signature sha256 and PNG, the overriding staff id,
+agreed at, start date, outcome. Ours on the charter's terms: Mindbody
+records that a contract was bought, not which wording was agreed to, and
+the studio edits that wording in its own rich text editor. One row per
+LIVE attempt that reached Mindbody, refusals included;
+`insertContractReceipt` never throws, and with no database the
+`[contract-signature]` log line carries the same facts. The profile card
+gains one line, "... signed on the customer screen on <date>", from our
+own row.
+
+### 4. The teacher's side
+
+The dialog gains **"Sign on the customer screen"** at 64px whenever a
+screen is connected, and with the rule on Buy presents the contract first
+anyway. While it is outstanding: "Waiting for the customer to sign", with
+Cancel and **"Sell without a signature"** (the T48 PIN dialog, now
+carrying its purpose and its own title). A busy screen is the design's
+three-way choice, Wait / Take over / Sell without a signature, with the
+sign-up wording when a student holds it. `completed` buys with no further
+tap; `refused` leaves the quiet line "Customer did not sign"; a screen
+that really went away says "Customer screen disconnected".
+
+### Verified
+
+- `env -u DATABASE_URL npm run build` and `npx tsc --noEmit` clean.
+- **Route driver, 36 assertions, 0 failed** (mock Mindbody, real server):
+  the setting on by default from the environment; unpaired + rule on is
+  the PIN sentence and NO purchasecontract call; the presented scene's
+  own stream carries plain-text terms, "$189.00 today", "Then $189.00
+  monthly." and the first name and none of the private half; a non-PNG
+  and a stale `agreedAt` are refused at `complete`; the `Test: true`
+  rehearsal is exempt and sends no signature; a different contract id, a
+  different start day and edited wording are each 409 in their own
+  sentence; the live purchase carries `ClientSignature` which the mock
+  decodes to PNG magic; the same id again is 409; an `approve`-purpose
+  token is refused and a `contract`-purpose one sells, files the Notes
+  line on the client and is one-shot; a live ticket mirror is refused
+  `reason: "busy"` while the contract holds the screen.
+- **Setting OFF via the environment, 4 assertions**: `/api/config` says
+  off, the membership sells with neither field, a stale request id and a
+  forged token are ignored rather than refused, and no signature ever
+  reached Mindbody.
+- **Postgres, 10 assertions across a restart**: migration 14 lands
+  (`schema_version` 14); a signature taken BEFORE a server restart sells
+  after it; the consumed row then says "already been used"; the receipt
+  rows are as designed (one with the PNG whose first eight bytes are the
+  PNG magic, its hash, the terms hash and the start date; one with staff
+  id 4242, no signature); the admin route flips the setting and
+  `/api/config` reports `source: "setting"`.
+- **Playwright, 22 assertions, 0 failed**, both palettes: the modal's
+  64px "Sign on the customer screen"; the display showing the membership,
+  its price and plain terms; agree dead until the terms are scrolled AND
+  the pad has ink, then live; the membership starting with no further tap
+  and the display thanking them; Not now leaving "Customer did not sign"
+  and no sale; the PIN path selling it; every display control at least
+  64px, nothing under 16px and no horizontal overflow on either screen.
+- **Regressions**: T114 (27), T115 (43), T203 (7 off + 45 on) and T200's
+  copy in `t204/t200-regress.mjs` (52) all pass. T204's driver reports 63
+  passed and 2 failed here, and the SAME two fail on a baseline build
+  with this branch stashed: they are the abandon-window timings, which
+  need the server's `POS_DISPLAY_ABANDON_MS` to exceed the driver's own
+  `ABANDON_MS`.
+
+### Found while driving
+
+- The teacher's event stream replays the hub's recent events on connect
+  (no `Last-Event-ID`), so a `refused` from an EARLIER contract closed
+  the wait for a later one, and an old `disconnected` (from an unpair
+  minutes before) put the dialog into "Customer screen disconnected"
+  while the contract was on the screen. Both are now checked: `refused`
+  BY REQUEST ID like the completion, and `disconnected` re-asks
+  `/api/admin/display` and only acts on a screen the server says is gone
+  now.
+
+### Fixed in review
+
+- Two purchases naming the same signature could both read it as unspent
+  before either claimed it, and the second could sell a spent signature
+  the instant the first released the claim. The request is now re-read
+  under the claim and refused if it is no longer completed and unconsumed.
+  Driven: two parallel purchases, one id, one sale, one live call.
+- The T202 waiver wait had the same stale-replay exposure this ticket
+  fixed for the contract: the teacher stream replays on reconnect, so an
+  earlier waiver's refusal could close a later wait. `refused` is matched
+  by request id there too. T203's approval wait polls by id and was fine.
+- Recorded: `contract_receipts` carries `contract_name` (a label as it
+  read, like `comp_receipts.teacher_name`) and `start_date`, which the
+  design's table does not list; both are for the profile card's line and
+  for reading a receipt without a lookup. With the rule OFF no receipt row
+  and no log line are written: the receipt attests to a rule that was
+  applied, and there was none.
+- **D-B2 is a gate, not a note**: no live contract sale with a signature
+  until the probe has run against the sandbox and both Totals agree.
+
+### Could not verify
+
+- **D-B2 has not run.** No Mindbody credentials in this environment, so
+  whether `ClientSignature` is accepted, and whether it leaves the
+  rehearsed Total alone, is open. The probe is written
+  (`scripts/probe-contract-signature.ts`) and rehearses twice, with and
+  without the field, comparing both Totals to the cent. If the Total
+  moves, the rehearsal must carry the signature too.
+- Everything Mindbody-side is the mock's: the contract, its terms, its
+  autopay and the purchase's answer. No real card, client, contract or
+  document page was touched, and the document Mindbody is documented to
+  file (`clientContractSignature-...`) has never been seen.
+- The staff session is faked in the driver harness (T200's idiom), so
+  T49/T50 attribution is exercised as shape.
+- No real iPad: the pad was driven with Playwright's mouse, so a finger
+  and an Apple Pencil are reasoned about, not measured.
+- D-B1 and D-B3 remain unrun, as T202 and T204 recorded.

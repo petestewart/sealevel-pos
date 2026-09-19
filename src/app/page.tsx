@@ -4437,6 +4437,11 @@ function FrontDesk({
    * the one that existed when the stream opened. */
   const agreeWaiverRef = useRef(agreeWaiver);
   const waiverClientRef = useRef(waiverClientId);
+  /** T205 review: the wait's request id, for the stream's `refused`. */
+  const waiverOnDisplayRef = useRef(waiverOnDisplay);
+  useEffect(() => {
+    waiverOnDisplayRef.current = waiverOnDisplay;
+  }, [waiverOnDisplay]);
   useEffect(() => {
     agreeWaiverRef.current = agreeWaiver;
     waiverClientRef.current = waiverClientId;
@@ -4570,6 +4575,11 @@ function FrontDesk({
       source.addEventListener("refused", (ev) => {
         const data = parse(ev as MessageEvent);
         if (data?.kind !== "waiver") return;
+        /* T205 review: BY REQUEST ID. A stream that reopens (the 15s
+         * retry below) is replayed the hub's recent events, and an
+         * earlier waiver's refusal must not close this wait. */
+        const waiting = waiverOnDisplayRef.current;
+        if (waiting === null || data.requestId !== waiting.requestId) return;
         setWaiverOnDisplay(null);
         setWaiverDisplayNote("Customer tapped Not now.");
       });

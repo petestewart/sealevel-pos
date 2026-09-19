@@ -332,14 +332,21 @@ const COMP_TOKEN_PREFIX = "c2";
  *  review's reason: a PIN typed for one of them must not pass as the
  *  authorization for another, and two request fields are not a
  *  separation while one value fits both. */
-export type CompPurpose = "comp" | "overdraft" | "override" | "approve";
+export type CompPurpose =
+  | "comp"
+  | "overdraft"
+  | "override"
+  | "approve"
+  /* T205: selling a membership without the customer's signature. */
+  | "contract";
 
 export function isCompPurpose(value: unknown): value is CompPurpose {
   return (
     value === "comp" ||
     value === "overdraft" ||
     value === "override" ||
-    value === "approve"
+    value === "approve" ||
+    value === "contract"
   );
 }
 

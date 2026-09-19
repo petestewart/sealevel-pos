@@ -1,6 +1,10 @@
 import { cardOnFileOf, type CardOnFile } from "./clientcard";
 import { fetchPasses, type PassInfo } from "./clientcontext";
-import { boundedDb, latestSignedWaiverReceipt } from "./db";
+import {
+  boundedDb,
+  latestSignedContractReceipt,
+  latestSignedWaiverReceipt,
+} from "./db";
 import { mindbody } from "./mindbody";
 import { studioWall } from "./roster";
 
@@ -79,6 +83,12 @@ export interface ClientProfile {
    *  with no database, no receipt, or a receipt with no signature, which
    *  is every agreement taken at the counter. */
   signedOnDisplayAt: string | null;
+  /** T205: when a MEMBERSHIP CONTRACT was signed on the customer
+   *  display, from our own `contract_receipts` row, with the membership's
+   *  name. The same reading as the waiver line above and the same
+   *  limits: our row, one line, never the image, and null with no
+   *  database, no receipt or a receipt with no signature. */
+  contractSignedOnDisplay: { at: string; contractName: string | null } | null;
   redAlert: string | null;
   yellowAlert: string | null;
   notes: string | null;
@@ -303,11 +313,26 @@ export async function clientProfile(
     750,
     null,
   );
+  /* T205: the same, for a membership contract. Bounded and best effort
+   * for the same reason: a line on a card is never worth a slower
+   * profile. */
+  const contractSignature = await boundedDb(
+    latestSignedContractReceipt(clientId),
+    750,
+    null,
+  );
   return {
     clientId,
     ...fields,
     signedOnDisplayAt:
       signature === null ? null : signature.agreedAt.toISOString(),
+    contractSignedOnDisplay:
+      contractSignature === null
+        ? null
+        : {
+            at: contractSignature.agreedAt.toISOString(),
+            contractName: contractSignature.contractName,
+          },
     visits: visits.status === "fulfilled" ? visits.value : null,
     passes: passes.status === "fulfilled" ? passes.value : null,
     errors,

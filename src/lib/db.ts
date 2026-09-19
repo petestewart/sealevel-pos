@@ -444,6 +444,41 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         ADD COLUMN IF NOT EXISTS signature_png bytea;
     `,
   },
+  {
+    /* T205: the contract signature's receipt. OURS, on the charter's
+     * own terms: Mindbody records that a contract was bought and (when
+     * it accepts ClientSignature) keeps the image on the client's
+     * documents page, but it does not record WHICH WORDING was agreed
+     * to. The studio edits those terms in Mindbody's rich text editor,
+     * so "the membership Sam signed" is only answerable from a hash of
+     * the text as it stood at that moment, beside the artifact that was
+     * drawn on it -- or, when a teacher sold it with their PIN instead,
+     * beside their staff id and no signature at all.
+     *
+     * Nothing here duplicates Mindbody: no price, no card, no client
+     * detail beyond the id, and no claim about the contract's state. One
+     * row per LIVE purchase attempt that reached Mindbody. Additive, and
+     * a deployed database at 13 runs only this block. */
+    version: 14,
+    sql: `
+      CREATE TABLE IF NOT EXISTS contract_receipts (
+        id                      bigserial PRIMARY KEY,
+        client_id               text NOT NULL,
+        contract_id             integer NOT NULL,
+        contract_name           text,
+        terms_sha256            text,
+        signature_sha256        text,
+        signature_png           bytea,
+        overridden_by_staff_id  text,
+        agreed_at               timestamptz,
+        start_date              text,
+        sale_outcome            text NOT NULL,
+        created_at              timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS contract_receipts_client_idx
+        ON contract_receipts (client_id);
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -545,6 +580,96 @@ export async function insertWaiverReceipt(
   } catch (err) {
     logDbError("waiver-receipt-insert", err);
     return false;
+  }
+}
+
+/* --- Contract receipts (T205) ---------------------------------------- */
+
+/**
+ * The durable record of one membership sale's SIGNATURE: which wording
+ * was agreed to (the hash of the raw terms as they were read), the
+ * artifact that was drawn on it, or the staff id of the teacher who sold
+ * it on their own PIN instead. Written once per LIVE purchase attempt
+ * that reached Mindbody, whatever the answer was: a refusal is exactly
+ * the case where somebody later asks what happened.
+ *
+ * Returns whether the row landed; false is "the log line already has
+ * it", never a failure of the purchase. Never throws.
+ */
+export async function insertContractReceipt(receipt: {
+  clientId: string;
+  contractId: number;
+  contractName: string | null;
+  termsSha256: string | null;
+  signature: { sha256: string; png: Buffer } | null;
+  overriddenByStaffId: string | null;
+  agreedAt: string | null;
+  /** The studio `YYYY-MM-DD` the membership starts on, "today" when the
+   *  teacher chose none. A string, because that is what the counter and
+   *  Mindbody both speak here (CLAUDE.md, site-local datetimes). */
+  startDate: string;
+  /** completed / suppressed / a refusal in words. */
+  saleOutcome: string;
+}): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `INSERT INTO contract_receipts
+         (client_id, contract_id, contract_name, terms_sha256,
+          signature_sha256, signature_png, overridden_by_staff_id,
+          agreed_at, start_date, sale_outcome)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        receipt.clientId,
+        receipt.contractId,
+        receipt.contractName,
+        receipt.termsSha256,
+        receipt.signature?.sha256 ?? null,
+        receipt.signature?.png ?? null,
+        receipt.overriddenByStaffId,
+        receipt.agreedAt,
+        receipt.startDate,
+        receipt.saleOutcome.slice(0, 500),
+      ],
+    );
+    return true;
+  } catch (err) {
+    logDbError("contract-receipt-insert", err);
+    return false;
+  }
+}
+
+/**
+ * T205: the newest contract receipt for a client that carries a
+ * SIGNATURE, for the profile card's one line. Our own row, the same
+ * reading the waiver's line gets; the PNG is deliberately not selected
+ * and is never rendered back into the POS.
+ */
+export async function latestSignedContractReceipt(
+  clientId: string,
+): Promise<{ agreedAt: Date; contractName: string | null } | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT agreed_at, contract_name
+         FROM contract_receipts
+        WHERE client_id = $1
+          AND signature_sha256 IS NOT NULL
+          AND agreed_at IS NOT NULL
+        ORDER BY agreed_at DESC LIMIT 1`,
+      [clientId],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      agreedAt: new Date(r.agreed_at),
+      contractName: r.contract_name === null ? null : String(r.contract_name),
+    };
+  } catch (err) {
+    logDbError("contract-receipt-read", err);
+    return null;
   }
 }
 

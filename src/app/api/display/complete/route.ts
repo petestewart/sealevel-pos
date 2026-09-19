@@ -10,6 +10,7 @@ import {
   isPairedDisplay,
   readJsonObject,
 } from "@/lib/display";
+import { readContractResult } from "@/lib/displaycontract";
 import { readSignupResult } from "@/lib/displaysignup";
 import { readWaiverResult } from "@/lib/displaywaiver";
 import { displayIdFrom } from "@/lib/displayauth";
@@ -98,6 +99,36 @@ export async function POST(request: Request) {
       signaturePng: filled.value.signaturePng,
       agreedAt: filled.value.agreedAt,
       signatureSha256: createHash("sha256").update(filled.png).digest("hex"),
+    };
+    const done = await completeRequest(id, requestId, stored);
+    if (!done.ok) {
+      return NextResponse.json({ error: done.error }, { status: done.status });
+    }
+    return NextResponse.json({ ok: true });
+  }
+  /* T205: a CONTRACT's signature is checked here by the same validator
+   * the waiver's goes through, and for the same reason: a signature that
+   * is not a PNG, one too big, or a moment that is not from the last
+   * hour is refused in plain words while the student is still standing
+   * there, rather than stored and found useless by the purchase that was
+   * meant to carry it to Mindbody. */
+  if (
+    held !== null &&
+    held.id === requestId &&
+    held.kind === "contract" &&
+    held.status === "pending"
+  ) {
+    const signed = readContractResult(kept);
+    if (!signed.ok) {
+      return NextResponse.json(
+        { error: `result: ${signed.error}` },
+        { status: signed.status },
+      );
+    }
+    stored = {
+      signaturePng: signed.value.signaturePng,
+      agreedAt: signed.value.agreedAt,
+      signatureSha256: createHash("sha256").update(signed.png).digest("hex"),
     };
     const done = await completeRequest(id, requestId, stored);
     if (!done.ok) {

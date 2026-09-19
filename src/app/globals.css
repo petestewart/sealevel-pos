@@ -8448,3 +8448,32 @@ textarea.reason-note-field:disabled::placeholder {
 .signup-hit-sub {
   font-size: 16px;
 }
+
+/* T205: the contract scene's own summary, above the terms. The waiver
+   scene's frame around it is unchanged; this is the block that says what
+   the membership costs, in the SERVER's words. Tokens only, in both
+   palettes through :root, radius 0 like everything else. */
+.dcontract-terms {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 2px solid var(--rule);
+  background: var(--surface-2);
+}
+
+.dcontract-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 20px;
+  color: var(--muted);
+}
+
+.dcontract-amt {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+  text-align: right;
+}

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { customerConfirmsSale } from "@/lib/approval";
+import {
+  contractRequiresSignature,
+  customerConfirmsSale,
+} from "@/lib/approval";
 import { authRequired, isAuthenticated } from "@/lib/auth";
 import { BANNER_SETTING_KEY, getSetting, storageMode } from "@/lib/db";
 import { displayState } from "@/lib/display";
@@ -137,6 +140,19 @@ export async function GET(request: Request) {
       return {
         customerConfirmsSale: confirm.on,
         customerConfirmsSaleSource: confirm.source,
+      };
+    })()),
+    /* T205: and whether a membership needs the customer's signature on
+     * that screen, with the same two fields and the same meaning. The
+     * browser's copy draws the contract dialog's button;
+     * /api/purchase-contract reads the setting itself on every purchase,
+     * so a browser that lies about it is refused. Unlike the approval
+     * setting above, this one defaults ON. */
+    ...(await (async () => {
+      const rule = await contractRequiresSignature();
+      return {
+        contractRequiresSignature: rule.on,
+        contractRequiresSignatureSource: rule.source,
       };
     })()),
   });

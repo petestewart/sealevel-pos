@@ -64,7 +64,10 @@ export async function POST(request: Request) {
    * not approve, and is filed on the client with this teacher's name. */
   if (purposeRaw !== undefined && !isCompPurpose(purposeRaw)) {
     return NextResponse.json(
-      { error: "purpose must be comp, overdraft, override or approve" },
+      {
+        error:
+          "purpose must be comp, overdraft, override, approve or contract",
+      },
       { status: 400 },
     );
   }

@@ -107,3 +107,103 @@ export function approvalOverrideLine(
     (saleId ? ` Sale ${saleId}.` : "")
   );
 }
+
+/* =====================================================================
+ * T205 (Phase 2.5 item 6): "the customer signs the contract", the second
+ * studio-wide rule of the customer screen, and the one /api/purchase-
+ * contract enforces.
+ *
+ * Design (docs/design/customer-display.md, "Scene 4"): D5, Pete,
+ * "required but with override option". So a membership sold at this
+ * counter carries EITHER the student's own signature, captured on the
+ * customer screen and sent to Mindbody as `ClientSignature`, OR the
+ * signed-in teacher's own PIN, filed on the client with their name.
+ *
+ * It reads and behaves exactly like `customer_confirms_sale` above --
+ * `app_settings`, admin-edited through PUT /api/admin/contract-signature,
+ * shown to everyone, the environment deciding when the store does not
+ * answer -- with ONE difference, and it is deliberate: this one defaults
+ * ON. The fallback for a sale is "charge as before", which is safe; the
+ * fallback for a membership would be "start a recurring commitment with
+ * no signature", which is the thing D5 asked for. So the environment
+ * variable is a way to turn it OFF (`false` or `0`), and unset means on.
+ *
+ * Like the setting above it can only ever ADD a precondition to a
+ * purchase, which is what lets its control sit in the drawer at all
+ * (CLAUDE.md, "Settings tab": the fourth recorded exception, and it only
+ * tightens).
+ *
+ * Nothing in this file calls Mindbody.
+ * =================================================================== */
+
+/** The app_settings key. */
+export const CONTRACT_SETTING_KEY = "contract_requires_signature";
+
+/** The environment fallback, for a deployment with no database. */
+export const CONTRACT_ENV_VAR = "POS_CONTRACT_REQUIRES_SIGNATURE";
+
+/** The comp-token purpose a teacher's PIN mints to sell a membership
+ *  without a customer signature (D5). Its own purpose, beside
+ *  APPROVE_PURPOSE and for the same T94 reason: a PIN typed to approve a
+ *  sale does not sell a membership unsigned. Defined in comp.ts, which
+ *  the browser can import. */
+export { CONTRACT_PURPOSE } from "./comp";
+
+function contractFromEnv(): boolean {
+  const raw = (process.env[CONTRACT_ENV_VAR] ?? "").trim().toLowerCase();
+  /* Unset is ON. Only the two words that mean no turn it off, and
+   * anything else (a typo, an empty string) leaves the rule standing:
+   * the direction a mistake falls in has to be the safe one. */
+  return !(raw === "false" || raw === "0");
+}
+
+let contractWarnedUnreadAt = 0;
+
+/**
+ * Whether this membership needs a customer signature, read per purchase.
+ * Same posture as `customerConfirmsSale`: bounded, never throwing, and a
+ * store that does not answer means the environment decides, said once a
+ * minute in the log.
+ */
+export async function contractRequiresSignature(): Promise<ConfirmSetting> {
+  const answer = await readSetting(CONTRACT_SETTING_KEY).catch(() => ({
+    answered: false as const,
+    value: null,
+  }));
+  if (!answer.answered) {
+    const now = Date.now();
+    if (now - contractWarnedUnreadAt >= 60_000) {
+      contractWarnedUnreadAt = now;
+      console.warn(
+        `[contract-signature] the stored setting could not be read; ` +
+          `${CONTRACT_ENV_VAR} in the server environment decides ` +
+          `(${contractFromEnv() ? "on" : "off"}).`,
+      );
+    }
+    return { on: contractFromEnv(), source: "env" };
+  }
+  if (answer.value === "true") return { on: true, source: "setting" };
+  if (answer.value === "false") return { on: false, source: "setting" };
+  return { on: contractFromEnv(), source: "env" };
+}
+
+/**
+ * The sentence filed on the client when a teacher sold a membership with
+ * their own PIN instead of the student's signature (D5). Filed the way
+ * T45/T62 file a comp's reason and T203 files an approval override, so
+ * the studio can find it months later and know which wording nobody
+ * signed.
+ */
+export function contractOverrideLine(
+  contractName: string,
+  teacherName: string | null,
+): string {
+  const who =
+    teacherName !== null && teacherName.trim().length > 0
+      ? teacherName.trim()
+      : "a teacher";
+  return (
+    `Membership ${contractName.trim() || "contract"} sold by ${who} ` +
+    "without a customer signature."
+  );
+}

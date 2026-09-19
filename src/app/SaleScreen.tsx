@@ -34,6 +34,7 @@ import {
   compNeedsDetail,
   compReasonLine,
   compValid,
+  CONTRACT_PURPOSE,
   DISCOUNT_PERCENT_MAX,
   DISCOUNT_PERCENT_MIN,
   discountCents,
@@ -7130,6 +7131,14 @@ type ContractOutcome =
 
 function ContractDialog(props: {
   contract: ContractInfo;
+  /** T205: whether the studio requires the customer's signature on this
+   *  membership (`contract_requires_signature`, /api/config). It decides
+   *  what this dialog draws; the server enforces it on every purchase. */
+  requiresSignature: boolean;
+  /** T205: whether there is a customer screen paired AND awake. With
+   *  none, the design is explicit that the teacher should notice: the
+   *  purchase asks for their PIN and says why. */
+  displayConnected: boolean;
   client: SaleClient | null;
   cardLookup: CardLookup | null;
   onClose: () => void;
@@ -7149,6 +7158,8 @@ function ContractDialog(props: {
 }) {
   const {
     contract,
+    requiresSignature,
+    displayConnected,
     client,
     cardLookup,
     onClose,
@@ -7178,6 +7189,33 @@ function ContractDialog(props: {
   const purchased = useRef(false);
   /** Bumped by the Retry button on a failed rehearsal. */
   const [rehearseNonce, setRehearseNonce] = useState(0);
+  /**
+   * T205: where the customer's signature has got to, when the studio
+   * requires one. Null is "not asked for, or nothing outstanding".
+   *
+   *   waiting  -- the contract is on the customer screen
+   *   busy     -- something else holds that screen (the design's
+   *               three-way choice: Wait, Take over, Sell without a
+   *               signature)
+   *   offline  -- no screen to sign on, so the PIN is the way forward
+   *   pin      -- the D5 override dialog is open
+   *
+   * Nothing here decides whether the membership may be sold: the server
+   * does, on every purchase, from the setting and the stored signature.
+   */
+  const [sign, setSign] = useState<
+    | null
+    | { stage: "waiting"; requestId: string }
+    | { stage: "busy"; signup?: boolean }
+    | { stage: "offline"; why: string }
+    | { stage: "pin"; because: string }
+  >(null);
+  /** The quiet sentence left behind when a signature ended without a
+   *  sale ("Customer did not sign"). The dialog stays as it was. */
+  const [signNote, setSignNote] = useState<string | null>(null);
+  /** Whether the teacher chose "Wait" on a busy screen, so the present
+   *  is retried until it goes through. */
+  const [waitingForScreen, setWaitingForScreen] = useState(false);
 
   const clientId = client?.id ?? null;
   const card = cardLookup?.card ?? null;
@@ -7297,7 +7335,13 @@ function ContractDialog(props: {
     rehearsal.error === null &&
     !noProratedFigure;
 
-  const doPurchase = async () => {
+  const doPurchase = async (auth?: {
+    /** T205: the signature this membership rides on, or the PIN token
+     *  that stood in for it. Exactly one, and only when the setting is
+     *  on; the route ignores both when it is off. */
+    displayRequestId?: string;
+    token?: string;
+  }) => {
     if (inFlight.current || !confirmable || clientId === null) return;
     inFlight.current = true;
     setPurchasing(true);
@@ -7321,6 +7365,10 @@ function ContractDialog(props: {
           clientId,
           ...(startKey !== null ? { startDate: startKey } : {}),
           ...(shownFirst !== null ? { expectedFirstTotal: shownFirst } : {}),
+          ...(auth?.displayRequestId
+            ? { displayRequestId: auth.displayRequestId }
+            : {}),
+          ...(auth?.token ? { signatureOverride: { token: auth.token } } : {}),
         }),
       });
       let body: any = null;
@@ -7388,6 +7436,141 @@ function ContractDialog(props: {
       onBusyChange(false);
     }
   };
+
+  /* T205: the purchase, once the signature (or the PIN) is in hand. The
+   * SSE listener below runs from an effect mounted once, so it reads the
+   * LATEST closure through a ref rather than the one that existed when
+   * the stream opened. */
+  const purchaseRef = useRef(doPurchase);
+  useEffect(() => {
+    purchaseRef.current = doPurchase;
+  });
+
+  /**
+   * Put the contract on the customer screen and wait for the signature.
+   *
+   * Nothing is charged here, and the browser sends nothing the student
+   * reads: the server fetches the contract, prices the first payment
+   * with its own `Test: true` rehearsal and hashes the terms, and keeps
+   * the client, the contract, the day and that hash where the display
+   * cannot see them. /api/purchase-contract checks all four before it
+   * sells anything.
+   */
+  const presentContract = useCallback(async (): Promise<void> => {
+    if (clientId === null) return;
+    try {
+      const res = await fetch("/api/display/present", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "contract",
+          contractId: contract.id,
+          clientId,
+          ...(startKey !== null ? { startDate: startKey } : {}),
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (res.ok && typeof body?.requestId === "string") {
+        setSignNote(null);
+        setSign({ stage: "waiting", requestId: body.requestId });
+        return;
+      }
+      if (body?.reason === "busy") {
+        setSign({
+          stage: "busy",
+          ...(body?.holdingSignup === true ? { signup: true } : {}),
+        });
+        return;
+      }
+      setSign({
+        stage: "offline",
+        why:
+          typeof body?.error === "string"
+            ? body.error
+            : "The customer screen could not be used.",
+      });
+    } catch {
+      setSign({
+        stage: "offline",
+        why: "The customer screen could not be reached.",
+      });
+    }
+  }, [clientId, contract.id, startKey]);
+
+  /* Wait: the present is retried until the screen comes free, and the
+   * contract goes up by itself the moment it does. */
+  useEffect(() => {
+    if (!waitingForScreen || sign?.stage !== "busy") return;
+    const timer = setInterval(() => void presentContract(), 3_000);
+    return () => clearInterval(timer);
+  }, [waitingForScreen, sign, presentContract]);
+
+  /* The stream, while a signature is outstanding. `completed` buys the
+   * membership with no further tap (the design's whole point);
+   * `refused` closes the wait with one quiet line; a disconnected screen
+   * says so rather than leaving a teacher watching a dead wait. */
+  useEffect(() => {
+    if (sign?.stage !== "waiting") return;
+    const wanted = sign.requestId;
+    let source: EventSource | null = null;
+    try {
+      source = new EventSource("/api/display/events");
+    } catch {
+      return;
+    }
+    const parse = (ev: MessageEvent): Record<string, unknown> | null => {
+      try {
+        const data: unknown = JSON.parse(ev.data);
+        return data && typeof data === "object"
+          ? (data as Record<string, unknown>)
+          : null;
+      } catch {
+        return null;
+      }
+    };
+    const onCompleted = (ev: Event) => {
+      const data = parse(ev as MessageEvent);
+      if (data?.kind !== "contract" || data.requestId !== wanted) return;
+      setWaitingForScreen(false);
+      setSign(null);
+      setSignNote("Signed on the customer screen.");
+      void purchaseRef.current({ displayRequestId: wanted });
+    };
+    const onRefused = (ev: Event) => {
+      const data = parse(ev as MessageEvent);
+      /* BY ID, like the completion: a stream that opens with no
+         `Last-Event-ID` is replayed the hub's recent events, and an
+         earlier contract's refusal must not close this wait. */
+      if (data?.kind !== "contract" || data.requestId !== wanted) return;
+      setWaitingForScreen(false);
+      setSign(null);
+      setSignNote("Customer did not sign.");
+    };
+    const onDisconnected = () => {
+      /* A stream that opens with no `Last-Event-ID` is replayed the
+         hub's recent events, which can include a `disconnected` from
+         before this wait began (an unpair, a screen that slept an hour
+         ago). So the event is a PROMPT to ask, not an answer: only a
+         screen the server says is gone now ends the wait. */
+      void fetch("/api/admin/display")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body) => {
+          if (body === null) return;
+          if (body.paired === true && body.connected === true) return;
+          setSign({ stage: "offline", why: "Customer screen disconnected." });
+        })
+        .catch(() => undefined);
+    };
+    source.addEventListener("completed", onCompleted);
+    source.addEventListener("refused", onRefused);
+    source.addEventListener("disconnected", onDisconnected);
+    return () => {
+      source?.removeEventListener("completed", onCompleted);
+      source?.removeEventListener("refused", onRefused);
+      source?.removeEventListener("disconnected", onDisconnected);
+      source?.close();
+    };
+  }, [sign]);
 
   /* The dialog unmounting mid-flight must not leave the overlay
    * believing money is still moving. */
@@ -7520,6 +7703,23 @@ function ContractDialog(props: {
           </span>
         </button>
 
+        {/* T205: the explicit way to put the contract in front of the
+            student, when there is a screen to put it on. With the rule
+            ON, Buy presents it first anyway (below) and this is the same
+            act said plainly; with the rule OFF, this is how a studio
+            that wants a signature on THIS membership still takes one.
+            64px like every other tap target here. */}
+        {displayConnected && sign === null && outcome?.kind !== "paid" ? (
+          <button
+            className="contract-start"
+            disabled={purchasing || blockReason !== null}
+            onClick={() => void presentContract()}
+          >
+            <span>Sign on the customer screen</span>
+            <span className="contract-start-day">Send</span>
+          </button>
+        ) : null}
+
         {contract.agreementTerms ? (
           /* The terms are PLAIN TEXT by the time they reach here: the
              server reduced Mindbody's HTML (T99, src/lib/richtext.ts).
@@ -7598,6 +7798,119 @@ function ContractDialog(props: {
           </div>
         ) : null}
 
+        {/* T205: the customer's signature, while it is outstanding. It
+            stands where the teacher is already looking, says what is
+            being waited for, and carries the ways out: Cancel (the
+            dialog stays exactly as it was), and the D5 PIN override. A
+            busy screen adds the design's Wait and Take over. Nothing
+            here sells: the purchase follows the customer's own
+            signature, or the PIN. */}
+        {sign !== null ? (
+          <div className="approve-wait" role="status">
+            <p className="approve-wait-title">
+              {sign.stage === "waiting"
+                ? "Waiting for the customer to sign"
+                : sign.stage === "busy"
+                  ? sign.signup === true
+                    ? "Someone is signing up on the customer screen."
+                    : "The customer screen is busy."
+                  : sign.stage === "offline"
+                    ? "The customer screen is not connected."
+                    : "Selling without a signature"}
+            </p>
+            <p className="approve-wait-sub">
+              {sign.stage === "waiting"
+                ? "The contract is on their screen. The membership starts the moment they sign."
+                : sign.stage === "busy"
+                  ? waitingForScreen
+                    ? "Waiting for it to come free. The contract goes up by itself."
+                    : sign.signup === true
+                      ? "Wait for them to finish, take the screen over, or sell it with your PIN."
+                      : "Wait for it, take it over, or sell it with your PIN."
+                  : sign.stage === "offline"
+                    ? `${sign.why} This membership needs your PIN, or a screen to sign on.`
+                    : "Enter your PIN in the box."}
+            </p>
+            {sign.stage !== "pin" ? (
+              <div className="approve-wait-buttons">
+                <button
+                  type="button"
+                  className="approve-wait-btn"
+                  disabled={purchasing}
+                  onClick={() => {
+                    setWaitingForScreen(false);
+                    setSign(null);
+                    setSignNote(null);
+                    if (sign.stage === "waiting") {
+                      void fetch("/api/display/cancel", { method: "POST" });
+                    }
+                  }}
+                >
+                  Cancel
+                </button>
+                {sign.stage === "busy" && !waitingForScreen ? (
+                  <button
+                    type="button"
+                    className="approve-wait-btn"
+                    disabled={purchasing}
+                    onClick={() => setWaitingForScreen(true)}
+                  >
+                    Wait
+                  </button>
+                ) : null}
+                {sign.stage === "busy" ? (
+                  <button
+                    type="button"
+                    className="approve-wait-btn"
+                    disabled={purchasing}
+                    onClick={() => {
+                      /* Take over: the screen apologises for a few
+                         seconds before the contract goes up, so the
+                         student it interrupted is not simply replaced by
+                         somebody else's membership. */
+                      setWaitingForScreen(false);
+                      void (async () => {
+                        await fetch("/api/display/cancel", {
+                          method: "POST",
+                          headers: { "content-type": "application/json" },
+                          body: JSON.stringify({ takenOver: true }),
+                        }).catch(() => undefined);
+                        await new Promise((r) => setTimeout(r, 3_000));
+                        await presentContract();
+                      })();
+                    }}
+                  >
+                    Take over
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="approve-wait-btn go"
+                  disabled={purchasing}
+                  onClick={() => {
+                    setWaitingForScreen(false);
+                    setSign({
+                      stage: "pin",
+                      because:
+                        sign.stage === "offline"
+                          ? sign.why
+                          : sign.stage === "busy"
+                            ? sign.signup === true
+                              ? "Someone was signing up on the customer screen."
+                              : "The customer screen is busy."
+                            : "The customer has not signed on the screen.",
+                    });
+                  }}
+                >
+                  Sell without a signature
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : signNote !== null ? (
+          <p className="approve-wait-sub">{signNote}</p>
+        ) : null}
+
         {outcome?.kind !== "paid" ? (
           <div className="modal-actions">
             <button
@@ -7611,8 +7924,26 @@ function ContractDialog(props: {
                 so tapping it is agreeing to exactly what it says. */}
             <button
               className="modal-confirm go contract-confirm"
-              disabled={!confirmable}
-              onClick={() => void doPurchase()}
+              disabled={!confirmable || sign !== null}
+              onClick={() => {
+                /* T205: with the rule on, Buy PRESENTS the contract
+                   first and the purchase follows the signature. With it
+                   off, or with a signature already spent on a retry,
+                   this is T30's own tap unchanged. The server enforces
+                   the rule either way. */
+                if (requiresSignature) {
+                  if (displayConnected) {
+                    void presentContract();
+                  } else {
+                    setSign({
+                      stage: "offline",
+                      why: "No customer screen is paired.",
+                    });
+                  }
+                  return;
+                }
+                void doPurchase();
+              }}
             >
               {purchasing ? (
                 <>
@@ -7630,6 +7961,24 @@ function ContractDialog(props: {
               )}
             </button>
           </div>
+        ) : null}
+        {/* T205: the D5 override. The PIN is T48's, minted for the
+            "contract" purpose alone, and /api/purchase-contract verifies
+            it, spends it once and files it on the client with this
+            teacher's name. */}
+        {sign?.stage === "pin" ? (
+          <ApprovalDialog
+            because={sign.because}
+            purpose={CONTRACT_PURPOSE}
+            title="Sell this membership without a signature"
+            note="Your name goes on the client's record as the person who sold it unsigned."
+            onCancel={() => setSign(null)}
+            onArmed={(armed: ApprovalArmed) => {
+              setSign(null);
+              setSignNote(null);
+              void doPurchase({ token: armed.token });
+            }}
+          />
         ) : null}
         {startOpen ? (
           <StartDatePicker
@@ -10045,6 +10394,15 @@ export default function SaleScreen(props: {
    * and can never cost a student an unapproved charge.
    */
   const [confirmsSale, setConfirmsSale] = useState(false);
+  /** T205: the membership rule, and whether there is a screen to collect
+   *  a signature on. Read from the same /api/config answer, and for the
+   *  same reason: this copy decides what the contract dialog DRAWS, and
+   *  /api/purchase-contract reads the setting itself on every purchase,
+   *  so a stale copy can cost a teacher a refusal and can never cost a
+   *  student an unsigned membership. The rule DEFAULTS ON here too, so a
+   *  config answer that never arrives lands on the safe side. */
+  const [contractSignature, setContractSignature] = useState(true);
+  const [displayConnected, setDisplayConnected] = useState(false);
   useEffect(() => {
     if (!props.open) return;
     let stopped = false;
@@ -10053,6 +10411,10 @@ export default function SaleScreen(props: {
       .then((body) => {
         if (stopped || !body) return;
         setConfirmsSale(body.customerConfirmsSale === true);
+        setContractSignature(body.contractRequiresSignature !== false);
+        setDisplayConnected(
+          body.display?.paired === true && body.display?.connected === true,
+        );
       })
       .catch(() => undefined);
     return () => {
@@ -12262,6 +12624,8 @@ export default function SaleScreen(props: {
       {contractDialog ? (
         <ContractDialog
           contract={contractDialog}
+          requiresSignature={contractSignature}
+          displayConnected={displayConnected}
           client={client}
           cardLookup={cardLookup}
           onClose={() => setContractDialog(null)}

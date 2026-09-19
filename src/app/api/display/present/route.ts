@@ -11,6 +11,8 @@ import {
 } from "@/lib/display";
 import { cartSha256 } from "@/lib/cartsha";
 import { readTicketPayload } from "@/lib/displayticket";
+import { readContractPayload } from "@/lib/displaycontract";
+import { buildContractScene } from "@/lib/contractscene";
 import { readWaiverPayload } from "@/lib/displaywaiver";
 import { readClientFirstName } from "@/lib/clients";
 import { getWaiver } from "@/lib/waiver";
@@ -27,9 +29,18 @@ export const dynamic = "force-dynamic";
  * up, and that is who Mindbody will name when the result is finalised
  * from this teacher's iPad later.
  *
- * THIS ROUTE CALLS MINDBODY NOWHERE. Presenting a scene is a server-side
- * handoff between two browsers; the writes stay in the routes that
- * already have them.
+ * THIS ROUTE WRITES TO MINDBODY NOWHERE. Presenting a scene is a
+ * server-side handoff between two browsers; the writes stay in the
+ * routes that already have them.
+ *
+ * It does READ Mindbody, for two of the five scenes and only to build
+ * what the student is shown: the waiver's text (T202, GET
+ * /site/liabilitywaiver through the same cache /api/waiver reads), and,
+ * since T205, a contract's name, terms and price -- GET /sale/contracts,
+ * GET /client/clients for the stored card, and the SAME `Test: true`
+ * POST /sale/purchasecontract rehearsal the teacher's own dialog runs
+ * (src/lib/contractscene.ts). A rehearsal commits nothing; the design's
+ * rule that the display never writes is intact.
  */
 export async function POST(request: Request) {
   const denied = requireSession(request);
@@ -148,6 +159,70 @@ export async function POST(request: Request) {
     privateHalf = { clientId, textSha256: waiver.sha256 };
   }
 
+  /* T205: a CONTRACT's payload is built here too, and for the same
+   * reasons as the waiver's, with one more: the figure under the terms
+   * has to be the server's own rehearsal rather than a number the
+   * teacher's browser relayed. The browser sends the client, the
+   * contract and (optionally) the chosen start day; everything the
+   * student reads comes from Mindbody through the server, and the
+   * client id, the contract id, the start day, the sha256 of the RAW
+   * terms and the rehearsed total in cents stay on the request's
+   * SERVER-side half, where /api/purchase-contract reads them back. */
+  if (input.kind === "contract") {
+    const clientId =
+      typeof input.clientId === "string" ? input.clientId.trim() : "";
+    if (clientId.length === 0) {
+      return NextResponse.json(
+        { error: "clientId is required for a contract" },
+        { status: 400 },
+      );
+    }
+    const contractId = input.contractId;
+    if (!Number.isInteger(contractId)) {
+      return NextResponse.json(
+        { error: "contractId (integer) is required for a contract" },
+        { status: 400 },
+      );
+    }
+    const rawStart = input.startDate;
+    if (
+      rawStart !== undefined &&
+      rawStart !== null &&
+      typeof rawStart !== "string"
+    ) {
+      return NextResponse.json(
+        { error: "startDate must be a YYYY-MM-DD day." },
+        { status: 400 },
+      );
+    }
+    const built = await buildContractScene({
+      clientId,
+      contractId: contractId as number,
+      startDate:
+        typeof rawStart === "string" && rawStart.trim().length > 0
+          ? rawStart.trim()
+          : null,
+      clientFirstName: await readClientFirstName(clientId),
+    });
+    if (!built.ok) {
+      return NextResponse.json(
+        { error: built.error },
+        { status: built.status },
+      );
+    }
+    /* Rebuilt field by field on the way out as well, so the shape the
+     * display validates is the shape it was handed. */
+    const checked = readContractPayload(built.value.payload);
+    if (!checked.ok) {
+      return NextResponse.json(
+        { error: `payload: ${checked.error}` },
+        { status: 502 },
+      );
+    }
+    scene = checked.value as unknown as Record<string, unknown>;
+    privateHalf = built.value.private as unknown as Record<string, unknown>;
+  }
+
   /* The one thing a scene may carry about the person in front of it: a
    * first name, for the greeting. Trimmed and bounded here so a payload
    * cannot smuggle a paragraph in through it. */
@@ -163,7 +238,9 @@ export async function POST(request: Request) {
       ...scene,
       /* A waiver's first name is the SERVER's, looked up above; a hint
        * from the browser does not get to overwrite it. */
-      ...(clientFirstName === null || input.kind === "waiver"
+      ...(clientFirstName === null ||
+      input.kind === "waiver" ||
+      input.kind === "contract"
         ? {}
         : { clientFirstName }),
     },

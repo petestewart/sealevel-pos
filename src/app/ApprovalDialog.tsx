@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { APPROVE_PURPOSE, isPinShape, PIN_MAX, PIN_MIN } from "@/lib/comp";
 
+import type { CompPurpose } from "@/lib/auth";
+
 /**
  * T203 (Phase 2.5 item 4), the D1 override: "Approve sale", beside
  * "Waiting for the customer to approve".
@@ -36,8 +38,24 @@ export default function ApprovalDialog(props: {
   because: string;
   onCancel: () => void;
   onArmed: (armed: ApprovalArmed) => void;
+  /**
+   * T205: the same dialog, a different authorization. The PURPOSE is
+   * signed into the token (T94 review), so a PIN typed here authorizes
+   * exactly one thing: "approve" a sale (D1), or "contract" to sell a
+   * membership with no customer signature (D5). It defaults to the
+   * approval, which is what T203 shipped, and the three strings that
+   * name the act move with it.
+   */
+  purpose?: CompPurpose;
+  title?: string;
+  /** The line under the heading: whose name goes on what. */
+  note?: string;
 }) {
   const { because, onCancel, onArmed } = props;
+  const purpose = props.purpose ?? APPROVE_PURPOSE;
+  const title = props.title ?? "Approve this sale yourself";
+  const note =
+    props.note ?? "Your name goes on the sale as the person who approved it.";
   const [pin, setPin] = useState("");
   const pinRef = useRef("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -79,7 +97,7 @@ export default function ApprovalDialog(props: {
         headers: { "content-type": "application/json" },
         /* The PURPOSE is signed into the token (T94 review), so a PIN
          * typed here approves a sale and authorizes nothing else. */
-        body: JSON.stringify({ pin: digits, purpose: APPROVE_PURPOSE }),
+        body: JSON.stringify({ pin: digits, purpose }),
       });
       const body = await res.json().catch(() => ({}));
       pinRef.current = "";
@@ -121,7 +139,7 @@ export default function ApprovalDialog(props: {
       busyRef.current = false;
       setBusy(false);
     }
-  }, [onArmed]);
+  }, [onArmed, purpose]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -156,14 +174,12 @@ export default function ApprovalDialog(props: {
         className="modal modal-sale modal-amount modal-reason"
         role="dialog"
         aria-modal="true"
-        aria-label="Approve this sale yourself"
+        aria-label={title}
         onClick={(e) => e.stopPropagation()}
       >
-        <p className="modal-title">Approve this sale yourself</p>
+        <p className="modal-title">{title}</p>
         <p className="reason-sub">{because} Enter your PIN.</p>
-        <p className="reason-note muted-note">
-          Your name goes on the sale as the person who approved it.
-        </p>
+        <p className="reason-note muted-note">{note}</p>
         <div
           key={`dots-${shake}`}
           className={

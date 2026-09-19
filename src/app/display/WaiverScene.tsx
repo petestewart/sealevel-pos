@@ -58,6 +58,19 @@ export default function WaiverScene(props: {
   /** T204: the sign-up greets by the name the student just typed. */
   heading?: string;
   notNowLabel?: string;
+  /**
+   * T205: the contract scene is this same screen with different words
+   * above it. The pad, the scroll rule and the export do not move; only
+   * the sentence under the heading, an optional block of server-worded
+   * terms summary above the text, the label on the text itself and the
+   * label on the agree button do. Anything that decides WHETHER the
+   * agree button is live (scrolled, inked) stays here, in one place.
+   */
+  lead?: string;
+  intro?: React.ReactNode;
+  textLabel?: string;
+  agreeLabel?: string;
+  scrollNote?: string;
 }) {
   const { requestId, payload, onDone } = props;
   const { onSubmit, onNotNow } = props;
@@ -267,13 +280,15 @@ export default function WaiverScene(props: {
         {props.heading ?? (name ? `Hello, ${name}` : "Welcome")}
       </h1>
       <p className="dwaiver-lead">
-        Please read the studio&apos;s liability waiver, then sign below.
+        {props.lead ??
+          "Please read the studio's liability waiver, then sign below."}
       </p>
+      {props.intro ?? null}
       <div
         className="dwaiver-text"
         ref={scrollRef}
         tabIndex={0}
-        aria-label="The liability waiver"
+        aria-label={props.textLabel ?? "The liability waiver"}
         onScroll={(e) => {
           const el = e.currentTarget;
           /* Once read, always read: scrolling back up does not un-read
@@ -286,7 +301,9 @@ export default function WaiverScene(props: {
         {text}
       </div>
       {!scrolled ? (
-        <p className="dwaiver-note">Scroll to the end of the waiver to sign.</p>
+        <p className="dwaiver-note">
+          {props.scrollNote ?? "Scroll to the end of the waiver to sign."}
+        </p>
       ) : null}
 
       <div className="dwaiver-pad-wrap">
@@ -319,7 +336,7 @@ export default function WaiverScene(props: {
           onClick={() => void agree()}
           disabled={!scrolled || !inked || saving}
         >
-          I have read it and agree
+          {props.agreeLabel ?? "I have read it and agree"}
         </button>
       </div>
     </section>

@@ -179,6 +179,11 @@ pack in the same gesture.
 
 ## Phase 2.5 — the customer-facing iPad
 
+**Every item below is built, on `feature/customer-display`.** What
+remains for this phase is the three probes (D-B1, D-B2, D-B3, all
+written and none run) and live verification at the counter: no item here
+has been driven against real Mindbody, a real iPad or a real student.
+
 Design: `docs/design/customer-display.md`. A second iPad on the counter,
 paired to the POS, that shows one scene at a time because a teacher put
 it there. The display never writes to Mindbody: every result is finalised
@@ -190,14 +195,14 @@ Plumbing first, then one scene at a time, in this order.
 - [x] Waiver: sign on the display, signature kept in `waiver_receipts` and copied to Mindbody documents. **T202** (the scene is built server-side and carries no client id or hash; the signature is consumed BY ID, once, across a restart; the document copy is best effort and never fails the agreement). Probe D-B1 is written and not run, so the upload is unverified live.
 - [x] Ticket approval: `customer_confirms_sale` in `app_settings`, admin-edited, enforced by `/api/checkout` on the server; teacher override by their own PIN (T48 idiom), filed on the client. **T203** (one cart hash, `src/lib/cartsha.ts`, computed server-side by both routes and holding everything that decides the total but not the total itself; the approval is spent only after the charge resolved; the setting only ever ADDS a precondition, which is why the drawer may hold it).
 - [x] Sign-up, self-serve: "New here? Sign up" on the idle screen, form then waiver signature in one request, a tray with a gold count on the POS header, Create finalises client and waiver in one tap, pending sign-ups surface in walk-in search, take-over rule when the teacher needs the screen. Email and text opt-in ticked by default. Answers Pete's rush case (design doc, "Self-serve"). **T204** (`/api/display/start` is the one route the DISPLAY puts a scene up with; a sign-up has two clocks, four hours for the result and two minutes of no touch for the screen; the form and the signature are one request, and Create is one claim over the create AND the waiver, which is now one shared `src/lib/waiverfinalise.ts`). D-B3 was NOT run: the create sends the text flags, reads the client back, and files a T62-signed Notes line when they did not stick.
-- [ ] Contract signature on the display, required by `contract_requires_signature` (default on) with the teacher's PIN override, sent as `ClientSignature` (probe D-B2 first), `contract_receipts` row.
+- [x] Contract signature on the display, required by `contract_requires_signature` (default on) with the teacher's PIN override, sent as `ClientSignature`, `contract_receipts` row. **T205** (the scene is built server-side from Mindbody's own contract and its own `Test: true` rehearsal, and carries words only: no client id, no contract id, no hash; the purchase refuses unless the signature names THIS client, contract and start day AND the terms still hash to what was signed; the signature is claimed before the write and spent only after it answered, so a refusal leaves it usable for a retry). D-B2 was NOT run: the field ships to the vendored spec, the rehearsal deliberately carries no signature, and the probe is what says whether Mindbody accepts it.
 
 Probes owed, both sandbox, `Test: true` where the endpoint takes it:
 
 | # | Probe | Answers |
 |---|---|---|
 | D-B1 | `POST /client/uploadclientdocument` with a small PNG | The `ClientDocument` bytes field and encoding, and that the file shows on the client's Documents page. **Probe written (`scripts/probe-upload-document.ts`), not run** (T202: no credentials in the build environment) |
-| D-B2 | `POST /sale/purchasecontract` `Test: true` with `ClientSignature` set | That the field is accepted and does not change the rehearsed Total |
+| D-B2 | `POST /sale/purchasecontract` `Test: true` with `ClientSignature` set | That the field is accepted and does not change the rehearsed Total. **Gate: no live contract sale with a signature until this has run.** **Probe written (`scripts/probe-contract-signature.ts`), not run** (T205: no credentials in the build environment). It rehearses twice, with and without the field, and compares both Totals to the cent; a Total that MOVED means the rehearsal must carry the signature too, since the counter shows the rehearsal's figure |
 | D-B3 | `POST /client/addclient` in the sandbox with the three `Send*Texts` flags, then read the client back | Whether `addclient` honours text opt-in, which `updateclient` documents as ignored. **Probe written (`scripts/probe-addclient-texts.ts`), not run** (T204: no credentials in the build environment). Shipping does not wait on it: `/api/client-create` reads the client back after every sign-up and files the opt-in as a Notes line when the flags did not stick |
 
 D1 to D5 are all answered (2026-09-19) and folded into the design doc.

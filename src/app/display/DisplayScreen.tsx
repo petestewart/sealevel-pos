@@ -4,13 +4,16 @@ import { useCallback, useEffect, useState } from "react";
 
 import { plainText } from "@/lib/richtext";
 import { readTicketPayload } from "@/lib/displayticket";
+import { readContractPayload } from "@/lib/displaycontract";
 import { readSignupPayload } from "@/lib/displaysignup";
 import { readWaiverPayload } from "@/lib/displaywaiver";
 
+import ContractScene from "./ContractScene";
 import SignupScene from "./SignupScene";
 import TicketScene from "./TicketScene";
 import WaiverScene from "./WaiverScene";
 
+import type { ContractPayload } from "@/lib/displaycontract";
 import type { SignupPayload } from "@/lib/displaysignup";
 import type { TicketPayload } from "@/lib/displayticket";
 import type { WaiverPayload } from "@/lib/displaywaiver";
@@ -48,7 +51,9 @@ type Scene =
    *  scene the STUDENT answers: completing and refusing both name it. */
   | { kind: "waiver"; requestId: string; payload: WaiverPayload }
   /* T204: the self-serve sign-up, the one scene the STUDENT puts up. */
-  | { kind: "register"; requestId: string; payload: SignupPayload };
+  | { kind: "register"; requestId: string; payload: SignupPayload }
+  /* T205: the membership contract, signed the way the waiver is. */
+  | { kind: "contract"; requestId: string; payload: ContractPayload };
 
 /** T202: how long "Thank you" stays after a signature, on this screen's
  *  own clock. The hub sends `idle` when the teacher's iPad finalises the
@@ -254,6 +259,19 @@ export default function DisplayScreen() {
           return;
         }
       }
+      if (data?.kind === "contract") {
+        const contract = readContractPayload(data.payload);
+        const requestId =
+          typeof (data as { requestId?: unknown }).requestId === "string"
+            ? String((data as { requestId?: unknown }).requestId)
+            : "";
+        if (contract.ok && requestId.length > 0) {
+          setThanks(null);
+          setNotice(null);
+          setScene({ kind: "contract", requestId, payload: contract.value });
+          return;
+        }
+      }
       if (data?.kind === "register") {
         const signup = readSignupPayload(data.payload);
         const requestId =
@@ -418,7 +436,19 @@ export default function DisplayScreen() {
       <main className="display">
         {banner.length > 0 ? <p className="display-banner">{banner}</p> : null}
         <div className="display-scene">
-          {scene.kind === "register" ? (
+          {scene.kind === "contract" ? (
+            <ContractScene
+              requestId={scene.requestId}
+              payload={scene.payload}
+              onDone={(who) => {
+                /* Done with the screen the moment the server has the
+                   signature; the hub's own idle (when the teacher's iPad
+                   purchases) arrives behind this. */
+                setScene(null);
+                setThanks(who ?? "");
+              }}
+            />
+          ) : scene.kind === "register" ? (
             <SignupScene
               requestId={scene.requestId}
               payload={scene.payload}

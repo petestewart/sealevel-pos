@@ -458,6 +458,7 @@ function SettingsPanel({
       />
       <DisplayPanel open={open} />
       <ConfirmSalePanel open={open} admin={mode?.targetAdmin === true} />
+      <ContractSignaturePanel open={open} admin={mode?.targetAdmin === true} />
       <p className="muted">
         The rest is stored in this browser. Applies immediately, no restart.
         The server's own dry run and the write guard stay in the server
@@ -876,6 +877,172 @@ function ConfirmSalePanel({
               }}
             >
               {on ? "Turn off approvals" : "Turn on approvals"}
+            </button>
+          </div>
+        )
+      ) : null}
+    </>
+  );
+}
+
+/* --- Membership needs a customer signature (T205) ---------------------
+ *
+ * Phase 2.5 item 6's setting, beside the one above and reading the same
+ * way, because the two are one policy about one screen. Shown to
+ * everyone, switched only by a named admin (POS_ADMIN_STAFF_IDS).
+ *
+ * It is the FOURTH recorded exception to "nothing in this drawer may
+ * loosen a write rail", and it is safe in the same one direction: with
+ * it on, /api/purchase-contract refuses MORE memberships, never fewer.
+ * Turning it OFF is what needs an admin. Dry run and the write guard are
+ * still not here.
+ */
+
+interface ContractSignatureInfo {
+  contractRequiresSignature: boolean;
+  contractRequiresSignatureSource: string;
+  envVar: string;
+  configured: boolean;
+  available: boolean;
+}
+
+function ContractSignaturePanel({
+  open,
+  admin,
+}: {
+  open: boolean;
+  admin: boolean;
+}) {
+  const [info, setInfo] = useState<ContractSignatureInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      /* Everyone reads the line from /api/config; an admin reads the
+       * fuller answer, which says whether there is a store to write
+       * to. */
+      const res = await fetch(
+        admin ? "/api/admin/contract-signature" : "/api/config",
+      );
+      if (!res.ok) return;
+      const body = await res.json();
+      setInfo({
+        contractRequiresSignature: body.contractRequiresSignature === true,
+        contractRequiresSignatureSource: String(
+          body.contractRequiresSignatureSource ?? "env",
+        ),
+        envVar: String(body.envVar ?? "POS_CONTRACT_REQUIRES_SIGNATURE"),
+        configured: body.configured !== false,
+        available: body.available !== false,
+      });
+    } catch {
+      /* The block stays quiet; nothing else depends on it. */
+    } finally {
+      setLoaded(true);
+    }
+  }, [admin]);
+
+  useEffect(() => {
+    if (!open) return;
+    void load();
+  }, [load, open]);
+
+  const setTo = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/contract-signature", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: next }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setAsking(false);
+      setDone(
+        next
+          ? "On. A membership now needs the customer's signature on their screen, or a teacher's PIN."
+          : "Off. A membership sells as it did before, with no signature.",
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!loaded || info === null) return null;
+  const on = info.contractRequiresSignature;
+  const stored = info.contractRequiresSignatureSource === "setting";
+  return (
+    <>
+      <div className="dev-label">membership needs a signature</div>
+      <p className="muted">
+        {on ? "On" : "Off"}.{" "}
+        {stored
+          ? "Stored setting."
+          : `From ${info.envVar} in the server environment (unset means on).`}{" "}
+        {on
+          ? "The membership dialog puts the contract on the customer screen to sign, and the server refuses a membership nobody signed. A teacher's PIN stands in when the screen cannot be used."
+          : "A membership sells with no signature asked for, and the customer screen is not used."}
+      </p>
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      {admin ? (
+        !info.configured || !info.available ? (
+          <p className="muted">
+            {info.configured
+              ? `The database is not answering, so ${info.envVar} in the server environment decides and this cannot be changed here.`
+              : `No database configured (DATABASE_URL unset), so ${info.envVar} in the server environment decides and this cannot be changed here.`}
+          </p>
+        ) : asking ? (
+          <div className="dev-target-ask">
+            <p className="dev-target-question">
+              {on
+                ? "Stop asking the customer to sign a membership contract?"
+                : "Ask the customer to sign every membership contract on their screen?"}
+            </p>
+            <div className="dev-target-buttons">
+              <button
+                type="button"
+                className="dev-target-btn"
+                disabled={busy}
+                onClick={() => setAsking(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dev-target-btn dev-target-go"
+                disabled={busy}
+                onClick={() => void setTo(!on)}
+              >
+                {busy ? "Saving" : on ? "Yes, turn it off" : "Yes, turn it on"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="dev-target-buttons">
+            <button
+              type="button"
+              className="dev-target-btn"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setDone(null);
+                setAsking(true);
+              }}
+            >
+              {on ? "Turn off signatures" : "Turn on signatures"}
             </button>
           </div>
         )

@@ -344,3 +344,14 @@ export function discountRecordLine(r: {
  * component: a client bundle must not pull `pg` in for one string.
  */
 export const APPROVE_PURPOSE = "approve" as const;
+
+/**
+ * T205: the comp-token purpose a teacher's PIN mints to sell a
+ * membership WITHOUT the customer's signature (the D5 override). Its own
+ * purpose, beside APPROVE_PURPOSE, for T94 review's reason: a PIN typed
+ * to approve a sale must not also start somebody's autopay unsigned.
+ * Here, beside the PIN shape the same dialog reads, because
+ * src/lib/approval.ts reaches the database and the dialog is a browser
+ * component.
+ */
+export const CONTRACT_PURPOSE = "contract" as const;

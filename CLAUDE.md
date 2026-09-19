@@ -270,14 +270,21 @@ tightens in only one direction too: with it on the server refuses MORE
 charges and never fewer, it is admin-only in BOTH directions (turning it
 off is the dangerous one), and the log names the staff id who moved it.
 
-## Customer display (T200, T201, T202, T203, T204; Phase 2.5)
+T205's "membership needs a signature" is the FOURTH, sits beside it, and
+reads the same way: with it on `/api/purchase-contract` refuses MORE
+memberships and never fewer, it is admin-only in both directions, and the
+log names who moved it. It is the one setting here that DEFAULTS ON, and
+turning it off is the dangerous direction.
+
+## Customer display (T200, T201, T202, T203, T204, T205; Phase 2.5)
 
 A second iPad on the counter, facing the student, at `/display`. Design:
 `docs/design/customer-display.md`. Built: the plumbing (idle screen,
 pairing, the hub in `src/lib/display.ts`, the two SSE routes and
 present/cancel/complete/refuse), the ticket scene (T201), the waiver
-scene (T202), the ticket approval (T203) and the self-serve sign-up
-(T204). The contract is item 6.
+scene (T202), the ticket approval (T203), the self-serve sign-up (T204)
+and the contract signature (T205). Every item of the phase is built; what
+is left is the three probes and live verification.
 
 **The display adds zero write paths to Mindbody, and must keep adding
 none.** Nothing in `src/lib/display.ts` or under `src/app/api/display/`
@@ -389,6 +396,37 @@ options so dry run and the write guard apply, and a failure reports
 SUPPRESSED release does not consume the signature, so a real run later
 can still spend it. A waiver the studio edited between the student
 reading it and the teacher's iPad recording it is refused outright.
+
+**A membership needs the customer's signature** (T205, Phase 2.5 item 6,
+D5: "required but with override option"). The rule is
+`contract_requires_signature` in `app_settings`, default ON, with
+`POS_CONTRACT_REQUIRES_SIGNATURE` as the no-database fallback (only
+`false` or `0` turn it off; unset means on) and `PUT
+/api/admin/contract-signature` as the admin control beside T203's.
+**It is enforced in `/api/purchase-contract`, before any Mindbody call,
+and nowhere else**: a LIVE purchase must carry either a
+`displayRequestId` naming a completed, unconsumed, unexpired `contract`
+request for THIS client, contract and start day whose recorded sha256 of
+the RAW terms still matches the terms as Mindbody serves them now, or a
+`signatureOverride` token minted from the teacher's own PIN for the new
+`contract` purpose (T94's rule: the purpose and the session's own staff
+id), spent once and filed on the client as a Notes line naming them. The
+`Test: true` rehearsal is exempt and unchanged. With NO display paired
+the purchase asks for the PIN every time and says so, deliberately: a
+studio that wants signatures should notice when the screen that collects
+them is gone.
+
+The signature is sent as `ClientSignature` on the live
+`POST /sale/purchasecontract` (sale.yml:6246, base64 PNG, filed by
+Mindbody under the client's documents), from the server's own store and
+never from the browser, and the rehearsal deliberately carries NONE: the
+counter shows the rehearsal's Total, and whether the field moves it is
+what probe D-B2 answers (`scripts/probe-contract-signature.ts`, written,
+not run). The request is claimed with `beginFinalisation` and spent only
+after the purchase answered, so a refusal leaves the signature usable for
+a retry of the same contract. `contract_receipts` (migration 14) is ours,
+for the one thing Mindbody does not keep: WHICH WORDING was signed, and
+by what artifact, or which teacher sold it unsigned.
 
 **The `pos_display` cookie grants exactly `/api/display/*`.** It is
 HMAC-signed like the device token (`src/lib/displayauth.ts`), carries
@@ -746,6 +784,17 @@ while `git clone` works, so clone the repo rather than fetching files.
   them is unknown until `scripts/probe-addclient-texts.ts` runs against
   the sandbox. Until then a dropped opt-in becomes a signed Notes line
   for a human to act on, never a silent loss.
+- **`ClientSignature` is unverified live (T205).** The contract
+  signature ships to the vendored spec's description and has never
+  reached Mindbody: whether the field is accepted, and whether it leaves
+  the rehearsed Total alone, is exactly what D-B2 asks
+  (`scripts/probe-contract-signature.ts`, written, not run). If the
+  Total MOVES, the rehearsal must carry the signature too, because the
+  figure on the counter's button is the rehearsal's. The document
+  Mindbody is documented to file under the client
+  (`clientContractSignature-...`) has likewise never been seen; our own
+  `contract_receipts` row is the record that does not depend on it.
+
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It
