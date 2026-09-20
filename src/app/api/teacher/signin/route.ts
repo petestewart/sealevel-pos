@@ -5,7 +5,7 @@ import {
   recordSigninSuccess,
   requireSession,
 } from "@/lib/auth";
-import { revokeStaffToken, signInAsStaff } from "@/lib/mindbody";
+import { adoptServiceToken, revokeStaffToken, signInAsStaff } from "@/lib/mindbody";
 import { listStaff } from "@/lib/staff";
 import { hasTeacherPin } from "@/lib/teacherpins";
 import {
@@ -98,6 +98,14 @@ export async function POST(request: Request) {
       { error: "Mindbody did not accept that sign-in.", reason: "teacher" },
       { status: 401 },
     );
+  }
+
+  /* The studio's own API login signing in as a teacher (the sandbox's
+   * only login; Pete testing on the counter): one token serves both, so
+   * the staff read below does not ask for a second issue the sandbox
+   * refuses. */
+  if (adoptServiceToken(username, signIn.token)) {
+    console.log("[staff] sign-in is the service account itself; reusing its token for reads");
   }
 
   const user = signIn.user;

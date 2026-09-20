@@ -200,6 +200,26 @@ export async function staffToken(env = mindbodyEnv()): Promise<string> {
 }
 
 /**
+ * A teacher who signed in AS THE SERVICE ACCOUNT ITSELF (the studio's own
+ * API login, which is also the only login the sandbox has) already holds
+ * a token this process can use for its reads. Adopt it as the cached
+ * service token so the next read does not ask Mindbody to issue a second
+ * token for the same user seconds later: the sandbox refuses that
+ * ("Staff identity authentication failed", Pete, 2026-09-20, with the
+ * typed sign-in accepted a second earlier). Only when the username is the
+ * service account's; anybody else's token is never the service token.
+ * Returns whether it was adopted.
+ */
+export function adoptServiceToken(username: string, token: string): boolean {
+  const env = mindbodyEnv();
+  if (username.trim().toLowerCase() !== env.username.trim().toLowerCase()) {
+    return false;
+  }
+  cachedTokens.set(env.siteId, { value: token, issuedAt: Date.now() });
+  return true;
+}
+
+/**
  * A staff sign-in with SOMEONE ELSE'S credentials (T48): a teacher
  * enrolling a comp PIN proves who they are by signing in to Mindbody once,
  * and this is that one call. Deliberately not staffToken(): the token is
