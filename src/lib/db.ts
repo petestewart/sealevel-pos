@@ -479,6 +479,19 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         ON contract_receipts (client_id);
     `,
   },
+  {
+    /* Sandbox sign-in (Pete, 2026-09-20): the sandbox's ONE staff login is
+     * also the app's service account, and Mindbody refuses to issue a
+     * second token for a user who already holds one. A session opened
+     * with the service account's own login is flagged so the service
+     * reads can borrow its token when an issue is refused. Additive,
+     * default false; rows from before read as ordinary teachers. */
+    version: 15,
+    sql: `
+      ALTER TABLE staff_sessions
+        ADD COLUMN IF NOT EXISTS is_service boolean NOT NULL DEFAULT false;
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -1038,6 +1051,8 @@ export interface StaffSessionRow {
   tokenEnc: string;
   issuedAt: Date;
   expiresAt: Date;
+  /** The session was opened with the SERVICE ACCOUNT's own login. */
+  isService: boolean;
 }
 
 /** Writes a fresh session's row. Returns whether it landed; false is
@@ -1049,10 +1064,10 @@ export async function insertStaffSession(row: StaffSessionRow): Promise<boolean>
     if (!p) return false;
     await p.query(
       `INSERT INTO staff_sessions
-         (id, staff_id, name, token_enc, issued_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (id, staff_id, name, token_enc, issued_at, expires_at, is_service)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (id) DO NOTHING`,
-      [row.id, row.staffId, row.name, row.tokenEnc, row.issuedAt, row.expiresAt],
+      [row.id, row.staffId, row.name, row.tokenEnc, row.issuedAt, row.expiresAt, row.isService],
     );
     return true;
   } catch (err) {
@@ -1072,20 +1087,47 @@ export async function findStaffSession(
     const p = await ready();
     if (!p) return null;
     const res = await p.query(
-      `SELECT id, staff_id, name, token_enc, issued_at, expires_at
+      `SELECT id, staff_id, name, token_enc, issued_at, expires_at, is_service
        FROM staff_sessions WHERE id = $1 AND expires_at > $2`,
       [id, now],
     );
     const r = res.rows[0];
     if (!r) return null;
-    return {
-      id: String(r.id),
-      staffId: String(r.staff_id),
-      name: String(r.name),
-      tokenEnc: String(r.token_enc),
-      issuedAt: r.issued_at as Date,
-      expiresAt: r.expires_at as Date,
-    };
+    return rowOf(r);
+  } catch (err) {
+    logDbError("staff-session-read", err);
+    return null;
+  }
+}
+
+function rowOf(r: any): StaffSessionRow {
+  return {
+    id: String(r.id),
+    staffId: String(r.staff_id),
+    name: String(r.name),
+    tokenEnc: String(r.token_enc),
+    issuedAt: r.issued_at as Date,
+    expiresAt: r.expires_at as Date,
+    isService: r.is_service === true,
+  };
+}
+
+/** The newest live session opened with the service account's own login,
+ *  or null (none, expired, or the store did not answer). */
+export async function findServiceStaffSession(
+  now = new Date(),
+): Promise<StaffSessionRow | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT id, staff_id, name, token_enc, issued_at, expires_at, is_service
+       FROM staff_sessions WHERE is_service = true AND expires_at > $1
+       ORDER BY issued_at DESC LIMIT 1`,
+      [now],
+    );
+    const r = res.rows[0];
+    return r ? rowOf(r) : null;
   } catch (err) {
     logDbError("staff-session-read", err);
     return null;

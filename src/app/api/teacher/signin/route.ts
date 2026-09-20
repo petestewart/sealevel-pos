@@ -104,7 +104,8 @@ export async function POST(request: Request) {
    * only login; Pete testing on the counter): one token serves both, so
    * the staff read below does not ask for a second issue the sandbox
    * refuses. */
-  if (adoptServiceToken(username, signIn.token)) {
+  const isService = adoptServiceToken(username, signIn.token);
+  if (isService) {
     console.log("[staff] sign-in is the service account itself; reusing its token for reads");
   }
 
@@ -187,7 +188,7 @@ export async function POST(request: Request) {
   if (previous) await endStaffSession(previous.id);
 
   const teacher = { id: staff.id, name: staff.name };
-  const cookie = await createStaffSession(teacher, signIn.token);
+  const cookie = await createStaffSession(teacher, signIn.token, Date.now(), isService);
   recordSigninSuccess();
   console.log(`[staff] signed in staff=${teacher.id}`);
   return NextResponse.json(

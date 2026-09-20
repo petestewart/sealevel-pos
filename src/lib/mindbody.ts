@@ -191,6 +191,20 @@ export async function staffToken(env = mindbodyEnv()): Promise<string> {
       cached.issuedAt = Date.now(); /* back off: retry issue in an hour, not per call */
       return cached.value;
     }
+    /* No cached token and Mindbody will not issue one. A teacher signed
+     * in AS the service account holds one (the sandbox's only login,
+     * 2026-09-20): borrow it. A dynamic import, because staffsession
+     * imports this module. */
+    const borrowed = await (
+      await import("./staffsession")
+    ).serviceSessionToken().catch(() => null);
+    if (borrowed) {
+      console.warn(
+        `[token] issue refused (HTTP ${res.status}); borrowing the signed-in service account's own token`,
+      );
+      cachedTokens.set(env.siteId, { value: borrowed, issuedAt: Date.now() });
+      return borrowed;
+    }
     throw new Error(
       `Mindbody usertoken/issue failed: HTTP ${res.status} ${JSON.stringify(body).slice(0, 200)}`,
     );

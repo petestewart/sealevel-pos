@@ -6,6 +6,7 @@ import {
   dbConfigured,
   deleteAllStaffSessions,
   deleteStaffSession,
+  findServiceStaffSession,
   findStaffSession,
   insertStaffSession,
   sweepStaffSessions,
@@ -76,6 +77,10 @@ export interface StaffSession {
   /** The Mindbody staff user token issued for this teacher. */
   token: string;
   issuedAt: number;
+  /** Opened with the SERVICE ACCOUNT's own login (the sandbox's only
+   *  login; Pete testing on the counter). Its token may be borrowed for
+   *  the app's reads when Mindbody refuses to issue a second one. */
+  isService: boolean;
 }
 
 const COOKIE_NAME = "pos_staff";
@@ -228,6 +233,7 @@ export async function createStaffSession(
   staff: { id: number; name: string },
   token: string,
   now = Date.now(),
+  isService = false,
 ): Promise<string> {
   logModeOnce();
   /* T89: somebody has signed in, so the "the target changed, sign in
@@ -242,6 +248,7 @@ export async function createStaffSession(
     name: staff.name,
     token,
     issuedAt: now,
+    isService,
   });
   if (p.mode === "postgres") {
     const landed = await insertStaffSession({
@@ -251,6 +258,7 @@ export async function createStaffSession(
       tokenEnc: encryptStaffToken(token, p.tokenKey),
       issuedAt: new Date(now),
       expiresAt: new Date(now + STAFF_TTL_MS),
+      isService,
     });
     if (!landed && !state.insertFailLogged) {
       state.insertFailLogged = true;
@@ -315,9 +323,31 @@ export async function staffSessionFrom(
     name: row.name,
     token,
     issuedAt,
+    isService: row.isService,
   };
   state.sessions.set(id, session);
   return session;
+}
+
+/**
+ * The token of a live session opened with the service account's own
+ * login, for `staffToken()` to borrow when Mindbody refuses to ISSUE one
+ * (the sandbox, which allows a user one outstanding token: the sign-in
+ * holds it, so the app's own issue is refused for as long as that
+ * teacher is signed in). Memory first, then the table, so a restart
+ * finds it too. Null when there is none, which leaves the refusal to
+ * surface as before.
+ */
+export async function serviceSessionToken(now = Date.now()): Promise<string | null> {
+  for (const s of state.sessions.values()) {
+    if (s.isService && now - s.issuedAt < STAFF_TTL_MS) return s.token;
+  }
+  const p = persistence();
+  if (p.mode !== "postgres") return null;
+  const row = await boundedDb(findServiceStaffSession(new Date(now)), TABLE_WAIT_MS, null);
+  if (!row) return null;
+  if (now - row.issuedAt.getTime() >= STAFF_TTL_MS) return null;
+  return decryptStaffToken(row.tokenEnc, p.tokenKey);
 }
 
 /** Ends a session: the entry and the row go, the token is revoked best
