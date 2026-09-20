@@ -158,20 +158,25 @@ async function main(): Promise<void> {
   for (const l of locs?.Locations ?? []) console.log(`    ${l?.Id}  ${l?.Name ?? ""}`);
   if (locationIds.length === 0) locationIds.push(STUDIO_LOCATION_ID);
 
-  console.log("\n=== GET /sale/contracts");
-  const rawContracts = await mindbody("/sale/contracts");
-  type Candidate = { id: number; name: string; locations: number[] };
-  const candidates: Candidate[] = (rawContracts?.Contracts ?? [])
-    .map((c: any) => ({
-      id: Number(c?.Id),
-      name: String(c?.Name ?? ""),
-      locations: Array.isArray(c?.LocationPurchaseRestrictionIds)
-        ? c.LocationPurchaseRestrictionIds.map(Number).filter(Number.isInteger)
-        : locationIds,
-    }))
-    .filter((c: Candidate) => Number.isInteger(c.id));
-  for (const c of candidates) {
-    console.log(`    ${c.id}  ${c.name}  sold at ${c.locations.join(", ") || "(none)"}`);
+  /* GET /sale/contracts REQUIRES request.locationId (Pete's run:
+   * "LocationId is a required parameter"), so the list is per location
+   * and everything it returns for a location is sellable there. Ask
+   * once per location and try each contract where it was listed. */
+  type Candidate = { id: number; name: string; location: number };
+  const candidates: Candidate[] = [];
+  for (const loc of locationIds) {
+    console.log(`\n=== GET /sale/contracts?request.locationId=${loc}`);
+    try {
+      const raw = await mindbody(`/sale/contracts?request.locationId=${loc}`);
+      for (const c of raw?.Contracts ?? []) {
+        const id = Number(c?.Id);
+        if (!Number.isInteger(id)) continue;
+        console.log(`    ${id}  ${c?.Name ?? ""}`);
+        candidates.push({ id, name: String(c?.Name ?? ""), location: loc });
+      }
+    } catch (err) {
+      console.log(`    FAILED: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
   const tryContracts: Candidate[] = Number.isInteger(contractId)
     ? candidates.filter((c) => c.id === contractId)
@@ -252,7 +257,7 @@ async function main(): Promise<void> {
   let without: any = null;
   let with_: any = null;
   outer: for (const c of tryContracts) {
-    for (const loc of c.locations) {
+    for (const loc of [c.location]) {
       for (const fb of fallbacks) {
         const base = {
           ContractId: c.id,
