@@ -81,50 +81,64 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const png = tinyPng();
-  const fileName = `probe-waiver-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "")}.png`;
-  const body = {
-    ClientId: clientId,
-    File: {
-      FileName: fileName,
-      MediaType: "png",
-      Buffer: png.toString("base64"),
-    },
-  };
-  console.log(`\n=== POST /client/uploadclientdocument`);
-  console.log(`    client ${clientId}`);
-  console.log(`    ${fileName}, ${png.length} bytes, MediaType "png"`);
-  console.log(
-    `    Buffer: ${body.File.Buffer.length} base64 chars, starts ${body.File.Buffer.slice(0, 16)}\n`,
-  );
-  try {
-    const res = await mindbody("/client/uploadclientdocument", {
-      method: "POST",
-      body,
-      clientId,
-    });
-    console.log("    RAW ANSWER:");
-    console.log(JSON.stringify(res, null, 2));
-    if (res?.DryRun) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "");
+  /* Pete's first run (2026-09-20, sandbox client 100041622): the spec's
+   * own listed value, "png", was refused with "Media type png is
+   * invalid". So the probe now tries the plausible spellings in order and
+   * stops at the first one the sandbox accepts; the accepted spelling is
+   * what src/lib/clients.ts uploadClientDocument must send. Each try is
+   * its own tiny file so a refusal cannot be a duplicate-name complaint. */
+  const candidates = ["png", ".png", "image/png", "PNG", "Png"];
+  for (const mediaType of candidates) {
+    const fileName = `probe-waiver-${stamp}-${candidates.indexOf(mediaType)}.png`;
+    const body = {
+      ClientId: clientId,
+      File: {
+        FileName: fileName,
+        MediaType: mediaType,
+        Buffer: png.toString("base64"),
+      },
+    };
+    console.log(`\n=== POST /client/uploadclientdocument`);
+    console.log(`    client ${clientId}`);
+    console.log(`    ${fileName}, ${png.length} bytes, MediaType ${JSON.stringify(mediaType)}`);
+    console.log(
+      `    Buffer: ${body.File.Buffer.length} base64 chars, starts ${body.File.Buffer.slice(0, 16)}\n`,
+    );
+    try {
+      const res = await mindbody("/client/uploadclientdocument", {
+        method: "POST",
+        body,
+        clientId,
+      });
+      console.log("    RAW ANSWER:");
+      console.log(JSON.stringify(res, null, 2));
+      if (res?.DryRun) {
+        console.log(
+          "\n    Suppressed by dry run. Re-run with POS_DRY_RUN=false to actually ask.",
+        );
+        return;
+      }
+      if (res?.WriteSuppressed) {
+        console.log(
+          "\n    Suppressed by the write guard. Put this client id in POS_WRITE_CLIENT_IDS.",
+        );
+        return;
+      }
       console.log(
-        "\n    Suppressed by dry run. Re-run with POS_DRY_RUN=false to actually ask.",
+        `\n    ACCEPTED with MediaType ${JSON.stringify(mediaType)}. That spelling is the answer; ` +
+          "now open that client's Documents page in Mindbody: the other half of D-B1 is whether staff can SEE it.",
       );
-    } else if (res?.WriteSuppressed) {
+      return;
+    } catch (err) {
       console.log(
-        "\n    Suppressed by the write guard. Put this client id in POS_WRITE_CLIENT_IDS.",
-      );
-    } else {
-      console.log(
-        "\n    Now open that client's Documents page in Mindbody: the other half of D-B1 is whether staff can SEE it.",
+        `    REFUSED with MediaType ${JSON.stringify(mediaType)}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-  } catch (err) {
-    console.log(
-      `    FAILED: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    console.log(
-      "    A 'MediaType' or 'Buffer' complaint here is the answer the probe is for: record the exact wording.",
-    );
   }
+  console.log(
+    "\n    Every spelling was refused. Record each wording above; the next guess is the field's meaning, not its spelling.",
+  );
 }
 
 void main();
