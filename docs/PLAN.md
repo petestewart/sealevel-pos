@@ -180,8 +180,7 @@ pack in the same gesture.
 ## Phase 2.5 — the customer-facing iPad
 
 **Every item below is built, on `feature/customer-display`.** What
-remains for this phase is the three probes (D-B1, D-B2, D-B3, all
-written and none run) and live verification at the counter: no item here
+remains for this phase is probe D-B2 (D-B1 and D-B3 ran on 2026-09-20) and live verification at the counter: no item here
 has been driven against real Mindbody, a real iPad or a real student.
 
 Design: `docs/design/customer-display.md`. A second iPad on the counter,
@@ -201,9 +200,9 @@ Probes owed, both sandbox, `Test: true` where the endpoint takes it:
 
 | # | Probe | Answers |
 |---|---|---|
-| D-B1 | `POST /client/uploadclientdocument` with a small PNG | The `ClientDocument` bytes field and encoding, and that the file shows on the client's Documents page. **Probe written (`scripts/probe-upload-document.ts`), not run** (T202: no credentials in the build environment) |
-| D-B2 | `POST /sale/purchasecontract` `Test: true` with `ClientSignature` set | That the field is accepted and does not change the rehearsed Total. **Gate: no live contract sale with a signature until this has run.** **Probe written (`scripts/probe-contract-signature.ts`), not run** (T205: no credentials in the build environment). It rehearses twice, with and without the field, and compares both Totals to the cent; a Total that MOVED means the rehearsal must carry the signature too, since the counter shows the rehearsal's figure |
-| D-B3 | `POST /client/addclient` in the sandbox with the three `Send*Texts` flags, then read the client back | Whether `addclient` honours text opt-in, which `updateclient` documents as ignored. **Probe written (`scripts/probe-addclient-texts.ts`), not run** (T204: no credentials in the build environment). Shipping does not wait on it: `/api/client-create` reads the client back after every sign-up and files the opt-in as a Notes line when the flags did not stick |
+| D-B1 | `POST /client/uploadclientdocument` with a small PNG | **Run 2026-09-20 (Pete, sandbox client 100015484): ACCEPTED, `{FileSize: 72, FileName}`.** `MediaType` is a MIME type: `png`, `.png`, `PNG` and `Png` are each refused "Media type <x> is invalid" and `image/png` passes, whatever client.yml:7427 lists. The upload now sends `image/png`. Still to look at: whether the file shows on that client's Documents page in the sandbox's Mindbody. |
+| D-B2 | `POST /sale/purchasecontract` `Test: true` with `ClientSignature` set | That the field is accepted and does not change the rehearsed Total. **Gate: no live contract sale with a signature until this has run.** Run 2026-09-20: the sandbox's contracts list (10 contracts, first id 354) but **none of its first 50 clients has a stored card**, and a rehearsal needs a payment. The probe now falls back to `UseAccountCredit` and then a sandbox test card in `CreditCardInfo`, still `Test: true`; re-run it. |
+| D-B3 | `POST /client/addclient` in the sandbox with the three `Send*Texts` flags, then read the client back | **Run 2026-09-20 (Pete, sandbox, probe client 100015635): addclient DROPS the text opt-in.** All six flags sent `true`; the create's own answer and the read-back both say the three email flags `true` and the three text flags `false`. So the T204 Notes fallback is the real path, not a stopgap, and the "Text me" box records an intention a human sets in Mindbody. The sandbox also requires `BirthDate` on a create, which the studio's site does not; the per-site required-fields read (T59b) already covers that. |
 
 D1 to D5 are all answered (2026-09-19) and folded into the design doc.
 

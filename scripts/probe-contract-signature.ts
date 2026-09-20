@@ -161,58 +161,103 @@ async function main(): Promise<void> {
     console.log(`    Using contract ${contractId}.`);
   }
 
-  let lastFour = "";
+  /* Payment for the rehearsal, in order of preference: the client's
+   * stored card (what the counter sends); the client's account credit
+   * (a `Test: true` rehearsal against a zero balance may still price);
+   * and, for the sandbox only, a test card in CreditCardInfo. Pete's
+   * run of 2026-09-20 found no stored card on any of the sandbox's first
+   * 50 clients, which is why the last two exist. Nothing here reaches a
+   * real card or a real charge: every call is Test: true on site -99. */
+  let payment: Record<string, unknown> | null = null;
+  let paymentLabel = "";
   if (clientId) {
     const card = await storedCardFor(clientId);
-    if (!card) {
-      console.log(`\n    Client ${clientId} has no stored card; a contract rehearsal needs one.`);
-      process.exit(1);
+    if (card) {
+      payment = { StoredCardInfo: { LastFour: card.lastFour } };
+      paymentLabel = `stored card ...${card.lastFour}`;
     }
-    lastFour = card.lastFour;
   } else {
-    console.log("\n=== GET /client/clients (finding a sandbox client with a stored card)");
+    console.log("\n=== GET /client/clients (finding a sandbox client, ideally with a stored card)");
     const list = await mindbody("/client/clients?limit=50");
     const rows: any[] = list?.Clients ?? [];
     for (const c of rows) {
       const lf = c?.ClientCreditCard?.LastFour;
       if (typeof lf === "string" && lf.length === 4) {
         clientId = String(c?.Id ?? "");
-        lastFour = lf;
+        payment = { StoredCardInfo: { LastFour: lf } };
+        paymentLabel = `stored card ...${lf}`;
         console.log(`    ${clientId}  ${c?.FirstName ?? ""} ${c?.LastName ?? ""}  card ...${lf}`);
         break;
       }
     }
     if (!clientId) {
+      clientId = String(rows[0]?.Id ?? "");
       console.log(
-        `    None of the first ${rows.length} sandbox clients has a stored card. ` +
-          "Store a card on one in the sandbox's Mindbody, then pass its id.",
+        `    None of the first ${rows.length} sandbox clients has a stored card; ` +
+          `using ${clientId} with the card-free fallbacks.`,
       );
+    }
+    if (!clientId) {
+      console.log("    No clients on this site; pass a client id instead.");
       process.exit(1);
     }
     console.log(`    Using client ${clientId}.`);
   }
+  const target = (process.env.MINDBODY_TARGET ?? "sandbox").trim();
+  const fallbacks: { label: string; fields: Record<string, unknown> }[] = [
+    ...(payment ? [{ label: paymentLabel, fields: payment }] : []),
+    { label: "account credit (UseAccountCredit)", fields: { UseAccountCredit: true } },
+    ...(target === "sandbox"
+      ? [
+          {
+            label: "sandbox test card 4111...1111 (CreditCardInfo)",
+            fields: {
+              CreditCardInfo: {
+                CreditCardNumber: "4111111111111111",
+                ExpMonth: "12",
+                ExpYear: "2030",
+                BillingName: "Probe Card",
+                BillingAddress: "1 Probe Street",
+                BillingCity: "Seattle",
+                BillingState: "WA",
+                BillingPostalCode: "98103",
+                SaveInfo: false,
+              },
+            },
+          },
+        ]
+      : []),
+  ];
   const png = tinyPng();
-  const base = {
-    ContractId: contractId,
-    ClientId: clientId,
-    Test: true,
-    LocationId: STUDIO_LOCATION_ID,
-    FirstPaymentOccurs: "Instant",
-    StoredCardInfo: { LastFour: lastFour },
-    /* Deliberately false: a probe must not send anybody an email. */
-    SendNotifications: false,
-  };
-  console.log(
-    `\nProbe D-B2: client ${clientId}, contract ${contractId}, card ...${lastFour}` +
-      `\nSignature: ${png.length} bytes of PNG, ${png.toString("base64").length} base64 chars`,
-  );
-
-  const without = await rehearse("WITHOUT ClientSignature", base, clientId);
-  const with_ = await rehearse(
-    "WITH ClientSignature",
-    { ...base, ClientSignature: png.toString("base64") },
-    clientId,
-  );
+  let without: any = null;
+  let with_: any = null;
+  for (const fb of fallbacks) {
+    const base = {
+      ContractId: contractId,
+      ClientId: clientId,
+      Test: true,
+      LocationId: STUDIO_LOCATION_ID,
+      FirstPaymentOccurs: "Instant",
+      ...fb.fields,
+      /* Deliberately false: a probe must not send anybody an email. */
+      SendNotifications: false,
+    };
+    console.log(
+      `\nProbe D-B2: client ${clientId}, contract ${contractId}, paying with ${fb.label}` +
+        `\nSignature: ${png.length} bytes of PNG, ${png.toString("base64").length} base64 chars`,
+    );
+    without = await rehearse("WITHOUT ClientSignature", base, clientId);
+    if (without === null) {
+      console.log(`    That payment did not price; trying the next.`);
+      continue;
+    }
+    with_ = await rehearse(
+      "WITH ClientSignature",
+      { ...base, ClientSignature: png.toString("base64") },
+      clientId,
+    );
+    break;
+  }
 
   console.log("\n=== VERDICT");
   if (without === null || with_ === null) {

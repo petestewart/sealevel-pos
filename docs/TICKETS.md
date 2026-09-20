@@ -17436,6 +17436,16 @@ request bodies in its log and a `__reset`), `routes.mjs`, `dbdrive.mjs`,
   mid-shift.** The env fallback and its once-a-minute warning were read,
   not exercised.
 
+### D-B1 ran, 2026-09-20
+
+Pete, sandbox, client 100015484 (the probe now finds its own sandbox
+client, since a production id "does not exist" on site -99). The
+spec's listed `MediaType` value `png` is refused "Media type png is
+invalid", as are `.png`, `PNG` and `Png`; `image/png` passes and the
+upload answers `{FileSize: 72, FileName}`. `src/lib/waiverfinalise.ts`
+now sends `image/png`. Not yet looked at: whether the file shows on the
+client's Documents page in the sandbox's Mindbody.
+
 ## T204. The student signs themselves up (2026-09-19)
 
 Phase 2.5 item 5, and Pete's rush case: "if a teacher has a line of
@@ -17661,6 +17671,19 @@ Against a real production server and a mock Mindbody
   waiver.
 
 ---
+
+### D-B3 ran, 2026-09-20
+
+Pete, sandbox, probe client 100015635 (delete it in Mindbody when done).
+The sandbox first refused the create with "The following are required:
+BirthDate", a per-site rule the studio's site does not have; the probe
+now reads `/client/requiredclientfields` and fills each with a
+placeholder, as the counter's form does. Then: all six `Send*` flags
+sent `true`, and BOTH the create's own answer and the read-back carry
+the three email flags `true` and the three text flags `false`. So
+`addclient` drops the text opt-in exactly as `updateclient` documents
+for itself, and the Notes line this ticket files on that evidence is
+the record, every time.
 
 ## T205. The membership contract, signed on the customer screen (2026-09-19)
 

@@ -372,11 +372,11 @@ consent flags on the `addclient` body, and continues into
 document upload, Notes line and consume-last, now shared with
 `/api/waiver-agree`) for the client id that now exists, under one
 `beginFinalisation` claim. A duplicate leaves the sign-up in the tray.
-**The text opt-in is unverified live** (D-B3): the flags ride the create
-because `AddClientRequest` lists them without `updateclient`'s "ignored"
-caveat, the route reads the client back, and only on evidence that they
-did not stick does it file a T62-signed Notes line asking a human to set
-it by hand.
+**The text opt-in does not stick** (D-B3, Pete, sandbox, 2026-09-20):
+`addclient` answers the three text flags `false` however they were sent,
+so the route's read-back finds them dropped every time and files the
+T62-signed Notes line asking a human to set it by hand. That line is the
+record of the student's "Text me", not a fallback.
 
 **A result is spent BY ID, once** (T202). `consumeRequest` finds a
 completed, unconsumed request by its id even when the hub has moved on to
@@ -654,6 +654,13 @@ while `git clone` works, so clone the repo rather than fetching files.
   figures before the tap and on the ticket after it, because the receipt and
   Mindbody will say the substitute's name. The whole story is filed on the
   client the way T45/T62 file a comp's reason.
+- **`/client/uploadclientdocument` wants a MIME type in `MediaType`**,
+  not the extension the spec lists (client.yml:7427 says `png`; the
+  sandbox answers "Media type png is invalid" for it and for `.png`,
+  `PNG` and `Png`, and accepts `image/png`). Probe D-B1, Pete, 2026-09-20.
+  And **`addclient` drops the three `Send*Texts` flags** (probe D-B3, same
+  day): sent `true`, they come back `false` on the create's answer and on
+  the read-back, while the three email flags stick.
 - **Categories live in `site.yml`, not `sale.yml`.** `GET /site/categories`
   exists; grepping only the Sale tag missed it once. `/site/liabilitywaiver`
   (the waiver's actual text) and `/site/paymenttypes` are next to it.
@@ -771,19 +778,23 @@ while `git clone` works, so clone the repo rather than fetching files.
   expired staff token (`isActorTokenDead` reads a 401), and that the
   sales report actually shows the token's staff member. The probe is
   `GET /api/teacher/probe` (the sign-in modal and the dev drawer run it).
-- **The waiver document upload is unverified live (T202).** Probe D-B1
-  (`scripts/probe-upload-document.ts`) is written and has not been run:
-  nobody has watched `POST /client/uploadclientdocument` accept the
-  spec's `{FileName, MediaType, Buffer}` shape or seen the file appear on
-  a client's Documents page. The signature itself is kept in
-  `waiver_receipts`, so a refused upload loses the copy, not the record.
-- **The text opt-in is unverified live (T204, probe D-B3).** The
-  self-serve sign-up sends the three `Send*Texts` flags on
-  `/client/addclient`, which is the one call the spec does not document
-  as ignoring them, and reads the client back; whether site 471 keeps
-  them is unknown until `scripts/probe-addclient-texts.ts` runs against
-  the sandbox. Until then a dropped opt-in becomes a signed Notes line
-  for a human to act on, never a silent loss.
+- **The waiver document upload is verified as accepted, not yet as
+  visible (T202, probe D-B1, Pete, sandbox, 2026-09-20).** `POST
+  /client/uploadclientdocument` answered `{FileSize: 72, FileName}` for
+  a PNG sent as `{FileName, MediaType: "image/png", Buffer}`, and
+  **`MediaType` is a MIME type**: the spec's own listed `png` is refused
+  "Media type png is invalid", as are `.png`, `PNG` and `Png`. Whether
+  the file then shows on the client's Documents page has not been looked
+  at. The signature itself is kept in `waiver_receipts`, so a refused
+  upload loses the copy, not the record.
+- **`addclient` DROPS the text opt-in (T204, probe D-B3, Pete, sandbox,
+  2026-09-20).** All six `Send*` flags sent `true`: the create's own
+  answer and the read-back both carry the three email flags `true` and
+  the three text flags `false`, so `AddClientRequest`'s silence about
+  the caveat `updateclient` documents means nothing. The sign-up's
+  "Text me" box still records the student's intention, and the T62-signed
+  Notes line `/api/client-create` files on that evidence is the real
+  path, for a human to set in Mindbody by hand, never a silent loss.
 - **`ClientSignature` is unverified live (T205).** The contract
   signature ships to the vendored spec's description and has never
   reached Mindbody: whether the field is accepted, and whether it leaves
