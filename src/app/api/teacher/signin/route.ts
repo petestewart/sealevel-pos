@@ -91,6 +91,9 @@ export async function POST(request: Request) {
     );
   }
   if (!signIn.ok) {
+    console.warn(
+      `[staff] sign-in refused by Mindbody: usertoken/issue answered HTTP ${signIn.status} for ${username.trim()}`,
+    );
     return NextResponse.json(
       { error: "Mindbody did not accept that sign-in.", reason: "teacher" },
       { status: 401 },
@@ -99,6 +102,9 @@ export async function POST(request: Request) {
 
   const user = signIn.user;
   if (!Number.isInteger(user.id) || user.id <= 0) {
+    console.warn(
+      `[staff] sign-in refused: Mindbody issued a token for user id ${String(user.id)} type "${user.type}", which is not a staff member's id`,
+    );
     void revokeStaffToken(signIn.token);
     return NextResponse.json(
       {
@@ -123,6 +129,9 @@ export async function POST(request: Request) {
   }
   const staff = teachers.find((t) => t.id === user.id);
   if (!staff) {
+    console.warn(
+      `[staff] sign-in refused: user id ${user.id} type "${user.type}" is not in the ${teachers.length} active staff rows /staff/staff returned`,
+    );
     void revokeStaffToken(signIn.token);
     return NextResponse.json(
       { error: "That Mindbody login is not an active staff member here." },
