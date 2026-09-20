@@ -147,11 +147,26 @@ export async function POST(request: Request) {
     } catch {
       row = null;
     }
-    if (row && row.active) {
+    if (row && !row.active) {
+      console.warn(
+        `[staff] sign-in refused: user id ${user.id} "${row.name}" is marked inactive by Mindbody`,
+      );
+    } else if (row) {
       console.log(
         `[staff] sign-in: user id ${user.id} "${row.name}" is active but its name reads as a placeholder; accepted on the password`,
       );
       staff = { id: row.id, name: row.name };
+    } else {
+      /* Not on any page: Mindbody's staff list omits the account entirely
+       * (the sandbox's API user, 2026-09-20). The sign-in answer itself
+       * named it, type "Staff", and Mindbody issues no token to a
+       * disabled login, so the password is the evidence and the list's
+       * silence is not a refusal. */
+      const name = `${user.firstName} ${user.lastName}`.trim() || `Staff ${user.id}`;
+      console.warn(
+        `[staff] sign-in: user id ${user.id} "${name}" type "${user.type}" is not on /staff/staff at all; accepted on the password`,
+      );
+      staff = { id: user.id, name };
     }
   }
   if (!staff) {

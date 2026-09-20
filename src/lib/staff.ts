@@ -117,6 +117,21 @@ async function fetchStaffRows(
 export async function findStaffRow(
   id: number,
 ): Promise<{ id: number; name: string; active: boolean } | null> {
+  /* First by id, which Mindbody's live API takes as StaffIds even though
+   * the vendored spec does not list it; an answer that ignores the
+   * parameter comes back as a page, which the loop below covers. */
+  try {
+    const direct = await mindbody(`/staff/staff?StaffIds=${id}&Limit=100`);
+    const rows: unknown[] = Array.isArray(direct?.StaffMembers) ? direct.StaffMembers : [];
+    for (const raw of rows) {
+      const row = raw as Record<string, unknown>;
+      if (row && row["Id"] === id) {
+        return { id, name: nameOf(row), active: row["Active"] !== false };
+      }
+    }
+  } catch {
+    /* fall through to the pages */
+  }
   for (let page = 0; page < MAX_PAGES; page++) {
     const body = await mindbody(
       `/staff/staff?Limit=${PAGE_LIMIT}&Offset=${page * PAGE_LIMIT}`,
