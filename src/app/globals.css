@@ -5926,8 +5926,28 @@ textarea.reason-note-field:disabled::placeholder {
  * terms rows and possibly the agreement text. */
 .modal-contract {
   width: min(560px, 100%);
-  max-height: calc(var(--vvh) - 48px);
+  /* T206 (Pete's contract attempt: with the refusal notice and the sign
+   * block both up, Cancel and the commitment button sat BEHIND the nav
+   * bar). This dialog is rendered inside the sale overlay, which is its
+   * own stacking context at a lower z-index than the fixed nav bar, so
+   * no z-index here can lift it over the bar: the box has to end above
+   * it. The margin is what the flex-centred scrim reserves, and the
+   * max-height is the visible band less that reservation. */
+  max-height: calc(var(--vvh) - 48px - var(--nav-space));
+  margin-bottom: var(--nav-space);
   overflow-y: auto;
+}
+
+/* T206: and the foot is pinned while the body scrolls. The generic rule
+ * sticks only a modal's LAST child (T98); this dialog keeps its
+ * overlays after the action row (the PIN box, the card form, the start
+ * date picker), each of which is a fixed scrim and out of flow, so
+ * sticking the row here carries nothing up with it. */
+.modal-contract .modal-actions {
+  position: sticky;
+  bottom: -18px;
+  z-index: 1;
+  background: var(--surface);
 }
 
 /* The terms, receipt-style label/value rows. */
@@ -7915,19 +7935,14 @@ textarea.reason-note-field:disabled::placeholder {
  * when the studio has turned `customer_confirms_sale` on. Read across a
  * counter, so both controls are 64px and nothing is under 16px; tokens
  * only, both palettes, radius 0. --accent means actionable or selected
- * and is on Approve alone; Not yet is an ordinary surface control and
- * NOT --stop, because declining is not destructive. */
+ * and is on Approve alone; Cancel is an ordinary surface control and
+ * NOT --stop, because declining is not destructive (T206: the two
+ * words are Cancel and Approve, with no question above them). */
 
 .dticket-approve {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-.dticket-ask {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 600;
 }
 
 .dticket-error {

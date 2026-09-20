@@ -206,7 +206,13 @@ export async function POST(request: Request) {
     });
     if (!built.ok) {
       return NextResponse.json(
-        { error: built.error },
+        {
+          error: built.error,
+          /* T206: "noterms" is not a screen problem, and the dialog
+           * words it as its own case. Every other refusal here keeps
+           * its plain sentence and nothing else. */
+          ...(built.reason === undefined ? {} : { reason: built.reason }),
+        },
         { status: built.status },
       );
     }

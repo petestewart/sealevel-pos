@@ -14,7 +14,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import DevDrawer from "./DevDrawer";
 import LockScreen from "./LockScreen";
 import NavBar, {
-  BuyIcon,
+  CartIcon,
   SettingsIcon,
   PayIcon,
   ProfileIcon,
@@ -928,9 +928,12 @@ function FrontDesk({
     first: string;
     last: string;
     /** T204: a self-serve sign-up's own typed details, read back from
-     *  the server, and the handle that holds their signature. */
+     *  the server, and the handle that holds their signature. T206 adds
+     *  the birth date, which the sign-up asks for on a site that
+     *  demands one. */
     email?: string;
     phone?: string;
+    birthDate?: string;
     signup?: {
       requestId: string;
       consentEmail: boolean;
@@ -942,6 +945,9 @@ function FrontDesk({
      *  "sale": the new person is attached to the open sale. */
     for: "search" | "guest" | "sale";
   } | null>(null);
+  /** T206: bumped whenever a card is saved anywhere in the app, so the
+   *  sale screen's card lookup for the attached client runs again. */
+  const [cardVersion, setCardVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<ModeConfig | null>(null);
   /** Rows whose check-in call failed after going green optimistically. */
@@ -2233,6 +2239,8 @@ function FrontDesk({
         last: String(body.form?.lastName ?? ""),
         email: typeof body.form?.email === "string" ? body.form.email : "",
         phone: typeof body.form?.phone === "string" ? body.form.phone : "",
+        birthDate:
+          typeof body.form?.birthDate === "string" ? body.form.birthDate : "",
         signup: {
           requestId: body.requestId,
           consentEmail: body.consent?.email === true,
@@ -2861,6 +2869,12 @@ function FrontDesk({
     setProfileState((st) =>
       st.profile ? { ...st, profile: { ...st.profile, card } } : st,
     );
+    /* T206 (Pete's second screenshot: a card added through the profile
+       while the sale screen was open left the membership dialog saying
+       "No card on file" until a refresh). The sale screen's card lookup
+       is its own and is cached per client, so a save anywhere has to
+       bump this counter and make it read again. */
+    setCardVersion((n) => n + 1);
     if (note) flashBanner(note);
   }, [flashBanner]);
 
@@ -5078,8 +5092,8 @@ function FrontDesk({
               (chargeBody?.ambiguous === true
                 ? ""
                 : flavor === "renewal"
-                  ? " Sell the pack in Buy, on account balance."
-                  : " Sell the pass in Buy, on account balance, then attach " +
+                  ? " Sell the pack in Cart, on account balance."
+                  : " Sell the pass in Cart, on account balance, then attach " +
                     "and check in from the row."),
             mindbody: String(chargeBody?.error ?? "no reason returned"),
           });
@@ -5694,8 +5708,12 @@ function FrontDesk({
     },
     {
       key: "buy",
-      label: "Buy",
-      icon: <BuyIcon />,
+      /* T206, Pete: 'we should change the "Buy" button to "Cart" and any
+         references to that screen should be named Cart, not Buy.' The
+         key, the URL and saleMode are untouched; the WORD is what
+         changed. */
+      label: "Cart",
+      icon: <CartIcon />,
       on: saleOpen && saleMode === "shelf",
       why: leaveWhy,
       onTap: () => openSale("shelf"),
@@ -6569,8 +6587,8 @@ function FrontDesk({
                         balance: entry.balance,
                       });
                     }}
-                    aria-label={`Buy for ${entry.name}`}
-                    title={`Buy for ${entry.name}`}
+                    aria-label={`Cart for ${entry.name}`}
+                    title={`Cart for ${entry.name}`}
                   >
                     <SellIcon />
                   </button>
@@ -6692,6 +6710,9 @@ function FrontDesk({
           {...(newClient.phone === undefined
             ? {}
             : { initialPhone: newClient.phone })}
+          {...(newClient.birthDate === undefined
+            ? {}
+            : { initialBirthDate: newClient.birthDate })}
           {...(newClient.signup === undefined
             ? {}
             : { signup: newClient.signup })}
@@ -8614,7 +8635,7 @@ function FrontDesk({
                 instruction where an action belongs. The line stays for
                 every other case. */}
             {payBuyOffer ? null : (
-              <p className="pay-cash-note">For cash, use Buy.</p>
+              <p className="pay-cash-note">For cash, use Cart.</p>
             )}
 
             {/* The outcome, when the gesture did not simply finish. */}
@@ -8690,7 +8711,7 @@ function FrontDesk({
                   className="modal-confirm pay-charge"
                   onClick={buyAndCheckIn}
                 >
-                  Buy and check in
+                  Cart and check in
                 </button>
               ) : !payMoneyMoved ? (
                 <button
@@ -8834,6 +8855,9 @@ function FrontDesk({
         onNavState={setSaleNav}
         config={config}
         client={saleClient}
+        /* T206: a card saved from the profile (or anywhere else) makes
+           the sale screen read the card on file again. */
+        cardVersion={cardVersion}
         onRequestAttach={openAttachSearch}
         /* T91: the Buy screen's New client entries. page.tsx owns the
            form, as it owns the attach modal, so the modal stacks above

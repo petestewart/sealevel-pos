@@ -5,6 +5,8 @@ import {
   ensureDisplayLoaded,
   eventsSince,
   isPairedDisplay,
+  markDisplayGone,
+  markDisplayStreamOpen,
   sceneFor,
   subscribeDisplay,
   touchDisplaySeen,
@@ -24,6 +26,14 @@ export const dynamic = "force-dynamic";
  * connection all land on the right screen rather than on whatever the
  * display last remembered. Every heartbeat stamps `last_seen_at`, which
  * is what the POS header's connection mark reads.
+ *
+ * T206: the teardown is the OTHER half of that mark. A heartbeat can
+ * only say the screen is still there; a Safari tab closing on the
+ * counter aborts this request, and `markDisplayGone` turns that into a
+ * `disconnected` on the teacher's stream straight away (Pete, first
+ * drive: "closed safari on ipad, display mark looks the same until i
+ * refresh"). Opens are counted, so a reload's overlapping second stream
+ * does not make the mark flap.
  */
 export async function GET(request: Request) {
   await ensureDisplayLoaded();
@@ -40,6 +50,7 @@ export async function GET(request: Request) {
     heartbeatMs: 15_000,
     beat: () => touchDisplaySeen(id),
     start: (writer) => {
+      markDisplayStreamOpen(id);
       for (const ev of eventsSince("display", since)) {
         writer.send(ev.id, ev.event, ev.data);
       }
@@ -48,7 +59,15 @@ export async function GET(request: Request) {
        * must not move a reconnecting display's Last-Event-ID past
        * anything it has yet to see. */
       writer.send(0, scene.event, scene.data);
-      return subscribeDisplay((ev) => writer.send(ev.id, ev.event, ev.data));
+      const unsubscribe = subscribeDisplay((ev) =>
+        writer.send(ev.id, ev.event, ev.data),
+      );
+      /* The teardown sse.ts runs on abort: the subscriber goes, and the
+       * count of open streams goes with it. */
+      return () => {
+        unsubscribe();
+        markDisplayGone(id);
+      };
     },
   });
 }

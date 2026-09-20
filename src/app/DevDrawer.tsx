@@ -2166,7 +2166,7 @@ function ShelfPanel() {
   return (
     <div className="dev-settings">
       <p className="muted">
-        What the Buy screen may sell, and how the Passes shelf is split.
+        What the Cart screen may sell, and how the Passes shelf is split.
         Hidden items never reach the shelf (a bundle line naming one stops
         rendering, with a console warning). Every pass is filed by rule
         into one of the rail&apos;s fixed sub-categories; a group here
@@ -2174,7 +2174,7 @@ function ShelfPanel() {
         custom one. The order block below sets the order the rail draws
         those sub-categories in, and a retail product can be moved off
         Mindbody&apos;s own category onto another counter cell. The gift
-        cards at the end are the preset amounts the Buy screen offers.
+        cards at the end are the preset amounts the Cart screen offers.
         Ids are per site.
       </p>
       {!available ? (
@@ -2389,7 +2389,7 @@ function ShelfPanel() {
                 </p>
               ) : (
                 <p className="muted">
-                  The preset amounts on the Buy screen. Hiding one takes it
+                  The preset amounts on the Cart screen. Hiding one takes it
                   off the presets and refuses it at checkout. The custom
                   amount product is the number pad&apos;s and cannot be
                   hidden.

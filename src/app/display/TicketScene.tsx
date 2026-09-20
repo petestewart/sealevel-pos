@@ -15,11 +15,13 @@ import type { TicketPayload } from "@/lib/displayticket";
  * `summary` is the same ticket after the charge, plus how it was paid and
  * a thank you, for the few seconds the hub gives it before it sends the
  * screen back to idle by itself. `approve` (T203) is the same ticket with
- * Approve and Not yet on it, for the studio that has turned
- * `customer_confirms_sale` on.
+ * Cancel and Approve on it, for the studio that has turned
+ * `customer_confirms_sale` on. T206, Pete's first drive: the two
+ * words and nothing above them. 'instead of "Does this look right?
+ * Not yet | Approve" it should just be "Cancel | Approve"'.
  *
  * THIS COMPONENT CHARGES NOTHING and writes nothing. Approve stores an
- * answer on the request (`/api/display/complete`), Not yet refuses it
+ * answer on the request (`/api/display/complete`), Cancel refuses it
  * (`/api/display/refuse`), and /api/checkout treats that stored answer as
  * a PRECONDITION it checks before it charges. A tap here never moves
  * money; the teacher's own Charge does.
@@ -75,7 +77,7 @@ export default function TicketScene(props: {
             body: JSON.stringify(
               approved
                 ? { requestId, result: { approved: true } }
-                : { requestId, reason: "Customer did not approve" },
+                : { requestId, reason: "Customer cancelled" },
             ),
           },
         );
@@ -155,7 +157,6 @@ export default function TicketScene(props: {
 
       {approve ? (
         <div className="dticket-approve">
-          <p className="dticket-ask">Does this look right?</p>
           {error !== null ? <p className="dticket-error">{error}</p> : null}
           <div className="dticket-approve-buttons">
             <button
@@ -164,7 +165,7 @@ export default function TicketScene(props: {
               disabled={busy}
               onClick={() => void answer(false)}
             >
-              Not yet
+              Cancel
             </button>
             <button
               type="button"

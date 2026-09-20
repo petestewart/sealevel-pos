@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  * How an approval is going (T203, Phase 2.5 item 4).
  *
  * The teacher's iPad asks this while it waits: the customer tapped
- * Approve or Not yet, the teacher's own tab was reloaded, or the screen
+ * Approve or Cancel, the teacher's own tab was reloaded, or the screen
  * went dark under it. The teacher's events stream carries the same two
  * events; this is what makes the wait survive a reconnect, a sleep and a
  * reload, which the waiver's own `/api/display/pending` does for the same

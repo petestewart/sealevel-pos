@@ -9,6 +9,7 @@ import {
   staffSessionEndedResponse,
 } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
+import { readBirthDate } from "@/lib/birthdate";
 import {
   createClient,
   isDuplicateClientError,
@@ -59,9 +60,15 @@ export const dynamic = "force-dynamic";
  * sign-up stays in the tray while the teacher searches for the person
  * who already exists.
  *
+ * T206: the body may also carry a `birthDate` (`YYYY-MM-DD`), which
+ * both forms ask for only when the site's own required list names it
+ * (src/lib/birthdate.ts). On the display path it is the TEACHER's value
+ * that is sent, like the name: the modal is prefilled from the stored
+ * sign-up and the teacher may correct it before Create.
+ *
  * Body: { firstName, lastName: string (1..60); email?: string;
- *         phone?: string; sendAccountEmails, sendPromotionalEmails:
- *         boolean; displayRequestId?: string }
+ *         phone?: string; birthDate?: string; sendAccountEmails,
+ *         sendPromotionalEmails: boolean; displayRequestId?: string }
  * Answer: { ok, clientId, client, suppressed, waiver?, textOptInStuck?,
  *           ...actorFields }
  */
@@ -144,6 +151,17 @@ export async function POST(request: Request) {
       phone = ph;
     }
   }
+  /* T206: the fifth field, when the site asks for one. Validated
+   * whenever it is sent and never required here: which sites demand it
+   * is Mindbody's own list, and Mindbody's refusal names it in words. */
+  const birth = readBirthDate(payload?.birthDate);
+  if (!birth.ok) {
+    return bad(
+      birth.error === "birthDate must be a string"
+        ? "birthDate must be a string."
+        : `${birth.error[0]?.toUpperCase() ?? ""}${birth.error.slice(1)}.`,
+    );
+  }
   for (const key of ["sendAccountEmails", "sendPromotionalEmails"] as const) {
     if (typeof payload?.[key] !== "boolean") {
       return bad(`${key} must be a boolean.`);
@@ -156,6 +174,7 @@ export async function POST(request: Request) {
     phone,
     sendAccountEmails: payload.sendAccountEmails,
     sendPromotionalEmails: payload.sendPromotionalEmails,
+    ...(birth.value === null ? {} : { birthDate: birth.value }),
   };
 
   /* T204: the sign-up the customer screen took, when this Create is
@@ -206,6 +225,12 @@ export async function POST(request: Request) {
        * an hour unfinishable while it still showed in the tray and in
        * search. It was already validated as fresh when the student
        * tapped agree; what is checked here is the shape. */
+      /* The stored result is read for its SHAPE here, with no
+       * required-field list: what the site demands was checked when the
+       * student answered, and the birth date that reaches Mindbody is
+       * the teacher's own (the body above), which they may have
+       * corrected. A site whose list changed in between must not strand
+       * a sign-up that is already signed. */
       const stored = readSignupResult(
         held.result ?? {},
         held.completedAt ?? Date.now(),

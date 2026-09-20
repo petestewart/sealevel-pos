@@ -311,6 +311,14 @@ rebuilds the payload field by field so no client, product or pricing
 option id and no card detail beyond the tender's WORD can reach a screen
 a student is holding.
 
+**A screen that goes says so at once** (T206): the display's SSE stream
+closing is the signal, so a Safari tab shut on the counter reaches the
+teacher's mark as `disconnected` in a second rather than in up to 75
+(`markDisplayGone`, counted against `markDisplayStreamOpen` so a
+reload's overlapping second stream cannot make the mark flap; the 45
+second silence window stays as the fallback for a stream that dies
+without an abort).
+
 **The customer can be made to APPROVE each sale** (T203, Phase 2.5 item
 4). `app_settings.customer_confirms_sale` (with
 `POS_CUSTOMER_CONFIRMS_SALE` as the no-database fallback) is a
@@ -724,6 +732,14 @@ while `git clone` works, so clone the repo rather than fetching files.
   keyboard on purpose, because that is where Apple's "Scan Credit Card"
   lives; T98 lifts every modal above the keyboard instead (`--vvh`,
   `--vv-top`, `--vv-bot`, `src/app/viewport.ts`).
+- **The sign-up forms ask a fifth field only when the site demands it**
+  (T206). Both the customer screen's sign-up and the teacher's New client
+  modal are D4's four fields ("first name, last name, email, phone.
+  Nothing else") plus a birth date, drawn ONLY when
+  `/client/requiredclientfields` names `BirthDate` or `Birthday`; one
+  validator (`src/lib/birthdate.ts`) covers both screens and both routes,
+  and a site that does not ask gets the same `addclient` body it always
+  did.
 - **Every colour is a token, in both palettes.** `globals.css` defines the
   palette twice, in `:root` (light) and in the `:root[data-theme="dark"]`
   block, and no hex belongs anywhere else in the CSS or in a component. A

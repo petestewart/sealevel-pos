@@ -7,7 +7,9 @@ import type { ReactNode } from "react";
  * inconsistent and unclear. the screens are sign-in, buy, pay. the
  * buttons are in different spots and 'back' is unclear as to where it's
  * going ... maybe a nav bar at the bottom ... sign-in, buy, pay, profile,
- * and dev should all be in the nav bar").
+ * and dev should all be in the nav bar"). T206 renamed the middle one to
+ * Cart, on Pete's first drive of the counter build; `NavScreen`'s "buy"
+ * key, the sale mode and the CSS keep their names.
  *
  * The same element on every screen, at the bottom, above the sale
  * overlay's z-order: the roster, the shelf and the payment step are three
@@ -69,8 +71,9 @@ export function SignInIcon() {
 
 /** A shopping bag: the shelf. The roster's Sell icon is a dollar circle
  *  because a bag at arm's length read as a trash can in a row of icons
- *  (T70); here the word Buy is under it, so the bag is unambiguous. */
-export function BuyIcon() {
+ *  (T70); here the word Cart is under it, so the bag is unambiguous.
+ *  T206 renamed the word; the bag is the same bag. */
+export function CartIcon() {
   return (
     <Icon
       d="M9 8V6.5a3 3 0 0 1 6 0V8"

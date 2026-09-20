@@ -2090,7 +2090,7 @@ function PaymentPanel(props: {
     | { stage: "pin"; because: string }
   >(null);
   /** The quiet sentence left behind when an approval ended without a
-   *  charge ("Customer did not approve"). The ticket stays as built. */
+   *  charge ("Customer cancelled"). The ticket stays as built. */
   const [approvalNote, setApprovalNote] = useState<string | null>(null);
   /** T203: whether the teacher chose "Wait" on a busy screen, so the
    *  present is retried until it goes through. */
@@ -4041,7 +4041,7 @@ function PaymentPanel(props: {
           return;
         }
         if (body.status === "refused") {
-          finish("Customer did not approve");
+          finish("Customer cancelled");
           return;
         }
         if (body.status === "cancelled" || body.status === "unknown") {
@@ -7155,6 +7155,16 @@ function ContractDialog(props: {
   /** True while the attach search modal is stacked above; Escape then
    *  belongs to that layer, not this dialog. */
   modalAbove: boolean;
+  /** T206: re-read the card on file. The lookup belongs to the sale
+   *  screen, so this dialog asks rather than reads: on OPEN, because a
+   *  cached miss from before a card was added anywhere else must not
+   *  decide a membership, and again after a card is saved from inside
+   *  it. Pete, first drive: "I don't see a way to add a card for anyone
+   *  in the sandbox", and on the sentence that pointed at the profile:
+   *  "if a teacher hits this point, they should be able to add a card
+   *  from here, not be forced to go back to the sign in page to do
+   *  so." */
+  onCardRefresh?: () => void;
 }) {
   const {
     contract,
@@ -7168,6 +7178,7 @@ function ContractDialog(props: {
     onPurchased,
     onStaffSessionEnded,
     modalAbove,
+    onCardRefresh,
   } = props;
 
   const [rehearsal, setRehearsal] = useState<ContractRehearsal | null>(null);
@@ -7176,6 +7187,15 @@ function ContractDialog(props: {
    * null sends exactly what T30 sent. */
   const [startKey, setStartKey] = useState<string | null>(null);
   const [startOpen, setStartOpen] = useState(false);
+  /* T206: the card form, opened from the no-card notice and closed by
+   * itself. It is THE card form (CardModal, T84's "file" mode), not a
+   * second one, so one validator and one route cover every card this
+   * app takes. Its Escape is a capturing listener that stops
+   * propagation, so this dialog's own Escape does not also fire. */
+  const [cardOpen, setCardOpen] = useState(false);
+  /** The amber line a save can carry (T49's service-account fallback),
+   *  kept in the dialog rather than dropped. */
+  const [cardNote, setCardNote] = useState<string | null>(null);
   const [purchasing, setPurchasing] = useState(false);
   const [outcome, setOutcome] = useState<ContractOutcome | null>(null);
   const inFlight = useRef(false);
@@ -7208,6 +7228,12 @@ function ContractDialog(props: {
     | { stage: "waiting"; requestId: string }
     | { stage: "busy"; signup?: boolean }
     | { stage: "offline"; why: string }
+    /** T206: the membership itself has nothing to sign, which is not a
+     *  fact about the customer screen. Pete's contract attempt read
+     *  "The customer screen is not connected." over a sub-line about
+     *  missing terms, with the header mark saying the screen was
+     *  there. */
+    | { stage: "noterms"; why: string }
     | { stage: "pin"; because: string }
   >(null);
   /** The quiet sentence left behind when a signature ended without a
@@ -7238,10 +7264,30 @@ function ContractDialog(props: {
       : cardLookup?.error
         ? "The card check failed. Detach and re-attach the client to retry."
         : !card
-          ? "No card on file. A membership charges the stored card; add a card in Mindbody first."
+          ? "No card on file. A membership charges the stored card."
           : card.expired
             ? `The card on file (ending ${card.lastFour}) is expired.`
             : null;
+
+  /* T206: the card on file is read again every time this dialog opens.
+   * A lookup from before (a card added on the profile, a card added on
+   * another screen) can be a cached MISS, and a membership refused for
+   * a card that is there is exactly what Pete hit. */
+  useEffect(() => {
+    onCardRefresh?.();
+    /* On open only: the refresh itself changes what comes back down. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* T206: the one block reason whose way forward is the client's own
+   * profile, where Add card is (ClientProfileCard). Computed beside the
+   * reason rather than parsed out of the sentence. */
+  const needsCard =
+    schedProblem === null &&
+    client !== null &&
+    !cardLookup?.loading &&
+    !cardLookup?.error &&
+    !card;
 
   /* The Test rehearsal: purchasecontract supports Test: true, so the
    * first-payment total on the confirm is the SERVER's number. Runs
@@ -7479,6 +7525,16 @@ function ContractDialog(props: {
         setSign({
           stage: "busy",
           ...(body?.holdingSignup === true ? { signup: true } : {}),
+        });
+        return;
+      }
+      if (body?.reason === "noterms") {
+        setSign({
+          stage: "noterms",
+          why:
+            typeof body?.error === "string"
+              ? body.error
+              : "This membership has no terms written in Mindbody.",
         });
         return;
       }
@@ -7740,6 +7796,23 @@ function ContractDialog(props: {
                 Attach a client
               </button>
             ) : null}
+            {/* T206: the card goes on from HERE. A teacher who has got
+                this far should not have to leave the membership, find
+                the roster, open a profile and come back. The same
+                CardModal the profile opens, and on a save the sale
+                screen's card lookup runs again, so the notice clears
+                and the rehearsal starts without this dialog closing. */}
+            {needsCard && client ? (
+              <button
+                className="class-change contract-attach"
+                onClick={() => {
+                  setCardNote(null);
+                  setCardOpen(true);
+                }}
+              >
+                Add card
+              </button>
+            ) : null}
           </div>
         ) : rehearsal?.error ? (
           <div className="sale-stop modal-note-gap">
@@ -7816,7 +7889,9 @@ function ContractDialog(props: {
                     : "The customer screen is busy."
                   : sign.stage === "offline"
                     ? "The customer screen is not connected."
-                    : "Selling without a signature"}
+                    : sign.stage === "noterms"
+                      ? "Nothing to sign for this membership"
+                      : "Selling without a signature"}
             </p>
             <p className="approve-wait-sub">
               {sign.stage === "waiting"
@@ -7829,7 +7904,9 @@ function ContractDialog(props: {
                       : "Wait for it, take it over, or sell it with your PIN."
                   : sign.stage === "offline"
                     ? `${sign.why} This membership needs your PIN, or a screen to sign on.`
-                    : "Enter your PIN in the box."}
+                    : sign.stage === "noterms"
+                      ? sign.why
+                      : "Enter your PIN in the box."}
             </p>
             {sign.stage !== "pin" ? (
               <div className="approve-wait-buttons">
@@ -7892,7 +7969,7 @@ function ContractDialog(props: {
                     setSign({
                       stage: "pin",
                       because:
-                        sign.stage === "offline"
+                        sign.stage === "offline" || sign.stage === "noterms"
                           ? sign.why
                           : sign.stage === "busy"
                             ? sign.signup === true
@@ -7909,6 +7986,10 @@ function ContractDialog(props: {
           </div>
         ) : signNote !== null ? (
           <p className="approve-wait-sub">{signNote}</p>
+        ) : null}
+
+        {cardNote !== null ? (
+          <p className="pass-note modal-note-gap">{cardNote}</p>
         ) : null}
 
         {outcome?.kind !== "paid" ? (
@@ -7980,6 +8061,27 @@ function ContractDialog(props: {
             }}
           />
         ) : null}
+        {/* T206: the card form, above this dialog (its scrim is
+            `over-profile`, z-index 32, against this one's 30). `current`
+            is null because this is only offered when there is no card
+            to replace. */}
+        {cardOpen && client ? (
+          <CardModal
+            mode="file"
+            clientId={client.id}
+            name={client.name}
+            current={null}
+            onClose={() => setCardOpen(false)}
+            onSaved={(_card, note) => {
+              setCardOpen(false);
+              setCardNote(note);
+              /* The lookup that gates this dialog is the sale screen's,
+                 so the refresh is asked for rather than done here. */
+              onCardRefresh?.();
+            }}
+          />
+        ) : null}
+
         {startOpen ? (
           <StartDatePicker
             chosen={startKey}
@@ -8157,6 +8259,11 @@ export default function SaleScreen(props: {
   onNavState: (state: SaleNavState) => void;
   config: ModeConfig | null;
   client: SaleClient | null;
+  /** T206: bumped by page.tsx whenever a card was saved anywhere (the
+   *  client profile's own Add card, for instance). The card lookup
+   *  below re-runs on it, so a card added while this screen is open is
+   *  seen without a reload. */
+  cardVersion?: number;
   /** Opens the existing search modal in attach mode (page.tsx owns it). */
   onRequestAttach: () => void;
   /** T91: opens the T59b New client form (page.tsx owns it, as it owns
@@ -8238,6 +8345,7 @@ export default function SaleScreen(props: {
     onNavState,
     config,
     client,
+    cardVersion,
     onRequestAttach,
     onRequestNewClient,
     clientNote,
@@ -9328,7 +9436,7 @@ export default function SaleScreen(props: {
     return () => {
       alive = false;
     };
-  }, [clientId, profileNonce]);
+  }, [clientId, profileNonce, cardVersion]);
 
   /* T79: the discount is priced WITH the cart (the mode and the value;
    * the route spreads it over the lines itself), so an armed, removed
@@ -10383,6 +10491,14 @@ export default function SaleScreen(props: {
    * from this tap beside a total from the last one would be worse than
    * one that waits. */
   const mirror = useDisplayMirror(props.open);
+  /** T205/T206: whether there is a screen to sign on, LIVE. It was read
+   *  once from /api/config when the overlay opened, so a display that
+   *  reconnected (or was paired) while the sale was open still read as
+   *  gone and the membership dialog said "The customer screen is not
+   *  connected." over a green header mark. The mirror hook already
+   *  holds the header's own answer: the events stream plus a 30 second
+   *  poll, and since T206 a stream teardown as well. */
+  const displayConnected = mirror.connected;
 
   /**
    * T203: whether the studio asks the customer to approve each sale
@@ -10402,7 +10518,6 @@ export default function SaleScreen(props: {
    *  student an unsigned membership. The rule DEFAULTS ON here too, so a
    *  config answer that never arrives lands on the safe side. */
   const [contractSignature, setContractSignature] = useState(true);
-  const [displayConnected, setDisplayConnected] = useState(false);
   useEffect(() => {
     if (!props.open) return;
     let stopped = false;
@@ -10412,9 +10527,6 @@ export default function SaleScreen(props: {
         if (stopped || !body) return;
         setConfirmsSale(body.customerConfirmsSale === true);
         setContractSignature(body.contractRequiresSignature !== false);
-        setDisplayConnected(
-          body.display?.paired === true && body.display?.connected === true,
-        );
       })
       .catch(() => undefined);
     return () => {
@@ -11349,15 +11461,18 @@ export default function SaleScreen(props: {
         : client.balance;
 
   return (
-    <div className="sale-overlay" role="dialog" aria-label="Buy">
+    <div className="sale-overlay" role="dialog" aria-label="Cart">
       <div className="sale-shell">
         <ModeBanner config={config} />
 
         <div className="sale-top">
           {/* T85 (Pete: "'Buy' doesn't need to display on the buy page"):
-              the title is gone. The nav bar's lit Buy item says which
+              the title is gone. The nav bar's lit Cart item says which
               screen this is, from the same place on every screen, and the
-              header's width goes to who the sale is for. */}
+              header's width goes to who the sale is for. T206 renamed the
+              screen to Cart (Pete: 'we should change the "Buy" button to
+              "Cart" and any references to that screen should be named
+              Cart, not Buy'); the title stays hidden. */}
 
           {/* Who the sale is for, first in the header (Pete, fourth live
               test): identity belongs in the header, and the payment
@@ -12639,6 +12754,10 @@ export default function SaleScreen(props: {
           }}
           onStaffSessionEnded={() => onStaffSessionEnded?.()}
           modalAbove={modalAbove}
+          /* T206: the dialog asks for the card on file to be read again,
+             on open and after a save, through the same lookup a charge
+             refreshes. */
+          onCardRefresh={() => setProfileNonce((n) => n + 1)}
         />
       ) : null}
 

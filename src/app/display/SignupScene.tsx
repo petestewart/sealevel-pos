@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import WaiverScene from "./WaiverScene";
 
+import { birthDateRequired, readBirthDate } from "@/lib/birthdate";
+
 import type { SignupPayload } from "@/lib/displaysignup";
 
 /**
@@ -23,6 +25,12 @@ import type { SignupPayload } from "@/lib/displaysignup";
  * Safari scrolls the focused field above the keyboard itself: T98's
  * --vvh/--vv-bot band is the POS page's hook and is NOT mounted on
  * /display, and nothing here depends on it.
+ *
+ * T206: a fifth field, "Birth date", appears when and only when the
+ * site's own required list asks for one (Pete's first drive ended in
+ * Mindbody's "The following are required: Birthday"). The list is on
+ * the payload the server built; on a site that does not ask, the form
+ * is D4's four fields and the stored result is unchanged.
  *
  * THIS COMPONENT WRITES NOTHING TO MINDBODY, and sends no client id and
  * no staff id: it POSTs /api/display/complete with the form, the two
@@ -49,6 +57,10 @@ export default function SignupScene(props: {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  /* T206: asked ONLY when the site's required list asks for it. Pete's
+   * first drive ended in Mindbody's "The following are required:
+   * Birthday" with no field on either form to answer it. */
+  const [birthDate, setBirthDate] = useState("");
   /* D4, Pete: "Include opt-in to text & emails (checked by default)." */
   const [wantsEmail, setWantsEmail] = useState(true);
   const [wantsText, setWantsText] = useState(true);
@@ -79,12 +91,14 @@ export default function SignupScene(props: {
   const required = new Set(payload.requiredFields.map((f) => f.toLowerCase()));
   const needsEmail = required.has("email");
   const needsPhone = [...required].some((f) => /^(mobile)?phone$/.test(f));
+  const needsBirthDate = birthDateRequired(payload.requiredFields);
 
   const values = {
     firstName: firstName.trim().replace(/\s+/g, " "),
     lastName: lastName.trim().replace(/\s+/g, " "),
     email: email.trim(),
     phone: phone.trim(),
+    birthDate: birthDate.trim(),
   };
 
   /** The same shapes the server insists on, said here first so the
@@ -103,6 +117,13 @@ export default function SignupScene(props: {
       if (needsPhone) return "The studio needs your phone number.";
     } else if (values.phone.replace(/\D/g, "").length < 10) {
       return "That phone number does not look right.";
+    }
+    if (values.birthDate.length === 0) {
+      if (needsBirthDate) return "The studio needs your date of birth.";
+    } else {
+      /* The same reader the server uses, so the screen says it first. */
+      const read = readBirthDate(values.birthDate);
+      if (!read.ok) return "That birth date does not look right.";
     }
     return null;
   };
@@ -148,6 +169,9 @@ export default function SignupScene(props: {
             lastName: values.lastName,
             email: values.email || null,
             phone: values.phone || null,
+            /* Sent only when it was asked for, so a site that does not
+               ask stores exactly what it stored before. */
+            ...(values.birthDate ? { birthDate: values.birthDate } : {}),
           },
           consent: { email: wantsEmail, text: wantsText },
           signaturePng,
@@ -235,6 +259,16 @@ export default function SignupScene(props: {
           needed: needsPhone,
           autoCapitalize: "off",
         })}
+        {/* T206: the fifth field, and only when Mindbody asks for it.
+            A date input, so the student gets the OS picker rather than
+            a format to guess at. */}
+        {needsBirthDate
+          ? field("Birth date", birthDate, setBirthDate, {
+              type: "date",
+              needed: true,
+              autoCapitalize: "off",
+            })
+          : null}
       </div>
       <div className="dsignup-opts">
         <label className="dsignup-opt">

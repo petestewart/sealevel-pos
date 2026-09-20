@@ -116,7 +116,20 @@ export async function buildContractScene(input: {
   startDate: string | null;
   clientFirstName: string | null;
 }): Promise<
-  { ok: true; value: ContractSceneBuild } | { ok: false; status: number; error: string }
+  | { ok: true; value: ContractSceneBuild }
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      /** T206: a machine-readable name for the one refusal that is not
+       *  about the SCREEN at all. A membership with no terms written in
+       *  Mindbody has nothing to sign, wherever the customer display is,
+       *  and the teacher's dialog must say so rather than reporting a
+       *  screen that is working perfectly well as not connected (Pete's
+       *  contract attempt: "The customer screen is not connected." above a
+       *  sub-line about missing terms, with the header mark green). */
+      reason?: "noterms";
+    }
 > {
   const { clientId, contractId } = input;
   /* The start day, checked by the SAME gate the purchase uses, and
@@ -152,6 +165,7 @@ export async function buildContractScene(input: {
     return {
       ok: false,
       status: 409,
+      reason: "noterms",
       error:
         "This membership has no terms written in Mindbody, so there is " +
         "nothing for the customer to sign. Sell it with your PIN, or add " +

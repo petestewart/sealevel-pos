@@ -86,7 +86,17 @@ export async function POST(request: Request) {
      * server was never going to keep. */
     held.status === "pending"
   ) {
-    const filled = readSignupResult(kept);
+    /* T206: the required-field list the SERVER put on this request's
+     * payload when the scene went up, so a site that asks for a birth
+     * date refuses a form without one here, while the student is still
+     * standing there. */
+    const filled = readSignupResult(
+      kept,
+      Date.now(),
+      Array.isArray(held.payload.requiredFields)
+        ? (held.payload.requiredFields as string[])
+        : [],
+    );
     if (!filled.ok) {
       return NextResponse.json(
         { error: `result: ${filled.error}` },

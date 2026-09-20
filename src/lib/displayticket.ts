@@ -27,7 +27,7 @@
 
 /**
  * T203 adds `approve` (Phase 2.5 item 4): the same priced ticket, plus
- * nothing, with Approve and Not yet on it. It is the one mode the student
+ * nothing, with Cancel and Approve on it. It is the one mode the student
  * ANSWERS, and the answer is a precondition /api/checkout checks, never
  * an action that charges.
  */

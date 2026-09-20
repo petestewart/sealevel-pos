@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { actorFallbackLine } from "./actornote";
 
+import { readBirthDate } from "@/lib/birthdate";
+
 /**
  * T59b: a new client signed up at the counter. Pete: "first name, last
  * name, email, phone. Nothing else." The email opt-in is T53's consent
@@ -53,6 +55,10 @@ interface Props {
    *  stored request. */
   initialEmail?: string;
   initialPhone?: string;
+  /** T206: `YYYY-MM-DD` as the student typed it, for the same reason as
+   *  the name: the teacher reads it back and may correct it, and what
+   *  the body carries is what reaches Mindbody. */
+  initialBirthDate?: string;
   signup?: {
     requestId: string;
     consentEmail: boolean;
@@ -83,15 +89,23 @@ function CloseIcon() {
 }
 
 /** Mindbody's names for the form's fields, for the required-field read:
- *  which of the site's requirements this form can and cannot meet. */
-const FORM_FIELDS: Record<string, "firstName" | "lastName" | "email" | "phone"> =
-  {
-    FirstName: "firstName",
-    LastName: "lastName",
-    Email: "email",
-    MobilePhone: "phone",
-    Phone: "phone",
-  };
+ *  which of the site's requirements this form can and cannot meet. T206
+ *  adds the birth date, which is the one field this form grows only when
+ *  the site asks for it (Pete's first drive: the sign-up ended in "The
+ *  following are required: Birthday"). Both spellings, because the
+ *  required list says `BirthDate` and the refusal says Birthday. */
+const FORM_FIELDS: Record<
+  string,
+  "firstName" | "lastName" | "email" | "phone" | "birthDate"
+> = {
+  FirstName: "firstName",
+  LastName: "lastName",
+  Email: "email",
+  MobilePhone: "phone",
+  Phone: "phone",
+  BirthDate: "birthDate",
+  Birthday: "birthDate",
+};
 
 /** A readable name for a field Mindbody lists that the form lacks:
  *  "AddressLine1" reads as "address line1", which is enough to tell the
@@ -105,6 +119,7 @@ export default function NewClientModal({
   initialLast,
   initialEmail,
   initialPhone,
+  initialBirthDate,
   signup,
   onClose,
   onCreated,
@@ -113,6 +128,7 @@ export default function NewClientModal({
   const [lastName, setLastName] = useState(initialLast);
   const [email, setEmail] = useState(initialEmail ?? "");
   const [phone, setPhone] = useState(initialPhone ?? "");
+  const [birthDate, setBirthDate] = useState(initialBirthDate ?? "");
   /* T204: a sign-up's boxes are the STUDENT's answer, shown as they
    *  were given and not editable here: the server takes the consent
    *  from the request, not from this form, so an editable box would be
@@ -169,7 +185,12 @@ export default function NewClientModal({
     lastName: lastName.trim(),
     email: email.trim(),
     phone: phone.trim(),
+    birthDate: birthDate.trim(),
   };
+  /* T206: the field exists only when the site's list asks for it, so
+   * nothing about a site that does not ask changes, here or on the
+   * wire. */
+  const wantsBirthDate = requiredHere.has("birthDate");
   const ready =
     values.firstName !== "" &&
     values.lastName !== "" &&
@@ -181,6 +202,15 @@ export default function NewClientModal({
     setBusy(true);
     setError(null);
     setSuppressedNote(null);
+    if (wantsBirthDate) {
+      const read = readBirthDate(values.birthDate);
+      if (!read.ok) {
+        inFlight.current = false;
+        setBusy(false);
+        setError("That birth date does not look right.");
+        return;
+      }
+    }
     try {
       const res = await fetch("/api/client-create", {
         method: "POST",
@@ -190,6 +220,9 @@ export default function NewClientModal({
           lastName: values.lastName,
           email: values.email || null,
           phone: values.phone || null,
+          ...(wantsBirthDate && values.birthDate
+            ? { birthDate: values.birthDate }
+            : {}),
           sendAccountEmails: account,
           sendPromotionalEmails: promo,
           ...(signup ? { displayRequestId: signup.requestId } : {}),
@@ -336,6 +369,16 @@ export default function NewClientModal({
             autoComplete: "tel",
             wide: true,
           })}
+          {/* T206: the fifth field, drawn only when Mindbody's own
+              required list asks for it. A date input, so no format has
+              to be guessed at and no amount-style pad is needed. */}
+          {wantsBirthDate
+            ? field("birthDate", "Birth date", birthDate, setBirthDate, {
+                type: "date",
+                autoComplete: "bday",
+                wide: true,
+              })
+            : null}
         </div>
         {signup ? (
           <div className="consent-opts">

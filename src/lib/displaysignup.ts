@@ -21,6 +21,7 @@
  * imported by the DISPLAY's components as well as by the routes.
  */
 
+import { birthDateRequired, readBirthDate } from "./birthdate";
 import { readWaiverResult } from "./displaywaiver";
 
 /** What the display renders. */
@@ -40,6 +41,9 @@ export interface SignupResult {
     lastName: string;
     email: string | null;
     phone: string | null;
+    /** T206: `YYYY-MM-DD`, present only on a site whose required list
+     *  asks for one; the scene shows the field only then. */
+    birthDate?: string | null;
   };
   /** The two boxes, both ticked by default on the screen (D4). `email`
    *  sets T53's three Send*Emails flags and `text` the three
@@ -83,6 +87,13 @@ export function readSignupPayload(
 export function readSignupResult(
   value: unknown,
   now = Date.now(),
+  /** T206: the site's required-field list, as the request's own payload
+   *  carries it. A birth date is REFUSED as missing only when this asks
+   *  for one; every other site never sees the field and is unchanged.
+   *  Empty (the default) checks the shape of one that was given and
+   *  insists on nothing, which is what the re-read at create time
+   *  wants. */
+  requiredFields: readonly string[] = [],
 ):
   | { ok: true; value: SignupResult; png: Buffer }
   | { ok: false; status: number; error: string } {
@@ -133,6 +144,17 @@ export function readSignupResult(
     phone = rawPhone;
   }
 
+  /* T206: the fifth field, when the site demands one. Validated here
+   * as well as on the screen, because the screen is a browser. */
+  const birth = readBirthDate(form.birthDate, now);
+  if (!birth.ok) {
+    return { ok: false, status: 400, error: birth.error };
+  }
+  const needsBirthDate = birthDateRequired(requiredFields);
+  if (needsBirthDate && birth.value === null) {
+    return { ok: false, status: 400, error: "a birth date is required" };
+  }
+
   const consent =
     raw.consent !== null &&
     typeof raw.consent === "object" &&
@@ -159,7 +181,15 @@ export function readSignupResult(
   return {
     ok: true,
     value: {
-      form: { firstName: first.value, lastName: last.value, email, phone },
+      form: {
+        firstName: first.value,
+        lastName: last.value,
+        email,
+        phone,
+        /* Absent, not null, on a site that never asked: a stored result
+         * carries only what was collected. */
+        ...(birth.value === null ? {} : { birthDate: birth.value }),
+      },
       consent: { email: consent.email, text: consent.text },
       signaturePng: signed.value.signaturePng,
       agreedAt: signed.value.agreedAt,
@@ -198,6 +228,10 @@ export function signupFormOf(
       lastName,
       email: str(form.email) || null,
       phone: str(form.phone) || null,
+      /* T206: for the modal's prefill. The teacher may correct it, so
+       * the create takes the value from their body and this is only
+       * what it starts as. */
+      birthDate: str(form.birthDate) || null,
     },
     consent: {
       email: (consent as Record<string, unknown>).email === true,

@@ -179,9 +179,11 @@ pack in the same gesture.
 
 ## Phase 2.5 — the customer-facing iPad
 
-**Every item below is built, on `feature/customer-display`.** What
-remains for this phase is live verification at the counter (all three probes ran on 2026-09-20) and live verification at the counter: no item here
-has been driven against real Mindbody, a real iPad or a real student.
+**Every item below is built, on `feature/customer-display`**, all three
+probes ran on 2026-09-20, and Pete drove the phase on two iPads against
+the sandbox the same day (T206 is what that drive sent back). What
+remains is the counter itself: no item here has been driven against the
+STUDIO's Mindbody site, or with a real student.
 
 Design: `docs/design/customer-display.md`. A second iPad on the counter,
 paired to the POS, that shows one scene at a time because a teacher put
@@ -196,13 +198,15 @@ Plumbing first, then one scene at a time, in this order.
 - [x] Sign-up, self-serve: "New here? Sign up" on the idle screen, form then waiver signature in one request, a tray with a gold count on the POS header, Create finalises client and waiver in one tap, pending sign-ups surface in walk-in search, take-over rule when the teacher needs the screen. Email and text opt-in ticked by default. Answers Pete's rush case (design doc, "Self-serve"). **T204** (`/api/display/start` is the one route the DISPLAY puts a scene up with; a sign-up has two clocks, four hours for the result and two minutes of no touch for the screen; the form and the signature are one request, and Create is one claim over the create AND the waiver, which is now one shared `src/lib/waiverfinalise.ts`). D-B3 was NOT run: the create sends the text flags, reads the client back, and files a T62-signed Notes line when they did not stick.
 - [x] Contract signature on the display, required by `contract_requires_signature` (default on) with the teacher's PIN override, sent as `ClientSignature`, `contract_receipts` row. **T205** (the scene is built server-side from Mindbody's own contract and its own `Test: true` rehearsal, and carries words only: no client id, no contract id, no hash; the purchase refuses unless the signature names THIS client, contract and start day AND the terms still hash to what was signed; the signature is claimed before the write and spent only after it answered, so a refusal leaves it usable for a retry). D-B2 was NOT run: the field ships to the vendored spec, the rehearsal deliberately carries no signature, and the probe is what says whether Mindbody accepts it.
 
+- [x] Pete's first drive on real hardware, 2026-09-20: the display mark notices a closed tab at once (the SSE teardown, counted so a reload cannot flap it), the approve scene reads Cancel | Approve, both sign-up forms ask a birth date when and only when the site's required list names one, the membership's no-card notice carries its own Add card (and any card saved anywhere makes the sale screen read again), a membership with no terms says so instead of blaming a connected screen, the contract modal ends above the nav bar, and the Buy screen is the Cart screen. **T206.**
+
 Probes owed, both sandbox, `Test: true` where the endpoint takes it:
 
 | # | Probe | Answers |
 |---|---|---|
 | D-B1 | `POST /client/uploadclientdocument` with a small PNG | **Run 2026-09-20 (Pete, sandbox client 100015484): ACCEPTED, `{FileSize: 72, FileName}`.** `MediaType` is a MIME type: `png`, `.png`, `PNG` and `Png` are each refused "Media type <x> is invalid" and `image/png` passes, whatever client.yml:7427 lists. The upload now sends `image/png`. Still to look at: whether the file shows on that client's Documents page in the sandbox's Mindbody. |
 | D-B2 | `POST /sale/purchasecontract` `Test: true` with `ClientSignature` set | **Run 2026-09-20 (Pete, sandbox client 100015484, contract 347 "Corporate Monthly Membership", paid by account credit): ACCEPTED, and the Total did not move** (70.00 without the field, 70.00 with it; the answer carries no signature field of its own). The gate is cleared: the rehearsal stays signature-free and the live purchase carries it. Along the way: `GET /sale/contracts` REQUIRES `request.locationId` and lists per location, and a contract can be listed for a location and still refuse to sell there (354 and 356 at location 1: "cannot be purchased at location 1"), so a listed contract is not a sellable one until the rehearsal says so. Not seen: the `clientContractSignature-...` document Mindbody says it files on a REAL purchase. |
-| D-B3 | `POST /client/addclient` in the sandbox with the three `Send*Texts` flags, then read the client back | **Run 2026-09-20 (Pete, sandbox, probe client 100015635): addclient DROPS the text opt-in.** All six flags sent `true`; the create's own answer and the read-back both say the three email flags `true` and the three text flags `false`. So the T204 Notes fallback is the real path, not a stopgap, and the "Text me" box records an intention a human sets in Mindbody. The sandbox also requires `BirthDate` on a create, which the studio's site does not; the per-site required-fields read (T59b) already covers that. |
+| D-B3 | `POST /client/addclient` in the sandbox with the three `Send*Texts` flags, then read the client back | **Run 2026-09-20 (Pete, sandbox, probe client 100015635): addclient DROPS the text opt-in.** All six flags sent `true`; the create's own answer and the read-back both say the three email flags `true` and the three text flags `false`. So the T204 Notes fallback is the real path, not a stopgap, and the "Text me" box records an intention a human sets in Mindbody. The sandbox also requires `BirthDate` on a create; what the studio's site requires has never been read live (T59b), and since T206 both sign-up forms ask for a birth date whenever the site's own list names one, and send none when it does not. |
 
 D1 to D5 are all answered (2026-09-19) and folded into the design doc.
 

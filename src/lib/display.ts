@@ -221,6 +221,18 @@ interface HubState {
   /** Whether the display was counted as connected at the last check, so
    *  connected/disconnected is an edge and not a per-request answer. */
   wasConnected: boolean;
+  /** T206: how many of the display's SSE streams are open right now.
+   *  Pete, first drive: "closed safari on ipad, display mark looks the
+   *  same until i refresh". The 45 second window alone cannot notice a
+   *  tab closing, and the edge was only ever looked for when a teacher
+   *  read the state. A stream teardown is the event, so the count is
+   *  kept here: a reload OVERLAPS two streams, so only zero open means
+   *  gone. */
+  streamOpen: number;
+  /** When the last stream closed, or null while one is open or none has
+   *  ever opened in this process. It is what makes `displayConnected`
+   *  false at once rather than 45 seconds later. */
+  lastClosedAt: number | null;
   /** T201: the timer that takes a short-lived scene (the post-sale
    *  summary) down on its own. `expireIfDue` is lazy and only runs when
    *  something asks the hub a question; a summary has to clear itself
@@ -261,12 +273,21 @@ const state: HubState = (G.__posDisplay ??= {
   loading: null,
   lastTouchWrite: 0,
   wasConnected: false,
+  streamOpen: 0,
+  lastClosedAt: null,
   expiryTimer: null,
   finalising: new Set<string>(),
   signups: new Map<string, DisplayRequest>(),
   lastTouch: 0,
   abandonTimer: null,
 });
+
+/* T206: the hub lives on globalThis so a dev recompile does not unpair
+ * the counter, which means a state object created before these two
+ * fields existed can outlive the build that adds them. Normalized once,
+ * here, rather than guarded at every read. */
+state.streamOpen ??= 0;
+state.lastClosedAt ??= null;
 
 /* --- Validation ------------------------------------------------------ */
 
@@ -526,6 +547,10 @@ export async function pairCode(
     void boundedDb(deleteDisplay(previous.id), TABLE_WAIT_MS, false);
   }
   state.wasConnected = false;
+  /* A new pairing owns no stream: whatever the last display left behind
+   * is not this one's. */
+  state.streamOpen = 0;
+  state.lastClosedAt = null;
   emit("display", "idle", {});
   emit("teacher", "disconnected", { paired: true, connected: false });
   console.log(`[display] paired ${id}${name ? ` (${name})` : ""}`);
@@ -574,11 +599,67 @@ export function pairedDisplay(): PairedDisplay | null {
   return state.paired;
 }
 
-/** Seen within 45 seconds. */
+/**
+ * Whether the display is there. A stream open says yes at once and a
+ * stream closed says no at once (T206); the 45 second silence window is
+ * the FALLBACK, for a stream that died without the abort ever reaching
+ * this process.
+ */
 export function displayConnected(now = Date.now()): boolean {
   const p = state.paired;
   if (p === null || p.lastSeenAt === null) return false;
+  if (state.streamOpen > 0) return true;
+  /* Closed since the last beat: gone, with no waiting. */
+  if (state.lastClosedAt !== null && state.lastClosedAt >= p.lastSeenAt) {
+    return false;
+  }
   return now - p.lastSeenAt < CONNECTED_WINDOW_MS;
+}
+
+/**
+ * T206: the display's stream opened. Counted, because a reload overlaps
+ * the new stream with the old one and the teacher's mark must not flap
+ * between them. `touchDisplaySeen` is what emits `connected`; this only
+ * records that somebody is holding the line.
+ */
+export function markDisplayStreamOpen(id: string, now = Date.now()): void {
+  const p = state.paired;
+  if (p === null || p.id !== id) return;
+  state.streamOpen += 1;
+  state.lastClosedAt = null;
+  /* A freshly paired display has no heartbeat yet, and displayConnected()
+   * reads null as never seen; the stream opening IS the first sighting,
+   * so it stamps one rather than reading red until the first beat. */
+  if (p.lastSeenAt === null) p.lastSeenAt = now;
+  /* Review: the teardown below is immediate, so the open has to be too.
+   * A reload does not always overlap (Safari tears the old EventSource
+   * down before the new page asks for one), and without this the mark
+   * went red on the close and stayed red until the first heartbeat up
+   * to 15 seconds later, with the contract dialog reading that live
+   * answer and offering the PIN for a screen that was right there.
+   * `noteConnectionState` only speaks on an EDGE, so an open while the
+   * mark is already green says nothing. */
+  noteConnectionState(now);
+}
+
+/**
+ * T206: the display's stream tore down, which is what a closed Safari
+ * tab looks like from here. Pete, first drive on real hardware: "closed
+ * safari on ipad, display mark looks the same until i refresh".
+ *
+ * Only the LAST stream closing means gone, so a reload (two streams for
+ * a moment) is not a disconnect. When it is the last, the moment is
+ * recorded, which makes `displayConnected` false immediately, and
+ * `noteConnectionState` sends `disconnected` down the teacher's stream
+ * at once rather than up to 75 seconds later.
+ */
+export function markDisplayGone(id: string, now = Date.now()): void {
+  const p = state.paired;
+  if (p === null || p.id !== id) return;
+  state.streamOpen = Math.max(0, state.streamOpen - 1);
+  if (state.streamOpen > 0) return;
+  state.lastClosedAt = now;
+  noteConnectionState(now);
 }
 
 /** The heartbeat. Memory every beat, the table at most once a minute. */
@@ -587,6 +668,9 @@ export function touchDisplaySeen(id: string, now = Date.now()): void {
   if (p === null || p.id !== id) return;
   const wasConnected = state.wasConnected;
   p.lastSeenAt = now;
+  /* T206: a beat is later than any close this process has seen, so the
+   *  close no longer decides. */
+  state.lastClosedAt = null;
   state.wasConnected = true;
   if (!wasConnected) {
     emit("teacher", "connected", { paired: true, connected: true });
@@ -619,6 +703,8 @@ export async function unpairDisplay(): Promise<boolean> {
   clearExpiryTimer();
   clearAbandonTimer();
   state.wasConnected = false;
+  state.streamOpen = 0;
+  state.lastClosedAt = null;
   await boundedDb(deleteDisplay(p.id), TABLE_WAIT_MS, false);
   emit("display", "idle", {});
   emit("teacher", "disconnected", { paired: false, connected: false });

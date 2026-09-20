@@ -1,3 +1,4 @@
+import { birthDateForMindbody, isBirthDateField } from "./birthdate";
 import { mindbody, type Actor } from "./mindbody";
 
 /**
@@ -445,6 +446,11 @@ export const SIGNUP_FORM_FIELDS = [
   "MobilePhone",
 ] as const;
 
+/* T206: and one more, conditionally. A birth date is not in the list
+ * above because the form does not have it: it GROWS it, on a site whose
+ * required list names `BirthDate` or `Birthday`, and on any other site
+ * the field is absent and the create's body is unchanged. */
+
 /**
  * `GET /client/requiredclientfields` (docs/mindbody-openapi/client.yml:2359):
  * "the list of fields that a new client has to fill out in business
@@ -471,10 +477,12 @@ export async function requiredClientFields(): Promise<{
     .map((f) => f.trim());
   const have = new Set<string>(SIGNUP_FORM_FIELDS);
   /* Mindbody's list may say "Phone" or "MobilePhone" for the one phone
-   * field the form has; either is met by it. Anything else the form
-   * cannot answer. */
+   * field the form has; either is met by it. T206: a birth date is met
+   * too, by the fifth field both forms grow when this list asks for one
+   * (src/lib/birthdate.ts). Anything else the form cannot answer. */
   const missing = required.filter(
-    (f) => !have.has(f) && !/^(mobile)?phone$/i.test(f),
+    (f) =>
+      !have.has(f) && !/^(mobile)?phone$/i.test(f) && !isBirthDateField(f),
   );
   return { required, missing };
 }
@@ -536,6 +544,10 @@ export interface NewClientInput {
   sendAccountTexts?: boolean;
   sendPromotionalTexts?: boolean;
   sendScheduleTexts?: boolean;
+  /** T206: `YYYY-MM-DD`, and only on a site that asks for one. Absent
+   *  (or null) sends no `BirthDate` at all, which is what every site
+   *  that does not ask gets, exactly as before. */
+  birthDate?: string | null;
 }
 
 /** T204: the three text flags, in Mindbody's own names. */
@@ -560,7 +572,11 @@ export const CONSENT_TEXT_FLAGS = [
  * default. Nothing else: not Active, not LiabilityRelease (the waiver
  * dialog is the ONLY thing that sets that, T18), no address. Property
  * names are the schema's own: FirstName, LastName, Email, MobilePhone,
- * SendAccountEmails, SendPromotionalEmails.
+ * SendAccountEmails, SendPromotionalEmails. T206 adds `BirthDate`, and
+ * only when the caller has one: a site whose required list asks for a
+ * birth date (site -99 does; site 471's list has never been read live,
+ * T59b) refuses the create without it, and every other site sends the
+ * same body it always did.
  *
  * The write guard: there is no client id yet, and `mindbody()` finds
  * none in the body either (it reads ClientId/ClientIds/UniqueClientId,
@@ -598,6 +614,12 @@ export async function createClient(
       ...(input.sendScheduleTexts === undefined
         ? {}
         : { SendScheduleTexts: input.sendScheduleTexts }),
+      /* T206: the one field a site can demand that the four Pete named
+       * do not cover. Naive and site-local like every Mindbody
+       * datetime. */
+      ...(input.birthDate
+        ? { BirthDate: birthDateForMindbody(input.birthDate) }
+        : {}),
     },
     /* Deliberately absent: a create has no client id to name. See above. */
     clientId: undefined,

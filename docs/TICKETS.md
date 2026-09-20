@@ -17884,3 +17884,204 @@ only the rehearsal says a contract is sellable. Still unseen: the
 - No real iPad: the pad was driven with Playwright's mouse, so a finger
   and an Apple Pencil are reasoned about, not measured.
 - D-B1 and D-B3 remain unrun, as T202 and T204 recorded.
+
+## T206. Pete's first drive on real hardware, 2026-09-20
+
+Phase 2.5 is built (T200 to T205) and Pete drove the whole of it on two
+iPads against the Mindbody sandbox. Nothing about the design came back
+wrong; what came back was five things the counter noticed, and, once
+those were in, four more from the same session. This ticket is those,
+and nothing else. **Nothing here changes what reaches Mindbody except an
+optional `BirthDate` on `addclient`, and only when the site's own
+required-field list asks for one.**
+
+### 1. "closed safari on ipad, display mark looks the same until i refresh"
+
+The header's display mark could take up to 75 seconds to notice a
+screen that had gone, and a CLOSED TAB was not an event at all: the
+heartbeat stamped `last_seen_at` every 15 seconds, `displayConnected()`
+read a 45 second window, and the edge was only looked for when a
+teacher-facing read happened to run (the header's 30 second poll).
+
+The stream teardown is now the signal. `src/app/api/display/stream/route.ts`
+counts opens (`markDisplayStreamOpen`) and, in the teardown `sse.ts`
+runs on abort, calls `markDisplayGone`, which records the moment the
+LAST stream closed and calls `noteConnectionState()`, so `disconnected`
+reaches the teacher's stream at once. A reload OVERLAPS two streams, so
+only zero open means gone and the mark cannot flap. The 45 second window
+stays as the fallback for a stream that dies without an abort ever
+reaching this process, and `touchDisplaySeen` clears the close, so a
+beat always wins over an older teardown. Pairing and unpairing reset the
+count: a new display owns no stream the last one left behind.
+
+### 2. 'instead of "Does this look right? Not yet | Approve" it should just be "Cancel | Approve"'
+
+`TicketScene`'s approve mode drops the question line and the button
+reads **Cancel**. The refusal the teacher sees is now "Customer
+cancelled" (`SaleScreen`'s `finish(...)`, and the display's own
+`reason`). The mechanism is T203's, untouched: Cancel still refuses the
+request, `/api/checkout` still treats a stored approval as a
+precondition, and no tap on that screen moves money. `.dticket-ask`
+went with the line.
+
+### 3. "The following are required: Birthday"
+
+Pete's sandbox sign-up reached the New Client modal and Mindbody refused
+the create: site -99 lists `BirthDate` in `/client/requiredclientfields`
+and the forms have four fields by design (D4) with no way to give it a
+fifth.
+
+Both forms now grow ONE field, "Birth date", **only when the site's
+required list names `BirthDate` or `Birthday`**: the display's
+`SignupScene` (on the list the server put on the scene's payload) and
+the teacher's `NewClientModal` (on its own `/api/client-create` read,
+where `FORM_FIELDS` gained both spellings). One validator, in the new
+`src/lib/birthdate.ts`, is used by both screens, by
+`/api/display/complete` and by `/api/client-create`: `YYYY-MM-DD`, a
+real day, not in the future, not more than 120 years back. The create
+sends `BirthDate: "YYYY-MM-DDT00:00:00"`, naive and site-local like
+every Mindbody datetime, and sends NOTHING when there is none, so a
+site that does not ask has a byte-identical body. On the display path
+the birth date is prefilled from the stored sign-up and the TEACHER's
+body wins, exactly as the name does; the stored result's re-read at
+create time checks the shape and insists on nothing, so a site whose
+list changed cannot strand a sign-up that is already signed. The
+required-field warning no longer lists a field the form now has.
+
+### 4. "I don't see a way to add a card for anyone in the sandbox"
+
+The membership dialog's no-card sentence pointed at Mindbody ("add a
+card in Mindbody first") when the app has its own Add card. Pete, on
+being shown the sentence rewritten to name the profile: **"if a teacher
+hits this point, they should be able to add a card from here, not be
+forced to go back to the sign in page to do so."**
+
+So the notice reads "No card on file. A membership charges the stored
+card." with a 64px **Add card** beside it, which opens THE card form
+(`CardModal`, T84's "file" mode, over the dialog at `over-profile`), not
+a second one. On a save the dialog asks the sale screen to read the card
+again and the notice clears where it stands, with the dialog still open.
+
+Then Pete added a card through the client PROFILE with the sale screen
+open and the dialog still said "No card on file" until a reload: the
+sale screen's card lookup is cached per client and nothing invalidated
+it. Now `cardSaved` in page.tsx bumps a `cardVersion` the sale screen's
+lookup depends on, so a card saved ANYWHERE is read again, and the
+membership dialog asks for a fresh read every time it OPENS as well,
+because a cached miss must not decide a membership.
+
+### 5. 'we should change the "Buy" button to "Cart"'
+
+"and any references to that screen should be named Cart, not Buy." The
+nav item's label, the overlay's `aria-label`, `BuyIcon` (now
+`CartIcon`, same bag), the roster row's "Cart for <name>", "For cash,
+use Cart.", "Cart and check in", the split-sale lines, the drawer's
+three "Buy screen" sentences and the shelf admin's "Cart > Gift cards"
+placements. Deliberately unchanged: the URL, `saleMode`, `NavScreen`'s
+`"buy"` key, every CSS class, "Buy it for another client" (T90's verb,
+not the screen), and the comments that quote Pete's earlier words, which
+are history. T85's rule that the title stays hidden on the screen holds.
+
+### 6. The sign block blamed the wrong thing
+
+Pete's contract attempt read **"The customer screen is not connected."**
+as its heading over a sub-line about missing terms, with the header mark
+saying the screen was there. Two faults, both fixed:
+
+- A membership with no `AgreementTerms` in Mindbody has nothing to sign,
+  which is not a fact about the screen. `buildContractScene` now names
+  that refusal (`reason: "noterms"`), `/api/display/present` forwards it,
+  and the dialog has its own stage: **"Nothing to sign for this
+  membership"**, Mindbody's own sentence under it, and the PIN offered.
+- The dialog's idea of "connected" was read ONCE from `/api/config` when
+  the sale screen opened, so a screen that reconnected after a refresh
+  still read as gone. It is now `mirror.connected` from
+  `useDisplayMirror`, which is the header mark's own answer: the events
+  stream, a 30 second poll, and since item 1 a stream teardown.
+
+### 7. The modal ran under the nav bar
+
+With the refusal notice and the sign block both up, the contract modal's
+Cancel and commitment button sat behind the bottom nav bar. The dialog
+is rendered inside the sale overlay, which is its own stacking context
+BELOW the fixed nav bar, so no z-index could lift it: `.modal-contract`
+now ends above the bar (`max-height: calc(var(--vvh) - 48px -
+var(--nav-space))` with a matching `margin-bottom`, both T98's
+variables), its body scrolls and its action row is sticky. The row's
+in-flow neighbours after it are none: the PIN box, the card form and the
+date picker are each a fixed scrim.
+
+### Verified
+
+- **Route driver, `scratchpad/t206/routes.mjs`, 19 passed with the
+  birth-date knob off and 26 with it on, 0 failed**, against a real
+  production server and the mock: a display stream opening says
+  connected, closing says disconnected within 3 seconds and the state
+  read agrees; two overlapping streams closing one at a time do NOT
+  disconnect until the last one goes; reopening says connected again;
+  the approve refusal reads "Customer cancelled"; with the knob on the
+  scene carries `BirthDate`, a complete with no birth date, a date that
+  is not a date, one in the future and one 200 years back are each 400,
+  a good one is stored and `signups/<id>` returns it, a create with no
+  `BirthDate` gets Mindbody's own "The following are required:
+  Birthday" and LEAVES the sign-up in the tray, and the create that
+  carries one sends `BirthDate: "1990-04-05T00:00:00"`; with the knob
+  off the scene carries no required fields, the read carries no birth
+  date and the create body has no `BirthDate` at all.
+- **Playwright, `scratchpad/t206/ui.mjs`, 43 passed with the knob off,
+  0 failed**: the approve scene shows exactly two controls, Cancel then
+  Approve, both 64px, with no "Does this look right?" and no "Not yet";
+  the nav bar reads Cart and the screen it opens is labelled Cart; the
+  membership with no card shows the new sentence and a 64px Add card,
+  the card form opens OVER the dialog and the dialog survives it, and on
+  save the notice goes and the commitment button lights with no reload;
+  the same through the PROFILE's own card form, with the sale screen
+  open; the no-terms membership reads "Nothing to sign for this
+  membership" with the PIN offered and never blames a connected screen;
+  the dialog's foot and whole box sit above the nav bar at 1180x820; a
+  screen that goes away and comes back reaches the OPEN dialog with no
+  reload; and with the knob off the sign-up form has four fields and the
+  modal no date input.
+- The knob-on Playwright pass repeats the sign-up half: the form asks
+  for a birth date, marks it needed, keeps every row at 64px and nothing
+  under 16px, and the teacher's modal opens prefilled with the date the
+  student typed and no amber line asking for a field the form now has.
+- **Regressions, all 0 failed**: T200's copy in `t204/t200-regress.mjs`
+  52, T114 27, T115 43, T203 7 off and 45 on, T204 65
+  (`POS_DISPLAY_ABANDON_MS=3000 POS_DISPLAY_SIGNUP_TTL_MS=15000`, with
+  the driver's own `SIGNUP_TTL_MS` matched to the server's; mismatched,
+  its three expiry assertions fail on any build), T205 36 on and 4 off.
+  One T115 assertion was stale, not broken: it expected `MediaType:
+  "png"` where probe D-B1 had already moved the upload to `image/png`
+  (commit 350a1c2, before this ticket). The driver's expectation was
+  corrected and it passes 43.
+- `npx tsc --noEmit` and `env -u DATABASE_URL npm run build` clean.
+
+### Could not verify
+
+- **Nothing here was driven on a real iPad.** The closed-Safari case is
+  driven as an aborted SSE request, which is what a closed tab looks
+  like from the server; whether iOS always tears the connection down
+  promptly when a tab is closed, backgrounded or the screen locks is
+  not something a headless Chromium can answer. The 45 second window is
+  still the fallback for exactly that.
+- **Which fields site 471 requires has still never been read live**
+  (T59b's gap). The birth-date field is built against site -99's list
+  and the mock's knob. If the studio's list does not name a birth date,
+  nothing about the counter changes.
+- **Whether Mindbody keeps the `BirthDate` an `addclient` carries** has
+  not been seen live; the mock echoes it back. D-B3 showed the three
+  text flags being dropped in silence, so a read-back of the birth date
+  may yet be worth the same treatment.
+- **"Stored card not found" on the sandbox rehearsal.** Pete stored a
+  card through the app minutes earlier (the profile shows Visa ...1111,
+  04/2031) and `POST /sale/purchasecontract` `Test: true` answered
+  "Stored card not found". T30 already records that the counter's
+  `StoredCardInfo` payment has never been proven live; this is the
+  first evidence against it and it is still evidence of a SANDBOX, whose
+  card vault is not the studio's. Open: whether `StoredCardInfo` needs a
+  field the counter does not send, or the sandbox simply cannot tender a
+  stored card. The place it gets settled is the studio site under
+  `POS_WRITE_CLIENT_IDS`, with a dummy client and a real card.
+- The staff session is faked in the harness (T200's idiom), so T49/T50
+  attribution is exercised as shape.
