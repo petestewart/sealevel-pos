@@ -41,7 +41,11 @@ import StaffModal, { type Teacher } from "./StaffModal";
 import PinModal from "./PinModal";
 import NewClientModal from "./NewClientModal";
 import SignupTray, { ago as signupAgo } from "./SignupTray";
-import type { PendingSignupRow } from "./SignupTray";
+import type {
+  PendingSignupRow,
+  SignupOutcome,
+  StuckSignupRow,
+} from "./SignupTray";
 import CardModal from "./CardModal";
 import GuestModal, {
   type ClassStanding,
@@ -70,6 +74,11 @@ interface ClassSummary {
   name: string;
   teacher: string;
   startsAt: string;
+  /** T207 review: Mindbody's own `EndDateTime`, naive studio wall clock
+   *  like `startsAt`. Optional here because a server that predates it
+   *  simply does not send it, and `classWhen` treats a missing end as a
+   *  generous length rather than as "ended". */
+  endsAt?: string | null;
   capacity: number | null;
   booked: number | null;
 }
@@ -639,6 +648,56 @@ function isFutureDay(startsAt: string): boolean {
   return startsAt.slice(0, 10) > studioToday();
 }
 
+/**
+ * T207 review: what the automatic sign-up may do with the class the
+ * counter is SHOWING, which is not the same question as "is it today".
+ *
+ * `defaultClassId` falls back to the last class of the day when nothing
+ * is within the "schedule back" window, so at 8pm the screen is still on
+ * the 6:30 that finished an hour ago. Booking a new student into that
+ * and marking them SignedIn would record attendance at a class they
+ * never attended, which is the one thing check-in must never invent. So:
+ *
+ * - "ended": the class is over. Create, and book nothing.
+ * - "otherday": the teacher is browsing another day, where T46 closes
+ *   check-in anyway. Create, and book nothing.
+ * - "ahead": it starts further ahead than the roster window reaches, so
+ *   it is a class the teacher went looking for rather than the one at
+ *   the door. Book, and do NOT check in.
+ * - "now": the class at the door. Book and check in.
+ *
+ * A class that started LONGER ago than the window and has not ended is
+ * "now" on purpose: a student walking into a class in progress is late,
+ * not absent, and that is exactly the roster row a teacher would tap.
+ */
+type ClassWhen = "now" | "ended" | "ahead" | "otherday";
+
+function classWhen(
+  cls: ClassSummary | null,
+  hoursForward: number,
+): ClassWhen | null {
+  if (cls === null || !cls.startsAt) return null;
+  if (cls.startsAt.slice(0, 10) !== studioToday()) return "otherday";
+  const mins = (iso: string): number =>
+    Number(iso.slice(11, 13)) * 60 + Number(iso.slice(14, 16));
+  const now = studioMinutesNow();
+  const start = mins(cls.startsAt);
+  /* Mindbody's own end when the list carried one. With none, or one that
+   * does not sit after the start on the same day, the class is given two
+   * hours, which is longer than anything this studio teaches: the
+   * failure this has to avoid is calling a class ended while it is
+   * running, not the reverse. */
+  const end =
+    typeof cls.endsAt === "string" &&
+    cls.endsAt.slice(0, 10) === cls.startsAt.slice(0, 10) &&
+    mins(cls.endsAt) > start
+      ? mins(cls.endsAt)
+      : start + 120;
+  if (end < now) return "ended";
+  if (start > now + hoursForward * 60) return "ahead";
+  return "now";
+}
+
 /** The class on a picked day nearest to this time of day, or the first
  *  one: at 6:15pm on a Wednesday the teacher asking about "last Monday"
  *  most likely means last Monday's evening class. */
@@ -903,6 +962,33 @@ function FrontDesk({
   /** Bumped when a sign-up is created or cleared, so the header tray is
    *  right without waiting for its poll. */
   const [signupRefresh, setSignupRefresh] = useState(0);
+  /**
+   * T207: the automatic run's state, all of it in this browser.
+   *
+   * `signupRows` is the tray's own list, handed up so the run can start
+   * from the same three sources the tray has (the stream, the poll, and
+   * the replay on connect). `signupWhy` is why a name is still in the
+   * tray; `signupStuck` is a sign-up whose client WAS created and whose
+   * booking was not, which the server no longer lists at all;
+   * `signupSaid` is the outcome line, for about ten seconds.
+   */
+  const [signupRows, setSignupRows] = useState<PendingSignupRow[]>([]);
+  const [signupWhy, setSignupWhy] = useState<Record<string, string>>({});
+  const [signupStuck, setSignupStuck] = useState<StuckSignupRow[]>([]);
+  const [signupSaid, setSignupSaid] = useState<SignupOutcome[]>([]);
+  /** One attempt per request id per browser, which is what keeps the
+   *  30 second poll from asking Mindbody the same refused question every
+   *  30 seconds, and `signupRunning` is the in-flight set that keeps the
+   *  poll and the event from double-firing in the same tab. Two iPads
+   *  are handled on the SERVER, by the create's own beginFinalisation
+   *  claim: the loser gets 409 and drops it without a word. */
+  const signupTried = useRef<Set<string>>(new Set());
+  const signupRunning = useRef<Set<string>>(new Set());
+  const signupTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  /** The runner's queue: every sign-up this tab handles, one after the
+   *  other, so two collected while the iPad slept cannot both book
+   *  against the same last seat. */
+  const signupChain = useRef<Promise<void>>(Promise.resolve());
   /** T71: the query `found` answers, for the bold match in each row. Set
    *  with the first page, so a query typed after the search stays out
    *  of the rows until it is searched. */
@@ -4020,6 +4106,19 @@ function FrontDesk({
     activeClass.capacity !== null &&
     activeClass.booked !== null &&
     activeClass.booked >= activeClass.capacity;
+  /** T207: the class on screen and whether it is full, readable inside
+   *  the automatic run without making that callback depend on every
+   *  render. The run reads them ONCE, at the moment it books, which is
+   *  the same thing a teacher's tap does. */
+  const activeClassRef = useRef<ClassSummary | null>(null);
+  activeClassRef.current = activeClass;
+  const classFullRef = useRef(false);
+  classFullRef.current = classFull;
+  /** T207: what the automatic run may do with that class, from its own
+   *  clock rather than from "is it today" (classWhen above). Read ONCE,
+   *  at the moment it books. */
+  const classWhenRef = useRef<ClassWhen | null>(null);
+  classWhenRef.current = classWhen(activeClass, settings.hoursForward);
 
   const loadWaitlist = useCallback(async (classId: number) => {
     setWaitlistError(null);
@@ -4242,6 +4341,433 @@ function FrontDesk({
     },
     [promoting, promote],
   );
+
+  /* =====================================================================
+   * T207: a sign-up that finishes itself.
+   *
+   * Pete, asked whether the teacher's Create tap should stay: "make
+   * automatic the default with a setting that can be set to review. the
+   * new client should be created and automatically signed in to class
+   * (or the waitlist if class is full)."
+   *
+   * So with the setting on automatic, a completed self-serve sign-up
+   * runs, with no tap, the sequence a teacher runs by hand: Create,
+   * then the walk-in booking, then the check-in. All three are the
+   * EXISTING write routes -- /api/client-create, /api/book,
+   * /api/checkin -- called from the teacher's own browser with the
+   * teacher's own session, so requireActor, dry run, the write guard,
+   * T49's attribution and T50's refusal all apply exactly as they do to
+   * the taps. Nothing new reaches Mindbody, and nothing runs on the
+   * display or on the server's own initiative.
+   *
+   * What it does NOT do is hide a decision. A create Mindbody refused, a
+   * duplicate, a booking it refused: each leaves a name in the tray with
+   * the reason under it, and the tray is where the teacher meets it, as
+   * in review mode.
+   * =================================================================== */
+
+  /** Ten seconds of "Sam Fisher created, checked in to 6:20 Bikram
+   *  Yoga", then gone. A count that stays is the tray's job. */
+  const saySignup = useCallback((text: string) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setSignupSaid((lines) => [...lines, { id, text }]);
+    const timer = setTimeout(() => {
+      setSignupSaid((lines) => lines.filter((l) => l.id !== id));
+      signupTimers.current = signupTimers.current.filter((t) => t !== timer);
+    }, 10_000);
+    signupTimers.current.push(timer);
+  }, []);
+
+  useEffect(
+    () => () => {
+      for (const timer of signupTimers.current) clearTimeout(timer);
+      signupTimers.current = [];
+    },
+    [],
+  );
+
+  /**
+   * Mindbody's own words for a class with no room, for the one case the
+   * capacity count on screen did not catch: a class that filled between
+   * the roster read and this booking. The count is still the primary
+   * decision, exactly as it is for a teacher's tap (`classFull` decides
+   * before the call); this is the retry that turns a refusal into the
+   * waiting list rather than into a name stuck in the tray.
+   */
+  const looksFull = useCallback((message: unknown): boolean => {
+    if (typeof message !== "string") return false;
+    const said = message.toLowerCase();
+    if (said.includes("full") || said.includes("capacity")) return true;
+    /* A wait list NAMED in a refusal is not by itself evidence of a
+     * full class: "this client is already on the wait list" is a
+     * refusal a second write cannot help, and retrying it would be a
+     * second attempt at a booking Mindbody has already decided. So the
+     * sentence has to say there is no room as well. */
+    const waitlist = said.includes("wait list") || said.includes("waitlist");
+    return (
+      waitlist &&
+      (said.includes("no room") ||
+        said.includes("no space") ||
+        said.includes("no spots") ||
+        said.includes("no available"))
+    );
+  }, []);
+
+  /** The visit the booking just made, when the booking answer did not
+   *  carry one: re-read the class the way the roster does and match the
+   *  client. One metered read, and only on that path. */
+  const visitIdFor = useCallback(
+    async (classId: number, clientId: string): Promise<number | null> => {
+      try {
+        /* summary=0, like refreshRoster's own read: without it the
+         * route makes a second metered `/class/classes` call for a
+         * header this lookup never uses. */
+        const d = await fetch(
+          `/api/roster?classId=${classId}&summary=0`,
+        ).then((r) => r.json());
+        const rows: RosterEntry[] = Array.isArray(d?.entries) ? d.entries : [];
+        const mine = rows.find((e) => e.clientId === clientId);
+        return typeof mine?.visitId === "number" ? mine.visitId : null;
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
+
+  const runSignup = useCallback(
+    async (row: PendingSignupRow) => {
+      const id = row.requestId;
+      /* The one client-side lock, and it is only against this browser
+       * firing twice (the poll and the stream event arriving together).
+       * `tried` makes it ONE attempt per id: a refusal must not be
+       * re-asked of Mindbody every thirty seconds. */
+      if (signupRunning.current.has(id) || signupTried.current.has(id)) return;
+      signupRunning.current.add(id);
+      signupTried.current.add(id);
+      const who = `${row.firstName} ${row.lastName}`.trim() || "The new client";
+      const stay = (reason: string) =>
+        setSignupWhy((w) => ({ ...w, [id]: reason }));
+      /* A 401 is the T50 gate taking over: the teacher's session went
+       * while this ran. Nothing was written, nothing is said here, and
+       * the attempt is given back so a fresh sign-in picks it up. */
+      const retryLater = () => signupTried.current.delete(id);
+      /* The client the create made, hoisted out of the try so the catch
+       * below can tell "nothing was created" from "created, and what
+       * came after it threw". By the time the create has answered the
+       * sign-up is SPENT, so the tray has no row of its own left to
+       * carry a reason and `stay` would say it to nobody: a dropped
+       * connection between the create and the booking has to leave a
+       * stuck row or the person is lost in silence. */
+      let created: { id: string; name: string } | null = null;
+      const stuckRow = (name: string, clientId: string, reason: string) =>
+        setSignupStuck((rows) => [
+          ...rows.filter((r) => r.requestId !== id),
+          { requestId: id, name, reason, clientId },
+        ]);
+      try {
+        /* 1. The form AS STORED. In this mode nobody corrects it: the
+         * teacher was never asked, so the body is the server's own
+         * record of what the student typed. */
+        const res = await fetch(
+          `/api/display/signups/${encodeURIComponent(id)}`,
+        );
+        const held = await res.json().catch(() => null);
+        if (!res.ok || typeof held?.requestId !== "string") {
+          if (res.status === 401) retryLater();
+          /* 404 is a sign-up somebody else finished or cleared; it is
+           * already gone from the tray and needs no line. */
+          return;
+        }
+        const form = held.form ?? {};
+
+        /* 2. The create, with the handle. Consent and signature come
+         * from the server's store inside the route; this body carries
+         * the form and the id, exactly as the modal's Create does. */
+        const made = await fetch("/api/client-create", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            firstName: String(form.firstName ?? ""),
+            lastName: String(form.lastName ?? ""),
+            email: typeof form.email === "string" && form.email ? form.email : null,
+            phone: typeof form.phone === "string" && form.phone ? form.phone : null,
+            ...(typeof form.birthDate === "string" && form.birthDate
+              ? { birthDate: form.birthDate }
+              : {}),
+            sendAccountEmails: held.consent?.email === true,
+            sendPromotionalEmails: held.consent?.email === true,
+            displayRequestId: id,
+          }),
+        });
+        const body = await made.json().catch(() => null);
+        noteActor(body);
+        if (!made.ok || body?.ok !== true) {
+          /* The other iPad got there first: the server's own
+           * beginFinalisation claim refused this one. Silence is the
+           * whole point -- one create, one teacher told. */
+          if (body?.inFlight === true) return;
+          if (made.status === 401) {
+            retryLater();
+            return;
+          }
+          stay(
+            body?.duplicate === true
+              ? "Already has an account, search for them."
+              : typeof body?.error === "string" && body.error
+                ? body.error
+                : `Mindbody refused the create (HTTP ${made.status}).`,
+          );
+          return;
+        }
+        if (body.suppressed) {
+          /* Nothing was created, so the sign-up is still waiting on the
+           * server and the tray keeps it. */
+          stay(
+            body.suppressed === "dry-run"
+              ? "Not created: dry run is on, so nothing was sent to Mindbody."
+              : "Not created: the write guard allows only the listed test clients.",
+          );
+          return;
+        }
+        const client = body.client as SearchResult | null;
+        if (!client || typeof client.id !== "string") {
+          stay("Mindbody answered without a client. Search for the name.");
+          return;
+        }
+        setSignupRefresh((n) => n + 1);
+        setFoundSignups((rows) => rows.filter((r) => r.requestId !== id));
+        /* The waiver half is the route's, and its failures are the ones
+         * a teacher has to hear about: the same two sentences the
+         * modal's Create shows, in the outcome line. */
+        const caveats: string[] = [];
+        if (body.waiver && body.waiver.agreed !== true) {
+          caveats.push("the waiver was not recorded");
+        } else if (body.waiver && body.waiver.documentFiled === false) {
+          caveats.push("the signature image did not reach Mindbody");
+        }
+        if (body.textOptInStuck === false) {
+          caveats.push("the text opt-in is noted on their profile to set by hand");
+        }
+        const tail = caveats.length > 0 ? ` (${caveats.join("; ")})` : "";
+        /* From here the client EXISTS. Anything that fails now leaves a
+         * row that must never offer Create again. */
+        created = { id: client.id, name: client.name };
+        const stuck = (reason: string) =>
+          stuckRow(client.name, client.id, reason);
+
+        /* 3. The class on screen, as the teacher's own walk-in booking
+         * reads it, and what its own clock allows (classWhen).
+         *
+         * Review fix: a client who now EXISTS in Mindbody and is in no
+         * class is exactly what the tray is for, so every one of these
+         * is a stuck ROW and not a line that clears itself in ten
+         * seconds. The line is for the outcome that needs nobody. */
+        const cls = activeClassRef.current;
+        const when = classWhenRef.current;
+        if (cls === null || when === null) {
+          stuck(`created; no class on screen to check in to.${tail}`);
+          return;
+        }
+        if (when === "otherday") {
+          /* T46: the roster on screen is another day's, where check-in
+           * is closed anyway. Create, and leave the booking to the
+           * teacher who went looking at that day. */
+          stuck(`created; the class on screen is not today.${tail}`);
+          return;
+        }
+        if (when === "ended") {
+          /* The 8pm case: `defaultClassId` leaves the finished 6:30 on
+           * screen, and attendance at a class that is over must never be
+           * invented. */
+          stuck(`created; the class on screen has ended.${tail}`);
+          return;
+        }
+        const where = `${clockTime(cls.startsAt)} ${cls.name}`;
+        const postBook = (waitlist: boolean) =>
+          fetch("/api/book", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              clientId: client.id,
+              classId: cls.classId,
+              ...(waitlist ? { waitlist: true } : {}),
+            }),
+          });
+        /* The capacity count decides first, exactly as it does for the
+         * teacher's "+" tap (tapWalkIn); the refusal below is the
+         * fallback for a class that filled in between. */
+        let queued = classFullRef.current;
+        let booked = await postBook(queued);
+        let bookBody = await booked.json().catch(() => null);
+        if (!booked.ok && !queued && looksFull(bookBody?.error)) {
+          queued = true;
+          booked = await postBook(true);
+          bookBody = await booked.json().catch(() => null);
+        }
+        noteActor(bookBody);
+        if (!booked.ok || bookBody?.ok !== true) {
+          if (booked.status === 401) {
+            stuck("created; sign in again to book them in.");
+            return;
+          }
+          stuck(
+            `created; booking refused: ${
+              typeof bookBody?.error === "string" && bookBody.error
+                ? bookBody.error
+                : `HTTP ${booked.status}`
+            }`,
+          );
+          return;
+        }
+        if (bookBody.suppressed) {
+          stuck(
+            bookBody.suppressed === "dry-run"
+              ? "created; the booking was suppressed by dry run."
+              : "created; the booking was suppressed by the write guard.",
+          );
+          return;
+        }
+        if (queued) {
+          void loadWaitlist(cls.classId);
+          await refreshRoster(cls.classId);
+          saySignup(`${who} created, on the waitlist for ${where}.${tail}`);
+          return;
+        }
+
+        /* 4. Check in, unless the class is further ahead than the roster
+         * window reaches (the teacher went looking for it, so it is not
+         * the class at the door), or Mindbody signed them in with the
+         * booking itself, which it does for a class already under way
+         * (T19). */
+        if (when === "ahead") {
+          await refreshRoster(cls.classId);
+          stuck(
+            `created and booked into ${cls.name}, not checked in ` +
+              `(starts at ${clockTime(cls.startsAt)}).${tail}`,
+          );
+          return;
+        }
+        if (bookBody.signedIn !== true) {
+          const visitId =
+            typeof bookBody.visitId === "number"
+              ? bookBody.visitId
+              : await visitIdFor(cls.classId, client.id);
+          if (visitId === null) {
+            await refreshRoster(cls.classId);
+            stuck("created and booked; check them in from the roster row.");
+            return;
+          }
+          const inRes = await fetch("/api/checkin", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              visitId,
+              signedIn: true,
+              clientId: client.id,
+            }),
+          });
+          const inBody = await inRes.json().catch(() => null);
+          noteActor(inBody);
+          await refreshRoster(cls.classId);
+          if (!inRes.ok || inBody?.ok !== true) {
+            stuck(
+              `created and booked; check-in refused: ${
+                typeof inBody?.error === "string" && inBody.error
+                  ? inBody.error
+                  : `HTTP ${inRes.status}`
+              }`,
+            );
+            return;
+          }
+          if (inBody.suppressed) {
+            /* Booked and not checked in: a person in the tray, not a
+             * line that goes away. */
+            stuck(
+              `created and booked into ${where}; the check-in was suppressed.${tail}`,
+            );
+            return;
+          }
+        } else {
+          await refreshRoster(cls.classId);
+        }
+        saySignup(`${who} created, checked in to ${where}.${tail}`);
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        if (created === null) {
+          stay(why);
+        } else {
+          stuckRow(
+            created.name,
+            created.id,
+            `created; the booking did not finish: ${why}`,
+          );
+        }
+      } finally {
+        signupRunning.current.delete(id);
+      }
+    },
+    [
+      loadWaitlist,
+      looksFull,
+      noteActor,
+      refreshRoster,
+      saySignup,
+      visitIdFor,
+    ],
+  );
+
+  /** Automatic until the config says otherwise, and nothing runs until
+   *  the config has answered at all: a sign-up that waits one poll is
+   *  better than one created under a rule this browser has not read. */
+  const signupAutomatic = config === null ? null : config.signupMode !== "review";
+
+  /**
+   * Review fix: the per-tab memory is bounded by the tray, not by the
+   * day. An id that is neither waiting on the server nor stuck on this
+   * screen is finished business: the sign-up was consumed, and a
+   * consumed request never comes back, so forgetting it cannot make
+   * this tab run it twice. A row still RUNNING is kept whatever the
+   * list says.
+   */
+  useEffect(() => {
+    const live = new Set<string>([
+      ...signupRows.map((r) => r.requestId),
+      ...signupStuck.map((r) => r.requestId),
+    ]);
+    for (const id of [...signupTried.current]) {
+      if (!live.has(id) && !signupRunning.current.has(id)) {
+        signupTried.current.delete(id);
+      }
+    }
+    setSignupWhy((why) => {
+      const keep = Object.keys(why).filter((id) => live.has(id));
+      if (keep.length === Object.keys(why).length) return why;
+      const next: Record<string, string> = {};
+      for (const id of keep) next[id] = why[id] as string;
+      return next;
+    });
+  }, [signupRows, signupStuck]);
+
+  /**
+   * Review fix: ONE at a time, and across effect runs, not just within
+   * one. Three sign-ups collected while the iPad slept arrive as one
+   * list, and firing them together would have all three read the same
+   * capacity count and book against one seat. The chain also keeps a
+   * second delivery of the same list (the poll landing on the event's
+   * heels) from starting a row the first pass has not reached yet.
+   * `runSignup` never throws, and the catch is belt and braces so one
+   * bad run cannot stop the chain for the rest of the day.
+   */
+  useEffect(() => {
+    if (signupAutomatic !== true) return;
+    const rows = signupRows;
+    signupChain.current = signupChain.current
+      .catch(() => undefined)
+      .then(async () => {
+        for (const row of rows) await runSignup(row);
+      });
+  }, [signupAutomatic, signupRows, runSignup]);
 
   /**
    * Record the student's agreement (T18). Only reachable from the reading
@@ -5792,6 +6318,18 @@ function FrontDesk({
       <SignupTray
         refreshKey={signupRefresh}
         onPick={(row) => void openSignup(row.requestId)}
+        onRows={setSignupRows}
+        reasons={signupWhy}
+        stuck={signupStuck}
+        outcomes={signupSaid}
+        /* T207: the client exists, so this tap is their PROFILE and
+           never the create form again. */
+        onStuckPick={(row) => openProfile(row.clientId, row.name)}
+        onStuckClear={(requestId) =>
+          setSignupStuck((rows) =>
+            rows.filter((r) => r.requestId !== requestId),
+          )
+        }
       />
 
       {error ? <p className="note">{error}</p> : null}

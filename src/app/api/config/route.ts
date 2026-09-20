@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   contractRequiresSignature,
   customerConfirmsSale,
+  signupMode,
 } from "@/lib/approval";
 import { authRequired, isAuthenticated } from "@/lib/auth";
 import { BANNER_SETTING_KEY, getSetting, storageMode } from "@/lib/db";
@@ -154,6 +155,16 @@ export async function GET(request: Request) {
         contractRequiresSignature: rule.on,
         contractRequiresSignatureSource: rule.source,
       };
+    })()),
+    /* T207: whether a completed self-serve sign-up is created
+     * automatically by the teacher's iPad or waits in the tray for a
+     * tap, and where that answer came from. Unlike the two above, no
+     * server route reads this to refuse anything: it decides what the
+     * TEACHER's browser does with a sign-up it is already allowed to
+     * create by hand, so the browser's copy is the whole rule. */
+    ...(await (async () => {
+      const mode = await signupMode();
+      return { signupMode: mode.mode, signupModeSource: mode.source };
     })()),
   });
 }

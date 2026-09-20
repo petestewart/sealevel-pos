@@ -18085,3 +18085,303 @@ date picker are each a fixed scrim.
   `POS_WRITE_CLIENT_IDS`, with a dummy client and a real card.
 - The staff session is faked in the harness (T200's idiom), so T49/T50
   attribution is exercised as shape.
+
+## T207. The sign-up finishes itself (2026-09-20)
+
+Pete, asked whether the teacher's Create tap on a self-serve sign-up
+should stay: **"make automatic the default with a setting that can be
+set to review. the new client should be created and automatically signed
+in to class (or the waitlist if class is full)."**
+
+So T204's tray is no longer where a sign-up waits. With the new setting
+on its default, a student who finishes signing up on the customer screen
+is created, booked into the class the counter is showing, and checked
+in, with nobody tapping anything, and the teacher hears one line about
+it. The tray stays, and becomes the EXCEPTION path: the only names in it
+are the ones a person is needed for, which after review includes every
+outcome that leaves a created client in no class.
+
+**No new write path.** The three writes are `/api/client-create`,
+`/api/book` and `/api/checkin`, each exactly as a teacher's tap calls
+them today, from the teacher's own browser with the teacher's own
+session. requireActor, dry run, the write guard, T49's attribution and
+T50's refusal all apply unchanged, and nothing runs on the display or on
+the server's own initiative. The only thing this ticket adds to the
+server is a setting and the route that edits it.
+
+### 1. The setting
+
+`signup_mode` in `app_settings`, `"automatic"` or `"review"`, **default
+automatic**, with `POS_SIGNUP_MODE` as the fallback for a counter with no
+database (`signupMode()` in `src/lib/approval.ts`; no row, or a row
+naming neither word, means the environment decides).
+
+**A store that does not ANSWER keeps the last value it did** (review),
+which is T89's idiom rather than T203's and is the one place this
+setting differs from its two neighbours. Their fallback direction is
+safe: with the store quiet they ask for MORE approval or none at all.
+This one's is not. A studio that stored `review` and had a database
+blip would flip to `automatic` and start creating and checking students
+in unattended, which is the looser direction and the one nobody asked
+for. So the process remembers the last mode the store answered with and
+holds it through the blip, falls to the environment only when it has
+never had an answer, clears the memory when the store answers that the
+row is GONE (so a deleted setting cannot come back on the next blip),
+and says which it did in the log once a minute. `GET /api/config` reports `signupMode` and
+`signupModeSource`. `PUT /api/admin/signup-mode` `{mode}` carries exactly
+the guards of `/api/admin/customer-confirms`: the device session, the
+devtools gate, a signed-in teacher, that teacher's staff id in
+`POS_ADMIN_STAFF_IDS`, and a database that answers. One log line,
+`[signup-mode] automatic -> review by staff=<id>`.
+
+**It is not a fifth exception to the drawer's rule, because it is not a
+rail.** T89's target, T203's approval and T205's signature each decide
+whether a write reaches Mindbody; this one decides whether a HUMAN taps
+before a create the same browser would make by hand moments later, with
+the same guards either way. No server route reads it. It is admin-only
+and logged for the plainer reason the others are: a studio-wide policy
+should be somebody's. The drawer's line and its 64px control sit beside
+the other two (`SignupModePanel`), and everyone sees the line.
+
+### 2. Automatic, in the teacher's browser
+
+The tray already had three ways of hearing about a finished sign-up: the
+`signups` event on the teacher's stream, a `completed` event for a
+`register` request, and a 30 second poll whose first read is also the
+catch-up for an iPad that was asleep. All three end in one list, so
+`SignupTray` now hands that list up (`onRows`) and page.tsx runs the
+sequence against it. One mechanism, not a second one for the poll.
+
+Per sign-up, once: read the stored form (`/api/display/signups/<id>`),
+create with `displayRequestId` and the form AS STORED (nobody corrects
+it in this mode, which is the whole of what "automatic" means), then
+book, then check in.
+
+- **The class on screen is judged by its own CLOCK, not by "is it
+  today"** (`classWhen` in page.tsx, added in review). `defaultClassId`
+  falls back to the LAST class of the day when nothing is within the
+  "schedule back" window, so at 8pm the screen still shows the 6:30 that
+  finished an hour ago, and booking a new student into that with
+  `SignedIn: true` would record attendance at a class they never
+  attended. So: an ENDED class, a class on ANOTHER DAY (where T46 closes
+  check-in anyway) and NO class each create the client and book nothing;
+  a class further AHEAD than the roster window reaches is booked and
+  deliberately NOT checked in, because it is a class the teacher went
+  looking for rather than the one at the door; and only the class at the
+  door is booked and checked in. The end comes from Mindbody's own
+  `EndDateTime`, which `ClassSummary` now carries (`src/lib/roster.ts`);
+  a class whose answer had none is given two hours, which is longer than
+  anything this studio teaches, because the failure to avoid is calling
+  a class ended while it is running. A class that started LONGER ago
+  than the window and has not ended is still the class at the door: that
+  student is late, not absent.
+- **Full is decided by the capacity count first**, which is what
+  `tapWalkIn` does today, and the booking goes straight to
+  `waitlist: true`. A class that filled between the roster read and the
+  booking is caught by the refusal instead: a plain booking refused in
+  words that mention a full class or a wait list is retried once as a
+  waitlist add. A waitlisted student is not checked in, and the line
+  says so.
+- **The visit comes from the booking answer** (`Visit.Id`), and when the
+  answer carries none the roster is re-read and the client's own visit
+  is found on it, which is the same lookup `visitPayment` makes. A
+  booking Mindbody already signed in (T19's after-start case) is not
+  signed in again.
+- Then the roster is refreshed, and the tray says, for about ten
+  seconds, "Sam Vega created, checked in to 6:20 Bikram Yoga", or "on
+  the waitlist for ...". **That line is for the outcome that needs
+  nobody, and nothing else** (review): a client who now exists in
+  Mindbody and is in no class is exactly what the tray is for, so "no
+  class on screen", "the class on screen has ended", "not today",
+  "booked, not checked in" and a suppressed check-in are all ROWS, which
+  stay. The waiver's own two failures (a release that did not land, a
+  signature image that did not reach Mindbody) and a dropped text opt-in
+  ride the end of whichever the run files, because they are the two
+  things the modal's Create says out loud and nobody is looking at a
+  modal here.
+- **One sign-up at a time in a tab** (review). Three collected while the
+  iPad slept arrive as one list, and firing them together would have all
+  three read the same capacity count and book against one seat, so the
+  runs are chained, across deliveries and not just within one.
+
+A new client has no pass, so the booking goes in unpaid exactly as a
+teacher's walk-in booking does, and the roster row shows "unpaid".
+
+### 3. When a person is needed
+
+The name stays in the tray with the reason under it, and the tap is
+still T204's prefilled modal, so the teacher fixes what is wrong and
+creates by hand:
+
+- a duplicate (the route's 409): "Already has an account, search for
+  them.";
+- a field the site demanded that the sign-up lacks: Mindbody's own
+  sentence;
+- a suppressed create (dry run, the write guard): nothing was created,
+  and the sign-up is still waiting on the server;
+- nobody signed in: nothing runs at all, because the tray's own read is
+  behind `requireActor` and 401s, so there is no list to run against.
+
+And the cases where the client EXISTS and the tray must not offer
+Create again: a refused or suppressed booking, a booking with no visit
+to check in, a suppressed check-in, a class that has ended or is not
+today or is hours ahead, no class at all, and (found in review) a create
+that landed followed by a throw before the booking, which used to lose
+the person in silence. The row reads what happened ("created; booking
+refused: <what Mindbody said>", "created; the class on screen has
+ended", "created and booked into Bikram Yoga, not checked in (starts at
+6:30pm)"), it is the page's own row rather than the server's (the
+request was consumed by the create), and tapping it opens the person's
+PROFILE.
+
+**One attempt per request id per browser.** A refusal must not be
+re-asked of Mindbody every thirty seconds, so a request id that has been
+run is never run again in that tab; a 401 is the one exception, since
+the teacher signing back in should pick it up. That memory is bounded by
+the TRAY, not by the day (review): an id that is neither waiting on the
+server nor stuck on this screen is finished business and is forgotten,
+and a consumed request never comes back, so forgetting it cannot make
+the tab run it twice. **Two iPads are settled on
+the SERVER**, by the create's own `beginFinalisation` claim (T204): the
+loser gets 409 `inFlight` and drops it in silence, because two lines
+about one student are worse than none.
+
+### 4. Review
+
+T204's behaviour, unchanged: the tray holds the name until a teacher
+taps Create, and nothing books or checks anybody in.
+
+### Fixed in review
+
+- **The 8pm class.** The selected class can be one that has ENDED, and
+  the run would have booked a student into it and marked them signed in.
+  `classWhen` above is the rule that came out of it, and it also
+  separated "hours ahead" from "at the door".
+- **A created client could vanish.** A throw between the create and the
+  booking (a dropped connection is enough) left no tray row, because the
+  sign-up was already spent: the person existed in Mindbody and nothing
+  on screen said so. The catch now files the stuck row.
+- **Created-but-unbooked was a ten second line.** It is a tray row now,
+  for the same reason the tray exists.
+- **Three sign-ups could book against one seat**: the runs are chained.
+- **A database blip could loosen the setting**: the last answered value
+  is kept (above).
+- `looksFull` matched any sentence with "wait list" in it, so "already
+  on the wait list" would have provoked a second booking attempt. A wait
+  list only counts as full when the sentence also says there is no room.
+- `visitIdFor` read the roster without `summary=0` and cost a second
+  metered `/class/classes` call it never used.
+- The outcome line is `role="status"`, being the one thing on the screen
+  that appears with no tap behind it.
+- The tray's list no longer renders with nobody waiting, so an outcome
+  line cannot leave an open list with no badge to close it.
+
+### Verified
+
+Against a real production Next server and a mock Mindbody
+(`scratchpad/t207/`), with `npx tsc --noEmit` and
+`env -u DATABASE_URL npm run build` clean:
+
+- **Route driver, `routes.mjs`, four servers, 49 assertions, 0 failed**
+  (the setting itself):
+  with no `POS_SIGNUP_MODE` the mode is automatic from the environment
+  (13); with `POS_SIGNUP_MODE=review` it is review, and the PUT is a 503
+  that names the variable and changes nothing (13); a teacher whose
+  staff id is not in `POS_ADMIN_STAFF_IDS` gets 403 on both verbs, still
+  reads the line from `/api/config`, and is offered no control (6); and
+  against Postgres an admin's PUT writes the `app_settings` row both
+  ways, `/api/config` agrees and names the source as the setting, the
+  same value again reports no change, a third word and a missing mode
+  are each 400, and the stored value wins over a `POS_SIGNUP_MODE` that
+  says otherwise (17).
+- **The outage driver, `outage.mjs`, 13 assertions, 0 failed**, against
+  a REAL Postgres stopped under the running server: with `review`
+  stored, the mode stays `review` through the outage and still names the
+  stored setting as its source, while the T203 setting in the same
+  `/api/config` answer falls back to the environment as designed; the
+  store answers again after the 30 second cooldown `src/lib/db.ts`
+  imposes, the mode is still `review` and now really from the store; and
+  an admin storing `automatic` over it is what the NEXT blip keeps, so
+  the memory follows the setting rather than outliving it.
+- **Playwright, `ui.mjs` automatic, 66 assertions, 0 failed**:
+  a sign-up finished on the display reaches the counter with no tap, and
+  the mock saw exactly one `addclient`, one `updateclient` carrying
+  `LiabilityRelease`, one `addclienttoclass` with no `Waitlist`, one
+  `updateclientvisit` with `SignedIn: true` and one document upload; the
+  tray's line names the person, the class and "created, checked in to",
+  the roster shows the new row, the badge clears, and the line goes by
+  itself about ten seconds later. With the class full the booking
+  carries `Waitlist: true`, nobody is signed in, and the line says
+  waitlist. With no class in the window the client is created, nothing
+  is booked, and a TRAY ROW says there is no class on screen with no ten
+  second line anywhere. A class that ENDED two hours ago creates the
+  client, books nothing, signs nobody in and says "the class on screen
+  has ended"; a class five and a half hours AHEAD is booked exactly once
+  and checked in NEVER, with the row naming the start time. A duplicate
+  leaves the name in the tray with "Already has an account, search for
+  them.", tapping it opens the prefilled form, and the refusal is not
+  re-asked twelve seconds later. A booking refused for another reason
+  leaves a row saying "created; booking refused: ..." whose tap opens
+  the profile and not a Create. With nobody signed in nothing is created
+  and nothing is booked. Two POS tabs open on one sign-up make exactly
+  one create, one booking and one check-in. A booking answer with no
+  visit id still ends checked in, from the roster's own visit. Two of
+  the cases skip themselves rather than assert the wrong thing when the
+  clock would put their class on another studio day.
+- **Playwright, `ui.mjs` review, 9 assertions, 0 failed**:
+  nothing is created or booked without a tap, the tray holds the name
+  and shows no outcome line, and the teacher's Create makes the client
+  and books nobody, exactly as T204 left it.
+- **Regressions, all 0 failed**, re-run in full after the review fixes:
+  T200's copy in `t204/t200-regress.mjs` 52, T114 27, T115 43, T203 7
+  off and 45 on, T204 65 (`POS_DISPLAY_ABANDON_MS=3000
+  POS_DISPLAY_SIGNUP_TTL_MS=15000` with the driver's own knobs
+  matched), T205 36 on and 4 off, and T206's own two drivers, 19 and 26
+  on its birth-date knob and 43 and 46 on its Playwright pass, the last
+  two run with `POS_SIGNUP_MODE=review` for the reason below. The T203
+  pair had to be run a second time, on its own: an `npm run build`
+  started in parallel emptied `.next` under its server, which is a
+  driver-harness mistake and nothing about this ticket.
+- **One regression driver had to be told which mode to run in, and that
+  is the ticket in one line.** T206's Playwright pass taps the TRAY to
+  create a sign-up, which is review-mode behaviour; under this ticket's
+  default the client is created before that tap can happen, so its last
+  four assertions had nothing to tap and it timed out. Run with
+  `POS_SIGNUP_MODE=review`, the mode it was written against, it passes
+  as before. Nothing about it was changed, and the driver is the
+  evidence that automatic really does get there first.
+
+### Could not verify
+
+- **Nothing here ran against the studio's Mindbody, a real class or a
+  real student.** Every booking and check-in above is the mock's.
+  Mindbody's own wording for a full class is therefore a GUESS in one
+  place only: the retry that turns a refused booking into a waitlist
+  add matches on "full", "wait list", "waitlist" or "capacity". The
+  capacity count is what decides in the ordinary case, and it is the
+  same count the teacher's own tap reads, so a wrong guess costs a name
+  in the tray with Mindbody's sentence under it, not a wrong write.
+- The staff session is faked in the harness (T200's idiom), so T49/T50
+  attribution is exercised as shape.
+- **Two iPads were two browser contexts against one server process.**
+  `beginFinalisation` is in-memory, so a SECOND SERVER INSTANCE would
+  not be settled by it; what stops a double create there is Mindbody's
+  own duplicate rule, which keys on first, last and email and is why the
+  T204 review recorded the same caveat for a student who gave no email.
+- Nothing was driven on a real iPad, so the tray's ten second line has
+  not been read by anyone with a queue in front of them.
+- **The stuck rows are BROWSER state.** A reload loses them, and the
+  sign-up they came from is already consumed, so nothing brings them
+  back. What is lost is the note, never the person: the client exists in
+  Mindbody and walk-in search finds them, which is the path a teacher
+  takes anyway. Putting them in the database would mean a table of our
+  own about clients Mindbody already has, which the T29 charter does not
+  allow, and the alternative recorded here is deliberate.
+- **T206's Playwright driver must be run with `POS_SIGNUP_MODE=review`**
+  (see the regression note above), and any future driver that taps the
+  tray to create a sign-up will need the same.
+- The outage case is driven against a REAL Postgres being stopped under
+  the server, which is a stopped database and not every way one can go
+  quiet (a hung host, a pool timeout). Those reach `readSetting` as the
+  same unanswered read, so the behaviour is the same by construction,
+  but only the stop was watched.

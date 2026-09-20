@@ -226,6 +226,28 @@ Notes line for the client id that now exists. The row is then a client
 like any other and the teacher checks them in. One tap for the teacher,
 at a moment of their choosing, and the student was never in the queue.
 
+**And then the tap went away (T207, Pete, 2026-09-20):** "make automatic
+the default with a setting that can be set to review. the new client
+should be created and automatically signed in to class (or the waitlist
+if class is full)." So the review tap above is now one of two modes, and
+the DEFAULT is that the teacher's iPad runs the whole of it by itself:
+the same Create, then the walk-in booking for the class on screen (the
+waiting list when it is full), then the check-in, all three through the
+write routes that already exist and under the teacher's own token. The
+tray stays and becomes the exception path: a duplicate, a field the site
+demands, a refused create, a refused booking, and every outcome that
+leaves a created client in no class each leave a name in it with the
+reason underneath, and a name whose client now EXISTS taps through to
+their profile rather than to Create. **The class on screen is judged by
+its own clock**: one that has ENDED, one on another day and no class at
+all are created and booked nowhere (the counter still shows the 6:30
+that finished at 8pm, and attendance must never be invented), a class
+further ahead than the roster window is booked without a check-in, and
+only the class at the door is booked and checked in. The studio-wide rule is
+`signup_mode` in `app_settings` (`POS_SIGNUP_MODE` with no database),
+admin-edited from the drawer beside the other two; it is not a write
+rail, since both modes make the same writes under the same guards.
+
 **The search finds them too.** When a teacher types a name into walk-in
 search and a pending sign-up matches it, it appears above the Mindbody
 results as "signed up on the customer screen, not created yet", and

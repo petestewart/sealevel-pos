@@ -207,3 +207,112 @@ export function contractOverrideLine(
     "without a customer signature."
   );
 }
+
+/* =====================================================================
+ * T207: "make automatic the default with a setting that can be set to
+ * review" (Pete, 2026-09-20, asked whether the teacher's Create tap on a
+ * self-serve sign-up should stay). The third studio-wide rule about the
+ * customer screen, stored and read exactly like the two above.
+ *
+ * It is NOT a rail, and the difference matters. The two settings above
+ * decide whether a SERVER route refuses a write; this one decides only
+ * whether a human taps before a create that the teacher's iPad would
+ * make anyway, moments later, by hand. Nothing on the server reads it:
+ * /api/client-create, /api/book and /api/checkin are the same three
+ * writes under the same guards either way, each behind requireActor, dry
+ * run and the write guard. So it is an ordinary setting that happens to
+ * live beside two exceptional ones, and it is in the drawer because a
+ * studio-wide policy with nowhere else to live should not cost a
+ * redeploy.
+ *
+ * Default AUTOMATIC, and the environment fallback only has to name
+ * "review" to turn it off, which is the shape of the sentence Pete
+ * asked for.
+ *
+ * Nothing in this file calls Mindbody.
+ * =================================================================== */
+
+/** The app_settings key. */
+export const SIGNUP_SETTING_KEY = "signup_mode";
+
+/** The environment fallback, for a counter with no database. */
+export const SIGNUP_ENV_VAR = "POS_SIGNUP_MODE";
+
+export type SignupMode = "automatic" | "review";
+
+export interface SignupModeSetting {
+  mode: SignupMode;
+  /** Where that answer came from, for /api/config and the drawer. */
+  source: "setting" | "env";
+}
+
+/** The two words, and nothing else: an unreadable value is automatic,
+ *  which is the default and what a fresh counter does. */
+export function readSignupMode(raw: unknown): SignupMode | null {
+  if (typeof raw !== "string") return null;
+  const word = raw.trim().toLowerCase();
+  if (word === "automatic") return "automatic";
+  if (word === "review") return "review";
+  return null;
+}
+
+function signupFromEnv(): SignupMode {
+  return readSignupMode(process.env[SIGNUP_ENV_VAR]) ?? "automatic";
+}
+
+let signupWarnedUnreadAt = 0;
+
+/**
+ * The last mode the store actually ANSWERED with in this process, and
+ * null once it has answered that there is no row. T89's idiom, and here
+ * for T89's reason (review): the other two settings fall back to the
+ * environment when the store goes quiet, which for them lands on the
+ * SAFER side. For this one it does not. A studio that stored `review`
+ * and has a database blip would flip to `automatic` and start creating
+ * and checking students in unattended, which is the direction nobody
+ * asked for. So a blip must not move it: the loaded value stays.
+ */
+let signupLastAnswered: SignupMode | null = null;
+
+/**
+ * Whether a completed self-serve sign-up is created automatically or
+ * waits for a teacher's tap. Bounded and never throwing, like the two
+ * above; unlike them, a store that does not answer keeps the last value
+ * it DID answer with, and falls to the environment only when this
+ * process has never had an answer. Said once a minute in the log either
+ * way.
+ */
+export async function signupMode(): Promise<SignupModeSetting> {
+  const answer = await readSetting(SIGNUP_SETTING_KEY).catch(() => ({
+    answered: false as const,
+    value: null,
+  }));
+  if (!answer.answered) {
+    const held = signupLastAnswered;
+    const now = Date.now();
+    if (now - signupWarnedUnreadAt >= 60_000) {
+      signupWarnedUnreadAt = now;
+      console.warn(
+        `[signup-mode] the stored setting could not be read; ` +
+          (held !== null
+            ? `keeping the last stored value (${held}).`
+            : `${SIGNUP_ENV_VAR} in the server environment decides ` +
+              `(${signupFromEnv()}).`),
+      );
+    }
+    return held !== null
+      ? { mode: held, source: "setting" }
+      : { mode: signupFromEnv(), source: "env" };
+  }
+  const stored = readSignupMode(answer.value);
+  if (stored !== null) {
+    signupLastAnswered = stored;
+    return { mode: stored, source: "setting" };
+  }
+  /* No row, or a row naming neither mode: the environment decides, which
+   * is the T29 fallback rule and the only way back off a stored value.
+   * The memory is cleared with it, so a row an admin DELETED cannot come
+   * back on the next blip. */
+  signupLastAnswered = null;
+  return { mode: signupFromEnv(), source: "env" };
+}

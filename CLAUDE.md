@@ -254,7 +254,10 @@ only. Under those, since T200, "customer display": whether a second
 screen is paired and connected, a six-digit code field with a Pair
 button, and Unpair behind one confirm. Anybody who can open the drawer
 may use it; pairing decides which SCREEN a waiver appears on, never
-whether a write happens.
+whether a write happens. Under those three, the studio-wide rules about
+that screen, each a line for everyone and a 64px admin control: T203's
+approval, T205's membership signature, and since T207 "customer screen
+sign-ups", automatic or review.
 
 Anything that decides whether a write reaches Mindbody in the LOOSER
 direction -- the server's dry run, the write guard -- is still
@@ -276,7 +279,22 @@ memberships and never fewer, it is admin-only in both directions, and the
 log names who moved it. It is the one setting here that DEFAULTS ON, and
 turning it off is the dangerous direction.
 
-## Customer display (T200, T201, T202, T203, T204, T205; Phase 2.5)
+T207's "customer screen sign-ups" sits beside those two and is NOT a
+fifth exception, because it is not a rail: automatic and review make the
+same three writes, from the same browser, under the same teacher's
+token, dry run and write guard, and no server route reads the setting to
+refuse anything. All it decides is whether a human taps before a create
+the teacher's iPad would make anyway. It is admin-only and logged for the
+reason the other two are, that a studio-wide policy should be somebody's.
+It is also the one setting of the three that does NOT fall back to the
+environment when the store goes quiet: the process keeps the last value
+the store answered with, because for this setting the environment's
+answer could be the LOOSER one (a stored `review` flipping to
+`automatic` on a database blip is more unattended writes, which nobody
+asked for), and it falls to the environment only when this process has
+never had an answer.
+
+## Customer display (T200, T201, T202, T203, T204, T205, T207; Phase 2.5)
 
 A second iPad on the counter, facing the student, at `/display`. Design:
 `docs/design/customer-display.md`. Built: the plumbing (idle screen,
@@ -284,7 +302,8 @@ pairing, the hub in `src/lib/display.ts`, the two SSE routes and
 present/cancel/complete/refuse), the ticket scene (T201), the waiver
 scene (T202), the ticket approval (T203), the self-serve sign-up (T204)
 and the contract signature (T205). Every item of the phase is built; what
-is left is the three probes and live verification.
+is left is live verification. T207 made the sign-up automatic by
+default.
 
 **The display adds zero write paths to Mindbody, and must keep adding
 none.** Nothing in `src/lib/display.ts` or under `src/app/api/display/`
@@ -386,6 +405,49 @@ so the route's read-back finds them dropped every time and files the
 T62-signed Notes line asking a human to set it by hand. That line is the
 record of the student's "Text me", not a fallback.
 
+**A finished sign-up finishes itself** (T207, Pete: "make automatic the
+default with a setting that can be set to review. the new client should
+be created and automatically signed in to class (or the waitlist if
+class is full)"). With `signup_mode` automatic, the DEFAULT, a completed
+`register` request makes the signed-in teacher's iPad run, with no tap,
+the sequence that teacher's taps run today: `/api/client-create` with
+the request id and the form AS STORED (nobody corrects it in this mode),
+then `/api/book` for the class the POS is showing, then `/api/checkin`
+with the visit the booking produced, or the roster's own visit for that
+client when the booking answer carried none. A full class books onto the
+waiting list instead and stops there. **Those are the only three writes,
+they are the existing routes, and they run in the TEACHER's browser**,
+so requireActor, dry run, the write guard and T49 attribution apply
+exactly as they do to the taps; nothing new reaches Mindbody and nothing
+runs on the display or on the server's own initiative. Sign-ups are run
+ONE at a time in a tab, so two collected while the iPad slept cannot
+both book against the same last seat.
+
+**The CLASS's own clock decides what the run may do**, not "is it
+today" (`classWhen` in page.tsx, on Mindbody's `EndDateTime`, which
+`ClassSummary` now carries). `defaultClassId` leaves the FINISHED 6:30
+on screen at 8pm, and attendance at a class that is over must never be
+invented: an ended class, a class on another day and no class at all
+each create the client and book nothing, and a class further ahead than
+the roster window reaches is booked WITHOUT a check-in. Only the class
+at the door is booked and checked in.
+
+The teacher hears one line, for about ten seconds, only when the run
+finished the job ("Sam Vega created, checked in to 6:20 Bikram Yoga",
+or the waiting list). **Everything else is a row in the tray**, because
+a person who now exists in Mindbody and is in no class is exactly what
+the tray is for: a duplicate, a field the site demanded, a refused
+create, a refused or suppressed booking, a suppressed check-in, an
+ended class, no class. A row whose CLIENT already exists taps through
+to their profile and never to Create again. The run is attempted ONCE
+per request id per browser, so a refusal is not re-asked of Mindbody
+every poll, and two iPads racing are settled on the server by the
+create's own `beginFinalisation` claim: the loser gets 409 and drops it
+without a word. Those rows are BROWSER state: a reload loses them, and
+the sign-up they came from is already spent, so the person is in
+Mindbody and findable by search. With the setting on review, T204's tap
+is what happens, unchanged.
+
 **A result is spent BY ID, once** (T202). `consumeRequest` finds a
 completed, unconsumed request by its id even when the hub has moved on to
 another scene or the process restarted, reloading it from
@@ -428,9 +490,9 @@ The signature is sent as `ClientSignature` on the live
 `POST /sale/purchasecontract` (sale.yml:6246, base64 PNG, filed by
 Mindbody under the client's documents), from the server's own store and
 never from the browser, and the rehearsal deliberately carries NONE: the
-counter shows the rehearsal's Total, and whether the field moves it is
-what probe D-B2 answers (`scripts/probe-contract-signature.ts`, written,
-not run). The request is claimed with `beginFinalisation` and spent only
+counter shows the rehearsal's Total, and the field does NOT move it
+(probe D-B2, `scripts/probe-contract-signature.ts`, run by Pete in the
+sandbox on 2026-09-20: 70.00 with and without the signature). The request is claimed with `beginFinalisation` and spent only
 after the purchase answered, so a refusal leaves the signature usable for
 a retry of the same contract. `contract_receipts` (migration 14) is ours,
 for the one thing Mindbody does not keep: WHICH WORDING was signed, and

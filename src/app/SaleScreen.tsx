@@ -100,6 +100,12 @@ export interface ModeConfig {
    *  charges nothing without a client (confirmed live 2026-08-30).
    *  Absent on the lock screen's trimmed answer and before config loads. */
   houseClient?: boolean;
+  /** T207: "automatic" or "review", the studio's rule for a completed
+   *  self-serve sign-up. Read by page.tsx's tray runner and by nothing
+   *  on this screen; absent on the lock screen's trimmed answer and
+   *  before the config loads, which both read as automatic (the
+   *  default) only once the answer has actually arrived. */
+  signupMode?: string;
 }
 
 /**

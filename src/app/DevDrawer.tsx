@@ -459,6 +459,7 @@ function SettingsPanel({
       <DisplayPanel open={open} />
       <ConfirmSalePanel open={open} admin={mode?.targetAdmin === true} />
       <ContractSignaturePanel open={open} admin={mode?.targetAdmin === true} />
+      <SignupModePanel open={open} admin={mode?.targetAdmin === true} />
       <p className="muted">
         The rest is stored in this browser. Applies immediately, no restart.
         The server's own dry run and the write guard stay in the server
@@ -1043,6 +1044,170 @@ function ContractSignaturePanel({
               }}
             >
               {on ? "Turn off signatures" : "Turn on signatures"}
+            </button>
+          </div>
+        )
+      ) : null}
+    </>
+  );
+}
+
+/* --- What happens when a student signs themselves up (T207) -----------
+ *
+ * Beside the two above, and deliberately not one of them. The settings
+ * above are the third and fourth recorded exceptions to "nothing in this
+ * drawer may loosen a write rail", and each is safe in only one
+ * direction. This one is an ORDINARY setting: automatic and review make
+ * the same three writes (/api/client-create, /api/book, /api/checkin)
+ * from the same browser under the same teacher's token and the same dry
+ * run and write guard, and all it decides is whether a teacher taps
+ * before a create their iPad would make anyway. No server route reads
+ * it to refuse anything.
+ *
+ * It is admin-edited all the same, for the reason the other two are: it
+ * is a studio-wide policy, and a studio should know who changed it.
+ */
+
+interface SignupModeInfo {
+  signupMode: string;
+  signupModeSource: string;
+  envVar: string;
+  configured: boolean;
+  available: boolean;
+}
+
+function SignupModePanel({ open, admin }: { open: boolean; admin: boolean }) {
+  const [info, setInfo] = useState<SignupModeInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      /* Everyone reads the line from /api/config; an admin reads the
+       * fuller answer, which says whether there is a store to write
+       * to. */
+      const res = await fetch(admin ? "/api/admin/signup-mode" : "/api/config");
+      if (!res.ok) return;
+      const body = await res.json();
+      setInfo({
+        signupMode: body.signupMode === "review" ? "review" : "automatic",
+        signupModeSource: String(body.signupModeSource ?? "env"),
+        envVar: String(body.envVar ?? "POS_SIGNUP_MODE"),
+        configured: body.configured !== false,
+        available: body.available !== false,
+      });
+    } catch {
+      /* The block stays quiet; nothing else depends on it. */
+    } finally {
+      setLoaded(true);
+    }
+  }, [admin]);
+
+  useEffect(() => {
+    if (!open) return;
+    void load();
+  }, [load, open]);
+
+  const setTo = async (next: "automatic" | "review") => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/signup-mode", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: next }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setAsking(false);
+      setDone(
+        next === "automatic"
+          ? "Automatic. A finished sign-up is created and booked into the class on screen with no tap."
+          : "Review. A finished sign-up waits in the tray for a teacher to tap Create.",
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!loaded || info === null) return null;
+  const automatic = info.signupMode !== "review";
+  const stored = info.signupModeSource === "setting";
+  const next = automatic ? "review" : "automatic";
+  return (
+    <>
+      <div className="dev-label">customer screen sign-ups</div>
+      <p className="muted">
+        {automatic ? "Automatic" : "Review"}.{" "}
+        {stored
+          ? "Stored setting."
+          : `From ${info.envVar} in the server environment (unset means automatic).`}{" "}
+        {automatic
+          ? "A student who finishes signing up is created here, booked into the class on screen, and checked in, with no tap. A name only stays in the tray when a person is needed."
+          : "A student who finishes signing up waits in the tray until a teacher taps Create."}
+      </p>
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      {admin ? (
+        !info.configured || !info.available ? (
+          <p className="muted">
+            {info.configured
+              ? `The database is not answering, so ${info.envVar} in the server environment decides and this cannot be changed here.`
+              : `No database configured (DATABASE_URL unset), so ${info.envVar} in the server environment decides and this cannot be changed here.`}
+          </p>
+        ) : asking ? (
+          <div className="dev-target-ask">
+            <p className="dev-target-question">
+              {automatic
+                ? "Hold every sign-up in the tray until a teacher taps Create?"
+                : "Create and check in every finished sign-up with no tap?"}
+            </p>
+            <div className="dev-target-buttons">
+              <button
+                type="button"
+                className="dev-target-btn"
+                disabled={busy}
+                onClick={() => setAsking(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dev-target-btn dev-target-go"
+                disabled={busy}
+                onClick={() => void setTo(next)}
+              >
+                {busy
+                  ? "Saving"
+                  : automatic
+                    ? "Yes, review each one"
+                    : "Yes, do it automatically"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="dev-target-buttons">
+            <button
+              type="button"
+              className="dev-target-btn"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setDone(null);
+                setAsking(true);
+              }}
+            >
+              {automatic ? "Switch to review" : "Switch to automatic"}
             </button>
           </div>
         )

@@ -82,6 +82,11 @@ export interface ClassSummary {
   name: string;
   teacher: string;
   startsAt: string;
+  /** `EndDateTime`, the same naive studio wall-clock string as
+   *  `startsAt`. T207's automatic sign-up needs to know whether the
+   *  class on screen has already ENDED before it checks anybody into
+   *  it; null when Mindbody's answer carried no end. */
+  endsAt: string | null;
   capacity: number | null;
   booked: number | null;
 }
@@ -150,6 +155,10 @@ async function classesBetween(
         name: c.ClassDescription?.Name ?? "Class",
         teacher: staffName(c.Staff),
         startsAt: c.StartDateTime,
+        endsAt:
+          typeof c.EndDateTime === "string" && c.EndDateTime
+            ? c.EndDateTime
+            : null,
         capacity: c.MaxCapacity ?? null,
         booked: c.TotalBooked ?? null,
       }),
@@ -556,6 +565,7 @@ export async function classRoster(
     name: summary?.name ?? "Class",
     teacher: summary?.teacher ?? "",
     startsAt: summary?.startsAt ?? "",
+    endsAt: summary?.endsAt ?? null,
     capacity: summary?.capacity ?? null,
     booked: summary?.booked ?? null,
     entries,

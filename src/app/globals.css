@@ -8431,6 +8431,24 @@ textarea.reason-note-field:disabled::placeholder {
   color: var(--bg);
 }
 
+/* T207: why a name is still waiting, under it, and what just happened to
+   one that is not. Both are quiet: the automatic path is meant to be
+   unremarkable, and only the exception is worth a teacher's eye. */
+.signup-why {
+  font-size: 16px;
+  color: var(--warn);
+}
+
+.signup-outcome {
+  margin: 8px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--gold);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+}
+
 /* The same person, found by typing their name into walk-in search. */
 .signup-hits {
   margin: 0 0 8px;
