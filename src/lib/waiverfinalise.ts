@@ -133,7 +133,12 @@ export async function finaliseWaiver(opts: {
         clientId,
         {
           fileName: waiverDocumentName(at, signed.sha256),
-          mediaType: "png",
+          /* D-B1 (Pete, sandbox, 2026-09-20): the spec lists "png" and
+           * Mindbody refuses it ("Media type png is invalid"), and
+           * ".png", "PNG" and "Png" with it; "image/png" is the spelling
+           * that passes the media-type check. A MIME type, not an
+           * extension, whatever client.yml:7427 says. */
+          mediaType: "image/png",
           buffer: signed.png,
         },
         noteActor,

@@ -23,7 +23,18 @@
  * Usage, against the sandbox:
  *
  *   MINDBODY_TARGET=sandbox POS_DRY_RUN=false \
- *     npx tsx --env-file=.env scripts/probe-upload-document.ts <clientId>
+ *     npx tsx --env-file=.env scripts/probe-upload-document.ts [clientId]
+ *
+ * With no client id it lists the sandbox's own clients and takes the
+ * first one, since a production id does not exist on site -99 (Pete's
+ * second run, 2026-09-20: "Client 100041622 does not exist").
+ *
+ * ANSWERED on the spelling, 2026-09-20 (Pete, sandbox): "png", ".png",
+ * "PNG" and "Png" are each refused as "Media type <x> is invalid", and
+ * "image/png" passes that check. The field wants a MIME type, not the
+ * extension client.yml:7427 lists. What is still open is whether the
+ * upload LANDS and is visible on the Documents page, which is what this
+ * probe now asks with a real sandbox client.
  *
  * Then open that client in Mindbody and look at their Documents page:
  * the question this probe cannot answer from its own output is whether
@@ -73,72 +84,68 @@ function tinyPng(): Buffer {
 }
 
 async function main(): Promise<void> {
-  const clientId = process.argv[2]?.trim();
+  let clientId = process.argv[2]?.trim() ?? "";
   if (!clientId) {
-    console.log(
-      "Usage: npx tsx --env-file=.env scripts/probe-upload-document.ts <clientId>",
-    );
-    process.exit(1);
+    console.log("\n=== GET /client/clients?limit=5 (finding a sandbox client)");
+    const list = await mindbody("/client/clients?limit=5");
+    const rows: any[] = list?.Clients ?? [];
+    for (const c of rows) {
+      console.log(`    ${c?.Id}  ${c?.FirstName ?? ""} ${c?.LastName ?? ""}`);
+    }
+    clientId = String(rows[0]?.Id ?? "");
+    if (!clientId) {
+      console.log("    No clients on this site; pass a client id instead.");
+      process.exit(1);
+    }
+    console.log(`    Using ${clientId}.`);
   }
   const png = tinyPng();
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "");
-  /* Pete's first run (2026-09-20, sandbox client 100041622): the spec's
-   * own listed value, "png", was refused with "Media type png is
-   * invalid". So the probe now tries the plausible spellings in order and
-   * stops at the first one the sandbox accepts; the accepted spelling is
-   * what src/lib/clients.ts uploadClientDocument must send. Each try is
-   * its own tiny file so a refusal cannot be a duplicate-name complaint. */
-  const candidates = ["png", ".png", "image/png", "PNG", "Png"];
-  for (const mediaType of candidates) {
-    const fileName = `probe-waiver-${stamp}-${candidates.indexOf(mediaType)}.png`;
-    const body = {
-      ClientId: clientId,
-      File: {
-        FileName: fileName,
-        MediaType: mediaType,
-        Buffer: png.toString("base64"),
-      },
-    };
-    console.log(`\n=== POST /client/uploadclientdocument`);
-    console.log(`    client ${clientId}`);
-    console.log(`    ${fileName}, ${png.length} bytes, MediaType ${JSON.stringify(mediaType)}`);
-    console.log(
-      `    Buffer: ${body.File.Buffer.length} base64 chars, starts ${body.File.Buffer.slice(0, 16)}\n`,
-    );
-    try {
-      const res = await mindbody("/client/uploadclientdocument", {
-        method: "POST",
-        body,
-        clientId,
-      });
-      console.log("    RAW ANSWER:");
-      console.log(JSON.stringify(res, null, 2));
-      if (res?.DryRun) {
-        console.log(
-          "\n    Suppressed by dry run. Re-run with POS_DRY_RUN=false to actually ask.",
-        );
-        return;
-      }
-      if (res?.WriteSuppressed) {
-        console.log(
-          "\n    Suppressed by the write guard. Put this client id in POS_WRITE_CLIENT_IDS.",
-        );
-        return;
-      }
+  const fileName = `probe-waiver-${stamp}.png`;
+  const body = {
+    ClientId: clientId,
+    File: {
+      FileName: fileName,
+      MediaType: "image/png",
+      Buffer: png.toString("base64"),
+    },
+  };
+  console.log(`\n=== POST /client/uploadclientdocument`);
+  console.log(`    client ${clientId}`);
+  console.log(`    ${fileName}, ${png.length} bytes, MediaType "image/png"`);
+  console.log(
+    `    Buffer: ${body.File.Buffer.length} base64 chars, starts ${body.File.Buffer.slice(0, 16)}\n`,
+  );
+  try {
+    const res = await mindbody("/client/uploadclientdocument", {
+      method: "POST",
+      body,
+      clientId,
+    });
+    console.log("    RAW ANSWER:");
+    console.log(JSON.stringify(res, null, 2));
+    if (res?.DryRun) {
       console.log(
-        `\n    ACCEPTED with MediaType ${JSON.stringify(mediaType)}. That spelling is the answer; ` +
-          "now open that client's Documents page in Mindbody: the other half of D-B1 is whether staff can SEE it.",
+        "\n    Suppressed by dry run. Re-run with POS_DRY_RUN=false to actually ask.",
       );
-      return;
-    } catch (err) {
+    } else if (res?.WriteSuppressed) {
       console.log(
-        `    REFUSED with MediaType ${JSON.stringify(mediaType)}: ${err instanceof Error ? err.message : String(err)}`,
+        "\n    Suppressed by the write guard. Put this client id in POS_WRITE_CLIENT_IDS.",
+      );
+    } else {
+      console.log(
+        `\n    ACCEPTED. Now open client ${clientId} in the sandbox's Mindbody and look at ` +
+          "their Documents page: the other half of D-B1 is whether staff can SEE it.",
       );
     }
+  } catch (err) {
+    console.log(
+      `    FAILED: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    console.log(
+      "    Record the exact wording; the media type is settled, so this is about the client, the size or the encoding.",
+    );
   }
-  console.log(
-    "\n    Every spelling was refused. Record each wording above; the next guess is the field's meaning, not its spelling.",
-  );
 }
 
 void main();

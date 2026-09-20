@@ -33,7 +33,16 @@
  *
  *   MINDBODY_TARGET=sandbox POS_DRY_RUN=false \
  *     npx tsx --env-file=.env scripts/probe-contract-signature.ts \
- *     <clientId> <contractId> <cardLastFour>
+ *     [clientId] [contractId]
+ *
+ * With no arguments it finds both itself: it lists the sandbox's
+ * contracts (`GET /sale/contracts`, the read the counter's contract list
+ * makes) and takes the first, and it walks the sandbox's clients looking
+ * for one with a stored card, because a contract rehearsal prices
+ * against `StoredCardInfo {LastFour}` and a client with no card cannot
+ * rehearse. The card's last four are read from the client record, never
+ * typed. A production client id does not exist on site -99, which is why
+ * it does not ask for one.
  *
  * Read the output for three things: whether the second call was accepted
  * at all, whether the two Totals match, and whether the answer carries
@@ -45,7 +54,7 @@
 import { crc32, deflateSync } from "node:zlib";
 
 import { mindbody } from "../src/lib/mindbody";
-import { STUDIO_LOCATION_ID } from "../src/lib/sale";
+import { STUDIO_LOCATION_ID, contractsFor, storedCardFor } from "../src/lib/sale";
 
 /** A tiny valid PNG, built here so the probe carries no fixture: an 8x8
  *  square, written chunk by chunk. Real enough that Mindbody's own
@@ -132,15 +141,55 @@ async function rehearse(
 }
 
 async function main(): Promise<void> {
-  const clientId = process.argv[2]?.trim();
-  const contractId = Number(process.argv[3]);
-  const lastFour = process.argv[4]?.trim();
-  if (!clientId || !Number.isInteger(contractId) || !lastFour) {
-    console.log(
-      "Usage: npx tsx --env-file=.env scripts/probe-contract-signature.ts " +
-        "<clientId> <contractId> <cardLastFour>",
-    );
-    process.exit(1);
+  let clientId = process.argv[2]?.trim() ?? "";
+  let contractId = Number(process.argv[3]);
+
+  if (!Number.isInteger(contractId)) {
+    console.log("\n=== GET /sale/contracts (finding a sandbox contract)");
+    const contracts = await contractsFor();
+    for (const c of contracts) {
+      console.log(
+        `    ${c.id}  ${c.name}  first payment ${c.firstPaymentTotal ?? "?"}` +
+          `  recurring ${c.recurringPaymentTotal ?? "?"}  autopay ${c.autopayEnabled}`,
+      );
+    }
+    contractId = contracts[0]?.id ?? NaN;
+    if (!Number.isInteger(contractId)) {
+      console.log("    No contracts on this site; pass a contract id instead.");
+      process.exit(1);
+    }
+    console.log(`    Using contract ${contractId}.`);
+  }
+
+  let lastFour = "";
+  if (clientId) {
+    const card = await storedCardFor(clientId);
+    if (!card) {
+      console.log(`\n    Client ${clientId} has no stored card; a contract rehearsal needs one.`);
+      process.exit(1);
+    }
+    lastFour = card.lastFour;
+  } else {
+    console.log("\n=== GET /client/clients (finding a sandbox client with a stored card)");
+    const list = await mindbody("/client/clients?limit=50");
+    const rows: any[] = list?.Clients ?? [];
+    for (const c of rows) {
+      const lf = c?.ClientCreditCard?.LastFour;
+      if (typeof lf === "string" && lf.length === 4) {
+        clientId = String(c?.Id ?? "");
+        lastFour = lf;
+        console.log(`    ${clientId}  ${c?.FirstName ?? ""} ${c?.LastName ?? ""}  card ...${lf}`);
+        break;
+      }
+    }
+    if (!clientId) {
+      console.log(
+        `    None of the first ${rows.length} sandbox clients has a stored card. ` +
+          "Store a card on one in the sandbox's Mindbody, then pass its id.",
+      );
+      process.exit(1);
+    }
+    console.log(`    Using client ${clientId}.`);
   }
   const png = tinyPng();
   const base = {

@@ -35,6 +35,7 @@
  * knowing.
  */
 import { mindbody } from "../src/lib/mindbody";
+import { requiredClientFields } from "../src/lib/clients";
 
 const TEXT_FLAGS = [
   "SendAccountTexts",
@@ -69,7 +70,50 @@ async function main() {
     SendScheduleTexts: true,
   };
 
-  console.log("=== POST /client/addclient");
+  /* Pete's first run (sandbox, 2026-09-20) was refused with "The
+   * following are required: Birthday": site -99 requires fields the
+   * studio's site does not. The counter reads this list per site (T59b,
+   * requiredClientFields), so the probe reads it too and fills whatever
+   * the sandbox demands with a placeholder, naming each one it added. */
+  console.log("=== GET /client/requiredclientfields");
+  const { required } = await requiredClientFields();
+  console.log(`    ${required.length === 0 ? "(none)" : required.join(", ")}`);
+  const FILLERS: Record<string, unknown> = {
+    Birthday: "1990-01-01T00:00:00",
+    BirthDate: "1990-01-01T00:00:00",
+    Gender: "Female",
+    AddressLine1: "1 Probe Street",
+    City: "Seattle",
+    State: "WA",
+    PostalCode: "98103",
+    Country: "US",
+    HomePhone: "2065550147",
+    WorkPhone: "2065550147",
+    EmergencyContactInfoName: "Probe Contact",
+    EmergencyContactInfoPhone: "2065550148",
+    EmergencyContactInfoRelationship: "Friend",
+    EmergencyContactInfoEmail: "probe.contact@example.com",
+    ReferredBy: "Probe",
+  };
+  const have = new Set(Object.keys(body));
+  const filled: string[] = [];
+  const unmet: string[] = [];
+  for (const f of required) {
+    if (have.has(f) || /^(mobile)?phone$/i.test(f)) continue;
+    if (f in FILLERS) {
+      (body as Record<string, unknown>)[f] = FILLERS[f];
+      filled.push(f);
+    } else {
+      unmet.push(f);
+    }
+  }
+  if (filled.length > 0) console.log(`    filled with placeholders: ${filled.join(", ")}`);
+  if (unmet.length > 0) {
+    console.log(`    required and NOT filled (no placeholder known): ${unmet.join(", ")}`);
+    console.log("    Add a filler for each in FILLERS above and re-run.");
+  }
+
+  console.log("\n=== POST /client/addclient");
   console.log(`    ${body.FirstName} ${body.LastName} <${body.Email}>`);
   console.log("    all six Send* flags sent as true\n");
 
