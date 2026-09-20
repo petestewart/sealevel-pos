@@ -889,6 +889,24 @@ async function runCheckout(
         );
       }
       const held = await loadRequest(wanted);
+      /* T208 review: SPENT is tested first, and on its own. A consumed
+       * request carries no result (T204's review nulls it with the
+       * `consumed_at`, so the row keeps nothing about the customer), so
+       * the `approved !== true` test below would have swallowed every
+       * re-used approval into the generic sentence. "Already used on a
+       * sale" is the one a teacher can act on: ask them again, rather
+       * than wonder whether the screen registered the tap. It is a
+       * refusal either way and nothing is charged. */
+      if (
+        held !== null &&
+        isApproveTicket(held.kind, held.payload) &&
+        held.consumedAt !== null
+      ) {
+        return refuse(
+          "That approval has already been used on a sale. Ask the customer " +
+            "again.",
+        );
+      }
       if (
         held === null ||
         !isApproveTicket(held.kind, held.payload) ||
@@ -898,12 +916,6 @@ async function runCheckout(
       ) {
         return refuse(
           "The customer has not approved this sale on the customer screen.",
-        );
-      }
-      if (held.consumedAt !== null) {
-        return refuse(
-          "That approval has already been used on a sale. Ask the customer " +
-            "again.",
         );
       }
       if (String(held.private.clientId ?? "") !== payer) {

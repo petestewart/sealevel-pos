@@ -8449,6 +8449,24 @@ textarea.reason-note-field:disabled::placeholder {
   font-size: 16px;
 }
 
+/* T208 review: a row still running that the server's list has already
+   dropped (the create spends the handle half way through). It is not a
+   button: there is nothing to open and a write is in flight. */
+.signup-name-held {
+  cursor: default;
+}
+
+/* T208: what the automatic run is doing with this name, while it does
+   it. The spinner takes the muted colour of the line it sits on, which
+   is what `currentColor` gives it in both palettes. */
+.signup-working {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
 /* The same person, found by typing their name into walk-in search. */
 .signup-hits {
   margin: 0 0 8px;
@@ -8509,4 +8527,79 @@ textarea.reason-note-field:disabled::placeholder {
   font-weight: 700;
   color: var(--ink);
   text-align: right;
+}
+
+/* T208: the waiting list at the BOTTOM of the roster (Pete: "waitlisted
+   clients should be at the bottom in a separated list"). The heading is
+   the column heads' own treatment -- 16px uppercase over the 2px rule --
+   so the break between the class and the queue reads as a break between
+   regions and not as another student. */
+.roster-section {
+  margin: 0;
+  padding: 14px 20px 10px;
+  border-top: 2px solid var(--rule);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.roster-wl {
+  background: var(--surface);
+}
+
+/* The row itself is the counter modal's (`.row`), which takes its side
+   room from the modal it usually sits in. In the roster it needs the
+   roster's own 20px gutter, or the name starts at the screen edge. */
+.roster-wl > .row {
+  padding: 12px 20px;
+}
+
+/* T208: the duplicate decision. Two people side by side at a glance,
+   which is the whole point of it; one column under a phone's width. */
+.modal-dupe {
+  width: min(640px, 100%);
+}
+
+.dupe-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0;
+  margin: 12px 0;
+  border: 1px solid var(--line);
+}
+
+.dupe-person {
+  padding: 12px;
+  border-right: 1px solid var(--line);
+}
+
+.dupe-person:last-child {
+  border-right: 0;
+  background: var(--surface-2);
+}
+
+.dupe-heading {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dupe-name {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.dupe-line {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
 }

@@ -651,6 +651,88 @@ export async function visitPayment(
   };
 }
 
+/**
+ * Whether ONE class has room, read fresh from Mindbody (T208).
+ *
+ * Pete's second drive: "for some reason i was able to check in more
+ * than the class size. is that a bug on our end?" It was ours.
+ * Mindbody's API does NOT enforce capacity -- `addclienttoclass`'s own
+ * description says so (docs/mindbody-openapi/class.yml:1077: "To
+ * prevent overbooking a class ... it is necessary to first check the
+ * capacity level of the class ('MaxCapacity' and 'TotalBooked') and the
+ * 'IsAvailable' parameter by running the GetClasses REQUEST") -- so the
+ * only thing standing between a full class and a 3-of-2 roster was the
+ * browser's own count, read whenever the roster last loaded.
+ *
+ * One metered read of that one class, on the service account like every
+ * other read. `true` is full, `false` is room, and **null is "Mindbody
+ * did not say"**: an unreadable count must not stop a booking a teacher
+ * asked for, and the class's own refusal is still behind it.
+ *
+ * It is one metered call per plain booking, deliberately: the price of
+ * not overbooking a hot room, and the same call the roster already
+ * makes for the window. It runs even when the write will be suppressed
+ * by dry run or the write guard, so a suppressed booking still reports
+ * what would have happened.
+ */
+/** A calendar day's bounds as naive studio wall-clock strings: what
+ *  Mindbody reads correctly (T40), built by string arithmetic on the
+ *  date part so no timezone is involved in "the next day". */
+function dayWindow(day: string, spanDays = 1): { start: string; end: string } {
+  const at = new Date(`${day}T00:00:00Z`);
+  const end = new Date(at.getTime() + spanDays * 24 * 60 * 60 * 1000);
+  return {
+    start: `${day}T00:00:00`,
+    end: `${end.toISOString().slice(0, 10)}T00:00:00`,
+  };
+}
+
+export async function classIsFull(
+  classId: number,
+  /**
+   * The class's own start, as the screen holds it (a naive studio
+   * wall-clock string). T208 review: `GET /class/classes` defaults
+   * `EndDateTime` to TODAY, so a by-id read with no window comes back
+   * EMPTY for tomorrow's class and answers "did not say", which books
+   * as asked. The hint only picks which day to ask about, so a wrong or
+   * missing one costs the check, never a wrong write; with none, a
+   * generous bracket from today is used instead.
+   */
+  startsAt?: string | null,
+): Promise<boolean | null> {
+  const day =
+    typeof startsAt === "string" && /^\d{4}-\d{2}-\d{2}/.test(startsAt)
+      ? dayWindow(startsAt.slice(0, 10))
+      : dayWindow(studioWall(new Date()).slice(0, 10), 90);
+  const body = await mindbody(
+    `/class/classes?ClassIds=${classId}` +
+      `&StartDateTime=${encodeURIComponent(day.start)}` +
+      `&EndDateTime=${encodeURIComponent(day.end)}`,
+  );
+  const found = (body?.Classes ?? []).find(
+    (c: any) => Number(c?.Id) === classId,
+  );
+  if (!found) return null;
+  const capacity = found.MaxCapacity;
+  const booked = found.TotalBooked;
+  if (
+    typeof capacity === "number" &&
+    Number.isFinite(capacity) &&
+    capacity > 0 &&
+    typeof booked === "number" &&
+    Number.isFinite(booked)
+  ) {
+    /* The count decides, and `IsAvailable: false` beside a full count is
+     * the same answer said twice. Beside a count with ROOM it can mean
+     * something else entirely (a booking window that is closed), which
+     * is Mindbody's refusal to give in words, not ours to guess at: a
+     * booking wrongly queued is a student told to wait for a seat that
+     * is there. */
+    return booked >= capacity;
+  }
+  return null;
+}
+
 export async function bookClientIntoClass(opts: {
   clientId: string;
   classId: number;

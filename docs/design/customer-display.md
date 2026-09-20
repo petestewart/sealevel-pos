@@ -241,12 +241,35 @@ reason underneath, and a name whose client now EXISTS taps through to
 their profile rather than to Create. **The class on screen is judged by
 its own clock**: one that has ENDED, one on another day and no class at
 all are created and booked nowhere (the counter still shows the 6:30
-that finished at 8pm, and attendance must never be invented), a class
-further ahead than the roster window is booked without a check-in, and
-only the class at the door is booked and checked in. The studio-wide rule is
+that finished at 8pm, and attendance must never be invented), and every
+other class -- the one at the door, and one starting hours from now --
+is booked AND checked in (T208, Pete: "it did not sign them in but did
+sign them up. is this because the class starts several hours from now?";
+the class on screen is the teacher's own choice, and T207's fourth
+answer, "ahead", is gone). The studio-wide rule is
 `signup_mode` in `app_settings` (`POS_SIGNUP_MODE` with no database),
 admin-edited from the drawer beside the other two; it is not a write
 rail, since both modes make the same writes under the same guards.
+
+**While the run works, the row says so** (T208): a spinner and
+"Creating and checking in..." from the moment a sign-up reaches the
+tray until the run resolves, because a name with nothing under it for
+two seconds reads exactly like a name that is stuck. The create spends
+the handle half way through, so the row is held by the BROWSER for the
+rest of it rather than disappearing with the server's list. And **a
+duplicate is a decision, not a dead end**: the refused create looks the
+person up with one search and answers with the match, the tray row
+reads "May already have an account: <name>", and tapping it puts the
+two people side by side with "Use their existing account" (no create at
+all: the waiver is filed against the account that exists, against a
+match the server recomputes from the same form the refused create
+carried, and the booking and check-in follow as usual) and "Create a
+new client anyway" (the same prefilled form, with a line saying an
+identical name and email will be refused again). **Review mode says
+what it is**: "Review sign-up", a line under the title, a button that
+names what the tap will do, and the same booking and check-in after it,
+so the two modes differ by the tap and nothing else -- and so does
+every other door into a create that finishes a sign-up, in either mode.
 
 **The search finds them too.** When a teacher types a name into walk-in
 search and a pending sign-up matches it, it appears above the Mindbody

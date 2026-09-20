@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
-import { consumeRequest, signupById } from "@/lib/display";
+import { clearSignup, signupById } from "@/lib/display";
 import { signupFormOf } from "@/lib/displaysignup";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +20,10 @@ export const dynamic = "force-dynamic";
  *
  * DELETE is the tray's "Clear": the student never came to the counter,
  * or signed up twice, so the handle is spent without creating anybody
- * and the result goes with it. No Mindbody call in either verb.
+ * and the result goes with it. Since T208 it spends the handle whatever
+ * the by-id lookup says, because a row a teacher can see and cannot
+ * clear is worse than one cleared twice. No Mindbody call in either
+ * verb.
  */
 export async function GET(
   request: Request,
@@ -62,14 +65,26 @@ export async function DELETE(
   const actor = await requireActor(request);
   if (actor.denied) return actor.denied;
   const { id } = await context.params;
-  const held = await signupById(id);
-  if (held === null) {
-    /* Already gone is the outcome the teacher asked for. */
-    return NextResponse.json({ cleared: false });
+  /* T208: unconditional. Pete's second drive: "i can't clear the failed
+   * one from the previous build." This used to consume only what the
+   * by-id lookup resolved, so a row the tray was listing and this
+   * answered null for was cleared by nothing and came back on the next
+   * poll. `clearSignup` drops it from memory, remembers the id as spent
+   * and marks the table row by id, whatever any store says about it.
+   * Still no Mindbody call: nobody is created either way. */
+  const spent = await clearSignup(id);
+  if (spent.wrongKind) {
+    /* T208 review: this route clears SIGN-UPS. A waiver, a ticket
+     * approval or a contract signature is finished somewhere else, and
+     * spending one here would blank the screen under the student. */
+    return NextResponse.json(
+      { error: "That is not a sign-up waiting for a teacher.", cleared: false },
+      { status: 404 },
+    );
   }
-  const spent = await consumeRequest(id);
   console.log(
-    `[display] sign-up ${id} cleared by staff=${actor.session.staffId} without creating anybody`,
+    `[display] sign-up ${id} cleared by staff=${actor.session.staffId} without creating anybody` +
+      (spent.marked ? "" : " (no row was marked)"),
   );
-  return NextResponse.json({ cleared: spent !== null });
+  return NextResponse.json({ cleared: true });
 }

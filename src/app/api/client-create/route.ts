@@ -12,7 +12,10 @@ import { requireSession } from "@/lib/auth";
 import { readBirthDate } from "@/lib/birthdate";
 import {
   createClient,
+  findExistingClient,
   isDuplicateClientError,
+  matchFields,
+  readClientNotes,
   readTextOptInStuck,
   requiredClientFields,
   type NewClientInput,
@@ -24,6 +27,7 @@ import {
 } from "@/lib/display";
 import { readSignupResult } from "@/lib/displaysignup";
 import { fileFormulaNote } from "@/lib/formulanote";
+import type { StaffSession } from "@/lib/staffsession";
 import { getWaiver } from "@/lib/waiver";
 import { finaliseWaiver } from "@/lib/waiverfinalise";
 
@@ -123,6 +127,15 @@ export async function POST(request: Request) {
   } catch {
     return bad("A JSON body is required.");
   }
+
+  /* T208: "Use their existing account". Nobody is created: the teacher
+   * accepted the match this route itself found when Mindbody refused
+   * the create, so the only thing left of the sign-up is the waiver the
+   * student already signed, filed against the account that exists. */
+  if (payload?.useExistingClientId !== undefined) {
+    return useExisting(payload, session);
+  }
+
   const firstName = cleanName(payload?.firstName, "First name");
   if (firstName instanceof NextResponse) return firstName;
   const lastName = cleanName(payload?.lastName, "Last name");
@@ -359,12 +372,26 @@ export async function POST(request: Request) {
     const gone = staffSessionEndedResponse(err);
     if (gone) return gone;
     if (isDuplicateClientError(err)) {
+      /* T208: say WHO. Pete's second drive: "if we think they already
+       * exist, the teacher should have a UI that very obviously states
+       * that instead of going to 'New client'." One search, on the
+       * typed email or the whole name, and the answer carries the match
+       * so the screen can put the two people side by side. The email
+       * and the phone are what a teacher already reads off a profile,
+       * and this answer only reaches a signed-in teacher's browser
+       * behind the device session. */
+      const found = await findExistingClient({
+        firstName: input.firstName,
+        lastName: input.lastName,
+        email: input.email,
+      });
       return NextResponse.json(
         {
           error:
             "Mindbody already has a client with this name and email. " +
             "Search for them instead.",
           duplicate: true,
+          match: found === null ? null : matchFields(found),
         },
         { status: 409 },
       );
@@ -375,5 +402,185 @@ export async function POST(request: Request) {
     );
   } finally {
     if (claimed !== null) releaseFinalisation(claimed);
+  }
+}
+
+/**
+ * T208: "Use their existing account".
+ *
+ * The teacher looked at the two people side by side and said they are
+ * the same person, so **nothing is created**: `addclient` is never
+ * called. What is left of the sign-up is the waiver the student signed
+ * on the customer screen, and it is filed against the account that
+ * already exists, through the same `finaliseWaiver` every other path
+ * uses -- the release under the teacher's token, the receipt row, the
+ * document copy, the Notes line -- under ONE `beginFinalisation` claim,
+ * with the handle spent last.
+ *
+ * The client id is NOT taken on trust. A browser could name any id, so
+ * the server looks the duplicate up again from the form AS STORED, the
+ * same one search it did when it answered the 409, and refuses an id
+ * that is not the match it found. (The alternative, storing the match
+ * on the request's private half, would mean a second writer for that
+ * column; recomputing costs one metered read on a tap a teacher makes
+ * once per sign-up.)
+ *
+ * Body: { displayRequestId: string, useExistingClientId: string,
+ *          form?: { firstName, lastName, email } -- the form the
+ *          REFUSED create carried, which is what the match is
+ *          recomputed from (T208 review) }
+ * Answer: { ok, clientId, existing: true, client, waiver, ...actorFields }
+ */
+async function useExisting(payload: any, session: StaffSession | null) {
+  const clientId =
+    typeof payload?.useExistingClientId === "string"
+      ? payload.useExistingClientId.trim()
+      : "";
+  if (clientId.length === 0) {
+    return bad("useExistingClientId must be a client id.");
+  }
+  const handle =
+    typeof payload?.displayRequestId === "string"
+      ? payload.displayRequestId.trim()
+      : "";
+  if (handle.length === 0) {
+    return bad("useExistingClientId needs the sign-up it is finishing.");
+  }
+  if (!beginFinalisation(handle)) {
+    return NextResponse.json(
+      { error: "That sign-up is already being created.", inFlight: true },
+      { status: 409 },
+    );
+  }
+  try {
+    const held = await loadRequest(handle);
+    if (
+      held === null ||
+      held.kind !== "register" ||
+      held.initiator !== "display" ||
+      held.status !== "completed" ||
+      held.consumedAt !== null ||
+      Date.now() >= held.expiresAt
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "That sign-up is no longer waiting. Ask them to sign up again on the customer screen, or create them here.",
+        },
+        { status: 409 },
+      );
+    }
+    /* The form as the STUDENT typed it, anchored to when it was stored
+     * (T204's review fix). The SIGNATURE and the consent come from
+     * here, always. */
+    const stored = readSignupResult(held.result ?? {}, held.completedAt ?? Date.now());
+    if (!stored.ok) {
+      return NextResponse.json(
+        { error: `That sign-up could not be read (${stored.error}).` },
+        { status: 409 },
+      );
+    }
+    /**
+     * T208 review: the match has to be recomputed from **the same form
+     * the refused create was sent**, not from the stored one.
+     *
+     * In review mode the teacher corrects a name or an email before
+     * Create, Mindbody refuses on the CORRECTED values, and the 409's
+     * match was found from them; recomputing from the student's own
+     * typing could then find nobody, or somebody else, and refuse
+     * "Use their existing account" every time. In automatic mode
+     * nobody corrects anything and the two forms are the same.
+     *
+     * The body's form is acceptable evidence here because it buys a
+     * caller nothing: this route still refuses any id that is not a
+     * match the SERVER itself computed, and the only write behind it is
+     * a waiver release that a signed-in teacher can already make for
+     * any client through /api/waiver-agree, against a client they can
+     * already book.
+     */
+    const sent =
+      payload?.form !== null && typeof payload?.form === "object"
+        ? (payload.form as Record<string, unknown>)
+        : null;
+    const str = (v: unknown, fallback: string) =>
+      typeof v === "string" && v.trim() !== "" ? v.trim() : fallback;
+    const lookFor = {
+      firstName: str(sent?.firstName, stored.value.form.firstName),
+      lastName: str(sent?.lastName, stored.value.form.lastName),
+      email:
+        sent === null
+          ? stored.value.form.email
+          : typeof sent.email === "string" && sent.email.trim() !== ""
+            ? sent.email.trim()
+            : null,
+    };
+    const match = await findExistingClient(lookFor);
+    if (match === null || match.id !== clientId) {
+      return NextResponse.json(
+        {
+          error:
+            "That is not the account Mindbody matched them to. Search for them instead.",
+        },
+        { status: 409 },
+      );
+    }
+    const waiverText = await getWaiver();
+    if (held.private.textSha256 !== waiverText.sha256) {
+      return NextResponse.json(
+        {
+          error:
+            "The waiver text changed while they were signing up. Ask them to read and sign it again.",
+        },
+        { status: 409 },
+      );
+    }
+    /* The notes as they stand, for the receipt append: the search row
+     * carries them already, and a null there is "no notes", which is
+     * what the append starts from. */
+    const currentNotes = match.notes ?? (await readClientNotes(clientId));
+    const waiver = await finaliseWaiver({
+      clientId,
+      session,
+      route: "/api/client-create",
+      waiverSha256: waiverText.sha256,
+      signed: {
+        requestId: held.id,
+        png: stored.png,
+        sha256: createHash("sha256").update(stored.png).digest("hex"),
+        agreedAt: stored.value.agreedAt,
+      },
+      currentNotes,
+    });
+    console.log(
+      `[signup] ${handle} finished against existing client ${clientId} by staff=${session?.staffId ?? "none"}`,
+    );
+    return NextResponse.json({
+      ok: true,
+      clientId,
+      existing: true,
+      client:
+        waiver.notes === null ? match : { ...match, notes: waiver.notes },
+      suppressed: null,
+      waiver: {
+        signed: true,
+        agreed: waiver.agreed,
+        suppressed: waiver.suppressed,
+        documentFiled: waiver.documentFiled,
+        documentReason: waiver.documentReason,
+        receiptNoted: waiver.receiptNoted,
+        receiptReason: waiver.receiptReason,
+        signatureSha256: waiver.signatureSha256,
+      },
+      ...actorFields(waiver.run),
+    });
+  } catch (err) {
+    const gone = staffSessionEndedResponse(err);
+    if (gone) return gone;
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 502 },
+    );
+  } finally {
+    releaseFinalisation(handle);
   }
 }

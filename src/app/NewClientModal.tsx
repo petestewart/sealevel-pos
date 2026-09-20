@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { actorFallbackLine } from "./actornote";
 
+import type { DuplicateMatch } from "./DuplicateModal";
+
 import { readBirthDate } from "@/lib/birthdate";
 
 /**
@@ -65,6 +67,40 @@ interface Props {
     consentText: boolean;
     completedAt: string | null;
   };
+  /**
+   * T208: this form IS review mode's review. Pete, second drive: "i see
+   * nothing that says 'review'. the create client modal is there, is
+   * that how it's supposed to work? if so, the verbiage and labeling
+   * needs to be much better." So the title, the line under it and the
+   * button all say what this tap is and what it will do; the form and
+   * the route behind it are the same ones.
+   */
+  review?: boolean;
+  /** T208: what Create will do, named on the button: "Create and check
+   *  in", "Create and add to waiting list", or plain "Create" when
+   *  there is no class on screen for it to do anything with. */
+  createLabel?: string;
+  /** T208: one amber line at the top, from the duplicate decision's
+   *  "Create a new client anyway". */
+  notice?: string;
+  /**
+   * T208: Mindbody refused this as a duplicate. The match is the
+   * account it was matched to, or null when the server's one search
+   * could not name one -- and the decision is worth opening either way
+   * (T208 review), because "Mindbody says they already have an
+   * account" with the search offer beats a red line in a form that
+   * cannot be made to work.
+   *
+   * `sent` is the form THIS create carried, which in review mode is the
+   * teacher's corrected version and is what the match was computed
+   * from; the accept sends it back so the server recomputes from the
+   * same words. Returning true means the caller took it and this form
+   * should say nothing.
+   */
+  onDuplicate?: (
+    match: DuplicateMatch | null,
+    sent: { firstName: string; lastName: string; email: string | null },
+  ) => boolean;
   onClose: () => void;
   /** The created person, and the amber line when the write ran as the
    *  studio account (T49's one loud fallback), else null. */
@@ -121,6 +157,10 @@ export default function NewClientModal({
   initialPhone,
   initialBirthDate,
   signup,
+  review,
+  createLabel,
+  notice,
+  onDuplicate,
   onClose,
   onCreated,
 }: Props) {
@@ -230,6 +270,40 @@ export default function NewClientModal({
       });
       const body = await res.json().catch(() => null);
       if (!res.ok || !body?.ok) {
+        /* T208: a duplicate is a DECISION, not a red line. The route
+         * names the account it matched, and the caller puts the two
+         * people side by side; only when it declines does this say
+         * anything. */
+        if (body?.duplicate === true && onDuplicate) {
+          const match: DuplicateMatch | null =
+            body.match && typeof body.match.id === "string"
+              ? {
+                  id: String(body.match.id),
+                  firstName: String(body.match.firstName ?? ""),
+                  lastName: String(body.match.lastName ?? ""),
+                  email:
+                    typeof body.match.email === "string" && body.match.email
+                      ? body.match.email
+                      : null,
+                  phone:
+                    typeof body.match.phone === "string" && body.match.phone
+                      ? body.match.phone
+                      : null,
+                }
+              : null;
+          /* Null match included (T208 review): the decision names what
+           * it knows and offers the search, which is the whole of what
+           * a teacher can do about it. */
+          if (
+            onDuplicate(match, {
+              firstName: values.firstName,
+              lastName: values.lastName,
+              email: values.email || null,
+            })
+          ) {
+            return;
+          }
+        }
         setError(
           typeof body?.error === "string" && body.error
             ? body.error
@@ -344,14 +418,26 @@ export default function NewClientModal({
           <CloseIcon />
         </button>
         <div className="modal-head">
-          <p className="modal-kicker">Walk-in</p>
-          <p className="modal-title">New client</p>
+          <p className="modal-kicker">
+            {review ? "Customer screen" : "Walk-in"}
+          </p>
+          <p className="modal-title">
+            {review ? "Review sign-up" : "New client"}
+          </p>
         </div>
         <p className="reason-sub nc-sub">
-          {signup
-            ? "Waiver signed on the customer screen, waiting for Create. Check the spelling of the name, then Create makes their account and files the waiver together."
-            : "Makes their Mindbody account. The waiver comes up when they are added to a class."}
+          {review
+            ? "Signed up on the customer screen. Check the details, then create them and check them in."
+            : signup
+              ? "Waiver signed on the customer screen, waiting for Create. Check the spelling of the name, then Create makes their account and files the waiver together."
+              : "Makes their Mindbody account. The waiver comes up when they are added to a class."}
         </p>
+        {/* T208: what has to change before Mindbody will take it. */}
+        {notice ? (
+          <p className="modal-warn" role="status">
+            {notice}
+          </p>
+        ) : null}
         <div className="nc-fields">
           {field("firstName", "First name", firstName, setFirstName, {
             autoComplete: "given-name",
@@ -442,7 +528,7 @@ export default function NewClientModal({
                 <span className="spinner" aria-label="working" /> Creating
               </>
             ) : (
-              "Create"
+              (createLabel ?? "Create")
             )}
           </button>
         </div>

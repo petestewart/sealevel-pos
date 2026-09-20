@@ -682,3 +682,68 @@ export function isDuplicateClientError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return /duplicate|already exist|already has|already in use/i.test(message);
 }
+
+/**
+ * T208: the person Mindbody refused the create FOR.
+ *
+ * Pete's second drive: "if we think they already exist, the teacher
+ * should have a UI that very obviously states that instead of going to
+ * 'New client'." The screen can only say who it thinks they are if the
+ * server looks, so a duplicate refusal costs ONE search -- the same
+ * `searchText` call /api/search makes, on the typed email, or on
+ * "first last" when there is no email, because Mindbody's duplicate
+ * rule keys on first name, last name and email together.
+ *
+ * The match is the row whose name AND email both match, case
+ * insensitively; failing that, a search that found exactly one person
+ * is that person; failing that, null, and the screen says Mindbody
+ * refused it without naming anybody. Never throws: a failed lookup is
+ * a duplicate with no match, which is the answer the counter had
+ * before this existed.
+ */
+export async function findExistingClient(input: {
+  firstName: string;
+  lastName: string;
+  email: string | null;
+}): Promise<SearchResult | null> {
+  const whole = `${input.firstName} ${input.lastName}`.trim();
+  const query = (input.email ?? "").trim() || whole;
+  if (query.length < 2) return null;
+  try {
+    const answer = await search(query, 10);
+    const rows = answer.results;
+    const same = (a: string | null, b: string | null) =>
+      (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
+    const exact = rows.find(
+      (r) =>
+        same(r.name, whole) &&
+        (input.email === null ? true : same(r.email, input.email)),
+    );
+    if (exact) return exact;
+    return rows.length === 1 ? (rows[0] ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The match as the decision modal shows it: what a teacher already
+ *  reads off a profile, and no more. The name is split the way the
+ *  search joined it, which is what the form's two fields want. */
+export function matchFields(row: SearchResult): {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phone: string | null;
+} {
+  const parts = row.name.trim().split(/\s+/);
+  const firstName = parts.length > 1 ? (parts[0] ?? "") : row.name.trim();
+  const lastName = parts.length > 1 ? parts.slice(1).join(" ") : "";
+  return {
+    id: row.id,
+    firstName,
+    lastName,
+    email: row.email,
+    phone: row.phone,
+  };
+}

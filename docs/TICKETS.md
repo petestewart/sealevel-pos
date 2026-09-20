@@ -18158,7 +18158,17 @@ it in this mode, which is the whole of what "automatic" means), then
 book, then check in.
 
 - **The class on screen is judged by its own CLOCK, not by "is it
-  today"** (`classWhen` in page.tsx, added in review). `defaultClassId`
+  today"** (`classWhen` in page.tsx, added in review). **Superseded in
+  part by T208, 2026-09-20**: the fourth answer below, "ahead" (book a
+  class past the roster window, do NOT check in), is gone. Pete met it
+  on his second drive as "it did not sign them in but did sign them up.
+  is this because the class starts several hours from now?" -- it was --
+  and the reasoning that the teacher "went looking" for that class cuts
+  both ways: the class on screen is their choice either way, and the
+  instruction for this whole path was "created and automatically signed
+  in to class". Any class that has not ENDED is now booked AND checked
+  in; "ended", "otherday" and no class are unchanged, because attendance
+  at a class that is over is the thing that must never be invented. `defaultClassId`
   falls back to the LAST class of the day when nothing is within the
   "schedule back" window, so at 8pm the screen still shows the 6:30 that
   finished an hour ago, and booking a new student into that with
@@ -18385,3 +18395,453 @@ Against a real production Next server and a mock Mindbody
   quiet (a hung host, a pool timeout). Those reach `readSetting` as the
   same unanswered read, so the behaviour is the same by construction,
   but only the stop was watched.
+
+## T208. Pete's second drive on real hardware, 2026-09-20
+
+T207 shipped in the morning and Pete drove the whole of Phase 2.5 again,
+two iPads and Chrome on the dev machine, against the Mindbody sandbox.
+The self-serve sign-up now finishes itself, and what came back was six
+things the counter noticed plus one sidenote. This ticket is those, and
+nothing else.
+
+**Nothing here adds a write path.** The display still imports no
+`mindbody()`; the three writes of an automatic run are still
+`/api/client-create`, `/api/book` and `/api/checkin` from the teacher's
+own browser. The one new Mindbody call anywhere in it is a READ: one
+`GET /class/classes?ClassIds=<id>` before a plain booking, on the
+service account, which is item 4.
+
+### 1. "there should be a waiting spinner so the teacher knows it didn't fail"
+
+Pete: "auto sign up does work, but there is a brief wait between when
+the banner shows up and when they are signed in to class." Three writes
+take a second or two of Mindbody's time, and in between the tray showed
+a name with nothing under it, which reads exactly like a name that is
+stuck.
+
+So the row says what is happening to it while it happens: a CSS spinner
+(`.spinner`, the one the rest of the app uses, drawn in `currentColor`
+so it takes the line's own token in both palettes, radius irrelevant
+because it is a circle by construction) and the words **"Creating and
+checking in..."**, or **"Creating and booking..."** when the class on
+screen is full. `signupBusy` in page.tsx is keyed by request id, set in
+the CHAIN effect (so a sign-up waiting its turn spins too, not only the
+one running) and cleared in `runSignup`'s `finally`, whichever way the
+run went. It also carries the NAME, because the row has to outlive the
+server's list: the create spends the handle half way through the run
+(review fix below). The gold badge keeps its count throughout: the
+count is about who is waiting, not about what is in flight.
+
+### 2. "it did not sign them in but did sign them up"
+
+"is this because the class starts several hours from now?" It was.
+T207's `classWhen` had four answers and one of them, `ahead`, booked a
+class starting past `settings.hoursForward` and deliberately skipped
+the check-in, on the reasoning that a class the teacher went LOOKING
+for is not the class at the door.
+
+That reasoning cuts both ways, and Pete's instruction for this path was
+"created and automatically signed in to class". The class on screen is
+the teacher's own choice whichever hour it starts, so **any class that
+has not ENDED is now booked and checked in**. `ended` (create, no
+booking, a tray row), `otherday` (the same) and no class at all are
+unchanged: attendance at a class that is over is the one thing this
+must never invent, and `defaultClassId` really does leave the finished
+6:30 on screen at 8pm. `classWhen` lost its `hoursForward` argument
+with the answer; the T207 ticket carries a dated note, and so do
+CLAUDE.md and the design doc.
+
+### 3. "i can't clear the failed one from the previous build"
+
+A row reading "Pete Stewart, 3 hours ago" sat in the tray with "That
+sign-up is no longer waiting. Ask them to sign up again on the customer
+screen, or create them here." under it, and Clear did nothing.
+
+**Cause: three stores, read in three orders.** A request can be held by
+the scene on the screen (`state.current`), by the tray's own map
+(`state.signups`) and by the `display_requests` row, and the hub lives
+on `globalThis` so a dev recompile leaves the first two behind. The
+LIST (`pendingSignups`) pruned memory and re-seeded it from the table;
+the by-id lookup read `state.signups` first; `loadRequest`, which
+`/api/client-create` and `consumeRequest` both use, preferred
+`state.current` outright. So a request whose memory copy had gone stale
+while the row was still good listed in the tray, refused every create
+with the sentence above, and answered `{cleared: false}` to Clear --
+after which the next poll brought it back, forever.
+
+Both halves are fixed:
+
+- **One resolver and one predicate.** `loadRequest` is now the only way
+  in: spent in this process is spent (`state.spent`, a bounded set, so
+  the memory-first consume T202's review insisted on cannot be undone
+  by a table write that missed), otherwise whichever store still has it
+  USABLE wins, memory first and then the row, and with nothing usable
+  anywhere it returns what it found so the caller can say why.
+  `signupById` is that call plus `liveSignup`, which is the same
+  predicate `pendingSignups` filters the table with. The tray cannot
+  show a row the routes behind it will refuse.
+- **Clear always clears a sign-up.** `clearSignup` drops the id from
+  memory, records it as spent, takes down the scene if it is the one on
+  screen, and marks the table row consumed BY ID, whatever any lookup
+  says about it. `DELETE /api/display/signups/<id>` answers
+  `cleared: true`. A request that RESOLVES to something other than a
+  self-serve sign-up is refused instead (review fix below).
+  A teacher tapping Clear is telling us nobody is coming; the only
+  honest answer is that it is gone. Nothing there reaches Mindbody,
+  exactly as before.
+- **And the runner does not strand one.** A detail read that 404s, or a
+  create that answers "no longer waiting", now makes the automatic run
+  call that same DELETE (`dropSignup`) instead of leaving the row for
+  the rest of the day.
+
+### 4. "i was able to check in more than the class size. is that a bug on our end?"
+
+Yes. A sandbox class with capacity 2 showed 3/2.
+
+**Mindbody's API does not enforce capacity**, and says so in the
+operation description rather than anywhere obvious:
+`docs/mindbody-openapi/class.yml:1077`, "To prevent overbooking a class
+... it is necessary to first check the capacity level of the class
+('MaxCapacity' and 'TotalBooked') and the 'IsAvailable' parameter by
+running the GetClasses REQUEST". The only count standing in the way was
+the BROWSER's `classFull`, computed from a class summary that is as old
+as the last roster load, and both the walk-in tap and T207's runner
+sent `waitlist` from it.
+
+So `/api/book` checks it itself: before a plain booking (not a
+promotion, not a caller who asked for the waiting list) it reads that
+one class, `GET /class/classes?ClassIds=<id>` on the service account
+like every read, and when `TotalBooked >= MaxCapacity` it books onto the
+WAITING LIST instead and answers `waitlisted: true` with
+`waitlistReason: "Class was full, added to the waiting list"`. One
+metered read per booking, which is the price of not overbooking a hot
+room.
+
+Three deliberate limits: **the count decides**, and `IsAvailable: false`
+beside a count with ROOM is ignored (it can mean a closed booking
+window, and a booking wrongly queued tells a student to wait for a seat
+that is there; Mindbody's own refusal comes back in words either way);
+**a read that cannot answer books exactly as asked**, because an
+unreadable count must not refuse a booking a teacher made; and T207's
+`looksFull` retry stays as the fallback for a refusal that still says
+full. Both callers read `waitlisted` off the answer: the tap path says
+the reason on the result row instead of "On the waiting list." and
+keeps the search modal open, and the runner's outcome line says
+waitlist. Both already refresh the roster, so the counts on screen are
+current afterwards.
+
+Pete's aside about the same drive, "aaa bbb went to the waiting list":
+that is this, correctly. The class was already over capacity (3 of 2),
+so the sign-up's booking was queued rather than adding a fourth.
+
+### 5. "the teacher should have a UI that very obviously states that"
+
+Pete: "if we think they already exist, the teacher should have a UI that
+very obviously states that instead of going to 'New client'. should be a
+decision modal that says 'We think this client already exists', display
+the one that it matches, and then have two buttons: one to accept the
+match and one to create new client anyway."
+
+Before this, a duplicate left "Already has an account, search for them."
+under the name and tapping it opened the New client form -- the one
+thing Mindbody had just refused.
+
+- **The refusal names who.** `/api/client-create`, on
+  `isDuplicateClientError`, calls `findExistingClient` (one `searchText`
+  read through the same `search()` /api/search uses, on the typed email
+  or, with none, "first last"), picks the row whose whole name and email
+  both match case-insensitively, else a search that found exactly one
+  person, else nobody, and answers 409 `{duplicate: true, match}` with
+  `{id, firstName, lastName, email, phone}`. Those two contact fields
+  are what a teacher already reads off a profile and this answer only
+  reaches a signed-in teacher's browser behind the device session, the
+  same rule `GET /api/display/signups/<id>` has carried since T204. The
+  lookup never throws: a failed search is a duplicate with no match,
+  which is the answer the counter had before.
+- **The decision.** `src/app/DuplicateModal.tsx`: "This person may
+  already have an account", the typed person and the matched one side
+  by side (name, email, phone), and two 64px buttons. With no match the
+  second column says so and "Use their existing account" is disabled.
+  The tray row reads "May already have an account: <name>", or
+  "Mindbody says they already have an account", and its tap opens this
+  rather than the form. So does the form's own Create in review mode
+  (`onDuplicate`), so the two doors end in the same place.
+- **"Use their existing account" creates NOBODY.** It posts
+  `{displayRequestId, useExistingClientId, form}` and the route skips
+  `addclient` entirely: under one `beginFinalisation` claim it verifies
+  the request, **looks the match up again itself** from the form the
+  refused create carried (review fix below) and refuses an id that is
+  not the one it found, checks the waiver wording has not changed, and
+  runs `finaliseWaiver` for that client id -- release, receipt row,
+  document upload, Notes line, handle spent last. The signature and the
+  consent are the stored result's, always.
+  It answers `{ok, clientId, existing: true, waiver}`, and the browser
+  carries on into the same booking and check-in, with the line reading
+  "Sam Fisher checked in to 6:20 Bikram Yoga (existing account)."
+  Recomputing the match rather than storing it on the request's private
+  half is the design call here: it costs one metered read on a tap a
+  teacher makes once, and it avoids a second writer for that column.
+- **"Create a new client anyway"** opens T204's prefilled form with one
+  amber line: Mindbody refuses a second account with the same name and
+  email, so change the email or a name before Create. The handle rides
+  it as it always did, so the waiver still lands.
+
+### 6. "i see nothing that says 'review'"
+
+"the create client modal is there, is that how it's supposed to work? if
+so, the verbiage and labeling needs to be much better." It was, and it
+was also the wrong shape: the tap created the client and stopped there,
+while automatic went on to book and check in.
+
+- The tray heading reads **"Waiting for your review"** in review mode
+  (automatic keeps T204's sentence, which is right for what is left
+  there: the exceptions).
+- The form is titled **"Review sign-up"** with the kicker "Customer
+  screen" and the line "Signed up on the customer screen. Check the
+  details, then create them and check them in."
+- The button names what the tap will do: **"Create and check in"**,
+  **"Create and add to waiting list"** when the class on screen is
+  full, or **"Create"** when there is no class on screen, it has ended,
+  or it is another day's.
+- And after Create it runs **the same sequence** the automatic run
+  does: the booking, the check-in, the same ten second outcome line,
+  the same tray rows for every exception. `bookAndCheckIn` was lifted
+  out of `runSignup` for it, which is also what "use their existing
+  account" calls, so the doors cannot drift. Since the review below,
+  **every** create carrying a sign-up handle ends there, in either
+  mode: the review tap, "Create a new client anyway", and a search
+  hit's own Create.
+
+### 7. "waitlisted clients should be at the bottom in a separated list"
+
+They were not in the roster at all: their only home was the waitlist
+counter's modal, a tap away and out of sight. They are the last rows of
+the roster now, under a "Waiting list (N)" heading drawn with the
+column heads' own treatment (16px uppercase over the 2px `--rule`, on
+`--surface-2`), inside the same scrolling list so they sit below the
+class rather than beside them. The rows are the modal's own markup and
+the tap is `tapPromote`, unchanged, waiver gate included. The counter's
+modal stays: this is a second door onto one list, not a copy of it. The
+list is still only READ for a full class, which is Phase 1.3's rule (a
+class with room cannot have a queue), so an unread list draws nothing.
+
+### Fixed in review
+
+Seven, and two of them were only reachable on paths the first drivers
+did not walk.
+
+1. **The duplicate match was computed from two different forms.** The
+   409's match came from the form the create was SENT (in review mode,
+   the teacher's corrections), and the accept recomputed it from the
+   STORED form, so "Use their existing account" could refuse every time
+   for exactly the person the teacher had just been shown. The accept
+   now carries that same form and the server recomputes from it, still
+   refusing any id that is not a match it found itself. **Why the
+   body's form is acceptable here**: it is evidence the server
+   re-reads, not a client id to trust, and it buys a caller nothing --
+   a signed-in teacher can already file a waiver on any client through
+   `/api/waiver-agree` and book any client, which is all this path
+   does.
+2. **Clear spent ANY request kind.** `clearSignup` was unconditional
+   about the id as well as about the stores, so a waiver, a ticket
+   approval or a contract signature named to `DELETE
+   /api/display/signups/<id>` would have been spent and taken off the
+   screen from under the student. It now refuses (404, nothing spent)
+   whatever resolves to something that is not a self-serve sign-up, and
+   is unconditional only for an id no store can account for, which is
+   the case Pete hit.
+3. **"That approval has already been used on a sale" was unreachable.**
+   `loadRequest` answered null for an id spent in this process, so
+   T203's distinct sentence and `/api/display/approval`'s
+   `consumed: true` both fell back to the generic answer, and the same
+   situation read differently before and after a restart. A spent id
+   now resolves to the CONSUMED copy (memory's, or the table's with
+   `consumedAt` set on a copy) and `consumeRequest` refuses on that
+   rather than on null. `/api/checkout` also tests SPENT first: T204's
+   review nulls a consumed row's `result`, so the `approved !== true`
+   test above it was swallowing every re-used approval into the generic
+   sentence. It is a refusal either way and nothing is charged; the
+   difference is whether the teacher is told to ask the customer again.
+4. **The spinner ended before the run did.** The create spends the
+   handle half way through, the server's `signups` event drops the row
+   at once, and the booking and the check-in are still going: the row
+   (and its spinner) vanished 0.5 to 2 seconds before the outcome line,
+   which is the gap this ticket exists to close. The tray now draws a
+   row for any BUSY id the list no longer carries, from the browser's
+   own state (hence the name in `signupBusy`), the page stopped
+   pruning busy ids and stopped nudging the tray mid-run, and
+   `bookAndCheckIn` sets the label itself so the review tap and "use
+   their existing account" spin too.
+5. **"Create a new client anyway" booked nobody in AUTOMATIC mode.**
+   The post-create sequence was gated on review mode, so that button
+   (and a search hit's own Create) left a brand new client in no class
+   under the default. Every create carrying a sign-up handle now ends
+   in `bookAndCheckIn`.
+6. **The capacity read asked about the wrong day.** `GET
+   /class/classes` defaults its `EndDateTime` to TODAY, so the by-id
+   read came back EMPTY for tomorrow's class and answered "did not
+   say", which books as asked -- the overbooking this item is about,
+   for every class that is not today. The read is bracketed now: the
+   booking body carries the class's own `classStartsAt` (it picks the
+   DAY and decides nothing else, so a wrong or missing one costs the
+   check and never a wrong write), and with none the read brackets
+   today plus ninety days. It is one metered call per plain booking,
+   deliberately, and it runs even when the write will be suppressed, so
+   a dry-run booking still says it would have been queued.
+7. **A consumed MEMORY copy outranked the table.** `loadRequest`
+   preferred memory's word that a request was consumed, which is the
+   same class of disagreement Pete hit: a hub object left on
+   globalThis by an earlier build. The table decides when it answers
+   now; memory answers only for a handle THIS process spent (the T202
+   rail, which must survive a table write that missed), for a copy that
+   is still usable (so a finalisation does not put a database on the
+   checkout path), or when there is no database.
+
+Minor, in the same pass: the waiting list's heading is no longer
+`aria-hidden` (it is the section's only label), and `NewClientModal`
+opens the decision for a duplicate with NO match too, so the teacher
+gets "Mindbody says they already have an account" and the search offer
+rather than a red line in a form that cannot be made to work.
+
+### Verified
+
+Against a real production Next server and a mock Mindbody
+(`scratchpad/t208/`), with `npx tsc --noEmit` and
+`env -u DATABASE_URL npm run build` clean:
+
+- **Route driver, `routes.mjs`, 48 assertions, 0 failed**: a class with
+  room books plainly, says `waitlisted: false` and costs exactly one
+  fresh `/class/classes` read; a class the mock reports FULL on that
+  by-id read while the window read still shows room (the stale flag,
+  exactly Pete's 3-of-2) answers `waitlisted: true` with the sentence
+  and the write itself carries `Waitlist: true`; a promotion keeps its
+  `WaitlistEntryId`, takes no `Waitlist` and costs no capacity read;
+  an asked-for waitlist add costs none either and carries no reason. A
+  duplicate answers 409 with the matched account, its email and its
+  phone, and leaves the sign-up waiting; a forged `useExistingClientId`
+  is refused in words with nothing written and the sign-up intact; the
+  real one creates NOBODY, releases the waiver against that client id,
+  files the signature, spends the sign-up and is refused the second
+  time. **And, after the review**: with the mock ending its own window
+  at today (which is what Mindbody does), tomorrow's class is still
+  found full by the bracketed read, with the hint and without it, and a
+  class 120 days out is found by the hint and books as asked without
+  one; a ticket approval named to Clear is refused 404 with nothing
+  spent and the scene stays up on the display's stream; and a sign-up
+  the teacher CORRECTED to somebody Mindbody knows is refused with that
+  match, the accept without the form cannot find it, and the accept
+  carrying the corrected form is taken and creates nobody.
+- **Stale driver, `stale.mjs`, 23 assertions, 0 failed**, against a REAL
+  Postgres (and, since the review, with `POS_CUSTOMER_CONFIRMS_SALE=true`):
+  a sign-up whose memory copy has run out while the row has
+  not is listed by the tray, OPENED by the by-id route (one predicate),
+  and cleared by one tap -- `cleared: true`, the row marked consumed,
+  the tray empty and still empty a poll later, the detail route 404, a
+  create naming it refused and nobody created anywhere in it; and a
+  second row in the same state CREATES rather than saying it is no
+  longer waiting, with the waiver filed. **Run against the pre-T208
+  build it fails 9 of 18, in Pete's own words**: Clear answers
+  `{cleared: false}`, the row comes back on the next poll, and the
+  create says "That sign-up is no longer waiting. Ask them to sign up
+  again on the customer screen, or create them here." That is the
+  reproduction this item asked for. Since the review it also approves a
+  ticket on the display, charges it, and charges the SAME approval
+  again IN THE SAME PROCESS: 409, in the words for it ("That approval
+  has already been used on a sale"), with `/api/display/approval`
+  reading `completed` and `consumed: true` rather than losing it.
+- **Playwright, `ui.mjs` automatic, 141 assertions, 0 failed**, both
+  palettes: T207's whole pass still holds (created, booked, checked in,
+  one call of each; the full class; no class; the ended class; nobody
+  signed in; two tabs, one create; a booking answer with no visit id),
+  and on top of it: the tray shows a spinner and "Creating and checking
+  in..." while a deliberately slow create is in flight, at 16px or more
+  and in both palettes, with the badge still counting, and it goes when
+  the outcome line arrives; a class five and a half hours AHEAD is now
+  booked AND signed in with no tray row left behind; a class the server
+  finds full lands on the waiting list although the tap asked for a
+  booking, with nobody signed in; a duplicate with no match opens the
+  decision (two 64px buttons, accepting disabled) and Create anyway
+  opens the prefilled form with the line about the name and email; a
+  duplicate Mindbody CAN name reads "May already have an account: Sam
+  Fisher", shows their email and phone, and "Use their existing
+  account" creates nobody, files the waiver on the existing client,
+  books them, signs them in and says "(existing account)"; a tray row
+  the server knows nothing about is spent with a DELETE and does not
+  come back; and the waiting list draws at the bottom of the roster,
+  headed with its count, below every class row, at 64px, in both
+  palettes. **After the review**: with the BOOKING slowed instead of
+  the create, the tray still shows the name and its spinner after the
+  create has landed and the server has stopped listing the sign-up, the
+  badge still counts them, and the spinner goes only when the outcome
+  line arrives; and in AUTOMATIC mode "Create a new client anyway",
+  with the email changed, creates, books and checks the person in.
+- **Playwright, `ui.mjs` review, 18 assertions, 0 failed**: nothing runs
+  without a tap, the heading reads "Waiting for your review", the form
+  is titled "Review sign-up" with its line and a 64px "Create and check
+  in", and the tap creates, books and checks in with the same outcome
+  line.
+- **Regressions, all 0 failed**: T200's copy in `t204/t200-regress.mjs`
+  52, T114 27, T115 43, T203 7 off and 45 on, T204 65, T205 36 on and 4
+  off, T206 19 and 26 on its birth-date knob with 43 and 46 on its
+  Playwright pass (run with `POS_SIGNUP_MODE=review`, as T207 recorded).
+  T207's own five route and outage drivers pass unchanged: 13, 13, 6, 17
+  and 13. Every one of these was re-run after the review fixes, and the
+  T203 pair matters most there: `/api/checkout`'s approval branch was
+  reordered.
+- **Eight of T207's Playwright assertions are SUPERSEDED, not broken**,
+  and its UI driver is the one thing that does not pass on this build:
+  the "ahead" class is now booked AND checked in with no tray row
+  (four), the duplicate's tray wording changed and its tap opens the
+  decision rather than the form (three, and the driver then times out
+  waiting for that form), and in review mode Create no longer "books
+  nobody" (one). Each is a change this ticket made deliberately, and
+  `t208/ui.mjs` -- which is that driver with those cases rewritten --
+  carries the new behaviour.
+
+### Could not verify
+
+- **Nothing here ran against the studio's Mindbody, a real class or a
+  real student.** Every booking, check-in, duplicate refusal and
+  capacity count above is the mock's.
+- **Mindbody's real duplicate wording is still a guess**
+  (`isDuplicateClientError` matches on "duplicate", "already exist",
+  "already has", "already in use"), and now a little more rides on it:
+  a refusal this does not recognise gets its own sentence in the tray
+  rather than the decision modal. The call log holds the exact message
+  the first time it happens live.
+- **`findExistingClient` is a searchText match, not Mindbody's own
+  duplicate check.** Mindbody refuses on first name, last name and email
+  together; this looks the email up and falls back to the whole name,
+  and answers null rather than guessing when the search returns several
+  people it cannot tell apart. A teacher then sees "Mindbody says they
+  already have an account" and searches by hand, which is what T204's
+  behaviour was for every duplicate.
+- **The capacity read has never been made against site 471.** The
+  parameter spelling (`ClassIds`) is the one the waitlist read already
+  uses live, and the mock answers it, but whether the studio's classes
+  report `MaxCapacity` and `TotalBooked` on a by-id read has not been
+  watched. A read that cannot answer books as asked, so the failure
+  mode is today's behaviour, not a refused booking.
+- **The stale row was reproduced by a mechanism, not by Pete's exact
+  history.** What it recreates is the state (memory and table
+  disagreeing about one request) rather than the sequence of builds that
+  put his counter into it; the fix is about the disagreement, and the
+  old build fails the driver in his own words.
+- **`state.spent` is per process and bounded at 500 ids.** A second
+  server instance would not share it, which is the same caveat
+  `beginFinalisation` has carried since T202; the table's own
+  `consumed_at` is the record behind it.
+- Nothing was driven on a real iPad, so the spinner has not been read by
+  anyone with a queue in front of them.
+- **The capacity read's window is bracketed against a MOCK that
+  enforces one.** That Mindbody ends its own window at today is the
+  spec's documented default rather than something watched live here,
+  and the ninety-day fallback bracket is a judgement: a class further
+  out than that, booked with no `classStartsAt` in the body, is not
+  capacity-checked at all and books as asked.
+- **"Already used on a sale" is now reachable, but only where the
+  request still exists.** With no database and the scene long gone,
+  nothing holds a copy of a spent approval and the refusal is still the
+  generic sentence; that is the case T203 recorded from the start.
+- The staff session is faked in the harness (T200's idiom), so T49/T50
+  attribution is exercised as shape.

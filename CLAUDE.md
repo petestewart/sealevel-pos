@@ -294,7 +294,7 @@ answer could be the LOOSER one (a stored `review` flipping to
 asked for), and it falls to the environment only when this process has
 never had an answer.
 
-## Customer display (T200, T201, T202, T203, T204, T205, T207; Phase 2.5)
+## Customer display (T200 to T205, T207, T208; Phase 2.5)
 
 A second iPad on the counter, facing the student, at `/display`. Design:
 `docs/design/customer-display.md`. Built: the plumbing (idle screen,
@@ -303,7 +303,11 @@ present/cancel/complete/refuse), the ticket scene (T201), the waiver
 scene (T202), the ticket approval (T203), the self-serve sign-up (T204)
 and the contract signature (T205). Every item of the phase is built; what
 is left is live verification. T207 made the sign-up automatic by
-default.
+default, and T208 is Pete's second drive on real hardware (the tray's
+in-progress spinner, a class hours ahead now checked in, a stale row
+that clears, the duplicate decision, review mode's own words, and, off
+the display, a server-side capacity check and the waiting list at the
+bottom of the roster).
 
 **The display adds zero write paths to Mindbody, and must keep adding
 none.** Nothing in `src/lib/display.ts` or under `src/app/api/display/`
@@ -390,6 +394,27 @@ typed email and phone reach a browser (a signed-in teacher's, behind the
 device session), and it never carries the PNG; everything is deleted on
 consume or at four hours. The same person appears above walk-in search's
 results as "signed up on the customer screen, not created yet".
+**A duplicate is a DECISION, not a dead end** (T208, Pete: "if we think
+they already exist, the teacher should have a UI that very obviously
+states that instead of going to 'New client'"). Mindbody's refusal
+makes `/api/client-create` look the person up with ONE search
+(`findExistingClient`, `searchText` on the typed email, else the whole
+name) and answer 409 `{duplicate: true, match}`; the tray row reads
+"May already have an account: <name>", and tapping it opens the
+decision, the two people side by side, with two 64px ways out. "Use
+their existing account" posts `useExistingClientId` and **creates
+nobody**: the route verifies the id against a match it computes ITSELF
+from the form the refused create carried (the teacher's corrections in
+review mode, the stored form in automatic, and the signature and
+consent always the student's own), runs only the waiver finalisation
+for that client and spends the sign-up, and the browser carries on into
+the same booking and check-in. The body's form is evidence the server
+re-reads, never a client id to trust: a forged one buys nothing a
+signed-in teacher cannot already do through `/api/waiver-agree`. "Create a new client anyway" is the same
+prefilled form with a line saying an identical name and email will be
+refused again. It is no longer true that a duplicate simply leaves the
+sign-up in the tray with nothing to do about it.
+
 **The only writes are `/api/client-create` and the waiver finalisation**,
 both under the teacher's own token: Create takes the request id as a
 handle, takes the FORM from the teacher's corrected body and the consent
@@ -428,9 +453,23 @@ today" (`classWhen` in page.tsx, on Mindbody's `EndDateTime`, which
 `ClassSummary` now carries). `defaultClassId` leaves the FINISHED 6:30
 on screen at 8pm, and attendance at a class that is over must never be
 invented: an ended class, a class on another day and no class at all
-each create the client and book nothing, and a class further ahead than
-the roster window reaches is booked WITHOUT a check-in. Only the class
-at the door is booked and checked in.
+each create the client and book nothing. **Every other class is booked
+AND checked in, however far ahead it starts** (T208, Pete: "it did not
+sign them in but did sign them up. is this because the class starts
+several hours from now?"): T207's fourth answer, "ahead", which booked
+a class past the roster window and deliberately skipped the check-in,
+is gone, because the class on screen is the teacher's own choice and
+Pete's instruction for this path was "created and automatically signed
+in to class".
+
+**While it runs, the tray row says so** (T208): a spinner and "Creating
+and checking in..." (or "Creating and booking..." for a full class)
+from the moment a sign-up lands until the run resolves, with the gold
+count unchanged. A name with nothing under it for two seconds reads
+exactly like a name that is stuck. The row OUTLIVES the server's list
+on purpose: the create spends the handle half way through, so the tray
+draws the in-flight name from the browser's own `signupBusy` until the
+booking and the check-in have answered.
 
 The teacher hears one line, for about ten seconds, only when the run
 finished the job ("Sam Vega created, checked in to 6:20 Bikram Yoga",
@@ -439,7 +478,26 @@ a person who now exists in Mindbody and is in no class is exactly what
 the tray is for: a duplicate, a field the site demanded, a refused
 create, a refused or suppressed booking, a suppressed check-in, an
 ended class, no class. A row whose CLIENT already exists taps through
-to their profile and never to Create again. The run is attempted ONCE
+to their profile and never to Create again. **A row the SERVER no
+longer has is spent, not stranded** (T208): a create answered "no
+longer waiting", or a detail read answered 404, makes the runner call
+the tray's own DELETE, because a row a teacher can see and cannot clear
+is the bug Pete met on his second drive. That DELETE spends a handle
+nothing can account for, and **only a SIGN-UP**: an id that resolves to
+a waiver, a ticket approval or a contract is refused with a 404 and
+nothing spent, because taking one of those off the screen from under a
+student is not what Clear is for.
+
+**In review mode the tap is the only difference** (T208). The tray
+heading reads "Waiting for your review", the form is titled "Review
+sign-up" with a line under it and a button that names what the tap will
+do ("Create and check in", "Create and add to waiting list", or plain
+"Create" when there is no class on screen), and after the create the
+SAME booking and check-in run, with the same outcome line and the same
+tray rows for the exceptions. **Every door into a create that carries a
+sign-up handle ends there**, in EITHER mode: the review tap, "Create a
+new client anyway", a search hit's own Create. A create that finishes a
+sign-up and leaves the person in no class is the bug, not the design. The run is attempted ONCE
 per request id per browser, so a refusal is not re-asked of Mindbody
 every poll, and two iPads racing are settled on the server by the
 create's own `beginFinalisation` claim: the loser gets 409 and drops it
@@ -680,6 +738,27 @@ while `git clone` works, so clone the repo rather than fetching files.
   studio wall-clock strings, and shows the rehearsal's own Total: no
   proration is ever computed here. Starting today sends none of the
   three.
+- **Mindbody does not enforce class capacity; the caller must.**
+  `addclienttoclass`'s own description says so (class.yml:1077: "To
+  prevent overbooking a class ... it is necessary to first check the
+  capacity level of the class ('MaxCapacity' and 'TotalBooked') and the
+  'IsAvailable' parameter by running the GetClasses REQUEST"), and
+  Pete's second drive checked three people into a class of two because
+  the only count in the way was the browser's, read whenever the roster
+  last loaded. So since T208 `/api/book` reads THAT ONE CLASS fresh
+  (`classIsFull` in `src/lib/roster.ts`, `GET /class/classes?ClassIds=`,
+  one metered read on the service account) before any plain booking, and
+  a full count sends the booking to the WAITING LIST instead, answering
+  `waitlisted: true` with a sentence the screen shows. A promotion
+  (`waitlistEntryId`) and a caller who ASKED for the waiting list are
+  exempt, and a read that cannot answer books exactly as asked: the
+  count decides, and `IsAvailable: false` beside a count with room is
+  Mindbody's refusal to give in words, not ours to guess at.
+  **The read must carry a date window**, because `/class/classes` ends
+  its own at TODAY: an unbracketed by-id read of tomorrow's class comes
+  back empty and checks nothing. The booking body carries the class's
+  own `classStartsAt` for that (it picks the DAY and decides nothing
+  else), and with none the read brackets today plus ninety days.
 - **The checkout answer carries no ClientService.** After selling a
   pass, the purchase instance (the id `updateclientvisit` and
   `addclienttoclass` take) comes from re-reading `/client/clientservices`

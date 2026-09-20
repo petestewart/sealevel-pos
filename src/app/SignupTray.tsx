@@ -81,6 +81,27 @@ export default function SignupTray(props: {
   onRows?: (rows: PendingSignupRow[]) => void;
   /** T207: why a name is still here, by request id. */
   reasons?: Record<string, string>;
+  /**
+   * T208: what the automatic run is doing with a name RIGHT NOW, by
+   * request id: the words to show under it and the name itself. Pete,
+   * second drive: "auto sign up does work, but there is a brief wait
+   * between when the banner shows up and when they are signed in to
+   * class. there should be a waiting spinner so the teacher knows it
+   * didn't fail." A name with nothing under it for two seconds reads
+   * exactly like a name that is stuck, and the badge keeps its count
+   * throughout.
+   *
+   * The NAME rides along because the row has to outlive the server's
+   * list (T208 review): the create spends the handle half way through
+   * the run, and the `signups` event that follows drops the row while
+   * the booking and the check-in are still going. A spinner that ends
+   * before the run does is the thing this was built to prevent, so a
+   * busy id the list no longer carries is still drawn, from here.
+   */
+  busy?: Record<string, { label: string; name: string }>;
+  /** T208: which mode the counter is in, for the heading only. Nothing
+   *  here decides what runs; the page does that. */
+  mode?: "automatic" | "review";
   /** T207: rows the server no longer lists because the client WAS
    *  created, and the booking after it was not. */
   stuck?: StuckSignupRow[];
@@ -94,6 +115,8 @@ export default function SignupTray(props: {
     onPick,
     onRows,
     reasons,
+    busy,
+    mode,
     stuck,
     onStuckPick,
     onStuckClear,
@@ -218,7 +241,12 @@ export default function SignupTray(props: {
 
   const stuckRows = stuck ?? [];
   const lines = outcomes ?? [];
-  const waiting = rows.length + stuckRows.length;
+  /* T208 review: the ones still running that the server has stopped
+   * listing. They keep their place in the tray until the run resolves. */
+  const held = Object.entries(busy ?? {})
+    .filter(([id]) => !rows.some((r) => r.requestId === id))
+    .map(([id, what]) => ({ requestId: id, ...what }));
+  const waiting = rows.length + held.length + stuckRows.length;
   /* T207: the tray is also where a finished sign-up says so, so it
    * renders for an outcome line with nobody waiting. */
   if (waiting === 0 && lines.length === 0) return null;
@@ -251,9 +279,15 @@ export default function SignupTray(props: {
       {open && waiting > 0 ? (
         <div className="signup-list" role="group" aria-label="Signed up on the customer screen">
           <p className="signup-list-head">
-            {rows.length > 0
-              ? "Signed up on the customer screen, not created yet."
-              : "Signed up on the customer screen."}
+            {/* T208: review mode says what the tap is FOR. Pete, second
+                drive: "i see nothing that says 'review'." In automatic
+                the only names here are the ones a person is needed for,
+                which is what the other sentence says. */}
+            {mode === "review"
+              ? "Waiting for your review"
+              : rows.length > 0
+                ? "Signed up on the customer screen, not created yet."
+                : "Signed up on the customer screen."}
           </p>
           <ul className="signup-rows">
             {rows.map((row) => (
@@ -270,10 +304,19 @@ export default function SignupTray(props: {
                     {`${row.firstName} ${row.lastName}`.trim() || "(unnamed)"}
                   </span>
                   <span className="signup-when">{ago(row.completedAt)}</span>
-                  {/* T207: why this one is still here. The tap is
-                      unchanged: it opens the same prefilled form, so a
-                      teacher can fix a name and create by hand. */}
-                  {reasons?.[row.requestId] ? (
+                  {/* T208: in progress, before there is anything to
+                      say about it. The spinner is the one thing on this
+                      row that means "wait", so it outranks a reason
+                      left over from an earlier attempt. */}
+                  {busy?.[row.requestId] ? (
+                    <span className="signup-working">
+                      <span className="spinner" aria-label="working" />
+                      {busy[row.requestId]?.label}
+                    </span>
+                  ) : reasons?.[row.requestId] ? (
+                    /* T207: why this one is still here. The tap is
+                       unchanged: it opens the same prefilled form, so a
+                       teacher can fix a name and create by hand. */
                     <span className="signup-why">{reasons[row.requestId]}</span>
                   ) : null}
                 </button>
@@ -294,6 +337,23 @@ export default function SignupTray(props: {
                 >
                   {confirming === row.requestId ? "Sure?" : "Clear"}
                 </button>
+              </li>
+            ))}
+            {/* T208 review: still running, and no longer on the
+                server's list, because the create has already spent the
+                handle. No Clear on these: there is a write in flight,
+                and the outcome (a line, or a row) is seconds away. */}
+            {held.map((row) => (
+              <li key={row.requestId} className="signup-row">
+                <span className="signup-name signup-name-held">
+                  <span className="signup-name-text">
+                    {row.name || "(unnamed)"}
+                  </span>
+                  <span className="signup-working">
+                    <span className="spinner" aria-label="working" />
+                    {row.label}
+                  </span>
+                </span>
               </li>
             ))}
             {/* T207: created, and the class booking after it was not.

@@ -253,6 +253,14 @@ interface HubState {
    *  waiting for a teacher; the table is read beside it when there is
    *  one, and this is all there is without one. */
   signups: Map<string, DisplayRequest>;
+  /** T208: request ids this PROCESS has spent (consumed or cleared),
+   *  kept after the object itself has gone from `current` and
+   *  `signups`. Spending is memory-first on purpose (T202 review), so a
+   *  table write that missed must not make a handle spendable again,
+   *  and a cleared row must not come back on the next poll. Bounded:
+   *  the oldest id goes when it is full, and the row it named is
+   *  already marked in the table by then. */
+  spent: Set<string>;
   /** T204: when the student last touched the sign-up on the screen, and
    *  the timer that ends it when they stop. */
   lastTouch: number;
@@ -278,6 +286,7 @@ const state: HubState = (G.__posDisplay ??= {
   expiryTimer: null,
   finalising: new Set<string>(),
   signups: new Map<string, DisplayRequest>(),
+  spent: new Set<string>(),
   lastTouch: 0,
   abandonTimer: null,
 });
@@ -288,6 +297,22 @@ const state: HubState = (G.__posDisplay ??= {
  * here, rather than guarded at every read. */
 state.streamOpen ??= 0;
 state.lastClosedAt ??= null;
+state.spent ??= new Set<string>();
+
+/** How many spent ids are remembered. A sign-up lives four hours and a
+ *  counter takes a few dozen a day, so this covers a day of them; past
+ *  it the table's own `consumed_at` is the record. */
+const MAX_SPENT_IDS = 500;
+
+/** T208: this id is spent in this process, whatever any store says. */
+function markSpent(requestId: string): void {
+  state.spent.add(requestId);
+  while (state.spent.size > MAX_SPENT_IDS) {
+    const oldest = state.spent.values().next();
+    if (oldest.done) break;
+    state.spent.delete(oldest.value);
+  }
+}
 
 /* --- Validation ------------------------------------------------------ */
 
@@ -1119,8 +1144,14 @@ export async function consumeRequest(
    * restarted and hold nothing at all. The row is the reason this table
    * exists, so a completed result is looked up there when memory has
    * lost it; with no database, memory is all there is and the answer is
-   * the same on one instance. */
-  const c = state.current?.id === requestId ? state.current : await loadRequest(requestId);
+   * the same on one instance.
+   *
+   * T208: through `loadRequest`, which is now the ONE resolver. It used
+   * to prefer `state.current` outright, so a stale scene left over from
+   * an earlier build (the hub survives a recompile on globalThis) made
+   * this answer null for a request the tray was listing from the table:
+   * the row could not be created and could not be cleared. */
+  const c = await loadRequest(requestId, now);
   if (c === null) return null;
   if (c.status !== "completed" || c.consumedAt !== null) return null;
   if (now >= c.expiresAt) return null;
@@ -1130,6 +1161,7 @@ export async function consumeRequest(
    * in this process. The row is marked best effort behind it; a miss is
    * logged, and the residual is one restart inside the 30 minutes. */
   c.consumedAt = now;
+  markSpent(c.id);
   if (dbConfigured()) {
     const spent = await boundedDb(
       consumeDisplayRequest(requestId),
@@ -1155,22 +1187,72 @@ export async function consumeRequest(
   return c;
 }
 
-/** One request by id, from memory or from the table (T202). Never
- *  throws; null is "there is nothing here to finalise". */
-export async function loadRequest(
-  requestId: string,
-): Promise<DisplayRequest | null> {
-  await ensureDisplayLoaded();
+/** Whichever memory holds this request: the scene on the screen, or the
+ *  tray's own map. Both can hold it, and after T204 they hold the same
+ *  object; after a restart or a recompile they can hold different ones. */
+function memoryRequest(requestId: string): DisplayRequest | null {
   if (state.current !== null && state.current.id === requestId) {
     return state.current;
   }
-  if (!dbConfigured()) return null;
-  const row = await boundedDb(
-    findDisplayRequestById(requestId),
-    TABLE_WAIT_MS,
-    null,
-  );
-  return row === null ? null : fromRow(row);
+  return state.signups.get(requestId) ?? null;
+}
+
+/** Still spendable: nobody has consumed it and its clock has not run
+ *  out. Status is the caller's business; this is about the handle. */
+function usable(r: DisplayRequest, now: number): boolean {
+  return r.consumedAt === null && now < r.expiresAt;
+}
+
+/**
+ * One request by id, from wherever it is freshest (T202, rewritten in
+ * T208). Never throws; null is "there is no such request here".
+ *
+ * Three stores can hold a request -- the scene on the screen, the
+ * tray's map and the `display_requests` row -- and Pete's second drive
+ * found them disagreeing: the tray listed a sign-up from the table that
+ * `/api/client-create` refused as "no longer waiting" and that Clear
+ * answered `cleared: false` for, because this read `state.current`
+ * first and that object was stale. So the rule is now one rule, and
+ * `pendingSignups`, `signupById`, `consumeRequest`, `/api/checkout`'s
+ * approval and `/api/display/approval` all come through here:
+ *
+ * - **A handle this process SPENT is spent**, whatever the table says.
+ *   It is consumed in memory first on purpose (T202 review), so a table
+ *   write that missed must not hand it back. `state.spent` is the
+ *   record of that, and the answer is the CONSUMED copy rather than
+ *   null (T208 review), so a caller that has a sentence for "already
+ *   used" says it, in this process and after a restart alike.
+ * - Otherwise a memory copy that is still USABLE answers at once: it is
+ *   the scene on the screen or the tray's own map, and a round trip to
+ *   the table would put a database on the checkout path.
+ * - Otherwise **the TABLE decides when it answers** (T208 review).
+ *   Memory holding a stale or a consumed-looking copy is exactly the
+ *   disagreement this rewrite exists for: a hub object left on
+ *   globalThis by an earlier build, or a row re-seeded into memory and
+ *   since moved on. Memory is the fallback only when there is no
+ *   database or it did not answer.
+ * - With nothing found anywhere, null.
+ */
+export async function loadRequest(
+  requestId: string,
+  now = Date.now(),
+): Promise<DisplayRequest | null> {
+  await ensureDisplayLoaded();
+  const mem = memoryRequest(requestId);
+  const spent = state.spent.has(requestId);
+  if (!spent && mem !== null && usable(mem, now)) return mem;
+  const row = dbConfigured()
+    ? await boundedDb(findDisplayRequestById(requestId), TABLE_WAIT_MS, null)
+    : null;
+  const stored = row === null ? null : fromRow(row);
+  const found = stored ?? mem;
+  if (found === null) return null;
+  if (spent && found.consumedAt === null) {
+    /* Spent here, and the store answering has not caught up. Say
+     * CONSUMED, on a copy, so nothing in memory is mutated by a read. */
+    return { ...found, consumedAt: now };
+  }
+  return found;
 }
 
 /**
@@ -1232,11 +1314,17 @@ function asPendingSignup(request: DisplayRequest): PendingSignup {
   };
 }
 
+/**
+ * THE predicate for "a sign-up a teacher may act on" (T208). The tray's
+ * list, the by-id lookup and the create all ask it, so the tray can
+ * never show a row the routes behind it will refuse.
+ */
 function liveSignup(r: DisplayRequest, now: number): boolean {
   return (
     isSelfServeSignup(r) &&
     r.status === "completed" &&
     r.consumedAt === null &&
+    !state.spent.has(r.id) &&
     now < r.expiresAt
   );
 }
@@ -1306,10 +1394,64 @@ export async function signupById(
   requestId: string,
   now = Date.now(),
 ): Promise<DisplayRequest | null> {
-  await ensureDisplayLoaded();
-  const held = state.signups.get(requestId) ?? (await loadRequest(requestId));
+  /* T208: `loadRequest` is the one resolver and `liveSignup` the one
+   * predicate, so this answers for exactly the rows `pendingSignups`
+   * lists. It used to read `state.signups` first and fall back to a
+   * `loadRequest` that preferred `state.current`, which is how a listed
+   * row could answer null here. */
+  const held = await loadRequest(requestId, now);
   if (held === null || !liveSignup(held, now)) return null;
   return held;
+}
+
+/**
+ * The tray's "Clear" (T204, rewritten in T208). Spends the handle
+ * UNCONDITIONALLY: the row leaves memory, the id is remembered as
+ * spent, and the table row is marked consumed by id even when nothing
+ * here could be resolved to a live request.
+ *
+ * Pete's second drive: "i can't clear the failed one from the previous
+ * build." Clear used to consume only what the by-id lookup returned, so
+ * a row the list showed and the lookup did not resolve answered
+ * `cleared: false` and came back on the next poll, forever. A teacher
+ * tapping Clear is telling us nobody is coming; the only honest answer
+ * is that it is gone.
+ *
+ * Nothing here reaches Mindbody: no client is created and no waiver is
+ * filed. `marked` says whether the row was marked in the table, for the
+ * log.
+ */
+export async function clearSignup(
+  requestId: string,
+  now = Date.now(),
+): Promise<{ cleared: boolean; marked: boolean; wrongKind: boolean }> {
+  await ensureDisplayLoaded();
+  /* T208 review: unconditional is about a row nothing can RESOLVE, not
+   * about any id at all. A waiver, a ticket approval or a contract
+   * signature is a different scene with a different route to finish it,
+   * and spending one here would take it off the screen from under the
+   * student. So a request that resolves to something other than a
+   * self-serve sign-up is refused with nothing spent; only an id no
+   * store can account for is spent on the teacher's word. */
+  const held = await loadRequest(requestId, now);
+  if (held !== null && !isSelfServeSignup(held)) {
+    return { cleared: false, marked: false, wrongKind: true };
+  }
+  markSpent(requestId);
+  const mem = memoryRequest(requestId);
+  if (mem !== null && mem.consumedAt === null) mem.consumedAt = now;
+  state.signups.delete(requestId);
+  if (state.current !== null && state.current.id === requestId) {
+    state.current = null;
+    clearExpiryTimer();
+    clearAbandonTimer();
+    emit("display", "idle", {});
+  }
+  const marked = dbConfigured()
+    ? await boundedDb(consumeDisplayRequest(requestId), TABLE_WAIT_MS, false)
+    : false;
+  emitSignups(now);
+  return { cleared: true, marked, wrongKind: false };
 }
 
 /**
