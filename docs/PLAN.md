@@ -180,7 +180,7 @@ pack in the same gesture.
 ## Phase 2.5 — the customer-facing iPad
 
 **Every item below is built, on `feature/customer-display`.** What
-remains for this phase is probe D-B2 (D-B1 and D-B3 ran on 2026-09-20) and live verification at the counter: no item here
+remains for this phase is live verification at the counter (all three probes ran on 2026-09-20) and live verification at the counter: no item here
 has been driven against real Mindbody, a real iPad or a real student.
 
 Design: `docs/design/customer-display.md`. A second iPad on the counter,
@@ -201,7 +201,7 @@ Probes owed, both sandbox, `Test: true` where the endpoint takes it:
 | # | Probe | Answers |
 |---|---|---|
 | D-B1 | `POST /client/uploadclientdocument` with a small PNG | **Run 2026-09-20 (Pete, sandbox client 100015484): ACCEPTED, `{FileSize: 72, FileName}`.** `MediaType` is a MIME type: `png`, `.png`, `PNG` and `Png` are each refused "Media type <x> is invalid" and `image/png` passes, whatever client.yml:7427 lists. The upload now sends `image/png`. Still to look at: whether the file shows on that client's Documents page in the sandbox's Mindbody. |
-| D-B2 | `POST /sale/purchasecontract` `Test: true` with `ClientSignature` set | That the field is accepted and does not change the rehearsed Total. **Gate: no live contract sale with a signature until this has run.** Run 2026-09-20: the sandbox's contracts list (10 contracts, first id 354) but **none of its first 50 clients has a stored card**, and a rehearsal needs a payment. The probe now falls back to `UseAccountCredit` and then a sandbox test card in `CreditCardInfo`, still `Test: true`; re-run it. |
+| D-B2 | `POST /sale/purchasecontract` `Test: true` with `ClientSignature` set | **Run 2026-09-20 (Pete, sandbox client 100015484, contract 347 "Corporate Monthly Membership", paid by account credit): ACCEPTED, and the Total did not move** (70.00 without the field, 70.00 with it; the answer carries no signature field of its own). The gate is cleared: the rehearsal stays signature-free and the live purchase carries it. Along the way: `GET /sale/contracts` REQUIRES `request.locationId` and lists per location, and a contract can be listed for a location and still refuse to sell there (354 and 356 at location 1: "cannot be purchased at location 1"), so a listed contract is not a sellable one until the rehearsal says so. Not seen: the `clientContractSignature-...` document Mindbody says it files on a REAL purchase. |
 | D-B3 | `POST /client/addclient` in the sandbox with the three `Send*Texts` flags, then read the client back | **Run 2026-09-20 (Pete, sandbox, probe client 100015635): addclient DROPS the text opt-in.** All six flags sent `true`; the create's own answer and the read-back both say the three email flags `true` and the three text flags `false`. So the T204 Notes fallback is the real path, not a stopgap, and the "Text me" box records an intention a human sets in Mindbody. The sandbox also requires `BirthDate` on a create, which the studio's site does not; the per-site required-fields read (T59b) already covers that. |
 
 D1 to D5 are all answered (2026-09-19) and folded into the design doc.

@@ -661,6 +661,13 @@ while `git clone` works, so clone the repo rather than fetching files.
   And **`addclient` drops the three `Send*Texts` flags** (probe D-B3, same
   day): sent `true`, they come back `false` on the create's answer and on
   the read-back, while the three email flags stick.
+- **`GET /sale/contracts` requires `request.locationId` and answers per
+  location, and a contract it lists for a location can still refuse to
+  sell there** (sandbox, 2026-09-20: 354 and 356 listed at location 1,
+  then "Contract 354 cannot be purchased at location 1" on the
+  rehearsal). The `Test: true` rehearsal is the only thing that says a
+  contract is sellable, which is one more reason the counter shows the
+  rehearsal's own answer and never the list's.
 - **Categories live in `site.yml`, not `sale.yml`.** `GET /site/categories`
   exists; grepping only the Sale tag missed it once. `/site/liabilitywaiver`
   (the waiver's actual text) and `/site/paymenttypes` are next to it.
@@ -795,17 +802,15 @@ while `git clone` works, so clone the repo rather than fetching files.
   "Text me" box still records the student's intention, and the T62-signed
   Notes line `/api/client-create` files on that evidence is the real
   path, for a human to set in Mindbody by hand, never a silent loss.
-- **`ClientSignature` is unverified live (T205).** The contract
-  signature ships to the vendored spec's description and has never
-  reached Mindbody: whether the field is accepted, and whether it leaves
-  the rehearsed Total alone, is exactly what D-B2 asks
-  (`scripts/probe-contract-signature.ts`, written, not run). If the
-  Total MOVES, the rehearsal must carry the signature too, because the
-  figure on the counter's button is the rehearsal's. The document
-  Mindbody is documented to file under the client
-  (`clientContractSignature-...`) has likewise never been seen; our own
-  `contract_receipts` row is the record that does not depend on it.
-
+- **`ClientSignature` is accepted and does not move the Total (T205,
+  probe D-B2, Pete, sandbox, 2026-09-20).** A `Test: true` rehearsal of
+  contract 347 for client 100015484 priced 70.00 without the field and
+  70.00 with a real PNG in it, and the answer carries no field about the
+  signature. So the rehearsal stays signature-free and the live purchase
+  carries it, as built. Not yet seen: the `clientContractSignature-...`
+  document Mindbody says it files under the client on a REAL purchase;
+  our own `contract_receipts` row is the record that does not depend on
+  it.
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It

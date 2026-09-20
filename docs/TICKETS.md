@@ -17851,6 +17851,22 @@ that really went away says "Customer screen disconnected".
 - **D-B2 is a gate, not a note**: no live contract sale with a signature
   until the probe has run against the sandbox and both Totals agree.
 
+### D-B2 ran, 2026-09-20
+
+Pete, sandbox, client 100015484, contract 347 ("Corporate Monthly
+Membership"), paid by `UseAccountCredit` because no sandbox client has
+a stored card. Two `Test: true` rehearsals, without and with a real PNG
+in `ClientSignature`: **both accepted, Total 70.00 both times**, tax 0,
+and the answer carries no field about the signature. So the field is
+accepted and leaves the money alone, and this ticket ships as built:
+the rehearsal carries no signature and the live purchase does. Three
+things the run cost to learn, now in CLAUDE.md: `GET /sale/contracts`
+requires `request.locationId`; the studio's `LocationId: 1` is a
+constant for site 471 and nothing else; and a contract the list
+returns for a location can still be refused there (354 and 356), so
+only the rehearsal says a contract is sellable. Still unseen: the
+`clientContractSignature-...` document on a REAL purchase.
+
 ### Could not verify
 
 - **D-B2 has not run.** No Mindbody credentials in this environment, so
