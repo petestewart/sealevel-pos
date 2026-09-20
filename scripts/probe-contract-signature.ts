@@ -144,21 +144,41 @@ async function main(): Promise<void> {
   let clientId = process.argv[2]?.trim() ?? "";
   let contractId = Number(process.argv[3]);
 
-  if (!Number.isInteger(contractId)) {
-    console.log("\n=== GET /sale/contracts (finding a sandbox contract)");
-    const contracts = await contractsFor();
-    for (const c of contracts) {
-      console.log(
-        `    ${c.id}  ${c.name}  first payment ${c.firstPaymentTotal ?? "?"}` +
-          `  recurring ${c.recurringPaymentTotal ?? "?"}  autopay ${c.autopayEnabled}`,
-      );
-    }
-    contractId = contracts[0]?.id ?? NaN;
-    if (!Number.isInteger(contractId)) {
-      console.log("    No contracts on this site; pass a contract id instead.");
-      process.exit(1);
-    }
-    console.log(`    Using contract ${contractId}.`);
+  /* Pete's run of 2026-09-20: "Contract 354 cannot be purchased at
+   * location 1". A contract carries LocationPurchaseRestrictionIds
+   * (sale.yml:5540, null means anywhere), and the studio's LocationId 1
+   * is a constant for site 471, not for the sandbox. So the probe reads
+   * the raw contracts and the site's locations, and tries each contract
+   * at a location it allows until one prices. */
+  console.log("\n=== GET /site/locations");
+  const locs = await mindbody("/site/locations");
+  const locationIds: number[] = (locs?.Locations ?? [])
+    .map((l: any) => Number(l?.Id))
+    .filter((n: number) => Number.isInteger(n));
+  for (const l of locs?.Locations ?? []) console.log(`    ${l?.Id}  ${l?.Name ?? ""}`);
+  if (locationIds.length === 0) locationIds.push(STUDIO_LOCATION_ID);
+
+  console.log("\n=== GET /sale/contracts");
+  const rawContracts = await mindbody("/sale/contracts");
+  type Candidate = { id: number; name: string; locations: number[] };
+  const candidates: Candidate[] = (rawContracts?.Contracts ?? [])
+    .map((c: any) => ({
+      id: Number(c?.Id),
+      name: String(c?.Name ?? ""),
+      locations: Array.isArray(c?.LocationPurchaseRestrictionIds)
+        ? c.LocationPurchaseRestrictionIds.map(Number).filter(Number.isInteger)
+        : locationIds,
+    }))
+    .filter((c: Candidate) => Number.isInteger(c.id));
+  for (const c of candidates) {
+    console.log(`    ${c.id}  ${c.name}  sold at ${c.locations.join(", ") || "(none)"}`);
+  }
+  const tryContracts: Candidate[] = Number.isInteger(contractId)
+    ? candidates.filter((c) => c.id === contractId)
+    : candidates;
+  if (tryContracts.length === 0) {
+    console.log("    No contract to try; pass a contract id this site lists.");
+    process.exit(1);
   }
 
   /* Payment for the rehearsal, in order of preference: the client's
@@ -231,32 +251,37 @@ async function main(): Promise<void> {
   const png = tinyPng();
   let without: any = null;
   let with_: any = null;
-  for (const fb of fallbacks) {
-    const base = {
-      ContractId: contractId,
-      ClientId: clientId,
-      Test: true,
-      LocationId: STUDIO_LOCATION_ID,
-      FirstPaymentOccurs: "Instant",
-      ...fb.fields,
-      /* Deliberately false: a probe must not send anybody an email. */
-      SendNotifications: false,
-    };
-    console.log(
-      `\nProbe D-B2: client ${clientId}, contract ${contractId}, paying with ${fb.label}` +
-        `\nSignature: ${png.length} bytes of PNG, ${png.toString("base64").length} base64 chars`,
-    );
-    without = await rehearse("WITHOUT ClientSignature", base, clientId);
-    if (without === null) {
-      console.log(`    That payment did not price; trying the next.`);
-      continue;
+  outer: for (const c of tryContracts) {
+    for (const loc of c.locations) {
+      for (const fb of fallbacks) {
+        const base = {
+          ContractId: c.id,
+          ClientId: clientId,
+          Test: true,
+          LocationId: loc,
+          FirstPaymentOccurs: "Instant",
+          ...fb.fields,
+          /* Deliberately false: a probe must not send anybody an email. */
+          SendNotifications: false,
+        };
+        console.log(
+          `\nProbe D-B2: client ${clientId}, contract ${c.id} (${c.name}), location ${loc}, paying with ${fb.label}` +
+            `\nSignature: ${png.length} bytes of PNG, ${png.toString("base64").length} base64 chars`,
+        );
+        without = await rehearse("WITHOUT ClientSignature", base, clientId);
+        if (without === null) {
+          console.log("    Did not price; trying the next combination.");
+          continue;
+        }
+        contractId = c.id;
+        with_ = await rehearse(
+          "WITH ClientSignature",
+          { ...base, ClientSignature: png.toString("base64") },
+          clientId,
+        );
+        break outer;
+      }
     }
-    with_ = await rehearse(
-      "WITH ClientSignature",
-      { ...base, ClientSignature: png.toString("base64") },
-      clientId,
-    );
-    break;
   }
 
   console.log("\n=== VERDICT");
