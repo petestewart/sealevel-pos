@@ -6,7 +6,7 @@ import {
   requireSession,
 } from "@/lib/auth";
 import { adoptServiceToken, revokeStaffToken, signInAsStaff } from "@/lib/mindbody";
-import { listStaff } from "@/lib/staff";
+import { findStaffRow, listStaff } from "@/lib/staff";
 import { hasTeacherPin } from "@/lib/teacherpins";
 import {
   createStaffSession,
@@ -135,7 +135,25 @@ export async function POST(request: Request) {
       { status: 502 },
     );
   }
-  const staff = teachers.find((t) => t.id === user.id);
+  let staff = teachers.find((t) => t.id === user.id) ?? null;
+  if (!staff) {
+    /* Not on the filtered list: either inactive, or a real account whose
+     * NAME tripped the placeholder test (the sandbox's API user). The
+     * password decided who this is; only Active decides whether they
+     * may act. */
+    let row: Awaited<ReturnType<typeof findStaffRow>> = null;
+    try {
+      row = await findStaffRow(user.id);
+    } catch {
+      row = null;
+    }
+    if (row && row.active) {
+      console.log(
+        `[staff] sign-in: user id ${user.id} "${row.name}" is active but its name reads as a placeholder; accepted on the password`,
+      );
+      staff = { id: row.id, name: row.name };
+    }
+  }
   if (!staff) {
     console.warn(
       `[staff] sign-in refused: user id ${user.id} type "${user.type}" is not in the ${teachers.length} active staff rows /staff/staff returned`,
