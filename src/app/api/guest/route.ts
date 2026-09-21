@@ -36,6 +36,12 @@ import {
 } from "@/lib/roster";
 import { guestPassOption } from "@/lib/sale";
 import type { StaffSession } from "@/lib/staffsession";
+import {
+  claimWaiverOverride,
+  fileWaiverOverrideNote,
+  releaseWaiverOverride,
+  waiverOverrideFields,
+} from "@/lib/waiverguard";
 
 export const dynamic = "force-dynamic";
 
@@ -75,7 +81,10 @@ export const dynamic = "force-dynamic";
  *      ever. The member's passes are read after and the count reported.
  *   4. The MEMBER's sign-in, when their row was not in (unchanged).
  *   5. RECORDS as T62 left them: the Formula Note with the signed Notes
- *      fallback on both profiles, and the `guest_visits` marker.
+ *      fallback on both profiles, and the `guest_visits` marker. T211
+ *      adds a third, on the GUEST alone and only when one was asked
+ *      for: the teacher whose PIN let a guest with no released
+ *      waiver into the class, and their reason.
  *
  * Order: sell, book, sign in the guest, return, sign in the member,
  * records. A failure stops the sequence and the answer says what
@@ -258,6 +267,16 @@ async function guestFlow(session: StaffSession, raw: unknown): Promise<Response>
   }
   const guestLabel = guestName ?? "the guest";
   const memberLabel = memberName ?? "the member";
+
+  /* T211: the teacher's PIN and reason for checking a guest in with no
+   * released waiver on file. The whole check -- shape, purpose, this
+   * teacher's own id, spent once -- runs HERE, before the three reads
+   * below and before anything is sold, so a bad one costs no call. The
+   * record is filed on the GUEST at the end, beside T62's own two
+   * notes, and only when their visit really landed. */
+  const claim = claimWaiverOverride(body["waiverOverride"], session, "guest");
+  if (!claim.ok) return claim.denied;
+  const waiverOverride = claim.override;
 
   /* Step 0: three reads, together. The member's pass, re-read: the
    * browser's cached list is what showed the action, and a list from
@@ -778,6 +797,26 @@ async function guestFlow(session: StaffSession, raw: unknown): Promise<Response>
     guest: "formula" | "notes" | null;
     member: "formula" | "notes" | null;
   } = { guest: null, member: null };
+  /* T211: the guest's visit either landed or it did not. A SUPPRESSED
+   * guest step wrote nothing, so the teacher's PIN goes back unspent
+   * and no record is filed about a check-in that is not there (T202's
+   * rule for a suppressed release). Anything else that went wrong costs
+   * the PIN, exactly as T48 decided for a refused charge. The step also
+   * reads "suppressed" when the visit or the booking LANDED and only
+   * the sign-in was suppressed (review of T211): a student in a class
+   * with no waiver is a write the override authorized, so the PIN is
+   * spent and the record filed below by `landed`, not by the step. */
+  if (steps.guest === "suppressed" && !landed) {
+    releaseWaiverOverride(waiverOverride);
+  }
+  const overrideNote =
+    waiverOverride === null || steps.guest !== "done"
+      ? null
+      : await fileWaiverOverrideNote({
+          session,
+          clientId: guestClientId,
+          override: waiverOverride,
+        });
   if (steps.guest === "done") {
     const [g, m] = await Promise.all([
       fileFormulaNote({
@@ -827,6 +866,10 @@ async function guestFlow(session: StaffSession, raw: unknown): Promise<Response>
   );
   return NextResponse.json({
     ok: true,
+    ...waiverOverrideFields(
+      steps.guest === "done" ? waiverOverride : null,
+      overrideNote,
+    ),
     suppressed,
     steps,
     sale,

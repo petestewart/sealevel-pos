@@ -55,6 +55,10 @@ import GuestModal, {
 import { isGuestPass, usableGuestPass } from "@/lib/guestpass";
 import { actorFallbackLine } from "./actornote";
 import ApprovalDialog, { type ApprovalArmed } from "./ApprovalDialog";
+import WaiverOverrideDialog, {
+  type WaiverOverrideArmed,
+} from "./WaiverOverrideDialog";
+import { waiverOverrideLabel, type WaiverFlow } from "@/lib/waiveroverride";
 import ApprovalWait from "./ApprovalWait";
 import { useSaleApproval } from "./useSaleApproval";
 import { displayFirstName } from "@/lib/displayticket";
@@ -1559,6 +1563,28 @@ function FrontDesk({
    * flow -- check-in for a roster row, booking for a search result.
    */
   const [waiverPrompt, setWaiverPrompt] = useState<WaiverSubject | null>(null);
+  /**
+   * T211: the teacher's override, in two pieces.
+   *
+   * `waiverOverridePad` is the PIN pad open over the dialog.
+   * `waiverOverrideRef` holds the ARMED authorization -- one token, one
+   * reason, for one client -- until the write it was typed for carries
+   * it. It is a ref and not state because the four flows pick it up
+   * from inside callbacks that must not re-render to see it, and it is
+   * taken ONCE (takeWaiverOverride): a one-shot token must never attach
+   * itself to a second write. The state beside it exists only so the
+   * screen can say an override is armed.
+   */
+  const [waiverOverridePad, setWaiverOverridePad] = useState(false);
+  const waiverOverrideRef = useRef<{
+    clientId: string;
+    token: string;
+    reason: string;
+  } | null>(null);
+  const [waiverOverrideArmed, setWaiverOverrideArmed] = useState<{
+    clientId: string;
+    teacher: string;
+  } | null>(null);
   /** The waiver text as served, with the sha256 of exactly that text
    *  (from /api/waiver) so the agreement receipt names what was shown.
    *  Non-null switches the dialog into its reading state. */
@@ -2959,6 +2985,42 @@ function FrontDesk({
     actorBannerTimer.current = setTimeout(() => setActorBanner(null), 20_000);
   }, []);
 
+  /**
+   * T211: the override this write may carry, or undefined. Read ONCE
+   * and cleared, because the token is one-shot: the server spends it on
+   * the first write that presents it and refuses it twice over, so
+   * leaving it armed could only attach a dead authorization to an
+   * unrelated later write for the same person.
+   */
+  const takeWaiverOverride = useCallback(
+    (clientId: string): { token: string; reason: string } | undefined => {
+      const armed = waiverOverrideRef.current;
+      if (armed === null || armed.clientId !== clientId) return undefined;
+      waiverOverrideRef.current = null;
+      setWaiverOverrideArmed(null);
+      return { token: armed.token, reason: armed.reason };
+    },
+    [],
+  );
+
+  /** What the answer to an overridden write says, in one place: the
+   *  record either landed on the profile or it did not, and a teacher
+   *  who went past a waiver should hear which. */
+  const noteWaiverOverride = useCallback(
+    (body: unknown, who: string, did = "went in") => {
+      const ov = (body as { waiverOverride?: unknown } | null)?.waiverOverride;
+      if (!ov || typeof ov !== "object") return;
+      const noted = (ov as { noted?: unknown }).noted === true;
+      const teacher = String((ov as { teacher?: unknown }).teacher ?? "");
+      flashBanner(
+        noted
+          ? `${who} ${did} without a waiver, on ${teacher || "a teacher"}'s PIN. The reason is on their profile.`
+          : `${who} ${did} without a waiver, on ${teacher || "a teacher"}'s PIN, but the note did not save. The server log holds the reason.`,
+      );
+    },
+    [flashBanner],
+  );
+
   /* T80: the PIN prompt's "PIN set" belongs in this banner, but it was
    * answered before the roster mounted. Shown once, then cleared
    * upstream so a later sign-in does not repeat it. */
@@ -3407,6 +3469,10 @@ function FrontDesk({
         const { [entry.clientId]: _drop, ...rest } = n;
         return rest;
       });
+      /* T211: a teacher's PIN, typed in the waiver dialog, rides this
+       * one write. Only a check-IN: the gate it goes past is on the way
+       * in, and the route refuses an override on a check-out. */
+      const override = signedIn ? takeWaiverOverride(entry.clientId) : undefined;
       try {
         const res = await fetch("/api/checkin", {
           method: "POST",
@@ -3415,11 +3481,13 @@ function FrontDesk({
             visitId: entry.visitId,
             signedIn,
             clientId: entry.clientId,
+            ...(override ? { waiverOverride: override } : {}),
           }),
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
         noteActor(body, entry.clientId);
+        if (override) noteWaiverOverride(body, entry.name);
         setEntries((rows) =>
           rows.map((r) =>
             r.clientId === entry.clientId ? { ...r, checkedIn: signedIn } : r,
@@ -3443,7 +3511,12 @@ function FrontDesk({
         setBusy((b) => b.filter((id) => id !== entry.clientId));
       }
     },
-    [settings.optimisticCheckIn, noteActor],
+    [
+      settings.optimisticCheckIn,
+      noteActor,
+      takeWaiverOverride,
+      noteWaiverOverride,
+    ],
   );
 
   /**
@@ -3846,6 +3919,10 @@ function FrontDesk({
     if (waiverSaving) return;
     waiverGen.current += 1;
     setWaiverPrompt(null);
+    /* T211: the PIN pad goes with it. It renders only over an open
+     * dialog, so a flag left true would put the pad up the instant the
+     * next person's dialog opened. */
+    setWaiverOverridePad(false);
     setWaiverText(null);
     setWaiverLoading(false);
     setWaiverFetchError(null);
@@ -4381,6 +4458,9 @@ function FrontDesk({
        * sends it: a queue entry is not a booking, and the waitlist flow
        * stays byte-for-byte as before. */
       const chosenPass = waitlist ? undefined : walkinPassChoice[client.id];
+      /* T211: the teacher's PIN, typed in the waiver dialog, rides this
+       * one booking. Taken once; absent on every ordinary add. */
+      const override = takeWaiverOverride(client.id);
       try {
         const res = await fetch("/api/book", {
           method: "POST",
@@ -4390,6 +4470,7 @@ function FrontDesk({
             classId: activeId,
             waitlist,
             clientServiceId: chosenPass,
+            ...(override ? { waiverOverride: override } : {}),
             /* T208: which DAY the server's capacity read should ask
                about. It decides nothing else. */
             ...(activeClassRef.current
@@ -4400,6 +4481,16 @@ function FrontDesk({
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
         noteActor(body);
+        /* T208: an add can land on the waiting list, either because the
+           teacher chose it or because the capacity read said full. The
+           banner says which, as the route's own answer does. */
+        if (override) {
+          noteWaiverOverride(
+            body,
+            client.name,
+            body.waitlisted ? "went on the waiting list" : "was added",
+          );
+        }
         if (body.suppressed) {
           setBookMsg((m) => ({
             ...m,
@@ -4447,7 +4538,16 @@ function FrontDesk({
         setBookingIds((b) => b.filter((id) => id !== client.id));
       }
     },
-    [activeId, bookingIds, refreshRoster, loadWaitlist, walkinPassChoice, closeSearch],
+    [
+      activeId,
+      bookingIds,
+      refreshRoster,
+      loadWaitlist,
+      walkinPassChoice,
+      closeSearch,
+      takeWaiverOverride,
+      noteWaiverOverride,
+    ],
   );
 
   /**
@@ -4498,6 +4598,9 @@ function FrontDesk({
         const { [row.entryId]: _drop, ...rest } = m;
         return rest;
       });
+      /* T211: the teacher's PIN, typed in the waiver dialog, rides this
+       * one promotion. Taken once; absent on every ordinary one. */
+      const override = takeWaiverOverride(row.clientId);
       try {
         const res = await fetch("/api/book", {
           method: "POST",
@@ -4506,11 +4609,13 @@ function FrontDesk({
             clientId: row.clientId,
             classId: activeId,
             waitlistEntryId: row.entryId,
+            ...(override ? { waiverOverride: override } : {}),
           }),
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
         noteActor(body);
+        if (override) noteWaiverOverride(body, row.name, "was promoted in");
         if (body.suppressed) {
           setPromoteMsg((m) => ({
             ...m,
@@ -4531,7 +4636,14 @@ function FrontDesk({
         setPromoting((p) => p.filter((id) => id !== row.entryId));
       }
     },
-    [activeId, promoting, refreshRoster, loadWaitlist],
+    [
+      activeId,
+      promoting,
+      refreshRoster,
+      loadWaitlist,
+      takeWaiverOverride,
+      noteWaiverOverride,
+    ],
   );
 
   /**
@@ -5427,6 +5539,14 @@ function FrontDesk({
             : r,
         ),
       );
+      /* T211 review: an override armed for this person is for a person
+       * with NO waiver. Now they have one, so the authorization is
+       * dropped rather than left to attach itself to their next tap and
+       * file "without a signed waiver" on somebody who signed. */
+      if (waiverOverrideRef.current?.clientId === person.id) {
+        waiverOverrideRef.current = null;
+        setWaiverOverrideArmed(null);
+      }
       if (subject.source === "walkin") {
         setFound((rows) =>
           rows.map((r) =>
@@ -5483,6 +5603,70 @@ function FrontDesk({
     tapWalkIn,
     tapPromote,
   ]);
+
+  /**
+   * T211: the teacher's override, armed.
+   *
+   * Pete: "a teacher should be able to override with their PIN and must
+   * give a reason." The PIN pad has just checked both with
+   * /api/teacher/verify (purpose `waiver`), so what arrives here is a
+   * one-shot token naming the teacher and their words. It is held for
+   * the ONE write the dialog was standing in front of, and that write
+   * is reached by the SAME continuation a recorded agreement takes, so
+   * every other gate -- the unpaid confirm, the full-class waiting
+   * list, the guest sheet -- is still ahead of it.
+   *
+   * The person is passed to that continuation with `waiverSigned: true`
+   * on the LOCAL copy only, which is what lets this one tap past the
+   * gate. Nothing writes it back to `entries`, `found` or `waitlist`:
+   * the override does not sign anybody's waiver, the roster still shows
+   * them unsigned, and the next tap opens this dialog again.
+   */
+  const armWaiverOverride = useCallback(
+    (armed: WaiverOverrideArmed) => {
+      const subject = waiverPrompt;
+      if (subject === null) return;
+      const clientId =
+        subject.source === "roster"
+          ? subject.entry.clientId
+          : subject.source === "walkin" || subject.source === "guest"
+            ? subject.client.id
+            : subject.row.clientId;
+      waiverOverrideRef.current = {
+        clientId,
+        token: armed.token,
+        reason: armed.reason,
+      };
+      setWaiverOverrideArmed({ clientId, teacher: armed.teacher.name });
+      setWaiverOverridePad(false);
+      closeWaiverDialog();
+      if (subject.source === "roster") {
+        tapCheckIn({ ...subject.entry, waiverSigned: true });
+      } else if (subject.source === "walkin") {
+        tapWalkIn({ ...subject.client, waiverSigned: true });
+      } else if (subject.source === "guest") {
+        /* T59c's sheet, with the same person selected. Nothing is
+         * written until its confirm, which is where the override goes. */
+        setGuestPick({ person: subject.client, standing: subject.standing });
+      } else {
+        tapPromote({ ...subject.row, waiverSigned: true });
+      }
+    },
+    [waiverPrompt, closeWaiverDialog, tapCheckIn, tapWalkIn, tapPromote],
+  );
+
+  /** Which gated flow the open dialog is about, for the override
+   *  control's verb and the record's wording. */
+  const waiverFlow: WaiverFlow =
+    waiverPrompt === null
+      ? "checkin"
+      : waiverPrompt.source === "walkin"
+        ? "walkin"
+        : waiverPrompt.source === "promote"
+          ? "promote"
+          : waiverPrompt.source === "guest"
+            ? "guest"
+            : "checkin";
 
   /* T202: the customer display's half of the waiver, all of it here so
    * the rules sit together. Nothing in this block calls Mindbody: it
@@ -5815,6 +5999,12 @@ function FrontDesk({
     ) => {
       const flow = guestFlow;
       noteActor(answer);
+      /* T211: the guest's check-in either went or it did not; either
+       * way this override has been presented and must not be held for
+       * another write. The server released it if the write was
+       * suppressed; the browser drops it here regardless. */
+      takeWaiverOverride(pick.person.id);
+      noteWaiverOverride(answer, pick.person.name);
       if (answer.reason === "staff") {
         /* The sign-in ended under the write: the gate is coming back
          * and the modal has nothing left to say. */
@@ -5839,7 +6029,15 @@ function FrontDesk({
         refetchPassList(pick.person.id);
       }
     },
-    [guestFlow, noteActor, closeGuestFlow, refreshClientState, refetchPassList],
+    [
+      guestFlow,
+      noteActor,
+      closeGuestFlow,
+      refreshClientState,
+      refetchPassList,
+      takeWaiverOverride,
+      noteWaiverOverride,
+    ],
   );
 
   /**
@@ -6315,8 +6513,13 @@ function FrontDesk({
         return;
       }
 
-      /* Stage (c): the check-in itself, the same write the chip makes. */
+      /* Stage (c): the check-in itself, the same write the chip makes.
+       * T211: and it carries the teacher's waiver override when one was
+       * armed, because an unpaid no-waiver row meets the waiver dialog
+       * first and the PAY dialog second: this is where that check-in
+       * actually happens. */
       setPayStage("checkin");
+      const cOverride = takeWaiverOverride(entry.clientId);
       try {
         const cr = await fetch("/api/checkin", {
           method: "POST",
@@ -6325,11 +6528,13 @@ function FrontDesk({
             visitId: entry.visitId,
             signedIn: true,
             clientId: entry.clientId,
+            ...(cOverride ? { waiverOverride: cOverride } : {}),
           }),
         });
         const cBody = await cr.json();
         if (!cr.ok) throw new Error(cBody?.error ?? `HTTP ${cr.status}`);
         noteActor(cBody, entry.clientId);
+        if (cOverride) noteWaiverOverride(cBody, entry.name);
       } catch {
         /* Paid and attached; the row is now a normal paid row, and its
          * ordinary check-in tap finishes the job. */
@@ -6567,7 +6772,10 @@ function FrontDesk({
         await refreshRoster(pending.classId);
         return;
       }
-      /* Stage (c): the sign-in, the same write the chip makes. */
+      /* Stage (c): the sign-in, the same write the chip makes. T211:
+       * carrying the teacher's waiver override when one was armed, for
+       * the same reason as the dialog above. */
+      const cOverride = takeWaiverOverride(pending.clientId);
       try {
         const cr = await fetch("/api/checkin", {
           method: "POST",
@@ -6576,11 +6784,13 @@ function FrontDesk({
             visitId: pending.visitId,
             signedIn: true,
             clientId: pending.clientId,
+            ...(cOverride ? { waiverOverride: cOverride } : {}),
           }),
         });
         const cBody = await cr.json();
         if (!cr.ok) throw new Error(cBody?.error ?? `HTTP ${cr.status}`);
         noteActor(cBody, pending.clientId);
+        if (cOverride) noteWaiverOverride(cBody, pending.clientName);
       } catch (err) {
         const line =
           `Paid, but the check-in failed: the pass is on the visit and ` +
@@ -7834,6 +8044,19 @@ function FrontDesk({
             setNewClient({ first, last, for: "guest" })
           }
           layerAbove={waiverPrompt !== null || newClient !== null}
+          /* T211: the override, only when it was armed for the guest
+             who is actually selected. */
+          waiverOverride={
+            waiverOverrideArmed !== null &&
+            guestPick !== null &&
+            waiverOverrideArmed.clientId === guestPick.person.id &&
+            waiverOverrideRef.current !== null
+              ? {
+                  token: waiverOverrideRef.current.token,
+                  reason: waiverOverrideRef.current.reason,
+                }
+              : null
+          }
           suppressionReason={
             config?.dryRun
               ? "Dry run is on: nothing is sent to Mindbody."
@@ -9474,8 +9697,39 @@ function FrontDesk({
                 ) : null}
               </>
             )}
+            {/* T211: the THIRD way through, and the only one that does
+                not depend on anything answering. It sits OUTSIDE the
+                reading/close-only split, and last, so it is here in
+                every shape of this dialog -- before the text is
+                fetched, while it is being read, after the fetch failed
+                (which used to be a dead end), after a refused "Record
+                agreement", and while the customer screen reports
+                disconnected, busy or a refused signature -- and always
+                after the normal path has been offered first. Pete:
+                "make sure this is doable if there is an error, that
+                would probably be the main reason to do so." */}
+            <div className="waiver-display-row waiver-override-row">
+              <button
+                className="waiver-display-button"
+                disabled={waiverSaving}
+                onClick={() => setWaiverOverridePad(true)}
+              >
+                {waiverOverrideLabel(waiverFlow)}
+              </button>
+            </div>
           </div>
         </div>
+      ) : null}
+      {/* T211: the PIN pad, over the waiver dialog. It asks for both a
+          PIN and a reason and arms nothing without them; it writes
+          nothing itself. */}
+      {waiverPrompt && waiverOverridePad ? (
+        <WaiverOverrideDialog
+          flow={waiverFlow}
+          name={waiverName}
+          onCancel={() => setWaiverOverridePad(false)}
+          onArmed={armWaiverOverride}
+        />
       ) : null}
 
       {/* T46: the calendar. A month grid in the app's own idiom rather

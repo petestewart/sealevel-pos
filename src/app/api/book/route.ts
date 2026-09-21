@@ -9,6 +9,12 @@ import {
 import { requireSession } from "@/lib/auth";
 
 import { bookClientIntoClass, classIsFull } from "@/lib/roster";
+import {
+  claimWaiverOverride,
+  fileWaiverOverrideNote,
+  releaseWaiverOverride,
+  waiverOverrideFields,
+} from "@/lib/waiverguard";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +47,15 @@ export const dynamic = "force-dynamic";
  * promotion (`waitlistEntryId`) is exempt: it is a seat Mindbody
  * already decided on. The read is on the service account, like every
  * read, and a read that cannot answer books exactly as asked.
+ *
+ * T211: an optional `waiverOverride: {token, reason}` may ride along,
+ * which is a teacher's own PIN (purpose `waiver`) and their words for
+ * why a student with no released waiver is being added anyway. It is
+ * verified and spent BEFORE any Mindbody call -- before the capacity
+ * read too -- and filed on the client AFTER the booking landed, naming
+ * the ADD or the PROMOTION by which one this was. Without the field
+ * nothing changes, and the field never marks the waiver signed: the
+ * next tap on that student meets the same dialog.
  */
 export async function POST(request: Request) {
   const denied = requireSession(request);
@@ -64,6 +79,9 @@ export async function POST(request: Request) {
        * by-id read with none comes back empty for tomorrow's class. It
        * decides nothing but which day is asked about. */
       classStartsAt,
+      /* T211: a teacher's PIN and their reason for booking a student
+       * with no waiver on file. Absent on every ordinary add. */
+      waiverOverride,
     } = await request.json();
     if (typeof clientId !== "string" || !clientId) {
       return NextResponse.json(
@@ -79,6 +97,17 @@ export async function POST(request: Request) {
     }
     let queue = waitlist === true;
     const promoting = typeof waitlistEntryId === "number";
+    /* T211: the whole override check -- shape, purpose, this teacher's
+     * own id, spent once -- before anything reaches Mindbody, the
+     * capacity read included. The flow is which gate the dialog was
+     * standing in front of: T19's add, or T20's promotion. */
+    const claim = claimWaiverOverride(
+      waiverOverride,
+      session,
+      promoting ? "promote" : "walkin",
+    );
+    if (!claim.ok) return claim.denied;
+    const override = claim.override;
     /* T208: the browser's flag can only ADD a waiting list here; what it
      * cannot do is keep a full class from being overbooked, because the
      * count it read may be minutes old. One metered read settles it. */
@@ -117,6 +146,25 @@ export async function POST(request: Request) {
         actor,
       }),
     );
+    /* T211: a booking dry run or the write guard suppressed never
+     * happened, so the PIN goes back unspent and no record is filed
+     * about a booking that is not there. Mirrors T202's suppressed
+     * release. */
+    if (run.result.suppressed && override !== null) {
+      releaseWaiverOverride(override);
+    }
+    const filed =
+      override === null || run.result.suppressed
+        ? null
+        : await fileWaiverOverrideNote({
+            session,
+            clientId,
+            override,
+            /* The teacher asked for an add and T208's capacity read (or
+             * their own tap) put them in the queue: the record says
+             * waiting list, not class. */
+            queued: queue && !promoting,
+          });
     return NextResponse.json({
       ok: true,
       ...run.result,
@@ -126,6 +174,7 @@ export async function POST(request: Request) {
        * list is not told something they already know. */
       waitlisted: queue,
       ...(waitlistReason === null ? {} : { waitlistReason }),
+      ...waiverOverrideFields(run.result.suppressed ? null : override, filed),
       ...actorFields(run),
     });
   } catch (err) {

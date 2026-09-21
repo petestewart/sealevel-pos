@@ -133,6 +133,14 @@ interface Props {
   layerAbove: boolean;
   /** Which guard is armed, for the amber lines: null when writes are live. */
   suppressionReason: string | null;
+  /**
+   * T211: a teacher's PIN and reason, typed in the waiver dialog, that
+   * authorizes checking THIS guest in with no released waiver. The page
+   * hands it over only when it was armed for the selected guest, and
+   * takes it back the moment /api/guest answers. Null on every ordinary
+   * guest check-in, which changes nothing.
+   */
+  waiverOverride?: { token: string; reason: string } | null;
   onClose: () => void;
   /** Every answer from /api/guest, so the page can note a fallback or an
    *  ended staff session and refresh the rows that changed. `landed` is
@@ -225,6 +233,7 @@ export default function GuestModal({
   onNewClient,
   layerAbove,
   suppressionReason,
+  waiverOverride,
   onClose,
   onAnswer,
   onRemoved,
@@ -421,6 +430,10 @@ export default function GuestModal({
           classStartsAt,
           memberName: member.name,
           guestName: pick.person.name,
+          /* T211: absent on every ordinary check-in. The server
+             verifies it, spends it once and files the reason on the
+             guest; nothing here decides anything. */
+          ...(waiverOverride ? { waiverOverride } : {}),
         }),
       });
       const body = (await res.json().catch(() => null)) as GuestAnswer | null;

@@ -327,18 +327,21 @@ const COMP_TOKEN_PREFIX = "c2";
 
 /** What a teacher's PIN authorized: a discount, charging an account past
  *  its balance (T94), overriding a pass Mindbody's own rules refused
- *  (T112), or approving a sale at the counter when the customer screen
- *  could not (T203's D1 override). Each is its own value for T94
- *  review's reason: a PIN typed for one of them must not pass as the
- *  authorization for another, and two request fields are not a
- *  separation while one value fits both. */
+ *  (T112), approving a sale at the counter when the customer screen
+ *  could not (T203's D1 override), selling a membership with no
+ *  signature (T205), or checking a student in with no waiver on file
+ *  (T211). Each is its own value for T94 review's reason: a PIN typed
+ *  for one of them must not pass as the authorization for another, and
+ *  two request fields are not a separation while one value fits both. */
 export type CompPurpose =
   | "comp"
   | "overdraft"
   | "override"
   | "approve"
   /* T205: selling a membership without the customer's signature. */
-  | "contract";
+  | "contract"
+  /* T211: booking or checking in a student with no released waiver. */
+  | "waiver";
 
 export function isCompPurpose(value: unknown): value is CompPurpose {
   return (
@@ -346,7 +349,8 @@ export function isCompPurpose(value: unknown): value is CompPurpose {
     value === "overdraft" ||
     value === "override" ||
     value === "approve" ||
-    value === "contract"
+    value === "contract" ||
+    value === "waiver"
   );
 }
 
@@ -435,6 +439,26 @@ export function spendCompToken(token: string, now = Date.now()): boolean {
   if (spentCompTokens.has(token)) return false;
   spentCompTokens.set(token, now);
   return true;
+}
+
+/**
+ * Hand a spent token back, for the ONE case where the write it
+ * authorized provably never happened: dry run or the write guard
+ * suppressed it (T211). Nothing reached Mindbody, so nothing was
+ * authorized, and a teacher who typed their PIN under a suppression
+ * must not have to type it again to find out the server is in dry run.
+ * This mirrors T202's rule that a suppressed release does not consume
+ * the student's signature.
+ *
+ * It is deliberately NOT the answer to a refusal or an error: those cost
+ * the PIN, exactly as T48 decided ("a refused or ambiguous charge does:
+ * the dialog asks again, which is the right price for trying twice"),
+ * because a 5xx or a dead transport is not evidence that nothing was
+ * written. Callers spend the token BEFORE the write, so two requests
+ * carrying one token can never both write; this is the only way back.
+ */
+export function unspendCompToken(token: string): void {
+  spentCompTokens.delete(token);
 }
 
 /** One cookie's value off a request, or null. Exported for the staff

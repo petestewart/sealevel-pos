@@ -8264,6 +8264,36 @@ textarea.reason-note-field:disabled::placeholder {
   opacity: 0.45;
 }
 
+/* T211: the teacher's override, the LAST control in the waiver dialog
+ * and the only one that is in every shape of it. Its own row, under
+ * whatever the normal path offered, full width at the same 64px; the
+ * button is T202's own, unchanged, because it is the same weight of
+ * choice and must not read louder than recording the agreement. */
+.waiver-override-row {
+  margin-top: 10px;
+}
+
+/* T211's PIN pad: the approval pad's box, a little wider for the reason
+ * field, whose label is the one new piece here. */
+.modal-waiver-override {
+  width: min(460px, 100%);
+}
+
+.wo-label {
+  margin: 6px 0 -4px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* The reason is 200 characters and two rows, so it scrolls rather than
+ * clipping; the discount note's own hidden overflow is for a field that
+ * grows instead. */
+.modal-waiver-override textarea.reason-note-field {
+  min-height: 76px;
+  overflow-y: auto;
+}
+
 /* --- T204: the self-serve sign-up ------------------------------------ */
 
 /* The one thing a student may start themselves, on the idle screen. */

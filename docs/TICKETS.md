@@ -19130,3 +19130,288 @@ exactly the class it was written against.
   it was in `scratchpad/t203/`, so the staleness stays visible and is
   fixed by whoever owns that file rather than quietly under this
   ticket. The count matches T203's own recorded 28.
+
+## T211. A teacher's PIN past the waiver gate, with a reason (Pete, 2026-09-21)
+
+Pete, verbatim:
+
+> currently a teacher cannot sign a student up for class if they have no
+> waiver. that is the normal flow but a teacher should be able to
+> override with their PIN and must give a reason. make sure this is
+> doable if there is an error, that would probably be the main reason to
+> do so.
+
+The last sentence is the whole ticket. T18's dialog has always had two
+ways through -- read the studio's real text here and record the
+student's agreement, or since T202 have them sign it on the customer
+screen -- and both of them depend on something answering. When
+`GET /site/liabilitywaiver` could not be fetched the dialog fell back to
+a **close-only** shape: a stop-coloured line saying they cannot be
+checked in, a sentence telling the teacher to use the Mindbody app, and
+an X. That is a dead end with a queue in front of it, and it is exactly
+the state Pete is describing.
+
+### What an override IS, and what it is deliberately not
+
+It is **not a signing path**. Nothing in T211 writes `LiabilityRelease`,
+nothing touches `waiver_receipts`, and no agreement is recorded on
+anybody's behalf, because the student did not make one. T18's addendum
+overruled "not if the teacher taps it" for a flow that shows the real
+text and records the STUDENT's agreement; it did not overrule the
+principle behind it, and manufacturing an agreement here would.
+
+What it is: an authorization for **one write** to go ahead without a
+waiver, with a name and a reason attached to it. The student is asked
+again on the next tap, which is the difference between "a teacher
+accepted the risk today" and "this student signed". The roster row still
+reads "no waiver" afterwards.
+
+### The sixth PIN purpose
+
+(CLAUDE.md's heading said "three" and was two purposes stale: `approve`
+arrived with T203 and `contract` with T205 without it being renamed.
+This ticket fixes the count as well as adding to it.)
+
+`CompPurpose` in `src/lib/auth.ts` gains `waiver`, beside `comp` (T48),
+`overdraft` (T94), `override` (T112), `approve` (T203) and `contract`
+(T205). Its own value, for T94 review's recorded reason: a PIN typed to
+discount a sale, to overdraw an account, to override a pass, to approve
+a sale or to sell a membership unsigned must not also let somebody into
+a class with no waiver, and **two request fields are not a separation
+while one value fits both**. The purpose is signed into the token and
+each reader names the one purpose it accepts, so all five other tokens
+are refused here in words with nothing written, and this one is refused
+everywhere else.
+
+`src/lib/waiveroverride.ts` (new, no server imports, so the dialog and
+the routes share it) holds the purpose, the reason's bounds (3 to 200
+trimmed, the discount note's own pair from T43/T67), the flow type, the
+verb per flow and **the record's wording, in one place**:
+
+    Checked in without a signed waiver by Dana Rivers at the counter: the waiver page would not load
+    Added to class without a signed waiver by ...
+    Promoted into class without a signed waiver by ...
+    Checked in as a guest without a signed waiver by ...
+
+### The control, in EVERY shape of the dialog
+
+`src/app/page.tsx`: one 64px control, "Check in without a waiver" (the
+verb follows the flow: "Add", "Promote", "Continue"), rendered **outside
+the reading/close-only split and last**, so it is present in every state
+the dialog can be in and always after the normal path has been offered
+first:
+
+- the initial shape, beside "Read the waiver";
+- the reading shape, under Cancel and "Record agreement and check in";
+- **the close-only shape after the text failed to load**, which now
+  shows the load error AND the override instead of only an X;
+- after a refused "Record agreement", with the error line still there;
+- with the customer screen disconnected, busy (beside Take over) or
+  refusing a `present`;
+- after any `/api/waiver-agree` refusal.
+
+It depends on nothing having loaded and nothing having answered, which
+is the point.
+
+`src/app/WaiverOverrideDialog.tsx` (new) is the pad: the kicker
+"Teacher override", the title naming the act, the line "The student has
+not signed the waiver. Your PIN and a reason are recorded on their
+profile.", a **required** reason textarea and the PIN pad's digits. The
+confirm arms only with both; a PIN alone, a reason alone and a
+two-character reason all leave it disabled. The reason is a text field
+and NOT a breach of the no-typed-amounts rule (Conventions): it is a
+sentence, and it is the T43/T48 precedent of the discount pad's reason
+note, which the rule names as one of its two recorded exceptions.
+
+### The server side
+
+`src/lib/waiverguard.ts` (new) is the one place a `waiverOverride` field
+is read, so three routes cannot check it three slightly different ways.
+`claimWaiverOverride` runs the whole gate **before any Mindbody call**:
+the shape, the token's purpose, T94's rule that the token must name the
+teacher whose session is behind the request, and the spend. Then the
+write runs exactly as it did, and only afterwards is the sentence filed
+through `fileFormulaNote` (T45's Formula Note, T62's signed Notes entry
+where the site has none), with the client id in the options so dry run
+and the write guard apply to the record as to the write.
+
+Three routes take the field, each naming its own flow:
+
+| route | flow | what it authorizes |
+| --- | --- | --- |
+| `/api/checkin` | `checkin` | a roster row's check-in, and the same check-in inside T25's "Pay and check in" and T26's renewal |
+| `/api/book` | `walkin` / `promote` | the walk-in add, or the promotion off the waiting list |
+| `/api/guest` | `guest` | a member's guest, filed on the GUEST |
+
+**The spend is up front and atomic**, so one token arriving twice writes
+once; `unspendCompToken` hands it back for the ONE case where the write
+provably never happened, dry run or the write guard, which is T202's
+rule that a suppressed release does not consume the student's signature.
+A refusal or an error still costs the PIN, exactly as T48 decided ("a
+refused or ambiguous charge does: the dialog asks again, which is the
+right price for trying twice"), because neither is evidence that nothing
+was written.
+
+Two refusals that are ours rather than the token's: an override on a
+**check-OUT** is 400 (the gate it goes past is on the way in), and an
+override with no `clientId` is 400 (the record has to be filed on
+somebody).
+
+### The browser holds it for exactly one write
+
+`waiverOverrideRef` in page.tsx keeps the armed token, the reason and
+the client it was typed for; `takeWaiverOverride(clientId)` reads it
+**once** and clears it, so a one-shot token cannot attach itself to a
+second write. Arming re-enters the SAME continuation a recorded
+agreement takes -- `tapCheckIn`, `tapWalkIn`, `tapPromote`, the guest
+sheet -- with the person carried as `waiverSigned: true` on the LOCAL
+copy only. Nothing writes that back to `entries`, `found` or `waitlist`,
+which is what keeps the roster honest and the next tap gated. Every
+other gate is still ahead: an unpaid row still meets T25's pay dialog
+(and the override rides that dialog's own check-in, which is where the
+write actually happens), a full class still offers the waiting list, and
+the guest sheet still confirms.
+
+### Rails re-traced
+
+- **The display adds zero write paths.** Nothing in this ticket touches
+  `src/lib/display.ts` or anything under `src/app/api/display/`, and
+  neither imports `mindbody()`.
+- **Every write is still under `requireActor`, dry run and the write
+  guard**, including the Notes line.
+- **The PIN and its one-shot token never reach the dev call log**, and
+  not by redaction: the call log records what the server sent to
+  MINDBODY, and neither value is ever in one. The reason IS in it, in
+  the Notes write, because the reason is the record.
+- No em dashes, nothing under 16px, every control at least 64px, radius
+  0, every colour a token in both palettes (three new rules, all reusing
+  T202's and T48's).
+
+### Drivers
+
+`scratchpad/t211/`, T209's harness extended with one mock person (Noa
+Walkin, 100000003: searchable, on no class, no `Liability`, so the
+walk-in add meets the gate). `all.sh` is the four of them.
+
+- `routes.mjs open` -- **63**. A plain check-in is unchanged and files
+  nothing. The real PIN path (`/api/teacher/verify` with
+  `purpose: "waiver"`) mints a token that checks Sam in, names Dana
+  Rivers, files the sentence as a T62 signed Notes entry, and **writes
+  no liability release and creates nobody**. Then: the same token twice
+  is 401 with nothing sent; all five other purposes are 401 with nothing
+  sent; a missing, blank, two-character, 201-character and non-string
+  reason are each 400 with nothing sent, and 200 characters is accepted;
+  another staff id's token, an expired one and a forged one are 401 with
+  nothing sent; an override on a check-out and one with no client are
+  400. `/api/book` files the ADD's own wording and the PROMOTION's,
+  and refuses a comp token with nothing booked; `/api/guest` refuses a
+  wrong purpose before its three reads. The dev log holds no token and
+  no PIN, and does hold the reason.
+- `routes.mjs guard` -- **8**, with `POS_WRITE_CLIENT_IDS` narrowing
+  writes to one client. A suppressed check-in answers `suppressed:
+  "write-guard"`, claims no record, files nothing, and **the same token
+  then works on an allowed client**: the suppressed write did not spend
+  the PIN.
+- `ui.mjs shapes` -- **30**, Playwright, the real screens. The control
+  is present and 64px in the initial shape, the reading shape, the
+  load-failed shape (`/api/waiver` faked to 500), after a refused
+  `/api/waiver-agree`, with the screen busy (beside Take over) and with
+  a `present` refused 400. The pad: the kicker, the recorded-on-profile
+  line, no em dashes, Done disabled with a PIN alone, with a
+  two-character reason and with a reason alone, enabled with both.
+  Sizes measured in light, the pad rendered in dark.
+- `ui.mjs pin` -- **16**, against a real Postgres so the PIN is enrolled
+  through `/api/teacher/pin`. The typed gesture: one `/api/checkin`
+  carrying the token and the reason, **no `/api/waiver-agree` at all**,
+  Sam checked in, the sentence on his profile, no liability release ever
+  written, and the banner "Sam Fisher went in without a waiver, on Dana
+  Rivers's PIN." Then he is checked back OUT and the chip tapped again:
+  **the same gate is there**, and no second check-in rode the spent PIN.
+  A walk-in who is not on the roster gets "Add without a waiver".
+
+Re-run on the same build: T209's `all.sh` (routes off 4 / on 25, ui off
+6 / on 86, ui pin 10) and `regress.sh` end to end, plus T208's `ui.mjs`
+in both modes. `npx tsc --noEmit` clean, `env -u DATABASE_URL npm run
+build` clean.
+
+### Fixed in review
+
+An independent review of the tree before commit found eight things;
+three it fixed, three more were fixed on its report, two stand as
+noted.
+
+- **Escape while the PIN check was in flight ran the write the
+  teacher had just abandoned.** Cancel and the scrim were disabled
+  while `/api/teacher/verify` was outstanding, Escape was not, and the
+  pending answer still armed the override, which re-enters the tap.
+  Escape now does what Cancel does while busy: nothing.
+- **A waiting-list add was recorded as a class check-in.** The Notes
+  line and the banner both said "added to class" when T208's fresh
+  capacity read had queued the person. `waiverOverrideLine` takes a
+  `queued` flag and the record reads "Added to the waiting list without
+  a signed waiver"; the banner says "went on the waiting list".
+- The verify route's 400 still listed five purposes.
+- **`/api/guest` handed the PIN back in a state where the visit had
+  LANDED.** Its guest step reads "suppressed" both when nothing was
+  written and when the booking landed and only the sign-in was
+  suppressed; the release now also requires `!landed`. Unreachable
+  today because both writes carry the same client id, so dry run and
+  the write guard suppress them together, but the rail no longer rests
+  on that.
+- **A stale armed override could attach itself to a student who has
+  since SIGNED.** The token is keyed by client id and expires in ten
+  minutes, but a roster refresh that flips that client's `waiverSigned`
+  to true let the next ordinary tap take it and file "without a signed
+  waiver" on somebody who signed. The refresh that flips the flag now
+  drops the armed override for that client.
+- The check-in path's Notes filing waits three seconds instead of the
+  helper's eight: it is the one tap made with a queue at the door and a
+  row that spins until the route answers; the line may still land.
+- Unused `isWaiverFlow` export removed.
+- Standing, as noted: `/api/guest` spends the PIN on a refusal that
+  reached only its reads ("No guest pass with sessions left"), which
+  costs a re-type; T48's posture, kept.
+
+### Limits, and what could not be verified
+
+- **Nothing here has been run against live Mindbody.** The mock proves
+  the shapes, the order and the refusals; it does not prove that
+  Mindbody's own `addclienttoclass` accepts a booking for a client with
+  no released waiver, which the API has never been asked. If it refuses
+  on its own, the override reports Mindbody's sentence and the student
+  still is not in, exactly as T112's Override reports a refusal it
+  cannot escape.
+- **The write guard stands in for dry run** in the suppression driver,
+  because dry run is forced OFF in the sandbox (CLAUDE.md) and the
+  harness is a sandbox target. The two take the same branch in
+  `mindbody()` and both come back as `suppressed`, so the rule is
+  driven; `POS_DRY_RUN=true` on a prod target is not.
+- **The guest flow's override is driven at the route's gate only.** The
+  refusal before any read is asserted; the full sell-book-sign-in
+  sequence ending in a third Notes line on the guest was not driven end
+  to end, because `/api/guest` needs a guest pass, a sale and a return
+  from the mock that T211 did not build. The code files it only when
+  `steps.guest === "done"` and releases the PIN when that step was
+  suppressed.
+- **A refusal costs the PIN.** A 502 from Mindbody under an overridden
+  write leaves the token spent and the teacher types it again. That is
+  T48's recorded posture for an ambiguous write and is deliberate, but
+  it is a second PIN entry in the exact situation ("there is an error")
+  Pete wants this to work in.
+- **The override is not offered anywhere but the waiver dialog.** A
+  teacher who closed the dialog has to tap the row again to get back to
+  it. Nobody has watched that on a real counter.
+- **An armed override that is not used stays armed until its token
+  expires.** The one path where that is reachable is an unpaid row: the
+  waiver dialog hands off to T25's pay dialog, and a teacher who closes
+  that dialog leaves the authorization in the browser for the rest of
+  the token's ten minutes. The next check-in for THAT person would carry
+  it, which is what the teacher authorized and is filed as such; it is
+  still a loose end, bounded by the TTL and by `takeWaiverOverride`
+  clearing on first use.
+- **The staff session is faked in the harness** (T200's idiom), so
+  T49/T50 attribution is exercised as shape, and the "teacher's own
+  token" in every driver is the one fake session.
+- **Two iPads racing one override** end with one write and one 401: the
+  spend is atomic. What the loser's screen says about it has not been
+  designed; it reads the same refusal a spent token gets.

@@ -140,18 +140,27 @@ over-long key, the store off or full of flights in progress all charge as
 before, loudly in the log. Nothing below the gate moved, and nothing about
 it is settable from the drawer.
 
-### A teacher's PIN now authorizes three separate things
+### A teacher's PIN now authorizes six separate things
 
 `CompPurpose` in `src/lib/auth.ts` is `comp` (a discount, T48), `overdraft`
-(charging an account past its balance, T94) and, since T112, `override`
-(selling a pass Mindbody's own rules refused). The purpose is SIGNED into the
-one-shot token and the reader names the one purpose it will accept, so a PIN
-typed to discount a sale cannot authorize an override and none of the three
-can stand in for another. Two request fields are not a separation while one
-value fits both, which is the lesson T94's review paid for; do not add a
-fourth purpose by reusing an existing one. Each token is verified before any
-Mindbody call and spent once, at `/api/checkout`, before the rehearsal, so a
-refusal that reached no cart costs no PIN.
+(charging an account past its balance, T94), `override` (selling a pass
+Mindbody's own rules refused, T112), `approve` (approving a sale the customer
+screen could not, T203), `contract` (selling a membership with no customer
+signature, T205) and, since T211, `waiver` (booking or checking a student in
+with no released waiver). The purpose is SIGNED into the one-shot token and
+the reader names the one purpose it will accept, so a PIN typed to discount a
+sale cannot authorize an override and none of the six can stand in for
+another. Two request fields are not a separation while one value fits both,
+which is the lesson T94's review paid for; do not add a seventh purpose by
+reusing an existing one. Each token is verified before any Mindbody call and
+spent once -- at `/api/checkout` before the rehearsal, at
+`/api/purchase-contract` before the purchase, and for T211 in
+`claimWaiverOverride` before the write -- so a refusal that reached no cart
+costs no PIN. **A write that dry run or the write guard SUPPRESSED hands the
+token back** (`unspendCompToken`, T211): nothing reached Mindbody, so nothing
+was authorized, which is T202's rule for a suppressed release. A refusal or
+an error still costs the PIN, because neither is evidence that nothing was
+written.
 
 ## Locked decisions
 
@@ -558,6 +567,32 @@ options so dry run and the write guard apply, and a failure reports
 SUPPRESSED release does not consume the signature, so a real run later
 can still spend it. A waiver the studio edited between the student
 reading it and the teacher's iPad recording it is refused outright.
+
+**A teacher's PIN is the third way past the waiver gate** (T211, Pete:
+"a teacher should be able to override with their PIN and must give a
+reason. make sure this is doable if there is an error, that would
+probably be the main reason to do so"). One 64px control in the T18/T19
+dialog, rendered OUTSIDE its reading/close-only split and last, so it is
+there in every shape the dialog can be in -- including the close-only
+one a failed waiver-text fetch used to dead-end in, and while the
+customer screen is disconnected, busy or refusing. It opens a PIN pad
+with a REQUIRED reason (3 to 200 characters, the T43/T48 reason-note
+precedent, which is why a text field here is not the typed-amount rule
+being broken). `/api/checkin`, `/api/book` and `/api/guest` take an
+optional `waiverOverride: {token, reason}`; `claimWaiverOverride` in
+`src/lib/waiverguard.ts` is the ONE place it is read, and it checks the
+shape, the `waiver` purpose, T94's rule that the token names this
+session's own teacher, and spends it, all before any Mindbody call. The
+write then runs exactly as it did and the sentence is filed on the
+client the way T45/T62 file a comp's reason ("Checked in without a
+signed waiver by <teacher> at the counter: <reason>", with the add's,
+the promotion's and the guest's own verbs). **It NEVER marks the waiver
+signed**: no `LiabilityRelease`, no `waiver_receipts` row, no recorded
+agreement, and the same dialog opens on that student's next tap. The
+browser holds the armed token for exactly one write
+(`takeWaiverOverride`, read once and cleared) and re-enters the same
+continuation a recorded agreement takes, so the unpaid confirm, the
+full-class waiting list and the guest sheet are all still ahead of it.
 
 **A membership needs the customer's signature** (T205, Phase 2.5 item 6,
 D5: "required but with override option"). The rule is

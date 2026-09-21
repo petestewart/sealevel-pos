@@ -61,12 +61,15 @@ export async function POST(request: Request) {
    * asking Mindbody for a refused pass again under this teacher's own
    * token or selling the configured substitute in its place. T203 adds
    * "approve", which authorizes charging a sale the customer screen did
-   * not approve, and is filed on the client with this teacher's name. */
+   * not approve, and is filed on the client with this teacher's name.
+   * T205 adds "contract" (a membership sold with no customer signature)
+   * and T211 "waiver" (a write that goes past the waiver gate). */
   if (purposeRaw !== undefined && !isCompPurpose(purposeRaw)) {
     return NextResponse.json(
       {
         error:
-          "purpose must be comp, overdraft, override, approve or contract",
+          "purpose must be comp, overdraft, override, approve, contract " +
+          "or waiver",
       },
       { status: 400 },
     );
