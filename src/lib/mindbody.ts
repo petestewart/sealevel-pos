@@ -138,6 +138,17 @@ export function siteIdFor(t: Target): string | null {
 }
 
 /**
+ * T210: the site id this process is talking to RIGHT NOW, or null when
+ * Mindbody is not configured for the current target. Never throws,
+ * because the callers (a staff session lookup, the sign-in, /api/config)
+ * must keep working on a counter whose credentials are half set: a null
+ * site decides nothing.
+ */
+export function currentSiteId(): string | null {
+  return siteIdFor(target());
+}
+
+/**
  * Mindbody does not document the staff token's lifetime, so this refreshes
  * an hour ahead of any plausible expiry rather than waiting to be told the
  * token is stale mid-transaction.
@@ -151,7 +162,10 @@ const TOKEN_TTL_MS = 60 * 60 * 1000;
  */
 const cachedTokens = new Map<
   string,
-  { value: string; issuedAt: number }
+  /** `borrowed`: the T206 borrow put it here from a signed-in service
+   *  session rather than an issue of this process's own. Only such a
+   *  token can turn out to belong to another site (T210 review). */
+  { value: string; issuedAt: number; borrowed?: boolean }
 >();
 
 export async function staffToken(env = mindbodyEnv()): Promise<string> {
@@ -197,12 +211,25 @@ export async function staffToken(env = mindbodyEnv()): Promise<string> {
      * imports this module. */
     const borrowed = await (
       await import("./staffsession")
-    ).serviceSessionToken().catch(() => null);
+    )
+      /* T210: for THIS site, and no other. The borrow used to take the
+       * newest service session whatever site issued it and cache it
+       * under env.siteId below, which is a token of the other studio
+       * sitting in this studio's slot: every call under it comes back
+       * "Delegated staff does not belong to the subscriber." Null here
+       * leaves the refusal to surface as it did before the borrow
+       * existed. */
+      .serviceSessionToken(env.siteId)
+      .catch(() => null);
     if (borrowed) {
       console.warn(
-        `[token] issue refused (HTTP ${res.status}); borrowing the signed-in service account's own token`,
+        `[token] issue refused (HTTP ${res.status}); borrowing the signed-in service account's own token for site ${env.siteId}`,
       );
-      cachedTokens.set(env.siteId, { value: borrowed, issuedAt: Date.now() });
+      cachedTokens.set(env.siteId, {
+        value: borrowed,
+        issuedAt: Date.now(),
+        borrowed: true,
+      });
       return borrowed;
     }
     throw new Error(
@@ -224,9 +251,27 @@ export async function staffToken(env = mindbodyEnv()): Promise<string> {
  * service account's; anybody else's token is never the service token.
  * Returns whether it was adopted.
  */
-export function adoptServiceToken(username: string, token: string): boolean {
+export function adoptServiceToken(
+  username: string,
+  token: string,
+  /* T210: the site the token was ISSUED for, from the env the sign-in
+   * ran against, not from the target as it reads a moment later. */
+  siteId: string,
+): boolean {
   const env = mindbodyEnv();
   if (username.trim().toLowerCase() !== env.username.trim().toLowerCase()) {
+    return false;
+  }
+  if (siteId !== env.siteId) {
+    /* T210: the one thing this function must never do is put another
+     * site's token in this site's slot. It is called at sign-in with
+     * the site that sign-in used, so this fires only when the target
+     * moved underneath it, and then the cache is left alone and the
+     * next read issues its own token. */
+    console.warn(
+      `[token] NOT adopting a service token issued for site ${siteId}: ` +
+        `this counter is on site ${env.siteId}.`,
+    );
     return false;
   }
   cachedTokens.set(env.siteId, { value: token, issuedAt: Date.now() });
@@ -251,8 +296,12 @@ export async function signInAsStaff(
       ok: true;
       token: string;
       user: { id: number; firstName: string; lastName: string; type: string };
+      /** T210: the site this token was issued for, so the caller records
+       *  it with the session rather than reading the target again a
+       *  moment later, when it may have moved. */
+      siteId: string;
     }
-  | { ok: false; status: number }
+  | { ok: false; status: number; siteId: string }
 > {
   /* T89: a sign-in must reach the site the counter is pointed at NOW,
    * not the one the environment names, so the override is loaded here
@@ -273,12 +322,13 @@ export async function signInAsStaff(
   const body = await res.json().catch(() => ({}));
   const token = body?.AccessToken;
   if (!res.ok || typeof token !== "string") {
-    return { ok: false, status: res.status };
+    return { ok: false, status: res.status, siteId: env.siteId };
   }
   const user = body?.User ?? {};
   return {
     ok: true,
     token,
+    siteId: env.siteId,
     user: {
       id: typeof user.Id === "number" ? user.Id : Number(user.Id ?? NaN),
       firstName: typeof user.FirstName === "string" ? user.FirstName : "",
@@ -314,6 +364,20 @@ export async function revokeStaffToken(token: string): Promise<void> {
  *  nothing about the sandbox's token. */
 export function forgetToken(): void {
   cachedTokens.delete(mindbodyEnv().siteId);
+}
+
+/** T210 review: forget the current site's cached token only when it was
+ *  BORROWED. A token this process issued for this site cannot belong to
+ *  another site, so the sentence on such a token is about something
+ *  else, and dropping it in the sandbox's refused-issue state (T206)
+ *  would throw away the only working credential. Returns whether it
+ *  forgot anything. */
+export function forgetBorrowedToken(): boolean {
+  const siteId = mindbodyEnv().siteId;
+  const cached = cachedTokens.get(siteId);
+  if (!cached || cached.borrowed !== true) return false;
+  cachedTokens.delete(siteId);
+  return true;
 }
 
 /**
@@ -491,8 +555,36 @@ export function isActorRefusal(err: unknown): boolean {
   const status = mindbodyHttpStatus(err);
   if (status === null || status >= 500) return false;
   if (status === 401 || status === 403) return true;
+  /* T210: and the sentence below, whatever 4xx it arrives on. It is a
+   * refusal of the CALLER too: the token is fine, for another site. */
+  if (isForeignSiteRefusal(err)) return true;
   const message = err instanceof Error ? err.message : String(err);
   return /permission/i.test(message);
+}
+
+/**
+ * T210. Mindbody's answer when a staff token is used with a SiteId it
+ * was not issued for: "Delegated staff does not belong to the
+ * subscriber." (Pete's third sandbox drive, 2026-09-21, on the review
+ * sign-up's Create, with nothing in the modal able to get past it.)
+ *
+ * It is not a permission problem and not a dead token in the ordinary
+ * sense: the token is alive at the site that issued it. For THIS site
+ * it is dead, which is why isActorTokenDead takes it -- the session
+ * ends, the write is refused rather than retried as the service
+ * account (which holds the same borrowed token and fails the same
+ * way), and the gate asks for a sign-in against the site the counter
+ * is actually on.
+ *
+ * Matched on the wording, case-insensitively, and only on a 4xx: a 5xx
+ * or a dead transport is ambiguous and must never end a session or
+ * claim that nothing was written.
+ */
+export function isForeignSiteRefusal(err: unknown): boolean {
+  const status = mindbodyHttpStatus(err);
+  if (status === null || status >= 500) return false;
+  const message = err instanceof Error ? err.message : String(err);
+  return /does not belong to the subscriber/i.test(message);
 }
 
 /**
@@ -508,7 +600,12 @@ export function isActorRefusal(err: unknown): boolean {
  * this, not isActorRefusal.
  */
 export function isActorTokenDead(err: unknown): boolean {
-  return mindbodyHttpStatus(err) === 401;
+  if (mindbodyHttpStatus(err) === 401) return true;
+  /* T210: a token from the other site is dead HERE, whatever status
+   * Mindbody attaches to the sentence. Same consequence as the 401:
+   * end the session, refuse the write, never retry as the service
+   * account. */
+  return isForeignSiteRefusal(err);
 }
 
 /** Build the teacher-facing error for a non-ok Mindbody answer, tagging it
@@ -722,7 +819,27 @@ export async function mindbody<T = any>(
      * and nothing else. The transport detail -- method, full path, status,
      * both bodies -- is already in the call log for the dev drawer; a
      * teacher must not be shown URL-encoded query strings. */
-    throw mindbodyHttpError(body, res.status);
+    const failure = mindbodyHttpError(body, res.status);
+    /* T210: the service account's own token was refused as belonging to
+     * another site. That is exactly the borrowed token this process
+     * cached for this site id (the T206 borrow, before it filtered by
+     * site), and riding it means every read fails the same way until a
+     * restart. Forget it, so the next call issues a token of this
+     * site's own; no retry here, because one failing call is cheap and
+     * a silent second attempt on a write is not. */
+    if (
+      !opts.anonymous &&
+      !opts.actor &&
+      isForeignSiteRefusal(failure) &&
+      forgetBorrowedToken()
+    ) {
+      console.warn(
+        `[token] the borrowed service token was refused for site ${env.siteId} ` +
+          "(it belongs to another Mindbody site); forgetting it, the next " +
+          "call issues a fresh one.",
+      );
+    }
+    throw failure;
   }
   return body as T;
 }

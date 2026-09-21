@@ -1526,6 +1526,12 @@ function TeacherPanel() {
   const [teacher, setTeacher] = useState<Teacher | null | undefined>(
     undefined,
   );
+  /* T210: the site that issued this teacher's token, and the site this
+   * counter is on. /api/teacher answers both. */
+  const [sites, setSites] = useState<{
+    siteId: string | null;
+    targetSiteId: string | null;
+  }>({ siteId: null, targetSiteId: null });
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1535,7 +1541,16 @@ function TeacherPanel() {
     fetch("/api/teacher")
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
-        if (live) setTeacher(body?.teacher ?? null);
+        if (!live) return;
+        setTeacher(body?.teacher ?? null);
+        setSites({
+          siteId:
+            typeof body?.siteId === "string" && body.siteId ? body.siteId : null,
+          targetSiteId:
+            typeof body?.targetSiteId === "string" && body.targetSiteId
+              ? body.targetSiteId
+              : null,
+        });
       })
       .catch(() => {
         if (live) setTeacher(null);
@@ -1581,6 +1596,29 @@ function TeacherPanel() {
             {teacher.name} (staff {teacher.id}). Writes carry actor=
             {teacher.id} in the calls tab.
           </p>
+          {/* T210: a staff token belongs to the site that issued it, so
+              the two site ids are worth a line of their own. They agree
+              in every ordinary state; when they do not, Mindbody refuses
+              every write under this sign-in ("Delegated staff does not
+              belong to the subscriber.") and the only fix is a fresh
+              sign-in against the studio this counter is on. */}
+          {sites.targetSiteId !== null &&
+          sites.siteId !== null &&
+          sites.siteId !== sites.targetSiteId ? (
+            <p className="dev-target-error">
+              This sign-in belongs to Mindbody site {sites.siteId} and this
+              counter is on site {sites.targetSiteId}. Writes under it are
+              refused. Sign out and sign in again.
+            </p>
+          ) : (
+            <p className="dev-target-now">
+              Signed in against site{" "}
+              {sites.siteId ?? "(not recorded; sign in again)"}
+              {sites.targetSiteId !== null
+                ? ", which is the site this counter is on."
+                : "."}
+            </p>
+          )}
           <ProbeView probe={probe} busy={busy} error={error} onRun={run} />
         </>
       )}

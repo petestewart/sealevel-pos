@@ -5081,6 +5081,14 @@ function FrontDesk({
       const body = await res.json().catch(() => null);
       noteActor(body);
       if (!res.ok || body?.ok !== true) {
+        /* T210: the sign-in ended under this write (expired, or a token
+         * belonging to another Mindbody site). The fetch wrapper has
+         * dropped the teacher and the gate is on its way; this dialog
+         * goes with it rather than holding a sentence behind it. */
+        if (res.status === 401 && body?.reason === "staff") {
+          setDuplicatePick(null);
+          return;
+        }
         setDuplicateMsg(
           typeof body?.error === "string" && body.error
             ? body.error
@@ -10528,7 +10536,15 @@ function AuthGate() {
     fetch("/api/teacher")
       .then((r) => (r.ok ? r.json() : null))
       .then((body) => {
-        if (!cancelled) setTeacher(body?.teacher ?? null);
+        if (cancelled) return;
+        setTeacher(body?.teacher ?? null);
+        /* T210: with nobody signed in, the server may have a reason for
+         * it (the target changed, or the session that was here belongs
+         * to another Mindbody site). Shown on the gate, exactly as the
+         * one a refused write carries. */
+        if (!body?.teacher && typeof body?.notice === "string" && body.notice) {
+          setGateNotice(body.notice);
+        }
       })
       .catch(() => {
         if (!cancelled) setTeacher(null);

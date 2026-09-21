@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
-import { isActorTokenDead, mindbody } from "@/lib/mindbody";
+import { currentSiteId, isActorTokenDead, mindbody } from "@/lib/mindbody";
 import { houseClientId, pricingOptions, priceCart } from "@/lib/sale";
 import {
   actorOf,
@@ -78,11 +78,21 @@ export async function GET(request: Request) {
     );
   }
   const actor = actorOf(session);
+  /* T210: which site issued this teacher's token, and which site the
+   * counter is on. A probe that comes back refused is almost always one
+   * of two things, a permission group or these two disagreeing, and the
+   * second is invisible without saying so. */
+  const siteId = session.siteId;
+  const targetSiteId = currentSiteId();
   const gone = async () => {
     await endStaffSession(session.id);
     return NextResponse.json(
       {
-        error: "Mindbody no longer accepts that sign-in. Sign in again.",
+        error:
+          siteId !== null && targetSiteId !== null && siteId !== targetSiteId
+            ? `That sign-in belongs to Mindbody site ${siteId} and this ` +
+              `counter is on site ${targetSiteId}. Sign in again.`
+            : "Mindbody no longer accepts that sign-in. Sign in again.",
         reason: "teacher",
         staffSessionEnded: true,
       },
@@ -167,6 +177,10 @@ export async function GET(request: Request) {
   return NextResponse.json({
     teacher: { id: session.staffId, name: session.name },
     tokenOk: true,
+    /* T210: the site that issued the token these two reads ran under,
+     * and the site they were sent to. Equal in every ordinary state. */
+    siteId,
+    targetSiteId,
     group: typeof group?.PermissionGroupName === "string" ? group.PermissionGroupName : null,
     ipRestricted: group?.IpRestricted === true,
     allowed,

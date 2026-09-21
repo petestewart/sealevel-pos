@@ -104,9 +104,17 @@ export async function POST(request: Request) {
    * only login; Pete testing on the counter): one token serves both, so
    * the staff read below does not ask for a second issue the sandbox
    * refuses. */
-  const isService = adoptServiceToken(username, signIn.token);
+  /* T210: the site the token was issued for, from the sign-in itself.
+   * It rides with the session from here on, so the borrow, the restore
+   * after a restart and the drawer all know which studio this token
+   * belongs to rather than assuming it is whatever the target says
+   * later. */
+  const siteId = signIn.siteId;
+  const isService = adoptServiceToken(username, signIn.token, siteId);
   if (isService) {
-    console.log("[staff] sign-in is the service account itself; reusing its token for reads");
+    console.log(
+      `[staff] sign-in is the service account itself; reusing its token for reads on site ${siteId}`,
+    );
   }
 
   const user = signIn.user;
@@ -188,9 +196,15 @@ export async function POST(request: Request) {
   if (previous) await endStaffSession(previous.id);
 
   const teacher = { id: staff.id, name: staff.name };
-  const cookie = await createStaffSession(teacher, signIn.token, Date.now(), isService);
+  const cookie = await createStaffSession(
+    teacher,
+    signIn.token,
+    Date.now(),
+    isService,
+    siteId,
+  );
   recordSigninSuccess();
-  console.log(`[staff] signed in staff=${teacher.id}`);
+  console.log(`[staff] signed in staff=${teacher.id} site=${siteId}`);
   return NextResponse.json(
     { ok: true, teacher, hasPin: await hasTeacherPin(teacher.id) },
     { headers: { "set-cookie": staffSetCookie(cookie) } },

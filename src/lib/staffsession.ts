@@ -11,8 +11,12 @@ import {
   insertStaffSession,
   sweepStaffSessions,
 } from "./db";
-import { revokeStaffToken, type Actor } from "./mindbody";
-import { clearTargetSwitchNotice } from "./target";
+import { currentSiteId, revokeStaffToken, type Actor } from "./mindbody";
+import {
+  clearTargetSwitchNotice,
+  ensureTarget,
+  setSignInNotice,
+} from "./target";
 import {
   STAFF_COOKIE_KEY_LABEL,
   STAFF_TOKEN_KEY_LABEL,
@@ -81,6 +85,17 @@ export interface StaffSession {
    *  login; Pete testing on the counter). Its token may be borrowed for
    *  the app's reads when Mindbody refuses to issue a second one. */
   isService: boolean;
+  /**
+   * T210: the Mindbody site id this token was issued for, read from the
+   * target at the moment of the sign-in and never from the target as it
+   * is now. A staff token belongs to the site that issued it: used
+   * against the other one, Mindbody answers "Delegated staff does not
+   * belong to the subscriber." and every write under it is refused.
+   * Null is UNKNOWN (a row written before migration 16, or a session
+   * seeded by a test harness); unknown is never borrowed as the service
+   * token and never restored from a row.
+   */
+  siteId: string | null;
 }
 
 const COOKIE_NAME = "pos_staff";
@@ -113,6 +128,14 @@ interface StaffState {
   modeLogged: boolean;
   /** "Row not written" has been logged this process. */
   insertFailLogged: boolean;
+  /** T210: "a session for another site was skipped" has been logged this
+   *  process, so a counter whose rows all belong elsewhere says so once
+   *  rather than on every request. */
+  foreignSiteLogged: boolean;
+  /** T210 review: session ids already refused as another site's, so a
+   *  browser polling with a stale cookie re-arms the gate notice ONCE
+   *  and not after every later sign-in cleared it. Bounded. */
+  foreignRefused: Set<string>;
   lastTableSweep: number;
 }
 const G = globalThis as typeof globalThis & { __posStaff?: StaffState };
@@ -121,6 +144,8 @@ const state: StaffState = (G.__posStaff ??= {
   processKey: randomBytes(32),
   modeLogged: false,
   insertFailLogged: false,
+  foreignSiteLogged: false,
+  foreignRefused: new Set<string>(),
   lastTableSweep: 0,
 });
 
@@ -234,6 +259,12 @@ export async function createStaffSession(
   token: string,
   now = Date.now(),
   isService = false,
+  /* T210: the site the token was issued FOR, which the sign-in route
+   * takes from the same env it signed in against rather than from
+   * target() as it reads now. Null only where the site is genuinely
+   * unknown (an unconfigured environment), which is never borrowed and
+   * never restored. */
+  siteId: string | null,
 ): Promise<string> {
   logModeOnce();
   /* T89: somebody has signed in, so the "the target changed, sign in
@@ -249,6 +280,7 @@ export async function createStaffSession(
     token,
     issuedAt: now,
     isService,
+    siteId,
   });
   if (p.mode === "postgres") {
     const landed = await insertStaffSession({
@@ -259,6 +291,7 @@ export async function createStaffSession(
       issuedAt: new Date(now),
       expiresAt: new Date(now + STAFF_TTL_MS),
       isService,
+      siteId,
     });
     if (!landed && !state.insertFailLogged) {
       state.insertFailLogged = true;
@@ -293,8 +326,35 @@ export async function staffSessionFrom(
   logModeOnce();
   const p = persistence();
   sweep(now, p);
+  /* T210 review: the site is read from the target, and at the top of a
+   * fresh process the STORED target (T89) has not been loaded yet, so
+   * target() still answers whatever MINDBODY_TARGET names. A counter
+   * switched from the drawer and then restarted would therefore compare
+   * every session against the wrong site for the first request that
+   * beats /api/config to it, and drop a session that fits the site it
+   * was issued for. Bounded, never throws, a no-op without a database,
+   * and at most one local read every five seconds -- the same call
+   * mindbody() makes before every Mindbody call. */
+  await ensureTarget();
+  const site = currentSiteId();
   const hit = state.sessions.get(id);
-  if (hit) return hit;
+  if (hit) {
+    /* T210: a session held in memory from before this process was
+     * pointed somewhere else. The drawer's switch ends every session
+     * (T89), but MINDBODY_TARGET changing across a restart never ran
+     * that, and neither does an env change under a dev server. A token
+     * issued for the other site cannot write here, so the session is
+     * dropped and the gate says why rather than letting the first write
+     * of the shift come back in Mindbody's words. */
+    if (!sessionFitsSite(hit, site)) {
+      state.sessions.delete(id);
+      /* Not revoked: the token is the other site's to expire, and a
+       * revoke aimed at this site would be one more call Mindbody
+       * refuses for the same reason. */
+      return null;
+    }
+    return hit;
+  }
   if (p.mode !== "postgres") return null;
   const row = await boundedDb(
     findStaffSession(id, new Date(now)),
@@ -324,10 +384,96 @@ export async function staffSessionFrom(
     token,
     issuedAt,
     isService: row.isService,
+    siteId: row.siteId,
   };
+  /* T210: a restored row whose token was issued for another site is NOT
+   * restored, and neither is one that records no site at all -- every
+   * row written before migration 16, which is exactly the population
+   * that could be either studio's. The row is left alone rather than
+   * deleted: it may be a live session of the other counter, and this
+   * process simply cannot use it. */
+  if (site !== null && (session.siteId === null || session.siteId !== site)) {
+    if (!state.foreignSiteLogged) {
+      state.foreignSiteLogged = true;
+      console.warn(
+        `[staff-session] not restoring a session row issued for site ` +
+          `${session.siteId ?? "(none recorded)"}: this counter is on site ` +
+          `${site}. A staff token belongs to the site that issued it. ` +
+          "Sign in again.",
+      );
+    }
+    noteForeignRefusal(id);
+    return null;
+  }
   state.sessions.set(id, session);
   return session;
 }
+
+/**
+ * T210: whether a session's token belongs to the site this process is
+ * talking to.
+ *
+ * Three answers, and the middle one is the one worth reading. A session
+ * naming THIS site is used. A session naming ANOTHER site is dropped:
+ * its token cannot write here, and riding it is what put Mindbody's
+ * "Delegated staff does not belong to the subscriber." in front of
+ * Pete. A session naming NO site is unknown, and unknown is treated
+ * differently in the two places it can come from: a persisted ROW is
+ * never restored (see staffSessionFrom, which is what makes the deploy
+ * of migration 16 cost one sign-in), while an entry already in MEMORY
+ * is let through, because the only way to hold one is a process whose
+ * code changed under it (a dev recompile keeps the Map on globalThis)
+ * or a test harness that seeded it, and signing a counter out for that
+ * buys nothing. Every real sign-in records its site.
+ *
+ * An environment with no site id at all (Mindbody not configured)
+ * decides nothing and lets the session through: refusing there would be
+ * a counter that cannot sign anybody in for a reason that has nothing
+ * to do with sites.
+ */
+function sessionFitsSite(
+  session: StaffSession,
+  site: string | null,
+): boolean {
+  if (site === null) return true;
+  /* `?? null` and not a plain comparison: an entry seeded by a test
+   * harness, or one held in memory across a dev recompile that added
+   * this field, has no siteId at all, and undefined means the same
+   * thing as null here -- nobody recorded it. */
+  const recorded = session.siteId ?? null;
+  if (recorded === null) return true;
+  if (recorded === site) return true;
+  if (!state.foreignSiteLogged) {
+    state.foreignSiteLogged = true;
+    console.warn(
+      `[staff-session] dropped a session issued for site ` +
+        `${recorded}: this counter is on site ` +
+        `${site}. A staff token belongs to the site that issued it, so ` +
+        "it is not used here. Sign in again.",
+    );
+  }
+  noteForeignRefusal(session.id);
+  return false;
+}
+
+/** Arms the gate's sentence the FIRST time a given session is refused
+ *  as another site's; a stale cookie that keeps polling does not re-arm
+ *  it after a later sign-in cleared it (T210 review). */
+function noteForeignRefusal(sessionId: string): void {
+  /* The state lives on globalThis across a dev recompile, so an object
+   * built before this field existed has no set yet. */
+  state.foreignRefused ??= new Set<string>();
+  if (state.foreignRefused.has(sessionId)) return;
+  if (state.foreignRefused.size >= 200) state.foreignRefused.clear();
+  state.foreignRefused.add(sessionId);
+  setSignInNotice(FOREIGN_SITE_NOTICE);
+}
+
+/** T210: what the sign-in gate says when a session was dropped, or a
+ *  write refused, because the token belongs to another Mindbody site.
+ *  The same sentence in both places, since it is the same fact. */
+export const FOREIGN_SITE_NOTICE =
+  "Your sign-in belongs to a different Mindbody site. Sign in again.";
 
 /**
  * The token of a live session opened with the service account's own
@@ -338,13 +484,37 @@ export async function staffSessionFrom(
  * finds it too. Null when there is none, which leaves the refusal to
  * surface as before.
  */
-export async function serviceSessionToken(now = Date.now()): Promise<string | null> {
+export async function serviceSessionToken(
+  siteId: string,
+  now = Date.now(),
+): Promise<string | null> {
+  /* T210: only a session issued FOR THIS SITE. Before this, the newest
+   * service session was borrowed whatever site it belonged to and
+   * cached under the current target's site id, which is how a counter
+   * restarted onto the other studio ended up sending every read and
+   * every fallback write under a token that site had never issued
+   * ("Delegated staff does not belong to the subscriber."). An unknown
+   * site (a row from before migration 16) is not this one. */
   for (const s of state.sessions.values()) {
-    if (s.isService && now - s.issuedAt < STAFF_TTL_MS) return s.token;
+    if (!s.isService || now - s.issuedAt >= STAFF_TTL_MS) continue;
+    if (s.siteId === siteId) return s.token;
   }
   const p = persistence();
   if (p.mode !== "postgres") return null;
-  const row = await boundedDb(findServiceStaffSession(new Date(now)), TABLE_WAIT_MS, null);
+  const answer = await boundedDb(
+    findServiceStaffSession(siteId, new Date(now)),
+    TABLE_WAIT_MS,
+    null,
+  );
+  if (!answer) return null;
+  if (answer.skipped.length > 0) {
+    console.warn(
+      `[staff-session] not borrowing ${answer.skipped.length} service ` +
+        `session(s) issued for site ${answer.skipped.join(", ")}: this ` +
+        `counter is on site ${siteId}.`,
+    );
+  }
+  const row = answer.row;
   if (!row) return null;
   if (now - row.issuedAt.getTime() >= STAFF_TTL_MS) return null;
   return decryptStaffToken(row.tokenEnc, p.tokenKey);

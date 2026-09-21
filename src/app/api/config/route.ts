@@ -84,6 +84,14 @@ export async function GET(request: Request) {
    * refuses anyone else regardless. */
   const session = await staffSessionFrom(request);
   return NextResponse.json({
+    /* T210: the site the signed-in teacher's token was issued for,
+     * beside `siteId` above, which is the site this counter is on.
+     * They agree in every ordinary state; when they do not, the token
+     * cannot write here at all (Mindbody: "Delegated staff does not
+     * belong to the subscriber.") and the drawer says so in words.
+     * Null for nobody signed in, or for a session from before
+     * migration 16, which records no site and is not restored. */
+    staffSiteId: session?.siteId ?? null,
     dryRun: dry.on,
     dryRunSource: dry.source,
     targetAdmin: isTargetAdmin(session?.staffId ?? null),

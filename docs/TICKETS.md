@@ -19131,6 +19131,295 @@ exactly the class it was written against.
   fixed by whoever owns that file rather than quietly under this
   ticket. The count matches T203's own recorded 28.
 
+## T210. A staff token belongs to the site that issued it (Pete, 2026-09-21)
+
+Pete's third sandbox drive, with a screenshot: the review sign-up's
+**Create** answered, in the modal's red line,
+
+> Delegated staff does not belong to the subscriber.
+
+and nothing could get past it: retyping the form and reopening the tray
+change nothing, because neither is what the sentence is about. That is
+Mindbody's answer to a **staff token used with a SiteId it was not
+issued for**. A staff account belongs to a
+site (CLAUDE.md has said so since the sandbox's first day, about the
+studio's own API login and site -99), and so does every token issued
+from one. Against the other site the token is not expired, not short of
+a permission and not wrong about the client: it is a credential of
+somewhere else.
+
+### The three holes, traced
+
+Reading, not guessing, because the sentence names nothing in this
+codebase. Three places hold a token, and none of them knew which site it
+came from.
+
+1. **The session.** `staff_sessions` (migration 8) carried no site id,
+   and neither did the in-memory `StaffSession`. So a session persisted
+   by T78 is restored by whatever process reads it next, and **a restart
+   with a different `MINDBODY_TARGET` in the environment does not run
+   T89's `endAllStaffSessions`** -- that runs on the drawer's switch and
+   only there. Point the service at the other studio, deploy, and every
+   teacher is still "signed in", holding the other site's token, and the
+   first write of the shift comes back in Mindbody's words.
+2. **The borrow.** T206's fallback for the sandbox's one login:
+   `findServiceStaffSession` took the newest `is_service` row REGARDLESS
+   of site, `serviceSessionToken()` handed it over, and `staffToken()`
+   cached it under the CURRENT target's `env.siteId`. That is the other
+   studio's token filed in this studio's slot, for an hour, for every
+   read and every service-account write. `adoptServiceToken` had the
+   same shape of trust: the username matched, so the token was assumed
+   to be this site's.
+3. **The refusal.** `isActorTokenDead` read a 401 and nothing else. This
+   refusal arrives as an ordinary 4xx with that sentence, so it was an
+   ordinary error: under a 403 it was an "actor refusal" and the write
+   was **retried once as the service account**, which holds the same
+   borrowed token and fails the same way, and under a 400 it was thrown
+   straight at the modal. Either way the browser got Mindbody's sentence
+   and the teacher got a dead end.
+
+The negative control is in the drivers: with T210's rule reverted, the
+403 phase fails eight assertions, two of them exactly Pete's screenshot
+(the raw sentence in the answer) and one of them the retry (**two**
+write attempts at Mindbody for one tap).
+
+### The rule, per hole
+
+**1. Every token records its site.** Migration 16 adds `site_id text` to
+`staff_sessions`, nullable because rows written before it cannot be told
+apart. `createStaffSession` records the site the sign-in actually used
+-- `signInAsStaff` now answers its own `siteId`, so the site comes from
+the env that issued the token and not from `target()` read a moment
+later, which can have moved. `StaffSession` carries it in memory too.
+
+Then three answers, and the middle one is the one worth reading
+(`sessionFitsSite` in `src/lib/staffsession.ts`):
+
+- a session naming THIS site is used;
+- a session naming ANOTHER site is dropped, in memory and from a row;
+- a session naming NO site is **unknown**, and unknown is treated
+  differently by where it came from. A persisted ROW is never restored,
+  which is what makes deploying migration 16 cost one sign-in and
+  nothing after. An entry already in MEMORY is let through, because the
+  only ways to hold one are a dev recompile (the Map lives on
+  globalThis) and a test harness that seeded it; every real sign-in
+  since this ticket records its site.
+
+An environment with no site id at all (Mindbody unconfigured) decides
+nothing: refusing there would be a counter that cannot sign anyone in
+for a reason that has nothing to do with sites. The foreign row is
+**left alone** rather than deleted: it may be the other counter's live
+session, and this process simply cannot use it. Logged once per process,
+never with a token.
+
+**2. The borrow takes the site from the env it was called with.**
+`serviceSessionToken(siteId)` returns only a session issued for that
+site (memory and table both), `findServiceStaffSession(siteId)` reads
+the newest few live service rows and hands back the one for this site
+plus the site ids of the ones it passed over, so the log can say what
+was skipped and why, and `adoptServiceToken(username, token, siteId)`
+refuses, loudly, a token that was not issued for the site it is about to
+be cached under. The sign-in calls it with the site its own token came
+from, so it adopts exactly as before; the point is that nothing else can
+hand it a foreign one.
+
+**3. That sentence is a dead token for this site.**
+`isForeignSiteRefusal` matches "does not belong to the subscriber"
+case-insensitively on a 4xx (a 5xx or a dead transport stays ambiguous
+and must never end a session or claim nothing was written).
+`isActorRefusal` takes it, so `runAsActor` handles it at all whatever
+status it rides in on; `isActorTokenDead` takes it, so the T50 rule
+applies unchanged: **the session ends, the write is refused 401
+`reason: "staff"`, and it is never retried as the service account.** The
+sentence the gate shows is its own -- "Your sign-in belongs to a
+different Mindbody site. Sign in again." -- set through T89's existing
+notice channel (`setSignInNotice`), which the gate already reads and the
+next sign-in already clears. For the SERVICE token the same sentence
+means the cached token for this site is forgotten (`forgetToken()`), so
+the next read issues a fresh one instead of riding a credential that
+cannot work; no retry, because one failed read is cheap and a silent
+second attempt on a write is not.
+
+### What the screen says
+
+The create surfaces stop showing a red line for it. `NewClientModal`
+(the review sign-up's Create, and New client) and the duplicate
+decision's "Use their existing account" return silently on a 401
+`reason: "staff"`: page.tsx's fetch wrapper has already dropped the
+teacher and the sign-in gate is coming back over the modal, so a
+sentence behind it is one nobody can act on. T207's automatic runner
+already did exactly this (`retryLater()` on a 401 and not a word), and
+the attempt is given back so a fresh sign-in picks the sign-up up.
+
+The gate explains itself even when nobody wrote anything. T89's notice
+channel (`setSignInNotice`) is what a refused write's 401 carries, and a
+teacher who simply walks up to an iPad after a restart makes no write:
+so `/api/teacher` now answers `notice` when nobody is signed in, and the
+gate shows it exactly as it shows the write's. A target switch gets the
+same benefit for free.
+
+The drawer's Settings tab, under "signed-in teacher", is where the quiet
+case is written down: "Signed in against site -99, which is the site
+this counter is on." When they differ it is a `--stop` line at 16px
+naming both and saying writes under it are refused. `/api/teacher` grew
+`siteId` and `targetSiteId` for it, `/api/config` grew `staffSiteId`
+beside its `siteId`, and `GET /api/teacher/probe` reports both and says
+so in its own refusal.
+
+### Rails re-traced
+
+- **The display adds zero write paths.** Nothing here touches
+  `src/lib/display.ts` or anything under `src/app/api/display/`.
+- **Every write is still under `requireActor`, dry run and the write
+  guard.** This ticket only ever refuses writes earlier; it lets none
+  through that did not go before.
+- **No token in a plain log line.** The new lines name site ids, staff
+  ids and counts. The call log keeps T109's record, unchanged.
+- No em dashes in the new copy, the drawer's line is 16px, nothing under
+  16px, every colour a token (the line reuses `--ink` and `--stop`
+  through the existing two classes).
+
+### Drivers
+
+`scratchpad/t210/`, T211's harness copied and extended: the mock grew
+`issueRefuse` (Mindbody refusing to issue a token, the sandbox's own
+behaviour), `subscriber`/`subscriberStatus` (the sentence, on any path
+prefix, as a 400 or a 403), a token that names the site it was issued
+for, a `site` field on every logged call and `/staff/staffpermissions`
+for the probe. `review-env.sh` carries BOTH credential sets pointing at
+the same mock with different site ids (-99 and 471), so a restart with a
+different `MINDBODY_TARGET` is a restart against a different SITE.
+`all.sh` is seven phases against seven boots of the server and one mock
+throughout. **64 assertions, all passing.**
+
+- **signin (8).** The service account signs in on site -99;
+  `/api/teacher`, `/api/config` and `/api/teacher/probe` all report the
+  session's site and the counter's, agreeing.
+- **borrow-same (5).** Issuing refused, a fresh process, the row in
+  Postgres: the read works, and it carries the token site -99 issued.
+- **borrow-other (13).** The same row, the server now on site 471: the
+  read is refused with nothing sent under another site's token
+  (`[staff-session] not borrowing ...`), the persisted session is not
+  restored, `/api/teacher` and `/api/config` say nobody is signed in on
+  site 471, `/api/teacher` carries the gate's own sentence before any
+  write is tried, and a write answers 401 `reason: "staff"` with that
+  sentence and nothing at Mindbody.
+- **null-site (3).** `update staff_sessions set site_id = null`: the row
+  is not restored even on the site that wrote it, and its cookie writes
+  nothing.
+- **memory-foreign (5).** A session seeded in MEMORY for site 471 while
+  the server runs on -99 is dropped before any Mindbody call.
+- **sentence, 400 and 403 (15 each).** The refusal ends the session
+  (401 `reason: "staff"`, `staffSessionEnded`, the site sentence,
+  "Nothing was written"), **one** write attempt reaches the mock and not
+  two, the next call is the gate with the same sentence, and on the
+  service-token half a refused read is not ridden twice and the next
+  read issues a fresh token.
+
+Re-run on the same build, all green: T208's `all.sh` (routes 48, stale
+23, ui automatic 134, ui review 18), T211's `all.sh` (routes open 63,
+routes guard 8, ui shapes 30, ui pin 16) and `regress.sh` end to end
+(t200 52, t114 27, t115 43, t203 7 and 45, t204 65, t205 36 and 4, t206
+19 / 43 / 26 / 46). `npx tsc --noEmit` clean, `env -u DATABASE_URL npm
+run build` clean.
+
+One note for whoever runs these next: a server left on port 3300 by an
+earlier session made the first regress run report 30 failures that were
+nothing but a missing staff cookie, because `regress.sh`'s pkill pattern
+(`^node .*scratchpad/t*/server.mjs`) does not match a server started as
+`node ./server.mjs` from inside its own directory. Check the port before
+believing a sweep of failures.
+
+### Fixed in review
+
+An independent review of the tree before commit found six things; one
+it fixed, four more were fixed on its report, one stands as noted.
+
+- **The site check ran against the wrong target for the first request
+  of a fresh process.** `staffSessionFrom` read the site from `target()`
+  before anything had loaded the STORED target (T89), so a counter
+  switched from the drawer and then restarted compared a session
+  correctly issued for site 471 against the environment's -99 and
+  refused it with this ticket's own sentence. Reproduced with a probe
+  (`scratchpad/t210/stored-boot.sh`) whose first request after the
+  restart is a write. `staffSessionFrom` now awaits `ensureTarget()`
+  first, the same bounded call every Mindbody call already makes.
+- **Only a BORROWED service token is forgotten on the sentence.** A
+  token this process issued for this site cannot belong to another
+  site, so the sentence on it is about something else, and forgetting
+  it in the sandbox's refused-issue state (T206's "ride the cached
+  token") would have thrown away the only working credential. The cache
+  entry records `borrowed`; `forgetBorrowedToken` is what the refusal
+  calls. The sentence driver now asserts a self-issued token is KEPT,
+  and the borrow driver asserts a borrowed one is forgotten and the
+  same-site session borrowed again.
+- **The service row is filtered by site in SQL**, not the newest five in
+  JavaScript, so two studios on one Postgres cannot hide this site's
+  row behind the other's; the rows passed over are read separately for
+  the log line.
+- **The gate notice is armed once per refused session**, not on every
+  poll: a browser with a stale cookie polling every thirty seconds used
+  to re-arm "Your sign-in belongs to a different Mindbody site" after
+  a later sign-in had cleared it, for a teacher it had nothing to do
+  with. A bounded set of refused session ids, lazily created because
+  the state lives on globalThis across a recompile.
+- `createStaffSession` now REQUIRES the site id; the in-memory
+  "unknown site is let through" leniency stays a harness affordance
+  and no caller can mint one by omission.
+- Standing, as noted: on a drawer-switched counter every process start
+  stamps T89's settle window when the stored target first loads, so a
+  write in the first two seconds answers "The studio target just
+  changed"; T89's rule, odd wording after a plain restart.
+
+### Limits, and what could not be verified
+
+- **Which of the three holes produced Pete's screenshot is not
+  established**, and cannot be from the screenshot alone: it needs that
+  server's log, which nobody has. All three were real on the code as it
+  stood, all three are closed, and the third is what turned any of them
+  into a dead end in the modal. If the counter's own log ever shows the
+  sentence again, `[staff-session]` and `[token]` now name the site ids
+  involved, which is the line that was missing.
+- **Nothing here has been run against live Mindbody**, and this ticket
+  is entirely about what Mindbody answers. The sentence itself is
+  Pete's screenshot, verbatim; the mock reproduces it, on both a 400 and
+  a 403 because nobody knows which status the real API used. If the live
+  wording ever differs by a word, `isForeignSiteRefusal` is the one
+  place to widen, and it is matched loosely (a substring, any case) for
+  exactly that reason.
+- **Matching on a sentence is matching on prose.** Mindbody could
+  reword it, and then this half degrades to what the code did before
+  T210: an ordinary refusal with the sentence on the screen. It cannot degrade to
+  a write going out, because the three site checks above do not depend
+  on the wording at all.
+- **A site id is not a target.** Two targets with the SAME site id
+  configured would be indistinguishable here; the site is what Mindbody
+  cares about, which is why it and not the target name is what is
+  recorded.
+- **The deploy costs one sign-in.** Every `staff_sessions` row written
+  before migration 16 reads as unknown and is not restored. That is the
+  honest reading of a row that could belong to either studio, and it
+  happens once.
+- **The foreign row is left in the table** until it expires. It is not
+  this process's to revoke: a revoke aimed at this site would be one
+  more call Mindbody refuses for the same reason.
+- **The in-memory leniency for an unknown site is a harness
+  affordance.** Real sign-ins always record a site, so the only entries
+  it admits are seeded ones and ones a dev recompile carried across. A
+  production process starts with an empty Map.
+- **Two iPads on different sites** were not driven. The session is
+  per browser and the check is per request, so each is refused on its
+  own; nothing shared moves.
+- **The site a session is checked against is the target as this process
+  last loaded it**, which `ensureTarget` refreshes at most every five
+  seconds. A drawer switch ends every session anyway (T89), so the
+  window is only reachable by another process switching the stored
+  target, and it closes on the next Mindbody call.
+- The **staff session is faked** in the sentence and memory phases
+  (T200's idiom); the other phases sign in for real through
+  `/api/teacher/signin` against the mock and then reuse that session's
+  row and cookie.
+
 ## T211. A teacher's PIN past the waiver gate, with a reason (Pete, 2026-09-21)
 
 Pete, verbatim:

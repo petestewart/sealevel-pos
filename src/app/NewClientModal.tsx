@@ -270,6 +270,15 @@ export default function NewClientModal({
       });
       const body = await res.json().catch(() => null);
       if (!res.ok || !body?.ok) {
+        /* T210: the sign-in went under the create -- the token expired,
+         * or it belongs to a different Mindbody site (Pete's third
+         * sandbox drive: "Delegated staff does not belong to the
+         * subscriber.", in this modal, with nothing able to get past
+         * it). The page's fetch wrapper has already dropped the teacher
+         * and the sign-in gate is coming back over this modal, so a red
+         * line here would be a sentence nobody can act on. Say nothing
+         * and let the gate say it. */
+        if (res.status === 401 && body?.reason === "staff") return;
         /* T208: a duplicate is a DECISION, not a red line. The route
          * names the account it matched, and the caller puts the two
          * people side by side; only when it declines does this say

@@ -111,8 +111,27 @@ the drawer alone. The drawer's Settings tab is where the quiet case is written
 down: the studio and site in words, whether the target came from the setting
 or the environment, the dry run and whose it is, and the write guard.
 
-The cached staff token is keyed by site id, so switching target cannot reuse a
-sandbox token against production.
+**A staff token belongs to the site that issued it, and all three places
+this app holds one now say which site that is** (T210; Pete's third drive met
+Mindbody's answer for getting this wrong, "Delegated staff does not belong to
+the subscriber.", in the review sign-up's modal with no way past it). The
+SERVICE token's cache is keyed by site id, so switching target cannot reuse a
+sandbox token against production. A TEACHER's session records the site its
+token was issued for (`staff_sessions.site_id`, migration 16, and `siteId` on
+the in-memory `StaffSession`): a row for another site, or one from before the
+column existed, is never restored, and a session held in memory for another
+site is dropped, which is what a restart with a different `MINDBODY_TARGET`
+used to walk straight past (T89's switch ends every session; an environment
+change at restart never ran it). The BORROW of a signed-in service account's
+own token (T206, `serviceSessionToken`, `adoptServiceToken`) takes the site id
+from the env it was called with and refuses a token issued for any other. And
+Mindbody's own sentence is treated as a dead token for this site: the session
+ends, the write is refused 401 `reason: "staff"` and is NEVER retried as the
+service account (which holds the same borrowed token and would fail the same
+way), the cached service token for this site is forgotten so the next read
+reissues, and the gate says "Your sign-in belongs to a different Mindbody site.
+Sign in again." The drawer's Settings tab names both site ids, and says in
+words when they differ; `/api/config` and `GET /api/teacher/probe` report both.
 
 ### One tap charges once, even if its request arrives twice (T113)
 
@@ -248,8 +267,9 @@ each: search debounce, minimum query length, result limit, how many hours of
 schedule to show either side of now, whether check-in is optimistic, and
 whether an unpaid booking needs a confirming tap. They live in the browser's
 localStorage, apply immediately, and need no restart. Testing a number should
-not cost a commit. Under them, "signed-in teacher" names who is signed in and
-runs the T49 permission probe.
+not cost a commit. Under them, "signed-in teacher" names who is signed in,
+says which Mindbody site issued their token and which site this counter is on
+(T210, loudly when the two differ), and runs the T49 permission probe.
 
 Since T89 the tab opens on the Mindbody target: the studio and site in
 words, whether that came from the setting or the environment, and, for a
@@ -872,6 +892,15 @@ while `git clone` works, so clone the repo rather than fetching files.
   figures before the tap and on the ticket after it, because the receipt and
   Mindbody will say the substitute's name. The whole story is filed on the
   client the way T45/T62 file a comp's reason.
+- **"Delegated staff does not belong to the subscriber." is a staff token
+  used against the wrong SiteId** (Pete's third sandbox drive, 2026-09-21,
+  T210). Not a permission, not an expired token, and not about the client or
+  the request: the token is alive at the site that issued it and meaningless
+  at any other. It arrives as a 4xx with that sentence and nothing else to
+  go on, so it is matched on the wording (`isForeignSiteRefusal`), counts as
+  a dead token for this site, and is never retried as the service account.
+  Anything holding a token -- the session, the cache, the borrow -- has to
+  know which site it belongs to; see the safety section above.
 - **`/client/uploadclientdocument` wants a MIME type in `MediaType`**,
   not the extension the spec lists (client.yml:7427 says `png`; the
   sandbox answers "Media type png is invalid" for it and for `.png`,
@@ -1007,8 +1036,11 @@ while `git clone` works, so clone the repo rather than fetching files.
   and Test-prices a cart. A token Mindbody refuses as dead mid-write
   ends the session and REFUSES that write (401 `reason: "staff"`, T50
   review); it is never redone as the service account, and the gate
-  says so. Still unverified: what Mindbody answers for an
-  expired staff token (`isActorTokenDead` reads a 401), and that the
+  says so. Since T210 a refusal whose message carries "does not belong
+  to the subscriber" (a token issued for the OTHER Mindbody site) is
+  read the same way, with its own sentence on the gate. Still
+  unverified: what Mindbody answers for an expired staff token
+  (`isActorTokenDead` reads a 401 and that one sentence), and that the
   sales report actually shows the token's staff member. The probe is
   `GET /api/teacher/probe` (the sign-in modal and the dev drawer run it).
 - **The waiver document upload is verified as accepted, not yet as

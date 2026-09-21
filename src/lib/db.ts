@@ -492,6 +492,25 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         ADD COLUMN IF NOT EXISTS is_service boolean NOT NULL DEFAULT false;
     `,
   },
+  {
+    /* T210: which Mindbody SITE the token in this row was issued for.
+     * A staff token belongs to the site that issued it, and Mindbody
+     * answers "Delegated staff does not belong to the subscriber." when
+     * one is used against another site -- which is what a counter
+     * restarted with a different MINDBODY_TARGET was doing with a
+     * persisted session (T89's switch ends every session, but an
+     * environment change at restart never ran it). Nullable, because
+     * rows written before this migration cannot be told apart: they
+     * read as UNKNOWN and are never loaded for any site, which costs
+     * one sign-in on the deploy that adds this column and nothing
+     * afterwards. Not a secret: the site id is already on
+     * /api/config. */
+    version: 16,
+    sql: `
+      ALTER TABLE staff_sessions
+        ADD COLUMN IF NOT EXISTS site_id text;
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -1053,6 +1072,10 @@ export interface StaffSessionRow {
   expiresAt: Date;
   /** The session was opened with the SERVICE ACCOUNT's own login. */
   isService: boolean;
+  /** T210: the Mindbody site id the token was issued for. Null for a
+   *  row written before migration 16, which reads as unknown and is
+   *  never loaded for any site. */
+  siteId: string | null;
 }
 
 /** Writes a fresh session's row. Returns whether it landed; false is
@@ -1064,10 +1087,19 @@ export async function insertStaffSession(row: StaffSessionRow): Promise<boolean>
     if (!p) return false;
     await p.query(
       `INSERT INTO staff_sessions
-         (id, staff_id, name, token_enc, issued_at, expires_at, is_service)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (id, staff_id, name, token_enc, issued_at, expires_at, is_service, site_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (id) DO NOTHING`,
-      [row.id, row.staffId, row.name, row.tokenEnc, row.issuedAt, row.expiresAt, row.isService],
+      [
+        row.id,
+        row.staffId,
+        row.name,
+        row.tokenEnc,
+        row.issuedAt,
+        row.expiresAt,
+        row.isService,
+        row.siteId,
+      ],
     );
     return true;
   } catch (err) {
@@ -1087,7 +1119,7 @@ export async function findStaffSession(
     const p = await ready();
     if (!p) return null;
     const res = await p.query(
-      `SELECT id, staff_id, name, token_enc, issued_at, expires_at, is_service
+      `SELECT id, staff_id, name, token_enc, issued_at, expires_at, is_service, site_id
        FROM staff_sessions WHERE id = $1 AND expires_at > $2`,
       [id, now],
     );
@@ -1109,25 +1141,57 @@ function rowOf(r: any): StaffSessionRow {
     issuedAt: r.issued_at as Date,
     expiresAt: r.expires_at as Date,
     isService: r.is_service === true,
+    siteId:
+      r.site_id === null || r.site_id === undefined ? null : String(r.site_id),
   };
 }
 
-/** The newest live session opened with the service account's own login,
- *  or null (none, expired, or the store did not answer). */
+/**
+ * The newest live session opened with the service account's own login
+ * FOR THIS SITE (T210), plus the site ids of the live service rows that
+ * were passed over, so the caller can say what it skipped and why.
+ * Null means the store did not answer; `{row: null}` means it answered
+ * and had nothing usable.
+ *
+ * Before T210 this took the newest service row whatever site it was
+ * issued for, and `staffToken()` then cached it under the CURRENT
+ * target's site id: a server restarted onto the other studio borrowed
+ * a token the other site had issued and every call under it was refused
+ * "Delegated staff does not belong to the subscriber.". A row with no
+ * site id (written before migration 16) is unknown, which is not this
+ * site either.
+ */
 export async function findServiceStaffSession(
+  siteId: string,
   now = new Date(),
-): Promise<StaffSessionRow | null> {
+): Promise<{ row: StaffSessionRow | null; skipped: string[] } | null> {
   try {
     const p = await ready();
     if (!p) return null;
+    /* T210 review: the site is filtered in SQL, so five newer rows of
+     * the other studio (two sites on one Postgres) cannot hide this
+     * site's. The rows passed over are read separately, for the log. */
     const res = await p.query(
-      `SELECT id, staff_id, name, token_enc, issued_at, expires_at, is_service
-       FROM staff_sessions WHERE is_service = true AND expires_at > $1
+      `SELECT id, staff_id, name, token_enc, issued_at, expires_at, is_service, site_id
+       FROM staff_sessions
+       WHERE is_service = true AND expires_at > $1 AND site_id = $2
        ORDER BY issued_at DESC LIMIT 1`,
-      [now],
+      [now, siteId],
     );
-    const r = res.rows[0];
-    return r ? rowOf(r) : null;
+    const mine = res.rows[0] ? rowOf(res.rows[0]) : null;
+    const others = await p.query(
+      `SELECT site_id FROM staff_sessions
+       WHERE is_service = true AND expires_at > $1
+         AND (site_id IS NULL OR site_id <> $2)
+       ORDER BY issued_at DESC LIMIT 5`,
+      [now, siteId],
+    );
+    return {
+      row: mine,
+      skipped: others.rows.map((r: { site_id: string | null }) =>
+        typeof r.site_id === "string" ? r.site_id : "(no site recorded)",
+      ),
+    };
   } catch (err) {
     logDbError("staff-session-read", err);
     return null;
