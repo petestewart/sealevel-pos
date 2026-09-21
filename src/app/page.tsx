@@ -54,6 +54,10 @@ import GuestModal, {
 } from "./GuestModal";
 import { isGuestPass, usableGuestPass } from "@/lib/guestpass";
 import { actorFallbackLine } from "./actornote";
+import ApprovalDialog, { type ApprovalArmed } from "./ApprovalDialog";
+import ApprovalWait from "./ApprovalWait";
+import { useSaleApproval } from "./useSaleApproval";
+import { displayFirstName } from "@/lib/displayticket";
 import { DEFAULT_SETTINGS, useSettings } from "./settings";
 import { toggleTheme, watchSystemTheme } from "./theme";
 import { useVisualViewport } from "./viewport";
@@ -342,6 +346,13 @@ interface PayProfile {
  *  renders. */
 interface PayPriced {
   suppressed: boolean;
+  /** T209: Mindbody's own subtotal and tax, read off the SAME
+   *  /api/price-cart answer the total comes from, for the ticket the
+   *  customer screen shows when the studio asks them to approve. Never
+   *  this browser's arithmetic: absent (or the cart unusable) means the
+   *  display draws the line and no totals. */
+  subTotal?: number | null;
+  taxTotal?: number | null;
   grandTotal: number | null;
   expectedTotal: number;
   disagrees: boolean;
@@ -1243,6 +1254,106 @@ function FrontDesk({
   const payFlight = useRef(false);
   /** How the last gesture ended, when it did not fully succeed. */
   const [payOutcome, setPayOutcome] = useState<PayOutcome | null>(null);
+  /**
+   * T209: the customer's approval over the pay-and-check-in dialog.
+   *
+   * T203 made the approval a precondition of EVERY charge in
+   * /api/checkout, and wired the asking half into the Cart screen alone.
+   * This dialog is the other charge path, so with the setting on it hit
+   * the route with nothing, was refused in words ("The customer has not
+   * approved this sale on the customer screen") and no scene ever
+   * appeared on the student's iPad (Pete, third sandbox drive,
+   * 2026-09-21). It now runs the SAME flow, from the same hook, drawing
+   * the same panel: identical words, identical two controls, so the two
+   * screens cannot drift.
+   *
+   * The setting comes from the `config` this page already polls -- not a
+   * second source -- and it decides only what this DRAWS. The server
+   * reads it itself on every charge.
+   *
+   * The two closures name `payCatalog`, `payPriced` and
+   * `runPayAndCheckIn`, the last of which is declared much further down:
+   * their bodies only run on a tap, long after it exists.
+   */
+  const payApproval = useSaleApproval({
+    on: config?.customerConfirmsSale === true,
+    build: () => {
+      const dialog = payDialogRef.current;
+      const sel =
+        paySelectedId !== null
+          ? (payCatalog.passes?.find((o) => o.id === paySelectedId) ?? null)
+          : null;
+      if (dialog === null || sel === null) return null;
+      /* Mindbody's figures or none. The same rule the Charge button
+         follows: a cart that is still pricing, was suppressed or whose
+         total Mindbody disagreed with carries NO totals to a student's
+         screen, and the display draws the line and waits. */
+      const usable =
+        !payPricing && payPriced && !payPriced.suppressed && !payPriced.disagrees
+          ? payPriced
+          : null;
+      return {
+        payload: {
+          mode: "approve" as const,
+          clientFirstName: displayFirstName(dialog.entry.name),
+          lines: [
+            {
+              name: sel.name,
+              quantity: 1,
+              unitPrice: sel.price,
+              linePrice: sel.price,
+            },
+          ],
+          subtotal: usable?.subTotal ?? null,
+          tax: usable?.taxTotal ?? null,
+          total: usable?.grandTotal ?? null,
+        },
+        /* The cart the SERVER hashes, in the same shape the charge below
+           sends it: the client and the one line's type, id, quantity and
+           unit price. The browser never sends a hash (T203). */
+        cart: {
+          items: [
+            {
+              type: sel.type,
+              metadataId: sel.id,
+              quantity: 1,
+              price: sel.price,
+            },
+          ],
+          clientId: dialog.entry.clientId,
+        },
+      };
+    },
+    charge: (approved) => void runPayAndCheckIn(approved),
+    /* T209 review: a present refused 401 `reason: "staff"` is the
+       sign-in gone (T50), the same thing `noteActor` does with a
+       write's `staffSessionEnded`. The gate comes back; the panel does
+       not claim the customer screen is at fault. */
+    onStaffSessionEnded: () => setTeacher(null),
+  });
+  /* Pulled out by name: the handlers the hook returns are stable, the
+   * object around them is not, and closePayDialog is a dependency of
+   * three other callbacks. */
+  const cancelPayApproval = payApproval.cancel;
+  /** Which stage the approval is at, as a plain string, so the Escape
+   *  handler below can depend on it without depending on the object. */
+  const payApprovalStage = payApproval.approval?.stage ?? null;
+  /**
+   * T209 review, the same rule as the Cart screen's cart edit: picking a
+   * DIFFERENT pass while the customer is looking at the old one ends the
+   * wait then and there. The pass list stays live during a wait (only a
+   * stage in flight locks it), so without this the student holds a
+   * ticket for pass A while the dialog shows pass B, and their Approve
+   * buys a server refusal about a ticket that changed. A no-op when
+   * nothing is outstanding, which is every ordinary open: the default
+   * selection lands long before any Charge tap.
+   */
+  const abandonPayApproval = payApproval.abandon;
+  useEffect(() => {
+    abandonPayApproval(
+      "The pass changed. Charge again to ask the customer.",
+    );
+  }, [paySelectedId, abandonPayApproval]);
   /** Rows with a check-in in flight. */
   const [busy, setBusy] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
@@ -3429,6 +3540,14 @@ function FrontDesk({
     if (payStage !== null) return;
     payGen.current += 1;
     payPriceGen.current += 1;
+    /* T209: the dialog is going, so an approval outstanding on the
+     * customer screen goes with it. A student left holding a ticket for
+     * a charge nobody is making is the one thing closing this must not
+     * leave behind, and `cancel` takes the scene down (POST
+     * /api/display/cancel) as well as clearing the wait. The server
+     * would expire it either way; a few seconds of somebody else's
+     * ticket is not a wait, it is a wrong screen. */
+    cancelPayApproval();
     setPayDialog(null);
     setPayOutcome(null);
     setPayPriced(null);
@@ -3436,7 +3555,7 @@ function FrontDesk({
     setPayPricing(false);
     setPaySelectedId(null);
     setPayProfile(null);
-  }, [payStage]);
+  }, [payStage, cancelPayApproval]);
 
   /**
    * T26: after a REAL check-in that used a pass's last session, decide
@@ -3635,11 +3754,17 @@ function FrontDesk({
   useEffect(() => {
     if (!payDialog) return;
     const onKey = (e: KeyboardEvent) => {
+      /* T209: with the PIN pad over this dialog, Escape belongs to the
+       * pad (it cancels the override and leaves the sale exactly as it
+       * was). One key must not close two things. While the customer is
+       * being ASKED, Escape still closes this dialog, and closing it
+       * takes the ticket off their screen. */
+      if (payApprovalStage === "pin") return;
       if (e.key === "Escape" && payStage === null) closePayDialog();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [payDialog, payStage, closePayDialog]);
+  }, [payDialog, payStage, closePayDialog, payApprovalStage]);
 
   /**
    * The check-in CHIP's tap. The chip is the ONLY check-in trigger: the
@@ -5918,7 +6043,14 @@ function FrontDesk({
    * roster refresh at the end is what shows the row paid and checked
    * in, and it drops itself if the teacher has somehow moved on.
    */
-  const runPayAndCheckIn = async () => {
+  const runPayAndCheckIn = async (approved?: {
+    /* T209: the display approval this charge is riding on, or the PIN
+     * token that stood in for it. Exactly one, and only when the studio
+     * asks the customer to approve; /api/checkout ignores both when the
+     * setting is off, so a stale dialog cannot refuse a sale. */
+    id?: string;
+    token?: string;
+  }) => {
     if (payFlight.current || !payChargeable) return;
     if (!payDialog || !paySelected || payMethod === null) return;
     const { entry, classId, flavor } = payDialog;
@@ -5958,6 +6090,13 @@ function FrontDesk({
               },
             ],
             clientId: entry.clientId,
+            /* T209: the customer's approval, or the PIN that stood in
+               for it. The server checks the setting itself and refuses
+               a charge that carries neither. */
+            ...(approved?.id ? { displayApprovalId: approved.id } : {}),
+            ...(approved?.token
+              ? { approvalOverride: { token: approved.token } }
+              : {}),
             method: payMethod,
           }),
         });
@@ -6281,7 +6420,15 @@ function FrontDesk({
     setPendingCheckIn(pending);
     setPendingResult(null);
     /* Closed inline, as the finished gesture is: closePayDialog reads
-     * payStage from a stale closure. */
+     * payStage from a stale closure. T209 review: the approval goes with
+     * it, exactly as closePayDialog takes it. This offer can appear
+     * WHILE an approval is outstanding (the tender flips to "nothing to
+     * charge with" when the selection changes mid-wait, and the Charge
+     * control becomes this one), and without this the student is left
+     * holding an approve ticket for a charge nobody is making -- one the
+     * Cart screen's own live mirror cannot even replace, because
+     * presentRequest only replaces a LIVE ticket in place. */
+    cancelPayApproval();
     payGen.current += 1;
     payPriceGen.current += 1;
     setPayDialog(null);
@@ -9779,6 +9926,21 @@ function FrontDesk({
               </p>
             ) : null}
 
+            {/* T209: the customer's approval, while it is outstanding.
+                The SAME panel the Cart screen draws, from the same
+                component, in the same words and with the same two 64px
+                controls: a teacher who has read it once has read it
+                everywhere. Nothing here charges. */}
+            <ApprovalWait
+              approval={payApproval.approval}
+              note={payApproval.note}
+              waitingForScreen={payApproval.waitingForScreen}
+              onCancel={payApproval.cancel}
+              onWait={payApproval.keepWaiting}
+              onTakeOver={payApproval.takeOver}
+              onPin={payApproval.toPin}
+            />
+
             <div className="modal-actions">
               <button
                 className="modal-cancel"
@@ -9805,7 +9967,13 @@ function FrontDesk({
                 <button
                   className="modal-confirm pay-charge"
                   disabled={!payChargeable}
-                  onClick={() => void runPayAndCheckIn()}
+                  /* T209: with "customer approves each sale" off this is
+                     the charge and nothing else, exactly as before. With
+                     it on the ticket goes on the customer screen and the
+                     charge follows their own tap, or the teacher's PIN.
+                     The decision is the shared hook's, not this
+                     dialog's. */
+                  onClick={payApproval.begin}
                 >
                   {payStage === "charge" ? (
                     <>
@@ -9853,6 +10021,18 @@ function FrontDesk({
             ) : null}
           </div>
         </div>
+      ) : null}
+
+      {/* T209: the D1 override over the pay-and-check-in dialog, the
+          same dialog and the same "approve" purpose the Cart screen
+          uses. /api/checkout verifies the token, spends it once and
+          files it on the client with this teacher's name. */}
+      {payDialog && payApproval.approval?.stage === "pin" ? (
+        <ApprovalDialog
+          because={payApproval.approval.because}
+          onCancel={payApproval.closePin}
+          onArmed={(armed: ApprovalArmed) => payApproval.armed(armed.token)}
+        />
       ) : null}
 
       {waitlistPrompt ? (

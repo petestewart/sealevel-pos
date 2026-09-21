@@ -368,6 +368,40 @@ way T45/T62 file a comp's reason ("Sale approved by <teacher> at the
 counter, customer screen not used"). With the setting off, both fields
 are ignored rather than refused: a stale dialog must not stop a sale.
 
+**EVERY charge path asks, through ONE shared piece** (T209). The rule is
+enforced on every charge, so every way to `/api/checkout` has to present
+the ticket, and there are exactly two: the Cart screen's Charge and the
+roster's "Pay and check in" over an unpaid row (T25, with T26's renewal
+sibling in the same dialog). T203 wired the first alone, so the second
+reached the route with nothing, was refused in words and put NO scene on
+the student's iPad (Pete, third sandbox drive, 2026-09-21). The flow now
+lives in `src/app/useSaleApproval.ts` -- the present, the 1 second poll
+of `/api/display/approval`, the busy retry, the three ways out -- and
+the panel in `src/app/ApprovalWait.tsx`, and both screens call them, so
+the words, the two 64px controls and the behaviour cannot drift. A
+screen that is not paired or not connected still gets the SAME panel,
+with the line that names the PIN, and never a PIN pad on its own: the
+override is the teacher's own deliberate tap. A refusal that is NOT
+about the screen says what it is: a 401 `reason: "staff"` is the
+sign-in gone and raises the gate rather than blaming the customer
+iPad, and any other refusal shows the SERVER's own sentence, with
+Approve sale still offered.
+
+**Nothing outstanding outlives the ticket it was about.** Whatever ends
+a wait takes the scene off the student's screen with it (`endWait` in
+the hook, which is also what Cancel and the reset are): closing the
+roster dialog, a cart edit on the Cart screen, picking a different pass
+in the roster dialog, and a present whose answer arrives after the
+teacher moved on, which takes its own just-created scene back down. A
+cart edit and a pass change each leave one sentence, because a
+customer tapping Approve on a ticket nobody can charge is worse than
+being asked twice. Cancelling the PIN pad is NOT one of these: it goes
+back to the wait it was opened over, so the ticket stays up and the
+customer's tap still charges. Take over's three second apology is
+cancellable, so Cancel during it puts no ticket up. "Check in free
+(comp)" is not a charge and presents nothing. A THIRD charge path added
+later belongs in that hook on the day it is written, not after a drive.
+
 **A student can sign themselves up** (T204, Phase 2.5 item 5). The idle
 screen's "New here? Sign up" calls `POST /api/display/start`, the one
 route the DISPLAY may put a scene up with: a `register` request with

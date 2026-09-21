@@ -18845,3 +18845,288 @@ Against a real production Next server and a mock Mindbody
   generic sentence; that is the case T203 recorded from the start.
 - The staff session is faked in the harness (T200's idiom), so T49/T50
   attribution is exercised as shape.
+
+---
+
+## T209. The roster's "Pay and check in" never asked the customer (Pete, 2026-09-21)
+
+Pete's third sandbox drive, with **"customer approves each sale" ON**.
+He tapped the check-in chip on an unpaid row, the T25 dialog came up
+("Pay and check in Rae"), he picked a Drop In and tapped Charge, and the
+dialog answered, in red:
+
+> Not charged: The customer has not approved this sale on the customer
+> screen. Nothing else happened; it is safe to try again.
+
+**And no approval scene ever appeared on the customer iPad.** The
+sentence was true and the advice was useless: trying again did the same
+thing, because nothing in that dialog had ever asked anybody.
+
+### The cause: one precondition, two charge paths, one of them wired
+
+T203 made the approval a precondition of **every** charge, enforced in
+`/api/checkout` and nowhere else, which was the right place to put it.
+It then wired the ASKING half into `SaleScreen.tsx` alone: `approvalCart`,
+`presentApproval`, the poll of `/api/display/approval`, the busy retry,
+the `approve-wait` panel, the `ApprovalDialog`, and
+`displayApprovalId` / `approvalOverride` on the charge body.
+
+There are exactly two callers of `/api/checkout` in this app, and the
+other one is `runPayAndCheckIn` in `page.tsx` -- T25's three-stage
+gesture over an unpaid roster row, with T26's renewal sale in the same
+dialog. It sent items, a client and a method, as it always had. With the
+setting off that is correct and unchanged; with it on it is a charge the
+server is obliged to refuse, and a teacher standing at the counter with
+a queue reads a sentence about a screen that never lit up.
+
+This is the shape of bug a second copy would have made permanent, so the
+fix is the flow moved OUT of the sale screen rather than reproduced
+beside it.
+
+### What changed
+
+**`src/app/useSaleApproval.ts` (new).** T203's state machine, lifted
+whole: the `present` (`POST /api/display/present` as a `ticket`/`approve`
+request, with the cart the SERVER hashes beside the payload and no hash
+from the browser), the 1 second poll that survives a dropped stream and a
+reload, the 2 second retry behind the design's "Wait", "Take over", the
+D1 PIN, and `begin()` -- with the setting off, the caller's own charge
+and nothing else. It owns no charge: the caller passes its own,
+unchanged, and the hook only decides WHEN it runs and WHAT authorization
+rides on it. The setting, the ticket builder and the charge are read
+through refs updated in the render body, so the wait stays keyed to the
+request id and a keystroke elsewhere on the screen cannot restart the
+poll -- the reason T203's own effect carried an `exhaustive-deps`
+suppression.
+
+**`src/app/ApprovalWait.tsx` (new).** The `approve-wait` panel, moved
+with its markup, its class names and its five sentences intact, plus the
+quiet line a finished approval leaves behind. Both screens render it.
+
+**`src/app/SaleScreen.tsx`.** The state, the present, the two effects,
+the panel's JSX and `onPrimaryTap` are gone; the hook and the component
+stand in their place. `doCharge` did not move and the ApprovalDialog is
+wired to the hook's `armed`. Nothing a teacher sees on that screen
+changed, which the driver asserts by comparing the two panels'
+`innerText` character for character.
+
+**`src/app/page.tsx`.** The pay dialog calls the same hook. Its ticket is
+the one chosen pricing option at its price, its totals are Mindbody's own
+(`/api/price-cart`'s `subTotal`, `taxTotal` and `grandTotal`, which the
+dialog already read and now keeps), and its cart is the same
+`items`/`clientId` shape it charges with, so the two hashes agree
+although the two bodies are not identical (the charge also carries
+`taxExempt`, `taxRate` and a method, none of which are in the hash).
+`runPayAndCheckIn` takes an optional `{id, token}` and puts
+`displayApprovalId` or `approvalOverride` on the body exactly as
+SaleScreen does. The setting comes from the `config` this page already
+polls every 30 seconds; there is no second source.
+
+**Closing the dialog cancels the ticket.** `closePayDialog` -- the X, the
+scrim, Cancel, Close and Escape -- calls the hook's `cancel`, which POSTs
+`/api/display/cancel` when something is up. A student holding a ticket
+for a charge nobody is making is the one thing closing that dialog must
+not leave behind. Escape is the PIN pad's while the PIN pad is open: one
+key must not close two things.
+
+**"Check in free (comp)" is not a charge and presents nothing.** It was
+never routed through `/api/checkout` and still is not.
+
+### Five things review found, and the rail they share
+
+Review passed the refactor, the hash agreement and the rails, and found
+five ways an outstanding approval could end badly. Four of them are the
+same rail said differently: **nothing outstanding may outlive the ticket
+it was about, and nothing may end in silence.** They are fixed in the
+hook, so both screens get them.
+
+1. **A cart edit made the customer's Approve do nothing, silently.** The
+   poll calls the newest `chargeRef.current`, and the Cart screen's
+   cart-edit effect clears the tender lines, so `chargeable` went false
+   and `doCharge` returned at its first guard: the panel vanished, no
+   charge went out, and nobody was told anything while the student was
+   still looking at the ticket. Now that effect calls the hook's
+   `abandon`, which ends the wait AT the edit, takes the scene off their
+   screen and leaves one line, "The ticket changed. Charge again to ask
+   the customer." The same hole existed in the roster dialog, whose pass
+   list stays live during a wait (only a stage in flight locks it), so
+   picking a different pass does the same thing with its own sentence.
+   That makes `resetTender`'s old comment, "an outstanding approval goes
+   with the tender", literally true rather than nearly true.
+2. **Cancelling the PIN pad stranded the ticket.** `toPin` deliberately
+   leaves the scene up, and `closePin` cleared the state outright, so a
+   teacher who reached for the keypad and thought better of it left a
+   student holding a ticket nothing was watching. The `pin` stage now
+   carries `resume` when it was opened over a live wait, and `closePin`
+   goes back to that wait: the panel returns, the poll resumes on the
+   same request id, and their Approve still charges once. Nothing is
+   cancelled and nothing is charged by that tap.
+3. **Take over's three second apology was not cancellable.** Cancel
+   during it still put the ticket up afterwards, which teaches a teacher
+   that the control does not work. The hook now carries a generation
+   counter that every ending or restarting path bumps, and the apology
+   checks it before presenting. The same counter closes a smaller race:
+   a `present` whose answer arrives after the teacher moved on takes its
+   own just-created scene back down instead of stranding it.
+4. **Every non-busy refusal of the present read as "not connected".** A
+   400 from the payload check, a 403, a 502 with a body, and above all a
+   401 `reason: "staff"` all landed on "The customer screen is not
+   connected.", which sends a teacher to look at the wrong iPad.
+   Now: 401 `reason: "staff"` is the sign-in gone (T50) and is reported
+   up through the caller's own `onStaffSessionEnded` (SaleScreen's prop,
+   the roster's `setTeacher(null)`), so the gate comes back and no panel
+   claims the screen is at fault; **409** is `presentRequest`'s own
+   answer about the screen (`unpaired`, `disconnected`, `busy`) and is
+   the one that really means not connected; a 5xx or an answer with no
+   sentence in it falls back to the same line because it says nothing
+   that can be passed on; everything else shows the SERVER's own
+   sentence in the panel, with Approve sale still offered. (The
+   instruction for this said "5xx / 503 display-not-paired"; the
+   unpaired and disconnected answers are in fact **409**, so both
+   statuses are treated as not connected and the note is recorded here.)
+5. **`buyAndCheckIn`'s inline close did not cancel.** The reviewer's own
+   edit, kept: it calls `cancelPayApproval()` like `closePayDialog`
+   does, so leaving the roster dialog for the Cart screen takes the
+   ticket down too.
+
+`endWait` is the one place all of this lands: it bumps the generation,
+clears the state, keeps the sentence, and POSTs `/api/display/cancel`
+whenever a scene is up (a live wait, or a PIN pad opened over one). It
+is a no-op when nothing is outstanding, which is what keeps it away from
+the post-sale summary: the approval is already spent and null by the
+time the charge that raises the summary returns.
+
+### Design calls made
+
+- **The panel is the same one, not a variant** (Pete, mid-ticket: "the
+  right behaviour for EVERY charge is ALWAYS the same panel the Cart
+  screen shows"). One component, one set of words, two callers.
+- **A screen that is not there still gets the panel.** The hook lands on
+  `offline` and the panel says "The customer screen is not connected." and
+  "This sale needs your PIN, or a screen to ask on.", with the same
+  Cancel and Approve sale. It does NOT jump to a PIN pad: the override is
+  the teacher's own deliberate tap, on a control they have read before,
+  and skipping to a keypad would teach a teacher that a dark screen means
+  "type your PIN" rather than "the customer was not asked".
+- **The hook does not own the charge.** Two charge paths that differ in
+  every other way (one is a whole tender model, the other is one method
+  derived from a balance and a card) share the question and nothing else.
+- **T26's renewal sale rides the same flow**, because it is the same
+  dialog reaching the same route. It was refused by the same sentence
+  before this ticket, for the same reason.
+- **The roster's ticket carries no totals it cannot stand behind.** A
+  cart still pricing, suppressed or disagreeing presents its line and no
+  subtotal, tax or total, which is T201's rule applied to the second
+  screen that now builds a payload.
+
+### Drivers
+
+`scratchpad/t209/`, T208's harness extended. The mock gains one knob,
+`unpaidRow`: a second person on the class (Rae Unpaid, 100000002) booked
+with NO pricing option and a card on file, which is the row whose chip
+opens this dialog; and `/client/clientservices` now answers with what a
+LIVE checkout sold, so T25's stage (b) can attach the pass it just
+bought. Both are off or empty by default, so every earlier driver sees
+exactly the class it was written against.
+
+- `routes.mjs on` -- 25 assertions. The roster's own two bodies through
+  the two real routes: refused with Pete's exact sentence when nothing
+  asked (unpaired, and connected), presented, approved, then **charged
+  on its own approval** (the hash agreement, which is the one thing a
+  shared piece has to get right or every approval refuses its own
+  checkout), spent once, refused when the pass was swapped after the tap,
+  and refused after the customer declined. The display's stream is read
+  for the client id, the cart and the hash: none of them travels.
+- `routes.mjs off` -- 4. The roster's charge goes through carrying
+  nothing.
+- `ui.mjs on` -- **86**, Playwright, two browser contexts and the real
+  `/display`. The panel appears on the roster dialog; its text and its
+  two 64px controls are compared **character for character** with the
+  Cart screen's own panel, in both the connected and the dark-screen
+  case; the display shows Cancel | Approve with the roster's line and
+  $27.59; Approve leads to exactly one `/api/checkout` carrying
+  `displayApprovalId` and no PIN token, one non-test checkout at
+  Mindbody, and the row reads "checked in". Then: the customer's Cancel
+  leaves "Customer cancelled" and charges nothing; closing the dialog
+  mid-wait POSTs `/api/display/cancel` and the student's screen goes
+  back to idle; "Check in free (comp)" presents nothing and charges
+  nothing; a student's own sign-up on that screen gives the panel
+  "Someone is signing up on the customer screen." with Wait and Take
+  over; with the display unpaired the panel still appears, does not open
+  a PIN pad, and "Approve sale" is what does. Sizes and the dark palette
+  are measured on the panel in both themes.
+  The five review fixes are driven here too: a cart EDIT during a wait
+  (the ticket row's own two taps, as a teacher does it) ends the panel,
+  leaves the sentence, cancels the scene and stops the student being
+  asked, with nothing charged; cancelling the PIN pad puts the waiting
+  panel BACK with no `/api/display/cancel` at all, and the customer's
+  Approve then charges once on the display approval; Cancel during Take
+  over's apology puts NO ticket up (no second present, no scene, nothing
+  charged); a 400 shows the server's own sentence instead of "not
+  connected", still offers Approve sale at 64px, and repeats that reason
+  on the PIN pad; a 401 `reason: "staff"` raises the sign-in gate with
+  no panel blaming the customer screen. The last two are driven by
+  answering `/api/display/present` from the BROWSER (`page.route`),
+  because a 400 comes from that route's own payload check and a 401 from
+  `requireActor`, and neither is reachable by driving the real screen
+  with a real session; the Mindbody mock sits on the far side of a route
+  that never calls it.
+- `ui.mjs off` -- 6. Nothing is presented, no panel, one charge, and it
+  carries neither approval field.
+- `ui.mjs pin` -- the D1 override typed on the roster's dialog, against a
+  real Postgres so a teacher PIN can be enrolled: the PIN dialog opens
+  over the pay dialog, the charge carries `approvalOverride` and no
+  `displayApprovalId`, the override is filed on the client, and Rae is
+  checked in.
+- Re-run after the review fixes: `all.sh` (routes 4 + 25, ui off 6, ui
+  on 86, ui pin 10) and `regress.sh` end to end (t200 52, t114 27, t115
+  43, **t203 off 7 and on 45**, t204 65, t205 36 + 4, t206 19 + 43 + 26
+  + 46), all green; T208's `ui.mjs` automatic (**134 passed, 0 failed**,
+  with its own seven-assertion "ahead class" section SKIPPED by the
+  driver's own guard -- at the clock this run happened on, a class five
+  and a half hours out lands on another studio day) and review (**18**);
+  and **T203's own Playwright pass, 28 passed, 0 failed**, from
+  `scratchpad/t209/t203-ui-refresh.mjs`.
+
+### Limits
+
+- **The two panels are compared as TEXT, not as pixels.** They are one
+  component, so the words cannot differ; where they sit differs by
+  construction (a modal on the roster, the payment column's foot on the
+  Cart screen), and nobody has looked at the roster panel on a real iPad
+  with a queue in front of them.
+- **T205's contract signature still has its own copy of this shape**
+  (`sign`, `signNote`, its own `waitingForScreen`, its own
+  `approve-wait` JSX in SaleScreen). It is a different question about a
+  different object and was deliberately left alone here; if it is ever
+  unified, it should be after somebody has established that the two
+  really are one flow and not two that look alike.
+- **The busy case was driven with a sign-up holding the screen**, which
+  is the one the wording names. A waiver or a contract holding it takes
+  the same `reason: "busy"` branch and was not separately driven from the
+  roster.
+- **A cart edit leaves the student looking at the LIVE mirror, not an
+  empty screen.** T201's informational ticket goes straight back up with
+  the edited cart, which is the right thing (they watch their ticket
+  being built) but means the driver asserts the approve scene's two
+  controls are gone rather than that the screen is blank.
+- **`armed` still leaves the approve scene up** when the PIN was typed
+  over a live wait, exactly as T203 shipped it: the comment there says
+  the route cancels a pending approval of its own when it takes the PIN.
+  That was not re-examined under this ticket.
+- **The mock's unpaid row is a fixture, not Pete's own class.** What it
+  reproduces is the state (a booking with no pricing option, a card on
+  file, a connected display and the setting on), not his sandbox's data.
+- The staff session is faked in the harness (T200's idiom), so T49/T50
+  attribution is exercised as shape.
+- **T203's own Playwright driver had gone stale before this ticket.**
+  It clicks the nav item "Buy" (T206 renamed it "Cart"), reads "Not yet"
+  off the display (T206 made it "Cancel") and asks for the note
+  "Customer did not approve" (the code has said "Customer cancelled"
+  since T203 shipped). As written it dies on the first of those, on this
+  build and on the one before it. `scratchpad/t209/t203-ui-refresh.mjs`
+  is that driver with those three strings renamed and NOTHING else
+  touched, and it is 28 passed, 0 failed here; the original is left as
+  it was in `scratchpad/t203/`, so the staleness stays visible and is
+  fixed by whoever owns that file rather than quietly under this
+  ticket. The count matches T203's own recorded 28.

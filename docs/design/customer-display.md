@@ -460,7 +460,15 @@ and "Thank you" for a few seconds before returning to idle. Emailed
 receipt state (T53) is shown when Mindbody confirmed one.
 
 **On:** the Charge tap first presents `ticket` with `mode: "approve"`:
-the same ticket with **Approve** and **Not yet** at 64px. The teacher's
+the same ticket with **Cancel** and **Approve** at 64px. **Every charge
+path asks, not just the Cart screen** (T209, 2026-09-21): the roster's
+"Pay and check in" over an unpaid row (T25) and its renewal sibling
+(T26) are the other way to `/api/checkout`, and they present the same
+scene through the same shared piece, `useSaleApproval` with
+`ApprovalWait`, so the two screens cannot drift. T203 wired the asking
+half into the Cart screen alone, and the roster's dialog reached the
+route with nothing: the charge was refused in words and no scene ever
+appeared on the customer iPad. The teacher's
 screen shows "Waiting for the customer to approve" with Cancel. Approve
 completes the request; the server records `{approved: true, cartSha256}`
 where the hash is over the priced cart it presented. The teacher's iPad
@@ -468,10 +476,38 @@ then calls `/api/checkout` with `displayApprovalId`, and **the server
 enforces the setting**: when `customer_confirms_sale` is on, a checkout
 without a fresh, unconsumed approval whose cart hash matches the cart
 being charged is refused with 409 and a plain sentence. "Not yet"
-refuses the request with the reason shown to the teacher ("Customer did
-not approve"), the ticket stays as built, and the teacher fixes it and
+refuses the request with the reason shown to the teacher ("Customer
+cancelled"), the ticket stays as built, and the teacher fixes it and
 charges again. A disconnected display while the setting is on refuses
 the charge the same way and says why.
+
+**A screen that is not there does not skip the panel.** With no display
+paired or connected the SAME panel appears, with its line changed to
+"The customer screen is not connected." and "This sale needs your PIN,
+or a screen to ask on.", and the same two controls. It never jumps
+straight to a PIN pad: the override is the teacher's own deliberate tap,
+and a teacher who has read this panel once has read it everywhere.
+
+**Nothing outstanding outlives the ticket it was about.** Every way a
+wait ends cancels the presented approval (`POST /api/display/cancel`),
+so a student is never left holding a ticket for a charge nobody is
+making: the roster dialog's Cancel, Close and Escape; a cart edit on
+the Cart screen, which clears the tender the charge is computed from; a
+different pass picked in the roster dialog; and a present whose answer
+lands after the teacher moved on, which takes its own scene back down.
+The last two leave one sentence each, so nobody watches the panel
+vanish in silence. Cancelling the PIN pad is deliberately NOT one of
+them: the ticket is still on the student's screen, so it returns to the
+wait and their Approve still charges once. Take over's three second
+apology is cancellable. The dialog's free entry ("Check in free
+(comp)") is not a charge and presents nothing.
+
+**A refusal that is not about the screen says what it is.** A present
+refused 401 `reason: "staff"` is the teacher's sign-in gone (T50) and
+raises the sign-in gate, not a sentence about the customer iPad; 409 is
+`presentRequest`'s own answer about the screen (unpaired, disconnected,
+busy) and reads as "not connected"; anything else shows the server's
+own sentence in the panel, with Approve sale still offered.
 
 **The teacher override (D1, Pete: "Teacher override, they must enter
 their PIN").** Beside "Waiting for the customer to approve" sits

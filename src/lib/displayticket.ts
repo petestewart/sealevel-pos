@@ -63,6 +63,20 @@ export interface TicketPayload {
   emailedReceipt?: boolean | null;
 }
 
+/**
+ * The greeting's name, and only that: a first name is the most the
+ * customer screen ever learns about the person standing at the counter.
+ *
+ * T209 moved it here from SaleScreen so every screen that builds a
+ * ticket payload -- the Cart screen and the roster's "Pay and check in"
+ * -- greets the same person by the same name.
+ */
+export function displayFirstName(name: string | null): string | null {
+  if (name === null) return null;
+  const first = name.trim().split(/\s+/)[0];
+  return first === undefined || first.length === 0 ? null : first;
+}
+
 /** A ticket is a handful of lines; a longer one is a bug, not a sale. */
 const MAX_LINES = 40;
 const MAX_NAME = 120;

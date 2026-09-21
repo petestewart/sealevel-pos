@@ -17,7 +17,10 @@ import CardModal from "./CardModal";
 import { toggleTheme } from "./theme";
 import ApprovalDialog, { type ApprovalArmed } from "./ApprovalDialog";
 import { useDisplayMirror } from "./useDisplayMirror";
+import ApprovalWait from "./ApprovalWait";
+import { useSaleApproval } from "./useSaleApproval";
 import type { TypedCard } from "@/lib/typedcard";
+import { displayFirstName } from "@/lib/displayticket";
 import type {
   TicketLine,
   TicketMode,
@@ -106,6 +109,15 @@ export interface ModeConfig {
    *  before the config loads, which both read as automatic (the
    *  default) only once the answer has actually arrived. */
   signupMode?: string;
+  /** T203: whether the studio asks the customer to approve each sale.
+   *  T209 reads it here as well as in SaleScreen's own /api/config
+   *  fetch, because the roster's "Pay and check in" is a second charge
+   *  path and has to ask the same question. Absent on the lock screen's
+   *  trimmed answer and before the config loads, which both read as OFF:
+   *  /api/checkout enforces the setting itself on every charge, so a
+   *  stale copy can cost a teacher a refusal and can never cost a
+   *  student an unapproved charge. */
+  customerConfirmsSale?: boolean;
 }
 
 /**
@@ -1033,14 +1045,6 @@ function displayTicketLines(cart: readonly CartEntry[]): TicketLine[] {
      * Mindbody's own. */
     linePrice: roundToCents(line.item.price * line.quantity),
   }));
-}
-
-/** The greeting's name, and only that: a first name is the most this
- *  screen ever learns about the person standing at the counter. */
-function displayFirstName(name: string | null): string | null {
-  if (name === null) return null;
-  const first = name.trim().split(/\s+/)[0];
-  return first === undefined || first.length === 0 ? null : first;
 }
 
 /**
@@ -2073,34 +2077,51 @@ function PaymentPanel(props: {
   const [lines, setLines] = useState<readonly TenderLine[]>([]);
   const nextLineId = useRef(1);
   /**
-   * T203: where the customer's approval has got to, when the studio has
-   * asked for one. Null is "not asked for, or nothing outstanding".
+   * T203: the customer's approval, when the studio has asked for one.
    *
-   *   waiting  -- the ticket is on the customer screen
-   *   busy     -- something else holds that screen (the design's
-   *               three-way choice: Wait, Take over, Approve sale)
-   *   offline  -- no screen to ask on, so the PIN is the way forward
-   *   pin      -- the D1 override dialog is open
+   * T209 lifted the whole of it into `useSaleApproval`, because
+   * /api/checkout enforces the setting on EVERY charge and this screen
+   * was the only one that asked: the roster's "Pay and check in" reached
+   * the route with no approval and no scene ever appeared on the
+   * student's iPad. Nothing about what a teacher sees here moved; the
+   * hook holds the same state machine, the same poll and the same three
+   * ways out, and `ApprovalWait` draws the same panel, so the two
+   * screens cannot drift.
    *
    * Nothing here decides whether the sale may be charged: the server
    * does, on every charge, from the setting and the stored approval.
+   *
+   * The two closures below are rebuilt every render and read by the hook
+   * through refs, so they see THIS render's cart and charge while the
+   * wait stays keyed to the request id. They name `approvalCart` and
+   * `doCharge`, which are declared further down: the bodies only run on
+   * a tap, long after both exist.
    */
-  const [approval, setApproval] = useState<
-    | null
-    | { stage: "waiting"; requestId: string }
-    /* T204: `signup` means a STUDENT is signing themselves up on that
-     *  screen, which is the one case the wording names and Take over
-     *  interrupts a person rather than a scene. */
-    | { stage: "busy"; signup?: boolean }
-    | { stage: "offline" }
-    | { stage: "pin"; because: string }
-  >(null);
-  /** The quiet sentence left behind when an approval ended without a
-   *  charge ("Customer cancelled"). The ticket stays as built. */
-  const [approvalNote, setApprovalNote] = useState<string | null>(null);
-  /** T203: whether the teacher chose "Wait" on a busy screen, so the
-   *  present is retried until it goes through. */
-  const [waitingForScreen, setWaitingForScreen] = useState(false);
+  const approvalFlow = useSaleApproval({
+    on: customerConfirmsSale,
+    build: () => ({
+      payload: displayTicketPayload({
+        mode: "approve",
+        cart,
+        priced,
+        pricing: false,
+        clientName: client?.name ?? null,
+        giftCardsCharged,
+        giftDiscountOff: roundToCents(armedParts.giftCents / 100),
+      }),
+      cart: approvalCart(),
+    }),
+    charge: (approved) => void doCharge(approved),
+    /* T209 review: a present refused 401 `reason: "staff"` is this
+       screen's own onStaffSessionEnded, exactly as the charge path
+       reads it off a checkout answer. */
+    onStaffSessionEnded,
+  });
+  const approval = approvalFlow.approval;
+  const approvalNote = approvalFlow.note;
+  const waitingForScreen = approvalFlow.waitingForScreen;
+  const approvalReset = approvalFlow.reset;
+  const approvalAbandon = approvalFlow.abandon;
   /** Comp stays OUT of the list: it is a whole-sale gesture with its own
    *  hold, not a tender. Arming it clears the lines; adding a line
    *  disarms it. The two can never both be set.
@@ -2571,10 +2592,15 @@ function PaymentPanel(props: {
      * standing would be an approval for a ticket nobody is charging. The
      * server refuses a stale one anyway: it is spent on the charge, and
      * a changed cart hashes differently. */
-    setApproval(null);
-    setApprovalNote(null);
-    setWaitingForScreen(false);
-  }, [dismissPad, dismissGift, dismissCardEntry, closeReason, setComp]);
+    approvalReset();
+  }, [
+    dismissPad,
+    dismissGift,
+    dismissCardEntry,
+    closeReason,
+    setComp,
+    approvalReset,
+  ]);
 
   /* T101: the ticket's rows are editable in pay mode now, EXCEPT where
    * this panel knows something the ticket does not. A part-sold ticket
@@ -2646,7 +2672,22 @@ function PaymentPanel(props: {
     setResult((r) => (r?.kind === "paid" ? null : r));
     setLines([]);
     dismissPad();
-  }, [cart, dismissPad]);
+    /**
+     * T209 review: and an outstanding approval goes with them.
+     *
+     * The tender lines are what `chargeable` is computed from, so
+     * clearing them here used to leave a customer looking at a ticket
+     * whose charge could no longer run: their Approve landed on a
+     * `doCharge` that returned at its first guard, the panel vanished,
+     * and nobody was told anything. Ending the wait AT the edit is what
+     * makes "an outstanding approval goes with the tender" true rather
+     * than nearly true. The scene comes off their screen with it, and
+     * the teacher gets one sentence.
+     */
+    approvalAbandon(
+      "The ticket changed. Charge again to ask the customer.",
+    );
+  }, [cart, dismissPad, approvalAbandon]);
 
   /* "Empty cart" on the client-change dialog: the cart SaleScreen just
    * cleared was what the tender was for, so nothing stays armed, comp
@@ -3386,62 +3427,6 @@ function PaymentPanel(props: {
     ...(comp !== null ? { discount: comp.discount } : {}),
   });
 
-  /**
-   * T203: put the priced ticket on the customer screen and wait for the
-   * tap, when the studio has `customer_confirms_sale` on.
-   *
-   * Nothing is charged here. The server records the cart's sha256 on the
-   * request's own server-side half and /api/checkout compares it to the
-   * cart it is about to charge, so this is a question, not a promise.
-   * A screen that is busy, dark or unpaired lands on the three-way
-   * choice the design gives (Wait, Take over, Approve sale); none of
-   * them is a way past the setting, because the only two things that
-   * satisfy it are the customer's own tap and a teacher's PIN.
-   */
-  const presentApproval = async (): Promise<void> => {
-    const payload = displayTicketPayload({
-      mode: "approve",
-      cart,
-      priced,
-      pricing: false,
-      clientName: client?.name ?? null,
-      giftCardsCharged,
-      giftDiscountOff: roundToCents(armedParts.giftCents / 100),
-    });
-    try {
-      const res = await fetch("/api/display/present", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          kind: "ticket",
-          payload,
-          ...(payload.clientFirstName
-            ? { clientFirstName: payload.clientFirstName }
-            : {}),
-          /* The cart the server hashes. It never reaches the display:
-             the hash and the client id live on the request's private
-             half, which the student's screen never sees. */
-          cart: approvalCart(),
-        }),
-      });
-      const body = await res.json().catch(() => null);
-      if (res.ok && typeof body?.requestId === "string") {
-        setApproval({ stage: "waiting", requestId: body.requestId });
-        return;
-      }
-      if (body?.reason === "busy") {
-        setApproval({
-          stage: "busy",
-          ...(body?.holdingSignup === true ? { signup: true } : {}),
-        });
-        return;
-      }
-      setApproval({ stage: "offline" });
-    } catch {
-      setApproval({ stage: "offline" });
-    }
-  };
-
   const doCharge = async (approved?: {
     /** T203: the display approval this charge is riding on, or the PIN
      *  token that stood in for it. Exactly one, and only when the
@@ -4011,95 +3996,13 @@ function PaymentPanel(props: {
     }
   };
 
-  /**
-   * T203: while the ticket is on the customer screen, ask how it went.
-   *
-   * A poll rather than the teacher's SSE stream, deliberately: this runs
-   * for the few seconds of one approval, it survives a stream that was
-   * dropped or never opened, and the answer it needs is one boolean. The
-   * moment the customer approves, the charge goes out with the
-   * approval's id and no further tap, which is the design's promise.
-   * A refusal, a cancel and a screen that went dark all close the wait
-   * with a plain sentence and leave the ticket exactly as built.
-   */
-  useEffect(() => {
-    if (approval?.stage !== "waiting") return;
-    const requestId = approval.requestId;
-    let stopped = false;
-    const finish = (note: string | null) => {
-      stopped = true;
-      setApproval(null);
-      setApprovalNote(note);
-    };
-    const tick = async () => {
-      if (stopped) return;
-      try {
-        const res = await fetch(
-          `/api/display/approval?requestId=${encodeURIComponent(requestId)}`,
-        );
-        const body = await res.json().catch(() => null);
-        if (stopped || body === null) return;
-        if (body.status === "completed" && body.approved === true) {
-          stopped = true;
-          setApproval(null);
-          setApprovalNote(null);
-          void doCharge({ id: requestId });
-          return;
-        }
-        if (body.status === "refused") {
-          finish("Customer cancelled");
-          return;
-        }
-        if (body.status === "cancelled" || body.status === "unknown") {
-          finish("Customer screen disconnected");
-          return;
-        }
-        if (body.connected === false) finish("Customer screen disconnected");
-      } catch {
-        /* One missed poll is not an answer; the next one asks again. */
-      }
-    };
-    void tick();
-    const timer = setInterval(() => void tick(), 1_000);
-    return () => {
-      stopped = true;
-      clearInterval(timer);
-    };
-    /* doCharge is rebuilt every render and is deliberately not a
-     * dependency: the wait is keyed by the request id, and re-running
-     * this effect per render would restart the poll on every keystroke
-     * elsewhere on the screen. */
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [approval]);
-
-  /** T203, the design's "Wait": keep asking for the screen until it is
-   *  free, or until the teacher cancels. */
-  useEffect(() => {
-    if (approval?.stage !== "busy" || !waitingForScreen) return;
-    const timer = setInterval(() => void presentApproval(), 2_000);
-    return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [approval, waitingForScreen]);
-
-  /**
-   * T203: the Charge tap, when the studio asks the customer first.
-   *
-   * With the setting off this is doCharge and nothing else, which is
-   * today's behaviour unchanged. With it on, the first tap presents the
-   * ticket for approval and the charge follows the customer's own tap;
-   * nothing auto-charges, and the server refuses a charge that carries
-   * no approval whatever this browser believes.
-   */
-  const onPrimaryTap = () => {
-    if (!customerConfirmsSale) {
-      void doCharge();
-      return;
-    }
-    if (approval !== null) return;
-    setApprovalNote(null);
-    setWaitingForScreen(false);
-    void presentApproval();
-  };
+  /* T203's wait, its busy retry and its primary tap all live in
+   * `useSaleApproval` since T209 (declared above, with this screen's
+   * ticket and this screen's charge). The poll, the 2 second retry on a
+   * busy screen and the rule that the charge follows the customer's own
+   * tap are unchanged; they are simply somewhere both charge screens
+   * can reach them. */
+  const onPrimaryTap = approvalFlow.begin;
 
   /** Retire a stale warning when the teacher changes the tender; a paid
    *  receipt stays until Done. */
@@ -5696,114 +5599,20 @@ function PaymentPanel(props: {
                   opens the reason and PIN dialog (T67), so nobody comps a
                   sale by grazing a control; it lives only here, in pay
                   mode (layout plan 2.9). */}
-              {/* T203: the customer's approval, while it is outstanding.
-                  It stands where a teacher is already looking, says what
-                  is being waited for, and carries the ways out: Cancel
-                  (the ticket stays exactly as built), and the D1 PIN
-                  override. A busy screen adds the design's Wait and Take
-                  over. Nothing here charges: the charge follows the
-                  customer's own tap, or the PIN. */}
-              {approval !== null ? (
-                <div className="approve-wait" role="status">
-                  <p className="approve-wait-title">
-                    {approval.stage === "waiting"
-                      ? "Waiting for the customer to approve"
-                      : approval.stage === "busy"
-                        ? approval.signup === true
-                          ? "Someone is signing up on the customer screen."
-                          : "The customer screen is busy."
-                        : approval.stage === "offline"
-                          ? "The customer screen is not connected."
-                          : "Approving with your PIN"}
-                  </p>
-                  <p className="approve-wait-sub">
-                    {approval.stage === "waiting"
-                      ? "The ticket is on their screen. The sale goes through the moment they tap Approve."
-                      : approval.stage === "busy"
-                        ? waitingForScreen
-                          ? "Waiting for it to come free. The ticket goes up by itself."
-                          : approval.signup === true
-                            ? "Wait for them to finish, take the screen over, or approve the sale with your PIN."
-                            : "Wait for it, take it over, or approve the sale with your PIN."
-                        : approval.stage === "offline"
-                          ? "This sale needs your PIN, or a screen to ask on."
-                          : "Enter your PIN in the box."}
-                  </p>
-                  {approval.stage !== "pin" ? (
-                    <div className="approve-wait-buttons">
-                      <button
-                        type="button"
-                        className="approve-wait-btn"
-                        onClick={() => {
-                          setWaitingForScreen(false);
-                          setApproval(null);
-                          setApprovalNote(null);
-                          if (approval.stage === "waiting") {
-                            void fetch("/api/display/cancel", { method: "POST" });
-                          }
-                        }}
-                      >
-                        Cancel
-                      </button>
-                      {approval.stage === "busy" && !waitingForScreen ? (
-                        <button
-                          type="button"
-                          className="approve-wait-btn"
-                          onClick={() => setWaitingForScreen(true)}
-                        >
-                          Wait
-                        </button>
-                      ) : null}
-                      {approval.stage === "busy" ? (
-                        <button
-                          type="button"
-                          className="approve-wait-btn"
-                          onClick={() => {
-                            /* Take over: the screen apologises for a few
-                               seconds before the ticket goes up, so the
-                               student it interrupted is not simply
-                               replaced by somebody else's sale. */
-                            setWaitingForScreen(false);
-                            void (async () => {
-                              await fetch("/api/display/cancel", {
-                                method: "POST",
-                                headers: { "content-type": "application/json" },
-                                body: JSON.stringify({ takenOver: true }),
-                              }).catch(() => undefined);
-                              await new Promise((r) => setTimeout(r, 3_000));
-                              await presentApproval();
-                            })();
-                          }}
-                        >
-                          Take over
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="approve-wait-btn go"
-                        onClick={() => {
-                          setWaitingForScreen(false);
-                          setApproval({
-                            stage: "pin",
-                            because:
-                              approval.stage === "offline"
-                                ? "The customer screen is not connected."
-                                : approval.stage === "busy"
-                                  ? approval.signup === true
-                                    ? "Someone was signing up on the customer screen."
-                                    : "The customer screen is busy."
-                                  : "The customer has not approved on the screen.",
-                          });
-                        }}
-                      >
-                        Approve sale
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : approvalNote !== null ? (
-                <p className="approve-wait-sub">{approvalNote}</p>
-              ) : null}
+              {/* T203: the customer's approval, while it is outstanding,
+                  drawn by the shared panel (T209) so the Cart screen and
+                  the roster's "Pay and check in" ask in the same words.
+                  Nothing here charges: the charge follows the customer's
+                  own tap, or the PIN. */}
+              <ApprovalWait
+                approval={approval}
+                note={approvalNote}
+                waitingForScreen={waitingForScreen}
+                onCancel={approvalFlow.cancel}
+                onWait={approvalFlow.keepWaiting}
+                onTakeOver={approvalFlow.takeOver}
+                onPin={approvalFlow.toPin}
+              />
 
               <div className="pay-foot">
                 <p className="pay-quiet">{tenderNote || " "}</p>
@@ -5844,14 +5653,8 @@ function PaymentPanel(props: {
       {approval?.stage === "pin" ? (
         <ApprovalDialog
           because={approval.because}
-          onCancel={() => setApproval(null)}
-          onArmed={(armed: ApprovalArmed) => {
-            setApproval(null);
-            setApprovalNote(null);
-            /* The screen is no longer being waited on; the route cancels
-               a pending approval of its own when it takes the PIN. */
-            void doCharge({ token: armed.token });
-          }}
+          onCancel={approvalFlow.closePin}
+          onArmed={(armed: ApprovalArmed) => approvalFlow.armed(armed.token)}
         />
       ) : null}
 
