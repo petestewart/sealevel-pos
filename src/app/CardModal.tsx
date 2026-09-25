@@ -54,6 +54,10 @@ interface Common {
 interface FileProps extends Common {
   mode?: "file";
   clientId: string;
+  /** T114: the record's UniqueId, so the read-back after the save shows
+   *  THIS person's card when two Mindbody records share the client id.
+   *  Null when the profile had none. */
+  uniqueId?: number | null;
   /** The card on file now, so the box can say what is being replaced. */
   current: CardOnFile | null;
   /** The card Mindbody holds after the save, and the amber line when the
@@ -278,6 +282,9 @@ export default function CardModal(props: Props) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           clientId: props.clientId,
+          ...(typeof props.uniqueId === "number"
+            ? { uniqueId: props.uniqueId }
+            : {}),
           number: digits,
           expMonth: month,
           expYear: year,

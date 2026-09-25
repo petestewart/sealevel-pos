@@ -7,7 +7,7 @@ import { clientProfile } from "@/lib/clientprofile";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/client-profile?clientId=...
+ * GET /api/client-profile?clientId=...[&uniqueId=...]
  *
  * T41: what the Buy header's profile icon opens: the same basic facts
  * Mindbody's client-info page shows (phone, email, visits and join date,
@@ -23,12 +23,19 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
-  const clientId = new URL(request.url).searchParams.get("clientId")?.trim();
+  const params = new URL(request.url).searchParams;
+  const clientId = params.get("clientId")?.trim();
   if (!clientId) {
     return NextResponse.json({ error: "clientId is required" }, { status: 400 });
   }
+  /* T114: the UniqueId of the person the modal is about, when the row
+   * that opened it had one. Two Mindbody records can share a client id,
+   * and this is what tells them apart. Anything that is not a whole
+   * number is treated as absent. */
+  const rawUnique = params.get("uniqueId")?.trim() ?? "";
+  const uniqueId = /^\d{1,12}$/.test(rawUnique) ? Number(rawUnique) : null;
   try {
-    const profile = await clientProfile(clientId);
+    const profile = await clientProfile(clientId, new Date(), uniqueId);
     return NextResponse.json(profile);
   } catch (err) {
     return NextResponse.json(
