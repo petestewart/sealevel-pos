@@ -243,6 +243,14 @@ export function ClientProfileCard({
   ]
     .filter(Boolean)
     .join(", ");
+  /* T114: when no record could be named, every empty row would repeat
+   * the whole sentence; it is said once, above, and the rows point at
+   * it. */
+  const shared = profile.sharedId;
+  const clientWhy =
+    shared && shared.uniqueId === null
+      ? "the client id is shared, see above"
+      : errors.client;
 
   return (
     <div className="profile-card">
@@ -254,6 +262,25 @@ export function ClientProfileCard({
         <div className="profile-head">
           <span className="profile-id">id {profile.mindbodyId}</span>
         </div>
+      ) : null}
+
+      {/* T114: two Mindbody records under one client id is a studio data
+          problem only a merge in Mindbody fixes. Said once, in the warn
+          pair, never as a banner and never as a gate: the teacher can
+          still check the visit in, and this is where they learn why a
+          saved change may land on the other record. */}
+      {shared ? (
+        <p className="modal-warn" role="note">
+          {shared.uniqueId !== null
+            ? `Mindbody has ${shared.records} client records under client ` +
+              `id ${profile.clientId}. This is the one with Mindbody id ` +
+              `${shared.uniqueId}. Passes, and anything saved from here, go ` +
+              `by client id, and Mindbody decides which record that means. ` +
+              `Merge the records in Mindbody.`
+            : (errors.client ??
+              `Mindbody has ${shared.records} client records under client ` +
+                `id ${profile.clientId}. Merge them in Mindbody.`)}
+        </p>
       ) : null}
 
       {/* T52 (Pete: "the profile view should also have any notes/alerts
@@ -276,10 +303,10 @@ export function ClientProfileCard({
 
       <div className="profile-grid">
         <Row label="Phone">
-          {profile.phone ?? <Missing why={errors.client} />}
+          {profile.phone ?? <Missing why={clientWhy} />}
         </Row>
         <Row label="Email">
-          {profile.email ?? <Missing why={errors.client} />}
+          {profile.email ?? <Missing why={clientWhy} />}
         </Row>
         {/* T71: the opt-ins as one row of live checkboxes (see OptIns);
             T53 had them as two read-only lines. The line under the
@@ -306,7 +333,7 @@ export function ClientProfileCard({
               )}
             </>
           ) : (
-            <Missing why={errors.client} />
+            <Missing why={clientWhy} />
           )}
         </Row>
         <Row label="Visits">
@@ -357,11 +384,11 @@ export function ClientProfileCard({
               <span className="profile-unsigned">Not signed</span>
             )
           ) : (
-            <Missing why={errors.client} />
+            <Missing why={clientWhy} />
           )}
         </Row>
         <Row label="Status">
-          {statusLine || <Missing why={errors.client} />}
+          {statusLine || <Missing why={clientWhy} />}
         </Row>
         {/* T84 (Pete: "we need to add the ability to add a card on
             file"): what Mindbody holds, which is the type, the last four
@@ -371,7 +398,7 @@ export function ClientProfileCard({
             no extra call. */}
         <Row label="Card on file">
           {errors.client ? (
-            <Missing why={errors.client} />
+            <Missing why={clientWhy} />
           ) : (
             <>
               {profile.card ? (

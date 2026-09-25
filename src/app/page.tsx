@@ -2552,14 +2552,25 @@ function FrontDesk({
    * since /api/client-profile is three metered reads. A stale answer
    * (closed, or reopened for someone else) is dropped by generation.
    */
-  const openProfile = useCallback((clientId: string, name: string) => {
+  const openProfile = useCallback((
+    clientId: string,
+    name: string,
+    /* T114: the row's UniqueId. Two Mindbody records can share a client
+     * id (Pete's live roster: Stacia Sander and an inactive Kati Robison
+     * under 10814), and this is what tells the server which one the row
+     * is about. */
+    uniqueId: number | null = null,
+  ) => {
     const gen = ++profileGen.current;
     setProfileView({ clientId, name });
     setProfileState({ profile: null, loading: true, error: null });
     setOptInMsg(null);
     setCardMsg(null);
     setCardOpen(false);
-    fetch(`/api/client-profile?clientId=${encodeURIComponent(clientId)}`)
+    fetch(
+      `/api/client-profile?clientId=${encodeURIComponent(clientId)}` +
+        (uniqueId !== null ? `&uniqueId=${uniqueId}` : ""),
+    )
       .then(async (r) => {
         const body = await r.json();
         if (!r.ok || body?.error) {
@@ -5194,7 +5205,7 @@ function FrontDesk({
      * happen to be on the picked roster; class rows never do. */
     const contact = attachTab === "class" ? "" : contactLine(client);
     return (
-      <li key={`attach-${client.id}`}>
+      <li key={`attach-${client.id}-${client.mindbodyId ?? ""}`}>
         <div
           className="rrow rrow-tap"
           role="button"
@@ -5249,7 +5260,7 @@ function FrontDesk({
               className="row-icon"
               onClick={(e) => {
                 e.stopPropagation();
-                openProfile(client.id, client.name);
+                openProfile(client.id, client.name, client.mindbodyId);
               }}
               aria-label={`Profile for ${client.name}`}
               title="Client profile"
@@ -5899,7 +5910,7 @@ function FrontDesk({
             : usableGuestPass(passLists[entry.clientId]?.data ?? null);
 
           return (
-            <li key={entry.clientId}>
+            <li key={`${entry.clientId}-${entry.mindbodyId ?? ""}`}>
               {/* The row body is NOT a check-in target (T16 reversal:
                   accidental check-ins): the chip in the actions cell is
                   the only trigger. The inline controls' stopPropagation
@@ -6219,7 +6230,7 @@ function FrontDesk({
                     className="row-icon"
                     onClick={(e) => {
                       e.stopPropagation();
-                      openProfile(entry.clientId, entry.name);
+                      openProfile(entry.clientId, entry.name, entry.mindbodyId);
                     }}
                     aria-label={`Profile for ${entry.name}`}
                     title="Client profile"
@@ -6783,7 +6794,7 @@ function FrontDesk({
                       ? `Add ${client.name} to the waitlist`
                       : `Add ${client.name} to this class`;
                     return (
-                      <li key={`walkin-${client.id}`}>
+                      <li key={`walkin-${client.id}-${client.mindbodyId ?? ""}`}>
                         {/* While ONE row's booking is in flight every
                             other row dims: the single-flight lock already
                             made them inert, this makes it visible. */}
@@ -7042,7 +7053,7 @@ function FrontDesk({
                               className="row-icon"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                openProfile(client.id, client.name);
+                                openProfile(client.id, client.name, client.mindbodyId);
                               }}
                               aria-label={`Profile for ${client.name}`}
                               title="Client profile"
@@ -7126,6 +7137,7 @@ function FrontDesk({
       {profileView && cardOpen && profileState.profile ? (
         <CardModal
           clientId={profileState.profile.clientId}
+          uniqueId={profileState.profile.mindbodyId}
           name={profileView.name}
           current={profileState.profile.card}
           onClose={() => setCardOpen(false)}
@@ -7354,7 +7366,7 @@ function FrontDesk({
                   {entries
                     .filter((e) => e.checkedIn)
                     .map((entry) => (
-                      <li key={`m-ci-${entry.clientId}`}>
+                      <li key={`m-ci-${entry.clientId}-${entry.mindbodyId ?? ""}`}>
                         <div className="row">
                           <span className="name">
                             {entry.name}

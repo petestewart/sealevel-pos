@@ -36,6 +36,7 @@ import {
   spreadDiscount,
   type Discount,
 } from "./comp";
+import { logSharedIdKept } from "./clientrecord";
 import { mindbody, type Actor } from "./mindbody";
 import { plainText } from "./richtext";
 import { studioWall } from "./roster";
@@ -1782,6 +1783,24 @@ export async function clientPaymentProfile(
   const row = (body?.Clients ?? []).find(
     (c: any) => String(c?.Id ?? "") === clientId,
   );
+  /* T114: a client id can be shared by two Mindbody records. This read
+   * deliberately stays `limit=1`, Mindbody's own pick, and is only
+   * LOGGED when TotalResults says the id is shared: every sale, card
+   * charge and account debit this profile gates is addressed to Mindbody
+   * by the same client id, so the record Mindbody resolves the id to is
+   * the one whose card and balance matter to it. Choosing a different
+   * record here could show one person's card and charge another's. The
+   * money path is untouched; the risk is recorded in T114. */
+  const total = body?.PaginationResponse?.TotalResults;
+  if (typeof total === "number") {
+    logSharedIdKept(
+      "payment profile",
+      clientId,
+      total,
+      "kept Mindbody's own pick for the id (limit=1), the record a sale " +
+        "addressed by this id is expected to reach; that is not verified",
+    );
+  }
   if (!row) {
     throw new Error("Mindbody returned no client record for this id.");
   }

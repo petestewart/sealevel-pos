@@ -498,6 +498,22 @@ while `git clone` works, so clone the repo rather than fetching files.
 - **`/class/classvisits` puts the CLASS name in the visit's `Name` field.**
   Reading it showed every roster row as "bikram yoga". Names come from
   explicit client fields, and otherwise from the client index by id.
+- **A client's `Id` is NOT unique on a site. `UniqueId` is** (T114). The
+  `Id` every endpoint calls `ClientId` is the studio's editable RSSID, and
+  two records can hold the same one: on site 471, 10814 is both Stacia
+  Sander (UniqueId 100037835, a current member) and Kati Robison (1005543,
+  inactive since 2010), and Mindbody's own UI shows "10814" on both. The
+  roster keyed its lookup on `Id`, the last record won, and Stacia's row
+  read "Kati Robison" over Kati's waiver and alerts. Ids are not even
+  numeric ("n23283"). A visit carries `ClientUniqueId` beside `ClientId`,
+  and that is the handle: every read that goes from an id to one record
+  goes through `pickClientRecord` (`src/lib/clientrecord.ts`), which picks
+  by UniqueId when the caller has one and picks NOTHING when two records
+  share the id and it has none. Never `limit=1` on a lookup by id: it lets
+  Mindbody choose and the exact-Id filter cannot tell. Writes that take
+  only the id (`updateclient`, formula notes, gift cards, account credit)
+  land wherever Mindbody resolves it, which is unverified; the fix for a
+  shared id is merging the records in Mindbody.
 - The permissions this app needs: `LaunchSignInScreen` (arrivals),
   `BookClassesAndEventsWithoutPayment` (booking a walk-in), and for Phase 2
   `MakeSales`, `CreateRetailTickets`, `UseStoredCreditCards`,
