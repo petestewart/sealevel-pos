@@ -36,7 +36,7 @@ import {
   spreadDiscount,
   type Discount,
 } from "./comp";
-import { logSharedIdKept } from "./clientrecord";
+import { logSharedId } from "./clientrecord";
 import { mindbody, type Actor } from "./mindbody";
 import { plainText } from "./richtext";
 import { studioWall } from "./roster";
@@ -1793,7 +1793,7 @@ export async function clientPaymentProfile(
    * money path is untouched; the risk is recorded in T114. */
   const total = body?.PaginationResponse?.TotalResults;
   if (typeof total === "number") {
-    logSharedIdKept(
+    logSharedId(
       "payment profile",
       clientId,
       total,

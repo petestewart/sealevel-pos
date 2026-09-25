@@ -97,13 +97,6 @@ export interface ClientProfile {
   /** Current passes, newest purchase first as Mindbody lists them. Null
    *  when the read failed. */
   passes: PassInfo[] | null;
-  /** T114: set when Mindbody holds more than one record under this
-   *  client id. `uniqueId` is the record shown, chosen by the UniqueId
-   *  the modal was opened with; null when there was nothing to choose
-   *  by (or no record carried it), in which case no record, visit or
-   *  pass is shown at all and `errors.client` says why. Null for an
-   *  ordinary id. */
-  sharedId: { records: number; uniqueId: number | null } | null;
   /** Which sub-reads failed, by name, with Mindbody's reason. */
   errors: { client?: string; visits?: string; passes?: string };
 }
@@ -155,14 +148,7 @@ type ClientFields = Pick<
 /** T114: the client read could not say which record the id means. The
  *  profile then shows no record, visit or pass: all three would be a
  *  guess. */
-class SharedIdError extends Error {
-  constructor(
-    message: string,
-    readonly records: number,
-  ) {
-    super(message);
-  }
-}
+class SharedIdError extends Error {}
 
 async function fetchClientFields(
   clientId: string,
@@ -184,16 +170,10 @@ async function fetchClientFields(
   );
   logClientPick("client profile", clientId, uniqueId, pick);
   if (pick.outcome === "ambiguous") {
-    throw new SharedIdError(
-      ambiguousClientMessage(clientId, pick.records),
-      pick.records,
-    );
+    throw new SharedIdError(ambiguousClientMessage(clientId, pick.records));
   }
   if (pick.outcome === "mismatch" && uniqueId !== null) {
-    throw new SharedIdError(
-      mismatchClientMessage(clientId, uniqueId),
-      pick.records,
-    );
+    throw new SharedIdError(mismatchClientMessage(clientId, uniqueId));
   }
   const c = pick.row;
   if (!c) throw new Error("Mindbody returned no client record for this id.");
@@ -345,8 +325,6 @@ export async function clientProfile(
           consent: null,
           card: null,
         });
-  /* T114: how many records share this id, and which one is shown. */
-  let sharedId: ClientProfile["sharedId"] = null;
   let visitsValue: { count: number; last: ProfileVisit | null } | null =
     visits.status === "fulfilled"
       ? { count: visits.value.count, last: visits.value.last }
@@ -358,20 +336,18 @@ export async function clientProfile(
   if (client.status === "rejected" && client.reason instanceof SharedIdError) {
     /* No record could be named, so the visits and passes Mindbody
      * returned for the bare id are its guess, not this person's. */
-    sharedId = { records: client.reason.records, uniqueId: null };
     const why = "not shown, since the client id does not name one record";
     visitsValue = null;
     passesValue = null;
     errors.visits = why;
     errors.passes = why;
   } else if (client.status === "fulfilled" && client.value.records > 1) {
-    sharedId = { records: client.value.records, uniqueId };
     /* The visits were read by the shared id too. Each carries its own
      * ClientUniqueId; when any names ANOTHER record, Mindbody answered
      * for somebody else and the section is dropped rather than shown
      * under this name. Passes carry no UniqueId to check by (a
-     * ClientService names only the shared ClientID), which the card's
-     * sentence says. */
+     * ClientService names only the shared ClientID), which is recorded
+     * as an open risk in T114. */
     const owners = visits.status === "fulfilled" ? visits.value.owners : [];
     if (uniqueId !== null && owners.some((u) => u !== uniqueId)) {
       visitsValue = null;
@@ -385,7 +361,6 @@ export async function clientProfile(
     ...fields,
     visits: visitsValue,
     passes: passesValue,
-    sharedId,
     errors,
   };
 }

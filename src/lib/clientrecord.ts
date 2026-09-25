@@ -2,62 +2,44 @@
  * T114: which client record an id means.
  *
  * A Mindbody client's `Id` (the "ClientId" every endpoint takes, the
- * studio's editable RSSID) is NOT unique on a site. `UniqueId` is. Pete's
- * live roster (2026-09-25) carried a visit with `ClientId: "10814"` and
- * `ClientUniqueId: 100037835`, and `GET /client/clients?clientIds=10814`
- * answered `TotalResults: 2`: Stacia Sander (UniqueId 100037835) and a
- * second record, Kati Robison, under the same Id. The roster's batched
- * lookup keyed its map on `Id`, the second record overwrote the first,
- * and Stacia's row read "Kati Robison" over Stacia's phone, alerts,
- * visits and card.
+ * studio's editable RSSID) is NOT unique on a site; `UniqueId` is. On
+ * site 471, 10814 was both Stacia Sander (100037835) and an inactive Kati
+ * Robison (1005543); the roster keyed its lookup on `Id`, the last record
+ * won, and Stacia's row read "Kati Robison". Pete's census found that one
+ * pair in 64 thousand records and renumbered it, so this is a small rail,
+ * not a feature: every read that goes from an id to ONE record comes
+ * through here so that the choice is made on purpose.
  *
- * So every read that goes from an Id to ONE record comes through here,
- * and the choice is made on purpose:
+ * - With the caller's UniqueId (a visit's `ClientUniqueId`, a search
+ *   row's `UniqueId`), that record and only that record is the client.
+ *   A record under the same Id with another UniqueId is somebody else.
+ * - Without one, a lone record is the client, exactly as before. Two or
+ *   more is ambiguous and NOTHING is picked: which came first in
+ *   Mindbody's answer is not a reason.
  *
- * - When the caller holds the UniqueId (a visit's `ClientUniqueId`, a
- *   search row's `UniqueId`), that record and only that record is the
- *   client. A record under the same Id with another UniqueId is somebody
- *   else, even when it is the only one Mindbody returned.
- * - Without one, a single record under the Id is the client, exactly as
- *   before. Two or more is AMBIGUOUS and nothing is picked: which record
- *   came first in Mindbody's answer is not a reason.
- *
- * Every ambiguity is logged server side, once per process per place, id
- * and outcome, since a roster reloads all day and one line is enough to
- * act on. The fix is Mindbody's (merge the two records); the app's job
- * is never to show the wrong person.
+ * A shared id is logged server side, once per process per place. There
+ * is deliberately no UI for it (see T114, "Proportion").
  */
 
 export type ClientPickOutcome =
-  /** One record under the id and no UniqueId said otherwise. */
   | "only"
-  /** Picked by the caller's UniqueId. */
   | "unique"
-  /** Two or more records under the id and no UniqueId to choose by. */
   | "ambiguous"
-  /** Records under the id, but none carries the caller's UniqueId. */
   | "mismatch"
-  /** No record under the id at all. */
   | "none";
 
 export interface ClientPick<T> {
   row: T | null;
   outcome: ClientPickOutcome;
-  /** How many records Mindbody holds under this id, as far as the answer
-   *  shows: the rows returned, or the page's TotalResults when a
-   *  single-id read reported more than it returned. 1 is ordinary. */
+  /** Records under this id as far as the answer shows: the rows returned,
+   *  or a single-id read's TotalResults when that is larger. 1 is
+   *  ordinary. */
   records: number;
-  /** The UniqueIds of the records under the id that the answer carried. */
-  uniqueIds: number[];
-  /** Of those, the ones whose record says `Active: false`. Pete's case
-   *  had an inactive record from 2010 on a current member's id; the log
-   *  names it so the merge is easy to decide. Never used to choose. */
-  inactive: number[];
 }
 
 /** How many records a single-id read asks for. One would let Mindbody
- *  choose between two records sharing the id, and the exact-Id filter
- *  after it could not tell (T114); ten sees any real duplicate. */
+ *  choose between records sharing the id, and the exact-Id filter after
+ *  it could not tell (T114). */
 export const CLIENT_ID_READ_LIMIT = 10;
 
 function uniqueIdOf(row: unknown): number | null {
@@ -66,12 +48,10 @@ function uniqueIdOf(row: unknown): number | null {
 }
 
 /**
- * Pick the record `clientId` means from the rows of a `/client/clients`
- * answer. `uniqueId` is the caller's authoritative handle, or null when
- * it has none. `total` is the answer's `PaginationResponse.TotalResults`
- * for a read that asked for this ONE id, so a truncated page still
- * counts as shared; pass null for a batched read, whose total covers
- * every id in it.
+ * Pick the record `clientId` means from a `/client/clients` answer's rows.
+ * `total` is `PaginationResponse.TotalResults` for a read that asked for
+ * this ONE id (so a truncated page still counts as shared); null for a
+ * batched read, whose total covers every id in it.
  */
 export function pickClientRecord<T>(
   rows: readonly T[],
@@ -86,104 +66,70 @@ export function pickClientRecord<T>(
     same.length,
     typeof total === "number" && Number.isFinite(total) ? total : 0,
   );
-  const uniqueIds = same
-    .map(uniqueIdOf)
-    .filter((u): u is number => u !== null);
-  const inactive = same
-    .filter((r) => (r as { Active?: unknown } | null)?.Active === false)
-    .map(uniqueIdOf)
-    .filter((u): u is number => u !== null);
-  const base = { records, uniqueIds, inactive };
-  if (same.length === 0) return { ...base, row: null, outcome: "none" };
+  const lone = same.length === 1 && records <= 1 ? same[0] : undefined;
+  if (same.length === 0) return { row: null, outcome: "none", records };
   if (uniqueId !== null) {
     const hit = same.find((r) => uniqueIdOf(r) === uniqueId);
-    if (hit !== undefined) return { ...base, row: hit, outcome: "unique" };
-    /* A lone record that carries no UniqueId at all cannot contradict
-     * the caller; one that carries a different UniqueId is someone else. */
-    const lone = same[0];
-    if (
-      same.length === 1 &&
-      records <= 1 &&
-      lone !== undefined &&
-      uniqueIdOf(lone) === null
-    ) {
-      return { ...base, row: lone, outcome: "only" };
+    if (hit !== undefined) return { row: hit, outcome: "unique", records };
+    /* A lone record carrying no UniqueId cannot contradict the caller;
+     * one carrying a different UniqueId is someone else. */
+    if (lone !== undefined && uniqueIdOf(lone) === null) {
+      return { row: lone, outcome: "only", records };
     }
-    return { ...base, row: null, outcome: "mismatch" };
+    return { row: null, outcome: "mismatch", records };
   }
-  const only = same[0];
-  if (same.length === 1 && records <= 1 && only !== undefined) {
-    return { ...base, row: only, outcome: "only" };
-  }
-  return { ...base, row: null, outcome: "ambiguous" };
+  if (lone !== undefined) return { row: lone, outcome: "only", records };
+  return { row: null, outcome: "ambiguous", records };
 }
 
 const logged = new Set<string>();
-const LOGGED_MAX = 500;
 
 /**
- * The server log line for an id that did not resolve plainly, once per
- * process per place, id and outcome. Says what was decided and why, so a
- * duplicate is a recorded decision rather than an accident of ordering.
- * Silent for an ordinary id (one record, or none).
+ * One server log line for a shared id (or a UniqueId that no record
+ * carries), once per process per place, id and decision: a roster
+ * reloads all day and one line is enough to act on. Silent otherwise.
  */
+export function logSharedId(
+  where: string,
+  clientId: string,
+  records: number,
+  decision: string,
+  /** Log even for a lone record (a UniqueId that record does not carry). */
+  always = false,
+): void {
+  if (records <= 1 && !always) return;
+  const key = `${where}|${clientId}|${decision}`;
+  if (logged.has(key)) return;
+  if (logged.size >= 500) logged.clear();
+  logged.add(key);
+  console.warn(
+    `[client-id] ${where}: client id ${JSON.stringify(clientId)} is held ` +
+      `by ${records} Mindbody record(s); ${decision}. Merge shared ids in ` +
+      `Mindbody.`,
+  );
+}
+
+/** `logSharedId` for a `pickClientRecord` result. */
 export function logClientPick(
   where: string,
   clientId: string,
   uniqueId: number | null,
   pick: ClientPick<unknown>,
 ): void {
-  if (pick.records <= 1 && pick.outcome !== "mismatch") return;
-  const key = `${where}|${clientId}|${uniqueId ?? ""}|${pick.outcome}`;
-  if (logged.has(key)) return;
-  if (logged.size >= LOGGED_MAX) logged.clear();
-  logged.add(key);
-  const seen =
-    pick.uniqueIds.length > 0
-      ? pick.uniqueIds
-          .map((u) => (pick.inactive.includes(u) ? `${u} inactive` : `${u}`))
-          .join(", ")
-      : "none shown";
   const decision =
     pick.outcome === "unique"
-      ? `took UniqueId ${uniqueId}, the one this caller named`
+      ? `took UniqueId ${uniqueId}, the one the caller named`
       : pick.outcome === "mismatch"
-        ? `none is UniqueId ${uniqueId}, the one this caller named, so ` +
-          `none is used`
+        ? `no record carries UniqueId ${uniqueId}, so none is used`
         : pick.outcome === "ambiguous"
-          ? "there is no UniqueId to choose by, so none is used"
-          : "used the only record returned";
-  console.warn(
-    `[client-id] ${where}: client id ${JSON.stringify(clientId)} is held ` +
-      `by ${pick.records} Mindbody record(s) (UniqueIds: ${seen}); ` +
-      `${decision}.` +
-      (pick.records > 1
-        ? " Two records under one id is a studio data problem: merge " +
-          "them in Mindbody."
-        : ""),
-  );
-}
-
-/**
- * The same line for a read that deliberately does NOT choose (the
- * payment profile, which stays on Mindbody's own pick: see sale.ts
- * `clientPaymentProfile`). `decision` says what it did instead.
- */
-export function logSharedIdKept(
-  where: string,
-  clientId: string,
-  records: number,
-  decision: string,
-): void {
-  if (records <= 1) return;
-  const key = `${where}|${clientId}|kept`;
-  if (logged.has(key)) return;
-  if (logged.size >= LOGGED_MAX) logged.clear();
-  logged.add(key);
-  console.warn(
-    `[client-id] ${where}: client id ${JSON.stringify(clientId)} is held ` +
-      `by ${records} Mindbody records; ${decision}. Two records under one ` +
-      `id is a studio data problem: merge them in Mindbody.`,
+          ? "no UniqueId to choose by, so none is used"
+          : "used the only record";
+  logSharedId(
+    where,
+    clientId,
+    pick.records,
+    decision,
+    pick.outcome === "mismatch",
   );
 }
 

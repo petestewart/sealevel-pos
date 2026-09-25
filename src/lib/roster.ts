@@ -413,9 +413,6 @@ interface ClientBrief {
   /** Staff notes (`Notes`) from the client record; null when none. */
   notes: string | null;
   uniqueId: number | null;
-  /** T114: `Active` on the record, for the server log only (never to
-   *  choose between records sharing an Id). null when absent. */
-  active: boolean | null;
   name: string;
   waiverSigned: boolean;
   /** `AccountBalance`, a top-level Client field; null when Mindbody
@@ -462,7 +459,6 @@ function briefFor(
     candidates.map((b) => ({
       Id: clientId,
       UniqueId: b.uniqueId,
-      Active: b.active,
       brief: b,
     })),
     clientId,
@@ -518,7 +514,6 @@ async function briefsForIds(ids: string[]): Promise<ClientBriefs> {
             ? c.Notes.trim()
             : null,
         uniqueId: typeof c?.UniqueId === "number" ? c.UniqueId : null,
-        active: typeof c?.Active === "boolean" ? c.Active : null,
         balance:
           typeof c?.AccountBalance === "number" &&
           Number.isFinite(c.AccountBalance)
