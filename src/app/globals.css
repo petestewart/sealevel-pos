@@ -910,6 +910,67 @@ button {
   min-width: 0;
 }
 
+/* T115: the roster row's place-in-line number, to the left of the name
+ * like Mindbody's own class sheet (Pete: "it should be small like the
+ * M / i chips"). The M chip's box (24px tall, 16px/800, radius 0) in
+ * the quiet pairing rather than the gold one, since a number is not a
+ * badge the eye should hunt for. It is text, not a tap target. The
+ * slot is a fixed 30px column, wide enough for "65" in tabular
+ * figures, so a one-digit and a two-digit row start their names at the
+ * same x; the subline sits under the name, not under the number. */
+.cell-name.numbered {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: center;
+}
+
+.cell-name.numbered > * {
+  grid-column: 2;
+}
+
+.cell-name.numbered > .line-no {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.line-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 24px;
+  border-radius: 0;
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.line-no:not(:empty) {
+  background: var(--surface-2);
+}
+
+/* Heard as "number 7", never shown: the digit alone reads as a stray
+ * figure to a screen reader. */
+.line-no-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The roster head's "Name" starts where the names do, past the number
+ * slot (30px plus the 10px gap). */
+.roster-head > .head-name {
+  padding-left: 40px;
+}
+
 /* The roster's fixed icon block between the name and the payment (back
  * in its own grid column since T71): two slots in a set order (M |
  * info), each the same width on every row and empty when the row lacks
@@ -7284,6 +7345,23 @@ textarea.reason-note-field:disabled::placeholder {
   .roster .name-text {
     white-space: normal;
     overflow-wrap: anywhere;
+  }
+
+  /* T115: the name column is 150px here, so the line number gives
+   * back what it can: 26px still holds "65" at 16px/800 in tabular
+   * figures, and a 6px gap still separates it from the name. The head's
+   * "Name" follows the names in. */
+  .cell-name.numbered {
+    grid-template-columns: 26px minmax(0, 1fr);
+    column-gap: 6px;
+  }
+
+  .line-no {
+    width: 26px;
+  }
+
+  .roster-head > .head-name {
+    padding-left: 32px;
   }
 
   .pay-name {
