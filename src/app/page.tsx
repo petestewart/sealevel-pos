@@ -1336,6 +1336,17 @@ function FrontDesk({
     redAlert: string | null;
     yellowAlert: string | null;
     notes: string | null;
+    /** T116: the record's UniqueId, so the server's read before the save
+     *  picks this person when two records share the id (T114). */
+    mindbodyId: number | null;
+  } | null>(null);
+  /** T116: the save would clear text on file, and the teacher is being
+   *  asked, once, whether that is what they mean. `onFile` is the text
+   *  the SERVER read from Mindbody when it refused, when it could read
+   *  it; the screen's own copy otherwise. */
+  const [infoBlankAsk, setInfoBlankAsk] = useState<{
+    onFile: string | null;
+    why: string | null;
   } | null>(null);
   /** Which of the info view's three fields is being edited, if any. The
    *  values are the Mindbody field names the save posts; the whitelist
@@ -3539,15 +3550,18 @@ function FrontDesk({
       redAlert: string | null;
       yellowAlert: string | null;
       notes: string | null;
+      mindbodyId?: number | null;
     }) => {
       setInfoEditing(null);
       setInfoMsg(null);
+      setInfoBlankAsk(null);
       setInfoView({
         clientId: p.clientId,
         name: p.name,
         redAlert: p.redAlert,
         yellowAlert: p.yellowAlert,
         notes: p.notes,
+        mindbodyId: p.mindbodyId ?? null,
       });
     },
     [],
@@ -3560,6 +3574,7 @@ function FrontDesk({
     setInfoView(null);
     setInfoEditing(null);
     setInfoMsg(null);
+    setInfoBlankAsk(null);
   }, [infoSaving]);
 
   /**
@@ -3579,7 +3594,7 @@ function FrontDesk({
    * whatever is new or changed with the session's name and answers
    * with the raw text it wrote, and that is what the local state takes.
    */
-  const saveInfoField = useCallback(async () => {
+  const saveInfoField = useCallback(async (confirmBlank = false) => {
     if (!infoView || !infoEditing || infoSaving) return;
     const { clientId } = infoView;
     const field = infoEditing;
@@ -3589,6 +3604,17 @@ function FrontDesk({
         : field === "RedAlert"
           ? infoView.redAlert
           : infoView.yellowAlert;
+    /* T116 (Pete: "yes"): emptying a field that holds text asks first,
+     * once, naming the field and the person. The server refuses the same
+     * save without the answer, from its own fresh read, so a screen that
+     * never saw the text (a row whose notes had not loaded) is asked too,
+     * by the 409 below. */
+    if (!confirmBlank && !infoDraft.trim() && (previous ?? "").trim()) {
+      setInfoMsg(null);
+      setInfoBlankAsk({ onFile: previous, why: null });
+      return;
+    }
+    setInfoBlankAsk(null);
     setInfoSaving(true);
     setInfoMsg(null);
     try {
@@ -3600,9 +3626,34 @@ function FrontDesk({
           field,
           value: infoDraft,
           previous: previous ?? "",
+          ...(infoView.mindbodyId !== null
+            ? { uniqueId: infoView.mindbodyId }
+            : {}),
+          ...(confirmBlank ? { confirmBlank: true } : {}),
         }),
       });
       const body = await res.json();
+      if (res.status === 409 && body?.reason === "blank") {
+        /* The screen's copy was behind Mindbody's: take Mindbody's, so
+         * a Cancel shows what is really on file. */
+        if (typeof body.onFile === "string" && body.onFile.trim()) {
+          const onFile: string = body.onFile;
+          setInfoView((v) =>
+            v
+              ? field === "Notes"
+                ? { ...v, notes: onFile }
+                : field === "RedAlert"
+                  ? { ...v, redAlert: onFile }
+                  : { ...v, yellowAlert: onFile }
+              : v,
+          );
+        }
+        setInfoBlankAsk({
+          onFile: typeof body.onFile === "string" ? body.onFile : null,
+          why: typeof body.error === "string" ? body.error : null,
+        });
+        return;
+      }
       if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
       noteActor(body);
       if (body.suppressed) {
@@ -7542,6 +7593,7 @@ function FrontDesk({
                            come back on the server's side. */
                         setInfoDraft(stripSignatures(s.text));
                         setInfoMsg(null);
+                        setInfoBlankAsk(null);
                         setInfoEditing(s.field);
                       }}
                     >
@@ -7588,6 +7640,7 @@ function FrontDesk({
                   onClick={() => {
                     setInfoEditing(null);
                     setInfoMsg(null);
+                    setInfoBlankAsk(null);
                   }}
                 >
                   Cancel
@@ -7605,6 +7658,77 @@ function FrontDesk({
                 </button>
               </div>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {/* T116: emptying a note or an alert that holds text asks once, in
+          the check-out dialog's shape: who and what, the consequence as
+          the one stop-coloured line, Cancel beside the stop-filled yes.
+          It stacks over the info view, which keeps the draft; Cancel
+          goes back to it. */}
+      {infoView && infoEditing && infoBlankAsk ? (
+        <div
+          className="modal-scrim"
+          onClick={() => setInfoBlankAsk(null)}
+          role="presentation"
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirm clearing"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="row-icon modal-x"
+              aria-label="Close"
+              onClick={() => setInfoBlankAsk(null)}
+            >
+              <CloseIcon />
+            </button>
+            <div className="modal-head">
+              <p className="modal-kicker">
+                {infoEditing === "Notes"
+                  ? "Notes"
+                  : infoEditing === "RedAlert"
+                    ? "Red alert"
+                    : "Yellow alert"}
+              </p>
+              <p className="modal-title">
+                Clear the{" "}
+                {infoEditing === "Notes"
+                  ? "notes"
+                  : infoEditing === "RedAlert"
+                    ? "red alert"
+                    : "yellow alert"}{" "}
+                for {infoView.name}?
+              </p>
+            </div>
+            {infoBlankAsk.onFile ? (
+              <NoteText text={infoBlankAsk.onFile} className="modal-note" />
+            ) : null}
+            <p className="modal-consequence">
+              Saving it empty removes this text from Mindbody.
+            </p>
+            {infoBlankAsk.why ? (
+              <p className="muted">{infoBlankAsk.why}</p>
+            ) : null}
+            <div className="modal-actions">
+              <button
+                className="modal-cancel"
+                onClick={() => setInfoBlankAsk(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="modal-confirm"
+                disabled={infoSaving}
+                onClick={() => void saveInfoField(true)}
+              >
+                Clear it
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

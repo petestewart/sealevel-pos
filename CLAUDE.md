@@ -114,6 +114,30 @@ or the environment, the dry run and whose it is, and the write guard.
 The cached staff token is keyed by site id, so switching target cannot reuse a
 sandbox token against production.
 
+### Every write to a client is recorded, and a save never blanks text quietly (T116)
+
+A student's notes and alert were found blank and nobody could say whether
+the app did it (the call log is in memory, a restart had wiped it, and a
+successful save logged nothing). So every `POST /client/updateclient`
+goes through ONE function, `updateClientAudited` in
+`src/lib/clientaudit.ts` (notes, alerts, opt-ins, card, waiver release,
+waiver receipt, T62's append); anything else sending it logs
+`[client-write] UNAUDITED`. Each write prints one `[client-write] {json}`
+console line, always and first, and adds one `client_writes` row when
+`DATABASE_URL` is set (T29 charter: our audit of our actions, only the
+fields we changed). The record is when, the teacher it was for (even
+after T49's fallback), whose token, client Id and UniqueId, each field's
+before (a fresh read) and after, and the outcome (sent, dry-run,
+write-guard, refused, error). A card is only "card replaced, last four
+X". A dead or absent database never blocks the write; a row that did not
+land logs `NOT STORED` every time. `/api/client-field` refuses an empty
+value over text Mindbody holds (409 `reason: "blank"`, decided on its own
+read, never the browser's) unless `confirmBlank: true`, which the info
+view sends only after asking once. The waiver receipt appends to
+Mindbody's notes, read fresh, never to the browser's copy. The drawer's
+writes tab and `GET /api/client-writes` (devtools-gated) show recent
+entries.
+
 ### One tap charges once, even if its request arrives twice (T113)
 
 The single flight (T22) and the partial lock (T95) both live in the BROWSER,

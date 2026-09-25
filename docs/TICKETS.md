@@ -17041,3 +17041,265 @@ Not verified:
   check-in.
 - What Mindbody does with a late-cancelled visit: whether it appears in
   `classvisits` at all, and whether the sheet numbers it.
+
+## T116. A durable record of every client write, and no silent blanking (Pete, 2026-09-25)
+
+### Why
+
+A student's notes and red/yellow alert were found blank in Mindbody.
+Nobody could say whether the app had done it: the dev drawer's call log
+lives in memory and a deploy restart had wiped it, and a successful notes
+or alert save left no line in the server log at all. Pete believes it
+was Mindbody, not us. Offered two things, a durable record of every write
+the app makes to a client and a guard against a save silently blanking
+text, he answered both: "yes".
+
+### The design
+
+**1. Every `POST /client/updateclient` is recorded.** There is now ONE
+function that sends it, `updateClientAudited` in `src/lib/clientaudit.ts`,
+and every writer goes through it: the info view's Notes, RedAlert and
+YellowAlert (`kind: "field"`), T53's email opt-ins (`consent`), T84/T93's
+card on file (`card`, including the card kept at checkout), T18's
+LiabilityRelease (`waiver-release`), the waiver receipt appended to Notes
+(`waiver-receipt`) and T62's signed Notes entry (`notes-append`). The
+payload and the answer are exactly what they were; the function only
+watches. A call to that endpoint that skips it says `[client-write]
+UNAUDITED` on the console (not refused: a missing audit line must never
+be what stops a teacher's save).
+
+Each write produces:
+
+- **One `[client-write] {json}` line on the server console, always**,
+  written before anything touches the database, so a dead database cannot
+  take it with it. Railway keeps the console.
+- **One `client_writes` row when `DATABASE_URL` is set** (migration 12).
+  The T29 charter holds, narrowly: this is our own audit of our own
+  actions, which Mindbody has no home for, and a row holds handles, the
+  teacher's name as it read, and ONLY the fields the write changed. No
+  UPDATE or DELETE exists for it.
+- A dead or absent database never blocks or fails the write. The insert
+  waits at most 1.5s (it runs on past that), and a row that did not land
+  says `[client-write] NOT STORED` on the console every time, not once
+  per process. With no database configured there is no such line: the
+  console line is the whole record, by design.
+
+The record: when; the teacher (staff id and name) the write was FOR,
+which is the signed-in session even after T49's fallback ran the call as
+the studio account (`runAsActor` carries it in an AsyncLocalStorage, and
+the waiver receipt, which picks its own actor, enters it with
+`asTeacher`); whose token carried the call (`actorId`, null for the
+studio account); the route; the client's Id and its UniqueId when the
+read before the write could name one record (T114); target and site; each
+field's value BEFORE and AFTER for text and flag fields; the outcome,
+`sent`, `dry-run`, `write-guard`, `refused` (a 4xx, with Mindbody's
+words) or `error`; and a note in words when there is one worth reading.
+
+"Before" is a fresh read of just those fields, on the service account,
+bounded at 1.5s (4s when it gates a clear; T116 review), through `pickClientRecord` so a shared id with nothing to
+choose by records "unknown" rather than one record's values as the
+client's. A failed read never holds up a write that does not need it; it
+records the reason. Where the caller already read the field (the blank
+check below, the T62 append, the waiver receipt), that read is reused and
+no second call is made.
+
+**A card records a sentence and nothing else**: "card replaced, last four
+1111", built in `clientcard.ts` from the last four digits. The number
+never reaches the audit module, no read is made before a card write, and
+all text values pass through `scrubSecrets` on the way into the record in
+case a teacher ever typed a card number into a note.
+
+**2. A save cannot silently blank text.** In the info view, a save that
+would turn non-empty Notes, RedAlert or YellowAlert into empty asks once,
+in the check-out dialog's shape: kicker naming the field, "Clear the red
+alert for Dennis Ortega?", the text on file, the consequence as the one
+stop-coloured line, Cancel beside a stop-filled "Clear it". It stacks over
+the info view, which keeps the draft; Cancel goes back to it.
+
+Server-side, `/api/client-field` reads the field fresh from Mindbody
+before every save and answers **409 `reason: "blank"`** to an empty value
+over non-empty text unless the body carries `confirmBlank: true`. A read
+that cannot say what is on file (a shared id, a failure) counts as text
+being there. The browser's `previous` plays no part in the decision, so a
+screen that never saw the text (a row whose notes had not loaded) is
+asked too: the 409 carries Mindbody's text as `onFile`, the dialog shows
+it, and the info view takes it so a Cancel shows what is really there.
+Blank over blank needs no yes.
+
+### Two things found on the way
+
+- **The waiver receipt could blank Notes.** `/api/waiver-agree` built the
+  appended Notes from the row's notes as the BROWSER sent them, and
+  `updateclient` writes Notes whole: a row whose notes were null or stale
+  wrote the receipt line over everything on file. It now appends to a
+  fresh `readClientNotes`; a read that cannot say (a shared id) files no
+  receipt in Notes, and the `waiver-agreed` log line and the
+  `waiver_receipts` row still hold it. The record notes when the screen's
+  copy differed.
+- **A stale editor is recorded, not refused.** The info view writes the
+  whole field from the screen's copy, so a note added elsewhere since the
+  roster loaded is overwritten by the next save. The brief is the blank
+  case, so this is not refused; the record says "the screen started from
+  different text than Mindbody held" beside the before and after, which
+  is what an investigation needs. Refusing it is a separate decision.
+
+### Seeing it
+
+`GET /api/client-writes?clientId=` (device session, and 404 unless
+devtools are on, exactly like `/api/devlog`), newest first, from the
+table when the database answers and else from this process's memory
+(200 entries), saying which. The drawer has a **writes** tab: a client id
+filter and one block per write, outcome, kind, client and UniqueId, when,
+who and as whom, and each field's before and after. Read only.
+
+### Build notes
+
+- `src/lib/clientaudit.ts` (new): `updateClientAudited`,
+  `readClientBefore`, `asTeacher`, `recentClientWrites`, `isBlankText`.
+- `src/lib/db.ts`: migration 12 (`client_writes`), `insertClientWrite`,
+  `listClientWrites`; the charter comment names the audit.
+- `src/lib/mindbody.ts`: the `audited` option and the UNAUDITED line.
+- `src/lib/clients.ts`, `src/lib/clientcard.ts`, `src/lib/formulanote.ts`:
+  the writers go through the audited function; `readClientNotes` also
+  returns the UniqueId.
+- `src/lib/actor.ts`: `runAsActor` runs both attempts as "for this
+  teacher".
+- `src/app/api/client-field/route.ts`: the fresh read, the 409, the
+  stale-screen note; `uniqueId` accepted from the info view.
+- `src/app/api/waiver-agree/route.ts`: the receipt appends to Mindbody's
+  notes.
+- `src/app/api/client-writes/route.ts` (new), `src/app/DevDrawer.tsx`
+  (writes tab), `src/app/page.tsx` (the ask, `mindbodyId` on the info
+  view).
+- No new CSS and no new token: the ask reuses the modal idiom, the tab
+  reuses the drawer's classes.
+- Money paths: untouched except that a card KEPT at checkout (T93) is now
+  recorded like any card save. It makes no extra Mindbody call.
+
+Verified against `next start` on **:3916** and the T114 mock, patched to
+keep what `updateclient` is sent and to refuse on a knob, on **:4916**
+(scratchpad/t116: `prep.py`, `start.sh`/`stop.sh`, `pg.sh` with a scratch
+Postgres on **:5916**; `start.sh` refuses unless the server serves this
+worktree's `BUILD_ID` and answers `/api/client-writes`), rebuilt before
+the runs. `route.mjs`, all green in every mode:
+
+- **db** (scratch Postgres): each of notes, red alert, yellow alert,
+  consent, card, waiver release, waiver receipt and the T62 append gives
+  exactly one console line and one row, with the right kind, before and
+  after (Mindbody's text before, the signed text after; consent flags
+  true to false and false to true; LiabilityRelease false to true),
+  teacher 100 "Pete Stewart", the teacher's token, client id and
+  UniqueId. The card's row and the whole server log hold no card number,
+  only "card replaced, last four 1111". Blank over text: 409, nothing
+  sent, no record, the alert still on file; the same for text only
+  Mindbody had; with `confirmBlank` it clears, recorded with the alert as
+  before and "cleared after the teacher confirmed"; blank over blank
+  needs nothing. A stale screen is saved and noted. The waiver receipt
+  with `notes: null` from the screen appends to Mindbody's "Old note"
+  rather than replacing it. The T62 append makes one client read, not
+  two. Refused (400) and error (500) are one line each; T49's fallback is
+  two lines, refused as the teacher then sent as the studio, both for
+  the teacher. The read route answers from the database.
+- **main** (no database): the same matrix, every write succeeds and
+  logs, no NOT STORED noise, the read route answers from memory.
+- **deaddb** (`DATABASE_URL` pointing at nothing): every write succeeds,
+  and every console line is followed by NOT STORED.
+- **guard** (`POS_WRITE_CLIENT_IDS=10000`): a save for 10001 is
+  `write-guard`, nothing sent. **dry** (prod target, dry run on): a save
+  is `dry-run`, nothing sent, the before still read, target prod site
+  471.
+- T102's and T103's route drivers, each on a fresh start (:3917/:4917,
+  :3918/:4918): ALL PASS, unchanged.
+- `ui.mjs`, Playwright, light and dark, 1180x820 and 820x1180: emptying
+  Dennis's red alert asks, naming the field and the person, with the text
+  on file, and sends nothing; Cancel keeps the editor; "Clear it" clears
+  it in Mindbody and the view reads "None."; a note written in Mindbody
+  after the roster loaded is caught by the server's 409, shown in the
+  ask, and shown in the view after Cancel, and survives. The drawer's
+  writes tab lists the clearing with its before and after and filters by
+  client. The shared audit: nothing under 16px, no low contrast.
+- `npm run typecheck` and `npm run build` clean.
+
+Not verified:
+
+- Anything against live Mindbody. In particular, whether the before-read
+  sees a write Mindbody made moments earlier (read-after-write
+  consistency), which a live save followed by its record would show.
+- Railway's actual console retention: the record's durability without a
+  database is only as long as Railway keeps logs.
+- A second server instance: the in-memory list is per process; the table
+  and the console are not.
+
+### Review
+
+Adversarial pass on the branch at e4f6c4d, driven from its own harness
+copy on ports nobody else claims (app :3946/:3947/:3948, mock
+:4946/:4947/:4948, scratch Postgres :5946, a silent TCP listener :5947),
+each run preflighted against this worktree's BUILD_ID and rebuilt before
+it. The mock copy gained three knobs: a read by id that hangs or fails,
+a refusal message of our choosing, and arbitrary fields on a person.
+
+**Every `updateclient` is recorded.** The only `mindbody()` call to that
+path is inside `updateClientAudited`; every writer (the editor, consent,
+the card route and checkout's keep-card, the waiver release, the waiver
+receipt, the T62 append) reaches it, and nothing under `scripts/` writes
+a client. No run printed `UNAUDITED`.
+
+**Found: the courtesy read was felt, and the receipt read was
+unbounded.** Measured against a mock whose read by id never answers: a
+consent toggle took 4,015ms (16ms with the read answering), because every
+write read its "before" under the 4s bound meant for the blank check; and
+`/api/waiver-agree` took 14,021ms, the release's 4s read plus the new
+receipt read, which had no bound of its own and waited on Mindbody's 15s
+timeout, all after the release had already landed. Fixed: a read that is
+only for the record waits 1.5s (`COURTESY_READ_MS`), a clear in
+`/api/client-field` keeps 4s because there the read decides whether to
+ask, and the receipt read is bounded at 4s and treated as any failed read
+(no Notes copy; the log line and the `waiver_receipts` row already hold
+the receipt). Re-measured: 1,512ms and 5,512ms. A failed or hung read
+still writes, for consent, the release and an ordinary edit, and the
+record says why the before is unknown.
+
+**Secrets.** A card number typed into notes, and a Mindbody refusal of a
+card save that quotes the number, both reach the record and the console
+as `<redacted>`; no `client_writes` row and no line of the server log
+holds the number across every run. A card's entry is the sentence only.
+Nothing else in the entry carries a token, PIN or CVV.
+
+**A dead database.** Refused connections and a listener that accepts
+and never answers: every write answered in 12 to 26ms and every line
+was followed by NOT STORED. The db layer's cooldown and its failed
+migration latch mean the 1.5s record wait is reached at most on the
+first touch of a database nobody has asked yet. Left as built: a slow
+insert that lands after 1.5s still logs NOT STORED, which its own
+wording ("or slower than 1500ms") admits.
+
+**The blank guard** holds: `" "` to `""` writes without asking; a
+whitespace-only draft over text asks; `confirmBlank` as `"true"` or `1`
+is not a yes; a UniqueId no record carries, and a read that fails, ask
+with the reason in words and `onFile: null`, and the yes then writes. In
+a real browser, light and dark, the failed-read ask carries that reason
+and "Clear it" writes. An ordinary edit with the read failing is never
+refused.
+
+**The waiver receipt change is right.** With the notes read failing:
+the release goes out and `agreed` is true, `receiptNoted` false with the
+reason, the only `updateclient` for the client is `LiabilityRelease`, the
+notes on file are untouched, the `waiver-agreed` line is logged and the
+`waiver_receipts` row lands. A shared id (T114) writes no Notes. With the
+screen sending `null` notes, the receipt is appended to Mindbody's text.
+
+**The T62 append and the fallback** record once per attempt: a comp on
+a site without Formula Notes under a teacher whose group refuses writes
+two `notes-append` lines, refused under the teacher's token then sent as
+the studio, both naming Pete with the same before, and one note lands.
+
+Re-run on this build: the builder's `route.mjs` in main, db, deaddb,
+guard and dry, `ui.mjs`, T102's and T103's route drivers each on a fresh
+start, and the review's own `r1.mjs` (main, db, deaddb, a black hole)
+and `ui-r.mjs`: ALL PASS. `npm run typecheck` and `npm run build` clean.
+
+Not changed, for the record: on a T49 fallback a consent or release
+write reads its before twice (once per attempt); the ask says "removes
+this text" even when the server could not read what the text is.
+

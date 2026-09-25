@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { asTeacher } from "./clientaudit";
 import { isActorRefusal, isActorTokenDead, type Actor } from "./mindbody";
 import {
   actorOf,
@@ -117,9 +118,13 @@ export async function runAsActor<T>(
     };
   }
   const actor = actorOf(session);
+  /* T116: both attempts run as "for this teacher", so a client write's
+   * record names them even when the call itself fell back to the studio
+   * account. */
+  const who = { staffId: session.staffId, name: session.name };
   try {
     return {
-      result: await run(actor),
+      result: await asTeacher(who, route, () => run(actor)),
       actorFallback: null,
       staffSessionEnded: false,
     };
@@ -148,7 +153,7 @@ export async function runAsActor<T>(
       `[actor] fallback staff=${session.staffId} route=${route} reason=${JSON.stringify(reason)}`,
     );
     return {
-      result: await run(null),
+      result: await asTeacher(who, route, () => run(null)),
       actorFallback: { name: session.name, reason },
       staffSessionEnded: false,
     };
