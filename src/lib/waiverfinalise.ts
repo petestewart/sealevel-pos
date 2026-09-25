@@ -1,6 +1,8 @@
 import { runAsActor } from "./actor";
 import type { ActorOutcome } from "./actor";
+import { asTeacher, BEFORE_READ_MS } from "./clientaudit";
 import {
+  readClientNotes,
   recordLiabilityRelease,
   updateClientNotes,
   uploadClientDocument,
@@ -75,7 +77,10 @@ export async function finaliseWaiver(opts: {
   /** The signature, when one was taken on the customer display; null is
    *  T18's counter path, where the teacher read it aloud. */
   signed: WaiverSignature | null;
-  /** The client's notes as they stand, for the append. */
+  /** The notes the SCREEN held for this client, or null when it held
+   *  none. Since main's T116 they are NOT what the receipt is appended
+   *  to (Mindbody's own notes, read at the moment of the append, are);
+   *  they only decide whether the write's record says the two differed. */
   currentNotes: string | null;
 }): Promise<WaiverFinaliseOutcome> {
   const { clientId, session, signed, waiverSha256 } = opts;
@@ -157,12 +162,53 @@ export async function finaliseWaiver(opts: {
     signed === null
       ? `Waiver agreed at the counter ${at}, text sha256:${waiverSha256.slice(0, 12)}`
       : `Waiver signed on the customer screen ${at}, text sha256:${waiverSha256.slice(0, 12)}, signature sha256:${signed.sha256.slice(0, 12)}`;
-  const current = typeof opts.currentNotes === "string" ? opts.currentNotes : "";
-  const newNotes = current ? `${current}\n${receiptLine}` : receiptLine;
+  let newNotes = receiptLine;
   let receiptNoted = false;
   let receiptReason: string | null = null;
   try {
-    const noted = await updateClientNotes(clientId, newNotes, noteActor);
+    /* T116 (main), carried into the shared finalisation when main was
+     * merged in: the append starts from Mindbody's notes, read NOW, and
+     * never from the copy the browser holds. `updateclient` writes Notes
+     * WHOLE, so a copy that had not loaded or was stale wrote the
+     * receipt line OVER everything on file. A read that cannot say (a
+     * shared id, T114; a failure; slower than BEFORE_READ_MS, because the
+     * release has already landed and the receipt is already in the log
+     * and the table) files no Notes copy, the same as any failed read. */
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = await Promise.race([
+      readClientNotes(clientId),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Mindbody did not answer with the notes in ${BEFORE_READ_MS / 1000}s`,
+              ),
+            ),
+          BEFORE_READ_MS,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
+    const current = read.notes.replace(/\s+$/, "");
+    newNotes = current ? `${current}\n${receiptLine}` : receiptLine;
+    const screenNotes = opts.currentNotes;
+    const who =
+      session === null ? null : { staffId: session.staffId, name: session.name };
+    const noted = await asTeacher(who, opts.route, () =>
+      updateClientNotes(clientId, newNotes, noteActor, {
+        kind: "waiver-receipt",
+        before: {
+          ok: true,
+          uniqueId: read.uniqueId,
+          values: { Notes: read.notes },
+        },
+        note:
+          typeof screenNotes === "string" &&
+          screenNotes.trim() !== read.notes.trim()
+            ? "the screen held different notes from Mindbody's; the receipt was appended to Mindbody's"
+            : null,
+      }),
+    );
     if (noted.suppressed) {
       receiptReason = `notes append suppressed by ${noted.suppressed}`;
     } else {

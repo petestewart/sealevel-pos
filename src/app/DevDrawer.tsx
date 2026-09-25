@@ -75,9 +75,9 @@ export default function DevDrawer({
   const [expanded, setExpanded] = useState<number | null>(null);
   /** Which call id was just copied, for the momentary "copied" label. */
   const [copied, setCopied] = useState<number | "all" | null>(null);
-  const [tab, setTab] = useState<"calls" | "settings" | "bundles" | "shelf">(
-    "settings",
-  );
+  const [tab, setTab] = useState<
+    "calls" | "settings" | "bundles" | "shelf" | "writes"
+  >("settings");
   /* Every open lands on the settings tab, whatever was showing last. */
   useEffect(() => {
     if (open) setTab("settings");
@@ -205,6 +205,14 @@ export default function DevDrawer({
           >
             shelf
           </button>
+          {/* T116: the record of every write to a client, which outlives
+              a restart where the logs tab does not. */}
+          <button
+            className={tab === "writes" ? "dev-tab on" : "dev-tab"}
+            onClick={() => setTab("writes")}
+          >
+            writes
+          </button>
           <button
             className={tab === "calls" ? "dev-tab on" : "dev-tab"}
             onClick={() => setTab("calls")}
@@ -259,6 +267,8 @@ export default function DevDrawer({
             <BundlesPanel />
           ) : tab === "shelf" ? (
             <ShelfPanel />
+          ) : tab === "writes" ? (
+            <WritesPanel open={open} />
           ) : calls.length === 0 ? (
             <p className="muted">No calls yet.</p>
           ) : (
@@ -316,6 +326,146 @@ export default function DevDrawer({
         </div>
       </section>
     </>
+  );
+}
+
+/* --- Writes tab (T116) ----------------------------------------------
+ *
+ * Read only: the recent record of client writes from /api/client-writes
+ * (the table when the database answers, else this process's memory,
+ * and the tab says which). A client id narrows it to one person. Each
+ * entry names when, who, what outcome, and every field's before and
+ * after, which is the question Pete could not answer when a student's
+ * notes were found blank.
+ */
+
+interface ClientWriteChangeView {
+  field: string;
+  before: string | boolean | null;
+  after: string | boolean | null;
+  beforeUnknown?: string;
+}
+
+interface ClientWriteView {
+  at: string;
+  clientId: string;
+  uniqueId: number | null;
+  kind: string;
+  changes: ClientWriteChangeView[];
+  outcome: string;
+  httpStatus: number | null;
+  error: string | null;
+  teacherId: number | null;
+  teacherName: string | null;
+  actorId: number | null;
+  route: string | null;
+  target: string;
+  siteId: string | null;
+  note: string | null;
+}
+
+function shown(v: string | boolean | null, unknown?: string): string {
+  if (unknown) return `(unknown: ${unknown})`;
+  if (v === null) return "(none)";
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return v.trim() === "" ? "(empty)" : JSON.stringify(v);
+}
+
+function WritesPanel({ open }: { open: boolean }) {
+  const [clientId, setClientId] = useState("");
+  const [entries, setEntries] = useState<ClientWriteView[]>([]);
+  const [source, setSource] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (id: string) => {
+    try {
+      const q = id.trim() ? `?clientId=${encodeURIComponent(id.trim())}` : "";
+      const res = await fetch(`/api/client-writes${q}`);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      setEntries(Array.isArray(body.entries) ? body.entries : []);
+      setSource(typeof body.source === "string" ? body.source : null);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open) void load(clientId);
+    /* Only on open; the filter loads on its own button. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, load]);
+
+  return (
+    <div className="dev-writes">
+      <div className="dev-setting">
+        <input
+          type="text"
+          className="dev-text"
+          placeholder="client id (empty for everyone)"
+          aria-label="Client id"
+          value={clientId}
+          onChange={(e) => setClientId(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void load(clientId);
+          }}
+        />
+        <button onClick={() => void load(clientId)}>show</button>
+      </div>
+      <p className="muted">
+        {source === "database"
+          ? "From the client_writes table: survives a restart."
+          : source === "memory"
+            ? "From this server's memory only (no database answered): a restart empties this list. The server log keeps every [client-write] line."
+            : ""}
+      </p>
+      {error ? <p className="dev-bad">{error}</p> : null}
+      {entries.length === 0 ? (
+        <p className="muted">No client writes recorded.</p>
+      ) : (
+        entries.map((e, i) => (
+          <div key={`${e.at}-${i}`} className="dev-call dev-write">
+            <div className="dev-row">
+              <span
+                className={`dev-status ${
+                  e.outcome === "sent"
+                    ? "dev-good"
+                    : e.outcome === "refused" || e.outcome === "error"
+                      ? "dev-bad"
+                      : "dev-suppressed"
+                }`}
+              >
+                {e.outcome}
+                {e.httpStatus !== null ? ` ${e.httpStatus}` : ""}
+              </span>
+              <span className="dev-method">{e.kind}</span>
+              <span className="dev-path">
+                client {e.clientId}
+                {e.uniqueId !== null ? ` (UniqueId ${e.uniqueId})` : ""}
+              </span>
+              <span className="dev-ms">{new Date(e.at).toLocaleString()}</span>
+            </div>
+            <div className="dev-detail">
+              <div className="muted">
+                by {e.teacherName ?? "nobody signed in"}
+                {e.teacherId !== null ? ` (staff ${e.teacherId})` : ""}
+                {e.actorId === null ? ", as the studio account" : ""}
+                {e.route ? `, ${e.route}` : ""}, {e.target} site{" "}
+                {e.siteId ?? "?"}
+              </div>
+              {e.changes.map((c) => (
+                <pre key={c.field}>
+                  {`${c.field}\n  before: ${shown(c.before, c.beforeUnknown)}\n  after:  ${shown(c.after)}`}
+                </pre>
+              ))}
+              {e.note ? <div className="muted">{e.note}</div> : null}
+              {e.error ? <div className="dev-bad">{e.error}</div> : null}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
   );
 }
 

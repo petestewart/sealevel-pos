@@ -15,7 +15,6 @@ import {
   findExistingClient,
   isDuplicateClientError,
   matchFields,
-  readClientNotes,
   readTextOptInStuck,
   requiredClientFields,
   type NewClientInput,
@@ -534,10 +533,10 @@ async function useExisting(payload: any, session: StaffSession | null) {
         { status: 409 },
       );
     }
-    /* The notes as they stand, for the receipt append: the search row
-     * carries them already, and a null there is "no notes", which is
-     * what the append starts from. */
-    const currentNotes = match.notes ?? (await readClientNotes(clientId));
+    /* The notes the search row carried, which since main's T116 only
+     * decide whether the receipt's record says they differed: the
+     * finalisation reads Mindbody's own notes at the moment it appends. */
+    const currentNotes = match.notes ?? null;
     const waiver = await finaliseWaiver({
       clientId,
       session,

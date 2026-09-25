@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 
 import type { BundleLine, CounterBundle } from "./bundles";
+import type { ClientWriteEntry } from "./clientaudit";
 
 /**
  * The database (T29), and its charter, which is enforced here rather than
@@ -8,7 +9,8 @@ import type { BundleLine, CounterBundle } from "./bundles";
  *
  *   THE DATABASE HOLDS WHAT MINDBODY HAS NO HOME FOR, AND NEVER A COPY OF
  *   WHAT IT DOES. Waiver receipts, bundle config, banner text, promo
- *   entitlements, teacher PINs: yes. Clients, classes, passes, prices, visits: never, at
+ *   entitlements, teacher PINs, our own audit of our writes to a client
+ *   (T116, only the fields we changed): yes. Clients, classes, passes, prices, visits: never, at
  *   any point, for any reason including speed. The client index was already
  *   deleted once for exactly this reason (see CLAUDE.md); a table makes
  *   rebuilding it tempting in a way in-memory caching did not. A schema
@@ -385,6 +387,43 @@ const MIGRATIONS: { version: number; sql: string }[] = [
     `,
   },
   {
+    /* T116: every write this app makes to a client record (Pete, after a
+     * student's notes and alert were found blank and the in-memory call
+     * log had gone with a restart). The charter holds, narrowly: this is
+     * OUR audit of OUR actions, which Mindbody has no home for. A row
+     * holds the handles (client id, UniqueId, staff ids), the teacher's
+     * name as it read, and for each field the write CHANGED its value
+     * before and after (`changes`, jsonb). Never the rest of the client
+     * record, never the client's name, never a card: a card's entry is
+     * the sentence "card replaced, last four 1234" and nothing else. No
+     * UPDATE and no DELETE anywhere: a record that can be edited is not
+     * one. */
+    version: 12,
+    sql: `
+      CREATE TABLE IF NOT EXISTS client_writes (
+        id            bigserial PRIMARY KEY,
+        at            timestamptz NOT NULL,
+        client_id     text NOT NULL,
+        unique_id     bigint,
+        kind          text NOT NULL,
+        changes       jsonb NOT NULL,
+        outcome       text NOT NULL,
+        http_status   integer,
+        error         text,
+        teacher_id    text,
+        teacher_name  text,
+        actor_id      text,
+        route         text,
+        target        text NOT NULL,
+        site_id       text,
+        note          text,
+        created_at    timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS client_writes_client_at_idx
+        ON client_writes (client_id, at DESC);
+    `,
+  },
+  {
     /* T200: the customer-facing display (docs/design/customer-display.md).
      * Both tables are charter-clean: they hold what Mindbody has no home
      * for and never a copy of what it does. `displays` is the pairing of
@@ -403,7 +442,7 @@ const MIGRATIONS: { version: number; sql: string }[] = [
      * a result may be spent once, by the teacher's iPad, and never
      * again. Nullable and additive throughout, and a deployed database
      * at 11 runs only this block. */
-    version: 12,
+    version: 13,
     sql: `
       CREATE TABLE IF NOT EXISTS displays (
         id            text PRIMARY KEY,
@@ -436,7 +475,7 @@ const MIGRATIONS: { version: number; sql: string }[] = [
      * copy uploaded to the client's documents is the copy. Additive,
      * nullable, and every row written before this one stays exactly as
      * it is: a counter agreement carries no signature and never will. */
-    version: 13,
+    version: 14,
     sql: `
       ALTER TABLE waiver_receipts
         ADD COLUMN IF NOT EXISTS signature_sha256 text;
@@ -459,7 +498,7 @@ const MIGRATIONS: { version: number; sql: string }[] = [
      * detail beyond the id, and no claim about the contract's state. One
      * row per LIVE purchase attempt that reached Mindbody. Additive, and
      * a deployed database at 13 runs only this block. */
-    version: 14,
+    version: 15,
     sql: `
       CREATE TABLE IF NOT EXISTS contract_receipts (
         id                      bigserial PRIMARY KEY,
@@ -486,7 +525,7 @@ const MIGRATIONS: { version: number; sql: string }[] = [
      * with the service account's own login is flagged so the service
      * reads can borrow its token when an issue is refused. Additive,
      * default false; rows from before read as ordinary teachers. */
-    version: 15,
+    version: 16,
     sql: `
       ALTER TABLE staff_sessions
         ADD COLUMN IF NOT EXISTS is_service boolean NOT NULL DEFAULT false;
@@ -505,10 +544,46 @@ const MIGRATIONS: { version: number; sql: string }[] = [
      * one sign-in on the deploy that adds this column and nothing
      * afterwards. Not a secret: the site id is already on
      * /api/config. */
-    version: 16,
+    version: 17,
     sql: `
       ALTER TABLE staff_sessions
         ADD COLUMN IF NOT EXISTS site_id text;
+    `,
+  },
+  {
+    /* The two series, merged (T212's merge of main's T116). Main's
+     * client_writes shipped as migration 12 while this branch's five
+     * (the displays, the receipt signatures, contract receipts, the
+     * service flag and the session's site) were also numbered 12 to 16.
+     * Main keeps 12, because a deployed database may already have run it;
+     * the branch's five are 13 to 17. A database that ran the branch's
+     * OLD numbering (max 16) skips the new 12 and would never get
+     * client_writes, so this re-asserts it. Every statement here and in
+     * 13 to 17 is IF NOT EXISTS, so a database that has it all already
+     * does nothing. */
+    version: 18,
+    sql: `
+      CREATE TABLE IF NOT EXISTS client_writes (
+        id            bigserial PRIMARY KEY,
+        at            timestamptz NOT NULL,
+        client_id     text NOT NULL,
+        unique_id     bigint,
+        kind          text NOT NULL,
+        changes       jsonb NOT NULL,
+        outcome       text NOT NULL,
+        http_status   integer,
+        error         text,
+        teacher_id    text,
+        teacher_name  text,
+        actor_id      text,
+        route         text,
+        target        text NOT NULL,
+        site_id       text,
+        note          text,
+        created_at    timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS client_writes_client_at_idx
+        ON client_writes (client_id, at DESC);
     `,
   },
 ];
@@ -701,6 +776,98 @@ export async function latestSignedContractReceipt(
     };
   } catch (err) {
     logDbError("contract-receipt-read", err);
+    return null;
+  }
+}
+
+/* --- Client writes (T116) -------------------------------------------- */
+
+/** One `client_writes` row as the drawer reads it: the entry as written. */
+export type ClientWriteRow = ClientWriteEntry;
+
+/**
+ * The durable half of a client write's record (src/lib/clientaudit.ts,
+ * which has already put the same entry on the console). Returns whether
+ * the row landed; false is "the console line has it", never a failure of
+ * the write, which has already happened by the time this runs.
+ */
+export async function insertClientWrite(
+  entry: ClientWriteEntry,
+): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `INSERT INTO client_writes
+         (at, client_id, unique_id, kind, changes, outcome, http_status,
+          error, teacher_id, teacher_name, actor_id, route, target,
+          site_id, note)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12,
+               $13, $14, $15)`,
+      [
+        entry.at,
+        entry.clientId,
+        entry.uniqueId,
+        entry.kind,
+        JSON.stringify(entry.changes),
+        entry.outcome,
+        entry.httpStatus,
+        entry.error,
+        entry.teacherId === null ? null : String(entry.teacherId),
+        entry.teacherName,
+        entry.actorId === null ? null : String(entry.actorId),
+        entry.route,
+        entry.target,
+        entry.siteId,
+        entry.note,
+      ],
+    );
+    return true;
+  } catch (err) {
+    logDbError("client-write-insert", err);
+    return false;
+  }
+}
+
+/** Recent rows, newest first, for one client or all of them; null when
+ *  the store did not answer (no database, or down), so the caller can
+ *  say where its list came from. */
+export async function listClientWrites(
+  clientId: string | null,
+  limit: number,
+): Promise<ClientWriteRow[] | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const n = Math.max(1, Math.min(200, Math.floor(limit)));
+    const res = await p.query(
+      clientId === null
+        ? `SELECT * FROM client_writes ORDER BY at DESC, id DESC LIMIT $1`
+        : `SELECT * FROM client_writes WHERE client_id = $2
+           ORDER BY at DESC, id DESC LIMIT $1`,
+      clientId === null ? [n] : [n, clientId],
+    );
+    return res.rows.map(
+      (r): ClientWriteRow => ({
+        at: new Date(r.at).toISOString(),
+        clientId: String(r.client_id),
+        uniqueId: r.unique_id === null ? null : Number(r.unique_id),
+        kind: r.kind,
+        changes: Array.isArray(r.changes) ? r.changes : [],
+        outcome: r.outcome,
+        httpStatus: r.http_status === null ? null : Number(r.http_status),
+        error: r.error ?? null,
+        teacherId: r.teacher_id === null ? null : Number(r.teacher_id),
+        teacherName: r.teacher_name ?? null,
+        actorId: r.actor_id === null ? null : Number(r.actor_id),
+        route: r.route ?? null,
+        target: String(r.target),
+        siteId: r.site_id ?? null,
+        note: r.note ?? null,
+      }),
+    );
+  } catch (err) {
+    logDbError("client-write-read", err);
     return null;
   }
 }

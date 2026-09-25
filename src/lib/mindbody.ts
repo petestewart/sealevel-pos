@@ -443,6 +443,14 @@ export interface MindbodyCallOptions {
    * spec-shaped.
    */
   clientId?: string;
+  /**
+   * T116: set only by `updateClientAudited` (src/lib/clientaudit.ts),
+   * which records every `/client/updateclient`. A call to that endpoint
+   * without it is a writer that skipped the record, and says so on the
+   * console; it is not refused, because a missing audit line must never
+   * be what stops a teacher's save.
+   */
+  audited?: boolean;
 }
 
 /**
@@ -674,6 +682,13 @@ export async function mindbody<T = any>(
   const method = opts.method ?? "GET";
 
   if (isWrite(method, path)) {
+    if (path === "/client/updateclient" && !opts.audited) {
+      console.warn(
+        `[client-write] UNAUDITED ${method} ${path} for client ` +
+          `${opts.clientId ?? "(none named)"}: route it through ` +
+          `updateClientAudited (src/lib/clientaudit.ts)`,
+      );
+    }
     /* T89: the server's dry run, or this browser's own. */
     const dry = await dryRunState();
     if (dry.on) {

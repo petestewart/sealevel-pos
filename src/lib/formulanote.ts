@@ -180,13 +180,19 @@ async function appendSignedNote(opts: {
   logTag: string;
 }): Promise<FormulaNoteOutcome> {
   const { clientId, logTag } = opts;
-  const current = await readClientNotes(clientId);
+  const read = await readClientNotes(clientId);
+  const current = read.notes;
   const entry = signEntries(opts.note, null, opts.session?.name ?? "", studioDate());
   const trimmed = current.replace(/\s+$/, "");
   const next = trimmed ? `${trimmed}\n\n${entry}` : entry;
+  /* T116: the read above is the write's "before", so the record costs no
+   * second read. */
   const res = (
     await runAsActor(opts.session, opts.route, (actor) =>
-      updateClientNotes(clientId, next, actor),
+      updateClientNotes(clientId, next, actor, {
+        kind: "notes-append",
+        before: { ok: true, uniqueId: read.uniqueId, values: { Notes: current } },
+      }),
     )
   ).result;
   if (res.suppressed) {
