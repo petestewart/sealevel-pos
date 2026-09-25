@@ -16846,3 +16846,69 @@ Not verified:
   source for the roster, but it is unused here: an unverified parameter
   whose documented default when ignored is "all UniqueIDs" waits for a
   live probe.
+
+### Review
+
+Hunted in the brief's order against the diff from feature/phase-2
+(already merged in, nothing to take).
+
+**Wrong person.** Every path that turns an id into one record now goes
+by UniqueId first: the roster (the visit's `ClientUniqueId`), the waiting
+list (each entry's own `Client.UniqueId`, aligned by position before the
+queue sort, so the sort cannot shift it), the info modal and the card
+read-back (the row's UniqueId, passed by every `openProfile` caller and
+by the card box). Ordering decides nothing in either order. A letter
+prefix (`n23283`, `R10814`) is compared as a string and works. A
+UniqueId that arrives as a string is treated as absent, which is the safe
+side: a lone record still names the row, a shared one reads "(unknown
+client)". The chunk boundary cannot split one id's records: ids are
+de-duplicated before chunking, so every record for an id arrives in the
+same batched answer, and the lists merge across chunks anyway. The
+payment profile stays on `limit=1` by design (the money path; the sale it
+gates is addressed by the same id and Mindbody resolves both); it only
+logs. The waiver receipt append can still land on whichever record
+Mindbody picks, which the ticket already records as an open risk.
+
+**One fix, for the ordinary case.** `pickClientRecord` took
+`max(rows with the exact Id, TotalResults)` as the record count. On a
+single-id read that let a row the query matched under some OTHER spelling
+of the id (a case variant, say) count toward "shared", which would have
+turned an ordinary client's modal and notes append into "cannot tell",
+where the base build found the exact match and carried on. TotalResults
+now counts only when the page was cut short of it (more than
+`CLIENT_ID_READ_LIMIT` records), which is the one thing it was there for.
+Checked directly on the picker: an ordinary record beside an
+other-spelling row on a full page picks the record; a truncated page
+still reads as shared; both orders, a lone other record, a letter prefix
+and a string UniqueId behave as described above.
+
+**Regressions.** Still one batched lookup per roster and one read per
+single-client lookup (`limit=10` instead of `limit=1`, same call count).
+A lookup that fails or misses a client reads "(unknown client)" and fails
+open exactly as before; the no-duplicate roster and profile answers are
+byte-identical to the base build's (the builder's snapshot, re-checked).
+Accepted, not changed: a lone record whose UniqueId differs from the
+visit's is not shown. That keeps the brief's first rule (never another
+person's name), and it would read "(unknown client)" rather than the
+wrong name if Mindbody ever answered a merged record that way, which
+nobody has seen.
+
+**The refusals.** Only `readClientNotes` refuses, and only when the
+exact-Id rows (or a truncated page) show more than one record, so an
+ordinary client cannot reach it. Its throw lands inside
+`fileFormulaNote`'s catch, which returns `{ error }` as for any note
+failure, and every checkout, overdraft, override, sold-nothing and guest
+caller already treats that as a note not filed: no sale, comp or guest
+outcome can change. The builder's driver shows the comp on a shared id
+with `noteVia: null` and the sale intact.
+
+**Proportion.** No ambiguity UI remains (the modal's existing "Could not
+read" lines are the only surface, on the one case with no UniqueId).
+`clientrecord.ts` is small for what it decides; nothing else cut.
+
+Re-run on a fresh `npm run build`, ports the T114 harness owns and
+nothing held (**:3714/:4714**, **:3715/:4715**, **:3716/:4716**), each
+start preflighted against this worktree's `BUILD_ID`: `route.mjs` 56/56,
+`ui.mjs` all green in both schemes and orientations, T102's driver all
+green and T103's all green, each on its own fresh start.
+`npm run typecheck` and `npm run build` clean.

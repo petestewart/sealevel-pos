@@ -50,8 +50,8 @@ function uniqueIdOf(row: unknown): number | null {
 /**
  * Pick the record `clientId` means from a `/client/clients` answer's rows.
  * `total` is `PaginationResponse.TotalResults` for a read that asked for
- * this ONE id (so a truncated page still counts as shared); null for a
- * batched read, whose total covers every id in it.
+ * this ONE id (so a page truncated below it still counts as shared);
+ * null for a batched read, whose total covers every id in it.
  */
 export function pickClientRecord<T>(
   rows: readonly T[],
@@ -62,10 +62,14 @@ export function pickClientRecord<T>(
   const same = rows.filter(
     (r) => String((r as { Id?: unknown } | null)?.Id ?? "") === clientId,
   );
-  const records = Math.max(
-    same.length,
-    typeof total === "number" && Number.isFinite(total) ? total : 0,
-  );
+  /* TotalResults only counts when the page was CUT SHORT of it: with
+   * every row in hand, the exact-Id rows are the count, and a row the
+   * query matched under some other Id spelling must not make an ordinary
+   * client look shared (T114 review). */
+  const records =
+    typeof total === "number" && Number.isFinite(total) && total > rows.length
+      ? Math.max(same.length, total)
+      : same.length;
   const lone = same.length === 1 && records <= 1 ? same[0] : undefined;
   if (same.length === 0) return { row: null, outcome: "none", records };
   if (uniqueId !== null) {
