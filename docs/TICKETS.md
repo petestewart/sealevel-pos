@@ -16912,3 +16912,132 @@ start preflighted against this worktree's `BUILD_ID`: `route.mjs` 56/56,
 `ui.mjs` all green in both schemes and orientations, T102's driver all
 green and T103's all green, each on its own fresh start.
 `npm run typecheck` and `npm run build` clean.
+
+
+## T115. Each roster row shows the student's number, as Mindbody's sheet does (Pete, 2026-09-25)
+
+### What Pete asked
+
+With a screenshot of Mindbody's class sheet:
+
+> "i would like the app to display the number for the student to the left
+> like mindbody does. this would be their place in "line". it should be
+> small like the M / i chips."
+
+He also confirmed that the app's default roster sort, "Sign-in order",
+already shows rows in Mindbody's `classvisits` order (`sortedEntries` in
+`src/app/page.tsx` returns the entries untouched for `signin`), so in the
+default view the numbers read 1, 2, 3 down the page.
+
+### What the number is
+
+Mindbody's sheet for class 124540 (Thu Sep 24 7:30pm Hot 26), sorted
+"Sign-in order", numbers ten rows: 1 Babb Ed (45), 2 Weiss Jonathan
+(100028980), 3 Wynn Kelly (100040320), 4 Danila Felix (100033141),
+5 Riedl Sam (100032992), 6 Vitruk Olga (n23283), 7 Sander Stacia (10814),
+8 Bousada Monica (100041675), 9 Williams Lorelei (100038166), 10 Ward
+Diedra (100038545, not signed in).
+
+Pete's call log has `GET /class/classvisits?ClassId=124540` answering its
+`Visits` in exactly that order for the first six (45, 100028980,
+100040320, 100033141, 100032992, n23283; the log was truncated after
+that). That order is not visit id order and not LastModified order. So
+the number is **the visit's 1-based position in Mindbody's own
+`classvisits` answer**, which is the sheet's sign-in order.
+
+**What that rests on, plainly:** six rows of one class. Rows 7 to 10 are
+inferred, not seen. It would break if Mindbody reordered the answer
+between reads (for example moving a visit when it is signed in, or
+listing late cancellations somewhere the sheet does not number them): the
+app would then show a different number from the sheet for the same
+person, and a check-in could renumber the rows below it on the next
+read. Nothing in the code or the mock gives reason to doubt the claim,
+but the mock is built on it, so it cannot test it either. The app does
+not filter any visit out of the answer before numbering, so a visit the
+sheet leaves unnumbered would shift everyone after it.
+
+### The design
+
+- **Carried on the person, set once, on the server.** `rosterFor` in
+  `src/lib/roster.ts` sets `line: index + 1` from the answer's order and
+  nothing else; `classRoster` spreads it through untouched. The row reads
+  `entry.line`, so the header's sort control (First name, Last name)
+  reorders rows and renumbers nobody. In "Sign-in order" the rows are the
+  answer's order, so the numbers read 1, 2, 3 down the page.
+- **Never guessed.** The browser never adds a roster row of its own (every
+  `setEntries` either replaces the list from `/api/roster` or patches a
+  field of an existing row), so a student booked at the counter has no
+  row, and no number, until the next roster read gives them one.
+- **Small like the M and info chips.** To the left of the name, in the M
+  chip's box: 24px tall, 16px/800, radius 0, tabular figures. The quiet
+  pairing (`--surface-2` fill, `--muted` digits) rather than the M chip's
+  gold: a number is a reference, not a badge the eye should hunt for. Not
+  a tap target, so the 48px/64px target rules do not apply; the 16px text
+  floor does.
+- **One name column.** A fixed 30px slot and a 10px gap (26px and 6px in
+  portrait, where the name column is 150px), wide enough for "65" (a
+  class holds up to 65), so a one-digit and a two-digit row start their
+  names at the same x. The subline stays under the name, and the number
+  sits on the name's line. The roster head's "Name" is indented to sit
+  over the names.
+- **Heard as "number 7".** A visually hidden "number " precedes the digit
+  (`.line-no-sr`), so a screen reader does not read a stray figure before
+  the name.
+- **Waiting list rows carry no number.** They are a different list with
+  their own row type and renderer; nothing there changed.
+- Tokens only, both palettes; no new token. No em dashes.
+
+### Build notes
+
+- `src/lib/roster.ts`: `RosterEntry.line`, set in `rosterFor`.
+- `src/app/page.tsx`: `RosterEntry.line`; the number slot in the roster
+  row's `.cell-name.numbered`; the head's `Name` in `.head-name`.
+- `src/app/globals.css`: `.cell-name.numbered`, `.line-no`,
+  `.line-no-sr`, `.roster-head > .head-name`, and the portrait
+  tightening inside the existing `max-width: 860px` block.
+- Other readers of `rosterFor` (`visitPayment`) ignore the new field.
+
+The trade in portrait: the number takes 32px from a 150px name column, so
+a few more names wrap to two lines there ("Jonathan Weiss", "Stacia
+Sander"). T60's rule already prefers a taller row to a name a teacher
+cannot read, so they wrap rather than ellipsize. Landscape names still
+fit on one line with room to spare (204px of text column).
+
+Verified against `next start` on **:3815** and the T114 mock with a T115
+knob on **:4815** (scratchpad/t115: `patch-mock.py`, `ui.mjs`,
+`start.sh`/`stop.sh`; `start.sh` and the driver both refuse to run unless
+the server serves this worktree's `BUILD_ID`), rebuilt before the run.
+The knob seeds Pete's class 124540 in the sheet's order with two more rows
+(twelve, so numbers reach two digits), visit ids scrambled against that
+order and names in no alphabetical order. `ui.mjs`, Playwright, light and
+dark, 1180x820 and 820x1180, 104 checks, all green:
+
+- In the default view the rows are the sheet's order and read 1 to 12
+  down the page, each number on the person the sheet numbered; the
+  `/api/roster` answer carries the same `line`, and it is provably neither
+  visit id order nor name order.
+- First name and Last name reorder the rows and every person keeps their
+  number; back to Sign-in order reads 1 to 12 again.
+- Every name starts at one x, one- and two-digit rows alike; every number
+  box is the same width, left of the name, the M chip's height, 16px, and
+  on the name's line.
+- The accessibility tree reads "number 7" before "Stacia Sander"; the
+  hidden words occupy a 1x1 clipped box.
+- A visit that appears in Mindbody's answer between reads gets 13 on the
+  next roster read, and nobody else's number moves.
+- The waiting list's rows carry no number.
+- The shared size and contrast audit: nothing under 16px, no low contrast
+  (the dark palette's digits at 5.25:1 are its lowest), in every state.
+- Screenshots looked at beside the M and info chips, both palettes, both
+  orientations.
+- `npm run typecheck` and `npm run build` clean.
+
+Not verified:
+
+- Anything against live Mindbody from this build. In particular, that
+  the `classvisits` order matches the sheet past row six, and that it
+  does not change when a visit is signed in, cancelled or added. A live
+  check is one roster beside Mindbody's sheet, before and after a
+  check-in.
+- What Mindbody does with a late-cancelled visit: whether it appears in
+  `classvisits` at all, and whether the sheet numbers it.
