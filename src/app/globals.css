@@ -8633,3 +8633,43 @@ textarea.reason-note-field:disabled::placeholder {
   font-size: 16px;
   color: var(--muted);
 }
+
+/* T212: the sign-in gate's studio choice. Two 64px halves on the rule,
+ * the chosen one in the accent (selected, the token's one meaning), and
+ * a sentence under them only when the choice would move the counter. */
+.studio-pick {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  margin: 14px 0 0;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+}
+
+.studio-pick-btn {
+  min-height: 64px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.studio-pick-btn + .studio-pick-btn {
+  border-left: 2px solid var(--rule);
+}
+
+.studio-pick-btn.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.studio-pick-note {
+  margin: 10px 0 0;
+  font-size: 17px;
+  color: var(--warn);
+}

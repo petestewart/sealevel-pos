@@ -19704,3 +19704,119 @@ noted.
 - **Two iPads racing one override** end with one write and one 401: the
   spend is atomic. What the loser's screen says about it has not been
   designed; it reads the same refusal a spent token gets.
+
+## T212. The studio can be switched from the sign-in screen (Pete, 2026-09-25)
+
+Pete, with a screenshot of the roster on production:
+
+> when i switch to prod it still says sandbox, not sure why.
+>
+> also i realized you cannot get to the settings to change between prod
+> and sandbox without being logged in, so that is a problem.
+
+### "It still says sandbox" is not the mode
+
+The line in the screenshot reads "Sandbox test", in the quiet surface with
+the accent rail. That is the STUDIO BANNER (PLAN 1.7), the announcement
+text, and "Sandbox test" is exactly the `POS_BANNER_TEXT` the setup steps
+for the hardware drive told Pete to put in `.env`. It follows no mode and
+never has. The mode line (`modeNotice`) is a different element above it,
+and it did what T111 says: on production it shows only for a dry run, the
+write guard, or this iPad's own dry run, and nothing at all when the
+counter is live and unrestricted. The roster underneath, "Hot 26 (90 min)"
+and a real member's annual pass, is production data. So nothing in code
+was wrong here. The fix is removing that line from `.env` (the drawer's
+banner field cannot clear it: clearing the stored value falls back to the
+env var by design).
+
+### The switch was behind the thing it was needed to fix
+
+T89 put the target switch in the drawer's Settings tab, and the drawer is
+inside the signed-in desk. Every guard on it was right, but together they
+made a trap: a staff login belongs to ONE Mindbody site (CLAUDE.md, T210),
+so a counter on the studio you cannot sign in to, or on a studio where
+your staff id is not in `POS_ADMIN_STAFF_IDS`, cannot reach the control
+that would move it. The only way out was editing the environment and
+restarting, which is the redeploy T89 was built to remove.
+
+### The rule
+
+The sign-in gate offers the studio. When the drawer's switch could work
+at all (the devtools gate, BOTH credential sets and a database, the same
+three conditions), `/api/config` carries `studioChoice`, the two studios
+with their site ids, and the gate draws two 64px halves above the login
+fields, starting on the counter's own. Picking the other one adds a line
+saying what signing in there does, and the button says "Sign in to
+sandbox" (or production).
+
+`POST /api/teacher/signin` takes an optional `target`. Absent, or naming
+the studio the counter is already on, is an ordinary sign-in and sends
+exactly what it always did. Naming the OTHER studio is a switch, and:
+
+1. the devtools gate, the credential sets and the database are checked
+   BEFORE any password leaves the server (404, 409 or 503, in words);
+2. the login is checked against the DESTINATION studio
+   (`signInAsStaff(..., at)`), which is the point: the drawer's proof was
+   an admin's password at the current site, and this is the same proof
+   made at the site that can actually take it;
+3. the id that studio answers must be in `POS_ADMIN_STAFF_IDS`. Anybody
+   else gets 403 naming their id at that studio and the variable ("Your
+   Sandbox staff id is 777, which is not in POS_ADMIN_STAFF_IDS. Nothing
+   was switched."), their token is revoked at the site that issued it,
+   and the counter does not move. Staff ids are per site, so an admin
+   who uses both studios needs both ids in the list, and the refusal is
+   what tells them the second one;
+4. then `switchTarget` (`src/lib/targetswitch.ts`, now the ONE body of
+   the switch, shared with `PUT /api/admin/target` so the order cannot
+   drift: every session ended while the old credentials are current,
+   then the row, then the catalog, gift card and required-field caches,
+   then the log line, `[target] prod -> sandbox by staff=4242 via
+   sign-in`);
+5. and the sign-in carries on as an ordinary one at the new studio, so
+   the admin lands on the roster signed in there. The "studio target
+   changed, sign in again" line is put back after their session is made,
+   because it is for every OTHER iPad, whose teacher was just signed out.
+
+What did not move: dry run and the write guard stay in the server
+environment, the drawer's switch is unchanged apart from calling the
+shared function, and nothing else about sign-in changed for a request
+with no `target`.
+
+### Drivers
+
+`scratchpad/t212/gate.mjs` against the T210 mock (both credential sets on
+one mock with different site ids; the mock taught a non-admin login, id
+777, and a wrong password), a real Postgres and a production build:
+
+- **db** (27 assertions): `studioChoice` names both studios and site ids;
+  a `target` naming the current studio is an ordinary sign-in at 471; a
+  bogus target is 400; a wrong password at the other studio is 401,
+  checked at -99, counter unmoved; a non-admin is 403 with their id and
+  the variable, no cookie, token revoked at -99, counter unmoved and the
+  other teacher still signed in; an admin is 200 as that studio's staff
+  member, the counter is on the sandbox from the stored setting, the new
+  session belongs to -99, the prod teacher elsewhere is signed out and
+  told why; the drawer's `PUT /api/admin/target` still switches back and
+  still signs the switching admin out; the gate switches twice more and
+  leaves the row on prod.
+- **nodev** and **nodb** (5 each): no `studioChoice`, a switch at sign-in
+  is refused (404, 503) with NO `usertoken/issue` sent, and a plain
+  sign-in still works.
+- **ui.mjs** (21): the two halves in both themes, 64px, 16px and up,
+  starting on the counter's studio; no line and a plain "Sign in" on the
+  counter's own; the line and "Sign in to sandbox" on the other; the
+  non-admin's refusal in words; an admin landing on the roster with the
+  mode banner now reading SANDBOX.
+
+### Limits
+
+- **Not driven against real Mindbody.** The mock issues a token to any
+  password but "wrong". Pete's real case (a prod counter, his sandbox
+  login) is the first live run.
+- **Admin ids are per site** and the list is one variable. An admin who
+  uses both studios needs both ids in `POS_ADMIN_STAFF_IDS`; the refusal
+  names the missing one.
+- **The gate's list is a promise about the SERVER, not the person**:
+  whether this login may switch is only known after the destination
+  answers, which is why the refusal is a sentence on the gate rather than
+  a hidden control.

@@ -118,6 +118,9 @@ export interface ModeConfig {
    *  stale copy can cost a teacher a refusal and can never cost a
    *  student an unapproved charge. */
   customerConfirmsSale?: boolean;
+  /** T212: the studios the sign-in gate may offer, or null for none.
+   *  Absent on the lock screen's trimmed answer. */
+  studioChoice?: { target: "prod" | "sandbox"; siteId: string | null }[] | null;
 }
 
 /**

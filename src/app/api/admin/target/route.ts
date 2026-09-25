@@ -3,9 +3,6 @@ import { NextResponse } from "next/server";
 import { requireActor } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 import { devtoolsEnabled } from "@/lib/calllog";
-import { clearRawCatalog } from "@/lib/catalog";
-import { clearRequiredFieldsCache } from "@/lib/clients";
-import { clearGiftCardProducts } from "@/lib/giftcardsale";
 import { dbAvailable, dbConfigured, storageMode } from "@/lib/db";
 import {
   dryRunState,
@@ -14,13 +11,12 @@ import {
   target,
   type Target,
 } from "@/lib/mindbody";
-import { endAllStaffSessions } from "@/lib/staffsession";
 import {
   ensureTarget,
   isTargetAdmin,
-  setTargetOverride,
   targetSource,
 } from "@/lib/target";
+import { switchBlocker, switchTarget } from "@/lib/targetswitch";
 
 export const dynamic = "force-dynamic";
 
@@ -151,63 +147,33 @@ export async function PUT(request: Request) {
     return NextResponse.json({ ...(await state()), switched: false });
   }
 
-  const missing = missingCredentials(next);
-  if (missing.length > 0) {
+  const blocked = await switchBlocker(next);
+  if (blocked) {
     return NextResponse.json(
       {
-        error:
-          `Cannot switch to ${next}: the server environment is missing ` +
-          `${missing.join(", ")}. Set ${missing.length > 1 ? "them" : "it"} ` +
-          "and redeploy, then switch.",
-        missing,
+        error: blocked.error,
+        ...(blocked.missing ? { missing: blocked.missing } : {}),
         ...(await state()),
         switched: false,
       },
-      { status: 409 },
-    );
-  }
-  if (!dbConfigured() || !(await dbAvailable())) {
-    return NextResponse.json(
-      {
-        error:
-          "No database to store the target in, so MINDBODY_TARGET in the " +
-          "server environment decides. Set DATABASE_URL to switch from here.",
-        ...(await state()),
-        switched: false,
-      },
-      { status: 503 },
+      { status: blocked.status },
     );
   }
 
-  /* Order matters. The sessions go FIRST, while the old target's
-   * credentials are still current, so each token is revoked against the
-   * site that issued it; only then is the row written. A failed write
-   * after that has signed everyone out of a counter that did not move,
-   * which costs a sign-in and is the cheap side of the trade. */
-  const sessions = await endAllStaffSessions();
-  const wrote = await setTargetOverride(next);
-  if (!wrote) {
+  /* T212: the switch itself is shared with the sign-in gate's studio
+   * choice, so the order (sessions, then the row, then the caches)
+   * cannot drift between the two doors. */
+  const moved = await switchTarget(next, admin.staffId, "drawer");
+  if (!moved.ok) {
     return NextResponse.json(
-      {
-        error:
-          "The database refused the target setting, so nothing was " +
-          "switched. Everyone has been signed out; sign in again.",
-        ...(await state()),
-        switched: false,
-      },
-      { status: 503 },
+      { error: moved.error, ...(await state()), switched: false },
+      { status: moved.status },
     );
   }
-  clearRawCatalog();
-  /* T95: and the gift card products, which are a cached read of the same
-   * kind and must never be served from the other studio. */
-  clearGiftCardProducts();
-  clearRequiredFieldsCache();
-  /* The one log line, and no token or credential in it. */
-  console.log(
-    `[target] ${current} -> ${next} by staff=${admin.staffId} ` +
-      `(sessions ended: ${sessions.ended}${sessions.tableCleared ? "" : ", table did not answer"})`,
-  );
+  const sessions = {
+    ended: moved.sessionsEnded,
+    tableCleared: moved.sessionsTableCleared,
+  };
   return NextResponse.json({
     ...(await state()),
     switched: true,

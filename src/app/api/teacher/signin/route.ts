@@ -5,7 +5,16 @@ import {
   recordSigninSuccess,
   requireSession,
 } from "@/lib/auth";
-import { adoptServiceToken, revokeStaffToken, signInAsStaff } from "@/lib/mindbody";
+import { devtoolsEnabled } from "@/lib/calllog";
+import {
+  adoptServiceToken,
+  revokeStaffToken,
+  signInAsStaff,
+  target,
+  type Target,
+} from "@/lib/mindbody";
+import { ensureTarget, isTargetAdmin, setSignInNotice } from "@/lib/target";
+import { switchBlocker, switchTarget } from "@/lib/targetswitch";
 import { findStaffRow, listStaff } from "@/lib/staff";
 import { hasTeacherPin } from "@/lib/teacherpins";
 import {
@@ -41,7 +50,18 @@ export const dynamic = "force-dynamic";
  * should be prompted to do so"). Null means PINs are unavailable here
  * (no database), which prompts for nothing. It says whether a PIN
  * exists and nothing about its value.
+ *
+ * T212: an optional `target` names the studio to sign in to. When it is
+ * the OTHER studio, this is also the counter's target switch: the login
+ * is checked against that studio, must belong to a named admin
+ * (`POS_ADMIN_STAFF_IDS`), and only then does the counter move, through
+ * the same `switchTarget` the drawer uses. Behind the devtools gate, both
+ * credential sets and a database, exactly like the drawer's switch.
  */
+function studioWord(t: Target): string {
+  return t === "prod" ? "Production" : "Sandbox";
+}
+
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
@@ -59,8 +79,9 @@ export async function POST(request: Request) {
 
   let username: unknown;
   let password: unknown;
+  let wanted: unknown;
   try {
-    ({ username, password } = await request.json());
+    ({ username, password, target: wanted } = await request.json());
   } catch {
     return NextResponse.json(
       { error: "username and password are required" },
@@ -81,9 +102,47 @@ export async function POST(request: Request) {
     );
   }
 
+  /* T212: the gate's studio choice. Absent, or naming the studio the
+   * counter is already on, is an ordinary sign-in. Naming the OTHER one
+   * is a switch, and every guard the drawer's switch has applies before
+   * a password is sent anywhere: the devtools gate, both credential
+   * sets, and a database to keep the setting in. */
+  if (wanted !== undefined && wanted !== "sandbox" && wanted !== "prod") {
+    return NextResponse.json(
+      { error: 'target must be "sandbox" or "prod"' },
+      { status: 400 },
+    );
+  }
+  await ensureTarget();
+  const switchTo: Target | null =
+    wanted === "sandbox" || wanted === "prod"
+      ? wanted === target()
+        ? null
+        : wanted
+      : null;
+  if (switchTo !== null) {
+    if (!devtoolsEnabled()) {
+      return NextResponse.json(
+        { error: "Switching the studio is not available on this counter." },
+        { status: 404 },
+      );
+    }
+    const blocked = await switchBlocker(switchTo);
+    if (blocked) {
+      return NextResponse.json({ error: blocked.error }, { status: blocked.status });
+    }
+  }
+
   let signIn;
   try {
-    signIn = await signInAsStaff(username.trim(), password);
+    /* T212: a switch signs in to the studio being switched TO, which is
+     * the proof: a staff login belongs to one site, and the one a
+     * counter cannot sign in to is exactly the one it may need to leave. */
+    signIn = await signInAsStaff(
+      username.trim(),
+      password,
+      switchTo ?? undefined,
+    );
   } catch {
     return NextResponse.json(
       { error: "Could not reach Mindbody to check that sign-in." },
@@ -98,6 +157,39 @@ export async function POST(request: Request) {
       { error: "Mindbody did not accept that sign-in.", reason: "teacher" },
       { status: 401 },
     );
+  }
+
+  if (switchTo !== null) {
+    /* T212: only a named admin moves the counter, the drawer's rule,
+     * checked against the id the DESTINATION studio just vouched for.
+     * The refusal names that id and the variable, because a staff id is
+     * per site and the list needs one for each studio an admin signs in
+     * to; it names nothing else. The token is revoked where it was
+     * issued, and the counter has not moved. */
+    const id = signIn.user.id;
+    if (!Number.isInteger(id) || id <= 0 || !isTargetAdmin(id)) {
+      void revokeStaffToken(signIn.token, switchTo);
+      console.warn(
+        `[target] switch to ${switchTo} at sign-in refused: staff ${String(id)} on site ${signIn.siteId} is not in POS_ADMIN_STAFF_IDS`,
+      );
+      return NextResponse.json(
+        {
+          error:
+            `Only an admin can switch the studio. Your ${studioWord(switchTo)} ` +
+            `staff id is ${String(id)}, which is not in POS_ADMIN_STAFF_IDS. ` +
+            "Nothing was switched.",
+        },
+        { status: 403 },
+      );
+    }
+    const moved = await switchTarget(switchTo, id, "sign-in");
+    if (!moved.ok) {
+      void revokeStaffToken(signIn.token, switchTo);
+      return NextResponse.json({ error: moved.error }, { status: moved.status });
+    }
+    /* The counter is on the destination now, and this sign-in carries on
+     * exactly as an ordinary one would there: the staff list, the
+     * session and the cookie all read the new target. */
   }
 
   /* The studio's own API login signing in as a teacher (the sandbox's
@@ -203,6 +295,14 @@ export async function POST(request: Request) {
     isService,
     siteId,
   );
+  if (switchTo !== null) {
+    /* T212: creating this session cleared the line the switch set, and
+     * that line is for every OTHER iPad, whose teacher was just signed
+     * out by a switch they did not make. Put it back. */
+    setSignInNotice(
+      `The studio target changed to ${switchTo}. Sign in again.`,
+    );
+  }
   recordSigninSuccess();
   console.log(`[staff] signed in staff=${teacher.id} site=${siteId}`);
   return NextResponse.json(

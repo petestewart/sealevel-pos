@@ -75,7 +75,16 @@ sets present in the environment, which it refuses by variable NAME.
 Switching ends every staff session (a token belongs to the site that issued
 it), clears the catalog cache, and refuses every write for two seconds
 afterwards, so a route that already read one studio cannot post to the
-other half way through (`targetSettling`). **Dry run and the write guard did not
+other half way through (`targetSettling`). **Since T212 the sign-in gate
+is the second door** (Pete: "you cannot get to the settings to change
+between prod and sandbox without being logged in"): a staff login belongs
+to one site, so the gate offers both studios whenever the drawer's switch
+could work (devtools, both credential sets, a database), and signing in
+to the OTHER one checks the login against THAT studio, requires its id
+in `POS_ADMIN_STAFF_IDS`, and only then moves the counter. Both doors
+call `switchTarget` in `src/lib/targetswitch.ts`, the one body of the
+switch. Staff ids are per site, so an admin of both studios needs both
+ids in the list. **Dry run and the write guard did not
 move**: they stay in the server environment, so a switch to prod still
 writes nothing until `POS_DRY_RUN=false` is deployed.
 

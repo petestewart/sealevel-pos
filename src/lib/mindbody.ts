@@ -131,6 +131,21 @@ export function missingCredentials(t: Target): string[] {
   return resolveEnv(t).missing;
 }
 
+/**
+ * T212: the credential set for a NAMED target, which need not be the
+ * current one. Throws like mindbodyEnv() when the set is incomplete, so
+ * a caller checks missingCredentials() first.
+ */
+export function envFor(t: Target): MindbodyEnv {
+  const resolved = resolveEnv(t);
+  if (resolved.env === null) {
+    throw new Error(
+      `Mindbody is not configured for target "${t}": missing ${resolved.missing.join(", ")}.`,
+    );
+  }
+  return resolved.env;
+}
+
 /** The site id a target would use, or null when its set is incomplete.
  *  Not a secret: /api/config already reports the current one. */
 export function siteIdFor(t: Target): string | null {
@@ -291,6 +306,10 @@ export function adoptServiceToken(
 export async function signInAsStaff(
   username: string,
   password: string,
+  /* T212: the studio to sign in to, when it is not the one the counter
+   * is on: the sign-in gate's studio choice proves an admin against the
+   * site they are switching TO. Omitted means the current target. */
+  at?: Target,
 ): Promise<
   | {
       ok: true;
@@ -308,7 +327,7 @@ export async function signInAsStaff(
    * too; this is the one Mindbody call that deliberately does not go
    * through mindbody(). */
   await ensureTarget();
-  const env = mindbodyEnv();
+  const env = at === undefined ? mindbodyEnv() : envFor(at);
   const res = await fetch(`${env.baseUrl}/usertoken/issue`, {
     method: "POST",
     headers: {
@@ -342,8 +361,17 @@ export async function signInAsStaff(
  *  user-token.yml). Best effort: the enrollment is already decided by the
  *  time this runs, and a token nobody holds expires on its own. Not
  *  recorded in the call log, for the same reason as the issue. */
-export async function revokeStaffToken(token: string): Promise<void> {
-  const env = mindbodyEnv();
+export async function revokeStaffToken(
+  token: string,
+  /* T212: the studio that issued it, when that is not the current one. */
+  at?: Target,
+): Promise<void> {
+  let env: MindbodyEnv;
+  try {
+    env = at === undefined ? mindbodyEnv() : envFor(at);
+  } catch {
+    return;
+  }
   try {
     await fetch(`${env.baseUrl}/usertoken/revoke`, {
       method: "DELETE",

@@ -10643,6 +10643,10 @@ function AuthGate() {
           required
           teacher={null}
           notice={gateNotice}
+          /* T212: the studio choice, so a counter on the studio nobody
+             here can sign in to is not stuck there. */
+          studios={gateConfig?.studioChoice ?? null}
+          currentTarget={gateConfig?.target ?? null}
           onClose={() => undefined}
           onTeacherChange={(t, hasPin) => {
             setGateNotice(null);
