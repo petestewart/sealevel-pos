@@ -500,20 +500,20 @@ while `git clone` works, so clone the repo rather than fetching files.
   explicit client fields, and otherwise from the client index by id.
 - **A client's `Id` is NOT unique on a site. `UniqueId` is** (T114). The
   `Id` every endpoint calls `ClientId` is the studio's editable RSSID, and
-  two records can hold the same one: on site 471, 10814 is both Stacia
-  Sander (UniqueId 100037835, a current member) and Kati Robison (1005543,
-  inactive since 2010), and Mindbody's own UI shows "10814" on both. The
-  roster keyed its lookup on `Id`, the last record won, and Stacia's row
-  read "Kati Robison" over Kati's waiver and alerts. Ids are not even
-  numeric ("n23283"). A visit carries `ClientUniqueId` beside `ClientId`,
-  and that is the handle: every read that goes from an id to one record
-  goes through `pickClientRecord` (`src/lib/clientrecord.ts`), which picks
-  by UniqueId when the caller has one and picks NOTHING when two records
-  share the id and it has none. Never `limit=1` on a lookup by id: it lets
-  Mindbody choose and the exact-Id filter cannot tell. Writes that take
-  only the id (`updateclient`, formula notes, gift cards, account credit)
-  land wherever Mindbody resolves it, which is unverified; the fix for a
-  shared id is merging the records in Mindbody.
+  Mindbody lets two records hold one: 10814 was both a current member and
+  a record inactive since 2010, and the roster, keyed on `Id`, put the
+  inactive one's name, waiver and alerts on the member's row. Ids are not
+  even numeric ("n23283"). Pete's census found that one pair in 63,948
+  records and renumbered the old one to `R10814` in Mindbody's UI
+  (`updateclient` + `NewId` cannot do it: it finds the record by the
+  ambiguous `Id`). A visit carries `ClientUniqueId` beside `ClientId`, and
+  that is the handle: a read that goes from an id to one record goes
+  through `pickClientRecord` (`src/lib/clientrecord.ts`), which picks by
+  UniqueId when the caller has one, picks NOTHING when two records share
+  the id and it has none, and logs `[client-id]`. Never `limit=1` on a
+  lookup by id: it lets Mindbody choose and the exact-Id filter cannot
+  tell. There is deliberately no UI for a shared id; a write that takes
+  only the id lands wherever Mindbody resolves it.
 - The permissions this app needs: `LaunchSignInScreen` (arrivals),
   `BookClassesAndEventsWithoutPayment` (booking a walk-in), and for Phase 2
   `MakeSales`, `CreateRetailTickets`, `UseStoredCreditCards`,
