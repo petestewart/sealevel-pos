@@ -1,4 +1,11 @@
 import { cardDigits, cardExpired, luhnOk } from "./cardrules";
+import {
+  CLIENT_ID_READ_LIMIT,
+  ambiguousClientMessage,
+  logClientPick,
+  mismatchClientMessage,
+  pickClientRecord,
+} from "./clientrecord";
 import { mindbody, type Actor } from "./mindbody";
 
 /**
@@ -155,15 +162,36 @@ export function parseCardInput(
 export async function cardOnFileFor(
   clientId: string,
   now = new Date(),
+  /** T114: the record's UniqueId when the caller has one; it decides
+   *  between records sharing `clientId`. */
+  uniqueId: number | null = null,
 ): Promise<CardOnFile | null> {
+  /* T114: never `limit=1`, which let Mindbody choose between records
+   * sharing the id. With no UniqueId and more than one record, this
+   * throws rather than show one of them: the caller (saveClientCard)
+   * then reports the card as taken but not shown back, which is true. */
   const body = await mindbody(
-    `/client/clients?clientIds=${encodeURIComponent(clientId)}&limit=1`,
+    `/client/clients?clientIds=${encodeURIComponent(clientId)}` +
+      `&limit=${CLIENT_ID_READ_LIMIT}`,
   );
-  const row = (body?.Clients ?? []).find(
-    (c: { Id?: unknown }) => String(c?.Id ?? "") === clientId,
+  const total = body?.PaginationResponse?.TotalResults;
+  const pick = pickClientRecord<any>(
+    body?.Clients ?? [],
+    clientId,
+    uniqueId,
+    typeof total === "number" ? total : null,
   );
-  if (!row) throw new Error("Mindbody returned no client record for this id.");
-  return cardOnFileOf(row, now);
+  logClientPick("card read-back", clientId, uniqueId, pick);
+  if (pick.outcome === "ambiguous") {
+    throw new Error(ambiguousClientMessage(clientId, pick.records));
+  }
+  if (pick.outcome === "mismatch" && uniqueId !== null) {
+    throw new Error(mismatchClientMessage(clientId, uniqueId));
+  }
+  if (!pick.row) {
+    throw new Error("Mindbody returned no client record for this id.");
+  }
+  return cardOnFileOf(pick.row, now);
 }
 
 /**
@@ -193,6 +221,10 @@ export async function saveClientCard(
   /** T49: the signed-in teacher whose token carries the write. */
   actor?: Actor | null,
   now = new Date(),
+  /** T114: the record's UniqueId, for the READ-BACK only. The write is
+   *  addressed by client id, as the endpoint requires, and Mindbody
+   *  resolves it; this cannot steer which record gets the card. */
+  uniqueId: number | null = null,
 ): Promise<{
   suppressed: "dry-run" | "write-guard" | null;
   card: CardOnFile | null;
@@ -219,7 +251,10 @@ export async function saveClientCard(
   if (res?.WriteSuppressed) return { suppressed: "write-guard", card: null };
   /* The card is on file from here on, whatever the read-back does. */
   try {
-    return { suppressed: null, card: await cardOnFileFor(clientId, now) };
+    return {
+      suppressed: null,
+      card: await cardOnFileFor(clientId, now, uniqueId),
+    };
   } catch (err) {
     /* No card detail in this line: it is the read that failed, and the
      * exchange is in the call log with the number redacted. */

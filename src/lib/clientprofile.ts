@@ -1,5 +1,12 @@
 import { cardOnFileOf, type CardOnFile } from "./clientcard";
 import { fetchPasses, type PassInfo } from "./clientcontext";
+import {
+  CLIENT_ID_READ_LIMIT,
+  ambiguousClientMessage,
+  logClientPick,
+  mismatchClientMessage,
+  pickClientRecord,
+} from "./clientrecord";
 import { mindbody } from "./mindbody";
 import { studioWall } from "./roster";
 
@@ -138,13 +145,37 @@ type ClientFields = Pick<
   | "card"
 >;
 
-async function fetchClientFields(clientId: string): Promise<ClientFields> {
+/** T114: the client read could not say which record the id means. The
+ *  profile then shows no record, visit or pass: all three would be a
+ *  guess. */
+class SharedIdError extends Error {}
+
+async function fetchClientFields(
+  clientId: string,
+  uniqueId: number | null,
+): Promise<ClientFields & { records: number }> {
+  /* T114: never `limit=1`. With two records under one id that let
+   * Mindbody choose, and the exact-Id filter could not tell. The record
+   * is picked by the UniqueId the modal was opened with (the roster
+   * row's, the search row's); src/lib/clientrecord.ts has the rules. */
   const body = await mindbody(
-    `/client/clients?clientIds=${encodeURIComponent(clientId)}&limit=1`,
+    `/client/clients?clientIds=${encodeURIComponent(clientId)}` +
+      `&limit=${CLIENT_ID_READ_LIMIT}`,
   );
-  const c = (body?.Clients ?? []).find(
-    (row: any) => String(row?.Id ?? "") === clientId,
+  const pick = pickClientRecord<any>(
+    body?.Clients ?? [],
+    clientId,
+    uniqueId,
+    num(body?.PaginationResponse?.TotalResults),
   );
+  logClientPick("client profile", clientId, uniqueId, pick);
+  if (pick.outcome === "ambiguous") {
+    throw new SharedIdError(ambiguousClientMessage(clientId, pick.records));
+  }
+  if (pick.outcome === "mismatch" && uniqueId !== null) {
+    throw new SharedIdError(mismatchClientMessage(clientId, uniqueId));
+  }
+  const c = pick.row;
   if (!c) throw new Error("Mindbody returned no client record for this id.");
   const first = str(c?.FirstName);
   const last = str(c?.LastName);
@@ -177,13 +208,14 @@ async function fetchClientFields(clientId: string): Promise<ClientFields> {
       promotionalTexts: c?.SendPromotionalTexts === true,
     },
     card: cardOnFileOf(c),
+    records: pick.records,
   };
 }
 
 async function fetchVisitSummary(
   clientId: string,
   now: Date,
-): Promise<{ count: number; last: ProfileVisit | null }> {
+): Promise<{ count: number; last: ProfileVisit | null; owners: number[] }> {
   const start = new Date(now.getTime() - VISIT_WINDOW_DAYS * DAY_MS);
   const body = await mindbody(
     `/client/clientvisits?ClientId=${encodeURIComponent(clientId)}` +
@@ -228,6 +260,16 @@ async function fetchVisitSummary(
   return {
     count: total ?? rows.length,
     last: attended[0] ?? null,
+    /* T114: whose visits these are, by the ClientUniqueId each visit
+     * carries (client.yml Visit), for a caller that has to check they
+     * belong to the record it showed. */
+    owners: [
+      ...new Set(
+        rows
+          .map((v) => num(v?.ClientUniqueId))
+          .filter((u): u is number => u !== null),
+      ),
+    ],
   };
 }
 
@@ -239,10 +281,14 @@ async function fetchVisitSummary(
 export async function clientProfile(
   clientId: string,
   now = new Date(),
+  /** T114: the UniqueId of the person the modal was opened for (the
+   *  roster row's visit, the search row's record), which decides between
+   *  records sharing `clientId`. Null when the caller has none. */
+  uniqueId: number | null = null,
 ): Promise<ClientProfile> {
   if (!clientId) throw new Error("clientProfile needs a client id.");
   const [client, visits, passes] = await Promise.allSettled([
-    fetchClientFields(clientId),
+    fetchClientFields(clientId, uniqueId),
     fetchVisitSummary(clientId, now),
     fetchPasses(clientId, now),
   ]);
@@ -261,7 +307,7 @@ export async function clientProfile(
   const errors: ClientProfile["errors"] = {};
   const fields: ClientFields =
     client.status === "fulfilled"
-      ? client.value
+      ? (({ records: _records, ...rest }) => rest)(client.value)
       : ((errors.client = reason(client.reason)),
         {
           name: null,
@@ -279,13 +325,42 @@ export async function clientProfile(
           consent: null,
           card: null,
         });
+  let visitsValue: { count: number; last: ProfileVisit | null } | null =
+    visits.status === "fulfilled"
+      ? { count: visits.value.count, last: visits.value.last }
+      : null;
+  let passesValue: PassInfo[] | null =
+    passes.status === "fulfilled" ? passes.value : null;
   if (visits.status === "rejected") errors.visits = reason(visits.reason);
   if (passes.status === "rejected") errors.passes = reason(passes.reason);
+  if (client.status === "rejected" && client.reason instanceof SharedIdError) {
+    /* No record could be named, so the visits and passes Mindbody
+     * returned for the bare id are its guess, not this person's. */
+    const why = "not shown, since the client id does not name one record";
+    visitsValue = null;
+    passesValue = null;
+    errors.visits = why;
+    errors.passes = why;
+  } else if (client.status === "fulfilled" && client.value.records > 1) {
+    /* The visits were read by the shared id too. Each carries its own
+     * ClientUniqueId; when any names ANOTHER record, Mindbody answered
+     * for somebody else and the section is dropped rather than shown
+     * under this name. Passes carry no UniqueId to check by (a
+     * ClientService names only the shared ClientID), which is recorded
+     * as an open risk in T114. */
+    const owners = visits.status === "fulfilled" ? visits.value.owners : [];
+    if (uniqueId !== null && owners.some((u) => u !== uniqueId)) {
+      visitsValue = null;
+      errors.visits =
+        "not shown: Mindbody answered with the other record's visits " +
+        "for this client id";
+    }
+  }
   return {
     clientId,
     ...fields,
-    visits: visits.status === "fulfilled" ? visits.value : null,
-    passes: passes.status === "fulfilled" ? passes.value : null,
+    visits: visitsValue,
+    passes: passesValue,
     errors,
   };
 }
