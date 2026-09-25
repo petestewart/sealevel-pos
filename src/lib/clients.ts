@@ -4,6 +4,11 @@ import {
   logClientPick,
   pickClientRecord,
 } from "./clientrecord";
+import {
+  updateClientAudited,
+  type ClientBefore,
+  type ClientWriteKind,
+} from "./clientaudit";
 import { mindbody, type Actor } from "./mindbody";
 
 /**
@@ -75,15 +80,23 @@ export async function updateClientField(
   value: string,
   /** T49: the signed-in teacher to save as, when there is one. */
   actor?: Actor | null,
+  /** T116: how the write is recorded. `before` is a read the caller
+   *  already made, so it is not made twice. */
+  audit: {
+    kind?: ClientWriteKind;
+    before?: ClientBefore | null;
+    uniqueId?: number | null;
+    note?: string | null;
+  } = {},
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
-  const res = await mindbody("/client/updateclient", {
-    method: "POST",
-    body: {
-      Client: { Id: clientId, [field]: value },
-      CrossRegionalUpdate: false,
-    },
+  const res = await updateClientAudited({
+    kind: audit.kind ?? "field",
     clientId,
-    ...(actor ? { actor } : {}),
+    fields: { [field]: value },
+    actor: actor ?? null,
+    uniqueId: audit.uniqueId ?? null,
+    before: audit.before ?? null,
+    note: audit.note ?? null,
   });
   if (res?.DryRun) return { suppressed: "dry-run" };
   if (res?.WriteSuppressed) return { suppressed: "write-guard" };
@@ -129,14 +142,11 @@ export async function updateClientConsent(
   if (Object.keys(sent).length === 0) {
     throw new Error("updateClientConsent needs at least one email flag.");
   }
-  const res = await mindbody("/client/updateclient", {
-    method: "POST",
-    body: {
-      Client: { Id: clientId, ...sent },
-      CrossRegionalUpdate: false,
-    },
+  const res = await updateClientAudited({
+    kind: "consent",
     clientId,
-    ...(actor ? { actor } : {}),
+    fields: sent,
+    actor: actor ?? null,
   });
   if (res?.DryRun) return { suppressed: "dry-run" };
   if (res?.WriteSuppressed) return { suppressed: "write-guard" };
@@ -150,8 +160,14 @@ export async function updateClientNotes(
   clientId: string,
   notes: string,
   actor?: Actor | null,
+  /** T116: which append this is, and the read it started from. */
+  audit: {
+    kind: ClientWriteKind;
+    before?: ClientBefore | null;
+    note?: string | null;
+  } = { kind: "field" },
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
-  return updateClientField(clientId, "Notes", notes, actor);
+  return updateClientField(clientId, "Notes", notes, actor, audit);
 }
 
 /**
@@ -164,7 +180,9 @@ export async function updateClientNotes(
  * the read fails or the client is not found, so the caller never writes
  * over notes it did not see.
  */
-export async function readClientNotes(clientId: string): Promise<string> {
+export async function readClientNotes(
+  clientId: string,
+): Promise<{ notes: string; uniqueId: number | null }> {
   /* T114: never `limit=1`. Two Mindbody records can share one client id,
    * and `updateclient` writes `Notes` WHOLE to whichever record Mindbody
    * resolves the id to. Reading one record's notes and writing them back
@@ -193,7 +211,11 @@ export async function readClientNotes(clientId: string): Promise<string> {
   }
   const row = pick.row;
   if (!row) throw new Error(`client ${clientId} not found`);
-  return typeof row.Notes === "string" ? row.Notes : "";
+  /* T116: the UniqueId rides along for the write's record. */
+  return {
+    notes: typeof row.Notes === "string" ? row.Notes : "",
+    uniqueId: typeof row.UniqueId === "number" ? row.UniqueId : null,
+  };
 }
 
 /**
@@ -229,14 +251,11 @@ export async function recordLiabilityRelease(
    *  is exactly what a teacher's token changes. */
   actor?: Actor | null,
 ): Promise<{ suppressed: "dry-run" | "write-guard" | null }> {
-  const res = await mindbody("/client/updateclient", {
-    method: "POST",
-    body: {
-      Client: { Id: clientId, LiabilityRelease: true },
-      CrossRegionalUpdate: false,
-    },
+  const res = await updateClientAudited({
+    kind: "waiver-release",
     clientId,
-    ...(actor ? { actor } : {}),
+    fields: { LiabilityRelease: true },
+    actor: actor ?? null,
   });
   if (res?.DryRun) return { suppressed: "dry-run" };
   if (res?.WriteSuppressed) return { suppressed: "write-guard" };

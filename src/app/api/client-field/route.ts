@@ -13,9 +13,22 @@ import {
   updateClientField,
   type EditableClientField,
 } from "@/lib/clients";
+import {
+  BEFORE_READ_MS,
+  COURTESY_READ_MS,
+  isBlankText,
+  readClientBefore,
+} from "@/lib/clientaudit";
 import { signEntries, studioDate } from "@/lib/notesig";
 
 export const dynamic = "force-dynamic";
+
+/** The field in the words the refusal uses. */
+const FIELD_WORDS: Record<EditableClientField, string> = {
+  Notes: "notes",
+  RedAlert: "red alert",
+  YellowAlert: "yellow alert",
+};
 
 /**
  * Save ONE free-text field on a client record: `POST /client/updateclient`
@@ -40,6 +53,11 @@ export const dynamic = "force-dynamic";
  * signed by them (src/lib/notesig.ts). The response carries the raw
  * text that was written as `value`, so the browser's local state can
  * hold exactly what Mindbody now holds.
+ *
+ * T116: the field is read fresh from Mindbody before the write, for the
+ * record (src/lib/clientaudit.ts) and for one refusal: a save that would
+ * turn text into nothing answers 409 `reason: "blank"` unless the body
+ * carries `confirmBlank: true`, which the editor sends only after asking.
  */
 export async function POST(request: Request) {
   const denied = requireSession(request);
@@ -53,7 +71,8 @@ export async function POST(request: Request) {
   /* A Mindbody write like the rest: behind the device session (T44
    * review put a teacher gate here too; T48 removed that layer). */
   try {
-    const { clientId, field, value, previous } = await request.json();
+    const { clientId, field, value, previous, confirmBlank, uniqueId } =
+      await request.json();
     if (typeof clientId !== "string" || !clientId) {
       return NextResponse.json(
         { error: "clientId (string) is required" },
@@ -91,12 +110,80 @@ export async function POST(request: Request) {
       session.name,
       studioDate(),
     );
+    const editable = field as EditableClientField;
+    const wantedUnique =
+      typeof uniqueId === "number" && Number.isInteger(uniqueId) && uniqueId > 0
+        ? uniqueId
+        : null;
+    /* T116: what Mindbody holds NOW, read fresh on the server and never
+     * taken from the browser. It is the record's "before", and it is
+     * what the blank check below is decided on. */
+    /* T116 review: the longer wait only for a clear, where the read is
+     * the gate; any other save waits the courtesy bound and goes out. */
+    const before = await readClientBefore(
+      clientId,
+      wantedUnique,
+      [editable],
+      isBlankText(signed) ? BEFORE_READ_MS : COURTESY_READ_MS,
+    );
+    const held = before.ok ? before.values[editable] : null;
+    /* T116 (Pete: "yes"): a save that turns non-empty text into nothing
+     * is refused unless the teacher was asked and said so. A read that
+     * could not say what is on file counts as text being there: a blank
+     * written over text nobody could see is exactly the accident this
+     * exists to stop. The browser asks in words and resends with
+     * `confirmBlank: true`. */
+    if (
+      isBlankText(signed) &&
+      (!before.ok || !isBlankText(held)) &&
+      confirmBlank !== true
+    ) {
+      console.warn(
+        `[client-write] blank refused client=${clientId} field=${editable} ` +
+          `staff=${session.staffId}: ${
+            before.ok ? "text on file" : `before unknown (${before.reason})`
+          }; asking the teacher`,
+      );
+      return NextResponse.json(
+        {
+          error: before.ok
+            ? `This would clear the ${FIELD_WORDS[editable]} on file.`
+            : `Mindbody could not say what the ${FIELD_WORDS[editable]} ` +
+              `holds now (${before.reason}), so clearing it needs a yes.`,
+          reason: "blank",
+          field: editable,
+          onFile: before.ok && typeof held === "string" ? held : null,
+        },
+        { status: 409 },
+      );
+    }
+    /* T116: the screen started from different text than Mindbody holds
+     * (a row whose notes had not loaded, or another save since). Not
+     * refused, since the brief is the blank case, but written into the
+     * record, where it is the first thing anyone investigating a lost
+     * note will want to know. */
+    const stale =
+      before.ok &&
+      typeof previous === "string" &&
+      (typeof held === "string" ? held : "").trim() !== previous.trim();
     /* T49: as the signed-in teacher when there is one, with the one
      * loud fallback. The signature stays the teacher's either way: it
      * says who wrote the note, and the fallback only changes whose
      * token carried it. */
     const run = await runAsActor(session, "/api/client-field", (actor) =>
-      updateClientField(clientId, field as EditableClientField, signed, actor),
+      updateClientField(clientId, editable, signed, actor, {
+        kind: "field",
+        before,
+        uniqueId: wantedUnique,
+        note: [
+          stale ? "the screen started from different text than Mindbody held" : "",
+          isBlankText(signed) && confirmBlank === true
+            ? "cleared after the teacher confirmed"
+            : "",
+        ]
+          .filter(Boolean)
+          .join("; ") || null,
+      }),
     );
     return NextResponse.json({
       ok: true,

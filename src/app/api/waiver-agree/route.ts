@@ -8,7 +8,12 @@ import {
 } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 
-import { recordLiabilityRelease, updateClientNotes } from "@/lib/clients";
+import { asTeacher, BEFORE_READ_MS } from "@/lib/clientaudit";
+import {
+  readClientNotes,
+  recordLiabilityRelease,
+  updateClientNotes,
+} from "@/lib/clients";
 import { insertWaiverReceipt } from "@/lib/db";
 import { getWaiver } from "@/lib/waiver";
 
@@ -144,12 +149,54 @@ export async function POST(request: Request) {
     await insertWaiverReceipt(clientId, at, waiver.sha256);
 
     const receiptLine = `Waiver agreed at the counter ${at}, text sha256:${waiver.sha256.slice(0, 12)}`;
-    const current = typeof notes === "string" ? notes : "";
-    const newNotes = current ? `${current}\n${receiptLine}` : receiptLine;
     let receiptNoted = false;
     let receiptReason: string | null = null;
+    let newNotes = receiptLine;
     try {
-      const noted = await updateClientNotes(clientId, newNotes, noteActor);
+      /* T116: the append starts from Mindbody's notes, read now, and no
+       * longer from the row's copy the browser sent. `updateclient`
+       * writes Notes WHOLE, so a row whose notes had not loaded (null)
+       * or were stale wrote the receipt line OVER everything on file:
+       * the same silent blanking T116 exists to catch. A read that
+       * cannot say (a shared id, T114; a failure) files no receipt in
+       * Notes; the log line and the waiver_receipts row above hold it. */
+      /* T116 review: bounded. The release above has already landed and
+       * the receipt is already in the log and the table, so a read that
+       * hangs must not hold the teacher for Mindbody's own 15s timeout
+       * (measured: 14s with a read that never answered). Missing the
+       * bound files no Notes copy, the same as any failed read. */
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const read = await Promise.race([
+        readClientNotes(clientId),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Mindbody did not answer with the notes in ${BEFORE_READ_MS / 1000}s`,
+                ),
+              ),
+            BEFORE_READ_MS,
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
+      const current = read.notes.replace(/\s+$/, "");
+      newNotes = current ? `${current}\n${receiptLine}` : receiptLine;
+      const browserNotes = typeof notes === "string" ? notes : "";
+      const noted = await asTeacher(session, "/api/waiver-agree", () =>
+        updateClientNotes(clientId, newNotes, noteActor, {
+          kind: "waiver-receipt",
+          before: {
+            ok: true,
+            uniqueId: read.uniqueId,
+            values: { Notes: read.notes },
+          },
+          note:
+            browserNotes.trim() !== read.notes.trim()
+              ? "the screen held different notes from Mindbody's; the receipt was appended to Mindbody's"
+              : null,
+        }),
+      );
       if (noted.suppressed) {
         /* Expected in rehearsal under the write guard; reported honestly
          * rather than as a landed note. */
