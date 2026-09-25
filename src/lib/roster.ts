@@ -76,6 +76,19 @@ export interface RosterEntry {
    *  use (the API's ClientId is the editable custom id and 404s there).
    *  null when neither the visit nor the client lookup carried it. */
   mindbodyId: number | null;
+  /**
+   * T115: the student's place in "line", 1-based, as Mindbody's own class
+   * sheet numbers it (Pete: "i would like the app to display the number
+   * for the student to the left like mindbody does. this would be their
+   * place in \"line\""). It is the visit's position in the
+   * `/class/classvisits` answer: on class 124540 that answer listed its
+   * first six visits in exactly the order the sheet numbered them 1 to 6,
+   * which is neither visit id order nor LastModified order. Set HERE, on
+   * the person, so the roster's own sort control reorders rows without
+   * renumbering anybody. Nothing in the browser ever guesses one: a row
+   * booked at the counter gets its number from the next roster read.
+   */
+  line: number;
 }
 
 export interface ClassSummary {
@@ -338,7 +351,7 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
    * alone; nothing reads it as a number. */
   const beforeThisVisit = (remaining: number | null): number | null =>
     remaining === null || remaining >= 100 ? remaining : remaining + 1;
-  return visits.map((v: any): RosterEntry => {
+  return visits.map((v: any, index: number): RosterEntry => {
     /* The visit embeds the full pass (`Service`, a ClientService). Its
      * Name is the same pricing option ServiceName carries, but the object
      * also has Remaining/Count/ExpirationDate/Id, which is everything the
@@ -386,6 +399,9 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
       notes: null,
       mindbodyId:
         typeof v.ClientUniqueId === "number" ? v.ClientUniqueId : null,
+      /* T115: Mindbody's sheet order, taken from the answer's order and
+       * nothing else. */
+      line: index + 1,
     };
   });
 }

@@ -109,6 +109,11 @@ interface RosterEntry {
   notes: string | null;
   /** Mindbody's numeric UniqueId, for staff web app links. */
   mindbodyId: number | null;
+  /** T115: the student's place in "line", 1-based, from the visit's
+   *  position in Mindbody's own classvisits answer (see
+   *  src/lib/roster.ts). Carried on the person, so sorting the roster
+   *  never renumbers anybody; never guessed here. */
+  line: number;
 }
 
 /** Mirrors src/lib/clients.ts: the context fields ride the searchText
@@ -5759,7 +5764,11 @@ function FrontDesk({
             }
           }}
         >
-          <span aria-hidden="true">Name</span>
+          {/* T115: indented past the line numbers, so the label sits
+              over the names it heads. */}
+          <span className="head-name" aria-hidden="true">
+            Name
+          </span>
           {/* T71: the badge column, no label. */}
           <span aria-hidden="true" />
           <span aria-hidden="true">Payment</span>
@@ -5917,7 +5926,22 @@ function FrontDesk({
                   calls are harmless leftovers; nothing depends on them
                   for check-in safety anymore. */}
               <div className="rrow">
-                <div className="cell-name">
+                <div className="cell-name numbered">
+                  {/* T115 (Pete: "i would like the app to display the
+                      number for the student to the left like mindbody
+                      does. this would be their place in \"line\". it
+                      should be small like the M / i chips."). Mindbody's
+                      number, from the roster read, on every row; a
+                      fixed-width slot so one- and two-digit numbers
+                      leave the names in one column. Not a control. */}
+                  <span className="line-no">
+                    {entry.line > 0 ? (
+                      <>
+                        <span className="line-no-sr">number </span>
+                        {entry.line}
+                      </>
+                    ) : null}
+                  </span>
                   <span className="name-line">
                     <span className="name-text">{entry.name}</span>
                   </span>
