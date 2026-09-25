@@ -6,6 +6,7 @@ import {
   mismatchClientMessage,
   pickClientRecord,
 } from "./clientrecord";
+import { updateClientAudited } from "./clientaudit";
 import { mindbody, type Actor } from "./mindbody";
 
 /**
@@ -229,23 +230,27 @@ export async function saveClientCard(
   suppressed: "dry-run" | "write-guard" | null;
   card: CardOnFile | null;
 }> {
-  const res = await mindbody("/client/updateclient", {
-    method: "POST",
-    body: {
-      Client: {
-        Id: clientId,
-        ClientCreditCard: {
-          CardNumber: input.number,
-          ExpMonth: input.expMonth,
-          ExpYear: input.expYear,
-          CardHolder: input.cardHolder,
-          PostalCode: input.postalCode,
-        },
-      },
-      CrossRegionalUpdate: false,
-    },
+  /* T116: recorded like every client write, as a sentence and nothing
+   * more. The last four are the only digits that leave this function
+   * for the record, and no read is made before a card: the card on file
+   * is not a text or flag field. */
+  const res = await updateClientAudited({
+    kind: "card",
     clientId,
-    ...(actor ? { actor } : {}),
+    fields: {
+      ClientCreditCard: {
+        CardNumber: input.number,
+        ExpMonth: input.expMonth,
+        ExpYear: input.expYear,
+        CardHolder: input.cardHolder,
+        PostalCode: input.postalCode,
+      },
+    },
+    actor: actor ?? null,
+    uniqueId,
+    display: {
+      ClientCreditCard: `card replaced, last four ${input.number.slice(-4)}`,
+    },
   });
   if (res?.DryRun) return { suppressed: "dry-run", card: null };
   if (res?.WriteSuppressed) return { suppressed: "write-guard", card: null };
