@@ -165,10 +165,18 @@ export type ClientBefore =
     }
   | { ok: false; reason: string };
 
-/** A before-read waits this long at most. It is a courtesy to the record
- *  and never a gate on a write that does not need it (the blank check in
- *  /api/client-field is the one that does, and it refuses on unknown). */
+/** A before-read waits this long at most when it GATES a write: the
+ *  blank check in /api/client-field, which asks on unknown, so a longer
+ *  wait there buys fewer needless questions. */
 export const BEFORE_READ_MS = 4_000;
+
+/** T116 review: and this long when it is only a courtesy to the record
+ *  (every other write, and a save that is not a clear). Measured against
+ *  a read that hangs, the 4s bound put 4s on every consent toggle and
+ *  waiver release, which a teacher at the counter feels; Mindbody answers
+ *  a read by id in 400 to 900ms, so this cuts only the tail, and a read
+ *  that misses it records "unknown" and the write goes out. */
+export const COURTESY_READ_MS = 1_500;
 
 function valueOf(row: any, field: AuditedField): string | boolean | null {
   if (field === "LiabilityRelease") {
@@ -190,6 +198,7 @@ export async function readClientBefore(
   clientId: string,
   uniqueId: number | null,
   fields: readonly AuditedField[],
+  waitMs: number = BEFORE_READ_MS,
 ): Promise<ClientBefore> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -200,8 +209,8 @@ export async function readClientBefore(
       ),
       new Promise<never>((_, reject) => {
         timer = setTimeout(
-          () => reject(new Error(`no answer in ${BEFORE_READ_MS / 1000}s`)),
-          BEFORE_READ_MS,
+          () => reject(new Error(`no answer in ${waitMs / 1000}s`)),
+          waitMs,
         );
       }),
     ]);
@@ -295,7 +304,12 @@ export async function updateClientAudited(opts: {
   ) as AuditedField[];
   let before = opts.before ?? null;
   if (before === null && readable.length > 0) {
-    before = await readClientBefore(clientId, opts.uniqueId ?? null, readable);
+    before = await readClientBefore(
+      clientId,
+      opts.uniqueId ?? null,
+      readable,
+      COURTESY_READ_MS,
+    );
   }
 
   const changes: ClientWriteChange[] = Object.keys(fields).map((field) => {

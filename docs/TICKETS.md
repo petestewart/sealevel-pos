@@ -17096,7 +17096,7 @@ field's value BEFORE and AFTER for text and flag fields; the outcome,
 words) or `error`; and a note in words when there is one worth reading.
 
 "Before" is a fresh read of just those fields, on the service account,
-bounded at 4s, through `pickClientRecord` so a shared id with nothing to
+bounded at 1.5s (4s when it gates a clear; T116 review), through `pickClientRecord` so a shared id with nothing to
 choose by records "unknown" rather than one record's values as the
 client's. A failed read never holds up a write that does not need it; it
 records the reason. Where the caller already read the field (the blank
@@ -17229,3 +17229,77 @@ Not verified:
   database is only as long as Railway keeps logs.
 - A second server instance: the in-memory list is per process; the table
   and the console are not.
+
+### Review
+
+Adversarial pass on the branch at e4f6c4d, driven from its own harness
+copy on ports nobody else claims (app :3946/:3947/:3948, mock
+:4946/:4947/:4948, scratch Postgres :5946, a silent TCP listener :5947),
+each run preflighted against this worktree's BUILD_ID and rebuilt before
+it. The mock copy gained three knobs: a read by id that hangs or fails,
+a refusal message of our choosing, and arbitrary fields on a person.
+
+**Every `updateclient` is recorded.** The only `mindbody()` call to that
+path is inside `updateClientAudited`; every writer (the editor, consent,
+the card route and checkout's keep-card, the waiver release, the waiver
+receipt, the T62 append) reaches it, and nothing under `scripts/` writes
+a client. No run printed `UNAUDITED`.
+
+**Found: the courtesy read was felt, and the receipt read was
+unbounded.** Measured against a mock whose read by id never answers: a
+consent toggle took 4,015ms (16ms with the read answering), because every
+write read its "before" under the 4s bound meant for the blank check; and
+`/api/waiver-agree` took 14,021ms, the release's 4s read plus the new
+receipt read, which had no bound of its own and waited on Mindbody's 15s
+timeout, all after the release had already landed. Fixed: a read that is
+only for the record waits 1.5s (`COURTESY_READ_MS`), a clear in
+`/api/client-field` keeps 4s because there the read decides whether to
+ask, and the receipt read is bounded at 4s and treated as any failed read
+(no Notes copy; the log line and the `waiver_receipts` row already hold
+the receipt). Re-measured: 1,512ms and 5,512ms. A failed or hung read
+still writes, for consent, the release and an ordinary edit, and the
+record says why the before is unknown.
+
+**Secrets.** A card number typed into notes, and a Mindbody refusal of a
+card save that quotes the number, both reach the record and the console
+as `<redacted>`; no `client_writes` row and no line of the server log
+holds the number across every run. A card's entry is the sentence only.
+Nothing else in the entry carries a token, PIN or CVV.
+
+**A dead database.** Refused connections and a listener that accepts
+and never answers: every write answered in 12 to 26ms and every line
+was followed by NOT STORED. The db layer's cooldown and its failed
+migration latch mean the 1.5s record wait is reached at most on the
+first touch of a database nobody has asked yet. Left as built: a slow
+insert that lands after 1.5s still logs NOT STORED, which its own
+wording ("or slower than 1500ms") admits.
+
+**The blank guard** holds: `" "` to `""` writes without asking; a
+whitespace-only draft over text asks; `confirmBlank` as `"true"` or `1`
+is not a yes; a UniqueId no record carries, and a read that fails, ask
+with the reason in words and `onFile: null`, and the yes then writes. In
+a real browser, light and dark, the failed-read ask carries that reason
+and "Clear it" writes. An ordinary edit with the read failing is never
+refused.
+
+**The waiver receipt change is right.** With the notes read failing:
+the release goes out and `agreed` is true, `receiptNoted` false with the
+reason, the only `updateclient` for the client is `LiabilityRelease`, the
+notes on file are untouched, the `waiver-agreed` line is logged and the
+`waiver_receipts` row lands. A shared id (T114) writes no Notes. With the
+screen sending `null` notes, the receipt is appended to Mindbody's text.
+
+**The T62 append and the fallback** record once per attempt: a comp on
+a site without Formula Notes under a teacher whose group refuses writes
+two `notes-append` lines, refused under the teacher's token then sent as
+the studio, both naming Pete with the same before, and one note lands.
+
+Re-run on this build: the builder's `route.mjs` in main, db, deaddb,
+guard and dry, `ui.mjs`, T102's and T103's route drivers each on a fresh
+start, and the review's own `r1.mjs` (main, db, deaddb, a black hole)
+and `ui-r.mjs`: ALL PASS. `npm run typecheck` and `npm run build` clean.
+
+Not changed, for the record: on a T49 fallback a consent or release
+write reads its before twice (once per attempt); the ask says "removes
+this text" even when the server could not read what the text is.
+

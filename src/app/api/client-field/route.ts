@@ -13,7 +13,12 @@ import {
   updateClientField,
   type EditableClientField,
 } from "@/lib/clients";
-import { isBlankText, readClientBefore } from "@/lib/clientaudit";
+import {
+  BEFORE_READ_MS,
+  COURTESY_READ_MS,
+  isBlankText,
+  readClientBefore,
+} from "@/lib/clientaudit";
 import { signEntries, studioDate } from "@/lib/notesig";
 
 export const dynamic = "force-dynamic";
@@ -113,7 +118,14 @@ export async function POST(request: Request) {
     /* T116: what Mindbody holds NOW, read fresh on the server and never
      * taken from the browser. It is the record's "before", and it is
      * what the blank check below is decided on. */
-    const before = await readClientBefore(clientId, wantedUnique, [editable]);
+    /* T116 review: the longer wait only for a clear, where the read is
+     * the gate; any other save waits the courtesy bound and goes out. */
+    const before = await readClientBefore(
+      clientId,
+      wantedUnique,
+      [editable],
+      isBlankText(signed) ? BEFORE_READ_MS : COURTESY_READ_MS,
+    );
     const held = before.ok ? before.values[editable] : null;
     /* T116 (Pete: "yes"): a save that turns non-empty text into nothing
      * is refused unless the teacher was asked and said so. A read that
