@@ -1,4 +1,10 @@
 import { birthDateForMindbody, isBirthDateField } from "./birthdate";
+import {
+  CLIENT_ID_READ_LIMIT,
+  ambiguousClientMessage,
+  logClientPick,
+  pickClientRecord,
+} from "./clientrecord";
 import { mindbody, type Actor } from "./mindbody";
 
 /**
@@ -160,12 +166,33 @@ export async function updateClientNotes(
  * over notes it did not see.
  */
 export async function readClientNotes(clientId: string): Promise<string> {
+  /* T114: never `limit=1`. Two Mindbody records can share one client id,
+   * and `updateclient` writes `Notes` WHOLE to whichever record Mindbody
+   * resolves the id to. Reading one record's notes and writing them back
+   * under the shared id could put one person's notes over another's, so
+   * a shared id refuses the append, with or without a UniqueId: nothing
+   * here can steer which record the WRITE lands on. The caller
+   * (formulanote.ts) reports the refusal as a record that did not file,
+   * which it already does for any failure. */
   const body = await mindbody(
-    `/client/clients?clientIds=${encodeURIComponent(clientId)}&limit=1`,
+    `/client/clients?clientIds=${encodeURIComponent(clientId)}` +
+      `&limit=${CLIENT_ID_READ_LIMIT}`,
   );
-  const row = (body?.Clients ?? []).find(
-    (c: { Id?: unknown }) => String(c?.Id ?? "") === clientId,
+  const total = body?.PaginationResponse?.TotalResults;
+  const pick = pickClientRecord<any>(
+    body?.Clients ?? [],
+    clientId,
+    null,
+    typeof total === "number" ? total : null,
   );
+  logClientPick("notes append", clientId, null, pick);
+  if (pick.outcome === "ambiguous") {
+    throw new Error(
+      `${ambiguousClientMessage(clientId, pick.records)} The note was not ` +
+        `written, since it could land over the other record's notes.`,
+    );
+  }
+  const row = pick.row;
   if (!row) throw new Error(`client ${clientId} not found`);
   return typeof row.Notes === "string" ? row.Notes : "";
 }

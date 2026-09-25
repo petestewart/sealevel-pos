@@ -1,3 +1,4 @@
+import { logClientPick, pickClientRecord } from "./clientrecord";
 import { mindbody, type Actor } from "./mindbody";
 
 /**
@@ -436,6 +437,47 @@ interface ClientBrief {
 }
 
 /**
+ * T114: every record the lookup returned, grouped by `Id`, in Mindbody's
+ * order. A LIST, because `Id` is not unique on a Mindbody site: Pete's
+ * live roster asked for ten ids and got eleven records back, two of them
+ * under "10814", and the map this used to be let the last one win, which
+ * put another person's name (and waiver, alerts, notes, balance) on a
+ * student's row. `briefFor` below chooses, on purpose.
+ */
+type ClientBriefs = Map<string, ClientBrief[]>;
+
+/**
+ * T114: the brief for one row. The row's UniqueId (a visit's
+ * `ClientUniqueId`, a waiting list entry's `Client.UniqueId`) decides
+ * when there is one; a record under the same Id with another UniqueId is
+ * somebody else and is never used, even when it is the only one that
+ * came back. Without one, a lone record is the client and two or more
+ * are ambiguous, so none is used: the row reads "(unknown client)" and
+ * fails open like any client the lookup missed, and a teacher can still
+ * check the visit in (check-in goes by VisitId, which is unambiguous).
+ * Anything other than one plain record is logged, once, server side.
+ */
+function briefFor(
+  briefs: ClientBriefs,
+  clientId: string,
+  uniqueId: number | null,
+  where: string,
+): ClientBrief | null {
+  const candidates = briefs.get(clientId) ?? [];
+  const pick = pickClientRecord(
+    candidates.map((b) => ({
+      Id: clientId,
+      UniqueId: b.uniqueId,
+      brief: b,
+    })),
+    clientId,
+    uniqueId,
+  );
+  logClientPick(where, clientId, uniqueId, pick);
+  return pick.row?.brief ?? null;
+}
+
+/**
  * Mindbody's hard limit, learned live: 21 ids in one request returned
  * HTTP 400 "ClientIds should not be more than 20." and the whole roster
  * fell back to "(unknown client)" with no waiver data. The old value of
@@ -444,7 +486,7 @@ interface ClientBrief {
  */
 const CLIENT_LOOKUP_CHUNK = 20;
 
-async function briefsForIds(ids: string[]): Promise<Map<string, ClientBrief>> {
+async function briefsForIds(ids: string[]): Promise<ClientBriefs> {
   const chunks: string[][] = [];
   for (let i = 0; i < ids.length; i += CLIENT_LOOKUP_CHUNK) {
     chunks.push(ids.slice(i, i + CLIENT_LOOKUP_CHUNK));
@@ -457,11 +499,14 @@ async function briefsForIds(ids: string[]): Promise<Map<string, ClientBrief>> {
       return mindbody(`/client/clients?${query}&limit=200`);
     }),
   );
-  const out = new Map<string, ClientBrief>();
+  const out: ClientBriefs = new Map();
   for (const body of bodies) {
     for (const c of body?.Clients ?? []) {
       if (c?.Id === undefined || c?.Id === null) continue;
-      out.set(String(c.Id), {
+      const key = String(c.Id);
+      const list = out.get(key) ?? [];
+      out.set(key, list);
+      list.push({
         name: `${c.FirstName ?? ""} ${c.LastName ?? ""}`.trim(),
         /** Absent Liability or IsReleased means no released waiver. */
         waiverSigned: Boolean(c?.Liability?.IsReleased),
@@ -524,7 +569,7 @@ export async function classRoster(
   const ids = [
     ...new Set(rawEntries.map((e) => e.clientId).filter((id) => id)),
   ];
-  let briefs = new Map<string, ClientBrief>();
+  let briefs: ClientBriefs = new Map();
   let waiverError: string | null = null;
   if (ids.length > 0) {
     try {
@@ -534,7 +579,14 @@ export async function classRoster(
     }
   }
   const entries = rawEntries.map((entry): RosterEntry => {
-    const brief = briefs.get(entry.clientId);
+    /* T114: by the visit's ClientUniqueId (`mindbodyId` here), never by
+     * whichever record under the Id came back last. */
+    const brief = briefFor(
+      briefs,
+      entry.clientId,
+      entry.mindbodyId,
+      `roster class ${classId}`,
+    );
     return {
       ...entry,
       name: entry.name || brief?.name || "(unknown client)",
@@ -850,8 +902,18 @@ export async function waitlistFor(classId: number): Promise<WaitlistRow[]> {
   const body = await mindbody(
     `/class/waitlistentries?ClassIds=${classId}&HidePastEntries=true&limit=100`,
   );
-  const rows: WaitlistRow[] = (body?.WaitlistEntries ?? [])
-    .filter((e: any) => typeof e?.Id === "number")
+  const listed: any[] = (body?.WaitlistEntries ?? []).filter(
+    (e: any) => typeof e?.Id === "number",
+  );
+  /* T114: each entry's own `Client.UniqueId` (a Client per the vendored
+   * spec, class.yml WaitlistEntry), by position, for choosing between
+   * records that share its Id exactly as a visit's ClientUniqueId does.
+   * Kept beside the rows rather than on them: the browser's WaitlistRow
+   * is unchanged. */
+  const listedUnique: (number | null)[] = listed.map((e: any) =>
+    typeof e?.Client?.UniqueId === "number" ? e.Client.UniqueId : null,
+  );
+  const rows: WaitlistRow[] = listed
     .map(
       (e: any): WaitlistRow => ({
         entryId: e.Id,
@@ -872,7 +934,7 @@ export async function waitlistFor(classId: number): Promise<WaitlistRow[]> {
    * names fall back, waiverSigned stays null on every row, and the list
    * still renders -- same posture as the roster's. */
   const ids = [...new Set(rows.map((r) => r.clientId).filter((id) => id))];
-  let briefs = new Map<string, ClientBrief>();
+  let briefs: ClientBriefs = new Map();
   if (ids.length > 0) {
     try {
       briefs = await briefsForIds(ids);
@@ -880,8 +942,13 @@ export async function waitlistFor(classId: number): Promise<WaitlistRow[]> {
       /* fall through with the un-enriched rows */
     }
   }
-  const enriched = rows.map((r): WaitlistRow => {
-    const brief = briefs.get(r.clientId);
+  const enriched = rows.map((r, i): WaitlistRow => {
+    const brief = briefFor(
+      briefs,
+      r.clientId,
+      listedUnique[i] ?? null,
+      `waitlist class ${classId}`,
+    );
     return {
       ...r,
       name: r.name || brief?.name || "(unknown client)",

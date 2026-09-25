@@ -56,8 +56,16 @@ export async function POST(request: Request) {
     if (parsed.input === null) {
       return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
+    /* T114: which record the read-back shows when two share the id. The
+     * WRITE still goes by client id, and Mindbody resolves it. */
+    const uniqueId =
+      typeof body?.uniqueId === "number" &&
+      Number.isInteger(body.uniqueId) &&
+      body.uniqueId > 0
+        ? (body.uniqueId as number)
+        : null;
     const run = await runAsActor(session, "/api/client-card", (actor) =>
-      saveClientCard(clientId, parsed.input, actor),
+      saveClientCard(clientId, parsed.input, actor, new Date(), uniqueId),
     );
     return NextResponse.json({
       ok: true,

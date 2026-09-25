@@ -16564,6 +16564,355 @@ Still open after the review:
 - Nothing has been near live Mindbody, and the second-instance limit is
   still reasoned rather than measured.
 
+## T114. Two Mindbody clients can share one `Id`, and the roster put the wrong name on a row (Pete, 2026-09-25)
+
+### What Pete saw
+
+At the counter, on live data: a roster row for a real student read
+**Kati Robison**. The person is **Stacia Sander**. Her info modal opened
+with the header "Kati Robison" and then showed Stacia's phone, Stacia's
+email, Stacia's red alert ("Pronounced Stay-sha"), Stacia's visits and
+Stacia's card. Only the name was another person's.
+
+### The evidence
+
+From Pete's own call log:
+
+- The visit on `/class/classvisits` carries `ClientId: "10814"` and
+  `ClientUniqueId: 100037835`.
+- `GET /client/clients?clientIds=10814&limit=1` answered
+  `PaginationResponse.TotalResults: 2`, with `Clients[0]` = Stacia Sander,
+  Id "10814", UniqueId 100037835. One id, two records.
+- The roster's batched lookup asked for ten ids and got eleven records
+  back (`TotalResults: 11`).
+- The same roster carries `ClientId: "n23283"` with
+  `ClientUniqueId: 100023283`: ids are not even numeric.
+
+**Confirmed from Mindbody's own UI** (Pete, 2026-09-25): two records carry
+client ID 10814.
+
+1. Stacia Sander, UniqueId 100037835, active member, joined 2024-05-05.
+2. Kati Robison, UniqueId 1005543 (her profile URL is
+   `/app/clients/1005543`), INACTIVE, deactivated 01/22/2010, joined
+   2001-04-13, 2 visits, waiver incomplete.
+
+Mindbody's UI shows "10814" as the client ID on both profiles. So an
+inactive record from 2010 can sit on a current member's id, and Mindbody
+does nothing to stop it.
+
+### The cause
+
+`briefsForIds` in `src/lib/roster.ts` keyed its map on `String(c.Id)` and
+`out.set(...)` every record Mindbody returned, so the second record under
+10814 overwrote the first, and `classRoster` read the survivor's name onto
+the row. Everything else Pete saw in the MODAL came from reads that went
+by id with `limit=1` (the profile read) or by `ClientId` (visits, passes),
+and every one of those got Stacia, which is exactly why the name alone was
+wrong there.
+
+Reproduced before building, against the base build (84de6b9) and a mock
+that returns both records under "10814" with Pete's real UniqueIds and the
+visit in the live shape (no names on the visit, `ClientUniqueId` on it):
+
+- Kati listed LAST in the lookup's answer: the row read "Kati Robison".
+- Kati listed FIRST: the row read "Stacia Sander".
+
+So Mindbody's ordering decided whose name a student got. The harness also
+showed what Pete could not see from the name alone: the whole row came
+from the losing record, not just the name. With Kati last, Stacia's row
+carried Kati's waiver state (`false`: Kati's is incomplete), Kati's yellow
+alert and notes behind the info icon, `member: false`, and no red alert,
+while `mindbodyId` stayed Stacia's (it comes from the visit). On the live
+row that would have meant Stacia's check-in stopping at a waiver dialog
+for a waiver she has signed, and her "Pronounced Stay-sha" alert missing
+from the row. The evidence points at this mechanism and nothing else.
+
+### The census, and the fix at the source
+
+Pete ran `scripts/duplicate-client-ids.ts` against site 471 live
+(2026-09-25): **63,948 client records scanned (49,495 of them inactive),
+320 calls, and exactly ONE shared Id: 10814**, one active record and one
+inactive. One pair in 64 thousand: an accident, not a pattern.
+
+He then renumbered Kati's record to **`R10814`** in Mindbody's own
+profile screen, which addresses a record by its UniqueId. The API route
+was tried first and rejected: `POST /client/updateclient` with `NewId`
+finds the record to change by `Id`, which is the ambiguous thing, so it
+cannot say which of the two it is renumbering.
+`scripts/client-id-lookup.ts` (read only) reports every record carrying
+a given id, which is how to check a renumbering took.
+
+So the live problem is closed at the source. What this ticket keeps is
+the rail that makes the NEXT duplicate harmless: nothing in Mindbody
+stops a studio creating one.
+
+### Proportion
+
+The census set the size of the build. The correctness core stays:
+UniqueId first in the roster and the waiting list, disambiguation in the
+single-client reads, and a server log line whenever an Id is shared.
+**There is no user-facing UI for ambiguity**: no sentence in the info
+modal, no banner, no new field on the profile answer. A first cut had a
+sentence in the modal and a `sharedId` field; both were taken out, since
+one record in 64 thousand does not earn screen space. What a teacher can
+see on a shared id is only what the existing screens already show for a
+client the app cannot read: "(unknown client)" on a row, and the modal's
+existing "Could not read" lines. Both need a shared id AND no UniqueId,
+which no live visit seen so far produces.
+
+### The design
+
+**`Id` is not unique; `UniqueId` is.** Every read that goes from an id to
+ONE record goes through `src/lib/clientrecord.ts` `pickClientRecord`,
+which decides on purpose:
+
+- When the caller holds a UniqueId (a visit's `ClientUniqueId`, a waiting
+  list entry's `Client.UniqueId`, a search row's `UniqueId`), that record
+  and only that record is the client. A record under the same Id with a
+  different UniqueId is somebody else, **even when it is the only one that
+  came back**: a lookup that returns only Kati for Stacia's visit shows
+  "(unknown client)", never Kati.
+- Without one, a single record is the client, exactly as before. Two or
+  more is **ambiguous and nothing is picked**: which record Mindbody listed
+  first is not a reason.
+- A shared id is logged server side, once per process per place, id and
+  decision:
+
+      [client-id] roster class 202609250: client id "10814" is held by 2
+      Mindbody record(s); took UniqueId 100037835, the one the caller
+      named. Merge shared ids in Mindbody.
+
+**No "prefer the active record" tiebreak**, deliberately. It would have
+resolved Pete's case, but `Active` is a claim about the record, not about
+who is standing at the counter: Kati Robison walking back in after sixteen
+years is exactly the person whose old record would be the right one.
+
+**The roster.** `briefsForIds` keeps every record, grouped by Id, and
+`briefFor` picks by the visit's `ClientUniqueId` (already on the entry as
+`mindbodyId`). The name, waiver, red and yellow alerts, notes, balance and
+membership all come from that ONE record, so they cannot disagree with
+each other. A visit with no `ClientUniqueId` still gets its name when its
+id has one record; on a shared id it reads "(unknown client)" and fails
+open like any client the lookup missed (waiver `null`, no alerts), and
+the row still checks in, because check-in is `updateclientvisit` by
+VisitId, which is unambiguous. Still ONE batched call per roster. The
+waiting list gets the same choice by its entry's own `Client.UniqueId`,
+kept beside the rows so the browser's `WaitlistRow` did not change. An
+ordinary roster is **byte-identical** to the base build's answer.
+
+**The single-client reads**, each decided on its own:
+
+- **The info modal** (`clientprofile.ts`): reads with `limit=10`
+  (`CLIENT_ID_READ_LIMIT`), never `limit=1`, and picks by the UniqueId the
+  modal was opened with. Every place that opens it (the roster row, the
+  search row, the attach row) already held one, so `openProfile` passes it
+  and `/api/client-profile` takes `&uniqueId=`. The answer's shape is
+  unchanged. The visits are read by the shared id too, and each visit
+  carries its own `ClientUniqueId`: when any names the OTHER record the
+  section is dropped through the existing "Could not read" line rather
+  than showing someone else's visits under this name. With no UniqueId to
+  choose by, or one neither record carries, the modal shows no record, no
+  visits and no passes, and the existing error line says it cannot tell.
+- **The card read-back** (`clientcard.ts` `cardOnFileFor`): same limit and
+  choice. The card box sends the profile's UniqueId, so after a save the
+  card shown is THIS person's. With no UniqueId on a shared id it throws,
+  and `saveClientCard` reports what it always reports for a read-back that
+  did not answer: the card was taken but not shown back. The parameter is
+  optional and last, so checkout's keep-card call (money path) did not
+  change.
+- **The notes read** (`clients.ts` `readClientNotes`), used only for the
+  T62 fallback append: a shared id **refuses the append**. `updateclient`
+  writes `Notes` whole, to whichever record Mindbody resolves the id to,
+  so reading one record's notes and writing them back could put one
+  person's notes over another's. `fileFormulaNote` already turns a throw
+  into "no record filed" (`noteVia: null`, the reason in the log), so the
+  sale is untouched.
+- **The payment profile** (`sale.ts` `clientPaymentProfile`): **unchanged**,
+  still `limit=1`, and only logged when `TotalResults` says the id is
+  shared. Every sale, charge and debit it gates is addressed by the same
+  client id, so Mindbody's own pick is the record whose card and balance
+  matter to it; choosing a different one here could show one person's card
+  and charge another's. This is the money path and stays as it was.
+
+The roster row, the search row, the attach row and the check-in modal row
+are keyed by client id plus UniqueId, so two people sharing an id in one
+list are two React rows, not one row rendered twice.
+
+Not touched: the money path, the idempotency gate, T75's and T103's
+assertions, every refusal. Nothing new blocks a check-in.
+
+### What Mindbody does with an ambiguous id, and what the app cannot fix
+
+Reads: every read Pete's modal made by id alone (`/client/clients` with
+`limit=1`, `/client/clientvisits?ClientId=`,
+`/client/clientservices?ClientId=`) resolved 10814 to Stacia, the active
+record. The multi-id roster lookup listed Kati after her. Nothing in the
+evidence says why Mindbody picks as it does.
+
+Writes: **not established, and not probed** (a write addressed to a real
+student's shared id is not something to invent). From the vendored spec:
+
+- These take `UniqueClientId` (or `UniqueId`), which "takes precedence"
+  over `ClientId`: `POST /sale/checkoutshoppingcart`,
+  `POST /sale/purchasecontract`, `POST /class/addclienttoclass`,
+  `POST /class/removeclientfromclass`, and among reads
+  `/client/clientvisits`, `/client/clientservices`, `/client/clientschedule`,
+  `/client/clientcontracts`, `/client/clientpurchases`,
+  `/client/activeclientmemberships` and `/client/clients` (`uniqueIds`).
+  So a sale, a contract and a booking COULD be steered by UniqueId. None
+  is today, and this ticket did not change that.
+- These take only the id: `POST /client/updateclient` (the card on file,
+  the waiver release, the notes and waiver receipt append, the opt-ins,
+  every field edit, and `NewId` itself), `POST /client/addclientformulanote`,
+  `POST /sale/purchasegiftcard` and `POST /sale/purchaseaccountcredit`.
+  Mindbody alone decides which record those land on.
+- Check-in and check-out go by `VisitId` and are unambiguous.
+
+**Open risks, should another shared id ever appear** (none exists on site
+471 after the renumbering): a card save, a waiver release, the waiver
+receipt append, a gift card, account credit, a sale or a booking for the
+id goes to whichever record Mindbody picks; and the per-client state the
+browser holds (pass lists, the M chip's membership read, the guest flow)
+is fetched by client id. The card read-back is the tell for the first: a
+save that landed on the other record shows the OLD card. The comp and
+guest record append refuses on a shared id; the waiver receipt append
+does not, because refusing it would block a waiver release. The fix, as
+here, is renumbering or merging the records in Mindbody's own UI, and the
+server log names the id the first time each place sees it.
+
+### Build notes
+
+- `src/lib/clientrecord.ts` (new, small): `pickClientRecord`,
+  `logSharedId` and `logClientPick`, the two error sentences,
+  `CLIENT_ID_READ_LIMIT = 10`.
+- `src/lib/roster.ts`: `briefsForIds` keeps a list per Id; `briefFor`
+  chooses; the roster and the waiting list both use it.
+- `src/lib/clientprofile.ts`, `src/app/api/client-profile/route.ts`,
+  `src/app/page.tsx` (`openProfile` passes the row's UniqueId; row keys):
+  the modal. The profile answer's shape is unchanged.
+- `src/lib/clientcard.ts`, `src/app/api/client-card/route.ts`,
+  `src/app/CardModal.tsx` (passes the UniqueId it was opened with, nothing
+  shown): the card read-back.
+- `src/lib/clients.ts`: `readClientNotes` refuses a shared id.
+- `src/lib/sale.ts`: a log line, nothing else.
+- UI: nothing new. No CSS, no copy, no element; `ClientProfileCard.tsx`
+  is as it was before this ticket.
+
+Verified against `next start` on **:3714** and the T113 mock patched with
+Pete's two records on **:4714** (scratchpad/t114: `patch-mock.py`,
+`route.mjs`, `ui.mjs`; every driver preflights that the server serves
+this worktree's `BUILD_ID`), rebuilt before the runs:
+
+- `route.mjs`, 56 checks, all green. With no duplicates, the roster in the
+  old shape, the live shape, the live shape with no `ClientUniqueId`, with
+  a client the lookup misses, and four profiles are **byte-identical** to
+  the base build's answers (snapshot taken on the base build, same mock).
+  The shared id in BOTH orders: the row is Stacia's name, red and yellow
+  alert, notes, waiver, membership and UniqueId, the other record's name
+  is nowhere in the answer, still one batched lookup. A visit with no
+  `ClientUniqueId` still gets its name; on a shared id it reads
+  "(unknown client)", fails open and leaks neither record. A client the
+  lookup did not return still reads "(unknown client)"; a lookup that
+  returned only the other record is not shown as this visit's client. The
+  modal by UniqueId is Stacia (by Kati's, Kati), with no new field on the
+  answer and the server log naming the id and the choice; with no
+  UniqueId it says it cannot tell and shows neither record, visits or
+  passes; visits answering for the other record are dropped. The card
+  read-back by UniqueId is Stacia's card; with none, no card rather than a
+  guess, the save itself still sent. A comp on the shared id writes no
+  Notes append (`noteVia: null`, the reason in the log); on an ordinary id
+  it still lands. The payment profile still reads `limit=1`.
+- `ui.mjs`, Playwright, light and dark, 1180x820 and 820x1180, 36 checks:
+  the row reads Stacia Sander and "Kati"/"Robison" appear nowhere; her
+  modal shows her phone and alert and no ambiguity sentence; with no
+  `ClientUniqueId` the row reads "(unknown client)" and the modal's
+  existing lines say it cannot tell and name nobody. Size and contrast
+  audit: nothing under 16px, no low contrast.
+- T102's and T103's route drivers, unchanged but for their ports
+  (**:3715/:4715** and **:3716/:4716**), each on its own fresh start:
+  all green (15 and 48 checks).
+- `npm run typecheck` and `npm run build` clean.
+
+Not verified:
+
+- Anything against live Mindbody from this build, including that the
+  roster now names Stacia's row correctly (after the renumbering the live
+  roster would be right on the base build too).
+- Which record a WRITE addressed to a shared id lands on.
+- That a waiting list entry's `Client` carries `UniqueId` live (the spec
+  says it is a Client). A visit or entry without it on a shared id reads
+  "(unknown client)", which is the safe side.
+- `uniqueIds` on `/client/clients` would remove the ambiguity at the
+  source for the roster, but it is unused here: an unverified parameter
+  whose documented default when ignored is "all UniqueIDs" waits for a
+  live probe.
+
+### Review
+
+Hunted in the brief's order against the diff from feature/phase-2
+(already merged in, nothing to take).
+
+**Wrong person.** Every path that turns an id into one record now goes
+by UniqueId first: the roster (the visit's `ClientUniqueId`), the waiting
+list (each entry's own `Client.UniqueId`, aligned by position before the
+queue sort, so the sort cannot shift it), the info modal and the card
+read-back (the row's UniqueId, passed by every `openProfile` caller and
+by the card box). Ordering decides nothing in either order. A letter
+prefix (`n23283`, `R10814`) is compared as a string and works. A
+UniqueId that arrives as a string is treated as absent, which is the safe
+side: a lone record still names the row, a shared one reads "(unknown
+client)". The chunk boundary cannot split one id's records: ids are
+de-duplicated before chunking, so every record for an id arrives in the
+same batched answer, and the lists merge across chunks anyway. The
+payment profile stays on `limit=1` by design (the money path; the sale it
+gates is addressed by the same id and Mindbody resolves both); it only
+logs. The waiver receipt append can still land on whichever record
+Mindbody picks, which the ticket already records as an open risk.
+
+**One fix, for the ordinary case.** `pickClientRecord` took
+`max(rows with the exact Id, TotalResults)` as the record count. On a
+single-id read that let a row the query matched under some OTHER spelling
+of the id (a case variant, say) count toward "shared", which would have
+turned an ordinary client's modal and notes append into "cannot tell",
+where the base build found the exact match and carried on. TotalResults
+now counts only when the page was cut short of it (more than
+`CLIENT_ID_READ_LIMIT` records), which is the one thing it was there for.
+Checked directly on the picker: an ordinary record beside an
+other-spelling row on a full page picks the record; a truncated page
+still reads as shared; both orders, a lone other record, a letter prefix
+and a string UniqueId behave as described above.
+
+**Regressions.** Still one batched lookup per roster and one read per
+single-client lookup (`limit=10` instead of `limit=1`, same call count).
+A lookup that fails or misses a client reads "(unknown client)" and fails
+open exactly as before; the no-duplicate roster and profile answers are
+byte-identical to the base build's (the builder's snapshot, re-checked).
+Accepted, not changed: a lone record whose UniqueId differs from the
+visit's is not shown. That keeps the brief's first rule (never another
+person's name), and it would read "(unknown client)" rather than the
+wrong name if Mindbody ever answered a merged record that way, which
+nobody has seen.
+
+**The refusals.** Only `readClientNotes` refuses, and only when the
+exact-Id rows (or a truncated page) show more than one record, so an
+ordinary client cannot reach it. Its throw lands inside
+`fileFormulaNote`'s catch, which returns `{ error }` as for any note
+failure, and every checkout, overdraft, override, sold-nothing and guest
+caller already treats that as a note not filed: no sale, comp or guest
+outcome can change. The builder's driver shows the comp on a shared id
+with `noteVia: null` and the sale intact.
+
+**Proportion.** No ambiguity UI remains (the modal's existing "Could not
+read" lines are the only surface, on the one case with no UniqueId).
+`clientrecord.ts` is small for what it decides; nothing else cut.
+
+Re-run on a fresh `npm run build`, ports the T114 harness owns and
+nothing held (**:3714/:4714**, **:3715/:4715**, **:3716/:4716**), each
+start preflighted against this worktree's `BUILD_ID`: `route.mjs` 56/56,
+`ui.mjs` all green in both schemes and orientations, T102's driver all
+green and T103's all green, each on its own fresh start.
+`npm run typecheck` and `npm run build` clean.
+
 > Phase 2.5 tickets (the customer display, branch `feature/customer-display`)
 > are numbered from T200 while the branch lives: main kept taking the
 > next number while this branch was open (T112, then T113), and every
