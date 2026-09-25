@@ -5,3 +5,4 @@ node_modules
 *.tsbuildinfo
 next-env.d.ts
 docs/design/mockups/sealevel-counter-refresh.html
+duplicate-client-ids.csv
