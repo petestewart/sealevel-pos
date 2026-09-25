@@ -2254,6 +2254,14 @@ button.chip.action:active {
   overflow-y: auto;
 }
 
+/* The list grows to fill the modal so it can scroll, and a grid that
+ * fills its box shares the spare height out between its rows: two
+ * waiting-list entries sat 250px apart. Rows keep their own height and
+ * the spare space stays below them. */
+.modal-counter .modal-roster {
+  align-content: start;
+}
+
 /* The search-results modal: wider still, because its rows reuse the
  * roster's grid layout. The column template is a sibling of
  * --roster-cols, redefined in scope so the shared .roster-head/.rrow
