@@ -7,6 +7,11 @@ import {
   mismatchClientMessage,
   pickClientRecord,
 } from "./clientrecord";
+import {
+  boundedDb,
+  latestSignedContractReceipt,
+  latestSignedWaiverReceipt,
+} from "./db";
 import { mindbody } from "./mindbody";
 import { studioWall } from "./roster";
 
@@ -78,6 +83,19 @@ export interface ClientProfile {
   /** True when a membership icon rides the name (client.yml:5152). */
   member: boolean;
   waiver: { released: boolean; agreedAt: string | null } | null;
+  /** T202: when the waiver was signed ON OUR CUSTOMER DISPLAY, from OUR
+   *  own `waiver_receipts` row (the row is ours, so the charter permits
+   *  reading it). One line on the profile card and nothing more: the
+   *  signature image itself is never rendered back into the POS. Null
+   *  with no database, no receipt, or a receipt with no signature, which
+   *  is every agreement taken at the counter. */
+  signedOnDisplayAt: string | null;
+  /** T205: when a MEMBERSHIP CONTRACT was signed on the customer
+   *  display, from our own `contract_receipts` row, with the membership's
+   *  name. The same reading as the waiver line above and the same
+   *  limits: our row, one line, never the image, and null with no
+   *  database, no receipt or a receipt with no signature. */
+  contractSignedOnDisplay: { at: string; contractName: string | null } | null;
   redAlert: string | null;
   yellowAlert: string | null;
   notes: string | null;
@@ -138,6 +156,7 @@ type ClientFields = Pick<
   | "status"
   | "member"
   | "waiver"
+  | "signedOnDisplayAt"
   | "redAlert"
   | "yellowAlert"
   | "notes"
@@ -196,6 +215,9 @@ async function fetchClientFields(
             agreedAt: str(liability.AgreementDate),
           }
         : null,
+    /* Ours, not Mindbody's: filled in by the assembly below from our own
+     * receipt row, because it is a fact about OUR screen. */
+    signedOnDisplayAt: null,
     redAlert: str(c?.RedAlert),
     yellowAlert: str(c?.YellowAlert),
     notes: str(c?.Notes),
@@ -319,6 +341,7 @@ export async function clientProfile(
           status: null,
           member: false,
           waiver: null,
+          signedOnDisplayAt: null,
           redAlert: null,
           yellowAlert: null,
           notes: null,
@@ -356,9 +379,35 @@ export async function clientProfile(
         "for this client id";
     }
   }
+  /* T202: our own receipt, when it carries a signature. Bounded and
+   * best effort like every table touch here: no database, a dead one or
+   * no row simply means the line is absent, never a slower or failed
+   * profile. */
+  const signature = await boundedDb(
+    latestSignedWaiverReceipt(clientId),
+    750,
+    null,
+  );
+  /* T205: the same, for a membership contract. Bounded and best effort
+   * for the same reason: a line on a card is never worth a slower
+   * profile. */
+  const contractSignature = await boundedDb(
+    latestSignedContractReceipt(clientId),
+    750,
+    null,
+  );
   return {
     clientId,
     ...fields,
+    signedOnDisplayAt:
+      signature === null ? null : signature.agreedAt.toISOString(),
+    contractSignedOnDisplay:
+      contractSignature === null
+        ? null
+        : {
+            at: contractSignature.agreedAt.toISOString(),
+            contractName: contractSignature.contractName,
+          },
     visits: visitsValue,
     passes: passesValue,
     errors,

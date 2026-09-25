@@ -254,11 +254,20 @@ export async function setTargetOverride(next: Target): Promise<boolean> {
   if (!wrote) return false;
   apply(next);
   state.loadedAt = Date.now();
-  state.notice = {
-    text: `The studio target changed to ${next}. Sign in again.`,
-    until: Date.now() + NOTICE_MS,
-  };
+  setSignInNotice(`The studio target changed to ${next}. Sign in again.`);
   return true;
+}
+
+/**
+ * T210: the same channel, for the other reason a teacher can find
+ * themselves back at the gate with no idea why -- a sign-in that
+ * belongs to the OTHER Mindbody site (a session persisted across a
+ * restart that changed MINDBODY_TARGET, or a token Mindbody refused
+ * with "Delegated staff does not belong to the subscriber."). One
+ * notice, one place the gate reads it, cleared by the next sign-in.
+ */
+export function setSignInNotice(text: string): void {
+  state.notice = { text, until: Date.now() + NOTICE_MS };
 }
 
 /**

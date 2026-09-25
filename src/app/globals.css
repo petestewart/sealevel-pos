@@ -5995,8 +5995,28 @@ textarea.reason-note-field:disabled::placeholder {
  * terms rows and possibly the agreement text. */
 .modal-contract {
   width: min(560px, 100%);
-  max-height: calc(var(--vvh) - 48px);
+  /* T206 (Pete's contract attempt: with the refusal notice and the sign
+   * block both up, Cancel and the commitment button sat BEHIND the nav
+   * bar). This dialog is rendered inside the sale overlay, which is its
+   * own stacking context at a lower z-index than the fixed nav bar, so
+   * no z-index here can lift it over the bar: the box has to end above
+   * it. The margin is what the flex-centred scrim reserves, and the
+   * max-height is the visible band less that reservation. */
+  max-height: calc(var(--vvh) - 48px - var(--nav-space));
+  margin-bottom: var(--nav-space);
   overflow-y: auto;
+}
+
+/* T206: and the foot is pinned while the body scrolls. The generic rule
+ * sticks only a modal's LAST child (T98); this dialog keeps its
+ * overlays after the action row (the PIN box, the card form, the start
+ * date picker), each of which is a fixed scrim and out of flow, so
+ * sticking the row here carries nothing up with it. */
+.modal-contract .modal-actions {
+  position: sticky;
+  bottom: -18px;
+  z-index: 1;
+  background: var(--surface);
 }
 
 /* The terms, receipt-style label/value rows. */
@@ -7765,4 +7785,977 @@ textarea.reason-note-field:disabled::placeholder {
   font-size: 16px;
   font-weight: 600;
   color: var(--ink);
+}
+
+/* --- The customer display (T200) -------------------------------------
+ * The second iPad's own screen, and nothing else's: no bars, no rows, no
+ * drawer. Sized for a student reading it at arm's length across a
+ * counter, so everything here is well above the 16px floor and the
+ * pairing code is the largest type in the app. Tokens only, both
+ * palettes, radius 0, like everywhere else. */
+
+.display {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+  /* The mode mark sits in the bottom corner. */
+  position: relative;
+  overflow-x: hidden;
+}
+
+.display-banner {
+  margin: 0;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+  border-left: 6px solid var(--accent);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.display-middle {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+  padding: 32px 16px 64px;
+  text-align: center;
+}
+
+.display-greeting {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.display-lead {
+  margin: 0;
+  max-width: 28ch;
+  font-size: 20px;
+  color: var(--muted);
+}
+
+/* The one number a teacher reads off this screen from a metre away. */
+.display-code {
+  margin: 0;
+  padding: 16px 24px;
+  border: 2px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 64px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+}
+
+.display-note {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Sandbox or dry run, quietly, in the corner. Nothing at all on a live
+ * studio that is writing for real. */
+.display-mark {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  margin: 0;
+  padding: 6px 10px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* --- The ticket scene on the customer display (T201) ------------------
+ * Scene 2 of docs/design/customer-display.md: the live mirror of the
+ * priced cart, and the post-sale summary. Read across a counter, so the
+ * floor here is well above the app's 16px and the total is the largest
+ * thing on the screen after the greeting. Tokens only, both palettes,
+ * radius 0. */
+
+.display-scene {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 32px 16px 64px;
+  overflow-y: auto;
+}
+
+.dticket {
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.dticket-heading {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.dticket-lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 2px solid var(--rule);
+}
+
+.dticket-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 8px 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 22px;
+}
+
+.dticket-line-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.dticket-line-qty {
+  font-size: 18px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.dticket-line-price {
+  font-variant-numeric: tabular-nums;
+  min-width: 5em;
+  text-align: right;
+}
+
+.dticket-line-discount {
+  grid-column: 1 / -1;
+  font-size: 18px;
+  color: var(--ok);
+  font-variant-numeric: tabular-nums;
+}
+
+.dticket-line-empty {
+  grid-template-columns: 1fr;
+  color: var(--muted);
+  font-size: 20px;
+  font-weight: 400;
+}
+
+.dticket-totals {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dticket-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  font-size: 20px;
+  color: var(--muted);
+}
+
+.dticket-total-row dt,
+.dticket-total-row dd {
+  margin: 0;
+}
+
+.dticket-total-row dd {
+  font-variant-numeric: tabular-nums;
+}
+
+.dticket-grand {
+  padding-top: 12px;
+  border-top: 2px solid var(--rule);
+  color: var(--ink);
+  font-size: 40px;
+  font-weight: 800;
+}
+
+/* Mindbody has not priced this cart yet. The lines stand and the figure
+ * waits: a total this screen invented is a total nobody can stand
+ * behind. */
+.dticket-pending {
+  padding-top: 12px;
+  border-top: 2px solid var(--rule);
+  font-size: 24px;
+}
+
+.dticket-paid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: var(--accent-bg);
+  color: var(--ink);
+}
+
+.dticket-charged {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.dticket-receipt {
+  margin: 0;
+  font-size: 18px;
+  color: var(--muted);
+}
+
+/* --- The approve ticket on the customer display (T203) ---------------
+ * Phase 2.5 item 4: the same ticket, with the two taps a student makes
+ * when the studio has turned `customer_confirms_sale` on. Read across a
+ * counter, so both controls are 64px and nothing is under 16px; tokens
+ * only, both palettes, radius 0. --accent means actionable or selected
+ * and is on Approve alone; Cancel is an ordinary surface control and
+ * NOT --stop, because declining is not destructive (T206: the two
+ * words are Cancel and Approve, with no question above them). */
+
+.dticket-approve {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dticket-error {
+  margin: 0;
+  font-size: 18px;
+  color: var(--stop);
+}
+
+.dticket-approve-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.dscene-btn {
+  flex: 1 1 180px;
+  min-height: 64px;
+  padding: 0 20px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.dscene-go {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.dscene-btn:disabled {
+  opacity: 0.45;
+}
+
+/* T203: the apology a "Take over" leaves on the customer screen for a
+ * few seconds, so a student half way through something is not simply
+ * interrupted by the next person's ticket. */
+
+.display-notice {
+  margin: 0;
+  font-size: 22px;
+  color: var(--muted);
+}
+
+/* --- Waiting for the customer to approve, on the TEACHER's screen
+ * (T203) -------------------------------------------------------------
+ * Shown in place of the tender while an approval is on the customer
+ * screen, and for the busy case (something else holds that screen) with
+ * its three ways forward. Every control is 64px; --accent is on the one
+ * that moves the sale on, and nothing here is --stop: cancelling an
+ * approval destroys nothing, the ticket stays as built. */
+
+.approve-wait {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 2px solid var(--rule);
+  background: var(--surface);
+}
+
+.approve-wait-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.approve-wait-sub {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.approve-wait-error {
+  margin: 0;
+  font-size: 16px;
+  color: var(--stop);
+}
+
+.approve-wait-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.approve-wait-btn {
+  flex: 1 1 140px;
+  min-height: 64px;
+  padding: 0 16px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.approve-wait-btn.go {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.approve-wait-btn:disabled {
+  opacity: 0.45;
+}
+
+/* --- The sale screen's "showing on the customer screen" line (T201) ---
+ * T111 had just quietened the top of the screen, so this is one muted
+ * 16px line under the ticket's heading and nothing else: a teacher needs
+ * to know the student can see the ticket, and does not need to be told
+ * about it twice. */
+
+.sale-display-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.sale-display-line .display-dot {
+  background: var(--accent);
+}
+
+/* --- The POS header's connection mark (T200) -------------------------
+ * Small on purpose: T111 took the top of the screen back, and a second
+ * screen being fine is not news. It is absent when nothing is paired,
+ * quiet when the display is connected, and amber the moment it has been
+ * silent for 45 seconds, which is the state a teacher has to know about
+ * before sending a waiver to a dead screen. */
+
+.display-mark-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.display-dot {
+  width: 10px;
+  height: 10px;
+  /* A status, not an action, so not --accent (token roles, CLAUDE.md). */
+  background: var(--ink);
+}
+
+.display-mark-row.away {
+  color: var(--warn);
+}
+
+.display-mark-row.away .display-dot {
+  background: var(--warn);
+}
+
+/* --- Customer display block, dev drawer settings tab (T200) ---------- */
+
+.dev-display-code {
+  font-size: 20px;
+  letter-spacing: 0.1em;
+  font-variant-numeric: tabular-nums;
+  padding: 12px;
+  min-height: 48px;
+  width: 8em;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 0;
+}
+
+/* --- The waiver scene on the customer display (T202) ------------------
+ * Scene 1 of docs/design/customer-display.md: the studio's real waiver,
+ * scrolled to the end, and the signature pad. Read and signed at arm's
+ * length across a counter, so the floor here is well above the app's
+ * 16px and every control is at least 64px. Tokens only, both palettes
+ * (the pad's ink is the element's own `color`, read at draw time, so it
+ * follows the theme with no hex of its own), radius 0. */
+
+.dwaiver {
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dwaiver-heading {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.dwaiver-lead {
+  margin: 0;
+  font-size: 20px;
+  color: var(--muted);
+}
+
+.dwaiver-text {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: min(38vh, 380px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.dwaiver-note {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.dwaiver-error {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--stop-bg);
+  color: var(--stop);
+  font-size: 16px;
+}
+
+.dwaiver-pad-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dwaiver-pad {
+  width: 100%;
+  height: 220px;
+  border: 2px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink);
+  touch-action: none;
+}
+
+.dwaiver-pad-label {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.dwaiver-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.dwaiver-button {
+  flex: 1 1 180px;
+  min-height: 64px;
+  padding: 0 20px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.dwaiver-agree {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.dwaiver-button:disabled {
+  opacity: 0.45;
+}
+
+/* T202: the waiver dialog's customer-screen row, above the counter's own
+ * actions. One 64px control, and while the student has the waiver the
+ * line says what is being waited for beside the way out of it. */
+.waiver-display-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+.waiver-waiting {
+  flex: 1;
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.waiver-display-button {
+  flex: 1;
+  min-height: 64px;
+  padding: 0 16px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.waiver-display-button:disabled {
+  opacity: 0.45;
+}
+
+/* T211: the teacher's override, the LAST control in the waiver dialog
+ * and the only one that is in every shape of it. Its own row, under
+ * whatever the normal path offered, full width at the same 64px; the
+ * button is T202's own, unchanged, because it is the same weight of
+ * choice and must not read louder than recording the agreement. */
+.waiver-override-row {
+  margin-top: 10px;
+}
+
+/* T211's PIN pad: the approval pad's box, a little wider for the reason
+ * field, whose label is the one new piece here. */
+.modal-waiver-override {
+  width: min(460px, 100%);
+}
+
+.wo-label {
+  margin: 6px 0 -4px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* The reason is 200 characters and two rows, so it scrolls rather than
+ * clipping; the discount note's own hidden overflow is for a field that
+ * grows instead. */
+.modal-waiver-override textarea.reason-note-field {
+  min-height: 76px;
+  overflow-y: auto;
+}
+
+/* --- T204: the self-serve sign-up ------------------------------------ */
+
+/* The one thing a student may start themselves, on the idle screen. */
+.display-start {
+  min-height: 64px;
+  padding: 0 28px;
+  border: 2px solid var(--accent);
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 22px;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.display-start:disabled {
+  opacity: 0.45;
+}
+
+/* Step 1: four fields and two boxes, at a size a student reads while
+ * standing up, with the OS keyboard in front of them (T98's viewport
+ * variables keep the scene above it). */
+.dsignup {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 820px;
+}
+
+.dsignup-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.dsignup-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.dsignup-input {
+  min-height: 64px;
+  padding: 0 16px;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 22px;
+  font-family: inherit;
+}
+
+.dsignup-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dsignup-opt {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 64px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.dsignup-opt input[type="checkbox"] {
+  width: 32px;
+  height: 32px;
+  accent-color: var(--accent);
+}
+
+/* The header tray: a gold count (the --gold role is badges and counts)
+ * and the list it opens. */
+.signup-tray {
+  position: relative;
+  padding: 6px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.signup-badge {
+  min-height: 64px;
+  padding: 0 20px;
+  border: 2px solid var(--gold);
+  border-radius: 0;
+  background: var(--gold-bg);
+  color: var(--gold);
+  font-size: 18px;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.signup-list {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.signup-list-head {
+  margin: 0;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.signup-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.signup-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.signup-name {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-height: 64px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 18px;
+  font-family: inherit;
+  text-align: left;
+}
+
+.signup-when {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.signup-clear {
+  min-width: 96px;
+  min-height: 64px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  font-family: inherit;
+}
+
+.signup-clear.confirming {
+  background: var(--stop);
+  color: var(--bg);
+}
+
+/* T207: why a name is still waiting, under it, and what just happened to
+   one that is not. Both are quiet: the automatic path is meant to be
+   unremarkable, and only the exception is worth a teacher's eye. */
+.signup-why {
+  font-size: 16px;
+  color: var(--warn);
+}
+
+.signup-outcome {
+  margin: 8px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--gold);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+}
+
+/* T208 review: a row still running that the server's list has already
+   dropped (the create spends the handle half way through). It is not a
+   button: there is nothing to open and a write is in flight. */
+.signup-name-held {
+  cursor: default;
+}
+
+/* T208: what the automatic run is doing with this name, while it does
+   it. The spinner takes the muted colour of the line it sits on, which
+   is what `currentColor` gives it in both palettes. */
+.signup-working {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* The same person, found by typing their name into walk-in search. */
+.signup-hits {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.signup-hit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 12px;
+  border: 2px solid var(--gold);
+  border-radius: 0;
+  background: var(--gold-bg);
+  color: var(--gold);
+  font-family: inherit;
+  text-align: left;
+}
+
+.signup-hit-name {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.signup-hit-sub {
+  font-size: 16px;
+}
+
+/* T205: the contract scene's own summary, above the terms. The waiver
+   scene's frame around it is unchanged; this is the block that says what
+   the membership costs, in the SERVER's words. Tokens only, in both
+   palettes through :root, radius 0 like everything else. */
+.dcontract-terms {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 2px solid var(--rule);
+  background: var(--surface-2);
+}
+
+.dcontract-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 20px;
+  color: var(--muted);
+}
+
+.dcontract-amt {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+  text-align: right;
+}
+
+/* T208: the waiting list at the BOTTOM of the roster (Pete: "waitlisted
+   clients should be at the bottom in a separated list"). The heading is
+   the column heads' own treatment -- 16px uppercase over the 2px rule --
+   so the break between the class and the queue reads as a break between
+   regions and not as another student. */
+.roster-section {
+  margin: 0;
+  padding: 14px 20px 10px;
+  border-top: 2px solid var(--rule);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.roster-wl {
+  background: var(--surface);
+}
+
+/* The row itself is the counter modal's (`.row`), which takes its side
+   room from the modal it usually sits in. In the roster it needs the
+   roster's own 20px gutter, or the name starts at the screen edge. */
+.roster-wl > .row {
+  padding: 12px 20px;
+}
+
+/* T208: the duplicate decision. Two people side by side at a glance,
+   which is the whole point of it; one column under a phone's width. */
+.modal-dupe {
+  width: min(640px, 100%);
+}
+
+.dupe-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0;
+  margin: 12px 0;
+  border: 1px solid var(--line);
+}
+
+.dupe-person {
+  padding: 12px;
+  border-right: 1px solid var(--line);
+}
+
+.dupe-person:last-child {
+  border-right: 0;
+  background: var(--surface-2);
+}
+
+.dupe-heading {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dupe-name {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.dupe-line {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* T212: the sign-in gate's studio choice. Two 64px halves on the rule,
+ * the chosen one in the accent (selected, the token's one meaning), and
+ * a sentence under them only when the choice would move the counter. */
+.studio-pick {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  margin: 14px 0 0;
+  border: 2px solid var(--rule);
+  border-radius: 0;
+}
+
+.studio-pick-btn {
+  min-height: 64px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.studio-pick-btn + .studio-pick-btn {
+  border-left: 2px solid var(--rule);
+}
+
+.studio-pick-btn.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.studio-pick-note {
+  margin: 10px 0 0;
+  font-size: 17px;
+  color: var(--warn);
 }

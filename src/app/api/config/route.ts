@@ -1,11 +1,25 @@
 import { NextResponse } from "next/server";
 
+import {
+  contractRequiresSignature,
+  customerConfirmsSale,
+  signupMode,
+} from "@/lib/approval";
 import { authRequired, isAuthenticated } from "@/lib/auth";
-import { BANNER_SETTING_KEY, getSetting, storageMode } from "@/lib/db";
+import { devtoolsEnabled } from "@/lib/calllog";
+import {
+  BANNER_SETTING_KEY,
+  dbConfigured,
+  getSetting,
+  storageMode,
+} from "@/lib/db";
+import { displayState } from "@/lib/display";
 import {
   allowedWriteClientIds,
   dryRunState,
   mindbodyEnv,
+  missingCredentials,
+  siteIdFor,
   target,
 } from "@/lib/mindbody";
 import { STUDIO_TAX_RATE, houseClientId } from "@/lib/sale";
@@ -78,6 +92,14 @@ export async function GET(request: Request) {
    * refuses anyone else regardless. */
   const session = await staffSessionFrom(request);
   return NextResponse.json({
+    /* T210: the site the signed-in teacher's token was issued for,
+     * beside `siteId` above, which is the site this counter is on.
+     * They agree in every ordinary state; when they do not, the token
+     * cannot write here at all (Mindbody: "Delegated staff does not
+     * belong to the subscriber.") and the drawer says so in words.
+     * Null for nobody signed in, or for a session from before
+     * migration 16, which records no site and is not restored. */
+    staffSiteId: session?.siteId ?? null,
     dryRun: dry.on,
     dryRunSource: dry.source,
     targetAdmin: isTargetAdmin(session?.staffId ?? null),
@@ -114,5 +136,67 @@ export async function GET(request: Request) {
      * Dry run and the write guard have no equivalent: they are env only,
      * always, and that is the rail T89 kept. */
     targetSource: targetSource(),
+    /* T212: the two studios the sign-in gate may offer, or null when it
+     * offers none. Offered only where the drawer's switch could work at
+     * all: the devtools gate, BOTH credential sets and a database. Site
+     * ids and words, never a credential; whether the person signing in
+     * may actually switch is decided by /api/teacher/signin against the
+     * studio they sign in to, so this list promises nothing. */
+    studioChoice:
+      devtoolsEnabled() &&
+      dbConfigured() &&
+      missingCredentials("prod").length === 0 &&
+      missingCredentials("sandbox").length === 0
+        ? (["prod", "sandbox"] as const).map((t) => ({
+            target: t,
+            siteId: siteIdFor(t),
+          }))
+        : null,
+    /* T200: whether a customer display is paired and awake. Two booleans
+     * and no id, because this is what the header's connection mark and
+     * the buttons that need a screen read; the drawer's block reads the
+     * fuller answer from /api/admin/display. Only on the authenticated
+     * answer: the lock screen's banner has no business naming the
+     * counter's second iPad. */
+    display: await (async () => {
+      const d = await displayState();
+      return { paired: d.paired, connected: d.connected };
+    })(),
+    /* T203: whether the customer must approve each sale on that screen,
+     * and whether that answer came from the stored setting or from
+     * POS_CUSTOMER_CONFIRMS_SALE in the server environment. The browser's
+     * copy is for the UI only: /api/checkout reads the setting itself on
+     * every charge, so a browser that lies about it is refused. On the
+     * authenticated answer only, like the display above. */
+    ...(await (async () => {
+      const confirm = await customerConfirmsSale();
+      return {
+        customerConfirmsSale: confirm.on,
+        customerConfirmsSaleSource: confirm.source,
+      };
+    })()),
+    /* T205: and whether a membership needs the customer's signature on
+     * that screen, with the same two fields and the same meaning. The
+     * browser's copy draws the contract dialog's button;
+     * /api/purchase-contract reads the setting itself on every purchase,
+     * so a browser that lies about it is refused. Unlike the approval
+     * setting above, this one defaults ON. */
+    ...(await (async () => {
+      const rule = await contractRequiresSignature();
+      return {
+        contractRequiresSignature: rule.on,
+        contractRequiresSignatureSource: rule.source,
+      };
+    })()),
+    /* T207: whether a completed self-serve sign-up is created
+     * automatically by the teacher's iPad or waits in the tray for a
+     * tap, and where that answer came from. Unlike the two above, no
+     * server route reads this to refuse anything: it decides what the
+     * TEACHER's browser does with a sign-up it is already allowed to
+     * create by hand, so the browser's copy is the whole rule. */
+    ...(await (async () => {
+      const mode = await signupMode();
+      return { signupMode: mode.mode, signupModeSource: mode.source };
+    })()),
   });
 }

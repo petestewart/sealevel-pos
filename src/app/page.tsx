@@ -14,7 +14,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import DevDrawer from "./DevDrawer";
 import LockScreen from "./LockScreen";
 import NavBar, {
-  BuyIcon,
+  CartIcon,
   SettingsIcon,
   PayIcon,
   ProfileIcon,
@@ -39,7 +39,14 @@ import {
 } from "./ClientProfileCard";
 import StaffModal, { type Teacher } from "./StaffModal";
 import PinModal from "./PinModal";
+import DuplicateModal, { type DuplicateMatch } from "./DuplicateModal";
 import NewClientModal from "./NewClientModal";
+import SignupTray, { ago as signupAgo } from "./SignupTray";
+import type {
+  PendingSignupRow,
+  SignupOutcome,
+  StuckSignupRow,
+} from "./SignupTray";
 import CardModal from "./CardModal";
 import GuestModal, {
   type ClassStanding,
@@ -47,6 +54,14 @@ import GuestModal, {
 } from "./GuestModal";
 import { isGuestPass, usableGuestPass } from "@/lib/guestpass";
 import { actorFallbackLine } from "./actornote";
+import ApprovalDialog, { type ApprovalArmed } from "./ApprovalDialog";
+import WaiverOverrideDialog, {
+  type WaiverOverrideArmed,
+} from "./WaiverOverrideDialog";
+import { waiverOverrideLabel, type WaiverFlow } from "@/lib/waiveroverride";
+import ApprovalWait from "./ApprovalWait";
+import { useSaleApproval } from "./useSaleApproval";
+import { displayFirstName } from "@/lib/displayticket";
 import { DEFAULT_SETTINGS, useSettings } from "./settings";
 import { toggleTheme, watchSystemTheme } from "./theme";
 import { useVisualViewport } from "./viewport";
@@ -68,6 +83,11 @@ interface ClassSummary {
   name: string;
   teacher: string;
   startsAt: string;
+  /** T207 review: Mindbody's own `EndDateTime`, naive studio wall clock
+   *  like `startsAt`. Optional here because a server that predates it
+   *  simply does not send it, and `classWhen` treats a missing end as a
+   *  generous length rather than as "ended". */
+  endsAt?: string | null;
   capacity: number | null;
   booked: number | null;
 }
@@ -335,6 +355,13 @@ interface PayProfile {
  *  renders. */
 interface PayPriced {
   suppressed: boolean;
+  /** T209: Mindbody's own subtotal and tax, read off the SAME
+   *  /api/price-cart answer the total comes from, for the ticket the
+   *  customer screen shows when the studio asks them to approve. Never
+   *  this browser's arithmetic: absent (or the cart unusable) means the
+   *  display draws the line and no totals. */
+  subTotal?: number | null;
+  taxTotal?: number | null;
   grandTotal: number | null;
   expectedTotal: number;
   disagrees: boolean;
@@ -642,6 +669,82 @@ function isFutureDay(startsAt: string): boolean {
   return startsAt.slice(0, 10) > studioToday();
 }
 
+/**
+ * T207 review: what the automatic sign-up may do with the class the
+ * counter is SHOWING, which is not the same question as "is it today".
+ *
+ * `defaultClassId` falls back to the last class of the day when nothing
+ * is within the "schedule back" window, so at 8pm the screen is still on
+ * the 6:30 that finished an hour ago. Booking a new student into that
+ * and marking them SignedIn would record attendance at a class they
+ * never attended, which is the one thing check-in must never invent. So:
+ *
+ * - "ended": the class is over. Create, and book nothing.
+ * - "otherday": the teacher is browsing another day, where T46 closes
+ *   check-in anyway. Create, and book nothing.
+ * - "now": any class that has NOT ended, however far ahead it starts.
+ *   Book AND check in.
+ *
+ * A class that started LONGER ago than the window and has not ended is
+ * "now" on purpose: a student walking into a class in progress is late,
+ * not absent, and that is exactly the roster row a teacher would tap.
+ *
+ * **T208 dropped the fourth answer, "ahead"** (Pete, second drive: "it
+ * did not sign them in but did sign them up. is this because the class
+ * starts several hours from now?"). It did: a class starting past the
+ * roster window was booked and deliberately not checked in, on the
+ * reasoning that the teacher had gone LOOKING for it. But the class on
+ * screen is the teacher's own choice either way, and Pete's instruction
+ * for this whole path was "created and automatically signed in to
+ * class". The only thing attendance must never be invented for is a
+ * class that is over, which "ended" still covers.
+ */
+type ClassWhen = "now" | "ended" | "otherday";
+
+function classWhen(cls: ClassSummary | null): ClassWhen | null {
+  if (cls === null || !cls.startsAt) return null;
+  if (cls.startsAt.slice(0, 10) !== studioToday()) return "otherday";
+  const mins = (iso: string): number =>
+    Number(iso.slice(11, 13)) * 60 + Number(iso.slice(14, 16));
+  const now = studioMinutesNow();
+  const start = mins(cls.startsAt);
+  /* Mindbody's own end when the list carried one. With none, or one that
+   * does not sit after the start on the same day, the class is given two
+   * hours, which is longer than anything this studio teaches: the
+   * failure this has to avoid is calling a class ended while it is
+   * running, not the reverse. */
+  const end =
+    typeof cls.endsAt === "string" &&
+    cls.endsAt.slice(0, 10) === cls.startsAt.slice(0, 10) &&
+    mins(cls.endsAt) > start
+      ? mins(cls.endsAt)
+      : start + 120;
+  if (end < now) return "ended";
+  return "now";
+}
+
+/**
+ * T207: the two things about a create a teacher has to hear even when
+ * nobody tapped it, plus T204's dropped text opt-in, as a parenthesis
+ * for the end of the outcome line. Lifted out in T208, so the automatic
+ * run and review mode's Create say the same words.
+ */
+function signupCaveats(body: {
+  waiver?: { agreed?: boolean; documentFiled?: boolean } | null;
+  textOptInStuck?: boolean | null;
+}): string {
+  const caveats: string[] = [];
+  if (body.waiver && body.waiver.agreed !== true) {
+    caveats.push("the waiver was not recorded");
+  } else if (body.waiver && body.waiver.documentFiled === false) {
+    caveats.push("the signature image did not reach Mindbody");
+  }
+  if (body.textOptInStuck === false) {
+    caveats.push("the text opt-in is noted on their profile to set by hand");
+  }
+  return caveats.length > 0 ? ` (${caveats.join("; ")})` : "";
+}
+
 /** The class on a picked day nearest to this time of day, or the first
  *  one: at 6:15pm on a Wednesday the teacher asking about "last Monday"
  *  most likely means last Monday's evening class. */
@@ -898,6 +1001,74 @@ function FrontDesk({
   const [entries, setEntries] = useState<RosterEntry[]>([]);
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<SearchResult[]>([]);
+  /** T204: the people who signed themselves up on the customer screen
+   *  and match the typed query. They are not in Mindbody yet, so
+   *  Mindbody's own search cannot find them; the server merges them
+   *  into the answer and they render ABOVE the results. */
+  const [foundSignups, setFoundSignups] = useState<PendingSignupRow[]>([]);
+  /** Bumped when a sign-up is created or cleared, so the header tray is
+   *  right without waiting for its poll. */
+  const [signupRefresh, setSignupRefresh] = useState(0);
+  /**
+   * T207: the automatic run's state, all of it in this browser.
+   *
+   * `signupRows` is the tray's own list, handed up so the run can start
+   * from the same three sources the tray has (the stream, the poll, and
+   * the replay on connect). `signupWhy` is why a name is still in the
+   * tray; `signupStuck` is a sign-up whose client WAS created and whose
+   * booking was not, which the server no longer lists at all;
+   * `signupSaid` is the outcome line, for about ten seconds.
+   */
+  const [signupRows, setSignupRows] = useState<PendingSignupRow[]>([]);
+  const [signupWhy, setSignupWhy] = useState<Record<string, string>>({});
+  const [signupStuck, setSignupStuck] = useState<StuckSignupRow[]>([]);
+  const [signupSaid, setSignupSaid] = useState<SignupOutcome[]>([]);
+  /**
+   * T208: what the automatic run is DOING with a name, while it does it.
+   *
+   * Pete, second drive: "auto sign up does work, but there is a brief
+   * wait between when the banner shows up and when they are signed in
+   * to class. there should be a waiting spinner so the teacher knows it
+   * didn't fail." Three writes take a second or two of Mindbody's time,
+   * and in between the tray showed a name with nothing under it, which
+   * reads exactly like a name that is stuck. Keyed by request id, set
+   * the moment a row is queued and cleared when the run resolves,
+   * whichever way it resolved.
+   */
+  const [signupBusy, setSignupBusy] = useState<
+    Record<string, { label: string; name: string }>
+  >({});
+  /** T208: the account Mindbody matched a refused create to, by request
+   *  id, for the decision modal the tray row opens. */
+  const [signupMatch, setSignupMatch] = useState<
+    Record<string, DuplicateMatch | null>
+  >({});
+  /** T208: the decision open on screen: the sign-up, what they typed,
+   *  and who Mindbody thinks they already are. */
+  const [duplicatePick, setDuplicatePick] = useState<{
+    requestId: string;
+    typed: { name: string; email: string | null; phone: string | null };
+    /** T208 review: the form the REFUSED create carried, sent back with
+     *  the accept so the server recomputes the match from the same
+     *  words. In review mode those are the teacher's corrections. */
+    form: { firstName: string; lastName: string; email: string | null };
+    match: DuplicateMatch | null;
+  } | null>(null);
+  const [duplicateBusy, setDuplicateBusy] = useState(false);
+  const [duplicateMsg, setDuplicateMsg] = useState<string | null>(null);
+  /** One attempt per request id per browser, which is what keeps the
+   *  30 second poll from asking Mindbody the same refused question every
+   *  30 seconds, and `signupRunning` is the in-flight set that keeps the
+   *  poll and the event from double-firing in the same tab. Two iPads
+   *  are handled on the SERVER, by the create's own beginFinalisation
+   *  claim: the loser gets 409 and drops it without a word. */
+  const signupTried = useRef<Set<string>>(new Set());
+  const signupRunning = useRef<Set<string>>(new Set());
+  const signupTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  /** The runner's queue: every sign-up this tab handles, one after the
+   *  other, so two collected while the iPad slept cannot both book
+   *  against the same last seat. */
+  const signupChain = useRef<Promise<void>>(Promise.resolve());
   /** T71: the query `found` answers, for the bold match in each row. Set
    *  with the first page, so a query typed after the search stays out
    *  of the rows until it is searched. */
@@ -922,11 +1093,30 @@ function FrontDesk({
   const [newClient, setNewClient] = useState<{
     first: string;
     last: string;
+    /** T208: an amber line at the top of the form, from the decision
+     *  modal's "Create a new client anyway". */
+    notice?: string;
+    /** T204: a self-serve sign-up's own typed details, read back from
+     *  the server, and the handle that holds their signature. T206 adds
+     *  the birth date, which the sign-up asks for on a site that
+     *  demands one. */
+    email?: string;
+    phone?: string;
+    birthDate?: string;
+    signup?: {
+      requestId: string;
+      consentEmail: boolean;
+      consentText: boolean;
+      completedAt: string | null;
+    };
     /** T59c: who asked for the form. "search" hands the new person to
      *  the walk-in results; "guest" selects them as the guest. T91 adds
      *  "sale": the new person is attached to the open sale. */
     for: "search" | "guest" | "sale";
   } | null>(null);
+  /** T206: bumped whenever a card is saved anywhere in the app, so the
+   *  sale screen's card lookup for the attached client runs again. */
+  const [cardVersion, setCardVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<ModeConfig | null>(null);
   /** Rows whose check-in call failed after going green optimistically. */
@@ -1073,6 +1263,106 @@ function FrontDesk({
   const payFlight = useRef(false);
   /** How the last gesture ended, when it did not fully succeed. */
   const [payOutcome, setPayOutcome] = useState<PayOutcome | null>(null);
+  /**
+   * T209: the customer's approval over the pay-and-check-in dialog.
+   *
+   * T203 made the approval a precondition of EVERY charge in
+   * /api/checkout, and wired the asking half into the Cart screen alone.
+   * This dialog is the other charge path, so with the setting on it hit
+   * the route with nothing, was refused in words ("The customer has not
+   * approved this sale on the customer screen") and no scene ever
+   * appeared on the student's iPad (Pete, third sandbox drive,
+   * 2026-09-21). It now runs the SAME flow, from the same hook, drawing
+   * the same panel: identical words, identical two controls, so the two
+   * screens cannot drift.
+   *
+   * The setting comes from the `config` this page already polls -- not a
+   * second source -- and it decides only what this DRAWS. The server
+   * reads it itself on every charge.
+   *
+   * The two closures name `payCatalog`, `payPriced` and
+   * `runPayAndCheckIn`, the last of which is declared much further down:
+   * their bodies only run on a tap, long after it exists.
+   */
+  const payApproval = useSaleApproval({
+    on: config?.customerConfirmsSale === true,
+    build: () => {
+      const dialog = payDialogRef.current;
+      const sel =
+        paySelectedId !== null
+          ? (payCatalog.passes?.find((o) => o.id === paySelectedId) ?? null)
+          : null;
+      if (dialog === null || sel === null) return null;
+      /* Mindbody's figures or none. The same rule the Charge button
+         follows: a cart that is still pricing, was suppressed or whose
+         total Mindbody disagreed with carries NO totals to a student's
+         screen, and the display draws the line and waits. */
+      const usable =
+        !payPricing && payPriced && !payPriced.suppressed && !payPriced.disagrees
+          ? payPriced
+          : null;
+      return {
+        payload: {
+          mode: "approve" as const,
+          clientFirstName: displayFirstName(dialog.entry.name),
+          lines: [
+            {
+              name: sel.name,
+              quantity: 1,
+              unitPrice: sel.price,
+              linePrice: sel.price,
+            },
+          ],
+          subtotal: usable?.subTotal ?? null,
+          tax: usable?.taxTotal ?? null,
+          total: usable?.grandTotal ?? null,
+        },
+        /* The cart the SERVER hashes, in the same shape the charge below
+           sends it: the client and the one line's type, id, quantity and
+           unit price. The browser never sends a hash (T203). */
+        cart: {
+          items: [
+            {
+              type: sel.type,
+              metadataId: sel.id,
+              quantity: 1,
+              price: sel.price,
+            },
+          ],
+          clientId: dialog.entry.clientId,
+        },
+      };
+    },
+    charge: (approved) => void runPayAndCheckIn(approved),
+    /* T209 review: a present refused 401 `reason: "staff"` is the
+       sign-in gone (T50), the same thing `noteActor` does with a
+       write's `staffSessionEnded`. The gate comes back; the panel does
+       not claim the customer screen is at fault. */
+    onStaffSessionEnded: () => setTeacher(null),
+  });
+  /* Pulled out by name: the handlers the hook returns are stable, the
+   * object around them is not, and closePayDialog is a dependency of
+   * three other callbacks. */
+  const cancelPayApproval = payApproval.cancel;
+  /** Which stage the approval is at, as a plain string, so the Escape
+   *  handler below can depend on it without depending on the object. */
+  const payApprovalStage = payApproval.approval?.stage ?? null;
+  /**
+   * T209 review, the same rule as the Cart screen's cart edit: picking a
+   * DIFFERENT pass while the customer is looking at the old one ends the
+   * wait then and there. The pass list stays live during a wait (only a
+   * stage in flight locks it), so without this the student holds a
+   * ticket for pass A while the dialog shows pass B, and their Approve
+   * buys a server refusal about a ticket that changed. A no-op when
+   * nothing is outstanding, which is every ordinary open: the default
+   * selection lands long before any Charge tap.
+   */
+  const abandonPayApproval = payApproval.abandon;
+  useEffect(() => {
+    abandonPayApproval(
+      "The pass changed. Charge again to ask the customer.",
+    );
+  }, [paySelectedId, abandonPayApproval]);
   /** Rows with a check-in in flight. */
   const [busy, setBusy] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
@@ -1278,6 +1568,28 @@ function FrontDesk({
    * flow -- check-in for a roster row, booking for a search result.
    */
   const [waiverPrompt, setWaiverPrompt] = useState<WaiverSubject | null>(null);
+  /**
+   * T211: the teacher's override, in two pieces.
+   *
+   * `waiverOverridePad` is the PIN pad open over the dialog.
+   * `waiverOverrideRef` holds the ARMED authorization -- one token, one
+   * reason, for one client -- until the write it was typed for carries
+   * it. It is a ref and not state because the four flows pick it up
+   * from inside callbacks that must not re-render to see it, and it is
+   * taken ONCE (takeWaiverOverride): a one-shot token must never attach
+   * itself to a second write. The state beside it exists only so the
+   * screen can say an override is armed.
+   */
+  const [waiverOverridePad, setWaiverOverridePad] = useState(false);
+  const waiverOverrideRef = useRef<{
+    clientId: string;
+    token: string;
+    reason: string;
+  } | null>(null);
+  const [waiverOverrideArmed, setWaiverOverrideArmed] = useState<{
+    clientId: string;
+    teacher: string;
+  } | null>(null);
   /** The waiver text as served, with the sha256 of exactly that text
    *  (from /api/waiver) so the agreement receipt names what was shown.
    *  Non-null switches the dialog into its reading state. */
@@ -1308,6 +1620,28 @@ function FrontDesk({
   const [waiverReceiptWarn, setWaiverReceiptWarn] = useState<string | null>(
     null,
   );
+  /** T202: the signature is being collected on the customer display.
+   *  Holds the request id the display was given, so a Cancel takes the
+   *  right scene down and a `completed` event finalises the right one.
+   *  The counter's own "They have read it and agree" stays live beside
+   *  it as the fallback. */
+  const [waiverOnDisplay, setWaiverOnDisplay] = useState<{
+    requestId: string;
+  } | null>(null);
+  /** A quiet line inside the waiver dialog about the customer screen: a
+   *  refusal ("Customer tapped Not now"), a present that failed, or the
+   *  "recording it now" while a signature that arrived while this iPad
+   *  was asleep is finalised. */
+  const [waiverDisplayNote, setWaiverDisplayNote] = useState<string | null>(
+    null,
+  );
+  /** T204: the customer screen is busy with a student's own sign-up,
+   *  so the dialog offers Take over beside the counter path. */
+  const [waiverDisplayBusy, setWaiverDisplayBusy] = useState(false);
+  /** T202: whether a customer display is paired AND connected right now,
+   *  which is what decides whether "Sign on the customer screen" exists
+   *  at all. Same two sources as the header's mark. */
+  const [displayLive, setDisplayLive] = useState(false);
   /** The scrollable waiver text region, for the fits-without-scrolling
    *  check once the text renders. */
   const waiverScrollRef = useRef<HTMLDivElement | null>(null);
@@ -2113,6 +2447,15 @@ function FrontDesk({
             return;
           }
           const page: SearchResult[] = d.results ?? [];
+          /* T204: first page only; a scroll for page two is a scroll
+           * through Mindbody's list. */
+          if (first) {
+            setFoundSignups(
+              Array.isArray(d.pendingSignups)
+                ? (d.pendingSignups as PendingSignupRow[])
+                : [],
+            );
+          }
           const total = typeof d.total === "number" ? d.total : null;
           const apply = () => {
             if (ctl.signal.aborted) return;
@@ -2168,6 +2511,58 @@ function FrontDesk({
     },
     [],
   );
+
+  /**
+   * T204: open the New Client form on a waiting self-serve sign-up.
+   *
+   * The form comes from the SERVER (`/api/display/signups/<id>`), never
+   * from anything a display sent this browser, and the signature does
+   * not travel with it: the request id is a handle, and Create pulls the
+   * PNG from the server's own store. Both doors in -- the header tray
+   * and a search hit -- come through here, so they cannot drift.
+   */
+  const openSignup = useCallback(async (
+    requestId: string,
+    /** T208: one amber line at the top of the form, for the teacher who
+     *  chose "Create a new client anyway" and has to change something
+     *  before Mindbody will take it. */
+    notice?: string,
+  ) => {
+    try {
+      const res = await fetch(
+        `/api/display/signups/${encodeURIComponent(requestId)}`,
+      );
+      const body = await res.json().catch(() => null);
+      if (!res.ok || typeof body?.requestId !== "string") {
+        setError(
+          typeof body?.error === "string"
+            ? body.error
+            : "That sign-up could not be opened.",
+        );
+        setSignupRefresh((n) => n + 1);
+        return;
+      }
+      setNewClient({
+        first: String(body.form?.firstName ?? ""),
+        last: String(body.form?.lastName ?? ""),
+        email: typeof body.form?.email === "string" ? body.form.email : "",
+        phone: typeof body.form?.phone === "string" ? body.form.phone : "",
+        birthDate:
+          typeof body.form?.birthDate === "string" ? body.form.birthDate : "",
+        signup: {
+          requestId: body.requestId,
+          consentEmail: body.consent?.email === true,
+          consentText: body.consent?.text === true,
+          completedAt:
+            typeof body.completedAt === "string" ? body.completedAt : null,
+        },
+        ...(notice === undefined ? {} : { notice }),
+        for: "search",
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
 
   /** Abort the in-flight search and drop the held results: the X, the
    *  close, and the attach modal's Class cell all mean the same thing,
@@ -2617,6 +3012,42 @@ function FrontDesk({
     actorBannerTimer.current = setTimeout(() => setActorBanner(null), 20_000);
   }, []);
 
+  /**
+   * T211: the override this write may carry, or undefined. Read ONCE
+   * and cleared, because the token is one-shot: the server spends it on
+   * the first write that presents it and refuses it twice over, so
+   * leaving it armed could only attach a dead authorization to an
+   * unrelated later write for the same person.
+   */
+  const takeWaiverOverride = useCallback(
+    (clientId: string): { token: string; reason: string } | undefined => {
+      const armed = waiverOverrideRef.current;
+      if (armed === null || armed.clientId !== clientId) return undefined;
+      waiverOverrideRef.current = null;
+      setWaiverOverrideArmed(null);
+      return { token: armed.token, reason: armed.reason };
+    },
+    [],
+  );
+
+  /** What the answer to an overridden write says, in one place: the
+   *  record either landed on the profile or it did not, and a teacher
+   *  who went past a waiver should hear which. */
+  const noteWaiverOverride = useCallback(
+    (body: unknown, who: string, did = "went in") => {
+      const ov = (body as { waiverOverride?: unknown } | null)?.waiverOverride;
+      if (!ov || typeof ov !== "object") return;
+      const noted = (ov as { noted?: unknown }).noted === true;
+      const teacher = String((ov as { teacher?: unknown }).teacher ?? "");
+      flashBanner(
+        noted
+          ? `${who} ${did} without a waiver, on ${teacher || "a teacher"}'s PIN. The reason is on their profile.`
+          : `${who} ${did} without a waiver, on ${teacher || "a teacher"}'s PIN, but the note did not save. The server log holds the reason.`,
+      );
+    },
+    [flashBanner],
+  );
+
   /* T80: the PIN prompt's "PIN set" belongs in this banner, but it was
    * answered before the roster mounted. Shown once, then cleared
    * upstream so a later sign-in does not repeat it. */
@@ -2794,6 +3225,12 @@ function FrontDesk({
     setProfileState((st) =>
       st.profile ? { ...st, profile: { ...st.profile, card } } : st,
     );
+    /* T206 (Pete's second screenshot: a card added through the profile
+       while the sale screen was open left the membership dialog saying
+       "No card on file" until a refresh). The sale screen's card lookup
+       is its own and is cached per client, so a save anywhere has to
+       bump this counter and make it read again. */
+    setCardVersion((n) => n + 1);
     if (note) flashBanner(note);
   }, [flashBanner]);
 
@@ -3059,6 +3496,10 @@ function FrontDesk({
         const { [entry.clientId]: _drop, ...rest } = n;
         return rest;
       });
+      /* T211: a teacher's PIN, typed in the waiver dialog, rides this
+       * one write. Only a check-IN: the gate it goes past is on the way
+       * in, and the route refuses an override on a check-out. */
+      const override = signedIn ? takeWaiverOverride(entry.clientId) : undefined;
       try {
         const res = await fetch("/api/checkin", {
           method: "POST",
@@ -3067,11 +3508,13 @@ function FrontDesk({
             visitId: entry.visitId,
             signedIn,
             clientId: entry.clientId,
+            ...(override ? { waiverOverride: override } : {}),
           }),
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
         noteActor(body, entry.clientId);
+        if (override) noteWaiverOverride(body, entry.name);
         setEntries((rows) =>
           rows.map((r) =>
             r.clientId === entry.clientId ? { ...r, checkedIn: signedIn } : r,
@@ -3095,7 +3538,12 @@ function FrontDesk({
         setBusy((b) => b.filter((id) => id !== entry.clientId));
       }
     },
-    [settings.optimisticCheckIn, noteActor],
+    [
+      settings.optimisticCheckIn,
+      noteActor,
+      takeWaiverOverride,
+      noteWaiverOverride,
+    ],
   );
 
   /**
@@ -3192,6 +3640,14 @@ function FrontDesk({
     if (payStage !== null) return;
     payGen.current += 1;
     payPriceGen.current += 1;
+    /* T209: the dialog is going, so an approval outstanding on the
+     * customer screen goes with it. A student left holding a ticket for
+     * a charge nobody is making is the one thing closing this must not
+     * leave behind, and `cancel` takes the scene down (POST
+     * /api/display/cancel) as well as clearing the wait. The server
+     * would expire it either way; a few seconds of somebody else's
+     * ticket is not a wait, it is a wrong screen. */
+    cancelPayApproval();
     setPayDialog(null);
     setPayOutcome(null);
     setPayPriced(null);
@@ -3199,7 +3655,7 @@ function FrontDesk({
     setPayPricing(false);
     setPaySelectedId(null);
     setPayProfile(null);
-  }, [payStage]);
+  }, [payStage, cancelPayApproval]);
 
   /**
    * T26: after a REAL check-in that used a pass's last session, decide
@@ -3398,11 +3854,17 @@ function FrontDesk({
   useEffect(() => {
     if (!payDialog) return;
     const onKey = (e: KeyboardEvent) => {
+      /* T209: with the PIN pad over this dialog, Escape belongs to the
+       * pad (it cancels the override and leaves the sale exactly as it
+       * was). One key must not close two things. While the customer is
+       * being ASKED, Escape still closes this dialog, and closing it
+       * takes the ticket off their screen. */
+      if (payApprovalStage === "pin") return;
       if (e.key === "Escape" && payStage === null) closePayDialog();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [payDialog, payStage, closePayDialog]);
+  }, [payDialog, payStage, closePayDialog, payApprovalStage]);
 
   /**
    * The check-in CHIP's tap. The chip is the ONLY check-in trigger: the
@@ -3484,12 +3946,24 @@ function FrontDesk({
     if (waiverSaving) return;
     waiverGen.current += 1;
     setWaiverPrompt(null);
+    /* T211: the PIN pad goes with it. It renders only over an open
+     * dialog, so a flag left true would put the pad up the instant the
+     * next person's dialog opened. */
+    setWaiverOverridePad(false);
     setWaiverText(null);
     setWaiverLoading(false);
     setWaiverFetchError(null);
     setWaiverScrolled(false);
     setWaiverMsg(null);
-  }, [waiverSaving]);
+    /* T202: a dialog closed while the student still has the waiver on
+     * the customer screen takes that scene down with it. Leaving it up
+     * would put one student's waiver in front of the next person. */
+    if (waiverOnDisplay !== null) {
+      void fetch("/api/display/cancel", { method: "POST" });
+      setWaiverOnDisplay(null);
+    }
+    setWaiverDisplayNote(null);
+  }, [waiverSaving, waiverOnDisplay]);
 
   /**
    * Fetch the waiver text and swap the dialog into its reading state. One
@@ -3971,6 +4445,19 @@ function FrontDesk({
     activeClass.capacity !== null &&
     activeClass.booked !== null &&
     activeClass.booked >= activeClass.capacity;
+  /** T207: the class on screen and whether it is full, readable inside
+   *  the automatic run without making that callback depend on every
+   *  render. The run reads them ONCE, at the moment it books, which is
+   *  the same thing a teacher's tap does. */
+  const activeClassRef = useRef<ClassSummary | null>(null);
+  activeClassRef.current = activeClass;
+  const classFullRef = useRef(false);
+  classFullRef.current = classFull;
+  /** T207: what the automatic run may do with that class, from its own
+   *  clock rather than from "is it today" (classWhen above). Read ONCE,
+   *  at the moment it books. */
+  const classWhenRef = useRef<ClassWhen | null>(null);
+  classWhenRef.current = classWhen(activeClass);
 
   const loadWaitlist = useCallback(async (classId: number) => {
     setWaitlistError(null);
@@ -4038,6 +4525,9 @@ function FrontDesk({
        * sends it: a queue entry is not a booking, and the waitlist flow
        * stays byte-for-byte as before. */
       const chosenPass = waitlist ? undefined : walkinPassChoice[client.id];
+      /* T211: the teacher's PIN, typed in the waiver dialog, rides this
+       * one booking. Taken once; absent on every ordinary add. */
+      const override = takeWaiverOverride(client.id);
       try {
         const res = await fetch("/api/book", {
           method: "POST",
@@ -4047,11 +4537,27 @@ function FrontDesk({
             classId: activeId,
             waitlist,
             clientServiceId: chosenPass,
+            ...(override ? { waiverOverride: override } : {}),
+            /* T208: which DAY the server's capacity read should ask
+               about. It decides nothing else. */
+            ...(activeClassRef.current
+              ? { classStartsAt: activeClassRef.current.startsAt }
+              : {}),
           }),
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
         noteActor(body);
+        /* T208: an add can land on the waiting list, either because the
+           teacher chose it or because the capacity read said full. The
+           banner says which, as the route's own answer does. */
+        if (override) {
+          noteWaiverOverride(
+            body,
+            client.name,
+            body.waitlisted ? "went on the waiting list" : "was added",
+          );
+        }
         if (body.suppressed) {
           setBookMsg((m) => ({
             ...m,
@@ -4062,8 +4568,22 @@ function FrontDesk({
           }));
           return;
         }
-        if (waitlist) {
-          setBookMsg((m) => ({ ...m, [client.id]: "On the waiting list." }));
+        /* T208: the SERVER checks the capacity again, fresh, before a
+         * plain booking, because Mindbody's API does not (class.yml:1077)
+         * and the count this screen read may be minutes old. So what
+         * happened is what the ANSWER says, not what this tap asked
+         * for: a booking that landed on the waiting list says so here,
+         * in Mindbody's place, rather than leaving a teacher to believe
+         * somebody is in a class they are not. */
+        const queued = waitlist || body.waitlisted === true;
+        if (queued) {
+          setBookMsg((m) => ({
+            ...m,
+            [client.id]:
+              typeof body.waitlistReason === "string" && body.waitlistReason
+                ? `${body.waitlistReason}.`
+                : "On the waiting list.",
+          }));
           /* Refresh unconditionally: the header counter shows this list's
            * length even when the panel is closed, and it just grew. */
           void loadWaitlist(activeId);
@@ -4075,7 +4595,7 @@ function FrontDesk({
          * check in. Suppressed writes, errors, and waitlist adds keep the
          * modal and its results, because their feedback renders on the
          * result row itself. */
-        if (!waitlist) closeSearch();
+        if (!queued) closeSearch();
       } catch (err) {
         setBookMsg((m) => ({
           ...m,
@@ -4085,7 +4605,16 @@ function FrontDesk({
         setBookingIds((b) => b.filter((id) => id !== client.id));
       }
     },
-    [activeId, bookingIds, refreshRoster, loadWaitlist, walkinPassChoice, closeSearch],
+    [
+      activeId,
+      bookingIds,
+      refreshRoster,
+      loadWaitlist,
+      walkinPassChoice,
+      closeSearch,
+      takeWaiverOverride,
+      noteWaiverOverride,
+    ],
   );
 
   /**
@@ -4136,6 +4665,9 @@ function FrontDesk({
         const { [row.entryId]: _drop, ...rest } = m;
         return rest;
       });
+      /* T211: the teacher's PIN, typed in the waiver dialog, rides this
+       * one promotion. Taken once; absent on every ordinary one. */
+      const override = takeWaiverOverride(row.clientId);
       try {
         const res = await fetch("/api/book", {
           method: "POST",
@@ -4144,11 +4676,13 @@ function FrontDesk({
             clientId: row.clientId,
             classId: activeId,
             waitlistEntryId: row.entryId,
+            ...(override ? { waiverOverride: override } : {}),
           }),
         });
         const body = await res.json();
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
         noteActor(body);
+        if (override) noteWaiverOverride(body, row.name, "was promoted in");
         if (body.suppressed) {
           setPromoteMsg((m) => ({
             ...m,
@@ -4169,7 +4703,14 @@ function FrontDesk({
         setPromoting((p) => p.filter((id) => id !== row.entryId));
       }
     },
-    [activeId, promoting, refreshRoster, loadWaitlist],
+    [
+      activeId,
+      promoting,
+      refreshRoster,
+      loadWaitlist,
+      takeWaiverOverride,
+      noteWaiverOverride,
+    ],
   );
 
   /**
@@ -4194,6 +4735,755 @@ function FrontDesk({
     [promoting, promote],
   );
 
+  /* =====================================================================
+   * T207: a sign-up that finishes itself.
+   *
+   * Pete, asked whether the teacher's Create tap should stay: "make
+   * automatic the default with a setting that can be set to review. the
+   * new client should be created and automatically signed in to class
+   * (or the waitlist if class is full)."
+   *
+   * So with the setting on automatic, a completed self-serve sign-up
+   * runs, with no tap, the sequence a teacher runs by hand: Create,
+   * then the walk-in booking, then the check-in. All three are the
+   * EXISTING write routes -- /api/client-create, /api/book,
+   * /api/checkin -- called from the teacher's own browser with the
+   * teacher's own session, so requireActor, dry run, the write guard,
+   * T49's attribution and T50's refusal all apply exactly as they do to
+   * the taps. Nothing new reaches Mindbody, and nothing runs on the
+   * display or on the server's own initiative.
+   *
+   * What it does NOT do is hide a decision. A create Mindbody refused, a
+   * duplicate, a booking it refused: each leaves a name in the tray with
+   * the reason under it, and the tray is where the teacher meets it, as
+   * in review mode.
+   * =================================================================== */
+
+  /** Ten seconds of "Sam Fisher created, checked in to 6:20 Bikram
+   *  Yoga", then gone. A count that stays is the tray's job. */
+  const saySignup = useCallback((text: string) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setSignupSaid((lines) => [...lines, { id, text }]);
+    const timer = setTimeout(() => {
+      setSignupSaid((lines) => lines.filter((l) => l.id !== id));
+      signupTimers.current = signupTimers.current.filter((t) => t !== timer);
+    }, 10_000);
+    signupTimers.current.push(timer);
+  }, []);
+
+  useEffect(
+    () => () => {
+      for (const timer of signupTimers.current) clearTimeout(timer);
+      signupTimers.current = [];
+    },
+    [],
+  );
+
+  /**
+   * Mindbody's own words for a class with no room, for the one case the
+   * capacity count on screen did not catch: a class that filled between
+   * the roster read and this booking. The count is still the primary
+   * decision, exactly as it is for a teacher's tap (`classFull` decides
+   * before the call); this is the retry that turns a refusal into the
+   * waiting list rather than into a name stuck in the tray.
+   */
+  const looksFull = useCallback((message: unknown): boolean => {
+    if (typeof message !== "string") return false;
+    const said = message.toLowerCase();
+    if (said.includes("full") || said.includes("capacity")) return true;
+    /* A wait list NAMED in a refusal is not by itself evidence of a
+     * full class: "this client is already on the wait list" is a
+     * refusal a second write cannot help, and retrying it would be a
+     * second attempt at a booking Mindbody has already decided. So the
+     * sentence has to say there is no room as well. */
+    const waitlist = said.includes("wait list") || said.includes("waitlist");
+    return (
+      waitlist &&
+      (said.includes("no room") ||
+        said.includes("no space") ||
+        said.includes("no spots") ||
+        said.includes("no available"))
+    );
+  }, []);
+
+  /** The visit the booking just made, when the booking answer did not
+   *  carry one: re-read the class the way the roster does and match the
+   *  client. One metered read, and only on that path. */
+  const visitIdFor = useCallback(
+    async (classId: number, clientId: string): Promise<number | null> => {
+      try {
+        /* summary=0, like refreshRoster's own read: without it the
+         * route makes a second metered `/class/classes` call for a
+         * header this lookup never uses. */
+        const d = await fetch(
+          `/api/roster?classId=${classId}&summary=0`,
+        ).then((r) => r.json());
+        const rows: RosterEntry[] = Array.isArray(d?.entries) ? d.entries : [];
+        const mine = rows.find((e) => e.clientId === clientId);
+        return typeof mine?.visitId === "number" ? mine.visitId : null;
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
+
+  /**
+   * T208: a sign-up the SERVER no longer has -- cleared from another
+   * iPad, spent by the other tab, or four hours old -- must not sit in
+   * this tray for the rest of the day. The same DELETE the tray's Clear
+   * makes, which since T208 spends the handle unconditionally.
+   */
+  const dropSignup = useCallback(async (requestId: string) => {
+    try {
+      await fetch(`/api/display/signups/${encodeURIComponent(requestId)}`, {
+        method: "DELETE",
+      });
+    } catch {
+      /* The poll is the truth either way. */
+    }
+    setSignupRows((rows) => rows.filter((r) => r.requestId !== requestId));
+    setSignupRefresh((n) => n + 1);
+  }, []);
+
+  /**
+   * The class half of a finished sign-up: book, then check in (T207
+   * steps 3 and 4).
+   *
+   * T208 lifted it out of `runSignup`, because there are now three
+   * doors into exactly this sequence and they must not drift:
+   *
+   * 1. the automatic run, with no tap at all;
+   * 2. review mode's Create tap, which Pete found indistinguishable
+   *    from the ordinary New client form and which ended there rather
+   *    than in a class;
+   * 3. "Use their existing account", where nobody was created at all
+   *    and the person still has to get into the class.
+   *
+   * Everything it writes is an existing route called from the teacher's
+   * own browser (/api/book, /api/checkin), so requireActor, dry run,
+   * the write guard and T49's attribution apply exactly as they do to a
+   * tap. Every outcome that leaves a person in NO class is a tray row,
+   * because that is what the tray is for; the ten second line is for
+   * the outcome that needs nobody.
+   */
+  const bookAndCheckIn = useCallback(
+    async (opts: {
+      requestId: string;
+      client: { id: string; name: string };
+      /** The name the line uses, which is the client's own. */
+      who: string;
+      /** Caveats from the create half, already parenthesised. */
+      tail?: string;
+      /** T208: nobody was created; this is the account Mindbody already
+       *  had, and the line says so. */
+      existing?: boolean;
+    }): Promise<void> => {
+      const { requestId, client, who } = opts;
+      const tail = opts.tail ?? "";
+      const existing = opts.existing === true;
+      /* "Sam Vega created, checked in to 6:20 Bikram Yoga." and, for a
+       * matched account, "Sam Vega checked in to 6:20 Bikram Yoga
+       * (existing account)." */
+      const line = (rest: string) =>
+        `${who} ${existing ? "" : "created, "}${rest}${existing ? " (existing account)" : ""}.${tail}`;
+      const began = existing ? "matched to their account" : "created";
+      const stuck = (reason: string) =>
+        setSignupStuck((rows) => [
+          ...rows.filter((r) => r.requestId !== requestId),
+          { requestId, name: client.name, reason, clientId: client.id },
+        ]);
+      /* T208 review: the spinner covers THIS half too, whichever door
+       * came in. The automatic run set it before the create; a review
+       * tap and "use their existing account" have nothing on screen
+       * without it, and the booking and check-in are the slow part. */
+      setSignupBusy((b) => ({
+        ...b,
+        [requestId]: {
+          label: classFullRef.current
+            ? "Creating and booking..."
+            : "Creating and checking in...",
+          name: client.name || who,
+        },
+      }));
+      try {
+        /* The class on screen, as the teacher's own walk-in booking
+         * reads it, and what its own clock allows (classWhen). */
+        const cls = activeClassRef.current;
+        const when = classWhenRef.current;
+        if (cls === null || when === null) {
+          stuck(`${began}; no class on screen to check in to.${tail}`);
+          return;
+        }
+        if (when === "otherday") {
+          /* T46: the roster on screen is another day's, where check-in
+           * is closed anyway. Leave the booking to the teacher who went
+           * looking at that day. */
+          stuck(`${began}; the class on screen is not today.${tail}`);
+          return;
+        }
+        if (when === "ended") {
+          /* The 8pm case: `defaultClassId` leaves the finished 6:30 on
+           * screen, and attendance at a class that is over must never be
+           * invented. */
+          stuck(`${began}; the class on screen has ended.${tail}`);
+          return;
+        }
+        const where = `${clockTime(cls.startsAt)} ${cls.name}`;
+        const postBook = (waitlist: boolean) =>
+          fetch("/api/book", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              clientId: client.id,
+              classId: cls.classId,
+              classStartsAt: cls.startsAt,
+              ...(waitlist ? { waitlist: true } : {}),
+            }),
+          });
+        /* The capacity count on screen decides first, exactly as it does
+         * for the teacher's "+" tap (tapWalkIn). Since T208 the SERVER
+         * checks the count again, fresh, and queues a booking this
+         * browser thought had room; `waitlisted` on the answer is what
+         * actually happened. The refusal retry below stays as the
+         * fallback for a class Mindbody itself calls full. */
+        let queued = classFullRef.current;
+        let booked = await postBook(queued);
+        let bookBody = await booked.json().catch(() => null);
+        if (!booked.ok && !queued && looksFull(bookBody?.error)) {
+          queued = true;
+          booked = await postBook(true);
+          bookBody = await booked.json().catch(() => null);
+        }
+        noteActor(bookBody);
+        if (!booked.ok || bookBody?.ok !== true) {
+          if (booked.status === 401) {
+            stuck(`${began}; sign in again to book them in.`);
+            return;
+          }
+          stuck(
+            `${began}; booking refused: ${
+              typeof bookBody?.error === "string" && bookBody.error
+                ? bookBody.error
+                : `HTTP ${booked.status}`
+            }`,
+          );
+          return;
+        }
+        if (bookBody.suppressed) {
+          stuck(
+            bookBody.suppressed === "dry-run"
+              ? `${began}; the booking was suppressed by dry run.`
+              : `${began}; the booking was suppressed by the write guard.`,
+          );
+          return;
+        }
+        if (bookBody.waitlisted === true) queued = true;
+        if (queued) {
+          void loadWaitlist(cls.classId);
+          await refreshRoster(cls.classId);
+          saySignup(line(`on the waitlist for ${where}`));
+          return;
+        }
+
+        /* Check in, unless Mindbody signed them in with the booking
+         * itself, which it does for a class already under way (T19).
+         *
+         * T208: a class that starts hours from now is checked in like
+         * any other. T207 booked it and deliberately left the check-in,
+         * which is what Pete met as "it did not sign them in but did
+         * sign them up"; the class on screen is the teacher's choice
+         * either way, and only a class that has ENDED is attendance
+         * that must not be invented. */
+        if (bookBody.signedIn !== true) {
+          const visitId =
+            typeof bookBody.visitId === "number"
+              ? bookBody.visitId
+              : await visitIdFor(cls.classId, client.id);
+          if (visitId === null) {
+            await refreshRoster(cls.classId);
+            stuck(`${began} and booked; check them in from the roster row.`);
+            return;
+          }
+          const inRes = await fetch("/api/checkin", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              visitId,
+              signedIn: true,
+              clientId: client.id,
+            }),
+          });
+          const inBody = await inRes.json().catch(() => null);
+          noteActor(inBody);
+          await refreshRoster(cls.classId);
+          if (!inRes.ok || inBody?.ok !== true) {
+            stuck(
+              `${began} and booked; check-in refused: ${
+                typeof inBody?.error === "string" && inBody.error
+                  ? inBody.error
+                  : `HTTP ${inRes.status}`
+              }`,
+            );
+            return;
+          }
+          if (inBody.suppressed) {
+            /* Booked and not checked in: a person in the tray, not a
+             * line that goes away. */
+            stuck(
+              `${began} and booked into ${where}; the check-in was suppressed.${tail}`,
+            );
+            return;
+          }
+        } else {
+          await refreshRoster(cls.classId);
+        }
+        saySignup(line(`checked in to ${where}`));
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        stuck(`${began}; the booking did not finish: ${why}`);
+      } finally {
+        setSignupBusy((b) => {
+          if (b[requestId] === undefined) return b;
+          const { [requestId]: _drop, ...rest } = b;
+          return rest;
+        });
+      }
+    },
+    [
+      loadWaitlist,
+      looksFull,
+      noteActor,
+      refreshRoster,
+      saySignup,
+      visitIdFor,
+    ],
+  );
+
+  /**
+   * T208: open the duplicate decision for a tray row. The typed email
+   * and phone are NOT in the tray's list (names and a moment only), so
+   * this is the same one read the prefilled form makes, behind the
+   * device session and a signed-in teacher.
+   */
+  const openDuplicate = useCallback(
+    async (row: PendingSignupRow) => {
+      const typedName = `${row.firstName} ${row.lastName}`.trim();
+      let typed = {
+        name: typedName,
+        email: null as string | null,
+        phone: null as string | null,
+      };
+      /* Automatic mode sent the form AS STORED, so that is what the
+       * match was computed from and what the accept sends back. */
+      let form = {
+        firstName: row.firstName,
+        lastName: row.lastName,
+        email: null as string | null,
+      };
+      try {
+        const res = await fetch(
+          `/api/display/signups/${encodeURIComponent(row.requestId)}`,
+        );
+        const body = await res.json().catch(() => null);
+        if (res.ok && body?.form) {
+          typed = {
+            name:
+              `${body.form.firstName ?? ""} ${body.form.lastName ?? ""}`.trim() ||
+              typedName,
+            email:
+              typeof body.form.email === "string" && body.form.email
+                ? body.form.email
+                : null,
+            phone:
+              typeof body.form.phone === "string" && body.form.phone
+                ? body.form.phone
+                : null,
+          };
+          form = {
+            firstName: String(body.form.firstName ?? row.firstName),
+            lastName: String(body.form.lastName ?? row.lastName),
+            email: typed.email,
+          };
+        }
+      } catch {
+        /* The names are enough to decide on; the rest is detail. */
+      }
+      setDuplicateMsg(null);
+      setDuplicatePick({
+        requestId: row.requestId,
+        typed,
+        form,
+        match: signupMatch[row.requestId] ?? null,
+      });
+    },
+    [signupMatch],
+  );
+
+  /**
+   * T208: "Use their existing account". Nobody is created: the route
+   * files the waiver the student signed against the account Mindbody
+   * already has (verified server-side against the match the server
+   * itself found), spends the sign-up, and this browser carries on into
+   * the same booking and check-in every other door ends in.
+   */
+  const useExistingAccount = useCallback(async () => {
+    const pick = duplicatePick;
+    if (pick === null || pick.match === null || duplicateBusy) return;
+    setDuplicateBusy(true);
+    setDuplicateMsg(null);
+    try {
+      const res = await fetch("/api/client-create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          displayRequestId: pick.requestId,
+          useExistingClientId: pick.match.id,
+          /* T208 review: the same form the refused create carried, so
+           * the server recomputes the match from the same words a
+           * teacher may have corrected. */
+          form: pick.form,
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      noteActor(body);
+      if (!res.ok || body?.ok !== true) {
+        /* T210: the sign-in ended under this write (expired, or a token
+         * belonging to another Mindbody site). The fetch wrapper has
+         * dropped the teacher and the gate is on its way; this dialog
+         * goes with it rather than holding a sentence behind it. */
+        if (res.status === 401 && body?.reason === "staff") {
+          setDuplicatePick(null);
+          return;
+        }
+        setDuplicateMsg(
+          typeof body?.error === "string" && body.error
+            ? body.error
+            : `Mindbody did not accept it (HTTP ${res.status}).`,
+        );
+        return;
+      }
+      const client = body.client as SearchResult | null;
+      setDuplicatePick(null);
+      setSignupRefresh((n) => n + 1);
+      setFoundSignups((rows) => rows.filter((r) => r.requestId !== pick.requestId));
+      setSignupWhy((w) => {
+        const { [pick.requestId]: _drop, ...rest } = w;
+        return rest;
+      });
+      if (!client || typeof client.id !== "string") return;
+      await bookAndCheckIn({
+        requestId: pick.requestId,
+        client: { id: client.id, name: client.name },
+        who: client.name,
+        tail: signupCaveats(body),
+        existing: true,
+      });
+    } catch (err) {
+      setDuplicateMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDuplicateBusy(false);
+    }
+  }, [bookAndCheckIn, duplicateBusy, duplicatePick, noteActor]);
+
+  const runSignup = useCallback(
+    async (row: PendingSignupRow) => {
+      const id = row.requestId;
+      /* The one client-side lock, and it is only against this browser
+       * firing twice (the poll and the stream event arriving together).
+       * `tried` makes it ONE attempt per id: a refusal must not be
+       * re-asked of Mindbody every thirty seconds. */
+      if (signupRunning.current.has(id) || signupTried.current.has(id)) return;
+      signupRunning.current.add(id);
+      signupTried.current.add(id);
+      const who = `${row.firstName} ${row.lastName}`.trim() || "The new client";
+      const stay = (reason: string) =>
+        setSignupWhy((w) => ({ ...w, [id]: reason }));
+      /* A 401 is the T50 gate taking over: the teacher's session went
+       * while this ran. Nothing was written, nothing is said here, and
+       * the attempt is given back so a fresh sign-in picks it up. */
+      const retryLater = () => signupTried.current.delete(id);
+      /* T208: the row says what is happening to it while it happens.
+       * "Creating and booking..." when the class on screen is full,
+       * because a waiting list is not a check-in. */
+      setSignupBusy((b) => ({
+        ...b,
+        [id]: {
+          label: classFullRef.current
+            ? "Creating and booking..."
+            : "Creating and checking in...",
+          name: who,
+        },
+      }));
+      /* The client the create made, hoisted out of the try so the catch
+       * below can tell "nothing was created" from "created, and what
+       * came after it threw". By the time the create has answered the
+       * sign-up is SPENT, so the tray has no row of its own left to
+       * carry a reason and `stay` would say it to nobody: a dropped
+       * connection between the create and the booking has to leave a
+       * stuck row or the person is lost in silence. */
+      let created: { id: string; name: string } | null = null;
+      try {
+        /* 1. The form AS STORED. In this mode nobody corrects it: the
+         * teacher was never asked, so the body is the server's own
+         * record of what the student typed. */
+        const res = await fetch(
+          `/api/display/signups/${encodeURIComponent(id)}`,
+        );
+        const held = await res.json().catch(() => null);
+        if (!res.ok || typeof held?.requestId !== "string") {
+          if (res.status === 401) retryLater();
+          /* T208: 404 is a sign-up the server no longer has. It used to
+           * be left alone "because it is already gone from the tray",
+           * and Pete's drive found the tray listing one of these for
+           * hours with no way to clear it. Spend the handle so the row
+           * goes and stays gone. */
+          else if (res.status === 404) void dropSignup(id);
+          return;
+        }
+        const form = held.form ?? {};
+
+        /* 2. The create, with the handle. Consent and signature come
+         * from the server's store inside the route; this body carries
+         * the form and the id, exactly as the modal's Create does. */
+        const made = await fetch("/api/client-create", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            firstName: String(form.firstName ?? ""),
+            lastName: String(form.lastName ?? ""),
+            email: typeof form.email === "string" && form.email ? form.email : null,
+            phone: typeof form.phone === "string" && form.phone ? form.phone : null,
+            ...(typeof form.birthDate === "string" && form.birthDate
+              ? { birthDate: form.birthDate }
+              : {}),
+            sendAccountEmails: held.consent?.email === true,
+            sendPromotionalEmails: held.consent?.email === true,
+            displayRequestId: id,
+          }),
+        });
+        const body = await made.json().catch(() => null);
+        noteActor(body);
+        if (!made.ok || body?.ok !== true) {
+          /* The other iPad got there first: the server's own
+           * beginFinalisation claim refused this one. Silence is the
+           * whole point -- one create, one teacher told. */
+          if (body?.inFlight === true) return;
+          if (made.status === 401) {
+            retryLater();
+            return;
+          }
+          if (body?.duplicate === true) {
+            /* T208: the refusal names WHO, when the search could, and
+             * the row's tap opens the decision rather than the form
+             * Mindbody has just refused. */
+            const match: DuplicateMatch | null =
+              body.match && typeof body.match.id === "string"
+                ? {
+                    id: String(body.match.id),
+                    firstName: String(body.match.firstName ?? ""),
+                    lastName: String(body.match.lastName ?? ""),
+                    email:
+                      typeof body.match.email === "string" && body.match.email
+                        ? body.match.email
+                        : null,
+                    phone:
+                      typeof body.match.phone === "string" && body.match.phone
+                        ? body.match.phone
+                        : null,
+                  }
+                : null;
+            setSignupMatch((m) => ({ ...m, [id]: match }));
+            stay(
+              match === null
+                ? "Mindbody says they already have an account"
+                : `May already have an account: ${`${match.firstName} ${match.lastName}`.trim()}`,
+            );
+            return;
+          }
+          if (
+            made.status === 409 &&
+            typeof body?.error === "string" &&
+            body.error.startsWith("That sign-up is no longer waiting")
+          ) {
+            /* T208: the server has nothing to finish. Leaving the row
+             * was the bug Pete could not clear. */
+            void dropSignup(id);
+            return;
+          }
+          stay(
+            typeof body?.error === "string" && body.error
+              ? body.error
+              : `Mindbody refused the create (HTTP ${made.status}).`,
+          );
+          return;
+        }
+        if (body.suppressed) {
+          /* Nothing was created, so the sign-up is still waiting on the
+           * server and the tray keeps it. */
+          stay(
+            body.suppressed === "dry-run"
+              ? "Not created: dry run is on, so nothing was sent to Mindbody."
+              : "Not created: the write guard allows only the listed test clients.",
+          );
+          return;
+        }
+        const client = body.client as SearchResult | null;
+        if (!client || typeof client.id !== "string") {
+          stay("Mindbody answered without a client. Search for the name.");
+          return;
+        }
+        /* T208 review: the tray is NOT nudged here. The create has
+         * spent the handle and the server's own `signups` event already
+         * says so; asking for a fresh list now only races the spinner
+         * off the screen before the booking is done. The nudge is in
+         * the `finally`, when the run has an outcome. */
+        setFoundSignups((rows) => rows.filter((r) => r.requestId !== id));
+        /* The waiver half is the route's, and its failures are the ones
+         * a teacher has to hear about: the same two sentences the
+         * modal's Create shows, in the outcome line. */
+        const tail = signupCaveats(body);
+        /* From here the client EXISTS. Anything that fails now leaves a
+         * row that must never offer Create again. */
+        created = { id: client.id, name: client.name };
+        await bookAndCheckIn({
+          requestId: id,
+          client: created,
+          who,
+          tail,
+        });
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        const made = created;
+        if (made === null) {
+          stay(why);
+        } else {
+          setSignupStuck((rows) => [
+            ...rows.filter((r) => r.requestId !== id),
+            {
+              requestId: id,
+              name: made.name,
+              reason: `created; the booking did not finish: ${why}`,
+              clientId: made.id,
+            },
+          ]);
+        }
+      } finally {
+        signupRunning.current.delete(id);
+        /* The spinner comes off HERE and nowhere else, so it covers the
+         * create, the booking and the check-in rather than the create
+         * alone, and the tray is asked for a fresh list in the same
+         * breath. */
+        setSignupBusy((b) => {
+          if (b[id] === undefined) return b;
+          const { [id]: _drop, ...rest } = b;
+          return rest;
+        });
+        setSignupRefresh((n) => n + 1);
+      }
+    },
+    [bookAndCheckIn, dropSignup, noteActor],
+  );
+
+  /** Automatic until the config says otherwise, and nothing runs until
+   *  the config has answered at all: a sign-up that waits one poll is
+   *  better than one created under a rule this browser has not read. */
+  const signupAutomatic = config === null ? null : config.signupMode !== "review";
+
+  /**
+   * T208: what review mode's Create tap will actually DO, on the button
+   * itself. The same three answers `bookAndCheckIn` acts on, read from
+   * the class on screen at the moment the form is open: a class at the
+   * door is a check-in, a full one is the waiting list, and no class
+   * (or one that has ended, or another day's) is a create and nothing
+   * more.
+   */
+  const signupCreateLabel =
+    classWhenRef.current === null || classWhenRef.current !== "now"
+      ? "Create"
+      : classFull
+        ? "Create and add to waiting list"
+        : "Create and check in";
+
+  /**
+   * Review fix: the per-tab memory is bounded by the tray, not by the
+   * day. An id that is neither waiting on the server nor stuck on this
+   * screen is finished business: the sign-up was consumed, and a
+   * consumed request never comes back, so forgetting it cannot make
+   * this tab run it twice. A row still RUNNING is kept whatever the
+   * list says.
+   */
+  useEffect(() => {
+    const live = new Set<string>([
+      ...signupRows.map((r) => r.requestId),
+      ...signupStuck.map((r) => r.requestId),
+    ]);
+    for (const id of [...signupTried.current]) {
+      if (!live.has(id) && !signupRunning.current.has(id)) {
+        signupTried.current.delete(id);
+      }
+    }
+    setSignupWhy((why) => {
+      const keep = Object.keys(why).filter((id) => live.has(id));
+      if (keep.length === Object.keys(why).length) return why;
+      const next: Record<string, string> = {};
+      for (const id of keep) next[id] = why[id] as string;
+      return next;
+    });
+    /* T208 review: the in-progress labels are NOT pruned here. A run
+     * spends the sign-up half way through (the create), so the row
+     * leaves this list while the booking and the check-in are still
+     * going, and a broom over `live` would take the spinner with it --
+     * the exact gap Pete asked to have filled. `runSignup`'s own
+     * `finally` clears the label, on every path, which is what bounds
+     * it. */
+    setSignupMatch((matched) => {
+      const keep = Object.keys(matched).filter((id) => live.has(id));
+      if (keep.length === Object.keys(matched).length) return matched;
+      const next: Record<string, DuplicateMatch | null> = {};
+      for (const id of keep) next[id] = matched[id] ?? null;
+      return next;
+    });
+  }, [signupRows, signupStuck]);
+
+  /**
+   * Review fix: ONE at a time, and across effect runs, not just within
+   * one. Three sign-ups collected while the iPad slept arrive as one
+   * list, and firing them together would have all three read the same
+   * capacity count and book against one seat. The chain also keeps a
+   * second delivery of the same list (the poll landing on the event's
+   * heels) from starting a row the first pass has not reached yet.
+   * `runSignup` never throws, and the catch is belt and braces so one
+   * bad run cannot stop the chain for the rest of the day.
+   */
+  useEffect(() => {
+    if (signupAutomatic !== true) return;
+    /* T208: a row waiting its turn in the chain is as much "in
+     * progress" as the one running, so the spinner goes on here, where
+     * the queue is, and comes off in `runSignup`'s finally. Rows this
+     * tab has already tried keep whatever reason they earned. */
+    const rows = signupRows.filter((r) => !signupTried.current.has(r.requestId));
+    if (rows.length === 0) return;
+    const label = classFullRef.current
+      ? "Creating and booking..."
+      : "Creating and checking in...";
+    setSignupBusy((b) => {
+      const next = { ...b };
+      for (const row of rows) {
+        next[row.requestId] ??= {
+          label,
+          name: `${row.firstName} ${row.lastName}`.trim() || "The new client",
+        };
+      }
+      return next;
+    });
+    signupChain.current = signupChain.current
+      .catch(() => undefined)
+      .then(async () => {
+        for (const row of rows) await runSignup(row);
+      });
+  }, [signupAutomatic, signupRows, runSignup]);
+
   /**
    * Record the student's agreement (T18). Only reachable from the reading
    * state's confirm, which is disabled until the text has been scrolled
@@ -4214,9 +5504,17 @@ function FrontDesk({
    * pass, and the single-flight booking lock all still applying (T19).
    * The next roster load confirms from Mindbody.
    */
-  const agreeWaiver = useCallback(async () => {
+  const agreeWaiver = useCallback(async (displayRequestId?: string) => {
     const subject = waiverPrompt;
-    if (!subject || !waiverText || !waiverScrolled || waiverSaving) return;
+    if (!subject || waiverSaving) return;
+    /* T202: two ways in. The counter's own confirm needs the text read
+     * on THIS screen, exactly as it always did. A signature collected on
+     * the customer display needs no text here at all: the student read
+     * the server's own copy on the other screen, and the server holds
+     * the hash of what it served. */
+    if (displayRequestId === undefined && (!waiverText || !waiverScrolled)) {
+      return;
+    }
     const person =
       subject.source === "roster"
         ? {
@@ -4247,11 +5545,33 @@ function FrontDesk({
            * A stale value loses at most a concurrent edit from another
            * surface; the roster refetches notes on every load. */
           notes: person.notes,
-          textSha256: waiverText.sha256,
+          /* T202: with a display request the SERVER takes the hash from
+           * its own record of what the student was shown; the browser's
+           * copy is not part of that path. */
+          ...(displayRequestId === undefined
+            ? { textSha256: waiverText?.sha256 }
+            : { displayRequestId }),
         }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      if (!res.ok) {
+        /* T202 review: a duplicate finalisation is not an error a
+         * teacher should see. The `completed` event can arrive twice
+         * (an SSE reconnect replays the buffer) and the dialog's own
+         * pending check can name the same signature; the server lets
+         * exactly one through and answers 409 for the rest. The one
+         * that won did the writing, so this one says nothing louder
+         * than a quiet line. */
+        if (displayRequestId !== undefined && res.status === 409) {
+          setWaiverDisplayNote(
+            body?.inFlight === true
+              ? "Recording the signature."
+              : String(body?.error ?? "That signature is no longer waiting."),
+          );
+          return;
+        }
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
       noteActor(body);
       if (body.suppressed) {
         setWaiverMsg(
@@ -4265,12 +5585,25 @@ function FrontDesk({
         body.receiptNoted && typeof body.notes === "string"
           ? body.notes.trim() || null
           : person.notes;
-      setWaiverReceiptWarn(
-        body.receiptNoted
-          ? null
-          : `Waiver recorded for ${person.name}, but the receipt note did not save` +
-              `${body.receiptReason ? ` (${body.receiptReason})` : ""}. The agreement stands; the server log holds the receipt.`,
-      );
+      setWaiverOnDisplay(null);
+      /* Two bookkeeping copies can fail without touching the agreement:
+       * the Notes append (T18) and, since T202, the signature's copy to
+       * Mindbody's documents. Both are said the same quiet way, because
+       * both leave the release real and the record held here. */
+      const warnings: string[] = [];
+      if (!body.receiptNoted) {
+        warnings.push(
+          `Waiver recorded for ${person.name}, but the receipt note did not save` +
+            `${body.receiptReason ? ` (${body.receiptReason})` : ""}. The agreement stands; the server log holds the receipt.`,
+        );
+      }
+      if (body.signed === true && body.documentFiled === false) {
+        warnings.push(
+          `The signature was not filed on their Mindbody documents` +
+            `${body.documentReason ? ` (${body.documentReason})` : ""}. The agreement stands; the signature is kept here.`,
+        );
+      }
+      setWaiverReceiptWarn(warnings.length === 0 ? null : warnings.join(" "));
       /* The roster updates for both flows: a walk-in who somehow already
        * has a roster row (booked from another surface mid-search) must
        * not keep a stale block on that row. */
@@ -4281,6 +5614,14 @@ function FrontDesk({
             : r,
         ),
       );
+      /* T211 review: an override armed for this person is for a person
+       * with NO waiver. Now they have one, so the authorization is
+       * dropped rather than left to attach itself to their next tap and
+       * file "without a signed waiver" on somebody who signed. */
+      if (waiverOverrideRef.current?.clientId === person.id) {
+        waiverOverrideRef.current = null;
+        setWaiverOverrideArmed(null);
+      }
       if (subject.source === "walkin") {
         setFound((rows) =>
           rows.map((r) =>
@@ -4337,6 +5678,276 @@ function FrontDesk({
     tapWalkIn,
     tapPromote,
   ]);
+
+  /**
+   * T211: the teacher's override, armed.
+   *
+   * Pete: "a teacher should be able to override with their PIN and must
+   * give a reason." The PIN pad has just checked both with
+   * /api/teacher/verify (purpose `waiver`), so what arrives here is a
+   * one-shot token naming the teacher and their words. It is held for
+   * the ONE write the dialog was standing in front of, and that write
+   * is reached by the SAME continuation a recorded agreement takes, so
+   * every other gate -- the unpaid confirm, the full-class waiting
+   * list, the guest sheet -- is still ahead of it.
+   *
+   * The person is passed to that continuation with `waiverSigned: true`
+   * on the LOCAL copy only, which is what lets this one tap past the
+   * gate. Nothing writes it back to `entries`, `found` or `waitlist`:
+   * the override does not sign anybody's waiver, the roster still shows
+   * them unsigned, and the next tap opens this dialog again.
+   */
+  const armWaiverOverride = useCallback(
+    (armed: WaiverOverrideArmed) => {
+      const subject = waiverPrompt;
+      if (subject === null) return;
+      const clientId =
+        subject.source === "roster"
+          ? subject.entry.clientId
+          : subject.source === "walkin" || subject.source === "guest"
+            ? subject.client.id
+            : subject.row.clientId;
+      waiverOverrideRef.current = {
+        clientId,
+        token: armed.token,
+        reason: armed.reason,
+      };
+      setWaiverOverrideArmed({ clientId, teacher: armed.teacher.name });
+      setWaiverOverridePad(false);
+      closeWaiverDialog();
+      if (subject.source === "roster") {
+        tapCheckIn({ ...subject.entry, waiverSigned: true });
+      } else if (subject.source === "walkin") {
+        tapWalkIn({ ...subject.client, waiverSigned: true });
+      } else if (subject.source === "guest") {
+        /* T59c's sheet, with the same person selected. Nothing is
+         * written until its confirm, which is where the override goes. */
+        setGuestPick({ person: subject.client, standing: subject.standing });
+      } else {
+        tapPromote({ ...subject.row, waiverSigned: true });
+      }
+    },
+    [waiverPrompt, closeWaiverDialog, tapCheckIn, tapWalkIn, tapPromote],
+  );
+
+  /** Which gated flow the open dialog is about, for the override
+   *  control's verb and the record's wording. */
+  const waiverFlow: WaiverFlow =
+    waiverPrompt === null
+      ? "checkin"
+      : waiverPrompt.source === "walkin"
+        ? "walkin"
+        : waiverPrompt.source === "promote"
+          ? "promote"
+          : waiverPrompt.source === "guest"
+            ? "guest"
+            : "checkin";
+
+  /* T202: the customer display's half of the waiver, all of it here so
+   * the rules sit together. Nothing in this block calls Mindbody: it
+   * POSTs /api/display/present and /api/display/cancel, listens on
+   * /api/display/events, and finalises through the SAME
+   * /api/waiver-agree the counter confirm uses. */
+
+  /** The client the open dialog is about, whichever flow opened it. */
+  const waiverClientId =
+    waiverPrompt === null
+      ? null
+      : waiverPrompt.source === "roster"
+        ? waiverPrompt.entry.clientId
+        : waiverPrompt.source === "walkin" || waiverPrompt.source === "guest"
+          ? waiverPrompt.client.id
+          : waiverPrompt.row.clientId;
+
+  /* The handlers below run from an SSE listener that is mounted once, so
+   * they read the LATEST callback through a ref rather than closing over
+   * the one that existed when the stream opened. */
+  const agreeWaiverRef = useRef(agreeWaiver);
+  const waiverClientRef = useRef(waiverClientId);
+  /** T205 review: the wait's request id, for the stream's `refused`. */
+  const waiverOnDisplayRef = useRef(waiverOnDisplay);
+  useEffect(() => {
+    waiverOnDisplayRef.current = waiverOnDisplay;
+  }, [waiverOnDisplay]);
+  useEffect(() => {
+    agreeWaiverRef.current = agreeWaiver;
+    waiverClientRef.current = waiverClientId;
+  });
+
+  /** Put the waiver on the customer screen. The browser sends the client
+   *  id and nothing else that matters: the server fetches its own copy
+   *  of the text, looks the first name up itself, and keeps the client
+   *  id and the text's hash where the display cannot see them. */
+  const sendWaiverToDisplay = useCallback(async () => {
+    if (waiverClientId === null || waiverSaving || waiverOnDisplay !== null) {
+      return;
+    }
+    setWaiverDisplayNote(null);
+    try {
+      const res = await fetch("/api/display/present", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "waiver", clientId: waiverClientId }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || typeof body?.requestId !== "string") {
+        /* T204: a student is signing themselves up on that screen. The
+         * design's choice, minus the sale's third way out (there is no
+         * money here): wait, or take it over. */
+        if (body?.holdingSignup === true) {
+          setWaiverDisplayBusy(true);
+          setWaiverDisplayNote(
+            "Someone is signing up on the customer screen. Wait for them, or take the screen over.",
+          );
+          return;
+        }
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      setWaiverDisplayBusy(false);
+      setWaiverOnDisplay({ requestId: body.requestId });
+    } catch (err) {
+      /* Said in the dialog, because the teacher DID ask for this: the
+       * counter confirm beside it is still the way through. */
+      setWaiverDisplayNote(
+        `The customer screen could not be used (${err instanceof Error ? err.message : String(err)}). Read it here instead.`,
+      );
+    }
+  }, [waiverClientId, waiverSaving, waiverOnDisplay]);
+
+  /** Take it back down without recording anything. */
+  const cancelWaiverOnDisplay = useCallback(async () => {
+    if (waiverSaving) return;
+    setWaiverOnDisplay(null);
+    setWaiverDisplayNote(null);
+    try {
+      await fetch("/api/display/cancel", { method: "POST" });
+    } catch {
+      /* The hub expires it either way. */
+    }
+  }, [waiverSaving]);
+
+  /** A signature is waiting: record it, with no tap from the teacher. */
+  /** T202 review: request ids this browser has already sent to
+   *  /api/waiver-agree. The `completed` event replays on an SSE
+   *  reconnect and the dialog's pending check asks on open, so the same
+   *  signature can be named twice within a second; the server refuses
+   *  the second, and this stops it being sent at all. */
+  const finalisedRef = useRef<Set<string>>(new Set());
+  const finaliseWaiverFromDisplay = useCallback((requestId: string) => {
+    if (finalisedRef.current.has(requestId)) return;
+    finalisedRef.current.add(requestId);
+    setWaiverOnDisplay({ requestId });
+    setWaiverDisplayNote("Signed on the customer screen, recording it now.");
+    void agreeWaiverRef.current(requestId);
+  }, []);
+  const finaliseRef = useRef(finaliseWaiverFromDisplay);
+  useEffect(() => {
+    finaliseRef.current = finaliseWaiverFromDisplay;
+  });
+
+  /* Whether a display is paired AND connected, which is the only thing
+   * that puts the button on the dialog. Two sources, like the header's
+   * mark: the events stream for immediacy, a 30 second poll for when the
+   * stream is refused or dropped. */
+  useEffect(() => {
+    const read = () => {
+      fetch("/api/admin/display")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body) => {
+          if (!body) return;
+          setDisplayLive(body.paired === true && body.connected === true);
+        })
+        .catch(() => undefined);
+    };
+    read();
+    const timer = setInterval(read, 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  /* The stream: `completed` finalises with no tap (the design's whole
+   * point), `refused` puts the dialog back as it was with one quiet
+   * line. A `completed` for a client whose dialog is no longer open is
+   * left alone: the result waits in the hub for 30 minutes and the
+   * pending check below picks it up when the dialog reopens. */
+  useEffect(() => {
+    let source: EventSource | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+    const open = () => {
+      if (stopped) return;
+      try {
+        source = new EventSource("/api/display/events");
+      } catch {
+        return;
+      }
+      const parse = (ev: MessageEvent): Record<string, unknown> | null => {
+        try {
+          const data: unknown = JSON.parse(ev.data);
+          return data && typeof data === "object"
+            ? (data as Record<string, unknown>)
+            : null;
+        } catch {
+          return null;
+        }
+      };
+      source.addEventListener("connected", () => setDisplayLive(true));
+      source.addEventListener("disconnected", () => setDisplayLive(false));
+      source.addEventListener("completed", (ev) => {
+        const data = parse(ev as MessageEvent);
+        if (data?.kind !== "waiver") return;
+        if (typeof data.requestId !== "string") return;
+        if (waiverClientRef.current === null) return;
+        finaliseRef.current(data.requestId);
+      });
+      source.addEventListener("refused", (ev) => {
+        const data = parse(ev as MessageEvent);
+        if (data?.kind !== "waiver") return;
+        /* T205 review: BY REQUEST ID. A stream that reopens (the 15s
+         * retry below) is replayed the hub's recent events, and an
+         * earlier waiver's refusal must not close this wait. */
+        const waiting = waiverOnDisplayRef.current;
+        if (waiting === null || data.requestId !== waiting.requestId) return;
+        setWaiverOnDisplay(null);
+        setWaiverDisplayNote("Customer tapped Not now.");
+      });
+      source.addEventListener("error", () => {
+        source?.close();
+        source = null;
+        if (!stopped && retry === null) {
+          retry = setTimeout(() => {
+            retry = null;
+            open();
+          }, 15_000);
+        }
+      });
+    };
+    open();
+    return () => {
+      stopped = true;
+      if (retry !== null) clearTimeout(retry);
+      source?.close();
+    };
+  }, []);
+
+  /* The iPad was asleep, or the tab reloaded, and the `completed` event
+   * went by unheard. Asked once when the dialog opens for someone: is
+   * there a signature waiting for THIS client? */
+  useEffect(() => {
+    if (waiverClientId === null) return;
+    let stopped = false;
+    fetch(`/api/display/pending?clientId=${encodeURIComponent(waiverClientId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (stopped || !body?.pending || typeof body.requestId !== "string") {
+          return;
+        }
+        finaliseRef.current(body.requestId);
+      })
+      .catch(() => undefined);
+    return () => {
+      stopped = true;
+    };
+  }, [waiverClientId]);
 
   /** The waiver dialog's subject, flattened for its rendering. */
   const waiverName =
@@ -4463,6 +6074,12 @@ function FrontDesk({
     ) => {
       const flow = guestFlow;
       noteActor(answer);
+      /* T211: the guest's check-in either went or it did not; either
+       * way this override has been presented and must not be held for
+       * another write. The server released it if the write was
+       * suppressed; the browser drops it here regardless. */
+      takeWaiverOverride(pick.person.id);
+      noteWaiverOverride(answer, pick.person.name);
       if (answer.reason === "staff") {
         /* The sign-in ended under the write: the gate is coming back
          * and the modal has nothing left to say. */
@@ -4487,7 +6104,15 @@ function FrontDesk({
         refetchPassList(pick.person.id);
       }
     },
-    [guestFlow, noteActor, closeGuestFlow, refreshClientState, refetchPassList],
+    [
+      guestFlow,
+      noteActor,
+      closeGuestFlow,
+      refreshClientState,
+      refetchPassList,
+      takeWaiverOverride,
+      noteWaiverOverride,
+    ],
   );
 
   /**
@@ -4691,7 +6316,14 @@ function FrontDesk({
    * roster refresh at the end is what shows the row paid and checked
    * in, and it drops itself if the teacher has somehow moved on.
    */
-  const runPayAndCheckIn = async () => {
+  const runPayAndCheckIn = async (approved?: {
+    /* T209: the display approval this charge is riding on, or the PIN
+     * token that stood in for it. Exactly one, and only when the studio
+     * asks the customer to approve; /api/checkout ignores both when the
+     * setting is off, so a stale dialog cannot refuse a sale. */
+    id?: string;
+    token?: string;
+  }) => {
     if (payFlight.current || !payChargeable) return;
     if (!payDialog || !paySelected || payMethod === null) return;
     const { entry, classId, flavor } = payDialog;
@@ -4731,6 +6363,13 @@ function FrontDesk({
               },
             ],
             clientId: entry.clientId,
+            /* T209: the customer's approval, or the PIN that stood in
+               for it. The server checks the setting itself and refuses
+               a charge that carries neither. */
+            ...(approved?.id ? { displayApprovalId: approved.id } : {}),
+            ...(approved?.token
+              ? { approvalOverride: { token: approved.token } }
+              : {}),
             method: payMethod,
           }),
         });
@@ -4794,8 +6433,8 @@ function FrontDesk({
               (chargeBody?.ambiguous === true
                 ? ""
                 : flavor === "renewal"
-                  ? " Sell the pack in Buy, on account balance."
-                  : " Sell the pass in Buy, on account balance, then attach " +
+                  ? " Sell the pack in Cart, on account balance."
+                  : " Sell the pass in Cart, on account balance, then attach " +
                     "and check in from the row."),
             mindbody: String(chargeBody?.error ?? "no reason returned"),
           });
@@ -4949,8 +6588,13 @@ function FrontDesk({
         return;
       }
 
-      /* Stage (c): the check-in itself, the same write the chip makes. */
+      /* Stage (c): the check-in itself, the same write the chip makes.
+       * T211: and it carries the teacher's waiver override when one was
+       * armed, because an unpaid no-waiver row meets the waiver dialog
+       * first and the PAY dialog second: this is where that check-in
+       * actually happens. */
       setPayStage("checkin");
+      const cOverride = takeWaiverOverride(entry.clientId);
       try {
         const cr = await fetch("/api/checkin", {
           method: "POST",
@@ -4959,11 +6603,13 @@ function FrontDesk({
             visitId: entry.visitId,
             signedIn: true,
             clientId: entry.clientId,
+            ...(cOverride ? { waiverOverride: cOverride } : {}),
           }),
         });
         const cBody = await cr.json();
         if (!cr.ok) throw new Error(cBody?.error ?? `HTTP ${cr.status}`);
         noteActor(cBody, entry.clientId);
+        if (cOverride) noteWaiverOverride(cBody, entry.name);
       } catch {
         /* Paid and attached; the row is now a normal paid row, and its
          * ordinary check-in tap finishes the job. */
@@ -5054,7 +6700,15 @@ function FrontDesk({
     setPendingCheckIn(pending);
     setPendingResult(null);
     /* Closed inline, as the finished gesture is: closePayDialog reads
-     * payStage from a stale closure. */
+     * payStage from a stale closure. T209 review: the approval goes with
+     * it, exactly as closePayDialog takes it. This offer can appear
+     * WHILE an approval is outstanding (the tender flips to "nothing to
+     * charge with" when the selection changes mid-wait, and the Charge
+     * control becomes this one), and without this the student is left
+     * holding an approve ticket for a charge nobody is making -- one the
+     * Cart screen's own live mirror cannot even replace, because
+     * presentRequest only replaces a LIVE ticket in place. */
+    cancelPayApproval();
     payGen.current += 1;
     payPriceGen.current += 1;
     setPayDialog(null);
@@ -5193,7 +6847,10 @@ function FrontDesk({
         await refreshRoster(pending.classId);
         return;
       }
-      /* Stage (c): the sign-in, the same write the chip makes. */
+      /* Stage (c): the sign-in, the same write the chip makes. T211:
+       * carrying the teacher's waiver override when one was armed, for
+       * the same reason as the dialog above. */
+      const cOverride = takeWaiverOverride(pending.clientId);
       try {
         const cr = await fetch("/api/checkin", {
           method: "POST",
@@ -5202,11 +6859,13 @@ function FrontDesk({
             visitId: pending.visitId,
             signedIn: true,
             clientId: pending.clientId,
+            ...(cOverride ? { waiverOverride: cOverride } : {}),
           }),
         });
         const cBody = await cr.json();
         if (!cr.ok) throw new Error(cBody?.error ?? `HTTP ${cr.status}`);
         noteActor(cBody, pending.clientId);
+        if (cOverride) noteWaiverOverride(cBody, pending.clientName);
       } catch (err) {
         const line =
           `Paid, but the check-in failed: the pass is on the visit and ` +
@@ -5410,8 +7069,12 @@ function FrontDesk({
     },
     {
       key: "buy",
-      label: "Buy",
-      icon: <BuyIcon />,
+      /* T206, Pete: 'we should change the "Buy" button to "Cart" and any
+         references to that screen should be named Cart, not Buy.' The
+         key, the URL and saleMode are untouched; the WORD is what
+         changed. */
+      label: "Cart",
+      icon: <CartIcon />,
       on: saleOpen && saleMode === "shelf",
       why: leaveWhy,
       onTap: () => openSale("shelf"),
@@ -5480,6 +7143,40 @@ function FrontDesk({
           surface, accent rail, no fill colour) so it cannot crowd out or be
           mistaken for the dry-run/live line above it. */}
       {config?.banner ? <p className="studio-banner">{config.banner}</p> : null}
+
+      {/* T200: the customer display, when there is one. Absent until a
+          teacher pairs one, which is every counter today. */}
+      <DisplayMark />
+
+      {/* T204: the self-serve sign-ups waiting for a teacher. Absent
+          when there are none, which is most of the day. */}
+      <SignupTray
+        refreshKey={signupRefresh}
+        onPick={(row) => {
+          /* T208: a duplicate's tap is the DECISION, not the form
+             Mindbody just refused. Everything else opens the prefilled
+             form, as it always did. */
+          if (signupMatch[row.requestId] !== undefined) {
+            openDuplicate(row);
+            return;
+          }
+          void openSignup(row.requestId);
+        }}
+        onRows={setSignupRows}
+        reasons={signupWhy}
+        busy={signupBusy}
+        mode={signupAutomatic === false ? "review" : "automatic"}
+        stuck={signupStuck}
+        outcomes={signupSaid}
+        /* T207: the client exists, so this tap is their PROFILE and
+           never the create form again. */
+        onStuckPick={(row) => openProfile(row.clientId, row.name)}
+        onStuckClear={(requestId) =>
+          setSignupStuck((rows) =>
+            rows.filter((r) => r.requestId !== requestId),
+          )
+        }
+      />
 
       {error ? <p className="note">{error}</p> : null}
 
@@ -6293,8 +7990,8 @@ function FrontDesk({
                         balance: entry.balance,
                       });
                     }}
-                    aria-label={`Buy for ${entry.name}`}
-                    title={`Buy for ${entry.name}`}
+                    aria-label={`Cart for ${entry.name}`}
+                    title={`Cart for ${entry.name}`}
                   >
                     <SellIcon />
                   </button>
@@ -6337,6 +8034,59 @@ function FrontDesk({
           );
         })}
 
+        {/* T208, Pete's sidenote on his second drive: "waitlisted
+            clients should be at the bottom in a separated list." They
+            were not in the roster at all -- their only home was the
+            waitlist counter's modal, which is a tap away and out of
+            sight -- so a teacher looking at the screen could not see
+            who was waiting. They are the last rows of the list now,
+            under their own heading drawn with the same rule the column
+            heads use, and the tap is the same promote it always was
+            (the waiver gate included). The counter's modal is still
+            there: this is a second door onto one list, not a copy of
+            it.
+
+            The list is only READ for a full class, which is the rule
+            the counter has always had (a class with room cannot have a
+            queue, so the metered call never fires for one), so an empty
+            or unread list draws nothing here. */}
+        {waitlist !== null && waitlist.length > 0 ? (
+          <li className="roster-section">Waiting list ({waitlist.length})</li>
+        ) : null}
+        {waitlist !== null && waitlist.length > 0
+          ? waitlist.map((row) => {
+              const working = promoting.includes(row.entryId);
+              const msg = promoteMsg[row.entryId];
+              return (
+                <li key={`wl-${row.entryId}`} className="roster-wl">
+                  <button
+                    className="row"
+                    disabled={working}
+                    onClick={() => tapPromote(row)}
+                  >
+                    <span className="name">
+                      {row.name}
+                      <span className="detail">
+                        {working
+                          ? "Talking to Mindbody..."
+                          : (msg ??
+                            (row.requestedAt
+                              ? `Waiting since ${clockTime(row.requestedAt)}`
+                              : "On the waiting list"))}
+                      </span>
+                    </span>
+                    <span className={working ? "chip busy" : "chip action"}>
+                      {working ? (
+                        <span className="spinner" aria-label="working" />
+                      ) : (
+                        "promote"
+                      )}
+                    </span>
+                  </button>
+                </li>
+              );
+            })
+          : null}
       </ul>
 
       {/* Search results, in their own modal (T16): opened by a submitted
@@ -6388,6 +8138,19 @@ function FrontDesk({
             setNewClient({ first, last, for: "guest" })
           }
           layerAbove={waiverPrompt !== null || newClient !== null}
+          /* T211: the override, only when it was armed for the guest
+             who is actually selected. */
+          waiverOverride={
+            waiverOverrideArmed !== null &&
+            guestPick !== null &&
+            waiverOverrideArmed.clientId === guestPick.person.id &&
+            waiverOverrideRef.current !== null
+              ? {
+                  token: waiverOverrideRef.current.token,
+                  reason: waiverOverrideRef.current.reason,
+                }
+              : null
+          }
           suppressionReason={
             config?.dryRun
               ? "Dry run is on: nothing is sent to Mindbody."
@@ -6406,14 +8169,121 @@ function FrontDesk({
           }}
         />
       ) : null}
+      {/* T208: the duplicate decision, over the tray. Two people side by
+          side and two 64px ways out; nothing here writes until one is
+          tapped. */}
+      {duplicatePick ? (
+        <DuplicateModal
+          typed={duplicatePick.typed}
+          match={duplicatePick.match}
+          busy={duplicateBusy}
+          error={duplicateMsg}
+          onUseExisting={() => void useExistingAccount()}
+          onCreateAnyway={() => {
+            const id = duplicatePick.requestId;
+            setDuplicatePick(null);
+            void openSignup(
+              id,
+              "Mindbody refuses a second account with the same name and email. Change the email, or a name, before Create.",
+            );
+          }}
+          onClose={() => setDuplicatePick(null)}
+        />
+      ) : null}
       {newClient ? (
         <NewClientModal
           initialFirst={newClient.first}
           initialLast={newClient.last}
-          onClose={() => setNewClient(null)}
+          {...(newClient.email === undefined
+            ? {}
+            : { initialEmail: newClient.email })}
+          {...(newClient.phone === undefined
+            ? {}
+            : { initialPhone: newClient.phone })}
+          {...(newClient.birthDate === undefined
+            ? {}
+            : { initialBirthDate: newClient.birthDate })}
+          {...(newClient.signup === undefined
+            ? {}
+            : { signup: newClient.signup })}
+          {...(newClient.notice === undefined
+            ? {}
+            : { notice: newClient.notice })}
+          /* T208: in review mode this IS the review, so it says so and
+             its button names what the tap will do. Pete, second drive:
+             "i see nothing that says 'review'. the create client modal
+             is there, is that how it's supposed to work? if so, the
+             verbiage and labeling needs to be much better." */
+          {...(newClient.signup !== undefined && signupAutomatic === false
+            ? { review: true, createLabel: signupCreateLabel }
+            : {})}
+          /* T208: a duplicate met in the form opens the same decision
+             the tray row does, rather than ending in a red line. */
+          onDuplicate={(match, sent) => {
+            const signup = newClient.signup;
+            if (signup === undefined) return false;
+            setNewClient(null);
+            setSignupMatch((m) => ({ ...m, [signup.requestId]: match }));
+            setDuplicateMsg(null);
+            setDuplicatePick({
+              requestId: signup.requestId,
+              /* What the teacher SENT, not what the form opened with:
+                 they may have corrected a name or the email, and
+                 Mindbody refused on those. */
+              typed: {
+                name: `${sent.firstName} ${sent.lastName}`.trim(),
+                email: sent.email,
+                phone: newClient.phone || null,
+              },
+              form: sent,
+              match,
+            });
+            return true;
+          }}
+          onClose={() => {
+            setNewClient(null);
+            /* T204: a sign-up the teacher backed out of is still
+               waiting; the tray says so on its next read. */
+            if (newClient.signup) setSignupRefresh((n) => n + 1);
+          }}
           onCreated={(client, note) => {
             const target = newClient.for;
+            const handle = newClient.signup?.requestId;
+            const wasSignup = handle !== undefined;
             setNewClient(null);
+            if (wasSignup) {
+              /* Created: the handle is spent, the tray loses the row and
+                 the search list drops the "not created yet" line. */
+              setSignupRefresh((n) => n + 1);
+              setFoundSignups([]);
+            }
+            /* T208: a sign-up finished by a TAP ends where the
+               automatic run ends. The tap is the only difference
+               between the two modes (review's Create), and it is also
+               how "Create a new client anyway" and a search hit's own
+               Create finish one -- in EITHER mode (T208 review: that
+               button left a new client in no class under automatic).
+               So every create carrying a handle books the class on
+               screen and checks them in, with the same outcome line and
+               the same tray rows for the exceptions. */
+            if (handle !== undefined) {
+              if (note) {
+                setActorBanner(note);
+                if (actorBannerTimer.current) {
+                  clearTimeout(actorBannerTimer.current);
+                }
+                actorBannerTimer.current = setTimeout(
+                  () => setActorBanner(null),
+                  20_000,
+                );
+              }
+              void bookAndCheckIn({
+                requestId: handle,
+                client: { id: client.id, name: client.name },
+                who: client.name,
+              });
+              return;
+            }
             if (target === "guest") {
               /* T59c: the new person is the guest. They have no release
                * yet, so pickGuest opens the waiver dialog first. */
@@ -6738,6 +8608,34 @@ function FrontDesk({
                 Mindbody...
               </p>
             ) : null}
+            {/* T204: somebody who signed themselves up on the customer
+                screen, above Mindbody's own results because they are not
+                in Mindbody yet. Tapping one opens the same prefilled
+                form the header tray opens, with the waiver already
+                signed and waiting for Create. */}
+            {foundSignups.length > 0 ? (
+              <ul className="signup-hits">
+                {foundSignups.map((row) => (
+                  <li key={`signup-${row.requestId}`}>
+                    <button
+                      className="signup-hit"
+                      onClick={() => void openSignup(row.requestId)}
+                    >
+                      <span className="signup-hit-name">
+                        <Hit
+                          text={`${row.firstName} ${row.lastName}`.trim()}
+                          q={foundFor}
+                        />
+                      </span>
+                      <span className="signup-hit-sub">
+                        Signed up on the customer screen {signupAgo(row.completedAt)},
+                        not created yet. Tap to create them.
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             {searchError ? (
               <p className="note">{searchError}</p>
             ) : null}
@@ -6750,7 +8648,12 @@ function FrontDesk({
                 Type at least {settings.minQueryLength} letters.
               </p>
             ) : null}
-            {!searching && !searchError && searchTitle && shownResults.length === 0 ? (
+            {!searching &&
+            !searchError &&
+            searchTitle &&
+            shownResults.length === 0 &&
+            /* T204: a pending sign-up IS somebody found. */
+            foundSignups.length === 0 ? (
               <>
                 <p className="muted">
                   Nobody found. Check the spelling, or try fewer letters.
@@ -7787,6 +9690,69 @@ function FrontDesk({
                   : "Has not signed the waiver."}
               </span>
             </div>
+              {/* T202: the customer screen. The button exists only when
+                  a display is paired AND connected, so a counter with
+                  no second iPad sees T18's dialog exactly as before.
+                  While the student has it, the teacher sees what they
+                  are waiting for and can take it back; the counter
+                  confirm below stays live the whole time as the
+                  fallback, because a student who walked off must not
+                  strand a teacher with a queue. */}
+              {waiverDisplayNote ? (
+                <p className="muted modal-note-gap">{waiverDisplayNote}</p>
+              ) : null}
+              {waiverOnDisplay !== null ? (
+                <div className="waiver-display-row">
+                  <p className="waiver-waiting">
+                    Waiting for the customer to sign.
+                  </p>
+                  <button
+                    className="waiver-display-button"
+                    disabled={waiverSaving}
+                    onClick={() => void cancelWaiverOnDisplay()}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : displayLive ? (
+                <div className="waiver-display-row">
+                  <button
+                    className="waiver-display-button"
+                    disabled={waiverSaving}
+                    onClick={() => void sendWaiverToDisplay()}
+                  >
+                    {waiverDisplayBusy
+                      ? "Try the customer screen again"
+                      : "Sign on the customer screen"}
+                  </button>
+                  {/* T204: take the screen off the student signing up.
+                      A plain tap, no PIN and no confirm: it costs them
+                      thirty seconds and moves no money. */}
+                  {waiverDisplayBusy ? (
+                    <button
+                      className="waiver-display-button"
+                      disabled={waiverSaving}
+                      onClick={() => {
+                        setWaiverDisplayNote(
+                          "Taking the screen over. It goes up in a moment.",
+                        );
+                        void (async () => {
+                          await fetch("/api/display/cancel", {
+                            method: "POST",
+                            headers: { "content-type": "application/json" },
+                            body: JSON.stringify({ takenOver: true }),
+                          }).catch(() => undefined);
+                          await new Promise((r) => setTimeout(r, 3_000));
+                          setWaiverDisplayBusy(false);
+                          await sendWaiverToDisplay();
+                        })();
+                      }}
+                    >
+                      Take over
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             {waiverText ? (
               <>
                 <div
@@ -7899,8 +9865,39 @@ function FrontDesk({
                 ) : null}
               </>
             )}
+            {/* T211: the THIRD way through, and the only one that does
+                not depend on anything answering. It sits OUTSIDE the
+                reading/close-only split, and last, so it is here in
+                every shape of this dialog -- before the text is
+                fetched, while it is being read, after the fetch failed
+                (which used to be a dead end), after a refused "Record
+                agreement", and while the customer screen reports
+                disconnected, busy or a refused signature -- and always
+                after the normal path has been offered first. Pete:
+                "make sure this is doable if there is an error, that
+                would probably be the main reason to do so." */}
+            <div className="waiver-display-row waiver-override-row">
+              <button
+                className="waiver-display-button"
+                disabled={waiverSaving}
+                onClick={() => setWaiverOverridePad(true)}
+              >
+                {waiverOverrideLabel(waiverFlow)}
+              </button>
+            </div>
           </div>
         </div>
+      ) : null}
+      {/* T211: the PIN pad, over the waiver dialog. It asks for both a
+          PIN and a reason and arms nothing without them; it writes
+          nothing itself. */}
+      {waiverPrompt && waiverOverridePad ? (
+        <WaiverOverrideDialog
+          flow={waiverFlow}
+          name={waiverName}
+          onCancel={() => setWaiverOverridePad(false)}
+          onArmed={armWaiverOverride}
+        />
       ) : null}
 
       {/* T46: the calendar. A month grid in the app's own idiom rather
@@ -8295,7 +10292,7 @@ function FrontDesk({
                 instruction where an action belongs. The line stays for
                 every other case. */}
             {payBuyOffer ? null : (
-              <p className="pay-cash-note">For cash, use Buy.</p>
+              <p className="pay-cash-note">For cash, use Cart.</p>
             )}
 
             {/* The outcome, when the gesture did not simply finish. */}
@@ -8351,6 +10348,21 @@ function FrontDesk({
               </p>
             ) : null}
 
+            {/* T209: the customer's approval, while it is outstanding.
+                The SAME panel the Cart screen draws, from the same
+                component, in the same words and with the same two 64px
+                controls: a teacher who has read it once has read it
+                everywhere. Nothing here charges. */}
+            <ApprovalWait
+              approval={payApproval.approval}
+              note={payApproval.note}
+              waitingForScreen={payApproval.waitingForScreen}
+              onCancel={payApproval.cancel}
+              onWait={payApproval.keepWaiting}
+              onTakeOver={payApproval.takeOver}
+              onPin={payApproval.toPin}
+            />
+
             <div className="modal-actions">
               <button
                 className="modal-cancel"
@@ -8371,13 +10383,19 @@ function FrontDesk({
                   className="modal-confirm pay-charge"
                   onClick={buyAndCheckIn}
                 >
-                  Buy and check in
+                  Cart and check in
                 </button>
               ) : !payMoneyMoved ? (
                 <button
                   className="modal-confirm pay-charge"
                   disabled={!payChargeable}
-                  onClick={() => void runPayAndCheckIn()}
+                  /* T209: with "customer approves each sale" off this is
+                     the charge and nothing else, exactly as before. With
+                     it on the ticket goes on the customer screen and the
+                     charge follows their own tap, or the teacher's PIN.
+                     The decision is the shared hook's, not this
+                     dialog's. */
+                  onClick={payApproval.begin}
                 >
                   {payStage === "charge" ? (
                     <>
@@ -8425,6 +10443,18 @@ function FrontDesk({
             ) : null}
           </div>
         </div>
+      ) : null}
+
+      {/* T209: the D1 override over the pay-and-check-in dialog, the
+          same dialog and the same "approve" purpose the Cart screen
+          uses. /api/checkout verifies the token, spends it once and
+          files it on the client with this teacher's name. */}
+      {payDialog && payApproval.approval?.stage === "pin" ? (
+        <ApprovalDialog
+          because={payApproval.approval.because}
+          onCancel={payApproval.closePin}
+          onArmed={(armed: ApprovalArmed) => payApproval.armed(armed.token)}
+        />
       ) : null}
 
       {waitlistPrompt ? (
@@ -8515,6 +10545,9 @@ function FrontDesk({
         onNavState={setSaleNav}
         config={config}
         client={saleClient}
+        /* T206: a card saved from the profile (or anywhere else) makes
+           the sale screen read the card on file again. */
+        cardVersion={cardVersion}
         onRequestAttach={openAttachSearch}
         /* T91: the Buy screen's New client entries. page.tsx owns the
            form, as it owns the attach modal, so the modal stacks above
@@ -8663,7 +10696,15 @@ function AuthGate() {
     fetch("/api/teacher")
       .then((r) => (r.ok ? r.json() : null))
       .then((body) => {
-        if (!cancelled) setTeacher(body?.teacher ?? null);
+        if (cancelled) return;
+        setTeacher(body?.teacher ?? null);
+        /* T210: with nobody signed in, the server may have a reason for
+         * it (the target changed, or the session that was here belongs
+         * to another Mindbody site). Shown on the gate, exactly as the
+         * one a refused write carries. */
+        if (!body?.teacher && typeof body?.notice === "string" && body.notice) {
+          setGateNotice(body.notice);
+        }
       })
       .catch(() => {
         if (!cancelled) setTeacher(null);
@@ -8762,6 +10803,10 @@ function AuthGate() {
           required
           teacher={null}
           notice={gateNotice}
+          /* T212: the studio choice, so a counter on the studio nobody
+             here can sign in to is not stuck there. */
+          studios={gateConfig?.studioChoice ?? null}
+          currentTarget={gateConfig?.target ?? null}
           onClose={() => undefined}
           onTeacherChange={(t, hasPin) => {
             setGateNotice(null);
@@ -8810,6 +10855,116 @@ function AuthGate() {
       initialFlash={pinFlash}
       onInitialFlashShown={() => setPinFlash(null)}
     />
+  );
+}
+
+/**
+ * The customer display's connection mark (T200).
+ *
+ * Small and quiet: T111 took the top of the screen back, and a second
+ * screen being fine is not news. It is absent when nothing is paired,
+ * accent when the display is connected, and amber the moment it has been
+ * silent for 45 seconds or said it went away, which is what a teacher
+ * needs to know BEFORE sending a waiver to a dead screen.
+ *
+ * Two sources, deliberately: the `/api/display/events` stream, which is
+ * what makes it immediate, and a 30 second poll of /api/admin/display,
+ * which is what makes it right when the stream is refused (nobody signed
+ * in) or dropped. Neither calls Mindbody.
+ */
+function DisplayMark() {
+  const [state, setState] = useState<{
+    paired: boolean;
+    connected: boolean;
+    name: string | null;
+  } | null>(null);
+
+  const read = useCallback(() => {
+    fetch("/api/admin/display")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!body) return;
+        setState({
+          paired: body.paired === true,
+          connected: body.connected === true,
+          name: body.name ?? null,
+        });
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    read();
+    const timer = setInterval(read, 30_000);
+    return () => clearInterval(timer);
+  }, [read]);
+
+  useEffect(() => {
+    let source: EventSource | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+    const open = () => {
+      if (stopped) return;
+      try {
+        source = new EventSource("/api/display/events");
+      } catch {
+        return;
+      }
+      const mark = (connected: boolean) => (ev: MessageEvent) => {
+        let paired = true;
+        try {
+          const data = JSON.parse(ev.data);
+          if (typeof data?.paired === "boolean") paired = data.paired;
+        } catch {
+          /* An event with no body still says which it was. */
+        }
+        setState((prev) => ({
+          paired,
+          connected,
+          name: prev?.name ?? null,
+        }));
+      };
+      source.addEventListener("connected", mark(true));
+      source.addEventListener("disconnected", mark(false));
+      /* A completed or refused scene is a later item's to act on; here it
+       * is only evidence that the screen is alive. */
+      source.addEventListener("completed", () => read());
+      source.addEventListener("refused", () => read());
+      source.addEventListener("error", () => {
+        /* Refused (nobody signed in) or dropped. Close and try again in
+         * fifteen seconds rather than letting EventSource hammer a 401
+         * every three. */
+        source?.close();
+        source = null;
+        if (!stopped && retry === null) {
+          retry = setTimeout(() => {
+            retry = null;
+            open();
+          }, 15_000);
+        }
+      });
+    };
+    open();
+    return () => {
+      stopped = true;
+      if (retry !== null) clearTimeout(retry);
+      source?.close();
+    };
+  }, [read]);
+
+  if (state === null || !state.paired) return null;
+  return (
+    <p
+      className={state.connected ? "display-mark-row" : "display-mark-row away"}
+      role="status"
+    >
+      <span className="display-dot" aria-hidden="true" />
+      <span>
+        {state.connected
+          ? `Customer display connected${state.name ? `: ${state.name}` : ""}`
+          : "Customer display is not responding"}
+      </span>
+    </p>
   );
 }
 

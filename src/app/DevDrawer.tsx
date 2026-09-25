@@ -606,6 +606,10 @@ function SettingsPanel({
           onConfigChanged();
         }}
       />
+      <DisplayPanel open={open} />
+      <ConfirmSalePanel open={open} admin={mode?.targetAdmin === true} />
+      <ContractSignaturePanel open={open} admin={mode?.targetAdmin === true} />
+      <SignupModePanel open={open} admin={mode?.targetAdmin === true} />
       <p className="muted">
         The rest is stored in this browser. Applies immediately, no restart.
         The server's own dry run and the write guard stay in the server
@@ -662,6 +666,703 @@ function SettingsPanel({
       <ThemeSetting />
       <TeacherPanel />
     </div>
+  );
+}
+
+/* --- Customer display (T200) ------------------------------------------
+ *
+ * Pair and unpair the second iPad. Anyone who can open the drawer may use
+ * it, and it is gated by the device session and a signed-in teacher and
+ * nothing else: pairing decides which SCREEN a waiver appears on, never
+ * whether a write happens or which studio it lands in, and "a teacher
+ * setting up the counter is the point" (docs/design/customer-display.md).
+ *
+ * The code entry is a plain numeric field, which the "no amount in a text
+ * field" rule does not touch: it is not an amount, it is six digits read
+ * off a screen once, and the OS keyboard is the right tool for that.
+ */
+
+interface DisplayInfo {
+  paired: boolean;
+  name: string | null;
+  pairedAt: string | null;
+  lastSeenAt: string | null;
+  connected: boolean;
+  busy: boolean;
+  storage: string;
+  durable: boolean;
+}
+
+/** "12 seconds ago", for the last heartbeat. Plain and approximate: the
+ *  question this answers is only "is that screen awake". */
+function ago(iso: string | null): string {
+  if (iso === null) return "never";
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return "never";
+  const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins} min ago`;
+  return `${Math.round(mins / 60)}h ago`;
+}
+
+function DisplayPanel({ open }: { open: boolean }) {
+  const [info, setInfo] = useState<DisplayInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/display");
+      if (!res.ok) return;
+      setInfo((await res.json()) as DisplayInfo);
+    } catch {
+      /* The block stays quiet; nothing else depends on it. */
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    void load();
+    /* While the drawer is open, often enough that "connected" is true
+     * rather than remembered. */
+    const timer = setInterval(() => void load(), 10_000);
+    return () => clearInterval(timer);
+  }, [load, open]);
+
+  const pair = async () => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/display/pair", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code: code.trim() }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || body?.ok !== true) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setCode("");
+      setDone("Paired. The customer screen goes to its welcome screen.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unpair = async () => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/display/unpair", { method: "POST" });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setAsking(false);
+      setDone("Unpaired. That iPad shows a new pairing code.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!loaded) return null;
+
+  return (
+    <>
+      <div className="dev-label">customer display</div>
+      <p className="muted">
+        {info === null
+          ? "The display cannot be read here."
+          : info.paired
+            ? `Paired${info.name ? `: ${info.name}` : ""}. ` +
+              (info.connected
+                ? `Connected, last seen ${ago(info.lastSeenAt)}.`
+                : `Not connected, last seen ${ago(info.lastSeenAt)}.`) +
+              (info.durable
+                ? ""
+                : " No database, so a server restart needs it paired again.")
+            : "Not paired. Open /display on the customer iPad and enter the six digits it shows."}
+      </p>
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      <div className="dev-target-buttons">
+        <input
+          className="dev-display-code"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          autoComplete="off"
+          maxLength={7}
+          placeholder="000000"
+          aria-label="Pairing code from the customer display"
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ""))}
+        />
+        <button
+          type="button"
+          className="dev-target-btn dev-target-go"
+          disabled={busy || code.trim().length !== 6}
+          onClick={() => void pair()}
+        >
+          {busy ? "Pairing" : "Pair"}
+        </button>
+      </div>
+      {info?.paired ? (
+        asking ? (
+          <div className="dev-target-ask">
+            <p className="dev-target-question">
+              Unpair the customer display? It shows a new code and anything on
+              it goes away.
+            </p>
+            <div className="dev-target-buttons">
+              <button
+                type="button"
+                className="dev-target-btn"
+                disabled={busy}
+                onClick={() => setAsking(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dev-target-btn dev-target-go stop"
+                disabled={busy}
+                onClick={() => void unpair()}
+              >
+                Yes, unpair
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="dev-target-buttons">
+            <button
+              type="button"
+              className="dev-target-btn"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setDone(null);
+                setAsking(true);
+              }}
+            >
+              Unpair
+            </button>
+          </div>
+        )
+      ) : null}
+    </>
+  );
+}
+
+/* --- Customer approves each sale (T203) -------------------------------
+ *
+ * Phase 2.5 item 4's setting, in the drawer for the reason T89's target
+ * is: it is a studio-wide policy with nowhere else to live, and a
+ * redeploy is the wrong price for changing one. It is shown to everyone
+ * and switched only by a named admin (POS_ADMIN_STAFF_IDS), because
+ * turning it OFF stays admin-only (design doc, Scene 2).
+ *
+ * It is the THIRD recorded exception to "nothing in this drawer may
+ * loosen a write rail", and like the other two it is safe in only one
+ * direction: with it on, /api/checkout refuses MORE charges, never
+ * fewer. Dry run and the write guard are still not here.
+ */
+
+interface ConfirmInfo {
+  customerConfirmsSale: boolean;
+  customerConfirmsSaleSource: string;
+  envVar: string;
+  configured: boolean;
+  available: boolean;
+}
+
+function ConfirmSalePanel({
+  open,
+  admin,
+}: {
+  open: boolean;
+  admin: boolean;
+}) {
+  const [info, setInfo] = useState<ConfirmInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      /* Everyone reads the line from /api/config, which needs no admin;
+       * an admin reads the fuller answer, which says whether there is a
+       * store to write to. */
+      const res = await fetch(admin ? "/api/admin/customer-confirms" : "/api/config");
+      if (!res.ok) return;
+      const body = await res.json();
+      setInfo({
+        customerConfirmsSale: body.customerConfirmsSale === true,
+        customerConfirmsSaleSource: String(
+          body.customerConfirmsSaleSource ?? "env",
+        ),
+        envVar: String(body.envVar ?? "POS_CUSTOMER_CONFIRMS_SALE"),
+        configured: body.configured !== false,
+        available: body.available !== false,
+      });
+    } catch {
+      /* The block stays quiet; nothing else depends on it. */
+    } finally {
+      setLoaded(true);
+    }
+  }, [admin]);
+
+  useEffect(() => {
+    if (!open) return;
+    void load();
+  }, [load, open]);
+
+  const setTo = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/customer-confirms", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: next }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setAsking(false);
+      setDone(
+        next
+          ? "On. Every sale now waits for the customer to approve it, or for a teacher's PIN."
+          : "Off. Charge charges, as before.",
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!loaded || info === null) return null;
+  const on = info.customerConfirmsSale;
+  const stored = info.customerConfirmsSaleSource === "setting";
+  return (
+    <>
+      <div className="dev-label">customer approves each sale</div>
+      <p className="muted">
+        {on ? "On" : "Off"}.{" "}
+        {stored
+          ? "Stored setting."
+          : `From ${info.envVar} in the server environment.`}{" "}
+        {on
+          ? "The Charge tap puts the ticket on the customer screen first, and the server refuses a charge the customer has not approved. A teacher's PIN stands in when the screen cannot be used."
+          : "Charge charges, and the customer screen shows the ticket and the thank you only."}
+      </p>
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      {admin ? (
+        !info.configured || !info.available ? (
+          <p className="muted">
+            {info.configured
+              ? `The database is not answering, so ${info.envVar} in the server environment decides and this cannot be changed here.`
+              : `No database configured (DATABASE_URL unset), so ${info.envVar} in the server environment decides and this cannot be changed here.`}
+          </p>
+        ) : asking ? (
+          <div className="dev-target-ask">
+            <p className="dev-target-question">
+              {on
+                ? "Stop asking the customer to approve each sale?"
+                : "Ask the customer to approve every sale on their screen?"}
+            </p>
+            <div className="dev-target-buttons">
+              <button
+                type="button"
+                className="dev-target-btn"
+                disabled={busy}
+                onClick={() => setAsking(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dev-target-btn dev-target-go"
+                disabled={busy}
+                onClick={() => void setTo(!on)}
+              >
+                {busy ? "Saving" : on ? "Yes, turn it off" : "Yes, turn it on"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="dev-target-buttons">
+            <button
+              type="button"
+              className="dev-target-btn"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setDone(null);
+                setAsking(true);
+              }}
+            >
+              {on ? "Turn off approvals" : "Turn on approvals"}
+            </button>
+          </div>
+        )
+      ) : null}
+    </>
+  );
+}
+
+/* --- Membership needs a customer signature (T205) ---------------------
+ *
+ * Phase 2.5 item 6's setting, beside the one above and reading the same
+ * way, because the two are one policy about one screen. Shown to
+ * everyone, switched only by a named admin (POS_ADMIN_STAFF_IDS).
+ *
+ * It is the FOURTH recorded exception to "nothing in this drawer may
+ * loosen a write rail", and it is safe in the same one direction: with
+ * it on, /api/purchase-contract refuses MORE memberships, never fewer.
+ * Turning it OFF is what needs an admin. Dry run and the write guard are
+ * still not here.
+ */
+
+interface ContractSignatureInfo {
+  contractRequiresSignature: boolean;
+  contractRequiresSignatureSource: string;
+  envVar: string;
+  configured: boolean;
+  available: boolean;
+}
+
+function ContractSignaturePanel({
+  open,
+  admin,
+}: {
+  open: boolean;
+  admin: boolean;
+}) {
+  const [info, setInfo] = useState<ContractSignatureInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      /* Everyone reads the line from /api/config; an admin reads the
+       * fuller answer, which says whether there is a store to write
+       * to. */
+      const res = await fetch(
+        admin ? "/api/admin/contract-signature" : "/api/config",
+      );
+      if (!res.ok) return;
+      const body = await res.json();
+      setInfo({
+        contractRequiresSignature: body.contractRequiresSignature === true,
+        contractRequiresSignatureSource: String(
+          body.contractRequiresSignatureSource ?? "env",
+        ),
+        envVar: String(body.envVar ?? "POS_CONTRACT_REQUIRES_SIGNATURE"),
+        configured: body.configured !== false,
+        available: body.available !== false,
+      });
+    } catch {
+      /* The block stays quiet; nothing else depends on it. */
+    } finally {
+      setLoaded(true);
+    }
+  }, [admin]);
+
+  useEffect(() => {
+    if (!open) return;
+    void load();
+  }, [load, open]);
+
+  const setTo = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/contract-signature", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: next }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setAsking(false);
+      setDone(
+        next
+          ? "On. A membership now needs the customer's signature on their screen, or a teacher's PIN."
+          : "Off. A membership sells as it did before, with no signature.",
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!loaded || info === null) return null;
+  const on = info.contractRequiresSignature;
+  const stored = info.contractRequiresSignatureSource === "setting";
+  return (
+    <>
+      <div className="dev-label">membership needs a signature</div>
+      <p className="muted">
+        {on ? "On" : "Off"}.{" "}
+        {stored
+          ? "Stored setting."
+          : `From ${info.envVar} in the server environment (unset means on).`}{" "}
+        {on
+          ? "The membership dialog puts the contract on the customer screen to sign, and the server refuses a membership nobody signed. A teacher's PIN stands in when the screen cannot be used."
+          : "A membership sells with no signature asked for, and the customer screen is not used."}
+      </p>
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      {admin ? (
+        !info.configured || !info.available ? (
+          <p className="muted">
+            {info.configured
+              ? `The database is not answering, so ${info.envVar} in the server environment decides and this cannot be changed here.`
+              : `No database configured (DATABASE_URL unset), so ${info.envVar} in the server environment decides and this cannot be changed here.`}
+          </p>
+        ) : asking ? (
+          <div className="dev-target-ask">
+            <p className="dev-target-question">
+              {on
+                ? "Stop asking the customer to sign a membership contract?"
+                : "Ask the customer to sign every membership contract on their screen?"}
+            </p>
+            <div className="dev-target-buttons">
+              <button
+                type="button"
+                className="dev-target-btn"
+                disabled={busy}
+                onClick={() => setAsking(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dev-target-btn dev-target-go"
+                disabled={busy}
+                onClick={() => void setTo(!on)}
+              >
+                {busy ? "Saving" : on ? "Yes, turn it off" : "Yes, turn it on"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="dev-target-buttons">
+            <button
+              type="button"
+              className="dev-target-btn"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setDone(null);
+                setAsking(true);
+              }}
+            >
+              {on ? "Turn off signatures" : "Turn on signatures"}
+            </button>
+          </div>
+        )
+      ) : null}
+    </>
+  );
+}
+
+/* --- What happens when a student signs themselves up (T207) -----------
+ *
+ * Beside the two above, and deliberately not one of them. The settings
+ * above are the third and fourth recorded exceptions to "nothing in this
+ * drawer may loosen a write rail", and each is safe in only one
+ * direction. This one is an ORDINARY setting: automatic and review make
+ * the same three writes (/api/client-create, /api/book, /api/checkin)
+ * from the same browser under the same teacher's token and the same dry
+ * run and write guard, and all it decides is whether a teacher taps
+ * before a create their iPad would make anyway. No server route reads
+ * it to refuse anything.
+ *
+ * It is admin-edited all the same, for the reason the other two are: it
+ * is a studio-wide policy, and a studio should know who changed it.
+ */
+
+interface SignupModeInfo {
+  signupMode: string;
+  signupModeSource: string;
+  envVar: string;
+  configured: boolean;
+  available: boolean;
+}
+
+function SignupModePanel({ open, admin }: { open: boolean; admin: boolean }) {
+  const [info, setInfo] = useState<SignupModeInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      /* Everyone reads the line from /api/config; an admin reads the
+       * fuller answer, which says whether there is a store to write
+       * to. */
+      const res = await fetch(admin ? "/api/admin/signup-mode" : "/api/config");
+      if (!res.ok) return;
+      const body = await res.json();
+      setInfo({
+        signupMode: body.signupMode === "review" ? "review" : "automatic",
+        signupModeSource: String(body.signupModeSource ?? "env"),
+        envVar: String(body.envVar ?? "POS_SIGNUP_MODE"),
+        configured: body.configured !== false,
+        available: body.available !== false,
+      });
+    } catch {
+      /* The block stays quiet; nothing else depends on it. */
+    } finally {
+      setLoaded(true);
+    }
+  }, [admin]);
+
+  useEffect(() => {
+    if (!open) return;
+    void load();
+  }, [load, open]);
+
+  const setTo = async (next: "automatic" | "review") => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const res = await fetch("/api/admin/signup-mode", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: next }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(String(body?.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setAsking(false);
+      setDone(
+        next === "automatic"
+          ? "Automatic. A finished sign-up is created and booked into the class on screen with no tap."
+          : "Review. A finished sign-up waits in the tray for a teacher to tap Create.",
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!loaded || info === null) return null;
+  const automatic = info.signupMode !== "review";
+  const stored = info.signupModeSource === "setting";
+  const next = automatic ? "review" : "automatic";
+  return (
+    <>
+      <div className="dev-label">customer screen sign-ups</div>
+      <p className="muted">
+        {automatic ? "Automatic" : "Review"}.{" "}
+        {stored
+          ? "Stored setting."
+          : `From ${info.envVar} in the server environment (unset means automatic).`}{" "}
+        {automatic
+          ? "A student who finishes signing up is created here, booked into the class on screen, and checked in, with no tap. A name only stays in the tray when a person is needed."
+          : "A student who finishes signing up waits in the tray until a teacher taps Create."}
+      </p>
+      {done ? <p className="dev-changed">{done}</p> : null}
+      {error ? <p className="dev-target-error">{error}</p> : null}
+      {admin ? (
+        !info.configured || !info.available ? (
+          <p className="muted">
+            {info.configured
+              ? `The database is not answering, so ${info.envVar} in the server environment decides and this cannot be changed here.`
+              : `No database configured (DATABASE_URL unset), so ${info.envVar} in the server environment decides and this cannot be changed here.`}
+          </p>
+        ) : asking ? (
+          <div className="dev-target-ask">
+            <p className="dev-target-question">
+              {automatic
+                ? "Hold every sign-up in the tray until a teacher taps Create?"
+                : "Create and check in every finished sign-up with no tap?"}
+            </p>
+            <div className="dev-target-buttons">
+              <button
+                type="button"
+                className="dev-target-btn"
+                disabled={busy}
+                onClick={() => setAsking(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dev-target-btn dev-target-go"
+                disabled={busy}
+                onClick={() => void setTo(next)}
+              >
+                {busy
+                  ? "Saving"
+                  : automatic
+                    ? "Yes, review each one"
+                    : "Yes, do it automatically"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="dev-target-buttons">
+            <button
+              type="button"
+              className="dev-target-btn"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setDone(null);
+                setAsking(true);
+              }}
+            >
+              {automatic ? "Switch to review" : "Switch to automatic"}
+            </button>
+          </div>
+        )
+      ) : null}
+    </>
   );
 }
 
@@ -975,6 +1676,12 @@ function TeacherPanel() {
   const [teacher, setTeacher] = useState<Teacher | null | undefined>(
     undefined,
   );
+  /* T210: the site that issued this teacher's token, and the site this
+   * counter is on. /api/teacher answers both. */
+  const [sites, setSites] = useState<{
+    siteId: string | null;
+    targetSiteId: string | null;
+  }>({ siteId: null, targetSiteId: null });
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -984,7 +1691,16 @@ function TeacherPanel() {
     fetch("/api/teacher")
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
-        if (live) setTeacher(body?.teacher ?? null);
+        if (!live) return;
+        setTeacher(body?.teacher ?? null);
+        setSites({
+          siteId:
+            typeof body?.siteId === "string" && body.siteId ? body.siteId : null,
+          targetSiteId:
+            typeof body?.targetSiteId === "string" && body.targetSiteId
+              ? body.targetSiteId
+              : null,
+        });
       })
       .catch(() => {
         if (live) setTeacher(null);
@@ -1030,6 +1746,29 @@ function TeacherPanel() {
             {teacher.name} (staff {teacher.id}). Writes carry actor=
             {teacher.id} in the calls tab.
           </p>
+          {/* T210: a staff token belongs to the site that issued it, so
+              the two site ids are worth a line of their own. They agree
+              in every ordinary state; when they do not, Mindbody refuses
+              every write under this sign-in ("Delegated staff does not
+              belong to the subscriber.") and the only fix is a fresh
+              sign-in against the studio this counter is on. */}
+          {sites.targetSiteId !== null &&
+          sites.siteId !== null &&
+          sites.siteId !== sites.targetSiteId ? (
+            <p className="dev-target-error">
+              This sign-in belongs to Mindbody site {sites.siteId} and this
+              counter is on site {sites.targetSiteId}. Writes under it are
+              refused. Sign out and sign in again.
+            </p>
+          ) : (
+            <p className="dev-target-now">
+              Signed in against site{" "}
+              {sites.siteId ?? "(not recorded; sign in again)"}
+              {sites.targetSiteId !== null
+                ? ", which is the site this counter is on."
+                : "."}
+            </p>
+          )}
           <ProbeView probe={probe} busy={busy} error={error} onRun={run} />
         </>
       )}
@@ -1780,7 +2519,7 @@ function ShelfPanel() {
   return (
     <div className="dev-settings">
       <p className="muted">
-        What the Buy screen may sell, and how the Passes shelf is split.
+        What the Cart screen may sell, and how the Passes shelf is split.
         Hidden items never reach the shelf (a bundle line naming one stops
         rendering, with a console warning). Every pass is filed by rule
         into one of the rail&apos;s fixed sub-categories; a group here
@@ -1788,7 +2527,7 @@ function ShelfPanel() {
         custom one. The order block below sets the order the rail draws
         those sub-categories in, and a retail product can be moved off
         Mindbody&apos;s own category onto another counter cell. The gift
-        cards at the end are the preset amounts the Buy screen offers.
+        cards at the end are the preset amounts the Cart screen offers.
         Ids are per site.
       </p>
       {!available ? (
@@ -2003,7 +2742,7 @@ function ShelfPanel() {
                 </p>
               ) : (
                 <p className="muted">
-                  The preset amounts on the Buy screen. Hiding one takes it
+                  The preset amounts on the Cart screen. Hiding one takes it
                   off the presets and refuses it at checkout. The custom
                   amount product is the number pad&apos;s and cannot be
                   hidden.

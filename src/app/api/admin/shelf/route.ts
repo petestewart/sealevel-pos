@@ -100,10 +100,10 @@ function giftCardItem(
     price: card.editable ? 0 : card.cardValue,
     editable: card.editable,
     placement: card.editable
-      ? "Buy > Gift cards: the custom amount"
+      ? "Cart > Gift cards: the custom amount"
       : hidden
         ? "hidden"
-        : "Buy > Gift cards",
+        : "Cart > Gift cards",
   };
 }
 

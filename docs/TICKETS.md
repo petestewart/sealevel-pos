@@ -17303,3 +17303,3281 @@ Not changed, for the record: on a T49 fallback a consent or release
 write reads its before twice (once per attempt); the ask says "removes
 this text" even when the server could not read what the text is.
 
+> Phase 2.5 tickets (the customer display, branch `feature/customer-display`)
+> are numbered from T200 while the branch lives: main kept taking the
+> next number while this branch was open (T112, then T113), and every
+> collision cost a renumber across thirty files. The block is deliberate,
+> not a gap; renumber at merge if a single series matters.
+
+## T200. The customer display, plumbing (2026-09-19)
+
+Phase 2.5 item 1, the first of the six in
+`docs/design/customer-display.md`: a second iPad on the counter that
+faces the student. This item builds nothing a student can act on. It
+builds the pipe every later scene runs through, and stops there: the
+idle screen, the pairing, the cookie, the two tables, the hub, both SSE
+streams, present / cancel / complete / refuse, the header's connection
+mark and the drawer's pair control. The waiver, the ticket, the sign-up
+and the contract are items 2 to 6 and nothing here consumes them.
+
+The rule the whole thing rests on, written once here so the next agent
+cannot miss it: **the display adds zero write paths to Mindbody.**
+Nothing in `src/lib/display.ts` or under `src/app/api/display/` imports
+`mindbody()`. A completed request is a stored result; the write happens
+later, from the teacher's iPad, under the teacher's token, through a
+write route that already exists. That is what keeps dry run, the write
+guard, T49 attribution and T50's "no sign-in, no write" applying
+unchanged.
+
+### 1. The display's identity: its own cookie, and only four routes
+
+A student holds this iPad, so it does not hold the device session. It
+holds `pos_display` (`src/lib/displayauth.ts`): httpOnly, SameSite=Lax
+(same origin as the POS), Secure in production, `d1.<display id>.<hmac>`
+in the device token's shape, carrying the display id and nothing else.
+The key follows the staff cookie's posture (T78): derived from
+`POS_SESSION_SECRET` when it is set, random per process when it is not,
+in which case a restart means re-pairing and the display says so on its
+own screen.
+
+`requireSession` never looks at that cookie, which is the point and is
+asserted route by route in the driver: a browser holding only
+`pos_display` is refused by `/api/roster`, `/api/checkin`, `/api/devlog`,
+`/api/search` and `/api/admin/display`, and gets only the LOCK SCREEN's
+trimmed answer from `/api/config` (banner, dry run, target), which is
+open to everyone by design.
+
+### 2. Pairing: six digits, plus a secret the screen never shows
+
+`/display` opens with no session at all and asks `/api/display/state`
+for a code. The server mints six crypto-random digits AND a random
+secret: the digits go on the screen for a teacher to read, the secret
+stays in the page's memory. A teacher types the digits into the drawer
+(`POST /api/admin/display/pair`, device session plus a signed-in
+teacher, deliberately NOT admin-gated and NOT devtools-gated, because
+"a teacher setting up the counter is the point"), and the display's next
+poll presents code AND secret and is handed the cookie.
+
+So the code alone is worth nothing. Somebody who reads it over the
+counter cannot turn it into a cookie, because they do not hold the
+secret the screen never displayed. A wrong code, or a right code with
+the wrong secret, is counted by a new `makeLimiter` counter in
+`auth.ts` (five, then 30 seconds, its own door as every other one is).
+A code that a teacher has not paired yet polls as "waiting" and is
+deliberately NOT counted: a display polling its own valid code every two
+seconds would otherwise lock the pairing door in ten seconds.
+
+Codes live five minutes; a code is good for exactly one cookie.
+
+### 3. The tables, and what happens without them
+
+Migration 12 adds `displays` (id, name, paired_at, last_seen_at) and
+`display_requests` (id, display_id, kind, initiator, payload, status,
+result, requested_by_staff_id, created_at, completed_at, consumed_at,
+expires_at). Both are charter-clean: the pairing of a studio iPad with
+this counter, and the scene a teacher put on it, exist nowhere else.
+Nothing Mindbody holds is stored, and a payload carries only what the
+student can already see on the screen in front of them.
+
+With no `DATABASE_URL` the app runs exactly as it does today: the hub is
+memory only, the idle screen says a restart will need re-pairing, and
+the drawer's block says the same thing to the teacher. `durable` means
+BOTH halves, a row and a derivable cookie key, because either one
+missing makes "paired" stop meaning it after a deploy.
+
+Requests expire after 30 minutes, result and all: a result is a handle
+for one finalisation, not a record. `consumeRequest` is the spend, and
+with a database the `UPDATE ... WHERE consumed_at IS NULL` is what
+decides, so one signature cannot be spent twice. Nothing calls it yet;
+item 3 is its first caller.
+
+### 4. The hub and the two streams
+
+`src/lib/display.ts` is an in-process hub on globalThis, the `calllog.ts`
+idiom: the paired display, the one request in progress, the subscriber
+set for each stream, and a bounded buffer of recent events per stream so
+a reconnecting `EventSource` can be handed what it missed by
+`Last-Event-ID`. Railway runs one instance, which is what makes that
+honest; LISTEN/NOTIFY slots in behind the same API if that changes.
+
+`GET /api/display/stream` (display cookie) replays the buffer, then the
+scene as it stands, then pushes `present`, `cancel` and `idle`, with a
+15s heartbeat comment. Each heartbeat stamps `last_seen_at` in memory
+and, at most once a minute, in the row. `GET /api/display/events`
+(device session AND a signed-in teacher) carries `completed`, `refused`,
+`connected` and `disconnected` the same way. The state replayed on
+connect is sent with `id: 0`, so a reconnect's `Last-Event-ID` is never
+moved past an event it has not seen.
+
+Only one thing holds the screen at a time: a second `present` while one
+is pending is 409, as is a present with nothing paired or nothing
+connected. `complete` and `refuse` take the display cookie only, must
+name the display's OWN current request, and the server strips any client
+id, staff id or price the display sends, because the display is never
+the source of those.
+
+### 5. What the counter sees
+
+The POS header gains one small line (`DisplayMark` in `page.tsx`):
+absent when nothing is paired, which is every counter today; `--accent`
+when the display is connected; `--warn` the moment it has been silent
+for 45 seconds or said it went away. It is driven by the events stream
+and by a 30 second poll of `/api/admin/display`, so it is immediate when
+the stream is up and still right when it is refused (nobody signed in)
+or dropped. T111 had just quietened the top of the screen; this is one
+16px line with a 10px square, and nothing at all until there is a second
+screen.
+
+The drawer's Settings tab gains a "customer display" block under the
+T89 controls: the state in a sentence, a numeric code field at 48px with
+a 64px Pair button, and Unpair behind one confirm. Anybody who can open
+the drawer may use it. The code field is a text field and the "no amount
+in a text field" rule is untouched: it is not an amount, and the OS
+keyboard is the right tool for six digits typed once.
+
+`/api/config` gains `display: {paired, connected}` on the authenticated
+answer only.
+
+### Build notes
+
+- `/display` is its own route with its own tree: no NavBar, no
+  DevDrawer, no lock screen, no POS. The theme boot script in
+  `layout.tsx` applies unchanged. The banner goes through T99's
+  `plainText` and never `dangerouslySetInnerHTML`, which is stricter
+  here than anywhere else because this iPad is in a student's hands.
+- The mode mark in the corner appears in the sandbox or under dry run
+  and is absent on a live studio writing for real, matching T111's
+  reasoning on the teacher's banner.
+- Every colour is a token that already existed in both palette blocks;
+  no hex was added anywhere.
+
+#### Verified
+
+Drivers in the scratchpad (not in the repo): `server.mjs` (a real
+production Next server with one thing faked, see "Could not verify"),
+`routes.mjs`, `restart.mjs`, `dbrows.mjs`, `ui.mjs`.
+
+- `npm run build` with no `DATABASE_URL` and no Mindbody credentials:
+  clean, and `/display` prerenders as a dynamic route. `npx tsc
+  --noEmit` clean throughout.
+- **54 route assertions passed with no database** and **53 with
+  Postgres**: the pairing exchange end to end (code and secret issued,
+  wrong secret refused, valid unpaired code waits, wrong code refused,
+  pairing succeeds, cookie issued, a spent code cannot be replayed);
+  the display cookie refused by `/api/roster`, `/api/checkin`,
+  `/api/devlog`, `/api/search` and `/api/admin/display`, and given only
+  the banner answer by `/api/config`; both streams' headers, their
+  replay on connect, and a 15 second heartbeat actually arriving on
+  both; `present` refused for a browser with no staff session (401
+  `reason: "staff"`), for an unknown kind, for a payload that is not an
+  object, for one over 64KB, and for a second scene while one is up;
+  `complete` and `refuse` refused for a teacher's browser and for a
+  stale id, accepted once and 409 the second time, with the client id,
+  staff id and price the display sent dropped on the floor; `cancel`
+  taking a scene down and the display receiving it; `/api/admin/display`
+  and `/api/config` agreeing; unpair, after which the old display cookie
+  opens nothing.
+- **With Postgres** (a local 16 cluster, since Docker has no daemon
+  here): migration 12 applied (schema_version 12), the `displays` row
+  written and read back, a presented `contract` scene and its result
+  landing in `display_requests` with `initiator=teacher`,
+  `requested_by_staff_id`, the payload and the result as jsonb and
+  `consumed_at` null; a **server restart with the pairing intact**, the
+  row reloaded lazily, the display's own cookie still opening its
+  stream; and `last_seen_at` moving on a heartbeat past the one minute
+  write throttle (14:49:08 to 14:50:18) and deliberately not moving
+  inside it.
+- **A restart with no database** leaves nothing paired, the old display
+  cookie names nobody, and the display is handed a fresh code and told
+  the pairing is not durable.
+- **32 Playwright assertions passed**: the idle screen in both palettes
+  at 1180px and at 390px, with the banner, the code, the sandbox mark,
+  the boot script's `data-theme`, its own background, nothing under
+  16px and no horizontal overflow; no drawer and no nav bar on
+  `/display`; no header mark on the POS while nothing is paired; the
+  drawer's block, its 64px Pair button, a wrong code refused in it, a
+  real pairing done through the UI, the display leaving its code behind
+  and saying it is ready; the header mark appearing and reading as
+  connected; and the mark going amber after the display's browser was
+  closed.
+
+#### Could not verify
+
+- **No Mindbody call was made, deliberately**, and none should be: this
+  item adds no write path. Nothing was run against a live or sandbox
+  site.
+- **The staff session was faked in the driver.** `present`, `pair` and
+  `unpair` sit behind `requireActor`, which can only be satisfied by a
+  real Mindbody sign-in, so the harness seeded the session Map on
+  globalThis and computed the cookie from `POS_SESSION_SECRET`. The
+  routes ran their own guards unchanged (the 401 `reason: "staff"`
+  cases were driven with no seeded session at all), but **no teacher has
+  signed in against Mindbody and then paired a display**.
+- **Docker was unavailable**, so the Postgres runs used a local
+  PostgreSQL 16 cluster rather than `docker-compose.yml`. The SQL is the
+  same; a deployed Railway database has not run migration 12.
+- **No real iPad.** Everything was driven in headless Chromium at iPad
+  and phone widths. Safari's `EventSource` behaviour behind Railway's
+  proxy, Add to Home Screen, and Guided Access are all unexercised, and
+  the 15 second heartbeat exists precisely for a proxy nobody has tested
+  this against yet.
+- **The request expiry (30 minutes) and the code expiry (five minutes)
+  were not waited out**, only read; the 45 second connection window and
+  the one minute row throttle were.
+- **`consumeRequest` has no caller yet**, so the one-finalisation rule is
+  exercised only by its own unit-level behaviour through the completed
+  request's 409 on a second complete. The review also found that it
+  can only spend the display's CURRENT request, and `presentRequest`
+  replaces a completed-but-unconsumed one, so a result waiting for a
+  sleeping teacher iPad (the design's 30 minutes) is stranded in memory
+  by the next scene. Item 3, its first caller, must look the request up
+  by id or refuse a present that would strand a result.
+
+## T201. The customer display's ticket, live and after the sale (2026-09-19)
+
+Phase 2.5 item 2, the first scene to run through T200's plumbing: the
+sale screen mirrors the priced cart to the customer iPad as a teacher
+builds it (D3, Pete: "Live"), and puts a thank-you summary up for a few
+seconds when the charge lands. No approval, no `customer_confirms_sale`,
+no PIN override (that is item 4), no waiver and no contract. **No write
+path was added**: nothing in `src/lib/displayticket.ts`, the hook or the
+scene component imports `mindbody()`, and `/api/checkout`'s money logic,
+`assertBasket`, the discount spread, the gift card rails and
+`/api/price-cart`'s pricing are all untouched.
+
+### 1. What travels, and what deliberately does not
+
+`src/lib/displayticket.ts` is the payload: `mode` (`live` or `summary`),
+the client's FIRST name, the lines (name, quantity, unit price, line
+price, a discount when there is one), Mindbody's subtotal, discount, tax
+and total, and for a summary the tender in WORDS ("Cash", "Card ending
+4242", "Account credit", "Gift card", "Comp"), what was charged and
+whether a receipt was confirmed emailed.
+
+`readTicketPayload` builds a NEW object field by field rather than
+forwarding what the body carried, and `/api/display/present` runs it for
+every `ticket`. So a client id, a pricing option id, a product id, a
+card number or anything else is dropped at the server rather than
+travelling to a screen a student is holding. The generic 64KB
+object check T200 already had says only "a JSON object"; this says what
+a ticket IS.
+
+**No figure on that screen is the browser's arithmetic standing in for
+Mindbody's.** The totals come from `/api/price-cart`'s answer or the
+checkout answer, and a cart that is being priced, that was suppressed or
+whose total Mindbody disagreed with carries NO totals at all: the
+display draws the lines and shows "Pricing". The two derived numbers are
+a line's extended price and the gift cards' own prices added to the
+cart's total, which are exactly the two the teacher's own ticket already
+derives, and `/api/checkout` rehearses every card with `Test: true`
+before a cent moves.
+
+### 2. Replace in place, and busy means silence
+
+A live ticket is **the one scene kind that is updated rather than
+completed** (design doc). `presentRequest` now replaces a held live
+ticket with the next `ticket` present, keeping the same request id: the
+display receives one `present` and no `cancel`, and the row's payload is
+updated rather than a row written per cart tap. The post-sale summary
+takes over a live ticket the same way, so the student watches their own
+ticket become a receipt instead of seeing it vanish and something else
+arrive.
+
+Anything ELSE holding the screen wins, and `present` answers 409 with
+`reason: "busy"`. The sale screen drops that without a word: the mirror
+is informational (the design's walkthrough, case 1) and resumes on the
+next priced change. The teacher is never told about a decision they did
+not make.
+
+`src/app/useDisplayMirror.ts` holds the traffic rules in one place:
+nothing is sent unless a display is paired AND connected (which is every
+counter today, so the common case sends nothing at all), one present in
+flight at a time with the newest payload queued and the intermediates
+dropped, and the queue cleared when the summary goes up so a cart tap
+from a second ago cannot land on top of the thank you.
+
+### 3. The summary ends on the SERVER's clock
+
+A `summary` present carries an eight second TTL and the hub arms its own
+timer, which emits `idle` when it fires. Deliberately server-side: lazy
+expiry only runs when something asks the hub a question, and a teacher
+whose tab is closed, asleep or reloaded must not be able to leave one
+student's ticket in front of the next person in the queue.
+
+The summary is presented for the two outcomes the teacher's own screen
+reads as done, a completed sale and one suppressed by dry run or the
+write guard, and for NO other: a refused, partial, ambiguous or
+sold-nothing charge never thanks a student for a sale that did not
+happen. Under suppression the display's own corner mark already says
+Sandbox or Dry run, which is why that case can show the ticket without
+lying about the mode.
+
+### 4. The two screens
+
+`src/app/display/TicketScene.tsx` renders it: the greeting ("Hello,
+Sam" / "Thank you, Sam"), the lines at 22px with quantity and line
+price, the totals, and the total itself at 40px. Every item name and
+the client's name go through T99's `plainText`, never
+`dangerouslySetInnerHTML`. `DisplayScreen` routes `present` by kind and
+renders the idle screen for a kind this build does not know, with one
+console line per kind rather than a guess in front of a student. Radius
+0, tokens only, both palettes, no hex added.
+
+On the teacher's side, one quiet 16px line in the ticket head,
+"Showing on the customer screen", present only while the last live
+present landed. Nothing modal, no new tap target.
+
+#### Verified
+
+Drivers in the scratchpad (not in the repo): `server.mjs` (T200's
+harness, unchanged), `mockmb.mjs` (a new minimal Mindbody stand-in),
+`routes.mjs`, `ui.mjs`.
+
+- `env -u DATABASE_URL npm run build` clean, `npx tsc --noEmit` clean.
+- **27 route assertions passed**, with no database: a live ticket
+  presented and then replaced in place under the SAME request id, with
+  the display seeing two `present` events and zero `cancel` and the
+  second carrying the new line and the new total; a live present while a
+  `waiver` is pending answering 409 `reason: "busy"` with the waiver
+  still holding the screen; a summary present whose window is seconds
+  rather than thirty minutes, arriving with its tender, and then
+  expiring to `idle` with nobody asking the hub anything for nine
+  seconds, after which the hub holds nothing; a payload carrying
+  `clientId`, `productId`, `pricingOptionId`, a full card number and a
+  per-line `metadataId` accepted and STRIPPED, with the stream's own
+  event body asserted to contain none of them and to contain the item
+  name, the total and the first name; a ticket with no lines and one
+  with an unknown mode refused 400 with a plain sentence; the display
+  cookie still refused by `/api/roster`, `/api/catalog`,
+  `/api/price-cart`, `/api/checkout`, `/api/display/present` and
+  `/api/devlog`; and `present` with nobody signed in 401
+  `reason: "staff"`.
+- **25 Playwright assertions passed** against the real sale screen and a
+  mock Mindbody: a display paired and ready, a client attached, two items
+  rung up, and the display rendering "Hello, Sam", both lines, both line
+  prices and the mock server's own subtotal ($225.00), tax ($23.29) and
+  total ($248.29); the teacher's "Showing on the customer screen" line
+  present; a line removed and the display following to $27.59; a cash
+  sale finalised and the display showing "Thank you, Sam", the tender in
+  words and the charged figure; the summary leaving the screen on the
+  server's clock with the display back on Ready; the summary in the dark
+  palette with an emailed-receipt line shown only because the answer
+  confirmed one; nothing under 16px, the total measured at 40px or more,
+  and no horizontal overflow in either palette or at phone width.
+  Screenshots: `ticket-live-light.png`, `ticket-summary-light.png`,
+  `ticket-summary-dark.png`.
+- **T200's plumbing driver passes again: 52 passed, 0 failed.** It had
+  used `{kind: "ticket", payload: {}}` as a placeholder scene, and a
+  ticket payload is now validated before the busy check, so that
+  placeholder is refused 400 ("mode must be live or summary") and the
+  three assertions resting on it (a second present being 409, cancel
+  taking it down, and the cancel reaching the display's stream) had
+  nothing to stand on. The placeholder is now a `waiver` scene with a
+  minimal object payload, which is what those assertions always meant:
+  a scene that holds the screen and is not a ticket. No product code
+  changed for it. The ticket-specific behaviour is asserted in T201's
+  own driver.
+
+#### Could not verify
+
+- **No Mindbody call was made, and none should be.** Every figure in the
+  UI pass is the MOCK's, not the studio's: the mock prices a cart at a
+  flat 10.35% and invents its own sale answer. Nothing was run against a
+  live or sandbox site, so this proves the transport and the shapes and
+  says nothing about Mindbody's real pricing of these items.
+- **The staff session was faked**, exactly as T200's driver fakes it: the
+  session Map was seeded on globalThis and the cookie derived from
+  `POS_SESSION_SECRET`. No teacher signed in against Mindbody and then
+  mirrored a ticket.
+- **No real iPad, and no second physical screen.** Both browsers were
+  headless Chromium contexts at 1180px. Safari's `EventSource` behind
+  Railway's proxy, the two devices on a real counter, and what the
+  mirror feels like at a queue are all unexercised.
+- **No database.** The whole pass ran with `DATABASE_URL` unset, so the
+  live ticket's payload UPDATE (`updateDisplayRequestPayload`) has been
+  exercised only as a no-op fallback; the SQL has not run against
+  Postgres.
+- **The suppressed (dry run / write guard) summary was not driven.** The
+  UI pass ran with `POS_DRY_RUN=false` against the mock, so the
+  completed-sale branch is the one that was exercised; the suppressed
+  branch is the same two lines of code beside it and was read, not run.
+- **A comp, a split tender, a gift card and a discount** all produce
+  their own tender words and discount lines, and none of them was driven
+  end to end; only cash was.
+
+---
+
+## T202. The waiver, signed on the customer display (2026-09-19)
+
+Phase 2.5 item 3, Scene 1 of `docs/design/customer-display.md`: the
+student reads the studio's real waiver on the customer iPad, signs it
+with a finger, and the teacher's iPad records the release with no tap.
+The signature is kept in `waiver_receipts` and copied, best effort, to
+the client's Mindbody documents.
+
+**The display still writes nothing.** The only new Mindbody call in the
+whole ticket is `POST /client/uploadclientdocument`, and it is made from
+`/api/waiver-agree`, under the teacher's token, with the client id in
+the options so dry run and the write guard apply. No file under
+`src/app/api/display/` or `src/app/display/` imports `mindbody()`.
+
+### 1. What travels, and what does not
+
+`/api/display/present` builds a `waiver` scene ITSELF. The browser sends
+`{kind: "waiver", clientId}` and nothing that matters: the server reads
+its own `getWaiver()` (the same cache `/api/waiver` and
+`/api/waiver-agree` share, so the hash on the receipt is the hash of
+what was shown), looks the first name up with `readClientFirstName`, and
+puts the client id and that hash on the request's SERVER-side half.
+
+That half is new: `DisplayRequest.private`, stored in the row's payload
+column under a reserved `__private` key and split back off on read. It
+never reaches `sceneFor`, so it cannot travel down the display's stream.
+The display is told a text and a first name, and is never told who the
+student is or what the wording hashes to.
+
+### 2. The scene, and what makes the agree button live
+
+`src/app/display/WaiverScene.tsx`: the greeting, the full text in a
+scrollable region with T18's scroll-to-end rule (a waiver short enough
+to need no scrolling counts as read the moment it renders, the same
+carve-out the counter dialog makes), a `<canvas>` signature pad driven
+by pointer events so a finger and an Apple Pencil are one code path, and
+three 64px controls: **Not now**, **Clear**, and **I have read it and
+agree**, the last disabled until the text has been scrolled AND the pad
+has ink. The exported PNG is transparent, device-pixel-ratio aware, and
+carries a typed line beneath the signature with the first name and the
+moment drawn INTO the same image, so the artifact is self-describing
+wherever it ends up. The ink is the element's own `color`, read at draw
+time, so the pad has no hex of its own in either palette.
+
+`/api/display/complete` validates a waiver result before storing it
+(`src/lib/displaywaiver.ts`, the payload-validator idiom T201 set):
+base64 that decodes to something starting with PNG's 8-byte signature,
+at most 256KB (413 over that), and an `agreedAt` that parses and is from
+the last hour. A result that fails is refused while the student is still
+standing there rather than found useless by the release it was meant to
+accompany.
+
+### 3. Finalisation, with no tap, and the by-id consume
+
+The teacher's iPad holds `/api/display/events` open; a `completed`
+waiver event calls `/api/waiver-agree` with `{clientId, notes,
+displayRequestId}` and no hash, because the server takes the hash from
+its own record.
+
+The route keeps every guard it had (device session, `requireActor`, T50
+no sign-in no write) and adds: the request is looked up **by id**, and
+must be a `waiver`, completed, unconsumed, unexpired, for THIS client,
+whose stored sha256 still equals `getWaiver().sha256` NOW. A waiver the
+studio edited while the student was reading it is refused with a plain
+sentence and nothing is written.
+
+That by-id lookup is the T200 review finding, fixed: `consumeRequest`
+no longer means "is this the hub's current request" but "is this request
+spendable", reloading it from `display_requests` when memory has lost it
+(the one reason that table exists). Consuming a request the hub has
+already moved past no longer blanks whatever is on the screen now.
+
+A suppressed release (dry run, the write guard) is reported exactly as
+before and **does not consume** the request, so a real run later can
+still spend the same signature, and nothing is uploaded either.
+
+On a real release: the `waiver_receipts` row gains `signature_sha256`
+and `signature_png` (bytea) through **migration 13**, additive and
+nullable, our artifact captured on our screen, the database holding the
+original and Mindbody receiving a copy. Then the copy itself, best
+effort like the Notes append: `documentFiled: false` with the reason
+never fails the agreement, and the teacher's screen says it the same
+quiet amber way. The Notes line reads "Waiver signed on the customer
+screen <at>, text sha256:..., signature sha256:...". The handle is
+spent LAST, after everything that could be retried from it.
+
+If the teacher's iPad was asleep and missed the event, the dialog asks
+`GET /api/display/pending?clientId=` on open (device session + a
+signed-in teacher; it answers a request id and a moment, never the PNG)
+and finalises with "Signed on the customer screen, recording it now."
+
+### 4. The teacher's dialog
+
+T18's dialog gains one 64px **Sign on the customer screen**, rendered
+only when a display is paired AND connected, in both the "waiver needed"
+and the reading state (the student reads on their own screen, so making
+the teacher read it first on theirs would be theatre). While the student
+has it, the dialog says "Waiting for the customer to sign" with a 64px
+Cancel, and the counter's own confirm stays live throughout as the
+fallback. "Not now" from the display returns the dialog with one quiet
+line. Closing the dialog cancels the scene, so one student's waiver is
+never left in front of the next person.
+
+**With no display paired the button is absent and T18's flow is exactly
+as it was.** The profile card gains one line, "signed on the customer
+screen on <date>", read from our own receipt row; the PNG is never
+rendered back into the POS.
+
+#### Verified
+
+Drivers in the scratchpad (not in the repo): `server.mjs` (T200's
+harness), `mockmb.mjs` (T201's mock, extended with the waiver text, the
+client read, `updateclient`, `uploadclientdocument`, a class and a
+roster visit, and a record of every request body and authorization
+header), `routes.mjs`, `dbdrive.mjs`, `ui.mjs`.
+
+- `env -u DATABASE_URL npm run build` clean, `npx tsc --noEmit` clean.
+- **43 route assertions passed** with no database: the scene built
+  server-side, with the stream's own event body asserted to contain the
+  waiver text and "Sam" and NOT the client id, any 64-hex hash or the
+  private half; a waiver present with no client id refused 400; a second
+  present refused 409; a non-PNG signature 400, an oversized one 413, a
+  stale `agreedAt` 400, a missing one 400; `pending` finding the waiting
+  signature for that client and nothing for another; the agreement
+  recorded, with the mock asserting `LiabilityRelease: true` sent under
+  the faked STAFF token, the upload's `FileName` matching
+  `waiver-<compact>-<sha12>.png`, `MediaType: "png"`, the client id on
+  the request, the Buffer decoding to PNG's magic, and the Notes line
+  reading "signed on the customer screen" with both hashes and the row's
+  existing note kept; the same signature refused 409 on a second
+  finalisation, a signature for another client refused, an unknown id
+  refused; the counter path unchanged (still records, still says "agreed
+  at the counter", uploads nothing, still 409s a wrong hash and 400s a
+  missing one); and the display cookie and a signed-out iPad both
+  refused by `/api/display/pending`.
+- **19 more with dry run on** (target prod, since the sandbox forces dry
+  run off): the agreement reported suppressed, and the signature NOT
+  consumed, so the same request finalises again.
+- **15 assertions against real Postgres**: the request row holding the
+  result and the private half in `payload.__private` and NOT among the
+  display's payload keys; the receipt row holding `signature_sha256` and
+  `signature_png` whose bytes compare equal to the PNG signed, matching
+  the hash the answer reported; the request marked consumed; a signature
+  completed, the server RESTARTED, and the finalisation then finding it
+  by id and landing its receipt; and, after a restart with the studio's
+  waiver text changed underneath, that finalisation refused 409 with
+  "changed while they were reading it" and no new receipt row.
+- **26 Playwright assertions passed** across two browser contexts: a
+  paired display and the real roster; the dialog opened from a row with
+  no waiver; the 64px button measured; the display showing the greeting
+  by name and the real text; agree disabled before scrolling, still
+  disabled scrolled with no ink, live once signed with real pointer
+  events, and disabled again after Clear; the signature agreed, the
+  display thanking them and returning to idle on its own, and the
+  teacher's dialog closing with no tap and the row no longer reading "no
+  waiver"; "Not now" returning the dialog with its quiet line and the
+  counter path still offered; the dark palette; nothing under 16px and
+  no control under 64px on the display, and no horizontal overflow in
+  either palette. Screenshots: `waiver-display-light.png`,
+  `waiver-display-dark.png`, `waiver-pos-after.png`,
+  `waiver-pos-notnow-dark.png`.
+- **T200's driver passes again (52) and T201's passes again (27).** Both
+  used `{kind: "waiver", payload: {...}}` as a placeholder for "a scene
+  that holds the screen and is not a ticket"; a waiver's payload is now
+  built by the server, so the placeholder is `register` instead. No
+  product code changed for it.
+
+#### Fixed in review
+
+- **Two finalisations of one signature could both write.** `consumeRequest`
+  runs LAST, after the release, the receipt row, the upload and the note,
+  so two calls naming one request both passed their checks and both wrote
+  (the review's own re-run of the driver found two `waiver-agreed` lines
+  35ms apart, and two uploads). Two triggers reach it: the `completed`
+  event replayed from the teacher stream's buffer on an SSE reconnect,
+  and the dialog's pending check on open. Three small changes:
+  `beginFinalisation`/`releaseFinalisation` in `src/lib/display.ts`, a
+  synchronous claim on the request id taken before the first await in
+  `/api/waiver-agree` and released in a `finally` (the loser answers 409
+  with `inFlight: true` and writes nothing); a `finalisedRef` in
+  `page.tsx` so one browser never sends the same request id twice; and a
+  409 on the display path rendering as the dialog's quiet line rather
+  than an error. Re-driven: two concurrent finalisations of one signature
+  now answer 200 and 409 with ONE document upload.
+
+#### Could not verify
+
+- **Probe D-B1 was not run.** There are no Mindbody credentials in this
+  environment. `scripts/probe-upload-document.ts` is written for Pete to
+  run against the sandbox; until it does, the upload's shape is the
+  vendored spec's reading and nothing more, and whether the file appears
+  on the client's Documents page is unknown. The posture is why this is
+  shippable anyway: a failed upload is reported and the agreement
+  stands, with the image kept in our own row.
+- **Every Mindbody answer was the MOCK's.** It accepts the upload and
+  answers `{FileSize, FileName}` because the spec says that is the
+  shape; a real site may refuse a MediaType, a file name or a size, and
+  nothing here would know.
+- **The staff session was faked**, as in T200 and T201: seeded on
+  globalThis with a cookie derived from `POS_SESSION_SECRET`. "Ran under
+  the teacher's token" means the driver asserted that token on the
+  outgoing request, not that Mindbody attributed anything.
+- **No real iPad, no finger and no Apple Pencil.** Both browsers were
+  headless Chromium at 1180px and the signature was drawn with synthetic
+  mouse-as-pointer events. Palm rejection, Pencil pressure, Safari's
+  `touch-action` behaviour and what a canvas feels like to sign on are
+  all unexercised.
+- **The 30 minute expiry and the events-stream reconnect replay** were
+  not driven; the pending route was, which is the same path a missed
+  event takes.
+- **A suppressed UPLOAD** (dry run or the write guard stopping the
+  document while the release went out) is the same two lines as the
+  suppressed Notes append beside it and was read, not run: the dry-run
+  pass stops at the release, which is where it should stop.
+
+---
+
+## T203. The customer approves the sale (2026-09-19)
+
+Phase 2.5 item 4: the studio can ask the person in front of the counter
+to approve their own ticket before a cent moves, and **the server is what
+enforces it**. The setting is `customer_confirms_sale`; the Charge tap
+puts the priced ticket on the customer iPad with Approve and Not yet; the
+charge follows the customer's own tap; and a teacher whose screen is
+busy, dark or being ignored can approve it themselves with their PIN,
+which is filed on the client with their name (D1, Pete: "Teacher
+override, they must enter their PIN").
+
+**No money logic changed.** The diff in `/api/checkout` is additive: one
+precondition checked before any Mindbody call, one token spent beside the
+two that were already spent there, and one record filed after the charge
+resolved. Pricing, `assertBasket`, the discount spread, the gift card
+rails and T113's idempotency are untouched.
+
+### 1. The setting, and which way it fails
+
+`app_settings.customer_confirms_sale`, `"true"` or `"false"`, default
+off, read per checkout through `readSetting` (`src/lib/approval.ts`).
+Global rather than a drawer localStorage tunable because it is a studio
+policy: the localStorage settings are for numbers that are wrong on one
+iPad, and this must be the same on every counter. With no database,
+`POS_CUSTOMER_CONFIRMS_SALE` in the environment decides (`.env.example`
+carries it).
+
+A store that does not ANSWER falls back to the environment and says so
+once a minute in the log. That is the opposite of T89's target, on
+purpose: there, forgetting a stored sandbox would point a counter at the
+real studio, so a blip must change nothing. Here the two answers are "ask
+the customer" and "do not", and the setting can only ever ADD a
+precondition to Charge. Falling back to the environment cannot make a
+charge easier than the deployment's own default.
+
+`GET /api/config` reports `customerConfirmsSale` and
+`customerConfirmsSaleSource` on the authenticated answer.
+`PUT /api/admin/customer-confirms` writes it behind ALL of: the device
+session, the devtools gate, `requireActor`, that teacher's staff id in
+`POS_ADMIN_STAFF_IDS` (`isTargetAdmin`, reused as is), and a database
+that answers (503 with the sentence otherwise). Turning it OFF is
+admin-only too, which is the design's rule and is the whole reason the
+admin gate is there. One log line: `[customer-confirms] off -> on by
+staff=<id>`.
+
+The drawer's Settings tab shows the line to everyone, under the Customer
+display block, and draws one 64px control that asks once for an admin.
+**It is the third recorded exception to "nothing in this drawer may
+loosen a write rail"**, and like the T89 pair it is safe in one
+direction only: with it on, `/api/checkout` refuses MORE charges, never
+fewer.
+
+### 2. The hash: what "the same ticket" means
+
+`src/lib/cartsha.ts` is one helper used by BOTH `/api/display/present`
+and `/api/checkout`, because two canonicalisations would refuse every
+approval they issued. The browser never sends a hash: a promise that the
+ticket has not changed, made by the thing that changes it, is not a
+promise. Each route hashes the cart itself from the same
+`items`/`giftCards`/`discount`/`clientId` shape the browser already sends
+to `/api/price-cart`.
+
+INSIDE the hash: the client id; each cart line's type, metadata id,
+quantity, unit price in cents and T90 `forClientId`; each gift card
+line's product id, quantity and chosen amount; and the whole-cart
+discount's mode and value. Lines are sorted by their own canonical text,
+so the order a cart was built in is not a change.
+
+NOT inside it, and this is the one place the ticket's wording could not
+be followed: **tax and the total**. `/api/checkout` is never sent them --
+they are Mindbody's, read from `/api/price-cart` -- so hashing them would
+make the two hashes unequal by construction. What DETERMINES them is all
+in the hash, and T75's own `Test: true` rehearsal is what already refuses
+a total that moved. The tender is out too: a customer approves what is
+being sold, not which card pays for it.
+
+### 3. The gate, in `/api/checkout`
+
+Beside the T112 override and the T79 discount, before any Mindbody call,
+so a refusal costs no metered call. With the setting on the request must
+carry EITHER `displayApprovalId` -- a completed, unconsumed, unexpired
+`ticket`/`approve` request for THIS client whose stored hash equals the
+hash of the cart being charged -- OR `approvalOverride: {token}`. The
+sentences are plain and each says what to do:
+
+- nothing, with a screen connected: "The customer has not approved this
+  sale on the customer screen."
+- nothing, with no screen: "The customer screen is not connected, so the
+  sale needs your PIN."
+- a hash that moved: "The ticket changed after the customer approved it.
+  Ask them again."
+- an approval already spent: "That approval has already been used on a
+  sale. Ask the customer again."
+- somebody else's approval: "That approval was for a different customer.
+  Ask them again."
+
+**The approval is consumed AFTER the charge resolved**, in
+`recordApproval`, built above every write path and called from each of
+them: from `recordDiscount` on the single-cart paths (exactly as T112's
+override record is), directly on the gift card ticket and the T90
+ticket once their writes resolved (those two answer without reaching
+`recordDiscount`), from the sold-nothing answer (money moved), and from
+the card-credit seam (the $10 credit was charged). Claimed
+synchronously through T202's `beginFinalisation`, so two answers
+arriving together cannot both spend it, and idempotent, so a path may
+reach it twice. A refused charge leaves it spendable for a retry of the
+SAME cart, which is the point: a different cart hashes differently and
+is refused anyway. Review found the first cut spent it only through
+`recordDiscount`, which left it unspent after a real gift card or T90
+charge: one approval could then have carried a second charge of the
+same cart under a fresh idempotency key. Fixed before commit and driven
+(the T90 case below). What still leaves it unspent: an exit where no
+write was attempted, and a single-cart write that THREW (an ambiguous
+"MAY have gone through" answer), where the teacher is told to check
+Mindbody before charging again.
+
+With the setting OFF both fields are **ignored, never an error**: a stale
+dialog on a browser must not refuse a sale.
+
+### 4. The override (D1)
+
+`src/app/ApprovalDialog.tsx` is T48's PIN and nothing new: one step, the
+signed-in teacher's own PIN, `/api/teacher/verify` with the new purpose
+`approve` (`CompPurpose`, `isCompPurpose`), and the one-shot token the
+sale hands to `/api/checkout`. The route verifies the purpose and that
+the token's staff id is the session's (T94's rule, T112's block copied),
+spends it once, cancels a pending approval on the display, and files the
+sentence on the client the way T45/T62 file a comp's reason: "Sale
+approved by <teacher> at the counter, customer screen not used." The
+staff id is in the structured log line either way. No reason is asked
+for: the sentence is fixed, and a teacher standing in front of somebody
+whose screen just died should be asked for as little as the record
+allows.
+
+### 5. The two screens
+
+`TicketScene` gains `approve`: the same ticket, "Does this look right?",
+and **Not yet** and **Approve** at 64px. Approve completes the request
+with `{approved: true}`; Not yet refuses it with "Customer did not
+approve". The scene writes nothing and charges nothing.
+
+The teacher's screen, in the payment column above the foot: "Waiting for
+the customer to approve" with **Cancel** (the ticket stays as built) and
+**Approve sale**. A poll on `GET /api/display/approval` is what closes
+the wait -- a poll rather than the SSE stream because it runs for the few
+seconds of one approval and survives a stream that was never opened -- and
+an approval turns straight into the charge with no further tap. A refusal
+or a screen that went dark leaves one quiet line and the ticket exactly as
+it was.
+
+**A busy screen** gets the design's three-way choice in its minimal form:
+"The customer screen is busy." with Wait (re-present every 2s), Take over
+(cancel with `takenOver: true`, wait three seconds, present) and Approve
+sale. `cancelRequest` carries `takenOver` to the display, which shows
+"Please start again in a moment" for four seconds rather than blinking
+back to Ready in front of a student who was half way through something.
+Item 5 will refine this; it is deliberately small.
+
+`presentRequest`'s in-place replacement of a live ticket now carries the
+new request's PRIVATE half with it. Without that, an approve ticket that
+replaced a live mirror would have been recorded against the hash of the
+ticket that was on the screen before it.
+
+#### Verified
+
+Drivers in the scratchpad (not in the repo): `server.mjs` (T200's
+harness, one name changed), `mockmb.mjs` (T202's, plus `/staff/staff`,
+request bodies in its log and a `__reset`), `routes.mjs`, `dbdrive.mjs`,
+`ui.mjs`.
+
+- `env -u DATABASE_URL npm run build` clean, `npx tsc --noEmit` clean.
+- **7 route assertions with the setting OFF**: a plain charge goes
+  through and reaches Mindbody exactly once, and both
+  `approvalOverride` (a forged token) and `displayApprovalId` (a name
+  that does not exist) are ignored rather than refused.
+- **36 route assertions with the setting ON** (env, no database): the
+  two refusal sentences, word for word, with the mock's log asserted to
+  hold NO checkout for either; an approve scene presented, the display's
+  own stream asserted to carry `"mode":"approve"` and neither the hash,
+  the private half nor the client id; the display completing it; the
+  charge with that id going through with exactly one checkout at
+  Mindbody; the same id again refused with still one checkout; a cart
+  with a line ADDED refused as "The ticket changed after the customer
+  approved it"; the same cart in another ORDER accepted; a changed
+  QUANTITY refused; another client's approval refused; "Not yet" read
+  back by the teacher's poll with its reason and then refused at the
+  charge; a forged token 401 `reason: "teacher"`; the take-over cancel
+  carrying `takenOver` to the display; and an unpaired display back to
+  the PIN sentence. Review added nine (45 in all): a T90 line under
+  approval charges once, answers `approvedOnDisplay`, and the same
+  approval again is 409 with still one checkout at Mindbody; and a
+  replay under the SAME idempotency key with a CHANGED cart is refused
+  rather than replayed, with one checkout at Mindbody.
+- **22 assertions with Postgres**: no row reads as off from the env; a
+  PUT with nobody signed in is 401 `reason: "staff"`; an admin turns it
+  on, the answer says `source: "setting"`, `/api/config` agrees and the
+  log line names the staff id; a PIN enrolled for staff 4242 mints a
+  token whose purpose field reads `approve`; a **comp**-purpose token is
+  refused for an approval (401); the approve token charges the sale, the
+  answer names the teacher, and the mock's `/client/updateclient` body
+  is asserted to carry "Sale approved by Dana Rivers at the counter,
+  customer screen not used." with T58's `[by ...]` signature; the same
+  token a second time is 401; a display approval spent once is refused
+  the second time in its own words (which needs the row); and the admin
+  turns it back off.
+- **3 assertions for a non-admin**: a signed-in teacher whose id is not
+  in `POS_ADMIN_STAFF_IDS` gets 403 on both verbs and still reads the
+  setting on `/api/config`.
+- **T200's driver passes again (52), T201's (27) and T202's (43)**, all
+  unchanged.
+- **28 Playwright assertions**: the setting on, a display paired, a Drop
+  In rung up for Sam, Charge showing "Waiting for the customer to
+  approve" with Cancel and Approve sale; the customer screen holding the
+  ticket with Approve and Not yet measured at 64px or more; Approve
+  completing the sale with NO further tap on the teacher's iPad and the
+  thank you following; "Not yet" leaving the quiet line, no done screen
+  and the ticket as built; the PIN path opening the dialog, taking the
+  digits on the pad and charging; nothing under 16px, no horizontal
+  overflow, both palettes and phone width. Screenshots:
+  `approve-display-light.png`, `approve-pos-light.png`,
+  `approve-notyet-light.png`, `approve-pin-dark.png`,
+  `approve-display-dark.png`.
+
+#### Could not verify
+
+- **No Mindbody call was made against a real site.** Every figure is the
+  mock's; the sale ids it answers do not resolve through `/sale/sales`,
+  so the override's log line reads `sale=unknown` here. Against the
+  studio it would name the sale, as the comp and override records do.
+- **The staff session was faked** exactly as T200's driver fakes it, so
+  no teacher signed in against Mindbody and approved anything under
+  their own token. The PIN itself is real: it was enrolled through
+  `/api/admin/teacher-pins` into Postgres and checked by
+  `/api/teacher/verify`.
+- **No real iPad and no second physical screen.** Two headless Chromium
+  contexts at 1180px.
+- **A gift card ticket, a split tender and account credit under
+  approval were NOT driven.** Their fields are in the hash and were
+  read, not run; a cash sale, a T90 line and the PIN override are what
+  was driven end to end. The gift card path's spend of the approval is
+  the same call the T90 path makes, placed the same way, and was read.
+- **The busy three-way choice was not driven in the UI.** The
+  `takenOver` cancel reaching the display is asserted in the route
+  driver; Wait, Take over and the apology screen were read, not clicked.
+- **The suppressed (dry run / write guard) charge under an approval**
+  was not driven: `recordApproval` is called with `suppressed` from the
+  same place T112's record is, and was read.
+- **Nothing here was run against a database that STOPS answering
+  mid-shift.** The env fallback and its once-a-minute warning were read,
+  not exercised.
+
+### D-B1 ran, 2026-09-20
+
+Pete, sandbox, client 100015484 (the probe now finds its own sandbox
+client, since a production id "does not exist" on site -99). The
+spec's listed `MediaType` value `png` is refused "Media type png is
+invalid", as are `.png`, `PNG` and `Png`; `image/png` passes and the
+upload answers `{FileSize: 72, FileName}`. `src/lib/waiverfinalise.ts`
+now sends `image/png`. Not yet looked at: whether the file shows on the
+client's Documents page in the sandbox's Mindbody.
+
+## T204. The student signs themselves up (2026-09-19)
+
+Phase 2.5 item 5, and Pete's rush case: "if a teacher has a line of
+students to check in and one of them needs to register a new account,
+ideally that student can do so without tying up the teacher." So the
+customer display's idle screen gains one 64px button, **"New here? Sign
+up"**, and the student does the whole of it themselves: four fields, the
+two opt-in boxes, the studio's waiver, their signature. The teacher meets
+the result in a **tray**, at a moment of their own choosing, and one tap
+of Create makes the client and files the waiver together.
+
+**The display still writes nothing.** Nothing new under `src/app/display`
+or `src/app/api/display` imports `mindbody()`. The sign-up is a stored
+result on a `display_requests` row; the two writes are the existing
+`/api/client-create` and the waiver finalisation, both from the teacher's
+iPad, under the teacher's token, behind dry run and the write guard.
+
+### 1. The request the DISPLAY starts
+
+`POST /api/display/start` `{kind: "signup"}`, the one route a display may
+put a scene up with, and it takes no scene: it takes a kind and the
+server builds what the screen shows. The display cookie alone guards it
+(the iPad a student holds has no session of any other sort), and it is
+refused unless that display is paired and NOTHING is in progress, which
+is the same "one thing holds the screen at a time" rule `present` has.
+
+The request is `kind: "register"`, `initiator: "display"` (T200 put the
+column there for exactly this), `requestedByStaffId: null` -- nobody put
+it up, and the teacher who creates the client is named by their own token
+on the write, which is the attribution that matters. Its payload is the
+required-field list and the waiver text, both read server-side on the
+service account, the field list cached for ten minutes because a
+STUDENT's tap must not cost a metered call each time somebody prods the
+button. The waiver's sha256 goes on the request's server-only half, like
+T202's, and never reaches the screen.
+
+**Two lives, because a self-serve request has two clocks.** The result
+lives **four hours** unconsumed (the design's number: the student did not
+come back), and the SCENE is ended by an **abandon clock** of two
+minutes: the screen posts `/api/display/touch` on any input, throttled to
+once every twenty seconds, and silence past the window cancels the
+request with `{abandoned: true}`, returns the display to idle and
+discards the partial form, so a student who wandered off cannot hold the
+screen against the next sale and the next student never sees the last
+one's email. Both have a test-only env knob read ONLY when set
+(`POS_DISPLAY_ABANDON_MS`, `POS_DISPLAY_SIGNUP_TTL_MS`).
+
+### 2. The scene, and what comes back
+
+`src/app/display/SignupScene.tsx`: step 1 is the four fields at 64px rows
+with the OS keyboard (text fields are fine here -- the "no amount in a
+text field" rule is about money, and this is the one screen where the
+student types about themselves) and the two boxes **ticked by default**
+(D4). Step 2 is T202's `WaiverScene` itself, given a heading and told
+where to send the PNG: the pad, the scroll-to-the-end rule and the
+self-describing export are one component, not two. Step 3 is "Thanks,
+<first name>", on the display's own clock.
+
+The result is `{form, consent, signaturePng, agreedAt}` and is validated
+at `/api/display/complete` while the student is still standing there: the
+names, the email and phone shapes, the two consent booleans, and T202's
+own PNG reader (magic bytes, 256KB, an `agreedAt` from the last hour). A
+result that fails is a plain sentence on their screen rather than a
+create that fails an hour later.
+
+### 3. The tray, and Create
+
+`GET /api/display/signups` (device session + `requireActor`) lists NAMES
+and a moment. `GET /api/display/signups/<id>` is the one place a
+student's typed email and phone are served to a browser, and it carries
+the form and the consent and **never the PNG**: the signature is the
+server's, and Create pulls it from the server's own store. `DELETE` is
+the tray's "Clear": the handle is spent, nobody is created, the result
+goes. Everything is deleted on consume or at four hours.
+
+`src/app/SignupTray.tsx` is the `--gold` count beside the display mark
+("2 signed up", 64px), fed by a new `signups` event on the teacher's
+stream (count and names only) and a 30 second poll. Tapping a name opens
+T59b's New Client modal prefilled from the server, with the line "Waiver
+signed on the customer screen, waiting for Create". The consent is shown
+as the student answered it and is NOT editable there: the server takes it
+from the request, so an editable box would be a control that does
+nothing. The name IS editable, which is the point of the review tap
+("jon" for "John").
+
+**Create finalises both, in one route and one tap.**
+`/api/client-create` takes `displayRequestId` as a HANDLE: the form is
+the body's (as the teacher corrected it), the consent and the signature
+are the server's. It claims the id with T202's `beginFinalisation` for
+the whole create plus waiver, verifies the request is a completed,
+unconsumed, unexpired self-serve `register`, checks the waiver wording
+has not changed since the student read it, creates the client with the
+six consent flags on the `addclient` body, reads the client back, and
+then runs the waiver finalisation for the id that now exists. A duplicate
+(T59b's `isDuplicateClientError`) leaves the request UNCONSUMED, so the
+sign-up stays in the tray while the teacher searches for the person who
+already has an account.
+
+`src/lib/waiverfinalise.ts` is T18's and T202's finalisation lifted out of
+`/api/waiver-agree` unchanged and called from both: the release under the
+teacher's token, the log line, the `waiver_receipts` row with the PNG,
+the best-effort document upload, the Notes line ("signed on the customer
+screen"), and the handle spent LAST. A suppressed release consumes
+nothing, exactly as before.
+
+### 4. The text opt-in, and D-B3
+
+The three `Send*Texts` flags are documented as ignored on `updateclient`
+(client.yml:5290-5309) and are listed on `AddClientRequest` without that
+caveat (4945-4956), so they ride the CREATE, which is the one call that
+may honour them. **The probe has not run** (no credentials here), so the
+route does not assume: after a real create it reads the client back
+(`readTextOptInStuck`) and, only on EVIDENCE that the flags did not
+stick, files a T62-signed Notes line asking a human to set it by hand.
+A read that cannot answer is `null` and files nothing, because a line
+telling a teacher to go and fix something is worth writing on evidence
+and not on a failed read. `scripts/probe-addclient-texts.ts` is written
+in the house style and is what closes D-B3.
+
+### 5. The search finds them
+
+`/api/search` merges the waiting sign-ups whose first or last name starts
+with the query into its answer as `pendingSignups`, first page only,
+three letters like the search itself, carrying a request id and names and
+never the email or phone. They render ABOVE Mindbody's rows as "signed up
+on the customer screen, not created yet" and tapping one opens the same
+prefilled form. **Deliberate shape**: they are a separate key rather than
+rows inside `results`, because a `results` row is a client id the booking
+path taps; a person who does not exist yet must not be one.
+
+### 6. When the teacher needs the screen
+
+`present` now says `holdingSignup: true` beside `reason: "busy"` when
+what holds the screen is a student's own sign-up. The sale screen's T203
+three-way choice keeps its buttons and changes its words to "Someone is
+signing up on the customer screen", and Take over cancels with
+`takenOver` exactly as it did, so the student gets the apology and the
+partial form is discarded server-side. The waiver dialog gets the same
+sentence and Take over, and nothing else: there is no money on that path,
+so there is no third way out. The live ticket mirror is unchanged and
+still skipped in silence, because a sign-up is a non-live scene and T201
+already drops those without a word.
+
+### Verified
+
+Against a real production server and a mock Mindbody
+(`scratchpad/t204/`), `env -u DATABASE_URL npm run build` and
+`npx tsc --noEmit` clean:
+
+- **Route driver, 65 assertions, twice in a row, 0 failed.** Start from an
+  unpaired browser is 401; a second start and a teacher's `present` are
+  409 `busy` with `holdingSignup` and the student's own sentence; the
+  scene carries `requiredFields` and the waiver and neither the sha256
+  nor the private half; a touch keeps it alive and silence past the
+  (shortened) window cancels with `abandoned: true` and refuses a late
+  complete; a non-PNG, an empty first name, a bad email and a missing
+  consent answer are each refused; the teacher's stream gets `completed`
+  and a `signups` count with no email in it; the tray lists names only
+  and 401s the display itself; the detail route gives the form and the
+  consent and not the PNG; `q=sa` finds nothing and `q=sam` finds the row
+  above the mock's own; a duplicate leaves it in the tray; Create sends
+  all six flags, reads back, reports `textOptInStuck: false` under the
+  mock's drop knob and files the Notes line, releases with
+  `LiabilityRelease: true`, uploads the PNG, writes both Notes lines and
+  empties the tray; a second create with the same handle is 409 and only
+  one client was ever created; Clear consumes with nothing reaching
+  Mindbody; take-over discards the partial form; the (shortened) four
+  hour expiry empties the tray and refuses a create naming it.
+- **T200 (52), T201 (27), T202 (43), T203 (7 off + 45 on) all pass.** One
+  assertion of T200's driver was updated in a copy
+  (`t204/t200-regress.mjs`): it completed a placeholder `register`
+  request with a placeholder result, which the server now validates.
+- **Postgres**: the row carries `kind=register`, `initiator=display`, a
+  four hour life and a `form` object in its result; after a server
+  restart the tray still holds it, the detail comes back from the table,
+  and the create finalises it (waiver receipt row with the PNG and its
+  hash, request marked consumed).
+- **Playwright, 41 assertions, 0 failed**, both palettes: pair, tap "New
+  here? Sign up", fill the form with the keyboard, both boxes ticked,
+  every row at least 64px and nothing under 16px, Next, agree dead until
+  the waiver is scrolled and the pad has ink, sign, agree, "Thank you,
+  Sam"; the gold "1 signed up" in the POS header at 64px, the list with
+  no email in it, the prefilled modal with the waiver line and the
+  consent as answered, Create closes it and the badge clears; the search
+  hit in dark; and, from the sale screen with the setting on, "Someone is
+  signing up on the customer screen" with Wait, Take over and Approve
+  sale, Take over apologising on the display and nothing typed surviving.
+
+### Fixed in review
+
+- A sign-up older than an hour could never be created: Create re-read the
+  stored result with T202's one-hour `agreedAt` window, while the tray
+  holds a sign-up for four hours. The re-read is now anchored to the
+  moment the result was stored, when it was already checked as fresh.
+  Proven against an aged Postgres row across a restart.
+- A consumed sign-up's row kept the student's email, phone and signature
+  until the four-hour sweep. `consumeDisplayRequest` now nulls `result`
+  with `consumed_at`; every reader already required an unconsumed row.
+- The required-fields cache is dropped on a T89 target switch, beside
+  the catalog cache.
+- Driver note: `POS_DISPLAY_SIGNUP_TTL_MS` must exceed the touch plus
+  abandon window in the route driver, or the touch assertion fails for
+  the wrong reason (the request expires first).
+- Recorded, not changed: when the create lands and the waiver release is
+  suppressed or throws, the request stays unconsumed so the signature is
+  not lost; a retry relies on Mindbody's duplicate rule, which keys on
+  first, last and email, so a student who gave no email could be created
+  twice in that rehearsal-only case.
+
+### Could not verify
+
+- **D-B3 has not run.** No Mindbody credentials in this environment, so
+  whether `addclient` keeps the text flags is still open; the probe is
+  written and the read-back plus Notes fallback is what makes shipping it
+  safe either way.
+- **D-B1 is still unrun**, so the signature's document upload is exercised
+  only against the mock, here as in T202.
+- The staff session is faked in the driver harness (T200's idiom), so
+  T49/T50 attribution is exercised as shape, not against Mindbody.
+- No real iPad: the keyboard was Playwright's, so T98's viewport
+  behaviour under the iOS keyboard is reasoned, not measured.
+- Nothing was driven against a real class, a real client or a real
+  waiver.
+
+---
+
+### D-B3 ran, 2026-09-20
+
+Pete, sandbox, probe client 100015635 (delete it in Mindbody when done).
+The sandbox first refused the create with "The following are required:
+BirthDate", a per-site rule the studio's site does not have; the probe
+now reads `/client/requiredclientfields` and fills each with a
+placeholder, as the counter's form does. Then: all six `Send*` flags
+sent `true`, and BOTH the create's own answer and the read-back carry
+the three email flags `true` and the three text flags `false`. So
+`addclient` drops the text opt-in exactly as `updateclient` documents
+for itself, and the Notes line this ticket files on that evidence is
+the record, every time.
+
+## T205. The membership contract, signed on the customer screen (2026-09-19)
+
+Phase 2.5 item 6, and D5 (Pete: "required but with override option").
+The membership dialog can put the contract on the customer screen; the
+student reads the terms, signs with a finger and taps **"I agree to these
+terms"**, and the membership starts with no further tap from the teacher.
+A studio-wide rule, **`contract_requires_signature`, default ON**, makes
+that the way a membership is sold here, with one way past it: the
+signed-in teacher's own PIN, filed on the client with their name.
+
+**The display still writes nothing.** Nothing under `src/app/display` or
+`src/app/api/display` writes to Mindbody. The `present` route does READ
+it, and says so in its own comment: `GET /sale/contracts` for the name,
+the terms and the autopay line, `GET /client/clients` for the stored card
+the rehearsal's schema demands, and the same `POST /sale/purchasecontract`
+`Test: true` rehearsal the teacher's dialog already runs, so the figure in
+front of the student is the server's own. A rehearsal commits nothing.
+The one write that changed is `/api/purchase-contract`'s existing live
+call, which now carries `ClientSignature`.
+
+### 1. The scene
+
+`kind: "contract"`, built entirely in `src/lib/contractscene.ts`. The
+payload is WORDS: the contract's name, the terms as plain text (T99's
+`plainText` over the raw `AgreementTerms`), "Starts today" or the day in
+words, "$189.00 today", "Then $189.00 monthly." and the student's first
+name. The SERVER-only half carries the client id, the contract id, the
+normalized start day, the **sha256 of the RAW terms** and the rehearsed
+total in cents, and never passes through `sceneFor`. The driver asserts
+the wire itself: no client id, no contract id, no hash, no `__private`,
+no tags in the terms.
+
+On the display, `ContractScene` is `WaiverScene` with different words
+above it. That is deliberate: the scroll-to-the-end rule, the pointer
+pad, Clear and the PNG export with its typed name line are ONE
+implementation (T202, made reusable by T204) and stay one. What is added
+is the summary block above the terms, and every line of it was worded by
+the server.
+
+### 2. The rule, and where it is enforced
+
+`contract_requires_signature` in `app_settings`, admin-edited through
+`PUT /api/admin/contract-signature` (the T203 route, line for line: device
+session, devtools gate, `requireActor`, `isTargetAdmin`, a database that
+answers, one log line), reported by `/api/config`, shown in the drawer
+beside "customer approves each sale". Its fallback is
+`POS_CONTRACT_REQUIRES_SIGNATURE`, and **unset means ON**, which is the
+one place this setting differs from T203's: the unsafe direction for a
+sale is "charge as before", and for a membership it is "start a recurring
+commitment nobody signed".
+
+Enforced in `/api/purchase-contract` and nowhere else, before any
+Mindbody call. A live purchase must carry EITHER `displayRequestId`,
+naming a completed, unconsumed, unexpired `contract` request for THIS
+client, THIS contract and THIS start day whose recorded terms hash still
+equals the hash of the terms as read now ("The contract wording changed
+while they were reading it. Ask them again."), OR `signatureOverride:
+{token}` with purpose `contract` (a new `CompPurpose`, minted by
+`/api/teacher/verify`), the token's staff id equal to the session's, spent
+once. Neither, and it is 409 in a plain sentence; with no display paired
+at all, 409 "No customer screen is paired, so this membership needs your
+PIN to sell without a signature", which the design asks for on purpose.
+With the rule OFF both fields are ignored and never an error.
+
+The signature is claimed synchronously (`beginFinalisation`) and CONSUMED
+only after the purchase answered, completed or suppressed. A refused or
+thrown purchase leaves it spendable, because the student signed THIS
+contract and a retry must not need them again.
+
+### 3. What is kept
+
+`contract_receipts` (migration 14, additive): client id, contract id,
+name, terms sha256, signature sha256 and PNG, the overriding staff id,
+agreed at, start date, outcome. Ours on the charter's terms: Mindbody
+records that a contract was bought, not which wording was agreed to, and
+the studio edits that wording in its own rich text editor. One row per
+LIVE attempt that reached Mindbody, refusals included;
+`insertContractReceipt` never throws, and with no database the
+`[contract-signature]` log line carries the same facts. The profile card
+gains one line, "... signed on the customer screen on <date>", from our
+own row.
+
+### 4. The teacher's side
+
+The dialog gains **"Sign on the customer screen"** at 64px whenever a
+screen is connected, and with the rule on Buy presents the contract first
+anyway. While it is outstanding: "Waiting for the customer to sign", with
+Cancel and **"Sell without a signature"** (the T48 PIN dialog, now
+carrying its purpose and its own title). A busy screen is the design's
+three-way choice, Wait / Take over / Sell without a signature, with the
+sign-up wording when a student holds it. `completed` buys with no further
+tap; `refused` leaves the quiet line "Customer did not sign"; a screen
+that really went away says "Customer screen disconnected".
+
+### Verified
+
+- `env -u DATABASE_URL npm run build` and `npx tsc --noEmit` clean.
+- **Route driver, 36 assertions, 0 failed** (mock Mindbody, real server):
+  the setting on by default from the environment; unpaired + rule on is
+  the PIN sentence and NO purchasecontract call; the presented scene's
+  own stream carries plain-text terms, "$189.00 today", "Then $189.00
+  monthly." and the first name and none of the private half; a non-PNG
+  and a stale `agreedAt` are refused at `complete`; the `Test: true`
+  rehearsal is exempt and sends no signature; a different contract id, a
+  different start day and edited wording are each 409 in their own
+  sentence; the live purchase carries `ClientSignature` which the mock
+  decodes to PNG magic; the same id again is 409; an `approve`-purpose
+  token is refused and a `contract`-purpose one sells, files the Notes
+  line on the client and is one-shot; a live ticket mirror is refused
+  `reason: "busy"` while the contract holds the screen.
+- **Setting OFF via the environment, 4 assertions**: `/api/config` says
+  off, the membership sells with neither field, a stale request id and a
+  forged token are ignored rather than refused, and no signature ever
+  reached Mindbody.
+- **Postgres, 10 assertions across a restart**: migration 14 lands
+  (`schema_version` 14); a signature taken BEFORE a server restart sells
+  after it; the consumed row then says "already been used"; the receipt
+  rows are as designed (one with the PNG whose first eight bytes are the
+  PNG magic, its hash, the terms hash and the start date; one with staff
+  id 4242, no signature); the admin route flips the setting and
+  `/api/config` reports `source: "setting"`.
+- **Playwright, 22 assertions, 0 failed**, both palettes: the modal's
+  64px "Sign on the customer screen"; the display showing the membership,
+  its price and plain terms; agree dead until the terms are scrolled AND
+  the pad has ink, then live; the membership starting with no further tap
+  and the display thanking them; Not now leaving "Customer did not sign"
+  and no sale; the PIN path selling it; every display control at least
+  64px, nothing under 16px and no horizontal overflow on either screen.
+- **Regressions**: T114 (27), T115 (43), T203 (7 off + 45 on) and T200's
+  copy in `t204/t200-regress.mjs` (52) all pass. T204's driver reports 63
+  passed and 2 failed here, and the SAME two fail on a baseline build
+  with this branch stashed: they are the abandon-window timings, which
+  need the server's `POS_DISPLAY_ABANDON_MS` to exceed the driver's own
+  `ABANDON_MS`.
+
+### Found while driving
+
+- The teacher's event stream replays the hub's recent events on connect
+  (no `Last-Event-ID`), so a `refused` from an EARLIER contract closed
+  the wait for a later one, and an old `disconnected` (from an unpair
+  minutes before) put the dialog into "Customer screen disconnected"
+  while the contract was on the screen. Both are now checked: `refused`
+  BY REQUEST ID like the completion, and `disconnected` re-asks
+  `/api/admin/display` and only acts on a screen the server says is gone
+  now.
+
+### Fixed in review
+
+- Two purchases naming the same signature could both read it as unspent
+  before either claimed it, and the second could sell a spent signature
+  the instant the first released the claim. The request is now re-read
+  under the claim and refused if it is no longer completed and unconsumed.
+  Driven: two parallel purchases, one id, one sale, one live call.
+- The T202 waiver wait had the same stale-replay exposure this ticket
+  fixed for the contract: the teacher stream replays on reconnect, so an
+  earlier waiver's refusal could close a later wait. `refused` is matched
+  by request id there too. T203's approval wait polls by id and was fine.
+- Recorded: `contract_receipts` carries `contract_name` (a label as it
+  read, like `comp_receipts.teacher_name`) and `start_date`, which the
+  design's table does not list; both are for the profile card's line and
+  for reading a receipt without a lookup. With the rule OFF no receipt row
+  and no log line are written: the receipt attests to a rule that was
+  applied, and there was none.
+- **D-B2 is a gate, not a note**: no live contract sale with a signature
+  until the probe has run against the sandbox and both Totals agree.
+
+### D-B2 ran, 2026-09-20
+
+Pete, sandbox, client 100015484, contract 347 ("Corporate Monthly
+Membership"), paid by `UseAccountCredit` because no sandbox client has
+a stored card. Two `Test: true` rehearsals, without and with a real PNG
+in `ClientSignature`: **both accepted, Total 70.00 both times**, tax 0,
+and the answer carries no field about the signature. So the field is
+accepted and leaves the money alone, and this ticket ships as built:
+the rehearsal carries no signature and the live purchase does. Three
+things the run cost to learn, now in CLAUDE.md: `GET /sale/contracts`
+requires `request.locationId`; the studio's `LocationId: 1` is a
+constant for site 471 and nothing else; and a contract the list
+returns for a location can still be refused there (354 and 356), so
+only the rehearsal says a contract is sellable. Still unseen: the
+`clientContractSignature-...` document on a REAL purchase.
+
+### Could not verify
+
+- **D-B2 has not run.** No Mindbody credentials in this environment, so
+  whether `ClientSignature` is accepted, and whether it leaves the
+  rehearsed Total alone, is open. The probe is written
+  (`scripts/probe-contract-signature.ts`) and rehearses twice, with and
+  without the field, comparing both Totals to the cent. If the Total
+  moves, the rehearsal must carry the signature too.
+- Everything Mindbody-side is the mock's: the contract, its terms, its
+  autopay and the purchase's answer. No real card, client, contract or
+  document page was touched, and the document Mindbody is documented to
+  file (`clientContractSignature-...`) has never been seen.
+- The staff session is faked in the driver harness (T200's idiom), so
+  T49/T50 attribution is exercised as shape.
+- No real iPad: the pad was driven with Playwright's mouse, so a finger
+  and an Apple Pencil are reasoned about, not measured.
+- D-B1 and D-B3 remain unrun, as T202 and T204 recorded.
+
+## T206. Pete's first drive on real hardware, 2026-09-20
+
+Phase 2.5 is built (T200 to T205) and Pete drove the whole of it on two
+iPads against the Mindbody sandbox. Nothing about the design came back
+wrong; what came back was five things the counter noticed, and, once
+those were in, four more from the same session. This ticket is those,
+and nothing else. **Nothing here changes what reaches Mindbody except an
+optional `BirthDate` on `addclient`, and only when the site's own
+required-field list asks for one.**
+
+### 1. "closed safari on ipad, display mark looks the same until i refresh"
+
+The header's display mark could take up to 75 seconds to notice a
+screen that had gone, and a CLOSED TAB was not an event at all: the
+heartbeat stamped `last_seen_at` every 15 seconds, `displayConnected()`
+read a 45 second window, and the edge was only looked for when a
+teacher-facing read happened to run (the header's 30 second poll).
+
+The stream teardown is now the signal. `src/app/api/display/stream/route.ts`
+counts opens (`markDisplayStreamOpen`) and, in the teardown `sse.ts`
+runs on abort, calls `markDisplayGone`, which records the moment the
+LAST stream closed and calls `noteConnectionState()`, so `disconnected`
+reaches the teacher's stream at once. A reload OVERLAPS two streams, so
+only zero open means gone and the mark cannot flap. The 45 second window
+stays as the fallback for a stream that dies without an abort ever
+reaching this process, and `touchDisplaySeen` clears the close, so a
+beat always wins over an older teardown. Pairing and unpairing reset the
+count: a new display owns no stream the last one left behind.
+
+### 2. 'instead of "Does this look right? Not yet | Approve" it should just be "Cancel | Approve"'
+
+`TicketScene`'s approve mode drops the question line and the button
+reads **Cancel**. The refusal the teacher sees is now "Customer
+cancelled" (`SaleScreen`'s `finish(...)`, and the display's own
+`reason`). The mechanism is T203's, untouched: Cancel still refuses the
+request, `/api/checkout` still treats a stored approval as a
+precondition, and no tap on that screen moves money. `.dticket-ask`
+went with the line.
+
+### 3. "The following are required: Birthday"
+
+Pete's sandbox sign-up reached the New Client modal and Mindbody refused
+the create: site -99 lists `BirthDate` in `/client/requiredclientfields`
+and the forms have four fields by design (D4) with no way to give it a
+fifth.
+
+Both forms now grow ONE field, "Birth date", **only when the site's
+required list names `BirthDate` or `Birthday`**: the display's
+`SignupScene` (on the list the server put on the scene's payload) and
+the teacher's `NewClientModal` (on its own `/api/client-create` read,
+where `FORM_FIELDS` gained both spellings). One validator, in the new
+`src/lib/birthdate.ts`, is used by both screens, by
+`/api/display/complete` and by `/api/client-create`: `YYYY-MM-DD`, a
+real day, not in the future, not more than 120 years back. The create
+sends `BirthDate: "YYYY-MM-DDT00:00:00"`, naive and site-local like
+every Mindbody datetime, and sends NOTHING when there is none, so a
+site that does not ask has a byte-identical body. On the display path
+the birth date is prefilled from the stored sign-up and the TEACHER's
+body wins, exactly as the name does; the stored result's re-read at
+create time checks the shape and insists on nothing, so a site whose
+list changed cannot strand a sign-up that is already signed. The
+required-field warning no longer lists a field the form now has.
+
+### 4. "I don't see a way to add a card for anyone in the sandbox"
+
+The membership dialog's no-card sentence pointed at Mindbody ("add a
+card in Mindbody first") when the app has its own Add card. Pete, on
+being shown the sentence rewritten to name the profile: **"if a teacher
+hits this point, they should be able to add a card from here, not be
+forced to go back to the sign in page to do so."**
+
+So the notice reads "No card on file. A membership charges the stored
+card." with a 64px **Add card** beside it, which opens THE card form
+(`CardModal`, T84's "file" mode, over the dialog at `over-profile`), not
+a second one. On a save the dialog asks the sale screen to read the card
+again and the notice clears where it stands, with the dialog still open.
+
+Then Pete added a card through the client PROFILE with the sale screen
+open and the dialog still said "No card on file" until a reload: the
+sale screen's card lookup is cached per client and nothing invalidated
+it. Now `cardSaved` in page.tsx bumps a `cardVersion` the sale screen's
+lookup depends on, so a card saved ANYWHERE is read again, and the
+membership dialog asks for a fresh read every time it OPENS as well,
+because a cached miss must not decide a membership.
+
+### 5. 'we should change the "Buy" button to "Cart"'
+
+"and any references to that screen should be named Cart, not Buy." The
+nav item's label, the overlay's `aria-label`, `BuyIcon` (now
+`CartIcon`, same bag), the roster row's "Cart for <name>", "For cash,
+use Cart.", "Cart and check in", the split-sale lines, the drawer's
+three "Buy screen" sentences and the shelf admin's "Cart > Gift cards"
+placements. Deliberately unchanged: the URL, `saleMode`, `NavScreen`'s
+`"buy"` key, every CSS class, "Buy it for another client" (T90's verb,
+not the screen), and the comments that quote Pete's earlier words, which
+are history. T85's rule that the title stays hidden on the screen holds.
+
+### 6. The sign block blamed the wrong thing
+
+Pete's contract attempt read **"The customer screen is not connected."**
+as its heading over a sub-line about missing terms, with the header mark
+saying the screen was there. Two faults, both fixed:
+
+- A membership with no `AgreementTerms` in Mindbody has nothing to sign,
+  which is not a fact about the screen. `buildContractScene` now names
+  that refusal (`reason: "noterms"`), `/api/display/present` forwards it,
+  and the dialog has its own stage: **"Nothing to sign for this
+  membership"**, Mindbody's own sentence under it, and the PIN offered.
+- The dialog's idea of "connected" was read ONCE from `/api/config` when
+  the sale screen opened, so a screen that reconnected after a refresh
+  still read as gone. It is now `mirror.connected` from
+  `useDisplayMirror`, which is the header mark's own answer: the events
+  stream, a 30 second poll, and since item 1 a stream teardown.
+
+### 7. The modal ran under the nav bar
+
+With the refusal notice and the sign block both up, the contract modal's
+Cancel and commitment button sat behind the bottom nav bar. The dialog
+is rendered inside the sale overlay, which is its own stacking context
+BELOW the fixed nav bar, so no z-index could lift it: `.modal-contract`
+now ends above the bar (`max-height: calc(var(--vvh) - 48px -
+var(--nav-space))` with a matching `margin-bottom`, both T98's
+variables), its body scrolls and its action row is sticky. The row's
+in-flow neighbours after it are none: the PIN box, the card form and the
+date picker are each a fixed scrim.
+
+### Verified
+
+- **Route driver, `scratchpad/t206/routes.mjs`, 19 passed with the
+  birth-date knob off and 26 with it on, 0 failed**, against a real
+  production server and the mock: a display stream opening says
+  connected, closing says disconnected within 3 seconds and the state
+  read agrees; two overlapping streams closing one at a time do NOT
+  disconnect until the last one goes; reopening says connected again;
+  the approve refusal reads "Customer cancelled"; with the knob on the
+  scene carries `BirthDate`, a complete with no birth date, a date that
+  is not a date, one in the future and one 200 years back are each 400,
+  a good one is stored and `signups/<id>` returns it, a create with no
+  `BirthDate` gets Mindbody's own "The following are required:
+  Birthday" and LEAVES the sign-up in the tray, and the create that
+  carries one sends `BirthDate: "1990-04-05T00:00:00"`; with the knob
+  off the scene carries no required fields, the read carries no birth
+  date and the create body has no `BirthDate` at all.
+- **Playwright, `scratchpad/t206/ui.mjs`, 43 passed with the knob off,
+  0 failed**: the approve scene shows exactly two controls, Cancel then
+  Approve, both 64px, with no "Does this look right?" and no "Not yet";
+  the nav bar reads Cart and the screen it opens is labelled Cart; the
+  membership with no card shows the new sentence and a 64px Add card,
+  the card form opens OVER the dialog and the dialog survives it, and on
+  save the notice goes and the commitment button lights with no reload;
+  the same through the PROFILE's own card form, with the sale screen
+  open; the no-terms membership reads "Nothing to sign for this
+  membership" with the PIN offered and never blames a connected screen;
+  the dialog's foot and whole box sit above the nav bar at 1180x820; a
+  screen that goes away and comes back reaches the OPEN dialog with no
+  reload; and with the knob off the sign-up form has four fields and the
+  modal no date input.
+- The knob-on Playwright pass repeats the sign-up half: the form asks
+  for a birth date, marks it needed, keeps every row at 64px and nothing
+  under 16px, and the teacher's modal opens prefilled with the date the
+  student typed and no amber line asking for a field the form now has.
+- **Regressions, all 0 failed**: T200's copy in `t204/t200-regress.mjs`
+  52, T114 27, T115 43, T203 7 off and 45 on, T204 65
+  (`POS_DISPLAY_ABANDON_MS=3000 POS_DISPLAY_SIGNUP_TTL_MS=15000`, with
+  the driver's own `SIGNUP_TTL_MS` matched to the server's; mismatched,
+  its three expiry assertions fail on any build), T205 36 on and 4 off.
+  One T115 assertion was stale, not broken: it expected `MediaType:
+  "png"` where probe D-B1 had already moved the upload to `image/png`
+  (commit 350a1c2, before this ticket). The driver's expectation was
+  corrected and it passes 43.
+- `npx tsc --noEmit` and `env -u DATABASE_URL npm run build` clean.
+
+### Could not verify
+
+- **Nothing here was driven on a real iPad.** The closed-Safari case is
+  driven as an aborted SSE request, which is what a closed tab looks
+  like from the server; whether iOS always tears the connection down
+  promptly when a tab is closed, backgrounded or the screen locks is
+  not something a headless Chromium can answer. The 45 second window is
+  still the fallback for exactly that.
+- **Which fields site 471 requires has still never been read live**
+  (T59b's gap). The birth-date field is built against site -99's list
+  and the mock's knob. If the studio's list does not name a birth date,
+  nothing about the counter changes.
+- **Whether Mindbody keeps the `BirthDate` an `addclient` carries** has
+  not been seen live; the mock echoes it back. D-B3 showed the three
+  text flags being dropped in silence, so a read-back of the birth date
+  may yet be worth the same treatment.
+- **"Stored card not found" on the sandbox rehearsal.** Pete stored a
+  card through the app minutes earlier (the profile shows Visa ...1111,
+  04/2031) and `POST /sale/purchasecontract` `Test: true` answered
+  "Stored card not found". T30 already records that the counter's
+  `StoredCardInfo` payment has never been proven live; this is the
+  first evidence against it and it is still evidence of a SANDBOX, whose
+  card vault is not the studio's. Open: whether `StoredCardInfo` needs a
+  field the counter does not send, or the sandbox simply cannot tender a
+  stored card. The place it gets settled is the studio site under
+  `POS_WRITE_CLIENT_IDS`, with a dummy client and a real card.
+- The staff session is faked in the harness (T200's idiom), so T49/T50
+  attribution is exercised as shape.
+
+## T207. The sign-up finishes itself (2026-09-20)
+
+Pete, asked whether the teacher's Create tap on a self-serve sign-up
+should stay: **"make automatic the default with a setting that can be
+set to review. the new client should be created and automatically signed
+in to class (or the waitlist if class is full)."**
+
+So T204's tray is no longer where a sign-up waits. With the new setting
+on its default, a student who finishes signing up on the customer screen
+is created, booked into the class the counter is showing, and checked
+in, with nobody tapping anything, and the teacher hears one line about
+it. The tray stays, and becomes the EXCEPTION path: the only names in it
+are the ones a person is needed for, which after review includes every
+outcome that leaves a created client in no class.
+
+**No new write path.** The three writes are `/api/client-create`,
+`/api/book` and `/api/checkin`, each exactly as a teacher's tap calls
+them today, from the teacher's own browser with the teacher's own
+session. requireActor, dry run, the write guard, T49's attribution and
+T50's refusal all apply unchanged, and nothing runs on the display or on
+the server's own initiative. The only thing this ticket adds to the
+server is a setting and the route that edits it.
+
+### 1. The setting
+
+`signup_mode` in `app_settings`, `"automatic"` or `"review"`, **default
+automatic**, with `POS_SIGNUP_MODE` as the fallback for a counter with no
+database (`signupMode()` in `src/lib/approval.ts`; no row, or a row
+naming neither word, means the environment decides).
+
+**A store that does not ANSWER keeps the last value it did** (review),
+which is T89's idiom rather than T203's and is the one place this
+setting differs from its two neighbours. Their fallback direction is
+safe: with the store quiet they ask for MORE approval or none at all.
+This one's is not. A studio that stored `review` and had a database
+blip would flip to `automatic` and start creating and checking students
+in unattended, which is the looser direction and the one nobody asked
+for. So the process remembers the last mode the store answered with and
+holds it through the blip, falls to the environment only when it has
+never had an answer, clears the memory when the store answers that the
+row is GONE (so a deleted setting cannot come back on the next blip),
+and says which it did in the log once a minute. `GET /api/config` reports `signupMode` and
+`signupModeSource`. `PUT /api/admin/signup-mode` `{mode}` carries exactly
+the guards of `/api/admin/customer-confirms`: the device session, the
+devtools gate, a signed-in teacher, that teacher's staff id in
+`POS_ADMIN_STAFF_IDS`, and a database that answers. One log line,
+`[signup-mode] automatic -> review by staff=<id>`.
+
+**It is not a fifth exception to the drawer's rule, because it is not a
+rail.** T89's target, T203's approval and T205's signature each decide
+whether a write reaches Mindbody; this one decides whether a HUMAN taps
+before a create the same browser would make by hand moments later, with
+the same guards either way. No server route reads it. It is admin-only
+and logged for the plainer reason the others are: a studio-wide policy
+should be somebody's. The drawer's line and its 64px control sit beside
+the other two (`SignupModePanel`), and everyone sees the line.
+
+### 2. Automatic, in the teacher's browser
+
+The tray already had three ways of hearing about a finished sign-up: the
+`signups` event on the teacher's stream, a `completed` event for a
+`register` request, and a 30 second poll whose first read is also the
+catch-up for an iPad that was asleep. All three end in one list, so
+`SignupTray` now hands that list up (`onRows`) and page.tsx runs the
+sequence against it. One mechanism, not a second one for the poll.
+
+Per sign-up, once: read the stored form (`/api/display/signups/<id>`),
+create with `displayRequestId` and the form AS STORED (nobody corrects
+it in this mode, which is the whole of what "automatic" means), then
+book, then check in.
+
+- **The class on screen is judged by its own CLOCK, not by "is it
+  today"** (`classWhen` in page.tsx, added in review). **Superseded in
+  part by T208, 2026-09-20**: the fourth answer below, "ahead" (book a
+  class past the roster window, do NOT check in), is gone. Pete met it
+  on his second drive as "it did not sign them in but did sign them up.
+  is this because the class starts several hours from now?" -- it was --
+  and the reasoning that the teacher "went looking" for that class cuts
+  both ways: the class on screen is their choice either way, and the
+  instruction for this whole path was "created and automatically signed
+  in to class". Any class that has not ENDED is now booked AND checked
+  in; "ended", "otherday" and no class are unchanged, because attendance
+  at a class that is over is the thing that must never be invented. `defaultClassId`
+  falls back to the LAST class of the day when nothing is within the
+  "schedule back" window, so at 8pm the screen still shows the 6:30 that
+  finished an hour ago, and booking a new student into that with
+  `SignedIn: true` would record attendance at a class they never
+  attended. So: an ENDED class, a class on ANOTHER DAY (where T46 closes
+  check-in anyway) and NO class each create the client and book nothing;
+  a class further AHEAD than the roster window reaches is booked and
+  deliberately NOT checked in, because it is a class the teacher went
+  looking for rather than the one at the door; and only the class at the
+  door is booked and checked in. The end comes from Mindbody's own
+  `EndDateTime`, which `ClassSummary` now carries (`src/lib/roster.ts`);
+  a class whose answer had none is given two hours, which is longer than
+  anything this studio teaches, because the failure to avoid is calling
+  a class ended while it is running. A class that started LONGER ago
+  than the window and has not ended is still the class at the door: that
+  student is late, not absent.
+- **Full is decided by the capacity count first**, which is what
+  `tapWalkIn` does today, and the booking goes straight to
+  `waitlist: true`. A class that filled between the roster read and the
+  booking is caught by the refusal instead: a plain booking refused in
+  words that mention a full class or a wait list is retried once as a
+  waitlist add. A waitlisted student is not checked in, and the line
+  says so.
+- **The visit comes from the booking answer** (`Visit.Id`), and when the
+  answer carries none the roster is re-read and the client's own visit
+  is found on it, which is the same lookup `visitPayment` makes. A
+  booking Mindbody already signed in (T19's after-start case) is not
+  signed in again.
+- Then the roster is refreshed, and the tray says, for about ten
+  seconds, "Sam Vega created, checked in to 6:20 Bikram Yoga", or "on
+  the waitlist for ...". **That line is for the outcome that needs
+  nobody, and nothing else** (review): a client who now exists in
+  Mindbody and is in no class is exactly what the tray is for, so "no
+  class on screen", "the class on screen has ended", "not today",
+  "booked, not checked in" and a suppressed check-in are all ROWS, which
+  stay. The waiver's own two failures (a release that did not land, a
+  signature image that did not reach Mindbody) and a dropped text opt-in
+  ride the end of whichever the run files, because they are the two
+  things the modal's Create says out loud and nobody is looking at a
+  modal here.
+- **One sign-up at a time in a tab** (review). Three collected while the
+  iPad slept arrive as one list, and firing them together would have all
+  three read the same capacity count and book against one seat, so the
+  runs are chained, across deliveries and not just within one.
+
+A new client has no pass, so the booking goes in unpaid exactly as a
+teacher's walk-in booking does, and the roster row shows "unpaid".
+
+### 3. When a person is needed
+
+The name stays in the tray with the reason under it, and the tap is
+still T204's prefilled modal, so the teacher fixes what is wrong and
+creates by hand:
+
+- a duplicate (the route's 409): "Already has an account, search for
+  them.";
+- a field the site demanded that the sign-up lacks: Mindbody's own
+  sentence;
+- a suppressed create (dry run, the write guard): nothing was created,
+  and the sign-up is still waiting on the server;
+- nobody signed in: nothing runs at all, because the tray's own read is
+  behind `requireActor` and 401s, so there is no list to run against.
+
+And the cases where the client EXISTS and the tray must not offer
+Create again: a refused or suppressed booking, a booking with no visit
+to check in, a suppressed check-in, a class that has ended or is not
+today or is hours ahead, no class at all, and (found in review) a create
+that landed followed by a throw before the booking, which used to lose
+the person in silence. The row reads what happened ("created; booking
+refused: <what Mindbody said>", "created; the class on screen has
+ended", "created and booked into Bikram Yoga, not checked in (starts at
+6:30pm)"), it is the page's own row rather than the server's (the
+request was consumed by the create), and tapping it opens the person's
+PROFILE.
+
+**One attempt per request id per browser.** A refusal must not be
+re-asked of Mindbody every thirty seconds, so a request id that has been
+run is never run again in that tab; a 401 is the one exception, since
+the teacher signing back in should pick it up. That memory is bounded by
+the TRAY, not by the day (review): an id that is neither waiting on the
+server nor stuck on this screen is finished business and is forgotten,
+and a consumed request never comes back, so forgetting it cannot make
+the tab run it twice. **Two iPads are settled on
+the SERVER**, by the create's own `beginFinalisation` claim (T204): the
+loser gets 409 `inFlight` and drops it in silence, because two lines
+about one student are worse than none.
+
+### 4. Review
+
+T204's behaviour, unchanged: the tray holds the name until a teacher
+taps Create, and nothing books or checks anybody in.
+
+### Fixed in review
+
+- **The 8pm class.** The selected class can be one that has ENDED, and
+  the run would have booked a student into it and marked them signed in.
+  `classWhen` above is the rule that came out of it, and it also
+  separated "hours ahead" from "at the door".
+- **A created client could vanish.** A throw between the create and the
+  booking (a dropped connection is enough) left no tray row, because the
+  sign-up was already spent: the person existed in Mindbody and nothing
+  on screen said so. The catch now files the stuck row.
+- **Created-but-unbooked was a ten second line.** It is a tray row now,
+  for the same reason the tray exists.
+- **Three sign-ups could book against one seat**: the runs are chained.
+- **A database blip could loosen the setting**: the last answered value
+  is kept (above).
+- `looksFull` matched any sentence with "wait list" in it, so "already
+  on the wait list" would have provoked a second booking attempt. A wait
+  list only counts as full when the sentence also says there is no room.
+- `visitIdFor` read the roster without `summary=0` and cost a second
+  metered `/class/classes` call it never used.
+- The outcome line is `role="status"`, being the one thing on the screen
+  that appears with no tap behind it.
+- The tray's list no longer renders with nobody waiting, so an outcome
+  line cannot leave an open list with no badge to close it.
+
+### Verified
+
+Against a real production Next server and a mock Mindbody
+(`scratchpad/t207/`), with `npx tsc --noEmit` and
+`env -u DATABASE_URL npm run build` clean:
+
+- **Route driver, `routes.mjs`, four servers, 49 assertions, 0 failed**
+  (the setting itself):
+  with no `POS_SIGNUP_MODE` the mode is automatic from the environment
+  (13); with `POS_SIGNUP_MODE=review` it is review, and the PUT is a 503
+  that names the variable and changes nothing (13); a teacher whose
+  staff id is not in `POS_ADMIN_STAFF_IDS` gets 403 on both verbs, still
+  reads the line from `/api/config`, and is offered no control (6); and
+  against Postgres an admin's PUT writes the `app_settings` row both
+  ways, `/api/config` agrees and names the source as the setting, the
+  same value again reports no change, a third word and a missing mode
+  are each 400, and the stored value wins over a `POS_SIGNUP_MODE` that
+  says otherwise (17).
+- **The outage driver, `outage.mjs`, 13 assertions, 0 failed**, against
+  a REAL Postgres stopped under the running server: with `review`
+  stored, the mode stays `review` through the outage and still names the
+  stored setting as its source, while the T203 setting in the same
+  `/api/config` answer falls back to the environment as designed; the
+  store answers again after the 30 second cooldown `src/lib/db.ts`
+  imposes, the mode is still `review` and now really from the store; and
+  an admin storing `automatic` over it is what the NEXT blip keeps, so
+  the memory follows the setting rather than outliving it.
+- **Playwright, `ui.mjs` automatic, 66 assertions, 0 failed**:
+  a sign-up finished on the display reaches the counter with no tap, and
+  the mock saw exactly one `addclient`, one `updateclient` carrying
+  `LiabilityRelease`, one `addclienttoclass` with no `Waitlist`, one
+  `updateclientvisit` with `SignedIn: true` and one document upload; the
+  tray's line names the person, the class and "created, checked in to",
+  the roster shows the new row, the badge clears, and the line goes by
+  itself about ten seconds later. With the class full the booking
+  carries `Waitlist: true`, nobody is signed in, and the line says
+  waitlist. With no class in the window the client is created, nothing
+  is booked, and a TRAY ROW says there is no class on screen with no ten
+  second line anywhere. A class that ENDED two hours ago creates the
+  client, books nothing, signs nobody in and says "the class on screen
+  has ended"; a class five and a half hours AHEAD is booked exactly once
+  and checked in NEVER, with the row naming the start time. A duplicate
+  leaves the name in the tray with "Already has an account, search for
+  them.", tapping it opens the prefilled form, and the refusal is not
+  re-asked twelve seconds later. A booking refused for another reason
+  leaves a row saying "created; booking refused: ..." whose tap opens
+  the profile and not a Create. With nobody signed in nothing is created
+  and nothing is booked. Two POS tabs open on one sign-up make exactly
+  one create, one booking and one check-in. A booking answer with no
+  visit id still ends checked in, from the roster's own visit. Two of
+  the cases skip themselves rather than assert the wrong thing when the
+  clock would put their class on another studio day.
+- **Playwright, `ui.mjs` review, 9 assertions, 0 failed**:
+  nothing is created or booked without a tap, the tray holds the name
+  and shows no outcome line, and the teacher's Create makes the client
+  and books nobody, exactly as T204 left it.
+- **Regressions, all 0 failed**, re-run in full after the review fixes:
+  T200's copy in `t204/t200-regress.mjs` 52, T114 27, T115 43, T203 7
+  off and 45 on, T204 65 (`POS_DISPLAY_ABANDON_MS=3000
+  POS_DISPLAY_SIGNUP_TTL_MS=15000` with the driver's own knobs
+  matched), T205 36 on and 4 off, and T206's own two drivers, 19 and 26
+  on its birth-date knob and 43 and 46 on its Playwright pass, the last
+  two run with `POS_SIGNUP_MODE=review` for the reason below. The T203
+  pair had to be run a second time, on its own: an `npm run build`
+  started in parallel emptied `.next` under its server, which is a
+  driver-harness mistake and nothing about this ticket.
+- **One regression driver had to be told which mode to run in, and that
+  is the ticket in one line.** T206's Playwright pass taps the TRAY to
+  create a sign-up, which is review-mode behaviour; under this ticket's
+  default the client is created before that tap can happen, so its last
+  four assertions had nothing to tap and it timed out. Run with
+  `POS_SIGNUP_MODE=review`, the mode it was written against, it passes
+  as before. Nothing about it was changed, and the driver is the
+  evidence that automatic really does get there first.
+
+### Could not verify
+
+- **Nothing here ran against the studio's Mindbody, a real class or a
+  real student.** Every booking and check-in above is the mock's.
+  Mindbody's own wording for a full class is therefore a GUESS in one
+  place only: the retry that turns a refused booking into a waitlist
+  add matches on "full", "wait list", "waitlist" or "capacity". The
+  capacity count is what decides in the ordinary case, and it is the
+  same count the teacher's own tap reads, so a wrong guess costs a name
+  in the tray with Mindbody's sentence under it, not a wrong write.
+- The staff session is faked in the harness (T200's idiom), so T49/T50
+  attribution is exercised as shape.
+- **Two iPads were two browser contexts against one server process.**
+  `beginFinalisation` is in-memory, so a SECOND SERVER INSTANCE would
+  not be settled by it; what stops a double create there is Mindbody's
+  own duplicate rule, which keys on first, last and email and is why the
+  T204 review recorded the same caveat for a student who gave no email.
+- Nothing was driven on a real iPad, so the tray's ten second line has
+  not been read by anyone with a queue in front of them.
+- **The stuck rows are BROWSER state.** A reload loses them, and the
+  sign-up they came from is already consumed, so nothing brings them
+  back. What is lost is the note, never the person: the client exists in
+  Mindbody and walk-in search finds them, which is the path a teacher
+  takes anyway. Putting them in the database would mean a table of our
+  own about clients Mindbody already has, which the T29 charter does not
+  allow, and the alternative recorded here is deliberate.
+- **T206's Playwright driver must be run with `POS_SIGNUP_MODE=review`**
+  (see the regression note above), and any future driver that taps the
+  tray to create a sign-up will need the same.
+- The outage case is driven against a REAL Postgres being stopped under
+  the server, which is a stopped database and not every way one can go
+  quiet (a hung host, a pool timeout). Those reach `readSetting` as the
+  same unanswered read, so the behaviour is the same by construction,
+  but only the stop was watched.
+
+## T208. Pete's second drive on real hardware, 2026-09-20
+
+T207 shipped in the morning and Pete drove the whole of Phase 2.5 again,
+two iPads and Chrome on the dev machine, against the Mindbody sandbox.
+The self-serve sign-up now finishes itself, and what came back was six
+things the counter noticed plus one sidenote. This ticket is those, and
+nothing else.
+
+**Nothing here adds a write path.** The display still imports no
+`mindbody()`; the three writes of an automatic run are still
+`/api/client-create`, `/api/book` and `/api/checkin` from the teacher's
+own browser. The one new Mindbody call anywhere in it is a READ: one
+`GET /class/classes?ClassIds=<id>` before a plain booking, on the
+service account, which is item 4.
+
+### 1. "there should be a waiting spinner so the teacher knows it didn't fail"
+
+Pete: "auto sign up does work, but there is a brief wait between when
+the banner shows up and when they are signed in to class." Three writes
+take a second or two of Mindbody's time, and in between the tray showed
+a name with nothing under it, which reads exactly like a name that is
+stuck.
+
+So the row says what is happening to it while it happens: a CSS spinner
+(`.spinner`, the one the rest of the app uses, drawn in `currentColor`
+so it takes the line's own token in both palettes, radius irrelevant
+because it is a circle by construction) and the words **"Creating and
+checking in..."**, or **"Creating and booking..."** when the class on
+screen is full. `signupBusy` in page.tsx is keyed by request id, set in
+the CHAIN effect (so a sign-up waiting its turn spins too, not only the
+one running) and cleared in `runSignup`'s `finally`, whichever way the
+run went. It also carries the NAME, because the row has to outlive the
+server's list: the create spends the handle half way through the run
+(review fix below). The gold badge keeps its count throughout: the
+count is about who is waiting, not about what is in flight.
+
+### 2. "it did not sign them in but did sign them up"
+
+"is this because the class starts several hours from now?" It was.
+T207's `classWhen` had four answers and one of them, `ahead`, booked a
+class starting past `settings.hoursForward` and deliberately skipped
+the check-in, on the reasoning that a class the teacher went LOOKING
+for is not the class at the door.
+
+That reasoning cuts both ways, and Pete's instruction for this path was
+"created and automatically signed in to class". The class on screen is
+the teacher's own choice whichever hour it starts, so **any class that
+has not ENDED is now booked and checked in**. `ended` (create, no
+booking, a tray row), `otherday` (the same) and no class at all are
+unchanged: attendance at a class that is over is the one thing this
+must never invent, and `defaultClassId` really does leave the finished
+6:30 on screen at 8pm. `classWhen` lost its `hoursForward` argument
+with the answer; the T207 ticket carries a dated note, and so do
+CLAUDE.md and the design doc.
+
+### 3. "i can't clear the failed one from the previous build"
+
+A row reading "Pete Stewart, 3 hours ago" sat in the tray with "That
+sign-up is no longer waiting. Ask them to sign up again on the customer
+screen, or create them here." under it, and Clear did nothing.
+
+**Cause: three stores, read in three orders.** A request can be held by
+the scene on the screen (`state.current`), by the tray's own map
+(`state.signups`) and by the `display_requests` row, and the hub lives
+on `globalThis` so a dev recompile leaves the first two behind. The
+LIST (`pendingSignups`) pruned memory and re-seeded it from the table;
+the by-id lookup read `state.signups` first; `loadRequest`, which
+`/api/client-create` and `consumeRequest` both use, preferred
+`state.current` outright. So a request whose memory copy had gone stale
+while the row was still good listed in the tray, refused every create
+with the sentence above, and answered `{cleared: false}` to Clear --
+after which the next poll brought it back, forever.
+
+Both halves are fixed:
+
+- **One resolver and one predicate.** `loadRequest` is now the only way
+  in: spent in this process is spent (`state.spent`, a bounded set, so
+  the memory-first consume T202's review insisted on cannot be undone
+  by a table write that missed), otherwise whichever store still has it
+  USABLE wins, memory first and then the row, and with nothing usable
+  anywhere it returns what it found so the caller can say why.
+  `signupById` is that call plus `liveSignup`, which is the same
+  predicate `pendingSignups` filters the table with. The tray cannot
+  show a row the routes behind it will refuse.
+- **Clear always clears a sign-up.** `clearSignup` drops the id from
+  memory, records it as spent, takes down the scene if it is the one on
+  screen, and marks the table row consumed BY ID, whatever any lookup
+  says about it. `DELETE /api/display/signups/<id>` answers
+  `cleared: true`. A request that RESOLVES to something other than a
+  self-serve sign-up is refused instead (review fix below).
+  A teacher tapping Clear is telling us nobody is coming; the only
+  honest answer is that it is gone. Nothing there reaches Mindbody,
+  exactly as before.
+- **And the runner does not strand one.** A detail read that 404s, or a
+  create that answers "no longer waiting", now makes the automatic run
+  call that same DELETE (`dropSignup`) instead of leaving the row for
+  the rest of the day.
+
+### 4. "i was able to check in more than the class size. is that a bug on our end?"
+
+Yes. A sandbox class with capacity 2 showed 3/2.
+
+**Mindbody's API does not enforce capacity**, and says so in the
+operation description rather than anywhere obvious:
+`docs/mindbody-openapi/class.yml:1077`, "To prevent overbooking a class
+... it is necessary to first check the capacity level of the class
+('MaxCapacity' and 'TotalBooked') and the 'IsAvailable' parameter by
+running the GetClasses REQUEST". The only count standing in the way was
+the BROWSER's `classFull`, computed from a class summary that is as old
+as the last roster load, and both the walk-in tap and T207's runner
+sent `waitlist` from it.
+
+So `/api/book` checks it itself: before a plain booking (not a
+promotion, not a caller who asked for the waiting list) it reads that
+one class, `GET /class/classes?ClassIds=<id>` on the service account
+like every read, and when `TotalBooked >= MaxCapacity` it books onto the
+WAITING LIST instead and answers `waitlisted: true` with
+`waitlistReason: "Class was full, added to the waiting list"`. One
+metered read per booking, which is the price of not overbooking a hot
+room.
+
+Three deliberate limits: **the count decides**, and `IsAvailable: false`
+beside a count with ROOM is ignored (it can mean a closed booking
+window, and a booking wrongly queued tells a student to wait for a seat
+that is there; Mindbody's own refusal comes back in words either way);
+**a read that cannot answer books exactly as asked**, because an
+unreadable count must not refuse a booking a teacher made; and T207's
+`looksFull` retry stays as the fallback for a refusal that still says
+full. Both callers read `waitlisted` off the answer: the tap path says
+the reason on the result row instead of "On the waiting list." and
+keeps the search modal open, and the runner's outcome line says
+waitlist. Both already refresh the roster, so the counts on screen are
+current afterwards.
+
+Pete's aside about the same drive, "aaa bbb went to the waiting list":
+that is this, correctly. The class was already over capacity (3 of 2),
+so the sign-up's booking was queued rather than adding a fourth.
+
+### 5. "the teacher should have a UI that very obviously states that"
+
+Pete: "if we think they already exist, the teacher should have a UI that
+very obviously states that instead of going to 'New client'. should be a
+decision modal that says 'We think this client already exists', display
+the one that it matches, and then have two buttons: one to accept the
+match and one to create new client anyway."
+
+Before this, a duplicate left "Already has an account, search for them."
+under the name and tapping it opened the New client form -- the one
+thing Mindbody had just refused.
+
+- **The refusal names who.** `/api/client-create`, on
+  `isDuplicateClientError`, calls `findExistingClient` (one `searchText`
+  read through the same `search()` /api/search uses, on the typed email
+  or, with none, "first last"), picks the row whose whole name and email
+  both match case-insensitively, else a search that found exactly one
+  person, else nobody, and answers 409 `{duplicate: true, match}` with
+  `{id, firstName, lastName, email, phone}`. Those two contact fields
+  are what a teacher already reads off a profile and this answer only
+  reaches a signed-in teacher's browser behind the device session, the
+  same rule `GET /api/display/signups/<id>` has carried since T204. The
+  lookup never throws: a failed search is a duplicate with no match,
+  which is the answer the counter had before.
+- **The decision.** `src/app/DuplicateModal.tsx`: "This person may
+  already have an account", the typed person and the matched one side
+  by side (name, email, phone), and two 64px buttons. With no match the
+  second column says so and "Use their existing account" is disabled.
+  The tray row reads "May already have an account: <name>", or
+  "Mindbody says they already have an account", and its tap opens this
+  rather than the form. So does the form's own Create in review mode
+  (`onDuplicate`), so the two doors end in the same place.
+- **"Use their existing account" creates NOBODY.** It posts
+  `{displayRequestId, useExistingClientId, form}` and the route skips
+  `addclient` entirely: under one `beginFinalisation` claim it verifies
+  the request, **looks the match up again itself** from the form the
+  refused create carried (review fix below) and refuses an id that is
+  not the one it found, checks the waiver wording has not changed, and
+  runs `finaliseWaiver` for that client id -- release, receipt row,
+  document upload, Notes line, handle spent last. The signature and the
+  consent are the stored result's, always.
+  It answers `{ok, clientId, existing: true, waiver}`, and the browser
+  carries on into the same booking and check-in, with the line reading
+  "Sam Fisher checked in to 6:20 Bikram Yoga (existing account)."
+  Recomputing the match rather than storing it on the request's private
+  half is the design call here: it costs one metered read on a tap a
+  teacher makes once, and it avoids a second writer for that column.
+- **"Create a new client anyway"** opens T204's prefilled form with one
+  amber line: Mindbody refuses a second account with the same name and
+  email, so change the email or a name before Create. The handle rides
+  it as it always did, so the waiver still lands.
+
+### 6. "i see nothing that says 'review'"
+
+"the create client modal is there, is that how it's supposed to work? if
+so, the verbiage and labeling needs to be much better." It was, and it
+was also the wrong shape: the tap created the client and stopped there,
+while automatic went on to book and check in.
+
+- The tray heading reads **"Waiting for your review"** in review mode
+  (automatic keeps T204's sentence, which is right for what is left
+  there: the exceptions).
+- The form is titled **"Review sign-up"** with the kicker "Customer
+  screen" and the line "Signed up on the customer screen. Check the
+  details, then create them and check them in."
+- The button names what the tap will do: **"Create and check in"**,
+  **"Create and add to waiting list"** when the class on screen is
+  full, or **"Create"** when there is no class on screen, it has ended,
+  or it is another day's.
+- And after Create it runs **the same sequence** the automatic run
+  does: the booking, the check-in, the same ten second outcome line,
+  the same tray rows for every exception. `bookAndCheckIn` was lifted
+  out of `runSignup` for it, which is also what "use their existing
+  account" calls, so the doors cannot drift. Since the review below,
+  **every** create carrying a sign-up handle ends there, in either
+  mode: the review tap, "Create a new client anyway", and a search
+  hit's own Create.
+
+### 7. "waitlisted clients should be at the bottom in a separated list"
+
+They were not in the roster at all: their only home was the waitlist
+counter's modal, a tap away and out of sight. They are the last rows of
+the roster now, under a "Waiting list (N)" heading drawn with the
+column heads' own treatment (16px uppercase over the 2px `--rule`, on
+`--surface-2`), inside the same scrolling list so they sit below the
+class rather than beside them. The rows are the modal's own markup and
+the tap is `tapPromote`, unchanged, waiver gate included. The counter's
+modal stays: this is a second door onto one list, not a copy of it. The
+list is still only READ for a full class, which is Phase 1.3's rule (a
+class with room cannot have a queue), so an unread list draws nothing.
+
+### Fixed in review
+
+Seven, and two of them were only reachable on paths the first drivers
+did not walk.
+
+1. **The duplicate match was computed from two different forms.** The
+   409's match came from the form the create was SENT (in review mode,
+   the teacher's corrections), and the accept recomputed it from the
+   STORED form, so "Use their existing account" could refuse every time
+   for exactly the person the teacher had just been shown. The accept
+   now carries that same form and the server recomputes from it, still
+   refusing any id that is not a match it found itself. **Why the
+   body's form is acceptable here**: it is evidence the server
+   re-reads, not a client id to trust, and it buys a caller nothing --
+   a signed-in teacher can already file a waiver on any client through
+   `/api/waiver-agree` and book any client, which is all this path
+   does.
+2. **Clear spent ANY request kind.** `clearSignup` was unconditional
+   about the id as well as about the stores, so a waiver, a ticket
+   approval or a contract signature named to `DELETE
+   /api/display/signups/<id>` would have been spent and taken off the
+   screen from under the student. It now refuses (404, nothing spent)
+   whatever resolves to something that is not a self-serve sign-up, and
+   is unconditional only for an id no store can account for, which is
+   the case Pete hit.
+3. **"That approval has already been used on a sale" was unreachable.**
+   `loadRequest` answered null for an id spent in this process, so
+   T203's distinct sentence and `/api/display/approval`'s
+   `consumed: true` both fell back to the generic answer, and the same
+   situation read differently before and after a restart. A spent id
+   now resolves to the CONSUMED copy (memory's, or the table's with
+   `consumedAt` set on a copy) and `consumeRequest` refuses on that
+   rather than on null. `/api/checkout` also tests SPENT first: T204's
+   review nulls a consumed row's `result`, so the `approved !== true`
+   test above it was swallowing every re-used approval into the generic
+   sentence. It is a refusal either way and nothing is charged; the
+   difference is whether the teacher is told to ask the customer again.
+4. **The spinner ended before the run did.** The create spends the
+   handle half way through, the server's `signups` event drops the row
+   at once, and the booking and the check-in are still going: the row
+   (and its spinner) vanished 0.5 to 2 seconds before the outcome line,
+   which is the gap this ticket exists to close. The tray now draws a
+   row for any BUSY id the list no longer carries, from the browser's
+   own state (hence the name in `signupBusy`), the page stopped
+   pruning busy ids and stopped nudging the tray mid-run, and
+   `bookAndCheckIn` sets the label itself so the review tap and "use
+   their existing account" spin too.
+5. **"Create a new client anyway" booked nobody in AUTOMATIC mode.**
+   The post-create sequence was gated on review mode, so that button
+   (and a search hit's own Create) left a brand new client in no class
+   under the default. Every create carrying a sign-up handle now ends
+   in `bookAndCheckIn`.
+6. **The capacity read asked about the wrong day.** `GET
+   /class/classes` defaults its `EndDateTime` to TODAY, so the by-id
+   read came back EMPTY for tomorrow's class and answered "did not
+   say", which books as asked -- the overbooking this item is about,
+   for every class that is not today. The read is bracketed now: the
+   booking body carries the class's own `classStartsAt` (it picks the
+   DAY and decides nothing else, so a wrong or missing one costs the
+   check and never a wrong write), and with none the read brackets
+   today plus ninety days. It is one metered call per plain booking,
+   deliberately, and it runs even when the write will be suppressed, so
+   a dry-run booking still says it would have been queued.
+7. **A consumed MEMORY copy outranked the table.** `loadRequest`
+   preferred memory's word that a request was consumed, which is the
+   same class of disagreement Pete hit: a hub object left on
+   globalThis by an earlier build. The table decides when it answers
+   now; memory answers only for a handle THIS process spent (the T202
+   rail, which must survive a table write that missed), for a copy that
+   is still usable (so a finalisation does not put a database on the
+   checkout path), or when there is no database.
+
+Minor, in the same pass: the waiting list's heading is no longer
+`aria-hidden` (it is the section's only label), and `NewClientModal`
+opens the decision for a duplicate with NO match too, so the teacher
+gets "Mindbody says they already have an account" and the search offer
+rather than a red line in a form that cannot be made to work.
+
+### Verified
+
+Against a real production Next server and a mock Mindbody
+(`scratchpad/t208/`), with `npx tsc --noEmit` and
+`env -u DATABASE_URL npm run build` clean:
+
+- **Route driver, `routes.mjs`, 48 assertions, 0 failed**: a class with
+  room books plainly, says `waitlisted: false` and costs exactly one
+  fresh `/class/classes` read; a class the mock reports FULL on that
+  by-id read while the window read still shows room (the stale flag,
+  exactly Pete's 3-of-2) answers `waitlisted: true` with the sentence
+  and the write itself carries `Waitlist: true`; a promotion keeps its
+  `WaitlistEntryId`, takes no `Waitlist` and costs no capacity read;
+  an asked-for waitlist add costs none either and carries no reason. A
+  duplicate answers 409 with the matched account, its email and its
+  phone, and leaves the sign-up waiting; a forged `useExistingClientId`
+  is refused in words with nothing written and the sign-up intact; the
+  real one creates NOBODY, releases the waiver against that client id,
+  files the signature, spends the sign-up and is refused the second
+  time. **And, after the review**: with the mock ending its own window
+  at today (which is what Mindbody does), tomorrow's class is still
+  found full by the bracketed read, with the hint and without it, and a
+  class 120 days out is found by the hint and books as asked without
+  one; a ticket approval named to Clear is refused 404 with nothing
+  spent and the scene stays up on the display's stream; and a sign-up
+  the teacher CORRECTED to somebody Mindbody knows is refused with that
+  match, the accept without the form cannot find it, and the accept
+  carrying the corrected form is taken and creates nobody.
+- **Stale driver, `stale.mjs`, 23 assertions, 0 failed**, against a REAL
+  Postgres (and, since the review, with `POS_CUSTOMER_CONFIRMS_SALE=true`):
+  a sign-up whose memory copy has run out while the row has
+  not is listed by the tray, OPENED by the by-id route (one predicate),
+  and cleared by one tap -- `cleared: true`, the row marked consumed,
+  the tray empty and still empty a poll later, the detail route 404, a
+  create naming it refused and nobody created anywhere in it; and a
+  second row in the same state CREATES rather than saying it is no
+  longer waiting, with the waiver filed. **Run against the pre-T208
+  build it fails 9 of 18, in Pete's own words**: Clear answers
+  `{cleared: false}`, the row comes back on the next poll, and the
+  create says "That sign-up is no longer waiting. Ask them to sign up
+  again on the customer screen, or create them here." That is the
+  reproduction this item asked for. Since the review it also approves a
+  ticket on the display, charges it, and charges the SAME approval
+  again IN THE SAME PROCESS: 409, in the words for it ("That approval
+  has already been used on a sale"), with `/api/display/approval`
+  reading `completed` and `consumed: true` rather than losing it.
+- **Playwright, `ui.mjs` automatic, 141 assertions, 0 failed**, both
+  palettes: T207's whole pass still holds (created, booked, checked in,
+  one call of each; the full class; no class; the ended class; nobody
+  signed in; two tabs, one create; a booking answer with no visit id),
+  and on top of it: the tray shows a spinner and "Creating and checking
+  in..." while a deliberately slow create is in flight, at 16px or more
+  and in both palettes, with the badge still counting, and it goes when
+  the outcome line arrives; a class five and a half hours AHEAD is now
+  booked AND signed in with no tray row left behind; a class the server
+  finds full lands on the waiting list although the tap asked for a
+  booking, with nobody signed in; a duplicate with no match opens the
+  decision (two 64px buttons, accepting disabled) and Create anyway
+  opens the prefilled form with the line about the name and email; a
+  duplicate Mindbody CAN name reads "May already have an account: Sam
+  Fisher", shows their email and phone, and "Use their existing
+  account" creates nobody, files the waiver on the existing client,
+  books them, signs them in and says "(existing account)"; a tray row
+  the server knows nothing about is spent with a DELETE and does not
+  come back; and the waiting list draws at the bottom of the roster,
+  headed with its count, below every class row, at 64px, in both
+  palettes. **After the review**: with the BOOKING slowed instead of
+  the create, the tray still shows the name and its spinner after the
+  create has landed and the server has stopped listing the sign-up, the
+  badge still counts them, and the spinner goes only when the outcome
+  line arrives; and in AUTOMATIC mode "Create a new client anyway",
+  with the email changed, creates, books and checks the person in.
+- **Playwright, `ui.mjs` review, 18 assertions, 0 failed**: nothing runs
+  without a tap, the heading reads "Waiting for your review", the form
+  is titled "Review sign-up" with its line and a 64px "Create and check
+  in", and the tap creates, books and checks in with the same outcome
+  line.
+- **Regressions, all 0 failed**: T200's copy in `t204/t200-regress.mjs`
+  52, T114 27, T115 43, T203 7 off and 45 on, T204 65, T205 36 on and 4
+  off, T206 19 and 26 on its birth-date knob with 43 and 46 on its
+  Playwright pass (run with `POS_SIGNUP_MODE=review`, as T207 recorded).
+  T207's own five route and outage drivers pass unchanged: 13, 13, 6, 17
+  and 13. Every one of these was re-run after the review fixes, and the
+  T203 pair matters most there: `/api/checkout`'s approval branch was
+  reordered.
+- **Eight of T207's Playwright assertions are SUPERSEDED, not broken**,
+  and its UI driver is the one thing that does not pass on this build:
+  the "ahead" class is now booked AND checked in with no tray row
+  (four), the duplicate's tray wording changed and its tap opens the
+  decision rather than the form (three, and the driver then times out
+  waiting for that form), and in review mode Create no longer "books
+  nobody" (one). Each is a change this ticket made deliberately, and
+  `t208/ui.mjs` -- which is that driver with those cases rewritten --
+  carries the new behaviour.
+
+### Could not verify
+
+- **Nothing here ran against the studio's Mindbody, a real class or a
+  real student.** Every booking, check-in, duplicate refusal and
+  capacity count above is the mock's.
+- **Mindbody's real duplicate wording is still a guess**
+  (`isDuplicateClientError` matches on "duplicate", "already exist",
+  "already has", "already in use"), and now a little more rides on it:
+  a refusal this does not recognise gets its own sentence in the tray
+  rather than the decision modal. The call log holds the exact message
+  the first time it happens live.
+- **`findExistingClient` is a searchText match, not Mindbody's own
+  duplicate check.** Mindbody refuses on first name, last name and email
+  together; this looks the email up and falls back to the whole name,
+  and answers null rather than guessing when the search returns several
+  people it cannot tell apart. A teacher then sees "Mindbody says they
+  already have an account" and searches by hand, which is what T204's
+  behaviour was for every duplicate.
+- **The capacity read has never been made against site 471.** The
+  parameter spelling (`ClassIds`) is the one the waitlist read already
+  uses live, and the mock answers it, but whether the studio's classes
+  report `MaxCapacity` and `TotalBooked` on a by-id read has not been
+  watched. A read that cannot answer books as asked, so the failure
+  mode is today's behaviour, not a refused booking.
+- **The stale row was reproduced by a mechanism, not by Pete's exact
+  history.** What it recreates is the state (memory and table
+  disagreeing about one request) rather than the sequence of builds that
+  put his counter into it; the fix is about the disagreement, and the
+  old build fails the driver in his own words.
+- **`state.spent` is per process and bounded at 500 ids.** A second
+  server instance would not share it, which is the same caveat
+  `beginFinalisation` has carried since T202; the table's own
+  `consumed_at` is the record behind it.
+- Nothing was driven on a real iPad, so the spinner has not been read by
+  anyone with a queue in front of them.
+- **The capacity read's window is bracketed against a MOCK that
+  enforces one.** That Mindbody ends its own window at today is the
+  spec's documented default rather than something watched live here,
+  and the ninety-day fallback bracket is a judgement: a class further
+  out than that, booked with no `classStartsAt` in the body, is not
+  capacity-checked at all and books as asked.
+- **"Already used on a sale" is now reachable, but only where the
+  request still exists.** With no database and the scene long gone,
+  nothing holds a copy of a spent approval and the refusal is still the
+  generic sentence; that is the case T203 recorded from the start.
+- The staff session is faked in the harness (T200's idiom), so T49/T50
+  attribution is exercised as shape.
+
+---
+
+## T209. The roster's "Pay and check in" never asked the customer (Pete, 2026-09-21)
+
+Pete's third sandbox drive, with **"customer approves each sale" ON**.
+He tapped the check-in chip on an unpaid row, the T25 dialog came up
+("Pay and check in Rae"), he picked a Drop In and tapped Charge, and the
+dialog answered, in red:
+
+> Not charged: The customer has not approved this sale on the customer
+> screen. Nothing else happened; it is safe to try again.
+
+**And no approval scene ever appeared on the customer iPad.** The
+sentence was true and the advice was useless: trying again did the same
+thing, because nothing in that dialog had ever asked anybody.
+
+### The cause: one precondition, two charge paths, one of them wired
+
+T203 made the approval a precondition of **every** charge, enforced in
+`/api/checkout` and nowhere else, which was the right place to put it.
+It then wired the ASKING half into `SaleScreen.tsx` alone: `approvalCart`,
+`presentApproval`, the poll of `/api/display/approval`, the busy retry,
+the `approve-wait` panel, the `ApprovalDialog`, and
+`displayApprovalId` / `approvalOverride` on the charge body.
+
+There are exactly two callers of `/api/checkout` in this app, and the
+other one is `runPayAndCheckIn` in `page.tsx` -- T25's three-stage
+gesture over an unpaid roster row, with T26's renewal sale in the same
+dialog. It sent items, a client and a method, as it always had. With the
+setting off that is correct and unchanged; with it on it is a charge the
+server is obliged to refuse, and a teacher standing at the counter with
+a queue reads a sentence about a screen that never lit up.
+
+This is the shape of bug a second copy would have made permanent, so the
+fix is the flow moved OUT of the sale screen rather than reproduced
+beside it.
+
+### What changed
+
+**`src/app/useSaleApproval.ts` (new).** T203's state machine, lifted
+whole: the `present` (`POST /api/display/present` as a `ticket`/`approve`
+request, with the cart the SERVER hashes beside the payload and no hash
+from the browser), the 1 second poll that survives a dropped stream and a
+reload, the 2 second retry behind the design's "Wait", "Take over", the
+D1 PIN, and `begin()` -- with the setting off, the caller's own charge
+and nothing else. It owns no charge: the caller passes its own,
+unchanged, and the hook only decides WHEN it runs and WHAT authorization
+rides on it. The setting, the ticket builder and the charge are read
+through refs updated in the render body, so the wait stays keyed to the
+request id and a keystroke elsewhere on the screen cannot restart the
+poll -- the reason T203's own effect carried an `exhaustive-deps`
+suppression.
+
+**`src/app/ApprovalWait.tsx` (new).** The `approve-wait` panel, moved
+with its markup, its class names and its five sentences intact, plus the
+quiet line a finished approval leaves behind. Both screens render it.
+
+**`src/app/SaleScreen.tsx`.** The state, the present, the two effects,
+the panel's JSX and `onPrimaryTap` are gone; the hook and the component
+stand in their place. `doCharge` did not move and the ApprovalDialog is
+wired to the hook's `armed`. Nothing a teacher sees on that screen
+changed, which the driver asserts by comparing the two panels'
+`innerText` character for character.
+
+**`src/app/page.tsx`.** The pay dialog calls the same hook. Its ticket is
+the one chosen pricing option at its price, its totals are Mindbody's own
+(`/api/price-cart`'s `subTotal`, `taxTotal` and `grandTotal`, which the
+dialog already read and now keeps), and its cart is the same
+`items`/`clientId` shape it charges with, so the two hashes agree
+although the two bodies are not identical (the charge also carries
+`taxExempt`, `taxRate` and a method, none of which are in the hash).
+`runPayAndCheckIn` takes an optional `{id, token}` and puts
+`displayApprovalId` or `approvalOverride` on the body exactly as
+SaleScreen does. The setting comes from the `config` this page already
+polls every 30 seconds; there is no second source.
+
+**Closing the dialog cancels the ticket.** `closePayDialog` -- the X, the
+scrim, Cancel, Close and Escape -- calls the hook's `cancel`, which POSTs
+`/api/display/cancel` when something is up. A student holding a ticket
+for a charge nobody is making is the one thing closing that dialog must
+not leave behind. Escape is the PIN pad's while the PIN pad is open: one
+key must not close two things.
+
+**"Check in free (comp)" is not a charge and presents nothing.** It was
+never routed through `/api/checkout` and still is not.
+
+### Five things review found, and the rail they share
+
+Review passed the refactor, the hash agreement and the rails, and found
+five ways an outstanding approval could end badly. Four of them are the
+same rail said differently: **nothing outstanding may outlive the ticket
+it was about, and nothing may end in silence.** They are fixed in the
+hook, so both screens get them.
+
+1. **A cart edit made the customer's Approve do nothing, silently.** The
+   poll calls the newest `chargeRef.current`, and the Cart screen's
+   cart-edit effect clears the tender lines, so `chargeable` went false
+   and `doCharge` returned at its first guard: the panel vanished, no
+   charge went out, and nobody was told anything while the student was
+   still looking at the ticket. Now that effect calls the hook's
+   `abandon`, which ends the wait AT the edit, takes the scene off their
+   screen and leaves one line, "The ticket changed. Charge again to ask
+   the customer." The same hole existed in the roster dialog, whose pass
+   list stays live during a wait (only a stage in flight locks it), so
+   picking a different pass does the same thing with its own sentence.
+   That makes `resetTender`'s old comment, "an outstanding approval goes
+   with the tender", literally true rather than nearly true.
+2. **Cancelling the PIN pad stranded the ticket.** `toPin` deliberately
+   leaves the scene up, and `closePin` cleared the state outright, so a
+   teacher who reached for the keypad and thought better of it left a
+   student holding a ticket nothing was watching. The `pin` stage now
+   carries `resume` when it was opened over a live wait, and `closePin`
+   goes back to that wait: the panel returns, the poll resumes on the
+   same request id, and their Approve still charges once. Nothing is
+   cancelled and nothing is charged by that tap.
+3. **Take over's three second apology was not cancellable.** Cancel
+   during it still put the ticket up afterwards, which teaches a teacher
+   that the control does not work. The hook now carries a generation
+   counter that every ending or restarting path bumps, and the apology
+   checks it before presenting. The same counter closes a smaller race:
+   a `present` whose answer arrives after the teacher moved on takes its
+   own just-created scene back down instead of stranding it.
+4. **Every non-busy refusal of the present read as "not connected".** A
+   400 from the payload check, a 403, a 502 with a body, and above all a
+   401 `reason: "staff"` all landed on "The customer screen is not
+   connected.", which sends a teacher to look at the wrong iPad.
+   Now: 401 `reason: "staff"` is the sign-in gone (T50) and is reported
+   up through the caller's own `onStaffSessionEnded` (SaleScreen's prop,
+   the roster's `setTeacher(null)`), so the gate comes back and no panel
+   claims the screen is at fault; **409** is `presentRequest`'s own
+   answer about the screen (`unpaired`, `disconnected`, `busy`) and is
+   the one that really means not connected; a 5xx or an answer with no
+   sentence in it falls back to the same line because it says nothing
+   that can be passed on; everything else shows the SERVER's own
+   sentence in the panel, with Approve sale still offered. (The
+   instruction for this said "5xx / 503 display-not-paired"; the
+   unpaired and disconnected answers are in fact **409**, so both
+   statuses are treated as not connected and the note is recorded here.)
+5. **`buyAndCheckIn`'s inline close did not cancel.** The reviewer's own
+   edit, kept: it calls `cancelPayApproval()` like `closePayDialog`
+   does, so leaving the roster dialog for the Cart screen takes the
+   ticket down too.
+
+`endWait` is the one place all of this lands: it bumps the generation,
+clears the state, keeps the sentence, and POSTs `/api/display/cancel`
+whenever a scene is up (a live wait, or a PIN pad opened over one). It
+is a no-op when nothing is outstanding, which is what keeps it away from
+the post-sale summary: the approval is already spent and null by the
+time the charge that raises the summary returns.
+
+### Design calls made
+
+- **The panel is the same one, not a variant** (Pete, mid-ticket: "the
+  right behaviour for EVERY charge is ALWAYS the same panel the Cart
+  screen shows"). One component, one set of words, two callers.
+- **A screen that is not there still gets the panel.** The hook lands on
+  `offline` and the panel says "The customer screen is not connected." and
+  "This sale needs your PIN, or a screen to ask on.", with the same
+  Cancel and Approve sale. It does NOT jump to a PIN pad: the override is
+  the teacher's own deliberate tap, on a control they have read before,
+  and skipping to a keypad would teach a teacher that a dark screen means
+  "type your PIN" rather than "the customer was not asked".
+- **The hook does not own the charge.** Two charge paths that differ in
+  every other way (one is a whole tender model, the other is one method
+  derived from a balance and a card) share the question and nothing else.
+- **T26's renewal sale rides the same flow**, because it is the same
+  dialog reaching the same route. It was refused by the same sentence
+  before this ticket, for the same reason.
+- **The roster's ticket carries no totals it cannot stand behind.** A
+  cart still pricing, suppressed or disagreeing presents its line and no
+  subtotal, tax or total, which is T201's rule applied to the second
+  screen that now builds a payload.
+
+### Drivers
+
+`scratchpad/t209/`, T208's harness extended. The mock gains one knob,
+`unpaidRow`: a second person on the class (Rae Unpaid, 100000002) booked
+with NO pricing option and a card on file, which is the row whose chip
+opens this dialog; and `/client/clientservices` now answers with what a
+LIVE checkout sold, so T25's stage (b) can attach the pass it just
+bought. Both are off or empty by default, so every earlier driver sees
+exactly the class it was written against.
+
+- `routes.mjs on` -- 25 assertions. The roster's own two bodies through
+  the two real routes: refused with Pete's exact sentence when nothing
+  asked (unpaired, and connected), presented, approved, then **charged
+  on its own approval** (the hash agreement, which is the one thing a
+  shared piece has to get right or every approval refuses its own
+  checkout), spent once, refused when the pass was swapped after the tap,
+  and refused after the customer declined. The display's stream is read
+  for the client id, the cart and the hash: none of them travels.
+- `routes.mjs off` -- 4. The roster's charge goes through carrying
+  nothing.
+- `ui.mjs on` -- **86**, Playwright, two browser contexts and the real
+  `/display`. The panel appears on the roster dialog; its text and its
+  two 64px controls are compared **character for character** with the
+  Cart screen's own panel, in both the connected and the dark-screen
+  case; the display shows Cancel | Approve with the roster's line and
+  $27.59; Approve leads to exactly one `/api/checkout` carrying
+  `displayApprovalId` and no PIN token, one non-test checkout at
+  Mindbody, and the row reads "checked in". Then: the customer's Cancel
+  leaves "Customer cancelled" and charges nothing; closing the dialog
+  mid-wait POSTs `/api/display/cancel` and the student's screen goes
+  back to idle; "Check in free (comp)" presents nothing and charges
+  nothing; a student's own sign-up on that screen gives the panel
+  "Someone is signing up on the customer screen." with Wait and Take
+  over; with the display unpaired the panel still appears, does not open
+  a PIN pad, and "Approve sale" is what does. Sizes and the dark palette
+  are measured on the panel in both themes.
+  The five review fixes are driven here too: a cart EDIT during a wait
+  (the ticket row's own two taps, as a teacher does it) ends the panel,
+  leaves the sentence, cancels the scene and stops the student being
+  asked, with nothing charged; cancelling the PIN pad puts the waiting
+  panel BACK with no `/api/display/cancel` at all, and the customer's
+  Approve then charges once on the display approval; Cancel during Take
+  over's apology puts NO ticket up (no second present, no scene, nothing
+  charged); a 400 shows the server's own sentence instead of "not
+  connected", still offers Approve sale at 64px, and repeats that reason
+  on the PIN pad; a 401 `reason: "staff"` raises the sign-in gate with
+  no panel blaming the customer screen. The last two are driven by
+  answering `/api/display/present` from the BROWSER (`page.route`),
+  because a 400 comes from that route's own payload check and a 401 from
+  `requireActor`, and neither is reachable by driving the real screen
+  with a real session; the Mindbody mock sits on the far side of a route
+  that never calls it.
+- `ui.mjs off` -- 6. Nothing is presented, no panel, one charge, and it
+  carries neither approval field.
+- `ui.mjs pin` -- the D1 override typed on the roster's dialog, against a
+  real Postgres so a teacher PIN can be enrolled: the PIN dialog opens
+  over the pay dialog, the charge carries `approvalOverride` and no
+  `displayApprovalId`, the override is filed on the client, and Rae is
+  checked in.
+- Re-run after the review fixes: `all.sh` (routes 4 + 25, ui off 6, ui
+  on 86, ui pin 10) and `regress.sh` end to end (t200 52, t114 27, t115
+  43, **t203 off 7 and on 45**, t204 65, t205 36 + 4, t206 19 + 43 + 26
+  + 46), all green; T208's `ui.mjs` automatic (**134 passed, 0 failed**,
+  with its own seven-assertion "ahead class" section SKIPPED by the
+  driver's own guard -- at the clock this run happened on, a class five
+  and a half hours out lands on another studio day) and review (**18**);
+  and **T203's own Playwright pass, 28 passed, 0 failed**, from
+  `scratchpad/t209/t203-ui-refresh.mjs`.
+
+### Limits
+
+- **The two panels are compared as TEXT, not as pixels.** They are one
+  component, so the words cannot differ; where they sit differs by
+  construction (a modal on the roster, the payment column's foot on the
+  Cart screen), and nobody has looked at the roster panel on a real iPad
+  with a queue in front of them.
+- **T205's contract signature still has its own copy of this shape**
+  (`sign`, `signNote`, its own `waitingForScreen`, its own
+  `approve-wait` JSX in SaleScreen). It is a different question about a
+  different object and was deliberately left alone here; if it is ever
+  unified, it should be after somebody has established that the two
+  really are one flow and not two that look alike.
+- **The busy case was driven with a sign-up holding the screen**, which
+  is the one the wording names. A waiver or a contract holding it takes
+  the same `reason: "busy"` branch and was not separately driven from the
+  roster.
+- **A cart edit leaves the student looking at the LIVE mirror, not an
+  empty screen.** T201's informational ticket goes straight back up with
+  the edited cart, which is the right thing (they watch their ticket
+  being built) but means the driver asserts the approve scene's two
+  controls are gone rather than that the screen is blank.
+- **`armed` still leaves the approve scene up** when the PIN was typed
+  over a live wait, exactly as T203 shipped it: the comment there says
+  the route cancels a pending approval of its own when it takes the PIN.
+  That was not re-examined under this ticket.
+- **The mock's unpaid row is a fixture, not Pete's own class.** What it
+  reproduces is the state (a booking with no pricing option, a card on
+  file, a connected display and the setting on), not his sandbox's data.
+- The staff session is faked in the harness (T200's idiom), so T49/T50
+  attribution is exercised as shape.
+- **T203's own Playwright driver had gone stale before this ticket.**
+  It clicks the nav item "Buy" (T206 renamed it "Cart"), reads "Not yet"
+  off the display (T206 made it "Cancel") and asks for the note
+  "Customer did not approve" (the code has said "Customer cancelled"
+  since T203 shipped). As written it dies on the first of those, on this
+  build and on the one before it. `scratchpad/t209/t203-ui-refresh.mjs`
+  is that driver with those three strings renamed and NOTHING else
+  touched, and it is 28 passed, 0 failed here; the original is left as
+  it was in `scratchpad/t203/`, so the staleness stays visible and is
+  fixed by whoever owns that file rather than quietly under this
+  ticket. The count matches T203's own recorded 28.
+
+## T210. A staff token belongs to the site that issued it (Pete, 2026-09-21)
+
+Pete's third sandbox drive, with a screenshot: the review sign-up's
+**Create** answered, in the modal's red line,
+
+> Delegated staff does not belong to the subscriber.
+
+and nothing could get past it: retyping the form and reopening the tray
+change nothing, because neither is what the sentence is about. That is
+Mindbody's answer to a **staff token used with a SiteId it was not
+issued for**. A staff account belongs to a
+site (CLAUDE.md has said so since the sandbox's first day, about the
+studio's own API login and site -99), and so does every token issued
+from one. Against the other site the token is not expired, not short of
+a permission and not wrong about the client: it is a credential of
+somewhere else.
+
+### The three holes, traced
+
+Reading, not guessing, because the sentence names nothing in this
+codebase. Three places hold a token, and none of them knew which site it
+came from.
+
+1. **The session.** `staff_sessions` (migration 8) carried no site id,
+   and neither did the in-memory `StaffSession`. So a session persisted
+   by T78 is restored by whatever process reads it next, and **a restart
+   with a different `MINDBODY_TARGET` in the environment does not run
+   T89's `endAllStaffSessions`** -- that runs on the drawer's switch and
+   only there. Point the service at the other studio, deploy, and every
+   teacher is still "signed in", holding the other site's token, and the
+   first write of the shift comes back in Mindbody's words.
+2. **The borrow.** T206's fallback for the sandbox's one login:
+   `findServiceStaffSession` took the newest `is_service` row REGARDLESS
+   of site, `serviceSessionToken()` handed it over, and `staffToken()`
+   cached it under the CURRENT target's `env.siteId`. That is the other
+   studio's token filed in this studio's slot, for an hour, for every
+   read and every service-account write. `adoptServiceToken` had the
+   same shape of trust: the username matched, so the token was assumed
+   to be this site's.
+3. **The refusal.** `isActorTokenDead` read a 401 and nothing else. This
+   refusal arrives as an ordinary 4xx with that sentence, so it was an
+   ordinary error: under a 403 it was an "actor refusal" and the write
+   was **retried once as the service account**, which holds the same
+   borrowed token and fails the same way, and under a 400 it was thrown
+   straight at the modal. Either way the browser got Mindbody's sentence
+   and the teacher got a dead end.
+
+The negative control is in the drivers: with T210's rule reverted, the
+403 phase fails eight assertions, two of them exactly Pete's screenshot
+(the raw sentence in the answer) and one of them the retry (**two**
+write attempts at Mindbody for one tap).
+
+### The rule, per hole
+
+**1. Every token records its site.** Migration 16 adds `site_id text` to
+`staff_sessions`, nullable because rows written before it cannot be told
+apart. `createStaffSession` records the site the sign-in actually used
+-- `signInAsStaff` now answers its own `siteId`, so the site comes from
+the env that issued the token and not from `target()` read a moment
+later, which can have moved. `StaffSession` carries it in memory too.
+
+Then three answers, and the middle one is the one worth reading
+(`sessionFitsSite` in `src/lib/staffsession.ts`):
+
+- a session naming THIS site is used;
+- a session naming ANOTHER site is dropped, in memory and from a row;
+- a session naming NO site is **unknown**, and unknown is treated
+  differently by where it came from. A persisted ROW is never restored,
+  which is what makes deploying migration 16 cost one sign-in and
+  nothing after. An entry already in MEMORY is let through, because the
+  only ways to hold one are a dev recompile (the Map lives on
+  globalThis) and a test harness that seeded it; every real sign-in
+  since this ticket records its site.
+
+An environment with no site id at all (Mindbody unconfigured) decides
+nothing: refusing there would be a counter that cannot sign anyone in
+for a reason that has nothing to do with sites. The foreign row is
+**left alone** rather than deleted: it may be the other counter's live
+session, and this process simply cannot use it. Logged once per process,
+never with a token.
+
+**2. The borrow takes the site from the env it was called with.**
+`serviceSessionToken(siteId)` returns only a session issued for that
+site (memory and table both), `findServiceStaffSession(siteId)` reads
+the newest few live service rows and hands back the one for this site
+plus the site ids of the ones it passed over, so the log can say what
+was skipped and why, and `adoptServiceToken(username, token, siteId)`
+refuses, loudly, a token that was not issued for the site it is about to
+be cached under. The sign-in calls it with the site its own token came
+from, so it adopts exactly as before; the point is that nothing else can
+hand it a foreign one.
+
+**3. That sentence is a dead token for this site.**
+`isForeignSiteRefusal` matches "does not belong to the subscriber"
+case-insensitively on a 4xx (a 5xx or a dead transport stays ambiguous
+and must never end a session or claim nothing was written).
+`isActorRefusal` takes it, so `runAsActor` handles it at all whatever
+status it rides in on; `isActorTokenDead` takes it, so the T50 rule
+applies unchanged: **the session ends, the write is refused 401
+`reason: "staff"`, and it is never retried as the service account.** The
+sentence the gate shows is its own -- "Your sign-in belongs to a
+different Mindbody site. Sign in again." -- set through T89's existing
+notice channel (`setSignInNotice`), which the gate already reads and the
+next sign-in already clears. For the SERVICE token the same sentence
+means the cached token for this site is forgotten (`forgetToken()`), so
+the next read issues a fresh one instead of riding a credential that
+cannot work; no retry, because one failed read is cheap and a silent
+second attempt on a write is not.
+
+### What the screen says
+
+The create surfaces stop showing a red line for it. `NewClientModal`
+(the review sign-up's Create, and New client) and the duplicate
+decision's "Use their existing account" return silently on a 401
+`reason: "staff"`: page.tsx's fetch wrapper has already dropped the
+teacher and the sign-in gate is coming back over the modal, so a
+sentence behind it is one nobody can act on. T207's automatic runner
+already did exactly this (`retryLater()` on a 401 and not a word), and
+the attempt is given back so a fresh sign-in picks the sign-up up.
+
+The gate explains itself even when nobody wrote anything. T89's notice
+channel (`setSignInNotice`) is what a refused write's 401 carries, and a
+teacher who simply walks up to an iPad after a restart makes no write:
+so `/api/teacher` now answers `notice` when nobody is signed in, and the
+gate shows it exactly as it shows the write's. A target switch gets the
+same benefit for free.
+
+The drawer's Settings tab, under "signed-in teacher", is where the quiet
+case is written down: "Signed in against site -99, which is the site
+this counter is on." When they differ it is a `--stop` line at 16px
+naming both and saying writes under it are refused. `/api/teacher` grew
+`siteId` and `targetSiteId` for it, `/api/config` grew `staffSiteId`
+beside its `siteId`, and `GET /api/teacher/probe` reports both and says
+so in its own refusal.
+
+### Rails re-traced
+
+- **The display adds zero write paths.** Nothing here touches
+  `src/lib/display.ts` or anything under `src/app/api/display/`.
+- **Every write is still under `requireActor`, dry run and the write
+  guard.** This ticket only ever refuses writes earlier; it lets none
+  through that did not go before.
+- **No token in a plain log line.** The new lines name site ids, staff
+  ids and counts. The call log keeps T109's record, unchanged.
+- No em dashes in the new copy, the drawer's line is 16px, nothing under
+  16px, every colour a token (the line reuses `--ink` and `--stop`
+  through the existing two classes).
+
+### Drivers
+
+`scratchpad/t210/`, T211's harness copied and extended: the mock grew
+`issueRefuse` (Mindbody refusing to issue a token, the sandbox's own
+behaviour), `subscriber`/`subscriberStatus` (the sentence, on any path
+prefix, as a 400 or a 403), a token that names the site it was issued
+for, a `site` field on every logged call and `/staff/staffpermissions`
+for the probe. `review-env.sh` carries BOTH credential sets pointing at
+the same mock with different site ids (-99 and 471), so a restart with a
+different `MINDBODY_TARGET` is a restart against a different SITE.
+`all.sh` is seven phases against seven boots of the server and one mock
+throughout. **64 assertions, all passing.**
+
+- **signin (8).** The service account signs in on site -99;
+  `/api/teacher`, `/api/config` and `/api/teacher/probe` all report the
+  session's site and the counter's, agreeing.
+- **borrow-same (5).** Issuing refused, a fresh process, the row in
+  Postgres: the read works, and it carries the token site -99 issued.
+- **borrow-other (13).** The same row, the server now on site 471: the
+  read is refused with nothing sent under another site's token
+  (`[staff-session] not borrowing ...`), the persisted session is not
+  restored, `/api/teacher` and `/api/config` say nobody is signed in on
+  site 471, `/api/teacher` carries the gate's own sentence before any
+  write is tried, and a write answers 401 `reason: "staff"` with that
+  sentence and nothing at Mindbody.
+- **null-site (3).** `update staff_sessions set site_id = null`: the row
+  is not restored even on the site that wrote it, and its cookie writes
+  nothing.
+- **memory-foreign (5).** A session seeded in MEMORY for site 471 while
+  the server runs on -99 is dropped before any Mindbody call.
+- **sentence, 400 and 403 (15 each).** The refusal ends the session
+  (401 `reason: "staff"`, `staffSessionEnded`, the site sentence,
+  "Nothing was written"), **one** write attempt reaches the mock and not
+  two, the next call is the gate with the same sentence, and on the
+  service-token half a refused read is not ridden twice and the next
+  read issues a fresh token.
+
+Re-run on the same build, all green: T208's `all.sh` (routes 48, stale
+23, ui automatic 134, ui review 18), T211's `all.sh` (routes open 63,
+routes guard 8, ui shapes 30, ui pin 16) and `regress.sh` end to end
+(t200 52, t114 27, t115 43, t203 7 and 45, t204 65, t205 36 and 4, t206
+19 / 43 / 26 / 46). `npx tsc --noEmit` clean, `env -u DATABASE_URL npm
+run build` clean.
+
+One note for whoever runs these next: a server left on port 3300 by an
+earlier session made the first regress run report 30 failures that were
+nothing but a missing staff cookie, because `regress.sh`'s pkill pattern
+(`^node .*scratchpad/t*/server.mjs`) does not match a server started as
+`node ./server.mjs` from inside its own directory. Check the port before
+believing a sweep of failures.
+
+### Fixed in review
+
+An independent review of the tree before commit found six things; one
+it fixed, four more were fixed on its report, one stands as noted.
+
+- **The site check ran against the wrong target for the first request
+  of a fresh process.** `staffSessionFrom` read the site from `target()`
+  before anything had loaded the STORED target (T89), so a counter
+  switched from the drawer and then restarted compared a session
+  correctly issued for site 471 against the environment's -99 and
+  refused it with this ticket's own sentence. Reproduced with a probe
+  (`scratchpad/t210/stored-boot.sh`) whose first request after the
+  restart is a write. `staffSessionFrom` now awaits `ensureTarget()`
+  first, the same bounded call every Mindbody call already makes.
+- **Only a BORROWED service token is forgotten on the sentence.** A
+  token this process issued for this site cannot belong to another
+  site, so the sentence on it is about something else, and forgetting
+  it in the sandbox's refused-issue state (T206's "ride the cached
+  token") would have thrown away the only working credential. The cache
+  entry records `borrowed`; `forgetBorrowedToken` is what the refusal
+  calls. The sentence driver now asserts a self-issued token is KEPT,
+  and the borrow driver asserts a borrowed one is forgotten and the
+  same-site session borrowed again.
+- **The service row is filtered by site in SQL**, not the newest five in
+  JavaScript, so two studios on one Postgres cannot hide this site's
+  row behind the other's; the rows passed over are read separately for
+  the log line.
+- **The gate notice is armed once per refused session**, not on every
+  poll: a browser with a stale cookie polling every thirty seconds used
+  to re-arm "Your sign-in belongs to a different Mindbody site" after
+  a later sign-in had cleared it, for a teacher it had nothing to do
+  with. A bounded set of refused session ids, lazily created because
+  the state lives on globalThis across a recompile.
+- `createStaffSession` now REQUIRES the site id; the in-memory
+  "unknown site is let through" leniency stays a harness affordance
+  and no caller can mint one by omission.
+- Standing, as noted: on a drawer-switched counter every process start
+  stamps T89's settle window when the stored target first loads, so a
+  write in the first two seconds answers "The studio target just
+  changed"; T89's rule, odd wording after a plain restart.
+
+### Limits, and what could not be verified
+
+- **Which of the three holes produced Pete's screenshot is not
+  established**, and cannot be from the screenshot alone: it needs that
+  server's log, which nobody has. All three were real on the code as it
+  stood, all three are closed, and the third is what turned any of them
+  into a dead end in the modal. If the counter's own log ever shows the
+  sentence again, `[staff-session]` and `[token]` now name the site ids
+  involved, which is the line that was missing.
+- **Nothing here has been run against live Mindbody**, and this ticket
+  is entirely about what Mindbody answers. The sentence itself is
+  Pete's screenshot, verbatim; the mock reproduces it, on both a 400 and
+  a 403 because nobody knows which status the real API used. If the live
+  wording ever differs by a word, `isForeignSiteRefusal` is the one
+  place to widen, and it is matched loosely (a substring, any case) for
+  exactly that reason.
+- **Matching on a sentence is matching on prose.** Mindbody could
+  reword it, and then this half degrades to what the code did before
+  T210: an ordinary refusal with the sentence on the screen. It cannot degrade to
+  a write going out, because the three site checks above do not depend
+  on the wording at all.
+- **A site id is not a target.** Two targets with the SAME site id
+  configured would be indistinguishable here; the site is what Mindbody
+  cares about, which is why it and not the target name is what is
+  recorded.
+- **The deploy costs one sign-in.** Every `staff_sessions` row written
+  before migration 16 reads as unknown and is not restored. That is the
+  honest reading of a row that could belong to either studio, and it
+  happens once.
+- **The foreign row is left in the table** until it expires. It is not
+  this process's to revoke: a revoke aimed at this site would be one
+  more call Mindbody refuses for the same reason.
+- **The in-memory leniency for an unknown site is a harness
+  affordance.** Real sign-ins always record a site, so the only entries
+  it admits are seeded ones and ones a dev recompile carried across. A
+  production process starts with an empty Map.
+- **Two iPads on different sites** were not driven. The session is
+  per browser and the check is per request, so each is refused on its
+  own; nothing shared moves.
+- **The site a session is checked against is the target as this process
+  last loaded it**, which `ensureTarget` refreshes at most every five
+  seconds. A drawer switch ends every session anyway (T89), so the
+  window is only reachable by another process switching the stored
+  target, and it closes on the next Mindbody call.
+- The **staff session is faked** in the sentence and memory phases
+  (T200's idiom); the other phases sign in for real through
+  `/api/teacher/signin` against the mock and then reuse that session's
+  row and cookie.
+
+## T211. A teacher's PIN past the waiver gate, with a reason (Pete, 2026-09-21)
+
+Pete, verbatim:
+
+> currently a teacher cannot sign a student up for class if they have no
+> waiver. that is the normal flow but a teacher should be able to
+> override with their PIN and must give a reason. make sure this is
+> doable if there is an error, that would probably be the main reason to
+> do so.
+
+The last sentence is the whole ticket. T18's dialog has always had two
+ways through -- read the studio's real text here and record the
+student's agreement, or since T202 have them sign it on the customer
+screen -- and both of them depend on something answering. When
+`GET /site/liabilitywaiver` could not be fetched the dialog fell back to
+a **close-only** shape: a stop-coloured line saying they cannot be
+checked in, a sentence telling the teacher to use the Mindbody app, and
+an X. That is a dead end with a queue in front of it, and it is exactly
+the state Pete is describing.
+
+### What an override IS, and what it is deliberately not
+
+It is **not a signing path**. Nothing in T211 writes `LiabilityRelease`,
+nothing touches `waiver_receipts`, and no agreement is recorded on
+anybody's behalf, because the student did not make one. T18's addendum
+overruled "not if the teacher taps it" for a flow that shows the real
+text and records the STUDENT's agreement; it did not overrule the
+principle behind it, and manufacturing an agreement here would.
+
+What it is: an authorization for **one write** to go ahead without a
+waiver, with a name and a reason attached to it. The student is asked
+again on the next tap, which is the difference between "a teacher
+accepted the risk today" and "this student signed". The roster row still
+reads "no waiver" afterwards.
+
+### The sixth PIN purpose
+
+(CLAUDE.md's heading said "three" and was two purposes stale: `approve`
+arrived with T203 and `contract` with T205 without it being renamed.
+This ticket fixes the count as well as adding to it.)
+
+`CompPurpose` in `src/lib/auth.ts` gains `waiver`, beside `comp` (T48),
+`overdraft` (T94), `override` (T112), `approve` (T203) and `contract`
+(T205). Its own value, for T94 review's recorded reason: a PIN typed to
+discount a sale, to overdraw an account, to override a pass, to approve
+a sale or to sell a membership unsigned must not also let somebody into
+a class with no waiver, and **two request fields are not a separation
+while one value fits both**. The purpose is signed into the token and
+each reader names the one purpose it accepts, so all five other tokens
+are refused here in words with nothing written, and this one is refused
+everywhere else.
+
+`src/lib/waiveroverride.ts` (new, no server imports, so the dialog and
+the routes share it) holds the purpose, the reason's bounds (3 to 200
+trimmed, the discount note's own pair from T43/T67), the flow type, the
+verb per flow and **the record's wording, in one place**:
+
+    Checked in without a signed waiver by Dana Rivers at the counter: the waiver page would not load
+    Added to class without a signed waiver by ...
+    Promoted into class without a signed waiver by ...
+    Checked in as a guest without a signed waiver by ...
+
+### The control, in EVERY shape of the dialog
+
+`src/app/page.tsx`: one 64px control, "Check in without a waiver" (the
+verb follows the flow: "Add", "Promote", "Continue"), rendered **outside
+the reading/close-only split and last**, so it is present in every state
+the dialog can be in and always after the normal path has been offered
+first:
+
+- the initial shape, beside "Read the waiver";
+- the reading shape, under Cancel and "Record agreement and check in";
+- **the close-only shape after the text failed to load**, which now
+  shows the load error AND the override instead of only an X;
+- after a refused "Record agreement", with the error line still there;
+- with the customer screen disconnected, busy (beside Take over) or
+  refusing a `present`;
+- after any `/api/waiver-agree` refusal.
+
+It depends on nothing having loaded and nothing having answered, which
+is the point.
+
+`src/app/WaiverOverrideDialog.tsx` (new) is the pad: the kicker
+"Teacher override", the title naming the act, the line "The student has
+not signed the waiver. Your PIN and a reason are recorded on their
+profile.", a **required** reason textarea and the PIN pad's digits. The
+confirm arms only with both; a PIN alone, a reason alone and a
+two-character reason all leave it disabled. The reason is a text field
+and NOT a breach of the no-typed-amounts rule (Conventions): it is a
+sentence, and it is the T43/T48 precedent of the discount pad's reason
+note, which the rule names as one of its two recorded exceptions.
+
+### The server side
+
+`src/lib/waiverguard.ts` (new) is the one place a `waiverOverride` field
+is read, so three routes cannot check it three slightly different ways.
+`claimWaiverOverride` runs the whole gate **before any Mindbody call**:
+the shape, the token's purpose, T94's rule that the token must name the
+teacher whose session is behind the request, and the spend. Then the
+write runs exactly as it did, and only afterwards is the sentence filed
+through `fileFormulaNote` (T45's Formula Note, T62's signed Notes entry
+where the site has none), with the client id in the options so dry run
+and the write guard apply to the record as to the write.
+
+Three routes take the field, each naming its own flow:
+
+| route | flow | what it authorizes |
+| --- | --- | --- |
+| `/api/checkin` | `checkin` | a roster row's check-in, and the same check-in inside T25's "Pay and check in" and T26's renewal |
+| `/api/book` | `walkin` / `promote` | the walk-in add, or the promotion off the waiting list |
+| `/api/guest` | `guest` | a member's guest, filed on the GUEST |
+
+**The spend is up front and atomic**, so one token arriving twice writes
+once; `unspendCompToken` hands it back for the ONE case where the write
+provably never happened, dry run or the write guard, which is T202's
+rule that a suppressed release does not consume the student's signature.
+A refusal or an error still costs the PIN, exactly as T48 decided ("a
+refused or ambiguous charge does: the dialog asks again, which is the
+right price for trying twice"), because neither is evidence that nothing
+was written.
+
+Two refusals that are ours rather than the token's: an override on a
+**check-OUT** is 400 (the gate it goes past is on the way in), and an
+override with no `clientId` is 400 (the record has to be filed on
+somebody).
+
+### The browser holds it for exactly one write
+
+`waiverOverrideRef` in page.tsx keeps the armed token, the reason and
+the client it was typed for; `takeWaiverOverride(clientId)` reads it
+**once** and clears it, so a one-shot token cannot attach itself to a
+second write. Arming re-enters the SAME continuation a recorded
+agreement takes -- `tapCheckIn`, `tapWalkIn`, `tapPromote`, the guest
+sheet -- with the person carried as `waiverSigned: true` on the LOCAL
+copy only. Nothing writes that back to `entries`, `found` or `waitlist`,
+which is what keeps the roster honest and the next tap gated. Every
+other gate is still ahead: an unpaid row still meets T25's pay dialog
+(and the override rides that dialog's own check-in, which is where the
+write actually happens), a full class still offers the waiting list, and
+the guest sheet still confirms.
+
+### Rails re-traced
+
+- **The display adds zero write paths.** Nothing in this ticket touches
+  `src/lib/display.ts` or anything under `src/app/api/display/`, and
+  neither imports `mindbody()`.
+- **Every write is still under `requireActor`, dry run and the write
+  guard**, including the Notes line.
+- **The PIN and its one-shot token never reach the dev call log**, and
+  not by redaction: the call log records what the server sent to
+  MINDBODY, and neither value is ever in one. The reason IS in it, in
+  the Notes write, because the reason is the record.
+- No em dashes, nothing under 16px, every control at least 64px, radius
+  0, every colour a token in both palettes (three new rules, all reusing
+  T202's and T48's).
+
+### Drivers
+
+`scratchpad/t211/`, T209's harness extended with one mock person (Noa
+Walkin, 100000003: searchable, on no class, no `Liability`, so the
+walk-in add meets the gate). `all.sh` is the four of them.
+
+- `routes.mjs open` -- **63**. A plain check-in is unchanged and files
+  nothing. The real PIN path (`/api/teacher/verify` with
+  `purpose: "waiver"`) mints a token that checks Sam in, names Dana
+  Rivers, files the sentence as a T62 signed Notes entry, and **writes
+  no liability release and creates nobody**. Then: the same token twice
+  is 401 with nothing sent; all five other purposes are 401 with nothing
+  sent; a missing, blank, two-character, 201-character and non-string
+  reason are each 400 with nothing sent, and 200 characters is accepted;
+  another staff id's token, an expired one and a forged one are 401 with
+  nothing sent; an override on a check-out and one with no client are
+  400. `/api/book` files the ADD's own wording and the PROMOTION's,
+  and refuses a comp token with nothing booked; `/api/guest` refuses a
+  wrong purpose before its three reads. The dev log holds no token and
+  no PIN, and does hold the reason.
+- `routes.mjs guard` -- **8**, with `POS_WRITE_CLIENT_IDS` narrowing
+  writes to one client. A suppressed check-in answers `suppressed:
+  "write-guard"`, claims no record, files nothing, and **the same token
+  then works on an allowed client**: the suppressed write did not spend
+  the PIN.
+- `ui.mjs shapes` -- **30**, Playwright, the real screens. The control
+  is present and 64px in the initial shape, the reading shape, the
+  load-failed shape (`/api/waiver` faked to 500), after a refused
+  `/api/waiver-agree`, with the screen busy (beside Take over) and with
+  a `present` refused 400. The pad: the kicker, the recorded-on-profile
+  line, no em dashes, Done disabled with a PIN alone, with a
+  two-character reason and with a reason alone, enabled with both.
+  Sizes measured in light, the pad rendered in dark.
+- `ui.mjs pin` -- **16**, against a real Postgres so the PIN is enrolled
+  through `/api/teacher/pin`. The typed gesture: one `/api/checkin`
+  carrying the token and the reason, **no `/api/waiver-agree` at all**,
+  Sam checked in, the sentence on his profile, no liability release ever
+  written, and the banner "Sam Fisher went in without a waiver, on Dana
+  Rivers's PIN." Then he is checked back OUT and the chip tapped again:
+  **the same gate is there**, and no second check-in rode the spent PIN.
+  A walk-in who is not on the roster gets "Add without a waiver".
+
+Re-run on the same build: T209's `all.sh` (routes off 4 / on 25, ui off
+6 / on 86, ui pin 10) and `regress.sh` end to end, plus T208's `ui.mjs`
+in both modes. `npx tsc --noEmit` clean, `env -u DATABASE_URL npm run
+build` clean.
+
+### Fixed in review
+
+An independent review of the tree before commit found eight things;
+three it fixed, three more were fixed on its report, two stand as
+noted.
+
+- **Escape while the PIN check was in flight ran the write the
+  teacher had just abandoned.** Cancel and the scrim were disabled
+  while `/api/teacher/verify` was outstanding, Escape was not, and the
+  pending answer still armed the override, which re-enters the tap.
+  Escape now does what Cancel does while busy: nothing.
+- **A waiting-list add was recorded as a class check-in.** The Notes
+  line and the banner both said "added to class" when T208's fresh
+  capacity read had queued the person. `waiverOverrideLine` takes a
+  `queued` flag and the record reads "Added to the waiting list without
+  a signed waiver"; the banner says "went on the waiting list".
+- The verify route's 400 still listed five purposes.
+- **`/api/guest` handed the PIN back in a state where the visit had
+  LANDED.** Its guest step reads "suppressed" both when nothing was
+  written and when the booking landed and only the sign-in was
+  suppressed; the release now also requires `!landed`. Unreachable
+  today because both writes carry the same client id, so dry run and
+  the write guard suppress them together, but the rail no longer rests
+  on that.
+- **A stale armed override could attach itself to a student who has
+  since SIGNED.** The token is keyed by client id and expires in ten
+  minutes, but a roster refresh that flips that client's `waiverSigned`
+  to true let the next ordinary tap take it and file "without a signed
+  waiver" on somebody who signed. The refresh that flips the flag now
+  drops the armed override for that client.
+- The check-in path's Notes filing waits three seconds instead of the
+  helper's eight: it is the one tap made with a queue at the door and a
+  row that spins until the route answers; the line may still land.
+- Unused `isWaiverFlow` export removed.
+- Standing, as noted: `/api/guest` spends the PIN on a refusal that
+  reached only its reads ("No guest pass with sessions left"), which
+  costs a re-type; T48's posture, kept.
+
+### Limits, and what could not be verified
+
+- **Nothing here has been run against live Mindbody.** The mock proves
+  the shapes, the order and the refusals; it does not prove that
+  Mindbody's own `addclienttoclass` accepts a booking for a client with
+  no released waiver, which the API has never been asked. If it refuses
+  on its own, the override reports Mindbody's sentence and the student
+  still is not in, exactly as T112's Override reports a refusal it
+  cannot escape.
+- **The write guard stands in for dry run** in the suppression driver,
+  because dry run is forced OFF in the sandbox (CLAUDE.md) and the
+  harness is a sandbox target. The two take the same branch in
+  `mindbody()` and both come back as `suppressed`, so the rule is
+  driven; `POS_DRY_RUN=true` on a prod target is not.
+- **The guest flow's override is driven at the route's gate only.** The
+  refusal before any read is asserted; the full sell-book-sign-in
+  sequence ending in a third Notes line on the guest was not driven end
+  to end, because `/api/guest` needs a guest pass, a sale and a return
+  from the mock that T211 did not build. The code files it only when
+  `steps.guest === "done"` and releases the PIN when that step was
+  suppressed.
+- **A refusal costs the PIN.** A 502 from Mindbody under an overridden
+  write leaves the token spent and the teacher types it again. That is
+  T48's recorded posture for an ambiguous write and is deliberate, but
+  it is a second PIN entry in the exact situation ("there is an error")
+  Pete wants this to work in.
+- **The override is not offered anywhere but the waiver dialog.** A
+  teacher who closed the dialog has to tap the row again to get back to
+  it. Nobody has watched that on a real counter.
+- **An armed override that is not used stays armed until its token
+  expires.** The one path where that is reachable is an unpaid row: the
+  waiver dialog hands off to T25's pay dialog, and a teacher who closes
+  that dialog leaves the authorization in the browser for the rest of
+  the token's ten minutes. The next check-in for THAT person would carry
+  it, which is what the teacher authorized and is filed as such; it is
+  still a loose end, bounded by the TTL and by `takeWaiverOverride`
+  clearing on first use.
+- **The staff session is faked in the harness** (T200's idiom), so
+  T49/T50 attribution is exercised as shape, and the "teacher's own
+  token" in every driver is the one fake session.
+- **Two iPads racing one override** end with one write and one 401: the
+  spend is atomic. What the loser's screen says about it has not been
+  designed; it reads the same refusal a spent token gets.
+
+## T212. The studio can be switched from the sign-in screen (Pete, 2026-09-25)
+
+Pete, with a screenshot of the roster on production:
+
+> when i switch to prod it still says sandbox, not sure why.
+>
+> also i realized you cannot get to the settings to change between prod
+> and sandbox without being logged in, so that is a problem.
+
+### "It still says sandbox" is not the mode
+
+The line in the screenshot reads "Sandbox test", in the quiet surface with
+the accent rail. That is the STUDIO BANNER (PLAN 1.7), the announcement
+text, and "Sandbox test" is exactly the `POS_BANNER_TEXT` the setup steps
+for the hardware drive told Pete to put in `.env`. It follows no mode and
+never has. The mode line (`modeNotice`) is a different element above it,
+and it did what T111 says: on production it shows only for a dry run, the
+write guard, or this iPad's own dry run, and nothing at all when the
+counter is live and unrestricted. The roster underneath, "Hot 26 (90 min)"
+and a real member's annual pass, is production data. So nothing in code
+was wrong here. The fix is removing that line from `.env` (the drawer's
+banner field cannot clear it: clearing the stored value falls back to the
+env var by design).
+
+### The switch was behind the thing it was needed to fix
+
+T89 put the target switch in the drawer's Settings tab, and the drawer is
+inside the signed-in desk. Every guard on it was right, but together they
+made a trap: a staff login belongs to ONE Mindbody site (CLAUDE.md, T210),
+so a counter on the studio you cannot sign in to, or on a studio where
+your staff id is not in `POS_ADMIN_STAFF_IDS`, cannot reach the control
+that would move it. The only way out was editing the environment and
+restarting, which is the redeploy T89 was built to remove.
+
+### The rule
+
+The sign-in gate offers the studio. When the drawer's switch could work
+at all (the devtools gate, BOTH credential sets and a database, the same
+three conditions), `/api/config` carries `studioChoice`, the two studios
+with their site ids, and the gate draws two 64px halves above the login
+fields, starting on the counter's own. Picking the other one adds a line
+saying what signing in there does, and the button says "Sign in to
+sandbox" (or production).
+
+`POST /api/teacher/signin` takes an optional `target`. Absent, or naming
+the studio the counter is already on, is an ordinary sign-in and sends
+exactly what it always did. Naming the OTHER studio is a switch, and:
+
+1. the devtools gate, the credential sets and the database are checked
+   BEFORE any password leaves the server (404, 409 or 503, in words);
+2. the login is checked against the DESTINATION studio
+   (`signInAsStaff(..., at)`), which is the point: the drawer's proof was
+   an admin's password at the current site, and this is the same proof
+   made at the site that can actually take it;
+3. the id that studio answers must be in `POS_ADMIN_STAFF_IDS`. Anybody
+   else gets 403 naming their id at that studio and the variable ("Your
+   Sandbox staff id is 777, which is not in POS_ADMIN_STAFF_IDS. Nothing
+   was switched."), their token is revoked at the site that issued it,
+   and the counter does not move. Staff ids are per site, so an admin
+   who uses both studios needs both ids in the list, and the refusal is
+   what tells them the second one;
+4. then `switchTarget` (`src/lib/targetswitch.ts`, now the ONE body of
+   the switch, shared with `PUT /api/admin/target` so the order cannot
+   drift: every session ended while the old credentials are current,
+   then the row, then the catalog, gift card and required-field caches,
+   then the log line, `[target] prod -> sandbox by staff=4242 via
+   sign-in`);
+5. and the sign-in carries on as an ordinary one at the new studio, so
+   the admin lands on the roster signed in there. The "studio target
+   changed, sign in again" line is put back after their session is made,
+   because it is for every OTHER iPad, whose teacher was just signed out.
+
+What did not move: dry run and the write guard stay in the server
+environment, the drawer's switch is unchanged apart from calling the
+shared function, and nothing else about sign-in changed for a request
+with no `target`.
+
+### Drivers
+
+`scratchpad/t212/gate.mjs` against the T210 mock (both credential sets on
+one mock with different site ids; the mock taught a non-admin login, id
+777, and a wrong password), a real Postgres and a production build:
+
+- **db** (27 assertions): `studioChoice` names both studios and site ids;
+  a `target` naming the current studio is an ordinary sign-in at 471; a
+  bogus target is 400; a wrong password at the other studio is 401,
+  checked at -99, counter unmoved; a non-admin is 403 with their id and
+  the variable, no cookie, token revoked at -99, counter unmoved and the
+  other teacher still signed in; an admin is 200 as that studio's staff
+  member, the counter is on the sandbox from the stored setting, the new
+  session belongs to -99, the prod teacher elsewhere is signed out and
+  told why; the drawer's `PUT /api/admin/target` still switches back and
+  still signs the switching admin out; the gate switches twice more and
+  leaves the row on prod.
+- **nodev** and **nodb** (5 each): no `studioChoice`, a switch at sign-in
+  is refused (404, 503) with NO `usertoken/issue` sent, and a plain
+  sign-in still works.
+- **ui.mjs** (21): the two halves in both themes, 64px, 16px and up,
+  starting on the counter's studio; no line and a plain "Sign in" on the
+  counter's own; the line and "Sign in to sandbox" on the other; the
+  non-admin's refusal in words; an admin landing on the roster with the
+  mode banner now reading SANDBOX.
+
+### Limits
+
+- **Not driven against real Mindbody.** The mock issues a token to any
+  password but "wrong". Pete's real case (a prod counter, his sandbox
+  login) is the first live run.
+- **Admin ids are per site** and the list is one variable. An admin who
+  uses both studios needs both ids in `POS_ADMIN_STAFF_IDS`; the refusal
+  names the missing one.
+- **The gate's list is a promise about the SERVER, not the person**:
+  whether this login may switch is only known after the destination
+  answers, which is why the refusal is a sentence on the gate rather than
+  a hidden control.
+
+### Merge note: the migration numbers moved (2026-09-25)
+
+Main's T116 shipped `client_writes` as migration 12 while this branch
+held 12 to 16 for its own five. The runner applies every migration above
+the highest version a database has recorded, so two twelves cannot both
+run. Main keeps 12, because a deployed database may already have it.
+This branch's five are now 13 to 17: the display tables 13, the waiver
+signature columns 14, `contract_receipts` 15, `staff_sessions.is_service`
+16 and `staff_sessions.site_id` 17. Tickets above quote the numbers they
+shipped with. Migration 18 re-creates `client_writes` if it is missing,
+for a database that already ran this branch's old numbering (Pete's
+local one, at 16) and would otherwise skip main's 12. Every statement in
+13 to 18 is `IF NOT EXISTS`, so running any of them twice does nothing.
+
+The same merge carried T116's Notes rule into
+`src/lib/waiverfinalise.ts`, which this branch had lifted the waiver's
+receipt append into: the receipt is appended to Mindbody's own notes,
+read at that moment within `BEFORE_READ_MS`, never to the screen's copy,
+and the write is recorded as `waiver-receipt` under the teacher. Both
+waiver doors (the counter's and the customer screen's sign-up) get it.
+

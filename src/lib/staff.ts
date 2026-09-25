@@ -105,6 +105,54 @@ async function fetchStaffRows(
   return out;
 }
 
+/**
+ * One staff row by id, from the same pages, WITHOUT the placeholder name
+ * test (Pete, sandbox, 2026-09-20: the sandbox's API user, id 100000351,
+ * signed in with its password and was then refused as "not an active
+ * staff member" because its name matched the placeholder words). A login
+ * that proved itself with a password is a person or an account somebody
+ * meant; the only thing Mindbody can still say against it is
+ * `Active: false`. Null when no page carries the id.
+ */
+export async function findStaffRow(
+  id: number,
+): Promise<{ id: number; name: string; active: boolean } | null> {
+  /* First by id, which Mindbody's live API takes as StaffIds even though
+   * the vendored spec does not list it; an answer that ignores the
+   * parameter comes back as a page, which the loop below covers. */
+  try {
+    const direct = await mindbody(`/staff/staff?StaffIds=${id}&Limit=100`);
+    const rows: unknown[] = Array.isArray(direct?.StaffMembers) ? direct.StaffMembers : [];
+    for (const raw of rows) {
+      const row = raw as Record<string, unknown>;
+      if (row && row["Id"] === id) {
+        return { id, name: nameOf(row), active: row["Active"] !== false };
+      }
+    }
+  } catch {
+    /* fall through to the pages */
+  }
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const body = await mindbody(
+      `/staff/staff?Limit=${PAGE_LIMIT}&Offset=${page * PAGE_LIMIT}`,
+    );
+    const rows: unknown[] = Array.isArray(body?.StaffMembers)
+      ? body.StaffMembers
+      : [];
+    for (const raw of rows) {
+      if (!raw || typeof raw !== "object") continue;
+      const row = raw as Record<string, unknown>;
+      if (row["Id"] === id) {
+        return { id, name: nameOf(row), active: row["Active"] !== false };
+      }
+    }
+    const total = Number(body?.PaginationResponse?.TotalResults ?? NaN);
+    if (rows.length < PAGE_LIMIT) break;
+    if (Number.isFinite(total) && (page + 1) * PAGE_LIMIT >= total) break;
+  }
+  return null;
+}
+
 /** The teachers, cached. Throws only when there is nothing cached to
  *  serve instead. */
 export async function listTeachers(): Promise<Teacher[]> {
