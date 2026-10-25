@@ -8759,3 +8759,35 @@ textarea.reason-note-field:disabled::placeholder {
   font-size: 17px;
   color: var(--warn);
 }
+
+/* T213: the roster refresh sits at the class group's right end, so its
+ * hairline is on the left, the mirror of the day control's. It spins
+ * while the roster read is out. */
+.refresh-btn {
+  border-right: 0;
+  border-left: 1px solid var(--line);
+}
+
+.refresh-btn:disabled {
+  color: var(--ink);
+  opacity: 1;
+}
+
+.refresh-btn.spinning svg {
+  animation: refresh-spin 0.9s linear infinite;
+}
+
+@keyframes refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refresh-btn.spinning svg {
+    animation: none;
+  }
+  .refresh-btn.spinning {
+    color: var(--muted);
+  }
+}

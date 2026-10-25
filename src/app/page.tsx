@@ -563,6 +563,11 @@ function CalendarIcon() {
   );
 }
 
+/** Circular arrow: the header's roster refresh (T213). */
+function RefreshIcon() {
+  return <Icon d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" size={22} width={2.2} />;
+}
+
 /** Month stepping in the calendar. */
 function ChevronLeftIcon() {
   return <Icon d="m15 6-6 6 6 6" size={22} width={2.2} />;
@@ -1719,6 +1724,8 @@ function FrontDesk({
    *  which pass a class burns is money-adjacent, so the dropdown spins
    *  until Mindbody answers. */
   const [passSavingId, setPassSavingId] = useState<number | null>(null);
+  /** T213: the header refresh button's spinner. */
+  const [rosterReloading, setRosterReloading] = useState(false);
   /** The background roster refresh's guard. True while any roster write
    *  on this iPad is in flight; the epoch moves every time one starts, so a
    *  quiet read that began before a write and lands after it is dropped
@@ -7064,6 +7071,29 @@ function FrontDesk({
   const calendarLabel = viewDate
     ? `${viewLoading ? "Loading" : "Viewing"} ${dayKeyLabel(viewDate)}. Change day`
     : "Change day";
+  /** T213 (Pete): "we also should have a small refresh button". The
+   *  same read the timer makes, on demand, but not quiet: a teacher who
+   *  asked should hear when it failed. Spins until the roster answers. */
+  const refreshButton = (
+    <button
+      className={rosterReloading ? "cal-btn refresh-btn spinning" : "cal-btn refresh-btn"}
+      aria-label="Refresh roster"
+      title="Refresh roster"
+      disabled={rosterReloading || activeId === null}
+      onClick={async () => {
+        if (activeId === null) return;
+        setRosterReloading(true);
+        try {
+          await refreshRoster(activeId);
+        } finally {
+          setRosterReloading(false);
+        }
+      }}
+    >
+      <RefreshIcon />
+    </button>
+  );
+
   const calendarButton = (
     <button
       className={viewDate ? "cal-btn viewing" : "cal-btn"}
@@ -7394,6 +7424,7 @@ function FrontDesk({
               </>
             ) : null}
           </div>
+          {refreshButton}
           </div>
           {/* T60 (Pete): "the position of signed up/checked in/waitlist
               and Buy/TeacherName/personicon should be swapped with each

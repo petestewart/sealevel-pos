@@ -20608,6 +20608,14 @@ classes and back.
   error banner over a roster that is still correct. The next tick or
   the next tap reads again.
 
+- **A refresh button** (Pete: "we also should have a small refresh
+  button"). It is a 76px cell at the right end of the class group, beside
+  the class picker, with a circular-arrow icon labelled "Refresh roster".
+  It makes the same read on demand, but not quietly: a failure the
+  teacher asked for shows. The icon spins until the roster answers (with
+  reduced motion it dims instead), and the button is off while the read
+  is out.
+
 ### Cost
 
 Each read is the same `/api/roster` call a class switch makes: about
@@ -20623,6 +20631,9 @@ without a commit if the bill says so.
   The mock then added a second, signed in, as if from another device.
   The second appeared with no interaction 30 seconds later, after
   exactly one more `classvisits` call.
+- The button, with the timer set to 0: a student added on the mock did
+  not appear in three seconds and did appear after one tap. The cell is
+  76x76 in both themes, and its screenshots were checked by eye.
 
 ### Limits
 
