@@ -481,6 +481,7 @@ const NUMBERS: {
   { key: "minQueryLength", label: "Minimum query", hint: "letters", min: 1, max: 6, step: 1 },
   { key: "searchLimit", label: "Search results", hint: "max", min: 3, max: 50, step: 1 },
   { key: "hoursBack", label: "Default class", hint: "hours back", min: 0, max: 12, step: 1 },
+  { key: "rosterRefreshSeconds", label: "Roster refresh", hint: "seconds, 0 off", min: 0, max: 300, step: 5 },
 ];
 
 const FLAGS: { key: keyof Settings; label: string; hint: string }[] = [

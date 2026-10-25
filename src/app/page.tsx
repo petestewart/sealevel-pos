@@ -1719,6 +1719,20 @@ function FrontDesk({
    *  which pass a class burns is money-adjacent, so the dropdown spins
    *  until Mindbody answers. */
   const [passSavingId, setPassSavingId] = useState<number | null>(null);
+  /** The background roster refresh's guard. True while any roster write
+   *  on this iPad is in flight; the epoch moves every time one starts, so a
+   *  quiet read that began before a write and lands after it is dropped
+   *  rather than painting the pre-write roster over the tapped row. */
+  const writeBusy =
+    busy.length > 0 ||
+    cancelBusy ||
+    bookingIds.length > 0 ||
+    promoting.length > 0 ||
+    passSavingId !== null;
+  const writeBusyRef = useRef(writeBusy);
+  const writeEpochRef = useRef(0);
+  if (writeBusy && !writeBusyRef.current) writeEpochRef.current += 1;
+  writeBusyRef.current = writeBusy;
   /** Outcome text inside the dropdown: a failure, or the quiet suppression
    *  notice when dry run or the write guard stopped the write. */
   const [passMsg, setPassMsg] = useState<string | null>(null);
@@ -2121,7 +2135,11 @@ function FrontDesk({
    * fills the class must flip the walk-in action to "waitlist" without
    * waiting for a page reload.
    */
-  const refreshRoster = useCallback(async (classId: number) => {
+  const refreshRoster = useCallback(async (classId: number, quiet = false) => {
+    /* A quiet read is the background refresh: it must never overwrite a
+     * row a write on this iPad is changing, and a blip must not raise the
+     * error banner over a roster that is still fine. */
+    const epoch = writeEpochRef.current;
     try {
       /* T46: with another day showing, the class is outside the
        * around-now window, so the route's summary lookup (an around-now
@@ -2137,7 +2155,8 @@ function FrontDesk({
        * entries. The capacity update below is keyed by classId and stays
        * correct either way, so only the entries write is at stake. */
       if (activeIdRef.current !== classId) return;
-      if (d.error) return setError(d.error);
+      if (quiet && (writeBusyRef.current || writeEpochRef.current !== epoch)) return;
+      if (d.error) return quiet ? undefined : setError(d.error);
       setEntries(d.entries ?? []);
       setWaiverError(d.waiverError ?? null);
       setClasses((cs) =>
@@ -2148,7 +2167,7 @@ function FrontDesk({
         ),
       );
     } catch (e) {
-      if (activeIdRef.current !== classId) return;
+      if (activeIdRef.current !== classId || quiet) return;
       setError(String(e));
     }
   }, []);
@@ -2185,6 +2204,39 @@ function FrontDesk({
     setLastUsed({});
     void refreshRoster(activeId);
   }, [activeId, refreshRoster]);
+
+  /**
+   * Someone can be checked in or booked without this iPad doing it: the
+   * student's own Mindbody app, the studio kiosk, another teacher's iPad.
+   * The roster only re-read on a class switch or after this iPad's own
+   * writes, so those arrivals never appeared until the teacher moved away
+   * and back. Re-read the class on screen every `rosterRefreshSeconds`
+   * while the page is visible, and at once when it becomes visible again.
+   * Skipped while any write is in flight, and a read that overlaps a write
+   * is dropped (refreshRoster's quiet path), so it can never undo a row a
+   * tap is changing; the write's own refresh lands the truth.
+   */
+  const rosterRefreshSeconds = settings.rosterRefreshSeconds;
+  useEffect(() => {
+    if (activeId === null) return;
+    const tick = () => {
+      if (document.visibilityState !== "visible") return;
+      if (writeBusyRef.current) return;
+      void refreshRoster(activeId, true);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const timer =
+      rosterRefreshSeconds > 0
+        ? setInterval(tick, Math.max(5, rosterRefreshSeconds) * 1000)
+        : null;
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      if (timer) clearInterval(timer);
+    };
+  }, [activeId, refreshRoster, rosterRefreshSeconds]);
 
   /**
    * The background sweep: after a roster renders, fetch each client's

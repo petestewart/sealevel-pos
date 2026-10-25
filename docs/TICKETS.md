@@ -20581,3 +20581,53 @@ read at that moment within `BEFORE_READ_MS`, never to the screen's copy,
 and the write is recorded as `waiver-receipt` under the teacher. Both
 waiver doors (the counter's and the customer screen's sign-up) get it.
 
+
+## T213. The roster re-reads itself (Pete, 2026-10-25)
+
+Pete: "The app does not refresh itself if someone signs in and the
+teacher is on the page." The roster was read when the class on screen
+changed and after this iPad's own writes, and at no other time. A
+student checked in by their own Mindbody app, the studio kiosk or
+another teacher's iPad stayed off the screen until the teacher switched
+classes and back.
+
+### What changed
+
+- **A quiet re-read of the class on screen** every
+  `rosterRefreshSeconds` (default 30) while the page is visible, and at
+  once when the tab becomes visible again. It is a new drawer tunable,
+  "Roster refresh", 0 to 300 seconds in steps of 5, where 0 turns the
+  timer off (returning to the tab still re-reads).
+- **It can never undo a tap.** It does not start while any roster write
+  is in flight (check-in, check-out, booking, cancel, promotion, a pass
+  change). A write that starts while a read is out moves an epoch, and
+  the read is dropped when it lands, so a pre-write roster cannot paint
+  over the row being changed. The write's own refresh lands the truth,
+  as before.
+- **It is silent on failure.** A blip in a background read raises no
+  error banner over a roster that is still correct. The next tick or
+  the next tap reads again.
+
+### Cost
+
+Each read is the same `/api/roster` call a class switch makes: about
+three metered Mindbody calls (the class, its visits, the clients). At
+30 seconds that is roughly 360 calls an hour per iPad left visible on
+a class. The drawer setting exists so that number can be turned down
+without a commit if the bill says so.
+
+### Verified
+
+- `tsc --noEmit` and `next build` with no database: clean.
+- Playwright against a mock Mindbody: the roster showed one student.
+  The mock then added a second, signed in, as if from another device.
+  The second appeared with no interaction 30 seconds later, after
+  exactly one more `classvisits` call.
+
+### Limits
+
+- Driven only against the mock.
+- The pay, guest, waiver and sign-up flows are not in the write guard.
+  Each ends in its own non-quiet roster refresh, so a background read
+  overlapping one can show the pre-write row for at most the moment
+  until that refresh lands.

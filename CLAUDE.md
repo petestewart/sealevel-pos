@@ -243,7 +243,12 @@ These three are the point of the app, not incidental optimizations. Do not
 undo them without reading the design doc's speed argument.
 
 1. **The roster is prefetched** for the classes around now, so tapping a name
-   hits memory rather than the API.
+   hits memory rather than the API. Since T213 it also re-reads the class on
+   screen every `rosterRefreshSeconds` (30 by default, a drawer tunable,
+   about three metered calls each) while the page is visible, so a student
+   checked in from the Mindbody app, the kiosk or another iPad appears
+   without a class switch. The re-read never starts during a write on this
+   iPad and is dropped if one began while it was out.
 2. **Search goes straight to Mindbody's `searchText`.** One call, 400-900ms,
    always current. Debounced at 350ms with the in-flight request aborted on
    the next keystroke, and a three-letter minimum: at 120ms and two letters,
@@ -298,7 +303,8 @@ and must not be reachable from the counter iPad.
 The drawer's second tab holds the tunables that have already been wrong once
 each: search debounce, minimum query length, result limit, how many hours of
 schedule to show either side of now, whether check-in is optimistic, and
-whether an unpaid booking needs a confirming tap. They live in the browser's
+whether an unpaid booking needs a confirming tap, and how often the roster
+re-reads itself (T213). They live in the browser's
 localStorage, apply immediately, and need no restart. Testing a number should
 not cost a commit. Under them, "signed-in teacher" names who is signed in,
 says which Mindbody site issued their token and which site this counter is on
