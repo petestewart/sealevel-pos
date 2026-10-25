@@ -50,6 +50,13 @@ export interface Settings {
    *  the class to everyone, one call; off, it says nobody matched and
    *  waits. */
   autoWidenSearch: boolean;
+  /** Seconds between quiet re-reads of the class on screen, so a student
+   *  who checks in or books somewhere else (the Mindbody app, the studio
+   *  kiosk, another iPad) shows up without the teacher switching classes.
+   *  Each read is about three metered Mindbody calls, and it runs only
+   *  while the page is visible and no write is in flight. 0 turns it off
+   *  (returning to the tab still re-reads). */
+  rosterRefreshSeconds: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -61,6 +68,7 @@ export const DEFAULT_SETTINGS: Settings = {
   optimisticCheckIn: false,
   confirmUnpaid: true,
   autoWidenSearch: true,
+  rosterRefreshSeconds: 30,
 };
 
 const KEY = "sealevel-pos.settings";

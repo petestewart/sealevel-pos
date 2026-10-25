@@ -359,7 +359,33 @@ export function ClientProfileCard({
           ) : (
             <Missing why={errors.client} />
           )}
+          {/* T202: our own receipt, one line, only when the signature
+              was captured on the customer screen. The image itself is
+              never rendered back into the POS. */}
+          {profile.signedOnDisplayAt ? (
+            <span className="profile-sub">
+              {" "}
+              signed on the customer screen on{" "}
+              {wallDate(profile.signedOnDisplayAt)}
+            </span>
+          ) : null}
         </Row>
+        {/* T205: the same one line for a MEMBERSHIP contract signed on
+            that screen, from our own contract receipt. Only when there
+            is one; nothing about the membership's state is inferred
+            from it (that is Mindbody's) and the image is never
+            rendered back. */}
+        {profile.contractSignedOnDisplay ? (
+          <Row label="Membership">
+            <span className="profile-sub">
+              {profile.contractSignedOnDisplay.contractName
+                ? `${profile.contractSignedOnDisplay.contractName} contract`
+                : "membership contract"}{" "}
+              signed on the customer screen on{" "}
+              {wallDate(profile.contractSignedOnDisplay.at)}
+            </span>
+          </Row>
+        ) : null}
         <Row label="Status">
           {statusLine || <Missing why={errors.client} />}
         </Row>

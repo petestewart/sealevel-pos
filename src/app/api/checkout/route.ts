@@ -31,7 +31,23 @@ import {
   type Discount,
   compNeedsDetail,
 } from "@/lib/comp";
+import {
+  APPROVE_PURPOSE,
+  approvalOverrideLine,
+  customerConfirmsSale,
+} from "@/lib/approval";
+import { cartSha256 } from "@/lib/cartsha";
 import { currentShelfConfig } from "@/lib/catalog";
+import {
+  beginFinalisation,
+  cancelRequest,
+  consumeRequest,
+  currentRequest,
+  displayState,
+  loadRequest,
+  releaseFinalisation,
+} from "@/lib/display";
+import { isApproveTicket } from "@/lib/displayticket";
 import { insertCompReceipt, type CompReceiptItem } from "@/lib/db";
 import {
   giftCardBalance,
@@ -781,6 +797,141 @@ async function runCheckout(
     }
   }
 
+  /**
+   * =================================================================
+   * T203 (Phase 2.5 item 4): the customer's approval, when the studio
+   * has asked for one.
+   *
+   * The setting is `customer_confirms_sale` in app_settings (with
+   * POS_CUSTOMER_CONFIRMS_SALE as the no-database fallback), and this is
+   * the ONLY place it is enforced: the browser's copy decides what the
+   * sale screen draws and nothing else, so a browser that omits both
+   * fields, or lies about the setting, is refused here.
+   *
+   * With the setting on, this charge must carry EITHER
+   *
+   *   `displayApprovalId`, naming a completed, unconsumed, unexpired
+   *   `ticket`/`approve` request for THIS client whose recorded cart
+   *   hash equals the hash of the cart being charged, OR
+   *
+   *   `approvalOverride: { token }`, the D1 override: the signed-in
+   *   teacher's own PIN, minted with purpose "approve", spent once, and
+   *   filed on the client with their name.
+   *
+   * Everything here is decided BEFORE any Mindbody call, beside the
+   * override and the discount checks for the same reason: a refusal that
+   * costs a metered call is a refusal that could have been free. Nothing
+   * is optimistic and nothing auto-charges: approval is a precondition
+   * the server checks, and the charge still goes out only on the
+   * teacher's own Charge action.
+   *
+   * The approval is CONSUMED after the charge resolved (see
+   * `recordApproval` below), never here: a refused charge must leave it
+   * spendable for a retry of the same cart, and a consumed one can never
+   * be spent twice.
+   * ================================================================= */
+  const confirmSetting = await customerConfirmsSale();
+  /** The approval this charge is riding on, spent once the write
+   *  resolved; null when the setting is off or a PIN stood in for it. */
+  let approvalId: string | null = null;
+  let approvalTeacher: TeacherIdentity | null = null;
+  let approvalToken: string | null = null;
+  if (confirmSetting.on) {
+    const overrideAsk: unknown = payload?.approvalOverride;
+    if (overrideAsk !== undefined && overrideAsk !== null) {
+      const token = (overrideAsk as { token?: unknown })?.token;
+      /* T94 review's rule, as T112 copies it: the token's own PURPOSE and
+       * this teacher's own id. A PIN typed to discount a sale, to
+       * overdraw an account or to override a pass does not approve one,
+       * and a token carried across a sign-out names somebody who is not
+       * behind the tap. */
+      approvalTeacher =
+        typeof token === "string"
+          ? verifyCompToken(token, APPROVE_PURPOSE)
+          : null;
+      if (approvalTeacher !== null && approvalTeacher.id !== session.staffId) {
+        approvalTeacher = null;
+      }
+      if (approvalTeacher === null) {
+        return NextResponse.json(
+          {
+            error: "Enter your PIN to approve this sale.",
+            reason: "teacher",
+          },
+          { status: 401 },
+        );
+      }
+      approvalToken = token as string;
+    }
+    if (approvalTeacher === null) {
+      const askedId: unknown = payload?.displayApprovalId;
+      const wanted =
+        typeof askedId === "string" && askedId.trim().length > 0
+          ? askedId.trim()
+          : null;
+      const payer =
+        typeof payload?.clientId === "string" ? payload.clientId.trim() : "";
+      const refuse = (error: string) =>
+        NextResponse.json(
+          { error, stage: "approval", reason: "approval" },
+          { status: 409 },
+        );
+      if (wanted === null) {
+        /* No approval and no PIN. Which sentence depends on whether
+         * there was a screen to approve on at all: a teacher whose
+         * display is dark needs to be told the way OUT of this, not told
+         * again that nobody tapped Approve. */
+        const screen = await displayState();
+        return refuse(
+          screen.paired && screen.connected
+            ? "The customer has not approved this sale on the customer screen."
+            : "The customer screen is not connected, so the sale needs your PIN.",
+        );
+      }
+      const held = await loadRequest(wanted);
+      /* T208 review: SPENT is tested first, and on its own. A consumed
+       * request carries no result (T204's review nulls it with the
+       * `consumed_at`, so the row keeps nothing about the customer), so
+       * the `approved !== true` test below would have swallowed every
+       * re-used approval into the generic sentence. "Already used on a
+       * sale" is the one a teacher can act on: ask them again, rather
+       * than wonder whether the screen registered the tap. It is a
+       * refusal either way and nothing is charged. */
+      if (
+        held !== null &&
+        isApproveTicket(held.kind, held.payload) &&
+        held.consumedAt !== null
+      ) {
+        return refuse(
+          "That approval has already been used on a sale. Ask the customer " +
+            "again.",
+        );
+      }
+      if (
+        held === null ||
+        !isApproveTicket(held.kind, held.payload) ||
+        held.status !== "completed" ||
+        held.result?.approved !== true ||
+        Date.now() >= held.expiresAt
+      ) {
+        return refuse(
+          "The customer has not approved this sale on the customer screen.",
+        );
+      }
+      if (String(held.private.clientId ?? "") !== payer) {
+        return refuse(
+          "That approval was for a different customer. Ask them again.",
+        );
+      }
+      if (String(held.private.cartSha256 ?? "") !== cartSha256(payload)) {
+        return refuse(
+          "The ticket changed after the customer approved it. Ask them again.",
+        );
+      }
+      approvalId = held.id;
+    }
+  }
+
   /* T79: the discount, checked before the token, the reason and the
    * client, and before any Mindbody call. A package-bearing cart is
    * refused (Mindbody ignores DiscountAmount on a package, so the sale
@@ -1372,6 +1523,105 @@ async function runCheckout(
     );
   }
 
+  /* T203: and the approval override's token, one-shot in the same place
+   * and for the same reason. A PIN that approved one sale does not
+   * approve the next one. */
+  if (approvalToken !== null && !spendCompToken(approvalToken)) {
+    return NextResponse.json(
+      { error: "Enter your PIN to approve this sale.", reason: "teacher" },
+      { status: 401 },
+    );
+  }
+  if (approvalToken !== null) {
+    /* The screen is not waiting on anybody any more: the teacher approved
+     * it themselves, and the PIN is spent (T203 review: after the spend,
+     * so a checkout refused before this point leaves the customer's
+     * Approve screen up). Only an APPROVE ticket comes down, so a waiver
+     * or a sign-up somebody else put up is left alone, and a cancel never
+     * fails a charge. */
+    const held = currentRequest();
+    if (
+      held !== null &&
+      held.status === "pending" &&
+      isApproveTicket(held.kind, held.payload)
+    ) {
+      await cancelRequest().catch(() => undefined);
+    }
+  }
+
+  /**
+   * T203: the approval, spent once the charge has resolved, and the
+   * override's own record when a PIN stood in for it.
+   *
+   * SPENT AFTER, never before: a refused charge must leave the approval
+   * usable for a retry of the SAME cart (a different cart hashes
+   * differently and is refused), and a spent one can never be spent
+   * twice. The claim is synchronous (`beginFinalisation`, T202's rule)
+   * so two answers arriving together cannot both spend it. It runs after
+   * the money moved and can never change that outcome: a consume that
+   * fails is one log line.
+   *
+   * The PIN override is filed on the client the way T45/T62 file a
+   * comp's reason, on a real sale for a named client, and its staff id
+   * is in the log line either way.
+   *
+   * T203 review: built HERE, above every write path, and called from
+   * each of them. The gift card ticket and the T90 ticket answer without
+   * reaching `recordDiscount`, and an approval left unspent after a REAL
+   * charge could carry a second charge of the same cart under a fresh
+   * idempotency key. Idempotent, so a path may call it twice.
+   */
+  let approvalRecorded = false;
+  const recordApproval = async (
+    saleId: string | null,
+    suppressed: boolean,
+  ): Promise<Record<string, unknown>> => {
+    if (approvalRecorded) return {};
+    approvalRecorded = true;
+    if (approvalId !== null) {
+      if (beginFinalisation(approvalId)) {
+        try {
+          const spent = await consumeRequest(approvalId);
+          if (spent === null) {
+            console.warn(
+              `[customer-confirms] approval ${approvalId} could not be ` +
+                "spent after the charge; it will expire on its own",
+            );
+          }
+        } finally {
+          releaseFinalisation(approvalId);
+        }
+      }
+      return { approvedOnDisplay: true };
+    }
+    if (approvalTeacher === null) return {};
+    console.log(
+      `[customer-confirms] override sale=${suppressed ? "suppressed" : (saleId ?? "unknown")} ` +
+        `client=${clientId ?? "house"} ` +
+        teacherLogTag(approvalTeacher),
+    );
+    let via: "formula" | "notes" | null = null;
+    const house = houseClientId();
+    const onHouse = clientId !== undefined && house !== null && clientId === house;
+    if (onHouse) console.log(`[customer-confirms] note skipped: house client`);
+    if (!suppressed && clientId !== undefined && !onHouse) {
+      const filed = await fileFormulaNote({
+        session,
+        clientId,
+        note: approvalOverrideLine(approvalTeacher.name, saleId),
+        route: "/api/checkout approval-note",
+        logTag: "[customer-confirms]",
+      });
+      via = filed.via;
+    }
+    return {
+      approvalOverride: {
+        teacher: approvalTeacher.name,
+        noteVia: via,
+      },
+    };
+  };
+
   /* T94: the overdraft token is spent in the same place and for the same
    * reason: a token is never reused across two checkouts, and a replayed
    * one costs no Mindbody call. It is spent whether or not the balance
@@ -1618,6 +1868,9 @@ async function runCheckout(
     paid: number | null;
     extra?: Record<string, unknown>;
   }): Promise<NextResponse> => {
+    /* T203 review: money moved, so the approval is spent. Idempotent for
+     * the two multi-sale paths that already spent it. */
+    await recordApproval(o.saleId, false);
     const words = soldNothingWords(o.verdict, o.saleId, o.paid);
     /* T75's per-line idiom in the log: ours against theirs, per line, so
      * the refusal is fixable by whoever reads it afterwards. */
@@ -2319,6 +2572,16 @@ async function runCheckout(
     }
     if (gone) return gone;
 
+    /* T203 review: the approval is spent HERE, the moment this ticket's
+     * writes resolved, before the answer is built. `gone` above is the
+     * one exit with nothing sold and nothing suppressed, so an approval
+     * survives it for the retry; every answer below either took money,
+     * MAY have, or was suppressed, and each of those spends it. */
+    const approvalFields = await recordApproval(
+      cartSale?.saleId ?? sold[0]?.saleId ?? null,
+      suppressedKind !== null && cartSale === null && sold.length === 0,
+    );
+
     /* ================================================================
      * T102: T79's record, for the ticket that just resolved.
      *
@@ -2457,6 +2720,7 @@ async function runCheckout(
         extra: {
           ...(untried ? { summary: `${untried} was not attempted.` } : {}),
           ...discountFields,
+          ...approvalFields,
         },
       });
     }
@@ -2489,6 +2753,7 @@ async function runCheckout(
           giftCardsSold: sold,
           ...(cartSale !== null ? { cartSold: cartSale } : {}),
           ...discountFields,
+          ...approvalFields,
         },
         { status: 502 },
       );
@@ -2506,6 +2771,7 @@ async function runCheckout(
             }
           : {}),
         ...discountFields,
+        ...approvalFields,
         ...actorFields({
           actorFallback: fallbackNote,
           staffSessionEnded: false,
@@ -2526,6 +2792,7 @@ async function runCheckout(
       receiptRequested: sendEmail,
       emailReceipt: sendEmail ? receiptConfirmed : null,
       ...discountFields,
+      ...approvalFields,
       ...actorFields({ actorFallback: fallbackNote, staffSessionEnded: false }),
     });
   }
@@ -2989,6 +3256,15 @@ async function runCheckout(
     }
     if (gone) return gone;
 
+    /* T203 review: the approval is spent HERE, once this ticket's carts
+     * resolved and before any answer below (the sold-nothing stop, the
+     * failure, the suppressed and the done answer) is built. `gone` is
+     * the one exit with no cart attempted, so an approval survives it. */
+    const approvalFields = await recordApproval(
+      sales.find((sale) => sale.suppressed === null)?.saleId ?? null,
+      sales.every((sale) => sale.suppressed !== null),
+    );
+
     /* T93 review: "keep on file" stores the card ONCE, on the attached
      * client, after that client's own cart has gone through; a recipient
      * never gets the card, and a ticket whose carts all failed stores
@@ -3067,6 +3343,7 @@ async function runCheckout(
           total: ticketTotal,
           ...typedFour,
           ...typedKeep,
+          ...approvalFields,
           ...(sessionEnded ? { staffSessionEnded: true } : {}),
         },
         { status: 502 },
@@ -3079,6 +3356,7 @@ async function runCheckout(
         ok: false,
         suppressed: sales[0]?.suppressed ?? (await suppressionKind()),
         sales,
+        ...approvalFields,
         ...actorFields({
           actorFallback: fallbackNote,
           staffSessionEnded: sessionEnded,
@@ -3097,6 +3375,7 @@ async function runCheckout(
         total: ticketTotal,
         ...typedFour,
         ...typedKeep,
+        ...approvalFields,
         ...actorFields({
           actorFallback: fallbackNote,
           staffSessionEnded: sessionEnded,
@@ -3118,6 +3397,7 @@ async function runCheckout(
         : {}),
       ...typedFour,
       ...typedKeep,
+      ...approvalFields,
       receiptRequested: sendEmail,
       emailReceipt: null,
       ...(discount !== null && compReason !== null
@@ -3516,7 +3796,10 @@ async function runCheckout(
      *  included; that is the amount on the studio for that shape. */
     onStudio: number;
   }): Promise<Record<string, unknown>> => {
-    const over = await recordOverride(o.saleId, o.suppressed);
+    const over = {
+      ...(await recordApproval(o.saleId, o.suppressed)),
+      ...(await recordOverride(o.saleId, o.suppressed)),
+    };
     if (discount === null || compReason === null) return over;
     /* T112: a substitution's discount is already written down in full by
      * the override's own note, which names both passes, both prices and
@@ -4552,6 +4835,9 @@ async function runCheckout(
       } catch {
         /* best effort; null renders as "balance unknown" */
       }
+      /* T203 review: the card WAS charged the credit, so the approval is
+       * spent; a second run is a second $10 and needs its own approval. */
+      await recordApproval(null, false);
       return NextResponse.json(
         {
           error: errMessage(err),

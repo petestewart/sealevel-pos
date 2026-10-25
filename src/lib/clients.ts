@@ -1,3 +1,4 @@
+import { birthDateForMindbody, isBirthDateField } from "./birthdate";
 import {
   CLIENT_ID_READ_LIMIT,
   ambiguousClientMessage,
@@ -219,6 +220,79 @@ export async function readClientNotes(
 }
 
 /**
+ * T202: the client's FIRST name, for the greeting on the customer
+ * display. Read on the server from the same `/client/clients` call
+ * `readClientNotes` uses, because the display's scene is built server
+ * side: the teacher's browser may pass a hint, and the server decides.
+ * Null when Mindbody has no first name on the row, and never throws --
+ * a greeting is not worth failing a waiver over, and the scene reads
+ * "Welcome" without one.
+ */
+export async function readClientFirstName(
+  clientId: string,
+): Promise<string | null> {
+  try {
+    const body = await mindbody(
+      `/client/clients?clientIds=${encodeURIComponent(clientId)}&limit=1`,
+    );
+    const row = (body?.Clients ?? []).find(
+      (c: { Id?: unknown }) => String(c?.Id ?? "") === clientId,
+    );
+    const first = typeof row?.FirstName === "string" ? row.FirstName.trim() : "";
+    return first.length > 0 ? first.slice(0, 40) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * T202: file a document on the client's Documents page,
+ * `POST /client/uploadclientdocument` (docs/mindbody-openapi/client.yml:
+ * 3633; `UploadClientDocumentRequest` is `{ClientId, File}` and
+ * `ClientDocument` is `{FileName, MediaType, Buffer}` where Buffer is a
+ * Base64 string of the file's bytes, 4MB cap).
+ *
+ * This is how the waiver signature reaches Mindbody: a waiver has no
+ * signature field anywhere on the client (only a contract does), so the
+ * image travels as a document or not at all. BEST EFFORT by contract --
+ * the caller files it after the release has already landed and reports
+ * a failure rather than failing the agreement, because the database row
+ * is the original and this is the copy.
+ *
+ * Through mindbody() with the client id in the options, so dry run and
+ * the write guard apply to it as to any write, and under the teacher's
+ * own token like the release it follows.
+ *
+ * UNVERIFIED LIVE: the encoding is the vendored spec's, and probe D-B1
+ * (scripts/probe-upload-document.ts) is written and has not been run.
+ */
+export async function uploadClientDocument(
+  clientId: string,
+  file: { fileName: string; mediaType: string; buffer: Buffer },
+  actor?: Actor | null,
+): Promise<{ suppressed: "dry-run" | "write-guard" | null; fileName: string | null }> {
+  const res = await mindbody("/client/uploadclientdocument", {
+    method: "POST",
+    body: {
+      ClientId: clientId,
+      File: {
+        FileName: file.fileName,
+        MediaType: file.mediaType,
+        Buffer: file.buffer.toString("base64"),
+      },
+    },
+    clientId,
+    ...(actor ? { actor } : {}),
+  });
+  if (res?.DryRun) return { suppressed: "dry-run", fileName: null };
+  if (res?.WriteSuppressed) return { suppressed: "write-guard", fileName: null };
+  return {
+    suppressed: null,
+    fileName: typeof res?.FileName === "string" ? res.FileName : file.fileName,
+  };
+}
+
+/**
  * Record a liability release: `POST /client/updateclient` with
  * `LiabilityRelease: true` (T18, Pete's recorded reversal of the T6 "no
  * tap path marks a waiver signed" rule -- Mindbody's own POS shows the
@@ -418,6 +492,11 @@ export const SIGNUP_FORM_FIELDS = [
   "MobilePhone",
 ] as const;
 
+/* T206: and one more, conditionally. A birth date is not in the list
+ * above because the form does not have it: it GROWS it, on a site whose
+ * required list names `BirthDate` or `Birthday`, and on any other site
+ * the field is absent and the create's body is unchanged. */
+
 /**
  * `GET /client/requiredclientfields` (docs/mindbody-openapi/client.yml:2359):
  * "the list of fields that a new client has to fill out in business
@@ -444,12 +523,51 @@ export async function requiredClientFields(): Promise<{
     .map((f) => f.trim());
   const have = new Set<string>(SIGNUP_FORM_FIELDS);
   /* Mindbody's list may say "Phone" or "MobilePhone" for the one phone
-   * field the form has; either is met by it. Anything else the form
-   * cannot answer. */
+   * field the form has; either is met by it. T206: a birth date is met
+   * too, by the fifth field both forms grow when this list asks for one
+   * (src/lib/birthdate.ts). Anything else the form cannot answer. */
   const missing = required.filter(
-    (f) => !have.has(f) && !/^(mobile)?phone$/i.test(f),
+    (f) =>
+      !have.has(f) && !/^(mobile)?phone$/i.test(f) && !isBirthDateField(f),
   );
   return { required, missing };
+}
+
+/**
+ * T204: the same read, cached for the customer display's sign-up scene.
+ * The teacher's modal reads it fresh on every open (once per form, a
+ * teacher's own tap); the display's idle button is a STUDENT's tap and
+ * must not cost a metered call each time somebody prods it, so the
+ * answer is held like the catalog's and refreshed every ten minutes. A
+ * read that fails is not an error here: the form asks for the four
+ * fields it has, and Mindbody's refusal at Create is the authoritative
+ * answer and comes back in words.
+ */
+let requiredFieldsCache: { at: number; value: string[] } | null = null;
+
+/** T204 review: the list belongs to a site, so a T89 target switch drops
+ *  it beside the catalog cache. */
+export function clearRequiredFieldsCache(): void {
+  requiredFieldsCache = null;
+}
+const REQUIRED_FIELDS_TTL_MS = 10 * 60 * 1000;
+
+export async function cachedRequiredClientFields(
+  now = Date.now(),
+): Promise<string[]> {
+  if (
+    requiredFieldsCache !== null &&
+    now - requiredFieldsCache.at < REQUIRED_FIELDS_TTL_MS
+  ) {
+    return requiredFieldsCache.value;
+  }
+  try {
+    const { required } = await requiredClientFields();
+    requiredFieldsCache = { at: now, value: required };
+    return required;
+  } catch {
+    return requiredFieldsCache?.value ?? [];
+  }
 }
 
 export interface NewClientInput {
@@ -459,7 +577,31 @@ export interface NewClientInput {
   phone: string | null;
   sendAccountEmails: boolean;
   sendPromotionalEmails: boolean;
+  /** T204: the self-serve sign-up asks the two consent questions as
+   *  channels, not as three flags each, and sends all six on the
+   *  CREATE. The schedule email flag and the three text flags are
+   *  omitted entirely when undefined, so T59b's counter form is one
+   *  unchanged payload. `AddClientRequest` lists the text flags without
+   *  `updateclient`'s "cannot be updated by developers" caveat
+   *  (client.yml:4945-4956 against :5290-5309), which is the whole
+   *  reason they ride the create; whether Mindbody keeps them is probe
+   *  D-B3 and is read back by /api/client-create. */
+  sendScheduleEmails?: boolean;
+  sendAccountTexts?: boolean;
+  sendPromotionalTexts?: boolean;
+  sendScheduleTexts?: boolean;
+  /** T206: `YYYY-MM-DD`, and only on a site that asks for one. Absent
+   *  (or null) sends no `BirthDate` at all, which is what every site
+   *  that does not ask gets, exactly as before. */
+  birthDate?: string | null;
 }
+
+/** T204: the three text flags, in Mindbody's own names. */
+export const CONSENT_TEXT_FLAGS = [
+  "SendAccountTexts",
+  "SendPromotionalTexts",
+  "SendScheduleTexts",
+] as const;
 
 /**
  * T59b: create a client at the counter. `POST /client/addclient`
@@ -476,7 +618,11 @@ export interface NewClientInput {
  * default. Nothing else: not Active, not LiabilityRelease (the waiver
  * dialog is the ONLY thing that sets that, T18), no address. Property
  * names are the schema's own: FirstName, LastName, Email, MobilePhone,
- * SendAccountEmails, SendPromotionalEmails.
+ * SendAccountEmails, SendPromotionalEmails. T206 adds `BirthDate`, and
+ * only when the caller has one: a site whose required list asks for a
+ * birth date (site -99 does; site 471's list has never been read live,
+ * T59b) refuses the create without it, and every other site sends the
+ * same body it always did.
  *
  * The write guard: there is no client id yet, and `mindbody()` finds
  * none in the body either (it reads ClientId/ClientIds/UniqueClientId,
@@ -502,6 +648,24 @@ export async function createClient(
       ...(input.phone ? { MobilePhone: input.phone } : {}),
       SendAccountEmails: input.sendAccountEmails,
       SendPromotionalEmails: input.sendPromotionalEmails,
+      ...(input.sendScheduleEmails === undefined
+        ? {}
+        : { SendScheduleEmails: input.sendScheduleEmails }),
+      ...(input.sendAccountTexts === undefined
+        ? {}
+        : { SendAccountTexts: input.sendAccountTexts }),
+      ...(input.sendPromotionalTexts === undefined
+        ? {}
+        : { SendPromotionalTexts: input.sendPromotionalTexts }),
+      ...(input.sendScheduleTexts === undefined
+        ? {}
+        : { SendScheduleTexts: input.sendScheduleTexts }),
+      /* T206: the one field a site can demand that the four Pete named
+       * do not cover. Naive and site-local like every Mindbody
+       * datetime. */
+      ...(input.birthDate
+        ? { BirthDate: birthDateForMindbody(input.birthDate) }
+        : {}),
     },
     /* Deliberately absent: a create has no client id to name. See above. */
     clientId: undefined,
@@ -520,6 +684,42 @@ export async function createClient(
 }
 
 /**
+ * T204 / probe D-B3: did the three text flags STICK?
+ *
+ * `updateclient` documents them as "cannot be updated by developers,
+ * ignored" (client.yml:5290-5309) and `AddClientRequest` lists them
+ * without that caveat, so the sign-up sends them on the create and this
+ * reads the client back to see what Mindbody kept. True when all three
+ * came back set, false when any did not, and NULL when the read failed
+ * or the answer carried none of the fields at all, which is "no
+ * evidence" rather than "dropped": a Notes line saying a teacher must
+ * set it by hand is worth filing on evidence, not on a failed read.
+ *
+ * A read on the service account like every other read, and it never
+ * throws: the client already exists by the time this runs.
+ */
+export async function readTextOptInStuck(
+  clientId: string,
+): Promise<boolean | null> {
+  try {
+    const body = await mindbody(
+      `/client/clients?clientIds=${encodeURIComponent(clientId)}&limit=1`,
+    );
+    const row = (body?.Clients ?? []).find(
+      (c: { Id?: unknown }) => String(c?.Id ?? "") === clientId,
+    );
+    if (!row) return null;
+    const seen = CONSENT_TEXT_FLAGS.filter(
+      (f) => typeof row[f] === "boolean",
+    );
+    if (seen.length === 0) return null;
+    return CONSENT_TEXT_FLAGS.every((f) => row[f] === true);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Whether a refused addclient was Mindbody's duplicate rule. The spec
  * documents the rule but not the wording; the call log holds the exact
  * message the first time it happens live, and this widens if needed.
@@ -527,4 +727,69 @@ export async function createClient(
 export function isDuplicateClientError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return /duplicate|already exist|already has|already in use/i.test(message);
+}
+
+/**
+ * T208: the person Mindbody refused the create FOR.
+ *
+ * Pete's second drive: "if we think they already exist, the teacher
+ * should have a UI that very obviously states that instead of going to
+ * 'New client'." The screen can only say who it thinks they are if the
+ * server looks, so a duplicate refusal costs ONE search -- the same
+ * `searchText` call /api/search makes, on the typed email, or on
+ * "first last" when there is no email, because Mindbody's duplicate
+ * rule keys on first name, last name and email together.
+ *
+ * The match is the row whose name AND email both match, case
+ * insensitively; failing that, a search that found exactly one person
+ * is that person; failing that, null, and the screen says Mindbody
+ * refused it without naming anybody. Never throws: a failed lookup is
+ * a duplicate with no match, which is the answer the counter had
+ * before this existed.
+ */
+export async function findExistingClient(input: {
+  firstName: string;
+  lastName: string;
+  email: string | null;
+}): Promise<SearchResult | null> {
+  const whole = `${input.firstName} ${input.lastName}`.trim();
+  const query = (input.email ?? "").trim() || whole;
+  if (query.length < 2) return null;
+  try {
+    const answer = await search(query, 10);
+    const rows = answer.results;
+    const same = (a: string | null, b: string | null) =>
+      (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
+    const exact = rows.find(
+      (r) =>
+        same(r.name, whole) &&
+        (input.email === null ? true : same(r.email, input.email)),
+    );
+    if (exact) return exact;
+    return rows.length === 1 ? (rows[0] ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The match as the decision modal shows it: what a teacher already
+ *  reads off a profile, and no more. The name is split the way the
+ *  search joined it, which is what the form's two fields want. */
+export function matchFields(row: SearchResult): {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phone: string | null;
+} {
+  const parts = row.name.trim().split(/\s+/);
+  const firstName = parts.length > 1 ? (parts[0] ?? "") : row.name.trim();
+  const lastName = parts.length > 1 ? parts.slice(1).join(" ") : "";
+  return {
+    id: row.id,
+    firstName,
+    lastName,
+    email: row.email,
+    phone: row.phone,
+  };
 }

@@ -215,6 +215,15 @@ const deviceLimiter = makeLimiter();
 const verifyLimiter = makeLimiter();
 const enrollLimiter = makeLimiter();
 const signinLimiter = makeLimiter();
+/** T200: the customer display's pairing code. Its own counter, like every
+ *  other door here: a display fumbling a six-digit code must not lock a
+ *  teacher out of the iPad, and the reverse. TWO counters, one per side
+ *  (T200 review): the teacher's Pair button sits behind the device
+ *  session, while the display's own poll is reachable by any browser at
+ *  all, and one shared counter let an anonymous browser burn five bad
+ *  codes and lock the teacher's button for thirty seconds, on repeat. */
+const pairLimiter = makeLimiter();
+const displayPollLimiter = makeLimiter();
 
 /** Milliseconds of device-login lockout remaining, 0 when allowed. */
 export function lockoutRemainingMs(now = Date.now()): number {
@@ -264,6 +273,29 @@ export function recordSigninSuccess(): void {
   signinLimiter.success();
 }
 
+/** The display pairing's counter (T200). Six crypto-random digits live
+ *  for five minutes, and a wrong code (or a right code with the wrong
+ *  secret) gets the same five-then-30s, so guessing a code before it
+ *  expires is not a loop anybody can run. */
+export function claimPairAttempt(now = Date.now()): number {
+  return pairLimiter.claim(now);
+}
+
+export function recordPairSuccess(): void {
+  pairLimiter.success();
+}
+
+/** The display side of the same exchange (`/api/display/state`, no
+ *  session): its own five-then-30s, so a stranger's wrong codes cost the
+ *  teacher's Pair button nothing. */
+export function claimDisplayPollAttempt(now = Date.now()): number {
+  return displayPollLimiter.claim(now);
+}
+
+export function recordDisplayPollSuccess(): void {
+  displayPollLimiter.success();
+}
+
 /* --- The comp token (T48) ---------------------------------------------
  * T44 named the teacher for a whole shift, from a cookie set at the start
  * of it, and Pete's live test found the gap: with no POS_PIN the prompt
@@ -294,14 +326,32 @@ const COMP_TOKEN_TTL_MS = 10 * 60 * 1000;
 const COMP_TOKEN_PREFIX = "c2";
 
 /** What a teacher's PIN authorized: a discount, charging an account past
- *  its balance (T94), or overriding a pass Mindbody's own rules refused
- *  (T112). Each is its own value for T94 review's reason: a PIN typed for
- *  one of them must not pass as the authorization for another, and two
- *  request fields are not a separation while one value fits both. */
-export type CompPurpose = "comp" | "overdraft" | "override";
+ *  its balance (T94), overriding a pass Mindbody's own rules refused
+ *  (T112), approving a sale at the counter when the customer screen
+ *  could not (T203's D1 override), selling a membership with no
+ *  signature (T205), or checking a student in with no waiver on file
+ *  (T211). Each is its own value for T94 review's reason: a PIN typed
+ *  for one of them must not pass as the authorization for another, and
+ *  two request fields are not a separation while one value fits both. */
+export type CompPurpose =
+  | "comp"
+  | "overdraft"
+  | "override"
+  | "approve"
+  /* T205: selling a membership without the customer's signature. */
+  | "contract"
+  /* T211: booking or checking in a student with no released waiver. */
+  | "waiver";
 
 export function isCompPurpose(value: unknown): value is CompPurpose {
-  return value === "comp" || value === "overdraft" || value === "override";
+  return (
+    value === "comp" ||
+    value === "overdraft" ||
+    value === "override" ||
+    value === "approve" ||
+    value === "contract" ||
+    value === "waiver"
+  );
 }
 
 export interface TeacherIdentity {
@@ -389,6 +439,26 @@ export function spendCompToken(token: string, now = Date.now()): boolean {
   if (spentCompTokens.has(token)) return false;
   spentCompTokens.set(token, now);
   return true;
+}
+
+/**
+ * Hand a spent token back, for the ONE case where the write it
+ * authorized provably never happened: dry run or the write guard
+ * suppressed it (T211). Nothing reached Mindbody, so nothing was
+ * authorized, and a teacher who typed their PIN under a suppression
+ * must not have to type it again to find out the server is in dry run.
+ * This mirrors T202's rule that a suppressed release does not consume
+ * the student's signature.
+ *
+ * It is deliberately NOT the answer to a refusal or an error: those cost
+ * the PIN, exactly as T48 decided ("a refused or ambiguous charge does:
+ * the dialog asks again, which is the right price for trying twice"),
+ * because a 5xx or a dead transport is not evidence that nothing was
+ * written. Callers spend the token BEFORE the write, so two requests
+ * carrying one token can never both write; this is the only way back.
+ */
+export function unspendCompToken(token: string): void {
+  spentCompTokens.delete(token);
 }
 
 /** One cookie's value off a request, or null. Exported for the staff

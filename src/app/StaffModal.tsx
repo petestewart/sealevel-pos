@@ -108,6 +108,16 @@ export function probeSummary(probe: ProbeResult): string {
   return `${who} cannot: ${cannot.join("; ")}.`;
 }
 
+/** T212: one studio the gate may sign in to, from /api/config. */
+export interface StudioChoice {
+  target: "prod" | "sandbox";
+  siteId: string | null;
+}
+
+function studioWord(t: string): string {
+  return t === "prod" ? "Production" : "Sandbox";
+}
+
 export default function StaffModal({
   open,
   teacher,
@@ -115,6 +125,8 @@ export default function StaffModal({
   onTeacherChange,
   required = false,
   notice = null,
+  studios = null,
+  currentTarget = null,
 }: {
   open: boolean;
   teacher: Teacher | null;
@@ -129,8 +141,23 @@ export default function StaffModal({
    *  sign-in that ended (the server's own line, so it says what was and
    *  was not sent). Shown where a wrong password would be. */
   notice?: string | null;
+  /** T212: the studios the GATE may sign in to, or null for none offered
+   *  (no devtools, a credential set missing, no database). Pete: "you
+   *  cannot get to the settings to change between prod and sandbox
+   *  without being logged in". Picking the other studio signs in THERE,
+   *  and a named admin's sign-in moves the counter with it; the server
+   *  refuses anyone else and says why. */
+  studios?: StudioChoice[] | null;
+  /** The studio the counter is on now, which the picker starts on. */
+  currentTarget?: string | null;
 }) {
   const [username, setUsername] = useState("");
+  /** T212: the studio this sign-in goes to. Starts on the counter's own
+   *  and follows it when it moves (another iPad switched it). */
+  const [studio, setStudio] = useState<string | null>(currentTarget);
+  useEffect(() => {
+    setStudio(currentTarget);
+  }, [currentTarget]);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -226,7 +253,19 @@ export default function StaffModal({
     if (busy || !valid) return;
     setBusy(true);
     setMsg(null);
-    const sent = { username: username.trim(), password };
+    /* T212: a target only when it is the OTHER studio, so an ordinary
+     * sign-in sends exactly what it always did. */
+    const switching =
+      required &&
+      studios !== null &&
+      studio !== null &&
+      currentTarget !== null &&
+      studio !== currentTarget;
+    const sent = {
+      username: username.trim(),
+      password,
+      ...(switching ? { target: studio } : {}),
+    };
     /* The password leaves state the moment it is sent. */
     setPassword("");
     try {
@@ -369,6 +408,46 @@ export default function StaffModal({
               <p className="modal-title">Sign in to Mindbody</p>
             </div>
             <p className="reason-sub">Sign in with your Mindbody login.</p>
+            {required && studios !== null && studios.length > 1 ? (
+              <>
+                <div
+                  className="studio-pick"
+                  role="group"
+                  aria-label="Mindbody studio"
+                >
+                  {studios.map((c) => (
+                    <button
+                      key={c.target}
+                      type="button"
+                      className={
+                        studio === c.target
+                          ? "studio-pick-btn on"
+                          : "studio-pick-btn"
+                      }
+                      aria-pressed={studio === c.target}
+                      disabled={busy}
+                      onClick={() => {
+                        setMsg(null);
+                        setStudio(c.target);
+                      }}
+                    >
+                      {studioWord(c.target)}
+                      {c.siteId ? `, site ${c.siteId}` : ""}
+                    </button>
+                  ))}
+                </div>
+                {studio !== null &&
+                currentTarget !== null &&
+                studio !== currentTarget ? (
+                  <p className="studio-pick-note">
+                    This counter is on {studioWord(currentTarget).toLowerCase()}.
+                    Signing in to {studioWord(studio).toLowerCase()} switches
+                    it, and every teacher signs in again. Admins only. Use
+                    your {studioWord(studio).toLowerCase()} login.
+                  </p>
+                ) : null}
+              </>
+            ) : null}
             <input
               className="reason-input"
               type="email"
@@ -406,7 +485,15 @@ export default function StaffModal({
                 disabled={busy || !valid}
                 onClick={() => void signIn()}
               >
-                {busy ? "Signing in" : "Sign in"}
+                {busy
+                  ? "Signing in"
+                  : required &&
+                      studios !== null &&
+                      studio !== null &&
+                      currentTarget !== null &&
+                      studio !== currentTarget
+                    ? `Sign in to ${studioWord(studio).toLowerCase()}`
+                    : "Sign in"}
               </button>
             </div>
           </>

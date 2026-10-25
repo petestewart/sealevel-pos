@@ -1,14 +1,20 @@
 import { NextResponse } from "next/server";
 
 import { asTeacher } from "./clientaudit";
-import { isActorRefusal, isActorTokenDead, type Actor } from "./mindbody";
 import {
+  isActorRefusal,
+  isActorTokenDead,
+  isForeignSiteRefusal,
+  type Actor,
+} from "./mindbody";
+import {
+  FOREIGN_SITE_NOTICE,
   actorOf,
   endStaffSession,
   staffSessionFrom,
   type StaffSession,
 } from "./staffsession";
-import { targetSwitchNotice } from "./target";
+import { setSignInNotice, targetSwitchNotice } from "./target";
 
 /**
  * Running a write as the signed-in teacher, with the one fallback (T49).
@@ -43,6 +49,14 @@ import { targetSwitchNotice } from "./target";
  * `fallback: false` is the comp's posture: a comp under a teacher's
  * token that Mindbody refuses is REFUSED, with the message, never
  * quietly done as somebody else.
+ *
+ * T210 widened the dead-token half by one sentence and nothing else.
+ * "Delegated staff does not belong to the subscriber." is Mindbody
+ * refusing a token that belongs to ANOTHER SITE; it is not a permission
+ * gap, so a retry as the service account is worse than useless (that
+ * account may be holding the very same borrowed token). It takes the
+ * 401's path exactly: session ended, write refused, gate back, with its
+ * own sentence for the teacher.
  */
 
 export interface ActorFallback {
@@ -132,13 +146,27 @@ export async function runAsActor<T>(
     if (!isActorRefusal(err)) throw err;
     const reason = err instanceof Error ? err.message : String(err);
     if (isActorTokenDead(err)) {
+      /* T210: a token Mindbody says belongs to another SITE is told
+       * apart from a token that simply died, because the sentence a
+       * teacher needs is a different one and the fix is a different
+       * one: sign in against the studio this counter is now on. Same
+       * consequence either way -- the session ends and the write is
+       * refused, never redone as the service account. */
+      const foreign = isForeignSiteRefusal(err);
       console.warn(
-        `[actor] token refused staff=${session.staffId} route=${route}; ending the staff session`,
+        `[actor] token refused staff=${session.staffId} route=${route}` +
+          (foreign
+            ? ` as belonging to another Mindbody site (session site=${session.siteId ?? "(none recorded)"})`
+            : "") +
+          "; ending the staff session",
       );
       await endStaffSession(session.id);
+      if (foreign) setSignInNotice(FOREIGN_SITE_NOTICE);
       const gone = new Error(
-        `Your Mindbody sign-in ended before this was sent (${reason}). ` +
-          "Nothing was written. Sign in and try again.",
+        foreign
+          ? `${FOREIGN_SITE_NOTICE} Nothing was written.`
+          : `Your Mindbody sign-in ended before this was sent (${reason}). ` +
+            "Nothing was written. Sign in and try again.",
       );
       (gone as Error & { staffSessionEnded?: boolean }).staffSessionEnded =
         true;

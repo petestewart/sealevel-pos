@@ -1,20 +1,21 @@
+import { createHash } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
 import {
   actorFields,
   requireActor,
-  runAsActor,
   staffSessionEndedResponse,
 } from "@/lib/actor";
 import { requireSession } from "@/lib/auth";
 
-import { asTeacher, BEFORE_READ_MS } from "@/lib/clientaudit";
 import {
-  readClientNotes,
-  recordLiabilityRelease,
-  updateClientNotes,
-} from "@/lib/clients";
-import { insertWaiverReceipt } from "@/lib/db";
+  beginFinalisation,
+  loadRequest,
+  releaseFinalisation,
+} from "@/lib/display";
+import { readWaiverResult } from "@/lib/displaywaiver";
+import { finaliseWaiver } from "@/lib/waiverfinalise";
 import { getWaiver } from "@/lib/waiver";
 
 export const dynamic = "force-dynamic";
@@ -67,15 +68,24 @@ export async function POST(request: Request) {
   const staff = await requireActor(request);
   if (staff.denied) return staff.denied;
   const { session } = staff;
+  /* T202 review: the id this call is finalising, released in the
+   * `finally` below whatever happens. */
+  let claimed: string | null = null;
   try {
-    const { clientId, notes, textSha256 } = await request.json();
+    const { clientId, notes, textSha256, displayRequestId } =
+      await request.json();
     if (typeof clientId !== "string" || !clientId) {
       return NextResponse.json(
         { error: "clientId (string) is required" },
         { status: 400 },
       );
     }
-    if (typeof textSha256 !== "string" || !/^[0-9a-f]{64}$/.test(textSha256)) {
+    /* T202: the display path names a REQUEST, and the hash comes from
+     * the server's own record of what that request showed. The counter
+     * path is unchanged and still echoes the hash it was served. */
+    const signedOnDisplay =
+      typeof displayRequestId === "string" && displayRequestId.trim().length > 0;
+    if (!signedOnDisplay && (typeof textSha256 !== "string" || !/^[0-9a-f]{64}$/.test(textSha256))) {
       return NextResponse.json(
         { error: "textSha256 (64 hex chars, from /api/waiver) is required" },
         { status: 400 },
@@ -98,7 +108,83 @@ export async function POST(request: Request) {
      * cannot be fetched to verify, this fails closed the same way. The
      * receipt below then records the server's hash, never the browser's. */
     const waiver = await getWaiver();
-    if (textSha256 !== waiver.sha256) {
+
+    /* T202: the display's half. The browser hands over a HANDLE and
+     * nothing else: the signature is pulled from the server's own store,
+     * never accepted from the teacher's browser, and every guard above
+     * this point (device session, requireActor, T50's no sign-in no
+     * write) has already run. */
+    let signed:
+      | { requestId: string; png: Buffer; sha256: string; agreedAt: string }
+      | null = null;
+    if (signedOnDisplay) {
+      /* T202 review: `consumeRequest` runs LAST, after the release, the
+       * row, the upload and the note, so two calls naming one signature
+       * (the `completed` event replayed on an SSE reconnect, beside the
+       * pending check the dialog makes on open) would otherwise both
+       * pass their checks and both write. Claimed synchronously, before
+       * the first await, so there is no window between the two. The
+       * loser writes nothing and says so in a field the dialog reads as
+       * "somebody else is already doing this", not as an error. */
+      const id = String(displayRequestId).trim();
+      if (!beginFinalisation(id)) {
+        return NextResponse.json(
+          { error: "That signature is already being recorded.", inFlight: true },
+          { status: 409 },
+        );
+      }
+      claimed = id;
+      const held = await loadRequest(id);
+      if (
+        held === null ||
+        held.kind !== "waiver" ||
+        held.status !== "completed" ||
+        held.consumedAt !== null ||
+        Date.now() >= held.expiresAt
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "That signature is no longer waiting. Ask them to sign again on the customer screen.",
+          },
+          { status: 409 },
+        );
+      }
+      if (held.private.clientId !== clientId) {
+        /* A handle is not a licence to write about somebody else. */
+        return NextResponse.json(
+          { error: "That signature belongs to a different client." },
+          { status: 409 },
+        );
+      }
+      /* The wording the student actually read, against the wording the
+       * studio serves NOW. An edit in between means nobody agreed to
+       * what is on file, so nothing is written. */
+      if (held.private.textSha256 !== waiver.sha256) {
+        return NextResponse.json(
+          {
+            error:
+              "The waiver text changed while they were reading it. Ask them to read and sign it again.",
+          },
+          { status: 409 },
+        );
+      }
+      const result = readWaiverResult(held.result ?? {}, Date.now() + 0);
+      if (!result.ok) {
+        return NextResponse.json(
+          { error: `The signature could not be read (${result.error}).` },
+          { status: 409 },
+        );
+      }
+      signed = {
+        requestId: held.id,
+        png: result.png,
+        /* Hashed from the BYTES, here, not read off the stored result:
+         * the receipt's figure names what was actually filed. */
+        sha256: createHash("sha256").update(result.png).digest("hex"),
+        agreedAt: result.value.agreedAt,
+      };
+    } else if (textSha256 !== waiver.sha256) {
       return NextResponse.json(
         {
           error:
@@ -108,114 +194,43 @@ export async function POST(request: Request) {
       );
     }
 
-    const run = await runAsActor(session, "/api/waiver-agree", (actor) =>
-      recordLiabilityRelease(clientId, actor),
-    );
-    const release = run.result;
-    if (release.suppressed) {
+    /* T204: the release, the receipt row, the document copy, the Notes
+     * append and the consume are all in src/lib/waiverfinalise.ts now,
+     * because /api/client-create finishes the SAME waiver for a client
+     * who did not exist when the signature was taken. Every rule above
+     * is unchanged and lives there. */
+    const done = await finaliseWaiver({
+      clientId,
+      session,
+      route: "/api/waiver-agree",
+      waiverSha256: waiver.sha256,
+      signed,
+      currentNotes: typeof notes === "string" ? notes : "",
+    });
+    if (!done.agreed) {
+      /* Nothing was written, so the request is deliberately NOT
+       * consumed: a real run later can still spend the signature. */
       return NextResponse.json({
         agreed: false,
-        suppressed: release.suppressed,
-        ...actorFields(run),
+        suppressed: done.suppressed,
+        ...(signed === null ? {} : { signed: true }),
+        ...actorFields(done.run),
       });
     }
-    /* The actor the release actually landed under: the teacher, or the
-     * service account after a fallback (or a dead token). */
-    const noteActor =
-      session && run.actorFallback === null && !run.staffSessionEnded
-        ? { token: session.token, staffId: session.staffId, name: session.name }
-        : null;
-
-    /* The release is real. The structured receipt line goes out first:
-     * even if the Notes append below fails, the server log holds the
-     * client, the moment, and the hash of the exact wording agreed to. */
-    const at = new Date().toISOString();
-    console.log(
-      JSON.stringify({
-        event: "waiver-agreed",
-        clientId,
-        at,
-        textSha256: waiver.sha256,
-      }),
-    );
-
-    /* T29: the durable receipt row, with the FULL sha256 (Notes truncates
-     * to 12 chars for staff readability). Only on a real release, like
-     * everything below this point. Best effort by design: with no
-     * database, or a failed insert, the helper returns false and the
-     * behavior is exactly pre-T29 -- the log line above already holds the
-     * receipt, and the Notes append still runs. receiptNoted keeps
-     * meaning what it always meant: the Mindbody Notes copy. */
-    await insertWaiverReceipt(clientId, at, waiver.sha256);
-
-    const receiptLine = `Waiver agreed at the counter ${at}, text sha256:${waiver.sha256.slice(0, 12)}`;
-    let receiptNoted = false;
-    let receiptReason: string | null = null;
-    let newNotes = receiptLine;
-    try {
-      /* T116: the append starts from Mindbody's notes, read now, and no
-       * longer from the row's copy the browser sent. `updateclient`
-       * writes Notes WHOLE, so a row whose notes had not loaded (null)
-       * or were stale wrote the receipt line OVER everything on file:
-       * the same silent blanking T116 exists to catch. A read that
-       * cannot say (a shared id, T114; a failure) files no receipt in
-       * Notes; the log line and the waiver_receipts row above hold it. */
-      /* T116 review: bounded. The release above has already landed and
-       * the receipt is already in the log and the table, so a read that
-       * hangs must not hold the teacher for Mindbody's own 15s timeout
-       * (measured: 14s with a read that never answered). Missing the
-       * bound files no Notes copy, the same as any failed read. */
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const read = await Promise.race([
-        readClientNotes(clientId),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(
-                new Error(
-                  `Mindbody did not answer with the notes in ${BEFORE_READ_MS / 1000}s`,
-                ),
-              ),
-            BEFORE_READ_MS,
-          );
-        }),
-      ]).finally(() => clearTimeout(timer));
-      const current = read.notes.replace(/\s+$/, "");
-      newNotes = current ? `${current}\n${receiptLine}` : receiptLine;
-      const browserNotes = typeof notes === "string" ? notes : "";
-      const noted = await asTeacher(session, "/api/waiver-agree", () =>
-        updateClientNotes(clientId, newNotes, noteActor, {
-          kind: "waiver-receipt",
-          before: {
-            ok: true,
-            uniqueId: read.uniqueId,
-            values: { Notes: read.notes },
-          },
-          note:
-            browserNotes.trim() !== read.notes.trim()
-              ? "the screen held different notes from Mindbody's; the receipt was appended to Mindbody's"
-              : null,
-        }),
-      );
-      if (noted.suppressed) {
-        /* Expected in rehearsal under the write guard; reported honestly
-         * rather than as a landed note. */
-        receiptReason = `notes append suppressed by ${noted.suppressed}`;
-      } else {
-        receiptNoted = true;
-      }
-    } catch (err) {
-      receiptReason = err instanceof Error ? err.message : String(err);
-    }
-
     return NextResponse.json({
       agreed: true,
-      receiptNoted,
-      receiptReason,
-      /* The notes as written, so the row's local state can match what a
-       * roster reload would show. Only meaningful when receiptNoted. */
-      notes: receiptNoted ? newNotes : null,
-      ...actorFields(run),
+      receiptNoted: done.receiptNoted,
+      receiptReason: done.receiptReason,
+      ...(signed === null
+        ? {}
+        : {
+            signed: true,
+            documentFiled: done.documentFiled,
+            documentReason: done.documentReason,
+            signatureSha256: done.signatureSha256,
+          }),
+      notes: done.notes,
+      ...actorFields(done.run),
     });
   } catch (err) {
     /* T50 review: the teacher's token died under this write (the
@@ -227,5 +242,7 @@ export async function POST(request: Request) {
       { error: err instanceof Error ? err.message : String(err) },
       { status: 502 },
     );
+  } finally {
+    if (claimed !== null) releaseFinalisation(claimed);
   }
 }

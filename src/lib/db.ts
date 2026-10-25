@@ -423,6 +423,169 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         ON client_writes (client_id, at DESC);
     `,
   },
+  {
+    /* T200: the customer-facing display (docs/design/customer-display.md).
+     * Both tables are charter-clean: they hold what Mindbody has no home
+     * for and never a copy of what it does. `displays` is the pairing of
+     * a studio-owned iPad with this counter, which exists nowhere else;
+     * `display_requests` is the scene a teacher put on it and the result
+     * the student handed back, which lives only long enough for the
+     * teacher's iPad to finalise it (30 minutes) and is then expired. No
+     * client, class, pass, price or visit is stored here: a request's
+     * payload carries a first name and what the student may already see
+     * on the screen in front of them, and nothing is ever read back out
+     * of it as a fact about Mindbody.
+     *
+     * `initiator` is "teacher" or "display" (the self-serve sign-up,
+     * built later); `status` is pending / completed / refused /
+     * cancelled / expired. `consumed_at` is the one-finalisation handle:
+     * a result may be spent once, by the teacher's iPad, and never
+     * again. Nullable and additive throughout, and a deployed database
+     * at 11 runs only this block. */
+    version: 13,
+    sql: `
+      CREATE TABLE IF NOT EXISTS displays (
+        id            text PRIMARY KEY,
+        name          text,
+        paired_at     timestamptz NOT NULL DEFAULT now(),
+        last_seen_at  timestamptz
+      );
+      CREATE TABLE IF NOT EXISTS display_requests (
+        id                      text PRIMARY KEY,
+        display_id              text NOT NULL,
+        kind                    text NOT NULL,
+        initiator               text NOT NULL,
+        payload                 jsonb,
+        status                  text NOT NULL,
+        result                  jsonb,
+        requested_by_staff_id   text,
+        created_at              timestamptz NOT NULL DEFAULT now(),
+        completed_at            timestamptz,
+        consumed_at             timestamptz,
+        expires_at              timestamptz NOT NULL
+      );
+    `,
+  },
+  {
+    /* T202: the waiver signature, beside the text hash it already
+     * carries. Charter-clean, and the reasoning is worth stating: this
+     * image is OUR artifact, captured on OUR screen, which Mindbody has
+     * no field for (a waiver has no signature anywhere on the client;
+     * only a contract does). So the database is the ORIGINAL and the
+     * copy uploaded to the client's documents is the copy. Additive,
+     * nullable, and every row written before this one stays exactly as
+     * it is: a counter agreement carries no signature and never will. */
+    version: 14,
+    sql: `
+      ALTER TABLE waiver_receipts
+        ADD COLUMN IF NOT EXISTS signature_sha256 text;
+      ALTER TABLE waiver_receipts
+        ADD COLUMN IF NOT EXISTS signature_png bytea;
+    `,
+  },
+  {
+    /* T205: the contract signature's receipt. OURS, on the charter's
+     * own terms: Mindbody records that a contract was bought and (when
+     * it accepts ClientSignature) keeps the image on the client's
+     * documents page, but it does not record WHICH WORDING was agreed
+     * to. The studio edits those terms in Mindbody's rich text editor,
+     * so "the membership Sam signed" is only answerable from a hash of
+     * the text as it stood at that moment, beside the artifact that was
+     * drawn on it -- or, when a teacher sold it with their PIN instead,
+     * beside their staff id and no signature at all.
+     *
+     * Nothing here duplicates Mindbody: no price, no card, no client
+     * detail beyond the id, and no claim about the contract's state. One
+     * row per LIVE purchase attempt that reached Mindbody. Additive, and
+     * a deployed database at 13 runs only this block. */
+    version: 15,
+    sql: `
+      CREATE TABLE IF NOT EXISTS contract_receipts (
+        id                      bigserial PRIMARY KEY,
+        client_id               text NOT NULL,
+        contract_id             integer NOT NULL,
+        contract_name           text,
+        terms_sha256            text,
+        signature_sha256        text,
+        signature_png           bytea,
+        overridden_by_staff_id  text,
+        agreed_at               timestamptz,
+        start_date              text,
+        sale_outcome            text NOT NULL,
+        created_at              timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS contract_receipts_client_idx
+        ON contract_receipts (client_id);
+    `,
+  },
+  {
+    /* Sandbox sign-in (Pete, 2026-09-20): the sandbox's ONE staff login is
+     * also the app's service account, and Mindbody refuses to issue a
+     * second token for a user who already holds one. A session opened
+     * with the service account's own login is flagged so the service
+     * reads can borrow its token when an issue is refused. Additive,
+     * default false; rows from before read as ordinary teachers. */
+    version: 16,
+    sql: `
+      ALTER TABLE staff_sessions
+        ADD COLUMN IF NOT EXISTS is_service boolean NOT NULL DEFAULT false;
+    `,
+  },
+  {
+    /* T210: which Mindbody SITE the token in this row was issued for.
+     * A staff token belongs to the site that issued it, and Mindbody
+     * answers "Delegated staff does not belong to the subscriber." when
+     * one is used against another site -- which is what a counter
+     * restarted with a different MINDBODY_TARGET was doing with a
+     * persisted session (T89's switch ends every session, but an
+     * environment change at restart never ran it). Nullable, because
+     * rows written before this migration cannot be told apart: they
+     * read as UNKNOWN and are never loaded for any site, which costs
+     * one sign-in on the deploy that adds this column and nothing
+     * afterwards. Not a secret: the site id is already on
+     * /api/config. */
+    version: 17,
+    sql: `
+      ALTER TABLE staff_sessions
+        ADD COLUMN IF NOT EXISTS site_id text;
+    `,
+  },
+  {
+    /* The two series, merged (T212's merge of main's T116). Main's
+     * client_writes shipped as migration 12 while this branch's five
+     * (the displays, the receipt signatures, contract receipts, the
+     * service flag and the session's site) were also numbered 12 to 16.
+     * Main keeps 12, because a deployed database may already have run it;
+     * the branch's five are 13 to 17. A database that ran the branch's
+     * OLD numbering (max 16) skips the new 12 and would never get
+     * client_writes, so this re-asserts it. Every statement here and in
+     * 13 to 17 is IF NOT EXISTS, so a database that has it all already
+     * does nothing. */
+    version: 18,
+    sql: `
+      CREATE TABLE IF NOT EXISTS client_writes (
+        id            bigserial PRIMARY KEY,
+        at            timestamptz NOT NULL,
+        client_id     text NOT NULL,
+        unique_id     bigint,
+        kind          text NOT NULL,
+        changes       jsonb NOT NULL,
+        outcome       text NOT NULL,
+        http_status   integer,
+        error         text,
+        teacher_id    text,
+        teacher_name  text,
+        actor_id      text,
+        route         text,
+        target        text NOT NULL,
+        site_id       text,
+        note          text,
+        created_at    timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS client_writes_client_at_idx
+        ON client_writes (client_id, at DESC);
+    `,
+  },
 ];
 
 let migrated: Promise<boolean> | null = null;
@@ -500,19 +663,120 @@ export async function insertWaiverReceipt(
   clientId: string,
   agreedAtIso: string,
   textSha256: string,
+  /** T202: the signature captured on the customer display, when there
+   *  was one. Absent for a counter agreement, which has no signature to
+   *  keep and must keep reading exactly as it did. */
+  signature?: { sha256: string; png: Buffer } | null,
 ): Promise<boolean> {
   try {
     const p = await ready();
     if (!p) return false;
     await p.query(
-      `INSERT INTO waiver_receipts (client_id, agreed_at, text_sha256)
-       VALUES ($1, $2, $3)`,
-      [clientId, agreedAtIso, textSha256],
+      `INSERT INTO waiver_receipts
+         (client_id, agreed_at, text_sha256, signature_sha256, signature_png)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        clientId,
+        agreedAtIso,
+        textSha256,
+        signature?.sha256 ?? null,
+        signature?.png ?? null,
+      ],
     );
     return true;
   } catch (err) {
     logDbError("waiver-receipt-insert", err);
     return false;
+  }
+}
+
+/* --- Contract receipts (T205) ---------------------------------------- */
+
+/**
+ * The durable record of one membership sale's SIGNATURE: which wording
+ * was agreed to (the hash of the raw terms as they were read), the
+ * artifact that was drawn on it, or the staff id of the teacher who sold
+ * it on their own PIN instead. Written once per LIVE purchase attempt
+ * that reached Mindbody, whatever the answer was: a refusal is exactly
+ * the case where somebody later asks what happened.
+ *
+ * Returns whether the row landed; false is "the log line already has
+ * it", never a failure of the purchase. Never throws.
+ */
+export async function insertContractReceipt(receipt: {
+  clientId: string;
+  contractId: number;
+  contractName: string | null;
+  termsSha256: string | null;
+  signature: { sha256: string; png: Buffer } | null;
+  overriddenByStaffId: string | null;
+  agreedAt: string | null;
+  /** The studio `YYYY-MM-DD` the membership starts on, "today" when the
+   *  teacher chose none. A string, because that is what the counter and
+   *  Mindbody both speak here (CLAUDE.md, site-local datetimes). */
+  startDate: string;
+  /** completed / suppressed / a refusal in words. */
+  saleOutcome: string;
+}): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `INSERT INTO contract_receipts
+         (client_id, contract_id, contract_name, terms_sha256,
+          signature_sha256, signature_png, overridden_by_staff_id,
+          agreed_at, start_date, sale_outcome)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        receipt.clientId,
+        receipt.contractId,
+        receipt.contractName,
+        receipt.termsSha256,
+        receipt.signature?.sha256 ?? null,
+        receipt.signature?.png ?? null,
+        receipt.overriddenByStaffId,
+        receipt.agreedAt,
+        receipt.startDate,
+        receipt.saleOutcome.slice(0, 500),
+      ],
+    );
+    return true;
+  } catch (err) {
+    logDbError("contract-receipt-insert", err);
+    return false;
+  }
+}
+
+/**
+ * T205: the newest contract receipt for a client that carries a
+ * SIGNATURE, for the profile card's one line. Our own row, the same
+ * reading the waiver's line gets; the PNG is deliberately not selected
+ * and is never rendered back into the POS.
+ */
+export async function latestSignedContractReceipt(
+  clientId: string,
+): Promise<{ agreedAt: Date; contractName: string | null } | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT agreed_at, contract_name
+         FROM contract_receipts
+        WHERE client_id = $1
+          AND signature_sha256 IS NOT NULL
+          AND agreed_at IS NOT NULL
+        ORDER BY agreed_at DESC LIMIT 1`,
+      [clientId],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      agreedAt: new Date(r.agreed_at),
+      contractName: r.contract_name === null ? null : String(r.contract_name),
+    };
+  } catch (err) {
+    logDbError("contract-receipt-read", err);
+    return null;
   }
 }
 
@@ -973,6 +1237,12 @@ export interface StaffSessionRow {
   tokenEnc: string;
   issuedAt: Date;
   expiresAt: Date;
+  /** The session was opened with the SERVICE ACCOUNT's own login. */
+  isService: boolean;
+  /** T210: the Mindbody site id the token was issued for. Null for a
+   *  row written before migration 16, which reads as unknown and is
+   *  never loaded for any site. */
+  siteId: string | null;
 }
 
 /** Writes a fresh session's row. Returns whether it landed; false is
@@ -984,10 +1254,19 @@ export async function insertStaffSession(row: StaffSessionRow): Promise<boolean>
     if (!p) return false;
     await p.query(
       `INSERT INTO staff_sessions
-         (id, staff_id, name, token_enc, issued_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (id, staff_id, name, token_enc, issued_at, expires_at, is_service, site_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (id) DO NOTHING`,
-      [row.id, row.staffId, row.name, row.tokenEnc, row.issuedAt, row.expiresAt],
+      [
+        row.id,
+        row.staffId,
+        row.name,
+        row.tokenEnc,
+        row.issuedAt,
+        row.expiresAt,
+        row.isService,
+        row.siteId,
+      ],
     );
     return true;
   } catch (err) {
@@ -1007,19 +1286,78 @@ export async function findStaffSession(
     const p = await ready();
     if (!p) return null;
     const res = await p.query(
-      `SELECT id, staff_id, name, token_enc, issued_at, expires_at
+      `SELECT id, staff_id, name, token_enc, issued_at, expires_at, is_service, site_id
        FROM staff_sessions WHERE id = $1 AND expires_at > $2`,
       [id, now],
     );
     const r = res.rows[0];
     if (!r) return null;
+    return rowOf(r);
+  } catch (err) {
+    logDbError("staff-session-read", err);
+    return null;
+  }
+}
+
+function rowOf(r: any): StaffSessionRow {
+  return {
+    id: String(r.id),
+    staffId: String(r.staff_id),
+    name: String(r.name),
+    tokenEnc: String(r.token_enc),
+    issuedAt: r.issued_at as Date,
+    expiresAt: r.expires_at as Date,
+    isService: r.is_service === true,
+    siteId:
+      r.site_id === null || r.site_id === undefined ? null : String(r.site_id),
+  };
+}
+
+/**
+ * The newest live session opened with the service account's own login
+ * FOR THIS SITE (T210), plus the site ids of the live service rows that
+ * were passed over, so the caller can say what it skipped and why.
+ * Null means the store did not answer; `{row: null}` means it answered
+ * and had nothing usable.
+ *
+ * Before T210 this took the newest service row whatever site it was
+ * issued for, and `staffToken()` then cached it under the CURRENT
+ * target's site id: a server restarted onto the other studio borrowed
+ * a token the other site had issued and every call under it was refused
+ * "Delegated staff does not belong to the subscriber.". A row with no
+ * site id (written before migration 16) is unknown, which is not this
+ * site either.
+ */
+export async function findServiceStaffSession(
+  siteId: string,
+  now = new Date(),
+): Promise<{ row: StaffSessionRow | null; skipped: string[] } | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    /* T210 review: the site is filtered in SQL, so five newer rows of
+     * the other studio (two sites on one Postgres) cannot hide this
+     * site's. The rows passed over are read separately, for the log. */
+    const res = await p.query(
+      `SELECT id, staff_id, name, token_enc, issued_at, expires_at, is_service, site_id
+       FROM staff_sessions
+       WHERE is_service = true AND expires_at > $1 AND site_id = $2
+       ORDER BY issued_at DESC LIMIT 1`,
+      [now, siteId],
+    );
+    const mine = res.rows[0] ? rowOf(res.rows[0]) : null;
+    const others = await p.query(
+      `SELECT site_id FROM staff_sessions
+       WHERE is_service = true AND expires_at > $1
+         AND (site_id IS NULL OR site_id <> $2)
+       ORDER BY issued_at DESC LIMIT 5`,
+      [now, siteId],
+    );
     return {
-      id: String(r.id),
-      staffId: String(r.staff_id),
-      name: String(r.name),
-      tokenEnc: String(r.token_enc),
-      issuedAt: r.issued_at as Date,
-      expiresAt: r.expires_at as Date,
+      row: mine,
+      skipped: others.rows.map((r: { site_id: string | null }) =>
+        typeof r.site_id === "string" ? r.site_id : "(no site recorded)",
+      ),
     };
   } catch (err) {
     logDbError("staff-session-read", err);
@@ -1317,5 +1655,427 @@ export async function setSetting(
   } catch (err) {
     logDbError("settings-write", err);
     return false;
+  }
+}
+
+/* --- The customer display (T200) ------------------------------------- */
+
+export interface DisplayRow {
+  id: string;
+  name: string | null;
+  pairedAt: Date;
+  lastSeenAt: Date | null;
+}
+
+/** A display request as a row: the scene a teacher put up and the result
+ *  the student handed back. `payload` and `result` are jsonb, validated
+ *  on the way IN (a plain JSON object, size-capped, in src/lib/display.ts)
+ *  and trusted on the way out, the bundles idiom. */
+export interface DisplayRequestRow {
+  id: string;
+  displayId: string;
+  kind: string;
+  initiator: string;
+  payload: unknown;
+  status: string;
+  result: unknown;
+  requestedByStaffId: string | null;
+  createdAt: Date;
+  completedAt: Date | null;
+  consumedAt: Date | null;
+  expiresAt: Date;
+}
+
+/** Records a pairing. Upsert on the id so a re-pair of the same iPad is
+ *  one row. False is "no database", never a failure of the pairing: the
+ *  hub holds it in memory either way and a restart then costs a re-pair,
+ *  which the display says on its own screen. */
+export async function upsertDisplay(row: {
+  id: string;
+  name: string | null;
+  pairedAt: Date;
+}): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `INSERT INTO displays (id, name, paired_at, last_seen_at)
+       VALUES ($1, $2, $3, $3)
+       ON CONFLICT (id) DO UPDATE
+         SET name = excluded.name, paired_at = excluded.paired_at`,
+      [row.id, row.name, row.pairedAt],
+    );
+    return true;
+  } catch (err) {
+    logDbError("display-upsert", err);
+    return false;
+  }
+}
+
+/** The newest paired display, which IS the display (one counter). Null
+ *  for none and for a store that did not answer alike: both mean "this
+ *  process knows of no paired display but what is in memory". */
+export async function latestDisplay(): Promise<DisplayRow | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT id, name, paired_at, last_seen_at
+       FROM displays ORDER BY paired_at DESC LIMIT 1`,
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      id: String(r.id),
+      name: r.name === null ? null : String(r.name),
+      pairedAt: r.paired_at as Date,
+      lastSeenAt: (r.last_seen_at as Date | null) ?? null,
+    };
+  } catch (err) {
+    logDbError("display-read", err);
+    return null;
+  }
+}
+
+/** Stamps the heartbeat. Throttled by the caller, since a heartbeat is
+ *  every 15s and a row write is not free. */
+export async function touchDisplay(id: string, at: Date): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(`UPDATE displays SET last_seen_at = $2 WHERE id = $1`, [
+      id,
+      at,
+    ]);
+    return true;
+  } catch (err) {
+    logDbError("display-touch", err);
+    return false;
+  }
+}
+
+/** Unpair: the row goes, and with it any request that named it. A
+ *  display nobody paired holds nothing anybody needs back. */
+export async function deleteDisplay(id: string): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(`DELETE FROM display_requests WHERE display_id = $1`, [id]);
+    await p.query(`DELETE FROM displays WHERE id = $1`, [id]);
+    return true;
+  } catch (err) {
+    logDbError("display-delete", err);
+    return false;
+  }
+}
+
+export async function insertDisplayRequest(
+  row: DisplayRequestRow,
+): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `INSERT INTO display_requests
+         (id, display_id, kind, initiator, payload, status, result,
+          requested_by_staff_id, created_at, completed_at, consumed_at,
+          expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        row.id,
+        row.displayId,
+        row.kind,
+        row.initiator,
+        row.payload === null ? null : JSON.stringify(row.payload),
+        row.status,
+        row.result === null ? null : JSON.stringify(row.result),
+        row.requestedByStaffId,
+        row.createdAt,
+        row.completedAt,
+        row.consumedAt,
+        row.expiresAt,
+      ],
+    );
+    return true;
+  } catch (err) {
+    logDbError("display-request-insert", err);
+    return false;
+  }
+}
+
+/** The outcome of a request: its status, its result, and when it
+ *  finished. Separate from the insert so the hot path (present) writes
+ *  once and the answer writes once. */
+export async function updateDisplayRequest(update: {
+  id: string;
+  status: string;
+  result: unknown;
+  completedAt: Date | null;
+}): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `UPDATE display_requests
+         SET status = $2, result = $3, completed_at = $4
+       WHERE id = $1`,
+      [
+        update.id,
+        update.status,
+        update.result === null ? null : JSON.stringify(update.result),
+        update.completedAt,
+      ],
+    );
+    return true;
+  } catch (err) {
+    logDbError("display-request-update", err);
+    return false;
+  }
+}
+
+/**
+ * T201: a live ticket's payload is REPLACED in place as the cart changes,
+ * so the row follows the scene rather than growing one row per keystroke.
+ * Charter-clean for the same reason the insert is: the payload is what a
+ * student can already read on the screen in front of them, and nothing
+ * Mindbody holds.
+ */
+export async function updateDisplayRequestPayload(
+  id: string,
+  payload: unknown,
+  expiresAt: Date,
+): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(
+      `UPDATE display_requests
+         SET payload = $2, expires_at = $3
+       WHERE id = $1 AND status = 'pending'`,
+      [id, JSON.stringify(payload), expiresAt],
+    );
+    return true;
+  } catch (err) {
+    logDbError("display-request-payload", err);
+    return false;
+  }
+}
+
+/** Spends a result: the one finalisation. False when no row moved (it
+ *  was consumed already, or there is no database), which the caller
+ *  reads as "not mine to spend" only alongside its own memory.
+ *
+ *  Review fix (T204): the result is CLEARED in the same statement. A
+ *  result is a handle for one finalisation and not a record (the design
+ *  doc's rule), and a spent sign-up's row otherwise kept the student's
+ *  email, phone and signature until the sweep, which for a sign-up is
+ *  four hours away. Nothing reads a result after it is spent: every
+ *  reader (liveSignup, pendingSignups, the create route) requires
+ *  consumed_at to be null. */
+export async function consumeDisplayRequest(id: string): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    const res = await p.query(
+      `UPDATE display_requests SET consumed_at = now(), result = NULL
+       WHERE id = $1 AND consumed_at IS NULL`,
+      [id],
+    );
+    return (res.rowCount ?? 0) > 0;
+  } catch (err) {
+    logDbError("display-request-consume", err);
+    return false;
+  }
+}
+
+/** The display's live request after a restart: the newest one still
+ *  inside its 30 minutes that nobody has finalised. */
+export async function findLiveDisplayRequest(
+  displayId: string,
+  now = new Date(),
+): Promise<DisplayRequestRow | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT id, display_id, kind, initiator, payload, status, result,
+              requested_by_staff_id, created_at, completed_at, consumed_at,
+              expires_at
+       FROM display_requests
+       WHERE display_id = $1 AND expires_at > $2 AND consumed_at IS NULL
+         AND status IN ('pending', 'completed', 'refused')
+       ORDER BY created_at DESC LIMIT 1`,
+      [displayId, now],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      id: String(r.id),
+      displayId: String(r.display_id),
+      kind: String(r.kind),
+      initiator: String(r.initiator),
+      payload: r.payload ?? null,
+      status: String(r.status),
+      result: r.result ?? null,
+      requestedByStaffId:
+        r.requested_by_staff_id === null
+          ? null
+          : String(r.requested_by_staff_id),
+      createdAt: r.created_at as Date,
+      completedAt: (r.completed_at as Date | null) ?? null,
+      consumedAt: (r.consumed_at as Date | null) ?? null,
+      expiresAt: r.expires_at as Date,
+    };
+  } catch (err) {
+    logDbError("display-request-read", err);
+    return null;
+  }
+}
+
+/** Expired rows go, results and all: a result is a handle for one
+ *  finalisation, not a record (the design doc's rule). */
+export async function sweepDisplayRequests(
+  now = new Date(),
+): Promise<boolean> {
+  try {
+    const p = await ready();
+    if (!p) return false;
+    await p.query(`DELETE FROM display_requests WHERE expires_at <= $1`, [now]);
+    return true;
+  } catch (err) {
+    logDbError("display-request-sweep", err);
+    return false;
+  }
+}
+
+/**
+ * T204: every self-serve sign-up waiting for a teacher, newest last.
+ * Completed, unconsumed and inside its four hours; anything else is
+ * either spent, refused or gone. The tray reads this beside the hub's
+ * own memory, which is what makes a signature and a typed name survive
+ * a restart between the student tapping agree and the teacher creating
+ * them.
+ */
+export async function listSelfServeSignups(
+  now = new Date(),
+  limit = 50,
+): Promise<DisplayRequestRow[]> {
+  try {
+    const p = await ready();
+    if (!p) return [];
+    const res = await p.query(
+      `SELECT id, display_id, kind, initiator, payload, status, result,
+              requested_by_staff_id, created_at, completed_at, consumed_at,
+              expires_at
+         FROM display_requests
+        WHERE kind = 'register' AND initiator = 'display'
+          AND status = 'completed' AND consumed_at IS NULL
+          AND expires_at > $1
+        ORDER BY completed_at ASC
+        LIMIT $2`,
+      [now, limit],
+    );
+    return res.rows.map((r) => ({
+      id: String(r.id),
+      displayId: String(r.display_id),
+      kind: String(r.kind),
+      initiator: String(r.initiator),
+      payload: r.payload ?? null,
+      status: String(r.status),
+      result: r.result ?? null,
+      requestedByStaffId:
+        r.requested_by_staff_id === null ? null : String(r.requested_by_staff_id),
+      createdAt: new Date(r.created_at),
+      completedAt: r.completed_at === null ? null : new Date(r.completed_at),
+      consumedAt: r.consumed_at === null ? null : new Date(r.consumed_at),
+      expiresAt: new Date(r.expires_at),
+    }));
+  } catch (err) {
+    logDbError("display-signups-read", err);
+    return [];
+  }
+}
+
+/* --- T202: reading our own waiver receipts --------------------------- */
+
+/**
+ * The newest waiver receipt for a client that carries a SIGNATURE, for
+ * the profile card's one line ("signed on the customer screen on ...").
+ * Reading our own row is exactly what the charter permits: the row is
+ * ours, Mindbody has no home for it, and nothing about Mindbody's own
+ * state is inferred from it. The PNG itself is deliberately NOT selected
+ * and is never rendered back into the POS.
+ */
+export async function latestSignedWaiverReceipt(
+  clientId: string,
+): Promise<{ agreedAt: Date; signatureSha256: string } | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT agreed_at, signature_sha256
+         FROM waiver_receipts
+        WHERE client_id = $1 AND signature_sha256 IS NOT NULL
+        ORDER BY agreed_at DESC LIMIT 1`,
+      [clientId],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      agreedAt: new Date(r.agreed_at),
+      signatureSha256: String(r.signature_sha256),
+    };
+  } catch (err) {
+    logDbError("waiver-receipt-read", err);
+    return null;
+  }
+}
+
+/**
+ * One display request BY ID (T202). T200's reload only ever looked up
+ * the display's newest live request, which is right for a restart and
+ * wrong for a finalisation: the teacher's iPad names the request it was
+ * told about, and that one may no longer be the hub's `current` (a
+ * later scene took the screen) or may not be in memory at all (the
+ * server restarted between the student tapping Done and the teacher's
+ * iPad consuming it, which is the ONE reason this table exists).
+ */
+export async function findDisplayRequestById(
+  id: string,
+): Promise<DisplayRequestRow | null> {
+  try {
+    const p = await ready();
+    if (!p) return null;
+    const res = await p.query(
+      `SELECT id, display_id, kind, initiator, payload, status, result,
+              requested_by_staff_id, created_at, completed_at, consumed_at,
+              expires_at
+         FROM display_requests
+        WHERE id = $1`,
+      [id],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      id: String(r.id),
+      displayId: String(r.display_id),
+      kind: String(r.kind),
+      initiator: String(r.initiator),
+      payload: r.payload ?? null,
+      status: String(r.status),
+      result: r.result ?? null,
+      requestedByStaffId:
+        r.requested_by_staff_id === null
+          ? null
+          : String(r.requested_by_staff_id),
+      createdAt: new Date(r.created_at),
+      completedAt: r.completed_at === null ? null : new Date(r.completed_at),
+      consumedAt: r.consumed_at === null ? null : new Date(r.consumed_at),
+      expiresAt: new Date(r.expires_at),
+    };
+  } catch (err) {
+    logDbError("display-request-find", err);
+    return null;
   }
 }

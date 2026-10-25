@@ -335,3 +335,23 @@ export function discountRecordLine(r: {
       )}) on ${usd(r.subtotal)}, paid ${usd(r.paid)}`;
   return `${head}: ${why}.${r.teacherName ? ` By ${r.teacherName}` : ""}`;
 }
+
+/**
+ * T203: the comp-token purpose a teacher's PIN mints to approve a sale
+ * themselves when the customer screen could not (the D1 override). It
+ * lives HERE, beside the PIN shape the same dialog reads, because
+ * src/lib/approval.ts reaches the database and the dialog is a browser
+ * component: a client bundle must not pull `pg` in for one string.
+ */
+export const APPROVE_PURPOSE = "approve" as const;
+
+/**
+ * T205: the comp-token purpose a teacher's PIN mints to sell a
+ * membership WITHOUT the customer's signature (the D5 override). Its own
+ * purpose, beside APPROVE_PURPOSE, for T94 review's reason: a PIN typed
+ * to approve a sale must not also start somebody's autopay unsigned.
+ * Here, beside the PIN shape the same dialog reads, because
+ * src/lib/approval.ts reaches the database and the dialog is a browser
+ * component.
+ */
+export const CONTRACT_PURPOSE = "contract" as const;

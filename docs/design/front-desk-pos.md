@@ -458,6 +458,31 @@ QR-on-their-phone flow remains the better end state and stays in Phase 3;
 this is the bridge that keeps a new student out of the Mindbody app queue at
 6pm.
 
+**Addendum, 2026-09-21 (Pete): the gate has a third way through, and it is
+the teacher's own PIN.** "currently a teacher cannot sign a student up for
+class if they have no waiver. that is the normal flow but a teacher should be
+able to override with their PIN and must give a reason. make sure this is
+doable if there is an error, that would probably be the main reason to do
+so." T211 builds it, and the shape is chosen so that nothing above is
+weakened. The override is NOT a signing path: it writes no
+`LiabilityRelease`, keeps no receipt, and records no agreement anybody made.
+It authorizes exactly one write -- a check-in, a walk-in add, a promotion or
+a guest's entry -- to go ahead without one, and the student meets the same
+dialog on their next tap, which is the difference between "a teacher
+accepted the risk today" and "this student signed". What it costs is T48's
+own authorization: the signed-in teacher's PIN minted for a sixth purpose,
+`waiver`, which none of the other five can stand in for, plus a reason of
+three to two hundred characters, both filed on the client the way T45/T62
+file a comp's reason ("Checked in without a signed waiver by <teacher> at
+the counter: <reason>"). The route verifies the purpose and that the token
+names the teacher whose session is behind the tap, spends it once before any
+Mindbody call, and hands it back only when dry run or the write guard
+suppressed the write, because a write that never happened authorized
+nothing. Pete's "if there is an error" is the reason the control sits
+outside the dialog's reading/close-only split and last: a waiver text that
+will not fetch used to be a dead end with a close button, and that is
+exactly the moment a teacher with a queue needs a way forward.
+
 ## Categories
 
 Hardcoded as config in the app, not fetched. `GET /site/categories` does exist

@@ -15,7 +15,17 @@ import PasswordInput from "./PasswordInput";
 import { actorFallbackLine } from "./actornote";
 import CardModal from "./CardModal";
 import { toggleTheme } from "./theme";
+import ApprovalDialog, { type ApprovalArmed } from "./ApprovalDialog";
+import { useDisplayMirror } from "./useDisplayMirror";
+import ApprovalWait from "./ApprovalWait";
+import { useSaleApproval } from "./useSaleApproval";
 import type { TypedCard } from "@/lib/typedcard";
+import { displayFirstName } from "@/lib/displayticket";
+import type {
+  TicketLine,
+  TicketMode,
+  TicketPayload,
+} from "@/lib/displayticket";
 import { IDEMPOTENCY_HEADER, newIdempotencyKey } from "@/lib/idemkey";
 
 import {
@@ -27,6 +37,7 @@ import {
   compNeedsDetail,
   compReasonLine,
   compValid,
+  CONTRACT_PURPOSE,
   DISCOUNT_PERCENT_MAX,
   DISCOUNT_PERCENT_MIN,
   discountCents,
@@ -92,6 +103,24 @@ export interface ModeConfig {
    *  charges nothing without a client (confirmed live 2026-08-30).
    *  Absent on the lock screen's trimmed answer and before config loads. */
   houseClient?: boolean;
+  /** T207: "automatic" or "review", the studio's rule for a completed
+   *  self-serve sign-up. Read by page.tsx's tray runner and by nothing
+   *  on this screen; absent on the lock screen's trimmed answer and
+   *  before the config loads, which both read as automatic (the
+   *  default) only once the answer has actually arrived. */
+  signupMode?: string;
+  /** T203: whether the studio asks the customer to approve each sale.
+   *  T209 reads it here as well as in SaleScreen's own /api/config
+   *  fetch, because the roster's "Pay and check in" is a second charge
+   *  path and has to ask the same question. Absent on the lock screen's
+   *  trimmed answer and before the config loads, which both read as OFF:
+   *  /api/checkout enforces the setting itself on every charge, so a
+   *  stale copy can cost a teacher a refusal and can never cost a
+   *  student an unapproved charge. */
+  customerConfirmsSale?: boolean;
+  /** T212: the studios the sign-in gate may offer, or null for none.
+   *  Absent on the lock screen's trimmed answer. */
+  studioChoice?: { target: "prod" | "sandbox"; siteId: string | null }[] | null;
 }
 
 /**
@@ -999,6 +1028,69 @@ function lineSubName(line: CartEntry): string | null {
   const name = cut === -1 ? item.subName : item.subName.slice(0, cut);
   const rest = cut === -1 ? "" : item.subName.slice(cut);
   return `${giftCardNameLead(name) ?? name}${rest}`;
+}
+
+/**
+ * T201: the ticket as the CUSTOMER DISPLAY renders it (Phase 2.5 item 2,
+ * design "Scene 2"). The same lines the teacher's ticket shows, named the
+ * way the ticket names them, with no id of any kind on them: the payload
+ * carries no client id, no pricing option id, no product id and nothing
+ * about a card, and /api/display/present rebuilds it field by field
+ * besides.
+ */
+function displayTicketLines(cart: readonly CartEntry[]): TicketLine[] {
+  return cart.map((line) => ({
+    name: lineNameOnly(line),
+    quantity: line.quantity,
+    unitPrice: line.item.price,
+    /* The line's extended price, derived exactly as the teacher's ticket
+     * derives it from the catalog's unit price. Every TOTAL below is
+     * Mindbody's own. */
+    linePrice: roundToCents(line.item.price * line.quantity),
+  }));
+}
+
+/**
+ * T201: one ticket payload, built the same way for the live mirror and
+ * for the post-sale summary.
+ *
+ * The rule that shapes it: **no figure here is this screen's arithmetic
+ * standing in for Mindbody's.** A cart that is being priced, that was
+ * suppressed, or whose total Mindbody disagreed with carries NO totals at
+ * all, and the display draws the lines and waits. The one addition is the
+ * gift cards' own prices, which is the addition the teacher's ticket
+ * already makes and which /api/checkout rehearses with `Test: true`
+ * before a cent moves.
+ */
+function displayTicketPayload(input: {
+  mode: TicketMode;
+  cart: readonly CartEntry[];
+  priced: PricedResult | null;
+  pricing: boolean;
+  clientName: string | null;
+  giftCardsCharged: number;
+  giftDiscountOff: number;
+}): TicketPayload {
+  const saleLines = input.cart.filter((line) => !isGiftCardLine(line));
+  const priced = input.pricing ? null : input.priced;
+  const usable =
+    priced !== null && !priced.suppressed && !priced.disagrees;
+  const cartTotal = saleLines.length === 0 ? 0 : usable ? priced.grandTotal : null;
+  const discountTotal = roundToCents(
+    (usable ? (priced.discountTotal ?? 0) : 0) + input.giftDiscountOff,
+  );
+  return {
+    mode: input.mode,
+    clientFirstName: displayFirstName(input.clientName),
+    lines: displayTicketLines(input.cart),
+    subtotal: usable ? priced.subTotal : null,
+    ...(discountTotal > 0 ? { discountTotal } : {}),
+    tax: usable ? priced.taxTotal : null,
+    total:
+      cartTotal === null
+        ? null
+        : roundToCents(cartTotal + input.giftCardsCharged),
+  };
 }
 
 /** Mirrors src/lib/sale.ts PricedCart, as /api/price-cart returns it. */
@@ -1928,6 +2020,24 @@ function PaymentPanel(props: {
    *  page.tsx's words. Shown on the done screen: the sale stands either
    *  way, and a failed check-in must be read where the teacher is. */
   pendingResult: { ok: boolean; text: string } | null;
+  /**
+   * T201: put the post-sale summary on the customer display. Called for
+   * the two outcomes the teacher's own screen reads as done -- a
+   * completed sale, and a suppressed one under dry run or the write
+   * guard -- and for NO other: a refused, partial, ambiguous or
+   * sold-nothing charge must never thank a student for a sale that did
+   * not happen. The panel builds it at the TAP, because the cart is
+   * cleared in the same commit the sale lands in.
+   */
+  onDisplaySummary: (payload: TicketPayload) => void;
+  /**
+   * T203: whether the studio has turned `customer_confirms_sale` on, as
+   * /api/config reports it. It decides what this panel DRAWS and nothing
+   * else: /api/checkout reads the setting itself on every charge and
+   * refuses a charge that carries neither a display approval nor a PIN,
+   * so a browser with a stale copy is refused rather than obeyed.
+   */
+  customerConfirmsSale: boolean;
 }) {
   const {
     cart,
@@ -1952,6 +2062,7 @@ function PaymentPanel(props: {
     override: armedOverride,
     receipt,
     pendingResult,
+    customerConfirmsSale,
   } = props;
 
   /**
@@ -1968,6 +2079,52 @@ function PaymentPanel(props: {
    */
   const [lines, setLines] = useState<readonly TenderLine[]>([]);
   const nextLineId = useRef(1);
+  /**
+   * T203: the customer's approval, when the studio has asked for one.
+   *
+   * T209 lifted the whole of it into `useSaleApproval`, because
+   * /api/checkout enforces the setting on EVERY charge and this screen
+   * was the only one that asked: the roster's "Pay and check in" reached
+   * the route with no approval and no scene ever appeared on the
+   * student's iPad. Nothing about what a teacher sees here moved; the
+   * hook holds the same state machine, the same poll and the same three
+   * ways out, and `ApprovalWait` draws the same panel, so the two
+   * screens cannot drift.
+   *
+   * Nothing here decides whether the sale may be charged: the server
+   * does, on every charge, from the setting and the stored approval.
+   *
+   * The two closures below are rebuilt every render and read by the hook
+   * through refs, so they see THIS render's cart and charge while the
+   * wait stays keyed to the request id. They name `approvalCart` and
+   * `doCharge`, which are declared further down: the bodies only run on
+   * a tap, long after both exist.
+   */
+  const approvalFlow = useSaleApproval({
+    on: customerConfirmsSale,
+    build: () => ({
+      payload: displayTicketPayload({
+        mode: "approve",
+        cart,
+        priced,
+        pricing: false,
+        clientName: client?.name ?? null,
+        giftCardsCharged,
+        giftDiscountOff: roundToCents(armedParts.giftCents / 100),
+      }),
+      cart: approvalCart(),
+    }),
+    charge: (approved) => void doCharge(approved),
+    /* T209 review: a present refused 401 `reason: "staff"` is this
+       screen's own onStaffSessionEnded, exactly as the charge path
+       reads it off a checkout answer. */
+    onStaffSessionEnded,
+  });
+  const approval = approvalFlow.approval;
+  const approvalNote = approvalFlow.note;
+  const waitingForScreen = approvalFlow.waitingForScreen;
+  const approvalReset = approvalFlow.reset;
+  const approvalAbandon = approvalFlow.abandon;
   /** Comp stays OUT of the list: it is a whole-sale gesture with its own
    *  hold, not a tender. Arming it clears the lines; adding a line
    *  disarms it. The two can never both be set.
@@ -2433,7 +2590,20 @@ function PaymentPanel(props: {
     /* T93: and the typed card, the same way and for the same reason. */
     dismissCardEntry();
     closeReason();
-  }, [dismissPad, dismissGift, dismissCardEntry, closeReason, setComp]);
+    /* T203: an outstanding approval goes with the tender. The sale is
+     * over (or the ticket is being started again), and an approval left
+     * standing would be an approval for a ticket nobody is charging. The
+     * server refuses a stale one anyway: it is spent on the charge, and
+     * a changed cart hashes differently. */
+    approvalReset();
+  }, [
+    dismissPad,
+    dismissGift,
+    dismissCardEntry,
+    closeReason,
+    setComp,
+    approvalReset,
+  ]);
 
   /* T101: the ticket's rows are editable in pay mode now, EXCEPT where
    * this panel knows something the ticket does not. A part-sold ticket
@@ -2505,7 +2675,22 @@ function PaymentPanel(props: {
     setResult((r) => (r?.kind === "paid" ? null : r));
     setLines([]);
     dismissPad();
-  }, [cart, dismissPad]);
+    /**
+     * T209 review: and an outstanding approval goes with them.
+     *
+     * The tender lines are what `chargeable` is computed from, so
+     * clearing them here used to leave a customer looking at a ticket
+     * whose charge could no longer run: their Approve landed on a
+     * `doCharge` that returned at its first guard, the panel vanished,
+     * and nobody was told anything. Ending the wait AT the edit is what
+     * makes "an outstanding approval goes with the tender" true rather
+     * than nearly true. The scene comes off their screen with it, and
+     * the teacher gets one sentence.
+     */
+    approvalAbandon(
+      "The ticket changed. Charge again to ask the customer.",
+    );
+  }, [cart, dismissPad, approvalAbandon]);
 
   /* "Empty cart" on the client-change dialog: the cart SaleScreen just
    * cleared was what the tender was for, so nothing stays armed, comp
@@ -3213,7 +3398,45 @@ function PaymentPanel(props: {
             ? `Record ${money(total)} cash`
             : `Charge ${money(total)}`;
 
-  const doCharge = async () => {
+  /**
+   * T203: the cart, in exactly the shape both /api/display/present and
+   * /api/checkout hash. Built in ONE place on purpose: the approval is
+   * only worth anything if the ticket the customer approved and the
+   * ticket that is charged hash to the same value, and two builders
+   * would drift. The extra fields the charge sends (an item's name for a
+   * comp receipt, the recipient's name for T90's sentence) are not in
+   * the hash, so they are free to differ.
+   */
+  const approvalCart = () => ({
+    items: saleLines.map((line) => ({
+      type: line.item.type,
+      metadataId: line.item.id,
+      quantity: line.quantity,
+      price: line.item.price,
+      ...(line.forClient ? { forClientId: line.forClient.id } : {}),
+    })),
+    ...(hasGiftCard
+      ? {
+          giftCards: giftCardLines.map((line) => ({
+            productId: Number(line.item.id),
+            quantity: line.quantity,
+            ...((line.item as GiftCardItem).editable
+              ? { amount: line.item.price }
+              : {}),
+          })),
+        }
+      : {}),
+    ...(clientId ? { clientId } : {}),
+    ...(comp !== null ? { discount: comp.discount } : {}),
+  });
+
+  const doCharge = async (approved?: {
+    /** T203: the display approval this charge is riding on, or the PIN
+     *  token that stood in for it. Exactly one, and only when the
+     *  setting is on; the route ignores both when it is off. */
+    id?: string;
+    token?: string;
+  }) => {
     /* Single flight: the ref refuses a second tap even in the same
      * render tick, and the button is disabled for every later one. */
     if (inFlight.current || !chargeable) return;
@@ -3309,6 +3532,41 @@ function PaymentPanel(props: {
      * lands, and the done block needs both after it has. */
     const typedLastFourAtTap = typedCard?.lastFour ?? null;
     const typedKeepAtTap = typedCard?.card.keep === true;
+    /* T201: the ticket as it stands at the tap, for the customer
+     * display's summary. Built here for the same reason the count and
+     * the receipt address are: the cart is cleared in the commit the
+     * sale lands in, and a summary built after it would be empty. */
+    const displaySummaryAtTap = displayTicketPayload({
+      mode: "summary",
+      cart,
+      priced,
+      pricing: false,
+      clientName: client?.name ?? null,
+      giftCardsCharged,
+      giftDiscountOff: roundToCents(armedParts.giftCents / 100),
+    });
+    /* The tender in WORDS, which is all a student's screen ever learns
+     * about how a sale was paid: a card's last four and nothing else of
+     * a card, and nothing at all of a gift card's number. */
+    const displayTender = comped
+      ? "Comp"
+      : lines.length === 2
+        ? "Two payments"
+        : soleLine === undefined
+          ? "Payment"
+          : soleLine.source === "storedcard"
+            ? card
+              ? `Card ending ${card.lastFour}`
+              : "Card"
+            : soleLine.source === "typedcard"
+              ? typedLastFourAtTap
+                ? `Card ending ${typedLastFourAtTap}`
+                : "Card"
+              : soleLine.source === "credit"
+                ? "Account credit"
+                : soleLine.source === "giftcard"
+                  ? "Gift card"
+                  : "Cash";
     inFlight.current = true;
     setCharging(true);
     onBusyChange(true);
@@ -3381,6 +3639,15 @@ function PaymentPanel(props: {
           /* T90: display only, for the route's per-cart sentence; every
              decision there is made on the id. */
           ...(hasOtherClient && client ? { clientName: client.name } : {}),
+          /* T203: the customer's approval, or the PIN that stood in for
+             it. The server checks the setting itself and refuses a
+             charge that carries neither; with the setting off it reads
+             neither field, so a stale dialog state cannot refuse a
+             sale. */
+          ...(approved?.id ? { displayApprovalId: approved.id } : {}),
+          ...(approved?.token
+            ? { approvalOverride: { token: approved.token } }
+            : {}),
           ...payment,
           /* T53: the toggle, as this render read it. The route ignores
            * it for the house client and for a comp anyway. */
@@ -3569,6 +3836,18 @@ function PaymentPanel(props: {
             .filter(Boolean)
             .join(" ") || null,
         });
+        /* T201: and the student's screen says thank you, with what was
+           bought, what was charged and how. The hub takes it down by
+           itself after a few seconds, so a teacher who walks away cannot
+           leave this ticket in front of the next person in the queue. */
+        props.onDisplaySummary({
+          ...displaySummaryAtTap,
+          tender: displayTender,
+          charged: typeof body?.total === "number" ? body.total : (total ?? 0),
+          /* T53's rule, on the student's screen too: only a receipt
+             Mindbody CONFIRMED is one this screen promises. */
+          emailedReceipt: body?.emailReceipt === true ? true : null,
+        });
         /* The sale is over: the tender goes with it. */
         resetTender();
       } else if (res.ok && body?.suppressed) {
@@ -3580,6 +3859,16 @@ function PaymentPanel(props: {
           kind: "suppressed",
           mode: String(body.suppressed),
           summary: typeof body?.summary === "string" ? body.summary : null,
+        });
+        /* T201: what the teacher's screen shows as done, the display
+           shows. Nothing moved, and the display says so in its own
+           corner: the dry run and sandbox mark is on this screen exactly
+           so a scene here never has to lie about the mode. */
+        props.onDisplaySummary({
+          ...displaySummaryAtTap,
+          tender: displayTender,
+          charged: total ?? 0,
+          emailedReceipt: null,
         });
       } else if (body?.stage === "checkout-after-credit") {
         /* THE seam, rendered verbatim and prominent: the credit exists,
@@ -3709,6 +3998,14 @@ function PaymentPanel(props: {
       if ("overdraftToken" in overdraftField) setOverdraft(null);
     }
   };
+
+  /* T203's wait, its busy retry and its primary tap all live in
+   * `useSaleApproval` since T209 (declared above, with this screen's
+   * ticket and this screen's charge). The poll, the 2 second retry on a
+   * busy screen and the rule that the charge follows the customer's own
+   * tap are unchanged; they are simply somewhere both charge screens
+   * can reach them. */
+  const onPrimaryTap = approvalFlow.begin;
 
   /** Retire a stale warning when the teacher changes the tender; a paid
    *  receipt stays until Done. */
@@ -4728,7 +5025,7 @@ function PaymentPanel(props: {
         title={primaryOn ? chargeLabel : (primaryWhy ?? undefined)}
         onClick={() => {
           if (!primaryOn) return;
-          void doCharge();
+          onPrimaryTap();
         }}
       >
         {charging ? (
@@ -5305,6 +5602,21 @@ function PaymentPanel(props: {
                   opens the reason and PIN dialog (T67), so nobody comps a
                   sale by grazing a control; it lives only here, in pay
                   mode (layout plan 2.9). */}
+              {/* T203: the customer's approval, while it is outstanding,
+                  drawn by the shared panel (T209) so the Cart screen and
+                  the roster's "Pay and check in" ask in the same words.
+                  Nothing here charges: the charge follows the customer's
+                  own tap, or the PIN. */}
+              <ApprovalWait
+                approval={approval}
+                note={approvalNote}
+                waitingForScreen={waitingForScreen}
+                onCancel={approvalFlow.cancel}
+                onWait={approvalFlow.keepWaiting}
+                onTakeOver={approvalFlow.takeOver}
+                onPin={approvalFlow.toPin}
+              />
+
               <div className="pay-foot">
                 <p className="pay-quiet">{tenderNote || " "}</p>
                 <button
@@ -5337,6 +5649,17 @@ function PaymentPanel(props: {
             <div className="pay-foot pay-foot-done">{primary}</div>
           ) : null}
         </div>
+
+      {/* T203: the D1 override. The PIN is T48's, minted for the
+          "approve" purpose alone, and /api/checkout verifies it, spends
+          it once and files it on the client with this teacher's name. */}
+      {approval?.stage === "pin" ? (
+        <ApprovalDialog
+          because={approval.because}
+          onCancel={approvalFlow.closePin}
+          onArmed={(armed: ApprovalArmed) => approvalFlow.armed(armed.token)}
+        />
+      ) : null}
 
       {/* T36: the amount modal. T35 put this keypad INLINE in the payment
           column, where it pushed the receipt down the screen; Pete, on
@@ -6620,6 +6943,14 @@ type ContractOutcome =
 
 function ContractDialog(props: {
   contract: ContractInfo;
+  /** T205: whether the studio requires the customer's signature on this
+   *  membership (`contract_requires_signature`, /api/config). It decides
+   *  what this dialog draws; the server enforces it on every purchase. */
+  requiresSignature: boolean;
+  /** T205: whether there is a customer screen paired AND awake. With
+   *  none, the design is explicit that the teacher should notice: the
+   *  purchase asks for their PIN and says why. */
+  displayConnected: boolean;
   client: SaleClient | null;
   cardLookup: CardLookup | null;
   onClose: () => void;
@@ -6636,9 +6967,21 @@ function ContractDialog(props: {
   /** True while the attach search modal is stacked above; Escape then
    *  belongs to that layer, not this dialog. */
   modalAbove: boolean;
+  /** T206: re-read the card on file. The lookup belongs to the sale
+   *  screen, so this dialog asks rather than reads: on OPEN, because a
+   *  cached miss from before a card was added anywhere else must not
+   *  decide a membership, and again after a card is saved from inside
+   *  it. Pete, first drive: "I don't see a way to add a card for anyone
+   *  in the sandbox", and on the sentence that pointed at the profile:
+   *  "if a teacher hits this point, they should be able to add a card
+   *  from here, not be forced to go back to the sign in page to do
+   *  so." */
+  onCardRefresh?: () => void;
 }) {
   const {
     contract,
+    requiresSignature,
+    displayConnected,
     client,
     cardLookup,
     onClose,
@@ -6647,6 +6990,7 @@ function ContractDialog(props: {
     onPurchased,
     onStaffSessionEnded,
     modalAbove,
+    onCardRefresh,
   } = props;
 
   const [rehearsal, setRehearsal] = useState<ContractRehearsal | null>(null);
@@ -6655,6 +6999,15 @@ function ContractDialog(props: {
    * null sends exactly what T30 sent. */
   const [startKey, setStartKey] = useState<string | null>(null);
   const [startOpen, setStartOpen] = useState(false);
+  /* T206: the card form, opened from the no-card notice and closed by
+   * itself. It is THE card form (CardModal, T84's "file" mode), not a
+   * second one, so one validator and one route cover every card this
+   * app takes. Its Escape is a capturing listener that stops
+   * propagation, so this dialog's own Escape does not also fire. */
+  const [cardOpen, setCardOpen] = useState(false);
+  /** The amber line a save can carry (T49's service-account fallback),
+   *  kept in the dialog rather than dropped. */
+  const [cardNote, setCardNote] = useState<string | null>(null);
   const [purchasing, setPurchasing] = useState(false);
   const [outcome, setOutcome] = useState<ContractOutcome | null>(null);
   const inFlight = useRef(false);
@@ -6668,6 +7021,39 @@ function ContractDialog(props: {
   const purchased = useRef(false);
   /** Bumped by the Retry button on a failed rehearsal. */
   const [rehearseNonce, setRehearseNonce] = useState(0);
+  /**
+   * T205: where the customer's signature has got to, when the studio
+   * requires one. Null is "not asked for, or nothing outstanding".
+   *
+   *   waiting  -- the contract is on the customer screen
+   *   busy     -- something else holds that screen (the design's
+   *               three-way choice: Wait, Take over, Sell without a
+   *               signature)
+   *   offline  -- no screen to sign on, so the PIN is the way forward
+   *   pin      -- the D5 override dialog is open
+   *
+   * Nothing here decides whether the membership may be sold: the server
+   * does, on every purchase, from the setting and the stored signature.
+   */
+  const [sign, setSign] = useState<
+    | null
+    | { stage: "waiting"; requestId: string }
+    | { stage: "busy"; signup?: boolean }
+    | { stage: "offline"; why: string }
+    /** T206: the membership itself has nothing to sign, which is not a
+     *  fact about the customer screen. Pete's contract attempt read
+     *  "The customer screen is not connected." over a sub-line about
+     *  missing terms, with the header mark saying the screen was
+     *  there. */
+    | { stage: "noterms"; why: string }
+    | { stage: "pin"; because: string }
+  >(null);
+  /** The quiet sentence left behind when a signature ended without a
+   *  sale ("Customer did not sign"). The dialog stays as it was. */
+  const [signNote, setSignNote] = useState<string | null>(null);
+  /** Whether the teacher chose "Wait" on a busy screen, so the present
+   *  is retried until it goes through. */
+  const [waitingForScreen, setWaitingForScreen] = useState(false);
 
   const clientId = client?.id ?? null;
   const card = cardLookup?.card ?? null;
@@ -6690,10 +7076,30 @@ function ContractDialog(props: {
       : cardLookup?.error
         ? "The card check failed. Detach and re-attach the client to retry."
         : !card
-          ? "No card on file. A membership charges the stored card; add a card in Mindbody first."
+          ? "No card on file. A membership charges the stored card."
           : card.expired
             ? `The card on file (ending ${card.lastFour}) is expired.`
             : null;
+
+  /* T206: the card on file is read again every time this dialog opens.
+   * A lookup from before (a card added on the profile, a card added on
+   * another screen) can be a cached MISS, and a membership refused for
+   * a card that is there is exactly what Pete hit. */
+  useEffect(() => {
+    onCardRefresh?.();
+    /* On open only: the refresh itself changes what comes back down. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* T206: the one block reason whose way forward is the client's own
+   * profile, where Add card is (ClientProfileCard). Computed beside the
+   * reason rather than parsed out of the sentence. */
+  const needsCard =
+    schedProblem === null &&
+    client !== null &&
+    !cardLookup?.loading &&
+    !cardLookup?.error &&
+    !card;
 
   /* The Test rehearsal: purchasecontract supports Test: true, so the
    * first-payment total on the confirm is the SERVER's number. Runs
@@ -6787,7 +7193,13 @@ function ContractDialog(props: {
     rehearsal.error === null &&
     !noProratedFigure;
 
-  const doPurchase = async () => {
+  const doPurchase = async (auth?: {
+    /** T205: the signature this membership rides on, or the PIN token
+     *  that stood in for it. Exactly one, and only when the setting is
+     *  on; the route ignores both when it is off. */
+    displayRequestId?: string;
+    token?: string;
+  }) => {
     if (inFlight.current || !confirmable || clientId === null) return;
     inFlight.current = true;
     setPurchasing(true);
@@ -6811,6 +7223,10 @@ function ContractDialog(props: {
           clientId,
           ...(startKey !== null ? { startDate: startKey } : {}),
           ...(shownFirst !== null ? { expectedFirstTotal: shownFirst } : {}),
+          ...(auth?.displayRequestId
+            ? { displayRequestId: auth.displayRequestId }
+            : {}),
+          ...(auth?.token ? { signatureOverride: { token: auth.token } } : {}),
         }),
       });
       let body: any = null;
@@ -6878,6 +7294,151 @@ function ContractDialog(props: {
       onBusyChange(false);
     }
   };
+
+  /* T205: the purchase, once the signature (or the PIN) is in hand. The
+   * SSE listener below runs from an effect mounted once, so it reads the
+   * LATEST closure through a ref rather than the one that existed when
+   * the stream opened. */
+  const purchaseRef = useRef(doPurchase);
+  useEffect(() => {
+    purchaseRef.current = doPurchase;
+  });
+
+  /**
+   * Put the contract on the customer screen and wait for the signature.
+   *
+   * Nothing is charged here, and the browser sends nothing the student
+   * reads: the server fetches the contract, prices the first payment
+   * with its own `Test: true` rehearsal and hashes the terms, and keeps
+   * the client, the contract, the day and that hash where the display
+   * cannot see them. /api/purchase-contract checks all four before it
+   * sells anything.
+   */
+  const presentContract = useCallback(async (): Promise<void> => {
+    if (clientId === null) return;
+    try {
+      const res = await fetch("/api/display/present", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "contract",
+          contractId: contract.id,
+          clientId,
+          ...(startKey !== null ? { startDate: startKey } : {}),
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (res.ok && typeof body?.requestId === "string") {
+        setSignNote(null);
+        setSign({ stage: "waiting", requestId: body.requestId });
+        return;
+      }
+      if (body?.reason === "busy") {
+        setSign({
+          stage: "busy",
+          ...(body?.holdingSignup === true ? { signup: true } : {}),
+        });
+        return;
+      }
+      if (body?.reason === "noterms") {
+        setSign({
+          stage: "noterms",
+          why:
+            typeof body?.error === "string"
+              ? body.error
+              : "This membership has no terms written in Mindbody.",
+        });
+        return;
+      }
+      setSign({
+        stage: "offline",
+        why:
+          typeof body?.error === "string"
+            ? body.error
+            : "The customer screen could not be used.",
+      });
+    } catch {
+      setSign({
+        stage: "offline",
+        why: "The customer screen could not be reached.",
+      });
+    }
+  }, [clientId, contract.id, startKey]);
+
+  /* Wait: the present is retried until the screen comes free, and the
+   * contract goes up by itself the moment it does. */
+  useEffect(() => {
+    if (!waitingForScreen || sign?.stage !== "busy") return;
+    const timer = setInterval(() => void presentContract(), 3_000);
+    return () => clearInterval(timer);
+  }, [waitingForScreen, sign, presentContract]);
+
+  /* The stream, while a signature is outstanding. `completed` buys the
+   * membership with no further tap (the design's whole point);
+   * `refused` closes the wait with one quiet line; a disconnected screen
+   * says so rather than leaving a teacher watching a dead wait. */
+  useEffect(() => {
+    if (sign?.stage !== "waiting") return;
+    const wanted = sign.requestId;
+    let source: EventSource | null = null;
+    try {
+      source = new EventSource("/api/display/events");
+    } catch {
+      return;
+    }
+    const parse = (ev: MessageEvent): Record<string, unknown> | null => {
+      try {
+        const data: unknown = JSON.parse(ev.data);
+        return data && typeof data === "object"
+          ? (data as Record<string, unknown>)
+          : null;
+      } catch {
+        return null;
+      }
+    };
+    const onCompleted = (ev: Event) => {
+      const data = parse(ev as MessageEvent);
+      if (data?.kind !== "contract" || data.requestId !== wanted) return;
+      setWaitingForScreen(false);
+      setSign(null);
+      setSignNote("Signed on the customer screen.");
+      void purchaseRef.current({ displayRequestId: wanted });
+    };
+    const onRefused = (ev: Event) => {
+      const data = parse(ev as MessageEvent);
+      /* BY ID, like the completion: a stream that opens with no
+         `Last-Event-ID` is replayed the hub's recent events, and an
+         earlier contract's refusal must not close this wait. */
+      if (data?.kind !== "contract" || data.requestId !== wanted) return;
+      setWaitingForScreen(false);
+      setSign(null);
+      setSignNote("Customer did not sign.");
+    };
+    const onDisconnected = () => {
+      /* A stream that opens with no `Last-Event-ID` is replayed the
+         hub's recent events, which can include a `disconnected` from
+         before this wait began (an unpair, a screen that slept an hour
+         ago). So the event is a PROMPT to ask, not an answer: only a
+         screen the server says is gone now ends the wait. */
+      void fetch("/api/admin/display")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body) => {
+          if (body === null) return;
+          if (body.paired === true && body.connected === true) return;
+          setSign({ stage: "offline", why: "Customer screen disconnected." });
+        })
+        .catch(() => undefined);
+    };
+    source.addEventListener("completed", onCompleted);
+    source.addEventListener("refused", onRefused);
+    source.addEventListener("disconnected", onDisconnected);
+    return () => {
+      source?.removeEventListener("completed", onCompleted);
+      source?.removeEventListener("refused", onRefused);
+      source?.removeEventListener("disconnected", onDisconnected);
+      source?.close();
+    };
+  }, [sign]);
 
   /* The dialog unmounting mid-flight must not leave the overlay
    * believing money is still moving. */
@@ -7010,6 +7571,23 @@ function ContractDialog(props: {
           </span>
         </button>
 
+        {/* T205: the explicit way to put the contract in front of the
+            student, when there is a screen to put it on. With the rule
+            ON, Buy presents it first anyway (below) and this is the same
+            act said plainly; with the rule OFF, this is how a studio
+            that wants a signature on THIS membership still takes one.
+            64px like every other tap target here. */}
+        {displayConnected && sign === null && outcome?.kind !== "paid" ? (
+          <button
+            className="contract-start"
+            disabled={purchasing || blockReason !== null}
+            onClick={() => void presentContract()}
+          >
+            <span>Sign on the customer screen</span>
+            <span className="contract-start-day">Send</span>
+          </button>
+        ) : null}
+
         {contract.agreementTerms ? (
           /* The terms are PLAIN TEXT by the time they reach here: the
              server reduced Mindbody's HTML (T99, src/lib/richtext.ts).
@@ -7028,6 +7606,23 @@ function ContractDialog(props: {
                 onClick={onRequestAttach}
               >
                 Attach a client
+              </button>
+            ) : null}
+            {/* T206: the card goes on from HERE. A teacher who has got
+                this far should not have to leave the membership, find
+                the roster, open a profile and come back. The same
+                CardModal the profile opens, and on a save the sale
+                screen's card lookup runs again, so the notice clears
+                and the rehearsal starts without this dialog closing. */}
+            {needsCard && client ? (
+              <button
+                className="class-change contract-attach"
+                onClick={() => {
+                  setCardNote(null);
+                  setCardOpen(true);
+                }}
+              >
+                Add card
               </button>
             ) : null}
           </div>
@@ -7088,6 +7683,127 @@ function ContractDialog(props: {
           </div>
         ) : null}
 
+        {/* T205: the customer's signature, while it is outstanding. It
+            stands where the teacher is already looking, says what is
+            being waited for, and carries the ways out: Cancel (the
+            dialog stays exactly as it was), and the D5 PIN override. A
+            busy screen adds the design's Wait and Take over. Nothing
+            here sells: the purchase follows the customer's own
+            signature, or the PIN. */}
+        {sign !== null ? (
+          <div className="approve-wait" role="status">
+            <p className="approve-wait-title">
+              {sign.stage === "waiting"
+                ? "Waiting for the customer to sign"
+                : sign.stage === "busy"
+                  ? sign.signup === true
+                    ? "Someone is signing up on the customer screen."
+                    : "The customer screen is busy."
+                  : sign.stage === "offline"
+                    ? "The customer screen is not connected."
+                    : sign.stage === "noterms"
+                      ? "Nothing to sign for this membership"
+                      : "Selling without a signature"}
+            </p>
+            <p className="approve-wait-sub">
+              {sign.stage === "waiting"
+                ? "The contract is on their screen. The membership starts the moment they sign."
+                : sign.stage === "busy"
+                  ? waitingForScreen
+                    ? "Waiting for it to come free. The contract goes up by itself."
+                    : sign.signup === true
+                      ? "Wait for them to finish, take the screen over, or sell it with your PIN."
+                      : "Wait for it, take it over, or sell it with your PIN."
+                  : sign.stage === "offline"
+                    ? `${sign.why} This membership needs your PIN, or a screen to sign on.`
+                    : sign.stage === "noterms"
+                      ? sign.why
+                      : "Enter your PIN in the box."}
+            </p>
+            {sign.stage !== "pin" ? (
+              <div className="approve-wait-buttons">
+                <button
+                  type="button"
+                  className="approve-wait-btn"
+                  disabled={purchasing}
+                  onClick={() => {
+                    setWaitingForScreen(false);
+                    setSign(null);
+                    setSignNote(null);
+                    if (sign.stage === "waiting") {
+                      void fetch("/api/display/cancel", { method: "POST" });
+                    }
+                  }}
+                >
+                  Cancel
+                </button>
+                {sign.stage === "busy" && !waitingForScreen ? (
+                  <button
+                    type="button"
+                    className="approve-wait-btn"
+                    disabled={purchasing}
+                    onClick={() => setWaitingForScreen(true)}
+                  >
+                    Wait
+                  </button>
+                ) : null}
+                {sign.stage === "busy" ? (
+                  <button
+                    type="button"
+                    className="approve-wait-btn"
+                    disabled={purchasing}
+                    onClick={() => {
+                      /* Take over: the screen apologises for a few
+                         seconds before the contract goes up, so the
+                         student it interrupted is not simply replaced by
+                         somebody else's membership. */
+                      setWaitingForScreen(false);
+                      void (async () => {
+                        await fetch("/api/display/cancel", {
+                          method: "POST",
+                          headers: { "content-type": "application/json" },
+                          body: JSON.stringify({ takenOver: true }),
+                        }).catch(() => undefined);
+                        await new Promise((r) => setTimeout(r, 3_000));
+                        await presentContract();
+                      })();
+                    }}
+                  >
+                    Take over
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="approve-wait-btn go"
+                  disabled={purchasing}
+                  onClick={() => {
+                    setWaitingForScreen(false);
+                    setSign({
+                      stage: "pin",
+                      because:
+                        sign.stage === "offline" || sign.stage === "noterms"
+                          ? sign.why
+                          : sign.stage === "busy"
+                            ? sign.signup === true
+                              ? "Someone was signing up on the customer screen."
+                              : "The customer screen is busy."
+                            : "The customer has not signed on the screen.",
+                    });
+                  }}
+                >
+                  Sell without a signature
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : signNote !== null ? (
+          <p className="approve-wait-sub">{signNote}</p>
+        ) : null}
+
+        {cardNote !== null ? (
+          <p className="pass-note modal-note-gap">{cardNote}</p>
+        ) : null}
+
         {outcome?.kind !== "paid" ? (
           <div className="modal-actions">
             <button
@@ -7101,8 +7817,26 @@ function ContractDialog(props: {
                 so tapping it is agreeing to exactly what it says. */}
             <button
               className="modal-confirm go contract-confirm"
-              disabled={!confirmable}
-              onClick={() => void doPurchase()}
+              disabled={!confirmable || sign !== null}
+              onClick={() => {
+                /* T205: with the rule on, Buy PRESENTS the contract
+                   first and the purchase follows the signature. With it
+                   off, or with a signature already spent on a retry,
+                   this is T30's own tap unchanged. The server enforces
+                   the rule either way. */
+                if (requiresSignature) {
+                  if (displayConnected) {
+                    void presentContract();
+                  } else {
+                    setSign({
+                      stage: "offline",
+                      why: "No customer screen is paired.",
+                    });
+                  }
+                  return;
+                }
+                void doPurchase();
+              }}
             >
               {purchasing ? (
                 <>
@@ -7121,6 +7855,45 @@ function ContractDialog(props: {
             </button>
           </div>
         ) : null}
+        {/* T205: the D5 override. The PIN is T48's, minted for the
+            "contract" purpose alone, and /api/purchase-contract verifies
+            it, spends it once and files it on the client with this
+            teacher's name. */}
+        {sign?.stage === "pin" ? (
+          <ApprovalDialog
+            because={sign.because}
+            purpose={CONTRACT_PURPOSE}
+            title="Sell this membership without a signature"
+            note="Your name goes on the client's record as the person who sold it unsigned."
+            onCancel={() => setSign(null)}
+            onArmed={(armed: ApprovalArmed) => {
+              setSign(null);
+              setSignNote(null);
+              void doPurchase({ token: armed.token });
+            }}
+          />
+        ) : null}
+        {/* T206: the card form, above this dialog (its scrim is
+            `over-profile`, z-index 32, against this one's 30). `current`
+            is null because this is only offered when there is no card
+            to replace. */}
+        {cardOpen && client ? (
+          <CardModal
+            mode="file"
+            clientId={client.id}
+            name={client.name}
+            current={null}
+            onClose={() => setCardOpen(false)}
+            onSaved={(_card, note) => {
+              setCardOpen(false);
+              setCardNote(note);
+              /* The lookup that gates this dialog is the sale screen's,
+                 so the refresh is asked for rather than done here. */
+              onCardRefresh?.();
+            }}
+          />
+        ) : null}
+
         {startOpen ? (
           <StartDatePicker
             chosen={startKey}
@@ -7298,6 +8071,11 @@ export default function SaleScreen(props: {
   onNavState: (state: SaleNavState) => void;
   config: ModeConfig | null;
   client: SaleClient | null;
+  /** T206: bumped by page.tsx whenever a card was saved anywhere (the
+   *  client profile's own Add card, for instance). The card lookup
+   *  below re-runs on it, so a card added while this screen is open is
+   *  seen without a reload. */
+  cardVersion?: number;
   /** Opens the existing search modal in attach mode (page.tsx owns it). */
   onRequestAttach: () => void;
   /** T91: opens the T59b New client form (page.tsx owns it, as it owns
@@ -7379,6 +8157,7 @@ export default function SaleScreen(props: {
     onNavState,
     config,
     client,
+    cardVersion,
     onRequestAttach,
     onRequestNewClient,
     clientNote,
@@ -8469,7 +9248,7 @@ export default function SaleScreen(props: {
     return () => {
       alive = false;
     };
-  }, [clientId, profileNonce]);
+  }, [clientId, profileNonce, cardVersion]);
 
   /* T79: the discount is priced WITH the cart (the mode and the value;
    * the route spreads it over the lines itself), so an armed, removed
@@ -9511,6 +10290,92 @@ export default function SaleScreen(props: {
   const giftDiscountOff = roundToCents(ticketParts.giftCents / 100);
   const giftCardsCharged = roundToCents(giftCardsTotal - giftDiscountOff);
 
+  /* ---------------- T201: the customer display's ticket ---------------
+   * The live mirror (D3, Pete: "Live"): every time a FRESH price answer
+   * lands, the ticket as it now stands goes to the display. The hook
+   * owns the traffic rules -- nothing sent without a connected display,
+   * one present in flight, latest wins, and a display that is busy with
+   * a waiver or a sign-up is skipped in silence.
+   *
+   * The dependency is the priced answer and the cart, so a cart tap
+   * mirrors once the price settles rather than on every tap: the figures
+   * on a student's screen are Mindbody's, and a ticket that showed lines
+   * from this tap beside a total from the last one would be worse than
+   * one that waits. */
+  const mirror = useDisplayMirror(props.open);
+  /** T205/T206: whether there is a screen to sign on, LIVE. It was read
+   *  once from /api/config when the overlay opened, so a display that
+   *  reconnected (or was paired) while the sale was open still read as
+   *  gone and the membership dialog said "The customer screen is not
+   *  connected." over a green header mark. The mirror hook already
+   *  holds the header's own answer: the events stream plus a 30 second
+   *  poll, and since T206 a stream teardown as well. */
+  const displayConnected = mirror.connected;
+
+  /**
+   * T203: whether the studio asks the customer to approve each sale
+   * (`customer_confirms_sale`, /api/config). Read when the sale screen
+   * opens, so a teacher who sells all morning is reading the setting as
+   * it stands rather than as it was when the app booted. It decides what
+   * the payment panel DRAWS; /api/checkout reads the setting itself on
+   * every charge, so this copy being stale can cost a teacher a refusal
+   * and can never cost a student an unapproved charge.
+   */
+  const [confirmsSale, setConfirmsSale] = useState(false);
+  /** T205: the membership rule, and whether there is a screen to collect
+   *  a signature on. Read from the same /api/config answer, and for the
+   *  same reason: this copy decides what the contract dialog DRAWS, and
+   *  /api/purchase-contract reads the setting itself on every purchase,
+   *  so a stale copy can cost a teacher a refusal and can never cost a
+   *  student an unsigned membership. The rule DEFAULTS ON here too, so a
+   *  config answer that never arrives lands on the safe side. */
+  const [contractSignature, setContractSignature] = useState(true);
+  useEffect(() => {
+    if (!props.open) return;
+    let stopped = false;
+    fetch("/api/config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (stopped || !body) return;
+        setConfirmsSale(body.customerConfirmsSale === true);
+        setContractSignature(body.contractRequiresSignature !== false);
+      })
+      .catch(() => undefined);
+    return () => {
+      stopped = true;
+    };
+  }, [props.open]);
+  const livePayload =
+    cart.length === 0
+      ? null
+      : displayTicketPayload({
+          mode: "live",
+          cart,
+          priced,
+          pricing,
+          clientName: client?.name ?? null,
+          giftCardsCharged,
+          giftDiscountOff,
+        });
+  const liveKey = livePayload === null ? "" : JSON.stringify(livePayload);
+  const mirrorLive = mirror.live;
+  useEffect(() => {
+    /* A closed sale screen shows nothing: the overlay going away is the
+     * teacher moving on, and the last ticket must not outlive it. */
+    if (!props.open) {
+      mirrorLive(null);
+      return;
+    }
+    mirrorLive(liveKey === "" ? null : (JSON.parse(liveKey) as TicketPayload));
+  }, [liveKey, props.open, mirrorLive]);
+
+  /** T201: the summary, built by the payment panel at the tap (the cart
+   *  is cleared in the same commit as the sale lands) and sent here. */
+  const onDisplaySummary = useCallback(
+    (payload: TicketPayload) => mirror.summary(payload),
+    [mirror],
+  );
+
   const payWhy: string | null = charging
     ? "Charging..."
     : cart.length === 0
@@ -10408,15 +11273,18 @@ export default function SaleScreen(props: {
         : client.balance;
 
   return (
-    <div className="sale-overlay" role="dialog" aria-label="Buy">
+    <div className="sale-overlay" role="dialog" aria-label="Cart">
       <div className="sale-shell">
         <ModeBanner config={config} />
 
         <div className="sale-top">
           {/* T85 (Pete: "'Buy' doesn't need to display on the buy page"):
-              the title is gone. The nav bar's lit Buy item says which
+              the title is gone. The nav bar's lit Cart item says which
               screen this is, from the same place on every screen, and the
-              header's width goes to who the sale is for. */}
+              header's width goes to who the sale is for. T206 renamed the
+              screen to Cart (Pete: 'we should change the "Buy" button to
+              "Cart" and any references to that screen should be named
+              Cart, not Buy'); the title stays hidden. */}
 
           {/* Who the sale is for, first in the header (Pete, fourth live
               test): identity belongs in the header, and the payment
@@ -10816,6 +11684,8 @@ export default function SaleScreen(props: {
               the outcomes are PaymentPanel's; the cart and the pricing
               loop stay here. */}
           <PaymentPanel
+            customerConfirmsSale={confirmsSale}
+            onDisplaySummary={onDisplaySummary}
             cart={cart}
             priced={priced}
             pricing={pricing}
@@ -10899,6 +11769,18 @@ export default function SaleScreen(props: {
                 </span>
               </span>
             </div>
+
+            {/* T201: the one thing a teacher needs to know about the
+                second screen while ringing up -- that the student can see
+                this. Quiet (T111 took the top of the screen back), not a
+                control, and absent entirely when there is no display or
+                when something else is holding it. */}
+            {mirror.showing ? (
+              <p className="sale-display-line" role="status">
+                <span className="display-dot" aria-hidden="true" />
+                Showing on the customer screen
+              </p>
+            ) : null}
 
             {/* T91: the New client create's amber line, in the ticket's
                 note slot because that is where the teacher is looking
@@ -11669,6 +12551,8 @@ export default function SaleScreen(props: {
       {contractDialog ? (
         <ContractDialog
           contract={contractDialog}
+          requiresSignature={contractSignature}
+          displayConnected={displayConnected}
           client={client}
           cardLookup={cardLookup}
           onClose={() => setContractDialog(null)}
@@ -11682,6 +12566,10 @@ export default function SaleScreen(props: {
           }}
           onStaffSessionEnded={() => onStaffSessionEnded?.()}
           modalAbove={modalAbove}
+          /* T206: the dialog asks for the card on file to be read again,
+             on open and after a save, through the same lookup a charge
+             refreshes. */
+          onCardRefresh={() => setProfileNonce((n) => n + 1)}
         />
       ) : null}
 

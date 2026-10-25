@@ -2001,6 +2001,23 @@ export interface ContractSummary {
  * studio.
  */
 export async function contractsFor(): Promise<ContractSummary[]> {
+  return (await contractsWithRawTerms()).map((c) => c.summary);
+}
+
+/**
+ * T205: the same read, keeping each contract's `AgreementTerms` as
+ * Mindbody served it -- markup and all -- beside the plain-text summary.
+ *
+ * The RAW string exists for exactly one purpose: its sha256 is what the
+ * contract scene records, so a purchase can refuse when the studio
+ * edited the wording while the student was reading it. It is SERVER-ONLY
+ * and never travels to a browser: `contractsFor` above is what the
+ * catalog serves, and T99's rule (terms as plain text, the Description
+ * not served at all) is untouched.
+ */
+export async function contractsWithRawTerms(): Promise<
+  { summary: ContractSummary; rawTerms: string }[]
+> {
   const body = await mindbody(
     `/sale/contracts?request.locationId=${STUDIO_LOCATION_ID}` +
       `&request.limit=100`,
@@ -2015,16 +2032,17 @@ export async function contractsFor(): Promise<ContractSummary[]> {
         restrict.includes(STUDIO_LOCATION_ID)
       );
     })
-    .map((c: any): ContractSummary | null => {
+    .map((c: any): { summary: ContractSummary; rawTerms: string } | null => {
       const id = num(c?.Id);
       if (id === null) return null;
+      const rawTerms = str(c?.AgreementTerms) ?? "";
       const firstPaymentTotal = num(c?.FirstPaymentAmountTotal);
       const recurringPaymentTotal = num(c?.RecurringPaymentAmountTotal);
       if ((firstPaymentTotal ?? 0) <= 0 && (recurringPaymentTotal ?? 0) <= 0) {
         return null;
       }
       const sched = c?.AutopaySchedule;
-      return {
+      const summary: ContractSummary = {
         id,
         name: str(c?.Name) ?? "Membership",
         firstPaymentTotal,
@@ -2049,16 +2067,31 @@ export async function contractsFor(): Promise<ContractSummary[]> {
          * browser never holds the markup at all; Contract.Description
          * is not served at all any more (Pete: "we don't need the
          * description. remove it."). */
-        agreementTerms: plainText(str(c?.AgreementTerms)) || null,
+        agreementTerms: plainText(rawTerms) || null,
         soldOnline: c?.SoldOnline === true,
       };
+      return { summary, rawTerms };
     })
-    .filter((c: ContractSummary | null): c is ContractSummary => c !== null)
-    .filter((c: ContractSummary) => {
-      if (seen.has(c.id)) return false;
-      seen.add(c.id);
+    .filter(
+      (
+        c: { summary: ContractSummary; rawTerms: string } | null,
+      ): c is { summary: ContractSummary; rawTerms: string } => c !== null,
+    )
+    .filter((c: { summary: ContractSummary }) => {
+      if (seen.has(c.summary.id)) return false;
+      seen.add(c.summary.id);
       return true;
     });
+}
+
+/** T205: one contract by id, with its raw terms. Null when the studio
+ *  does not sell it (or no longer does), which the presenting route
+ *  reports in words rather than putting a blank scene on a screen. */
+export async function contractWithRawTerms(
+  contractId: number,
+): Promise<{ summary: ContractSummary; rawTerms: string } | null> {
+  const all = await contractsWithRawTerms();
+  return all.find((c) => c.summary.id === contractId) ?? null;
 }
 
 /* =====================================================================
@@ -2225,6 +2258,18 @@ export async function purchaseContract(opts: {
   startDate?: string | null;
   /** T49: the signed-in teacher, when there is one. */
   actor?: Actor | null;
+  /**
+   * T205: the customer's signature, base64 PNG, from the server's own
+   * store -- never from a browser. Mindbody files it under the client's
+   * documents as `clientContractSignature-...` (sale.yml:6246), so the
+   * contract's copy rides the purchase itself and needs no second call.
+   *
+   * It is NEVER sent on the `Test: true` rehearsal: the rehearsal's
+   * Total is the figure the screen shows, and whether this field moves
+   * that figure is exactly what probe D-B2 answers. Until it has, the
+   * rehearsal stays byte for byte what T30 and T99 sent.
+   */
+  clientSignature?: string | null;
 }): Promise<ContractPurchaseOutcome> {
   const { contractId, clientId, lastFour, test } = opts;
   if (!Number.isInteger(contractId)) {
@@ -2264,6 +2309,11 @@ export async function purchaseContract(opts: {
         ? { StartDate: startWall, ProrateDate: startWall }
         : {}),
       StoredCardInfo: { LastFour: lastFour },
+      /* T205: the signature, on the REAL purchase only. */
+      ...(!test && typeof opts.clientSignature === "string" &&
+      opts.clientSignature.length > 0
+        ? { ClientSignature: opts.clientSignature }
+        : {}),
       SendNotifications: true,
     },
     clientId,

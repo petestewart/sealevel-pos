@@ -4,6 +4,10 @@ import { useEffect, useRef, useState } from "react";
 
 import { actorFallbackLine } from "./actornote";
 
+import type { DuplicateMatch } from "./DuplicateModal";
+
+import { readBirthDate } from "@/lib/birthdate";
+
 /**
  * T59b: a new client signed up at the counter. Pete: "first name, last
  * name, email, phone. Nothing else." The email opt-in is T53's consent
@@ -45,6 +49,58 @@ interface Props {
   /** Prefill from the search box when it looked like a name. */
   initialFirst: string;
   initialLast: string;
+  /** T204: a self-serve sign-up's own typed contact details and the two
+   *  consent answers, read back from the server (never from the
+   *  display's browser), with the request id that holds the signature.
+   *  The teacher may still fix the spelling of a name: the form is the
+   *  body's, and only the consent and the signature come from the
+   *  stored request. */
+  initialEmail?: string;
+  initialPhone?: string;
+  /** T206: `YYYY-MM-DD` as the student typed it, for the same reason as
+   *  the name: the teacher reads it back and may correct it, and what
+   *  the body carries is what reaches Mindbody. */
+  initialBirthDate?: string;
+  signup?: {
+    requestId: string;
+    consentEmail: boolean;
+    consentText: boolean;
+    completedAt: string | null;
+  };
+  /**
+   * T208: this form IS review mode's review. Pete, second drive: "i see
+   * nothing that says 'review'. the create client modal is there, is
+   * that how it's supposed to work? if so, the verbiage and labeling
+   * needs to be much better." So the title, the line under it and the
+   * button all say what this tap is and what it will do; the form and
+   * the route behind it are the same ones.
+   */
+  review?: boolean;
+  /** T208: what Create will do, named on the button: "Create and check
+   *  in", "Create and add to waiting list", or plain "Create" when
+   *  there is no class on screen for it to do anything with. */
+  createLabel?: string;
+  /** T208: one amber line at the top, from the duplicate decision's
+   *  "Create a new client anyway". */
+  notice?: string;
+  /**
+   * T208: Mindbody refused this as a duplicate. The match is the
+   * account it was matched to, or null when the server's one search
+   * could not name one -- and the decision is worth opening either way
+   * (T208 review), because "Mindbody says they already have an
+   * account" with the search offer beats a red line in a form that
+   * cannot be made to work.
+   *
+   * `sent` is the form THIS create carried, which in review mode is the
+   * teacher's corrected version and is what the match was computed
+   * from; the accept sends it back so the server recomputes from the
+   * same words. Returning true means the caller took it and this form
+   * should say nothing.
+   */
+  onDuplicate?: (
+    match: DuplicateMatch | null,
+    sent: { firstName: string; lastName: string; email: string | null },
+  ) => boolean;
   onClose: () => void;
   /** The created person, and the amber line when the write ran as the
    *  studio account (T49's one loud fallback), else null. */
@@ -69,15 +125,23 @@ function CloseIcon() {
 }
 
 /** Mindbody's names for the form's fields, for the required-field read:
- *  which of the site's requirements this form can and cannot meet. */
-const FORM_FIELDS: Record<string, "firstName" | "lastName" | "email" | "phone"> =
-  {
-    FirstName: "firstName",
-    LastName: "lastName",
-    Email: "email",
-    MobilePhone: "phone",
-    Phone: "phone",
-  };
+ *  which of the site's requirements this form can and cannot meet. T206
+ *  adds the birth date, which is the one field this form grows only when
+ *  the site asks for it (Pete's first drive: the sign-up ended in "The
+ *  following are required: Birthday"). Both spellings, because the
+ *  required list says `BirthDate` and the refusal says Birthday. */
+const FORM_FIELDS: Record<
+  string,
+  "firstName" | "lastName" | "email" | "phone" | "birthDate"
+> = {
+  FirstName: "firstName",
+  LastName: "lastName",
+  Email: "email",
+  MobilePhone: "phone",
+  Phone: "phone",
+  BirthDate: "birthDate",
+  Birthday: "birthDate",
+};
 
 /** A readable name for a field Mindbody lists that the form lacks:
  *  "AddressLine1" reads as "address line1", which is enough to tell the
@@ -89,15 +153,28 @@ function readable(field: string): string {
 export default function NewClientModal({
   initialFirst,
   initialLast,
+  initialEmail,
+  initialPhone,
+  initialBirthDate,
+  signup,
+  review,
+  createLabel,
+  notice,
+  onDuplicate,
   onClose,
   onCreated,
 }: Props) {
   const [firstName, setFirstName] = useState(initialFirst);
   const [lastName, setLastName] = useState(initialLast);
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [account, setAccount] = useState(false);
-  const [promo, setPromo] = useState(false);
+  const [email, setEmail] = useState(initialEmail ?? "");
+  const [phone, setPhone] = useState(initialPhone ?? "");
+  const [birthDate, setBirthDate] = useState(initialBirthDate ?? "");
+  /* T204: a sign-up's boxes are the STUDENT's answer, shown as they
+   *  were given and not editable here: the server takes the consent
+   *  from the request, not from this form, so an editable box would be
+   *  a control that does nothing. */
+  const [account, setAccount] = useState(signup?.consentEmail ?? false);
+  const [promo, setPromo] = useState(signup?.consentEmail ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /* The amber notices: a suppressed write, and what Mindbody requires
@@ -148,7 +225,12 @@ export default function NewClientModal({
     lastName: lastName.trim(),
     email: email.trim(),
     phone: phone.trim(),
+    birthDate: birthDate.trim(),
   };
+  /* T206: the field exists only when the site's list asks for it, so
+   * nothing about a site that does not ask changes, here or on the
+   * wire. */
+  const wantsBirthDate = requiredHere.has("birthDate");
   const ready =
     values.firstName !== "" &&
     values.lastName !== "" &&
@@ -160,6 +242,15 @@ export default function NewClientModal({
     setBusy(true);
     setError(null);
     setSuppressedNote(null);
+    if (wantsBirthDate) {
+      const read = readBirthDate(values.birthDate);
+      if (!read.ok) {
+        inFlight.current = false;
+        setBusy(false);
+        setError("That birth date does not look right.");
+        return;
+      }
+    }
     try {
       const res = await fetch("/api/client-create", {
         method: "POST",
@@ -169,12 +260,59 @@ export default function NewClientModal({
           lastName: values.lastName,
           email: values.email || null,
           phone: values.phone || null,
+          ...(wantsBirthDate && values.birthDate
+            ? { birthDate: values.birthDate }
+            : {}),
           sendAccountEmails: account,
           sendPromotionalEmails: promo,
+          ...(signup ? { displayRequestId: signup.requestId } : {}),
         }),
       });
       const body = await res.json().catch(() => null);
       if (!res.ok || !body?.ok) {
+        /* T210: the sign-in went under the create -- the token expired,
+         * or it belongs to a different Mindbody site (Pete's third
+         * sandbox drive: "Delegated staff does not belong to the
+         * subscriber.", in this modal, with nothing able to get past
+         * it). The page's fetch wrapper has already dropped the teacher
+         * and the sign-in gate is coming back over this modal, so a red
+         * line here would be a sentence nobody can act on. Say nothing
+         * and let the gate say it. */
+        if (res.status === 401 && body?.reason === "staff") return;
+        /* T208: a duplicate is a DECISION, not a red line. The route
+         * names the account it matched, and the caller puts the two
+         * people side by side; only when it declines does this say
+         * anything. */
+        if (body?.duplicate === true && onDuplicate) {
+          const match: DuplicateMatch | null =
+            body.match && typeof body.match.id === "string"
+              ? {
+                  id: String(body.match.id),
+                  firstName: String(body.match.firstName ?? ""),
+                  lastName: String(body.match.lastName ?? ""),
+                  email:
+                    typeof body.match.email === "string" && body.match.email
+                      ? body.match.email
+                      : null,
+                  phone:
+                    typeof body.match.phone === "string" && body.match.phone
+                      ? body.match.phone
+                      : null,
+                }
+              : null;
+          /* Null match included (T208 review): the decision names what
+           * it knows and offers the search, which is the whole of what
+           * a teacher can do about it. */
+          if (
+            onDuplicate(match, {
+              firstName: values.firstName,
+              lastName: values.lastName,
+              email: values.email || null,
+            })
+          ) {
+            return;
+          }
+        }
         setError(
           typeof body?.error === "string" && body.error
             ? body.error
@@ -196,10 +334,33 @@ export default function NewClientModal({
         setError("Mindbody answered without a client. Search for the name.");
         return;
       }
-      onCreated(
-        client,
-        body.actorFallback ? actorFallbackLine(body.actorFallback) : null,
-      );
+      /* T204: the two things a teacher must hear about a sign-up's
+       * Create, said in the amber line the caller already shows: a
+       * waiver that did not land, and a text opt-in Mindbody dropped. */
+      const extra: string[] = [];
+      if (signup) {
+        if (body.waiver && body.waiver.agreed !== true) {
+          extra.push(
+            body.waiver.suppressed
+              ? `The waiver was not recorded: ${body.waiver.suppressed === "dry-run" ? "dry run is on" : "the write guard is on"}.`
+              : "The waiver was not recorded. Open their profile and use the waiver dialog.",
+          );
+        } else if (body.waiver && body.waiver.documentFiled === false) {
+          extra.push(
+            "The waiver is recorded; the signature image did not reach Mindbody.",
+          );
+        }
+        if (body.textOptInStuck === false) {
+          extra.push(
+            "Mindbody did not keep the text opt-in; it is noted on their profile to set by hand.",
+          );
+        }
+      }
+      const fallback = body.actorFallback
+        ? actorFallbackLine(body.actorFallback)
+        : null;
+      const note = [fallback, ...extra].filter(Boolean).join(" ");
+      onCreated(client, note.length > 0 ? note : null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -266,13 +427,26 @@ export default function NewClientModal({
           <CloseIcon />
         </button>
         <div className="modal-head">
-          <p className="modal-kicker">Walk-in</p>
-          <p className="modal-title">New client</p>
+          <p className="modal-kicker">
+            {review ? "Customer screen" : "Walk-in"}
+          </p>
+          <p className="modal-title">
+            {review ? "Review sign-up" : "New client"}
+          </p>
         </div>
         <p className="reason-sub nc-sub">
-          Makes their Mindbody account. The waiver comes up when they are
-          added to a class.
+          {review
+            ? "Signed up on the customer screen. Check the details, then create them and check them in."
+            : signup
+              ? "Waiver signed on the customer screen, waiting for Create. Check the spelling of the name, then Create makes their account and files the waiver together."
+              : "Makes their Mindbody account. The waiver comes up when they are added to a class."}
         </p>
+        {/* T208: what has to change before Mindbody will take it. */}
+        {notice ? (
+          <p className="modal-warn" role="status">
+            {notice}
+          </p>
+        ) : null}
         <div className="nc-fields">
           {field("firstName", "First name", firstName, setFirstName, {
             autoComplete: "given-name",
@@ -290,27 +464,47 @@ export default function NewClientModal({
             autoComplete: "tel",
             wide: true,
           })}
+          {/* T206: the fifth field, drawn only when Mindbody's own
+              required list asks for it. A date input, so no format has
+              to be guessed at and no amount-style pad is needed. */}
+          {wantsBirthDate
+            ? field("birthDate", "Birth date", birthDate, setBirthDate, {
+                type: "date",
+                autoComplete: "bday",
+                wide: true,
+              })
+            : null}
         </div>
-        <div className="consent-opts">
-          <label className="consent-opt">
-            <input
-              type="checkbox"
-              checked={account}
-              disabled={busy}
-              onChange={(e) => setAccount(e.target.checked)}
-            />
-            <span>Emails about my account</span>
-          </label>
-          <label className="consent-opt">
-            <input
-              type="checkbox"
-              checked={promo}
-              disabled={busy}
-              onChange={(e) => setPromo(e.target.checked)}
-            />
-            <span>News and offers</span>
-          </label>
-        </div>
+        {signup ? (
+          <div className="consent-opts">
+            <p className="reason-sub nc-sub">
+              They asked for email: {signup.consentEmail ? "yes" : "no"}. They
+              asked for texts: {signup.consentText ? "yes" : "no"}. Both go out
+              with the account as they answered them.
+            </p>
+          </div>
+        ) : (
+          <div className="consent-opts">
+            <label className="consent-opt">
+              <input
+                type="checkbox"
+                checked={account}
+                disabled={busy}
+                onChange={(e) => setAccount(e.target.checked)}
+              />
+              <span>Emails about my account</span>
+            </label>
+            <label className="consent-opt">
+              <input
+                type="checkbox"
+                checked={promo}
+                disabled={busy}
+                onChange={(e) => setPromo(e.target.checked)}
+              />
+              <span>News and offers</span>
+            </label>
+          </div>
+        )}
         {missing.length > 0 ? (
           <p className="modal-warn" role="status">
             Mindbody also asks new clients here for{" "}
@@ -343,7 +537,7 @@ export default function NewClientModal({
                 <span className="spinner" aria-label="working" /> Creating
               </>
             ) : (
-              "Create"
+              (createLabel ?? "Create")
             )}
           </button>
         </div>
