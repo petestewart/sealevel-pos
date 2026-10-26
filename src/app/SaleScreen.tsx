@@ -7071,7 +7071,12 @@ function ContractDialog(props: {
     ? schedProblem
     : !client
     ? "A membership needs a client attached."
-    : cardLookup?.loading
+    : /* T214: a REFETCH keeps the card it already has, and so must the
+       * block: flipping to "checking" and back re-ran the rehearsal on
+       * every open, two purchasecontract calls back to back, and Mindbody
+       * refused the second "PaymentAlreadyInCart". Only a lookup with no
+       * card yet holds the dialog. */
+      cardLookup?.loading && !card
       ? "Checking for a card on file..."
       : cardLookup?.error
         ? "The card check failed. Detach and re-attach the client to retry."
