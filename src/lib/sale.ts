@@ -2246,6 +2246,34 @@ export interface ContractPurchaseOutcome {
  *   ConsumerPresent (6283)/PaymentAuthenticationCallbackUrl (6287, SCA): none
  *   sent; recorded so nobody re-digs.
  */
+/**
+ * T214: Mindbody holds ONE shopping cart per client while a
+ * `/sale/purchasecontract` is being worked, Test or real. A second call
+ * for the same client that lands while the first is still out is refused
+ * "Code: Conflict SubCode: PaymentAlreadyInCart" (Pete's counter,
+ * 2026-10-26, on the rehearsal). Since T206 the contract dialog re-reads
+ * the card on open, which flips the rehearsal off and back on and sent two
+ * rehearsals back to back, and since T205 the customer screen's scene
+ * rehearses too. So every purchasecontract call for a client waits for
+ * the one before it to answer, whoever made it. Per process: one Railway
+ * instance is the deployment this app has.
+ */
+const contractCallTail = new Map<string, Promise<unknown>>();
+async function oneContractCallPerClient<T>(
+  clientId: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const prior = contractCallTail.get(clientId) ?? Promise.resolve();
+  const mine = prior.catch(() => undefined).then(run);
+  const tail = mine.catch(() => undefined);
+  contractCallTail.set(clientId, tail);
+  try {
+    return await mine;
+  } finally {
+    if (contractCallTail.get(clientId) === tail) contractCallTail.delete(clientId);
+  }
+}
+
 export async function purchaseContract(opts: {
   contractId: number;
   clientId: string;
@@ -2297,7 +2325,7 @@ export async function purchaseContract(opts: {
    * as site-local either way, and toISOString() would land this seven
    * hours out (CLAUDE.md, and roster.ts studioWall). */
   const startWall = deferred ? `${start}T00:00:00` : null;
-  const res = await mindbody("/sale/purchasecontract", {
+  const res = await oneContractCallPerClient(clientId, () => mindbody("/sale/purchasecontract", {
     method: "POST",
     body: {
       ContractId: contractId,
@@ -2318,7 +2346,7 @@ export async function purchaseContract(opts: {
     },
     clientId,
     ...(opts.actor ? { actor: opts.actor } : {}),
-  });
+  }));
   if (res?.DryRun === true) {
     return { suppressed: "dry-run", test, clientContractId: null, totals: null };
   }

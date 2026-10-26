@@ -20642,3 +20642,52 @@ without a commit if the bill says so.
   Each ends in its own non-quiet roster refresh, so a background read
   overlapping one can show the pre-write row for at most the moment
   until that refresh lands.
+
+## T214. A membership rehearsal refused "PaymentAlreadyInCart" (Pete, 2026-10-26)
+
+On the first day of the Phase 2.5 deploy, Pete's counter opened Monthly
+Committed Membership (Auto-Renew) for a client with a stored card. The
+dialog showed "Mindbody refused the rehearsal: Code: Conflict SubCode:
+PaymentAlreadyInCart Detail: Payment already in cart Level: Error". It was
+the `Test: true` rehearsal, so nothing was charged.
+
+### Cause
+
+Mindbody holds one cart per client while a `/sale/purchasecontract` is
+being worked, Test or real, and refuses a second call that lands while the
+first is still out. T206 made the contract dialog re-read the stored card
+every time it opens. The re-read set the lookup to loading, which turned
+`blockReason` to "Checking for a card on file..." and back. The rehearsal
+effect depends on `blockReason`, so it ran twice in quick succession: once
+on the cached card and once after the refresh. The second call landed
+while the first was still at Mindbody. The browser shows only the newest
+answer, which was the refusal. Retry worked because nothing was in flight
+by then.
+
+### Fix
+
+- **Server.** Every `purchasecontract` call for a client now waits for
+  the one before it to answer (`oneContractCallPerClient` in
+  `src/lib/sale.ts`). That covers the browser's rehearsal, the live
+  purchase's own rehearsal, and the customer screen's contract scene.
+  The queue is per process, and the app runs as one Railway instance.
+- **Browser.** A re-read that already has a card keeps the dialog
+  unblocked, so opening the dialog sends one rehearsal, not two. A lookup
+  with no card yet still holds the dialog.
+
+### Verified
+
+- A mock Mindbody that refuses an overlapping `purchasecontract` for the
+  same client with Pete's exact sentence. Two `test: true` requests sent
+  to `/api/purchase-contract` at once:
+  - With main's `sale.ts`, one came back 502 with "Code: Conflict
+    SubCode: PaymentAlreadyInCart ...".
+  - With the fix, both came back 200, and the calls never overlapped.
+- `tsc --noEmit` and `next build` with no database: clean.
+
+### Limits
+
+- The browser change was checked by reading the code, not driven in a
+  browser.
+- A second server instance would defeat the queue, the same as T113's
+  record.
