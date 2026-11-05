@@ -1,23 +1,14 @@
 /**
- * The one way the Mindbody target moves (T89's switch, shared since T212).
+ * The one way the Mindbody target moves (T89's switch).
  *
- * Two doors lead here and both need a NAMED ADMIN (`POS_ADMIN_STAFF_IDS`)
- * who proved it with a Mindbody password:
- *
- * - the drawer's Settings tab (`PUT /api/admin/target`), for an admin
- *   already signed in to the studio the counter is on;
- * - the sign-in gate's studio choice (`POST /api/teacher/signin` with a
- *   `target`), for an admin signing in to the OTHER studio. Pete: "you
- *   cannot get to the settings to change between prod and sandbox
- *   without being logged in". A staff login belongs to one site, so a
- *   counter on the studio you cannot sign in to had no way back but an
- *   edit to the environment and a restart. Signing in to the destination
- *   is the same proof the drawer asks for, made where it can be made.
- *
- * Either way the switch itself is this function and nothing else, so the
- * order below (sessions ended while the old credentials are current, then
- * the row, then every cache of the other studio) cannot drift between
- * the two. Dry run and the write guard are not touched by either.
+ * One door leads here: the drawer's Settings tab (`PUT /api/admin/target`),
+ * for a NAMED ADMIN (`POS_ADMIN_STAFF_IDS`) signed in to the studio the
+ * counter is on. T212 added a second, the sign-in gate's studio choice,
+ * and T215 took it out again (Pete: "The production and sandbox options
+ * shouldn't be there, that should just be in settings"). It stays a
+ * function of its own so the order below (sessions ended while the old
+ * credentials are current, then the row, then every cache of the other
+ * studio) is written once. Dry run and the write guard are not touched.
  */
 
 import { clearRawCatalog } from "./catalog";
@@ -70,7 +61,7 @@ export async function switchBlocker(
 export async function switchTarget(
   next: Target,
   staffId: number,
-  via: "drawer" | "sign-in",
+  via: "drawer",
 ): Promise<
   | {
       ok: true;

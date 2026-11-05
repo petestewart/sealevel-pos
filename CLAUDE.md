@@ -75,16 +75,18 @@ sets present in the environment, which it refuses by variable NAME.
 Switching ends every staff session (a token belongs to the site that issued
 it), clears the catalog cache, and refuses every write for two seconds
 afterwards, so a route that already read one studio cannot post to the
-other half way through (`targetSettling`). **Since T212 the sign-in gate
-is the second door** (Pete: "you cannot get to the settings to change
-between prod and sandbox without being logged in"): a staff login belongs
-to one site, so the gate offers both studios whenever the drawer's switch
-could work (devtools, both credential sets, a database), and signing in
-to the OTHER one checks the login against THAT studio, requires its id
-in `POS_ADMIN_STAFF_IDS`, and only then moves the counter. Both doors
-call `switchTarget` in `src/lib/targetswitch.ts`, the one body of the
-switch. Staff ids are per site, so an admin of both studios needs both
-ids in the list. **Dry run and the write guard did not
+other half way through (`targetSettling`). **The drawer is the ONLY
+door** (T215, Pete: "The production and sandbox options shouldn't be
+there, that should just be in settings"). T212 had put a studio choice
+on the sign-in gate, so a counter on a studio nobody could sign in to
+was not stuck; it is gone, and `/api/teacher/signin` refuses a `target`
+naming the other studio (a stale page) with nothing sent. The trap T212
+closed is open again: a counter is moved only by an admin signed in to
+the studio it is ON, so an admin of both studios needs BOTH staff ids
+(they are per site) in `POS_ADMIN_STAFF_IDS`, and a stored target
+otherwise only moves by a database edit, since the row wins over
+`MINDBODY_TARGET`. The switch itself is `switchTarget` in
+`src/lib/targetswitch.ts`. **Dry run and the write guard did not
 move**: they stay in the server environment, so a switch to prod still
 writes nothing until `POS_DRY_RUN=false` is deployed.
 
@@ -1025,7 +1027,13 @@ while `git clone` works, so clone the repo rather than fetching files.
   pad's reason note and PIN (T43/T48/T71). Card entry keeps the OS
   keyboard on purpose, because that is where Apple's "Scan Credit Card"
   lives; T98 lifts every modal above the keyboard instead (`--vvh`,
-  `--vv-top`, `--vv-bot`, `src/app/viewport.ts`).
+  `--vv-top`, `--vv-bot`, `src/app/viewport.ts`). T98 has never been
+  seen working on a real iPad, and the sign-in gate is where it failed
+  (T215): a centred form put its password field under the keyboard, iOS
+  scrolled the page to reveal it and the top went off the screen. So the
+  gate's form is pinned HIGH, keyboard up or down, with its fields above
+  where the keyboard will be, which leaves iOS nothing to scroll. A modal
+  whose fields sit low is still trusting T98.
 - **The sign-up forms ask a fifth field only when the site demands it**
   (T206). Both the customer screen's sign-up and the teacher's New client
   modal are D4's four fields ("first name, last name, email, phone.

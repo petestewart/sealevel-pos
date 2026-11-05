@@ -160,9 +160,8 @@ export async function PUT(request: Request) {
     );
   }
 
-  /* T212: the switch itself is shared with the sign-in gate's studio
-   * choice, so the order (sessions, then the row, then the caches)
-   * cannot drift between the two doors. */
+  /* The switch itself is `switchTarget`, which keeps the order
+   * (sessions, then the row, then the caches) in one place. */
   const moved = await switchTarget(next, admin.staffId, "drawer");
   if (!moved.ok) {
     return NextResponse.json(

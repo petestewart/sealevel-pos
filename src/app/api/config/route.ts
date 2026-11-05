@@ -6,10 +6,8 @@ import {
   signupMode,
 } from "@/lib/approval";
 import { authRequired, isAuthenticated } from "@/lib/auth";
-import { devtoolsEnabled } from "@/lib/calllog";
 import {
   BANNER_SETTING_KEY,
-  dbConfigured,
   getSetting,
   storageMode,
 } from "@/lib/db";
@@ -18,8 +16,6 @@ import {
   allowedWriteClientIds,
   dryRunState,
   mindbodyEnv,
-  missingCredentials,
-  siteIdFor,
   target,
 } from "@/lib/mindbody";
 import { STUDIO_TAX_RATE, houseClientId } from "@/lib/sale";
@@ -136,22 +132,6 @@ export async function GET(request: Request) {
      * Dry run and the write guard have no equivalent: they are env only,
      * always, and that is the rail T89 kept. */
     targetSource: targetSource(),
-    /* T212: the two studios the sign-in gate may offer, or null when it
-     * offers none. Offered only where the drawer's switch could work at
-     * all: the devtools gate, BOTH credential sets and a database. Site
-     * ids and words, never a credential; whether the person signing in
-     * may actually switch is decided by /api/teacher/signin against the
-     * studio they sign in to, so this list promises nothing. */
-    studioChoice:
-      devtoolsEnabled() &&
-      dbConfigured() &&
-      missingCredentials("prod").length === 0 &&
-      missingCredentials("sandbox").length === 0
-        ? (["prod", "sandbox"] as const).map((t) => ({
-            target: t,
-            siteId: siteIdFor(t),
-          }))
-        : null,
     /* T200: whether a customer display is paired and awake. Two booleans
      * and no id, because this is what the header's connection mark and
      * the buttons that need a screen read; the drawer's block reads the

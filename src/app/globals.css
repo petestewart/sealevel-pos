@@ -7005,6 +7005,30 @@ textarea.reason-note-field:disabled::placeholder {
 
 .modal-scrim.staff-gate {
   background: var(--bg);
+  /* T215: the gate's form sits HIGH on the screen and stays there, with
+   * the keyboard down and up, rather than centred. Centred, its password
+   * field was at 448-512px on an 11" iPad in landscape, under the
+   * keyboard's top edge (about 410px), so iOS scrolled the whole page up
+   * to reveal it and the top of the form went off the screen (Pete, on
+   * the counter iPad, 2026-11-04). With the fields already above where
+   * the keyboard will be, iOS has nothing to scroll and the box never
+   * moves. 56px clears the counter case's top lip and the 44px mode
+   * banner; it grows a little on taller screens. --vv-top still applies,
+   * so if iOS does pan (Safari's own toolbars, a smaller iPad), the box
+   * follows it the way every other modal does (T98). */
+  --gate-top: clamp(56px, 7vh, 96px);
+  align-items: flex-start;
+  padding-top: calc(var(--gate-top) + var(--vv-top));
+}
+
+/* T215: and never taller than the room left under that top, so with a
+ * keyboard bigger than this one expected the box scrolls inside itself
+ * (T98's field helper keeps the focused field in view) instead of
+ * running under the keyboard. No bottom margin: the box may touch the
+ * keyboard's edge, which on an 11" iPad in landscape is the difference
+ * between the box keeping its one size and scrolling by 11px. */
+.modal-scrim.staff-gate .modal {
+  max-height: calc(var(--vvh) - var(--gate-top));
 }
 
 /* T50 review: the signed-in account modal closes by its X (the
@@ -8718,46 +8742,6 @@ textarea.reason-note-field:disabled::placeholder {
   margin: 0;
   font-size: 16px;
   color: var(--muted);
-}
-
-/* T212: the sign-in gate's studio choice. Two 64px halves on the rule,
- * the chosen one in the accent (selected, the token's one meaning), and
- * a sentence under them only when the choice would move the counter. */
-.studio-pick {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0;
-  margin: 14px 0 0;
-  border: 2px solid var(--rule);
-  border-radius: 0;
-}
-
-.studio-pick-btn {
-  min-height: 64px;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: 0;
-  background: var(--surface);
-  color: var(--ink);
-  font: inherit;
-  font-size: 17px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.studio-pick-btn + .studio-pick-btn {
-  border-left: 2px solid var(--rule);
-}
-
-.studio-pick-btn.on {
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-
-.studio-pick-note {
-  margin: 10px 0 0;
-  font-size: 17px;
-  color: var(--warn);
 }
 
 /* T213: the roster refresh sits at the class group's right end, so its
