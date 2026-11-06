@@ -20691,3 +20691,101 @@ by then.
   browser.
 - A second server instance would defeat the queue, the same as T113's
   record.
+
+## T215. The sign-in gate: no studio choice, and a form the keyboard cannot push off the screen (Pete, 2026-11-04)
+
+Pete, with a photo of the counter iPad at the gate, keyboard up, the top
+of the form gone off the top of the screen:
+
+> The sign in page has problems. The production and sandbox options
+> shouldn't be there, that should just be in settings. And the form goes
+> out of view in the iPad when the keyboard shows.
+
+### The studio choice is gone
+
+T212's two halves above the login fields, `studioChoice` on
+`/api/config`, and the switch inside `POST /api/teacher/signin` are all
+removed. The drawer's Settings tab (`PUT /api/admin/target`) is the one
+door again, for an admin signed in to the studio the counter is on, and
+`switchTarget` keeps the order of the switch in one place. A `target` in
+a sign-in body that names the OTHER studio (a tab still running the old
+page) is refused 409 in words, "The studio is switched in Settings now,
+not at sign-in. Reload this page, sign in, and switch there. Nothing was
+switched.", before any password leaves the server, so nobody signs in
+believing the counter moved. A `target` naming the current studio is an
+ordinary sign-in. `signInAsStaff` and `revokeStaffToken` lost the `at`
+parameter and `envFor` went with them; nothing else called them.
+
+**This reopens the trap T212 closed.** A counter is moved only by an
+admin signed in to the studio it is on, and the stored row wins over
+`MINDBODY_TARGET`. So:
+
+- an admin who uses both studios needs BOTH staff ids in
+  `POS_ADMIN_STAFF_IDS` (ids are per site);
+- a counter left on a studio where nobody here is an admin is moved only
+  by deleting the `mindbody_target` row in `app_settings`, after which
+  the environment decides.
+
+### Why the form went off the screen
+
+The gate centred its box. At 1180x820 (an 11" iPad in landscape) the box
+ran 221 to 599 with the picker gone, so the password field sat at 448 to
+512, below the keyboard's top edge at roughly 410. iOS scrolls the page to
+reveal a focused field that the keyboard will cover. That scroll is what
+took the top of the box off the screen. T98's visual-viewport hook is
+supposed to follow it, and it has never been seen working on an iPad:
+its ticket says so, and the photo is the first time anyone has looked.
+
+### The fix: give iOS nothing to scroll
+
+The gate's form is now pinned HIGH on the screen, keyboard down and up,
+instead of centred (`.modal-scrim.staff-gate`: `align-items: flex-start`,
+top `clamp(56px, 7vh, 96px)` plus `--vv-top`). Its fields are then already
+above where the keyboard will be, so iOS has no reason to scroll and the
+box never moves. 56px clears the 44px mode banner and, from the photo,
+the counter case's lip over the top middle of the screen. The redundant
+sub-line ("Sign in with your Mindbody login.", under a title that says
+"Sign in to Mindbody") went too, which takes 34px off the box.
+
+The box's ceiling is the band less that top (`calc(var(--vvh) -
+var(--gate-top))`), so a keyboard bigger than expected makes the box
+scroll inside itself (T98's field helper keeps the focused field in view)
+rather than run under the keyboard. The refusal line ("Mindbody did not
+accept that sign-in.") moved ABOVE the fields: with the box scrolling,
+T98's sticky last row covered whatever sat under the password field.
+
+Measured in Chromium (box, password field, Sign in, top to bottom, CSS px):
+
+| Screen | Box | Password | Sign in |
+|---|---|---|---|
+| 11" landscape, 1180x820 | 57-400 | 249-313 | 330-398 |
+| 13" landscape, 1366x1024 | 72-414 | 263-327 | 344-412 |
+| 11" portrait, 820x1180 | 83-425 | 274-338 | 355-423 |
+
+With a keyboard band published on the 11" landscape screen (`--vvh` 413,
+the hook's own value for a keyboard about 407 tall), the box neither
+moves nor resizes nor scrolls. With a refusal line it scrolls by about
+20px, and the sticky Sign in row overlaps the password field's bottom
+edge by 4px, which leaves the field usable. With a band of 340 it
+scrolls inside itself. With a published pan of 80px it follows the pan.
+
+### Verified
+
+- `tsc --noEmit` and `next build`: clean.
+- The gate in Chromium at the three sizes above, both palettes, checked
+  by eye: no studio choice, the box under the sandbox banner.
+- `POST /api/teacher/signin` with `target: "prod"` on a sandbox counter:
+  409 with the sentence above. With `target: "sandbox"`: an ordinary
+  sign-in. `/api/config` no longer carries `studioChoice`.
+
+### Limits
+
+- **No real iOS keyboard was involved**, the same limit T98 had. The
+  argument rests on iOS not scrolling for a field it can already see,
+  and the numbers rest on a keyboard about 410px tall on an 11" iPad in
+  landscape. Pete's counter iPad is the test: tap the password field and
+  the box should not move.
+- The case lip's depth was read off one photo, not measured.
+- Other modals with text fields still rely on T98 alone. If one of them
+  goes off the screen the same way, the same move (fields high, nothing
+  for iOS to reveal) is the fix to reach for.
