@@ -20789,3 +20789,62 @@ scrolls inside itself. With a published pan of 80px it follows the pan.
 - Other modals with text fields still rely on T98 alone. If one of them
   goes off the screen the same way, the same move (fields high, nothing
   for iOS to reveal) is the fix to reach for.
+
+## T216. A star on a student's first class (Pete, 2026-11-07)
+
+Pete: "when a class is going to be a student's first class with us a
+star is shown on their row in the same area where \"M\" (for member)
+is".
+
+### What changed
+
+- **The evidence costs no call.** `FirstClassDate` is a top-level Client
+  field (client.yml, "The date of the clients first booked class at the
+  business"), and the roster already reads every client on it in one
+  batched `/client/clients` lookup. `ClientBrief` keeps it, and each
+  `RosterEntry` carries `firstClass: {date} | null`, null when the
+  lookup failed or missed the client.
+- **The rule is one pure function**, `isFirstClass` in
+  `src/lib/firstclass.ts`, run in the browser against the class on
+  screen's `startsAt` (both naive studio wall-clock strings, so a string
+  comparison). A star when Mindbody knows of no class before this one:
+  no date on the record (they are on this roster, so this is one), a
+  date on a later day, or the same day at or after this class's start
+  (a bare date counts). An earlier day, or an earlier class the same
+  day, is no star. An unanswered lookup is unknown and draws nothing,
+  the M's fail-open posture.
+- **Where it sits.** In landscape the icon column grew from 78px to
+  112px: M | star | info, each in a fixed slot, empty when the row lacks
+  it, so the M and the info icons keep their columns and the star gets
+  its own. The chip is the M's 24px gold square with a filled star in
+  it. In portrait (under 860px) the column stays 78px: the M and the
+  star share the M's slot, stacked in two 26px bands on a row with
+  both, because a third slot there came straight out of a name column
+  that already wraps. The star is a marker with an accessible name
+  ("First class with us: <name>"), not a control.
+
+### Verified
+
+- `tsc --noEmit` and `next build`: clean.
+- The rule against ten cases (no lookup, no date, years ago, same day
+  bare, this class exactly, earlier and later the same day, a later day,
+  no class, an unparseable date).
+- Chromium against a mock Mindbody with four students (no
+  FirstClassDate; 2023; this class's own start and a member; 6:20am the
+  same day): stars on exactly the first and third, at 1194x834 in both
+  palettes and at 820 and 810 portrait. No pass name ellipsizes in
+  landscape, and the portrait name column measured the same width as
+  before the change (118px at 820, 108px at 810).
+
+### Limits
+
+- **How Mindbody fills `FirstClassDate` has never been seen live**:
+  whether at booking or at the first sign-in, and whether it carries a
+  time. The rule gives the star either way for a student whose first
+  class is this one. If it is set at booking, someone who booked an
+  earlier class and missed it shows no star; a missing star was chosen
+  over a false one on a regular. If the field turns out to be absent on
+  every record, EVERY row would show a star, which would be obvious on
+  the first look at a real roster: that is the thing to check.
+- Search results and the waiting list section show no star; only the
+  roster rows have a class to compare against.
