@@ -1132,6 +1132,13 @@ while `git clone` works, so clone the repo rather than fetching files.
   document Mindbody says it files under the client on a REAL purchase;
   our own `contract_receipts` row is the record that does not depend on
   it.
+- **The first-class star reads `FirstClassDate`, never seen live (T216).**
+  The roster's star beside the M (`src/lib/firstclass.ts`) trusts the
+  client record's `FirstClassDate` against the class on screen, and a
+  record with NO date counts as a first class. Nobody has looked at what
+  Mindbody puts there for a new walk-in, or whether it carries a time.
+  If every row on a real roster shows a star, the field is absent and
+  the rule needs another source.
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It

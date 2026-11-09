@@ -771,7 +771,10 @@ button {
    * column gave up the width, and the split moved to 1.6:1.9 so
    * "Monthly Committed Membership" still sits on one line at 1194
    * beside the guest icon (a name never runs as long as a pass). */
-  --roster-cols: minmax(0, 1.6fr) 78px minmax(0, 1.9fr) 104px 156px 188px;
+  /* The first-class star (2026-11-07) took a 32px slot of its own after
+   * the M, so the icon column is 112px = 32 (M) + 2 + 32 (star) + 2 +
+   * 44 (info). */
+  --roster-cols: minmax(0, 1.6fr) 112px minmax(0, 1.9fr) 104px 156px 188px;
 }
 
 .roster-head,
@@ -975,7 +978,8 @@ button {
  * in its own grid column since T71): two slots in a set order (M |
  * info), each the same width on every row and empty when the row lacks
  * the marker, so every marker aligns as its own column down the list.
- * 78px total = 32 (the M button) + 2 + 44 (the info icon), and the
+ * 112px total = 32 (the M button) + 2 + 32 (the first-class star) +
+ * 2 + 44 (the info icon), and the
  * --roster-cols column must stay equal to it. One info slot since T20:
  * the alert and notes icons folded into the single info icon. */
 .cell-icons {
@@ -988,6 +992,26 @@ button {
 .cell-icons .m-slot {
   flex: 0 0 auto;
   width: 32px;
+}
+
+/* The M and the first-class star, as one unit: side by side here, and
+ * sharing the M's single slot in portrait (see the 860px block). */
+.cell-icons .marker-pair {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* The first-class star's slot: the M button's 32px, centring the same
+ * 24px gold chip, so the two markers read as one family. Not a button. */
+.cell-icons .first-slot {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 44px;
 }
 
 /* The M badge's button and the info icon keep their 44px height inside
@@ -7327,6 +7351,26 @@ textarea.reason-note-field:disabled::placeholder {
 @media (max-width: 860px) {
   :root {
     --roster-cols: minmax(0, 2fr) 78px minmax(120px, 1.4fr) 4.5em 148px 188px;
+  }
+
+  /* The first-class star gives the portrait name column nothing: it
+   * shares the M's 32px slot, so the column stays 78px = 32 + 2 + 44.
+   * The empty spacers collapse, and a row with BOTH stacks the two
+   * chips, each in a 26px band (a 44px M over a 44px star would outgrow
+   * the row). */
+  .cell-icons .marker-pair {
+    flex-direction: column;
+    justify-content: center;
+    width: 32px;
+  }
+
+  .cell-icons .marker-pair .m-slot {
+    display: none;
+  }
+
+  .cell-icons .marker-pair.both .m-chip-btn,
+  .cell-icons .marker-pair.both .first-slot {
+    height: 26px;
   }
 
   .roster-head,
