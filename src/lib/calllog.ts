@@ -175,9 +175,9 @@ export function scrubCardDigits(text: string): string {
  * Note which key names that leaves: `cardNumber` is the GiftCard
  * payment's Metadata key for the barcode AND, in any casing, the card on
  * file's own PAN field, so SECRET_KEY still strikes it as an object key
- * and the barcode is visible where it actually travels, inside the
- * stringified Metadata. A PAN inside a stringified body is still struck
- * by CARD_SHAPED, which needs no key at all.
+ * everywhere EXCEPT inside a GiftCard payment's Metadata (T219, which
+ * made that Metadata an object; redactCard lets its barcode through).
+ * A PAN anywhere is still struck by CARD_SHAPED, which needs no key.
  */
 
 /**
@@ -263,6 +263,23 @@ function redactCard(
       else if (keep.includes(k)) out[k] = v;
     }
     return out;
+  }
+  /* T219: a GiftCard payment's Metadata is an object now, and its
+   * `cardNumber` is the BARCODE, which T109 put back in the record on
+   * Pete's call. Its strings still go through the digit and CVV scrub,
+   * so a barcode that happens to be card-shaped is struck as any such
+   * run is; only the key rule is not applied to it. */
+  if (
+    obj.Type === "GiftCard" &&
+    obj.Metadata !== null &&
+    typeof obj.Metadata === "object" &&
+    !Array.isArray(obj.Metadata)
+  ) {
+    const meta: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj.Metadata as Record<string, unknown>)) {
+      meta[k] = typeof v === "string" ? scrubSecrets(v) : v;
+    }
+    return { ...obj, Metadata: meta };
   }
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {

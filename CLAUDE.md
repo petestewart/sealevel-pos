@@ -1074,6 +1074,13 @@ while `git clone` works, so clone the repo rather than fetching files.
   file and check them in together, keeping free entry as the deliberate
   exception. See the phasing section of the design doc.
 
+- **Two payment shapes have never met live Mindbody (T219).** A gift
+  card tender's `Metadata` is now an OBJECT (`{amount, cardNumber}`);
+  T83's string was refused at Finalize for a missing key. And a split may
+  now carry up to four legs, several of them typed cards beside the saved
+  card, in ONE checkout; the spec puts no limit on `Payments` and two
+  legs have sold, but several `CreditCard` entries in one call have not
+  been seen. Both refuse cleanly, nothing charged, if Mindbody disagrees.
 - **The live charge has never fully settled.** The probe reached payment
   handling and was refused with "Credit card is expired", which proves
   authorization but not that a charge reaches Stripe. Re-run

@@ -610,6 +610,35 @@ function categoryShelf(
 }
 
 /**
+ * T219: the cart screen's item search (Pete: "in the cart page, we need a
+ * search bar where people can search for an item and have it come up",
+ * with "gift card" as his example). It searches what is ALREADY loaded --
+ * the catalog payload and the gift card list -- and makes no call: the
+ * shelf is the live catalog, read when the screen opened and refreshed by
+ * the header's own refresh, so there is nothing fresher to ask.
+ *
+ * Every word of the query must appear somewhere in the item's words,
+ * which are its name and the shelf it lives on, so "gift card" finds the
+ * gift cards, "towel" finds what is filed under Towel and Mat, and "10
+ * class" finds the ten-class pass without caring about word order.
+ */
+const SHELF_SEARCH_MIN = 2;
+const SHELF_SEARCH_LIMIT = 60;
+function shelfMatches(
+  words: readonly string[],
+  ...fields: (string | null | undefined)[]
+): boolean {
+  const hay = fields
+    .filter((f): f is string => typeof f === "string" && f.length > 0)
+    .join(" ")
+    .toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+function shelfQueryWords(query: string): string[] {
+  return query.toLowerCase().split(/\s+/).filter((w) => w.length > 0);
+}
+
+/**
  * One rung-up line. Keyed by type+id AND recipient (cartKey below), so
  * re-tapping an item bumps its quantity instead of adding a duplicate
  * line, and the same item bought for two different people is two lines.
@@ -1426,6 +1455,16 @@ function GiftCardIcon() {
  *  button should have a number keypad icon on its right"). Twelve squares
  *  in a 3x4 grid, drawn with the Icon stroke so it reads as a keypad at
  *  44px and inherits its colour from the button it sits in. */
+/** T219: the shelf search's magnifying glass, the roster's own glyph. */
+function SearchGlassIcon() {
+  return (
+    <Icon size={24}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m16.5 16.5 4.5 4.5" />
+    </Icon>
+  );
+}
+
 function KeypadIcon() {
   return (
     <Icon size={22}>
@@ -1590,7 +1629,22 @@ interface TenderLine {
   id: number;
   source: TenderSource;
   cents: number;
+  /**
+   * T219: this line is the WHOLE payment, taken by one tap for the whole
+   * due, and nobody has typed a figure into it since. Such a line follows
+   * the total (capped by its source's own rule) instead of being cleared
+   * when a discount moves it: Pete had to deselect and reselect the
+   * method after every discount before Finalize Sale would light. A
+   * typed figure, a second line or an overdraft PIN each end it, because
+   * then the amount is somebody's choice and not "all of it".
+   */
+  whole?: boolean;
 }
+
+/** T219: the most parts a payment may have. Keep in sync with
+ *  MAX_SPLIT_LEGS in src/app/api/checkout/route.ts, which is where it is
+ *  enforced; this copy only greys the tiles with the reason. */
+const MAX_TENDER_LINES = 4;
 
 /** Keep in sync with src/lib/sale.ts CARD_MINIMUM_USD. The server
  *  refuses a card leg under it regardless; this mirror only lets the
@@ -2391,8 +2445,23 @@ function PaymentPanel(props: {
    *  open. The modal has no draft state here: it holds what is being
    *  typed itself and hands up a validated card, so a cancelled entry
    *  leaves this component with nothing. */
-  const [typedCard, setTypedCard] = useState<TypedCardHeld | null>(null);
+  /* T219: one held card PER typed-card line, keyed by the line's id: a
+   * split may now carry several typed cards (Pete: "split between
+   * multiple credit cards"). `typedCard` is the first of them, which is
+   * what the single-line paths and the done screen's fallback read. */
+  const [typedCards, setTypedCards] = useState<
+    ReadonlyMap<number, TypedCardHeld>
+  >(() => new Map());
+  const typedCard: TypedCardHeld | null = (() => {
+    for (const held of typedCards.values()) return held;
+    return null;
+  })();
   const [cardEntry, setCardEntry] = useState(false);
+  /** T219: the line a "take from the last part" add just created, at $0
+   *  with its keypad open. Cancelled or done with nothing typed, it goes
+   *  again: it never had an amount, so removing it is not T36's trap of
+   *  an editor deleting the row it was opened on. */
+  const freshLineRef = useRef<number | null>(null);
   /** Digits typed since the modal opened, accumulating into CENTS
    *  (2-0-0-0 reads $20.00), exactly as the cash tender field did. Empty
    *  means nothing was typed, and Done then leaves the line as it was. */
@@ -2622,10 +2691,43 @@ function PaymentPanel(props: {
    * them. */
   const discountKey =
     comp === null ? "" : `${comp.discount.mode}:${comp.discount.value}`;
+  /* T219: except a line that was paying the WHOLE sale. It stays, and
+   * the effect below moves it to the new total once Mindbody has priced
+   * it (the total is null while that runs, so Finalize cannot fire on the
+   * old figure). A 100% discount takes no tender at all, so it still
+   * clears everything. */
+  const keepWholeLine = useCallback(
+    (cur: readonly TenderLine[]): readonly TenderLine[] =>
+      !comped && cur.length === 1 && cur[0]?.whole === true ? cur : [],
+    [comped],
+  );
+  const keepWholeRef = useRef(keepWholeLine);
+  keepWholeRef.current = keepWholeLine;
   useEffect(() => {
-    setLines([]);
+    setLines((cur) => keepWholeRef.current(cur));
     dismissPad();
   }, [discountKey, dismissPad]);
+
+  /* T219: a whole-sale line follows the total. Only ever a single line
+   * flagged `whole`, only against a total Mindbody has priced (null while
+   * pricing, so the button stays dark until the new figure lands), and
+   * capped the way a tap would have capped it: credit by the balance, a
+   * gift card by its own. A line its cap leaves short simply shows the
+   * remainder due, as a tap would have. */
+  useEffect(() => {
+    if (totalCents === null) return;
+    setLines((cur) => {
+      const only = cur.length === 1 ? cur[0] : undefined;
+      if (only === undefined || only.whole !== true) return cur;
+      let target = totalCents;
+      if (only.source === "credit") target = Math.min(target, balanceCents ?? 0);
+      if (only.source === "giftcard") {
+        target = Math.min(target, giftCard?.balanceCents ?? 0);
+      }
+      if (target <= 0 || target === only.cents) return cur;
+      return [{ ...only, cents: target }];
+    });
+  }, [totalCents, balanceCents, giftCard]);
 
   /* T79: a cart edit under an armed discount re-spreads it (the figures
    * are recomputed from the cart on every render), unless the cart can
@@ -2919,10 +3021,17 @@ function PaymentPanel(props: {
    * so no PAN outlives the tender it was typed for and the next Card tap
    * starts from nothing. */
   useEffect(() => {
-    if (typedCard === null) return;
-    if (lines.some((l) => l.source === "typedcard")) return;
-    setTypedCard(null);
-  }, [lines, typedCard]);
+    if (typedCards.size === 0) return;
+    const live = new Set(
+      lines.filter((l) => l.source === "typedcard").map((l) => l.id),
+    );
+    if ([...typedCards.keys()].every((id) => live.has(id))) return;
+    setTypedCards((cur) => {
+      const next = new Map(cur);
+      for (const id of cur.keys()) if (!live.has(id)) next.delete(id);
+      return next;
+    });
+  }, [lines, typedCards]);
 
   /* An amount modal whose LINE has gone must not stay open in name only.
    * Every deliberate path (removeLine, Cancel, Done, the resets)
@@ -2994,7 +3103,8 @@ function PaymentPanel(props: {
   const capFor = (source: TenderSource): number | null => {
     if (source === "cash") return null;
     if (totalCents === null) return 0;
-    const room = Math.max(0, totalCents - (lines.length === 2 ? 1 : 0));
+    /* T219: a cent for every OTHER part, so none can fall to zero. */
+    const room = Math.max(0, totalCents - Math.max(0, lines.length - 1));
     if (source === "credit") {
       /* T94: an authorized overdraft is exactly the cap being lifted. The
        * PIN was entered against the whole remaining due, so the account
@@ -3020,10 +3130,16 @@ function PaymentPanel(props: {
 
   /** Why this source cannot ADD a line right now, or null. */
   const addReason = (source: TenderSource): string | null => {
-    if (usedSources.has(source)) return "Already in the payment";
-    /* Two lines is the maximum because /api/checkout accepts one method
-     * or exactly two legs. Greyed WITH that reason, never hidden. */
-    if (lines.length >= 2) return "Two parts is the maximum";
+    /* T219: a typed card is the one source a customer can hand over
+     * twice; everything else is in the payment at most once. */
+    if (usedSources.has(source) && source !== "typedcard") {
+      return "Already in the payment";
+    }
+    /* /api/checkout accepts one method or a split of up to four legs
+     * (T219; two before it). Greyed WITH that reason, never hidden. */
+    if (lines.length >= MAX_TENDER_LINES) {
+      return `${MAX_TENDER_LINES} parts is the maximum`;
+    }
     /* T90 review: a split cannot pay a ticket holding a line for
      * another client, and the route refuses one (a split's two legs sum
      * to ONE total, and there is no matrix of legs against carts). The
@@ -3057,7 +3173,17 @@ function PaymentPanel(props: {
     if (total === null) {
       return pricing ? "Pricing with Mindbody..." : "No total to pay yet";
     }
-    if (dueCents !== null && dueCents <= 0) return "Nothing left to cover";
+    /* T219: with the total already covered, another part takes its
+     * amount from the last one (addLine opens its keypad at $0.00), which
+     * is how a third card joins a two-card split. A gift card cannot: its
+     * modal is built around what is still due. */
+    if (
+      dueCents !== null &&
+      dueCents <= 0 &&
+      (lines.length === 0 || source === "giftcard")
+    ) {
+      return "Nothing left to cover";
+    }
     if (source === "credit") return creditReason;
     /* T93 review (Pete, 2026-09-14: "Allow two charges."): a ticket
      * holding a line for another client is one Mindbody sale PER
@@ -3065,17 +3191,15 @@ function PaymentPanel(props: {
      * per cart. It is NOT greyed here; the line under the tender says how
      * many times the card will be charged and for what, and /api/checkout
      * refuses before any charge if a cart is under the $10 floor. */
-    /* T93: one card leg at a time. A stored card and a typed card in the
-     * same payment would be two card charges in one sale, which nobody
-     * asked for and which the $10-per-leg floor makes worse; greyed WITH
-     * the reason, as every other refusal here is. */
-    if (source === "typedcard" && usedSources.has("storedcard")) {
-      return "Already paying by card";
-    }
+    /* T93 allowed one card leg at a time. T219 lifts it on Pete's word
+     * ("a purchase should be able to be split between multiple credit
+     * cards (including the saved card)"): the stored card and any number
+     * of typed cards may share a payment, each its own authorization and
+     * each held to the $10 floor on its own. They still go to Mindbody in
+     * ONE call, so a decline on one leaves none of them charged. */
     /* T83: a gift card needs no client and no card on file; what it
      * needs is a number, which the modal asks for. */
     if (source === "storedcard") {
-      if (usedSources.has("typedcard")) return "Already paying by card";
       if (cardReason !== null) return cardReason;
       /* T82: the under-$10 guard, not rule 1. A whole-sale card payment
        * (the card as the first and therefore only line) under the $10
@@ -3146,7 +3270,7 @@ function PaymentPanel(props: {
       /* Unreachable in normal use: the effect above drops the line with
        * the card. Refused rather than charged on a card this render does
        * not hold. */
-      if (typedCard === null) return "Enter the card again";
+      if (!typedCards.has(line.id)) return "Enter the card again";
       /* The $10 floor is a card-processing floor, so it applies to a
        * typed card whether it is the whole sale or one leg: unlike the
        * stored card there is no credit-purchase path under it, and
@@ -3181,7 +3305,7 @@ function PaymentPanel(props: {
       /* The $10 minimum bites on a card LEG of a split, which the server
        * refuses outright; a whole-sale card under $10 is fine, since that
        * is PLAN 2.3's credit-purchase path. */
-      if (lines.length === 2 && covered < CARD_MINIMUM_USD * 100) {
+      if (lines.length >= 2 && covered < CARD_MINIMUM_USD * 100) {
         return `The card leg is under the $${CARD_MINIMUM_USD} card minimum`;
       }
       return null;
@@ -3228,10 +3352,12 @@ function PaymentPanel(props: {
   })();
   const firstLineProblem = lineReasons.find((r) => r !== null) ?? null;
 
+  /* T219: every source once except a typed card, up to four parts. */
+  const onceLines = lines.filter((l) => l.source !== "typedcard");
   const tenderValid =
     lines.length > 0 &&
-    lines.length <= 2 &&
-    usedSources.size === lines.length &&
+    lines.length <= MAX_TENDER_LINES &&
+    new Set(onceLines.map((l) => l.source)).size === onceLines.length &&
     firstLineProblem === null;
 
   const chargeable =
@@ -3343,8 +3469,8 @@ function PaymentPanel(props: {
       ? `Gift card ...${giftCard.lastFour}`
       : /* T93: the typed card wears its last four for the same reason: it
            is the only part of the number that ever reaches a screen. */
-        line.source === "typedcard" && typedCard !== null
-        ? `Card (typed) ending ${typedCard.lastFour}`
+        line.source === "typedcard" && typedCards.has(line.id)
+        ? `Card (typed) ending ${typedCards.get(line.id)?.lastFour ?? ""}`
         : sourceLabel(line.source);
 
   /** One leg of a split, as the Charge button restates it. The cash leg
@@ -3389,6 +3515,10 @@ function PaymentPanel(props: {
             (lines[1] as TenderLine).source,
             (coverage[1] ?? 0) / 100,
           )}`
+        : /* T219: three or four parts do not fit the button as words;
+             each part's figure is on its own row right above it. */
+          lines.length > 2
+          ? `Charge ${money(total)} in ${lines.length} parts`
         : soleLine === undefined
           ? "Charge"
           : soleLine.source === "cash"
@@ -3456,10 +3586,16 @@ function PaymentPanel(props: {
         : {}),
       /* T93: the typed card rides its own leg and nothing else's; the
        * route refuses a typedCard on any other method. */
-      ...(line.source === "typedcard" && typedCard !== null
-        ? { typedCard: typedCard.card }
+      ...(line.source === "typedcard" && typedCards.has(line.id)
+        ? { typedCard: (typedCards.get(line.id) as TypedCardHeld).card }
         : {}),
     }));
+    /* T219: each leg's own last four, for the done screen's sentence. */
+    const legFoursAtTap = lines.map((line) =>
+      line.source === "typedcard"
+        ? (typedCards.get(line.id)?.lastFour ?? null)
+        : null,
+    );
     /* T43: a comp carries its reason (the route refuses a comp without
      * one, and a reason on any other method). The reason never reaches
      * Mindbody, whose checkout request has no notes field; the route
@@ -3467,7 +3603,7 @@ function PaymentPanel(props: {
     const tender = comped
       ? /* T79: a 100% discount pays nothing: method comp, no tender. */
         { method: "comp" as const }
-      : legs.length === 2
+      : legs.length >= 2
         ? { split: { legs } }
         : soleLine !== undefined && legs[0] !== undefined
           ? {
@@ -3480,8 +3616,12 @@ function PaymentPanel(props: {
                 ? { giftCard: { number: giftCard.number } }
                 : {}),
               /* T93: and the whole-sale typed card shape. */
-              ...(soleLine.source === "typedcard" && typedCard !== null
-                ? { typedCard: typedCard.card }
+              ...(soleLine.source === "typedcard" &&
+              typedCards.has(soleLine.id)
+                ? {
+                    typedCard: (typedCards.get(soleLine.id) as TypedCardHeld)
+                      .card,
+                  }
                 : {}),
             }
           : null;
@@ -3527,8 +3667,10 @@ function PaymentPanel(props: {
     /* T93: the same, for the typed card, and whether "keep on file" was
      * asked for: the held card goes with the tender the moment the sale
      * lands, and the done block needs both after it has. */
-    const typedLastFourAtTap = typedCard?.lastFour ?? null;
-    const typedKeepAtTap = typedCard?.card.keep === true;
+    const keptTyped =
+      [...typedCards.values()].find((t) => t.card.keep) ?? typedCard;
+    const typedLastFourAtTap = keptTyped?.lastFour ?? null;
+    const typedKeepAtTap = keptTyped?.card.keep === true;
     /* T201: the ticket as it stands at the tap, for the customer
      * display's summary. Built here for the same reason the count and
      * the receipt address are: the cart is cleared in the commit the
@@ -3547,8 +3689,8 @@ function PaymentPanel(props: {
      * a card, and nothing at all of a gift card's number. */
     const displayTender = comped
       ? "Comp"
-      : lines.length === 2
-        ? "Two payments"
+      : lines.length >= 2
+        ? `${["", "", "Two", "Three", "Four"][lines.length] ?? "Several"} payments`
         : soleLine === undefined
           ? "Payment"
           : soleLine.source === "storedcard"
@@ -3695,18 +3837,26 @@ function PaymentPanel(props: {
           typeof body?.typedCard?.lastFour === "string"
             ? body.typedCard.lastFour
             : typedLastFourAtTap;
-        const legDesc = (m: TenderSource, usd: number) =>
+        const legDesc = (
+          m: TenderSource,
+          usd: number,
+          four: string | null = null,
+        ) =>
           m === "storedcard"
             ? `${money(usd)} on the stored card${card ? ` ...${card.lastFour}` : ""}`
             : m === "typedcard"
-              ? `${money(usd)} on the card ending ${typedFour ?? "----"}`
+              ? `${money(usd)} on the card ending ${four ?? typedFour ?? "----"}`
             : m === "credit"
               ? `${money(usd)} from account`
               : m === "giftcard"
                 ? `${money(usd)} on the gift card${giftFour ? ` ...${giftFour}` : ""}`
                 : `${money(usd)} cash`;
         const methodName = isSplit
-          ? legs.map((leg) => legDesc(leg.method, leg.amount)).join(" + ")
+          ? legs
+              .map((leg, i) =>
+                legDesc(leg.method, leg.amount, legFoursAtTap[i] ?? null),
+              )
+              .join(" + ")
           : comped
             ? "comp"
             : soleLine === undefined
@@ -4014,7 +4164,13 @@ function PaymentPanel(props: {
    *  case. */
   const addLine = (source: TenderSource) => {
     if (addReason(source) !== null || charging) return;
-    if (dueCents === null || dueCents <= 0) return;
+    if (dueCents === null) return;
+    /* T219: nothing left to cover, but a part already in the payment:
+     * the new part starts at $0.00 with its keypad open, and what is
+     * typed there comes off the last part (applyPad). addReason has
+     * already refused this with no parts at all, and for a gift card. */
+    const takeFrom = dueCents <= 0;
+    if (takeFrom && lines.length === 0) return;
     /* T83: a gift card line comes from the modal (openGift), which has
      * the number and the balance the line needs. A bare tap could only
      * ever make a line with no card behind it. */
@@ -4023,8 +4179,9 @@ function PaymentPanel(props: {
      * make a line with no card behind it. Its line comes from the modal
      * (openCardEntry). */
     if (source === "typedcard") return;
-    const cents =
-      source === "credit"
+    const cents = takeFrom
+      ? 0
+      : source === "credit"
         ? Math.min(dueCents, balanceCents ?? 0)
         : dueCents;
     /* T94: an account with nothing on it still takes a line, at $0.00,
@@ -4033,7 +4190,7 @@ function PaymentPanel(props: {
      * the old "no balance, no option" behaviour Pete reversed. Every
      * other source still needs something to cover. */
     const emptyAccount = source === "credit" && cents === 0;
-    if (cents <= 0 && !emptyAccount) return;
+    if (cents <= 0 && !emptyAccount && !takeFrom) return;
     const id = nextLineId.current++;
     /* T79: a PARTIAL discount survives a tender -- the remainder is
      * exactly what this line is paying, and dropping the discount here
@@ -4042,13 +4199,22 @@ function PaymentPanel(props: {
      * leaves nothing due, so the guard above already returned and no
      * tender can reach an armed comp. */
     setCompCleared(false);
-    setLines((cur) => [...cur, { id, source, cents }]);
-    if (emptyAccount) openPad(id);
+    /* T219: the first line, for the whole due, is the whole payment and
+     * follows the total; a second line makes both somebody's choice. */
+    setLines((cur) => [
+      ...cur.map((l) => (l.whole ? { ...l, whole: false } : l)),
+      { id, source, cents, whole: cur.length === 0 && cents === dueCents },
+    ]);
+    if (takeFrom) {
+      openPad(id);
+      freshLineRef.current = id;
+    } else if (emptyAccount) openPad(id);
     else dismissPad();
     clearStaleResult();
   };
 
   const removeLine = (id: number) => {
+    if (freshLineRef.current === id) freshLineRef.current = null;
     setLines((cur) => cur.filter((l) => l.id !== id));
     if (padFor === id) dismissPad();
     setCompCleared(false);
@@ -4117,7 +4283,9 @@ function PaymentPanel(props: {
    *  greyed, so a keyboard Enter cannot get past them. */
   const openCardEntry = () => {
     if (addReason("typedcard") !== null || charging) return;
-    if (dueCents === null || dueCents <= 0) return;
+    /* T219: with the total covered, a second (or third) card still
+     * opens: its line takes its amount from the last part. */
+    if (dueCents === null || (dueCents <= 0 && lines.length === 0)) return;
     setCardEntry(true);
     dismissPad();
     onModalChange(true);
@@ -4130,17 +4298,30 @@ function PaymentPanel(props: {
    *  line like every other). The line is an ordinary tender line from
    *  here on, and /api/checkout validates the card again. */
   const applyTypedCard = (card: TypedCard, lastFour: string) => {
-    if (dueCents === null || dueCents <= 0) return;
+    if (dueCents === null) return;
     if (addReason("typedcard") !== null) return;
-    setTypedCard({ card, lastFour });
+    /* T219: a card added when the total is already covered starts at
+     * $0.00 and takes its amount from the last part on the keypad. */
+    const takeFrom = dueCents <= 0;
+    if (takeFrom && lines.length === 0) return;
     const id = nextLineId.current++;
+    setTypedCards((cur) => new Map(cur).set(id, { card, lastFour }));
     setLines((cur) => [
-      ...cur,
-      { id, source: "typedcard" as TenderSource, cents: dueCents },
+      ...cur.map((l) => (l.whole ? { ...l, whole: false } : l)),
+      {
+        id,
+        source: "typedcard" as TenderSource,
+        cents: takeFrom ? 0 : dueCents,
+        whole: cur.length === 0,
+      },
     ]);
     setCompCleared(false);
     clearStaleResult();
     dismissCardEntry();
+    if (takeFrom) {
+      openPad(id);
+      freshLineRef.current = id;
+    }
   };
 
   /** Whatever a scanner or a keyboard put in the field, as a barcode
@@ -4286,7 +4467,15 @@ function PaymentPanel(props: {
       balanceCents: gift.balanceCents,
     });
     const id = nextLineId.current++;
-    setLines((cur) => [...cur, { id, source: "giftcard" as TenderSource, cents }]);
+    setLines((cur) => [
+      ...cur.map((l) => (l.whole ? { ...l, whole: false } : l)),
+      {
+        id,
+        source: "giftcard" as TenderSource,
+        cents,
+        whole: cur.length === 0 && cents === dueCents,
+      },
+    ]);
     setCompCleared(false);
     clearStaleResult();
     dismissGift();
@@ -4336,17 +4525,31 @@ function PaymentPanel(props: {
 
   /* The OTHER line of a two-line tender, and what Done would recompute it
    * to. Editing one line moves the other, so the modal says so rather
-   * than calling a part-payment "short". */
+   * than calling a part-payment "short". T219: with more parts it is the
+   * one applyPad moves: the newest, or the one before it when the newest
+   * is being edited, against the parts that stay put. */
+  const padNewest = lines[lines.length - 1];
   const padPartner =
-    lines.length === 2 && padIndex >= 0 ? lines[1 - padIndex] : undefined;
+    lines.length >= 2 && padIndex >= 0 && padNewest !== undefined
+      ? padNewest.id !== padLine?.id
+        ? padNewest
+        : lines[lines.length - 2]
+      : undefined;
+  const padFixed = lines
+    .filter((l) => l.id !== padLine?.id && l.id !== padPartner?.id)
+    .reduce((sum, l) => sum + l.cents, 0);
   const padRest =
-    totalCents === null ? null : Math.max(0, totalCents - draftCents);
+    totalCents === null
+      ? null
+      : Math.max(0, totalCents - draftCents - padFixed);
   const padPartnerCents =
     padPartner === undefined || padRest === null || padRest <= 0
       ? null
       : padPartner.source === "credit"
         ? Math.min(padRest, balanceCents ?? 0)
-        : padRest;
+        : padPartner.source === "giftcard"
+          ? Math.min(padRest, giftCard?.balanceCents ?? 0)
+          : padRest;
   /** Over the due (cash only, since every other source is clamped) is the
    *  teacher's change; under it, on a single-line tender, is short. */
   const padSurplus = padDueCents === null ? null : draftCents - padDueCents;
@@ -4380,8 +4583,33 @@ function PaymentPanel(props: {
    *  leaves the line exactly as it was -- it does NOT remove it, since
    *  Cancel covers that intent and an editing modal that deletes the row
    *  it was opened on is a trap. */
+  /** T219: remove the line a "take from" add created, if it is still the
+   *  one at $0 nobody typed into. True when it was removed. */
+  const dropIfFresh = (id: number): boolean => {
+    if (freshLineRef.current !== id) return false;
+    freshLineRef.current = null;
+    const line = lines.find((l) => l.id === id);
+    if (line === undefined || line.cents !== 0) return false;
+    setLines((cur) => cur.filter((l) => l.id !== id));
+    return true;
+  };
+  /** Cancel, Escape and the scrim: the line is left exactly as it was
+   *  (T36), except T219's part added for nothing, which goes. */
+  const cancelPad = () => {
+    if (padFor !== null) dropIfFresh(padFor);
+    dismissPad();
+  };
+  const cancelPadRef = useRef(cancelPad);
+  cancelPadRef.current = cancelPad;
+
   const applyPad = () => {
     const line = padLine;
+    /* T219: a part added for nothing and given nothing goes again. */
+    if (line !== undefined && entry === "" && dropIfFresh(line.id)) {
+      dismissPad();
+      return;
+    }
+    if (freshLineRef.current === line?.id) freshLineRef.current = null;
     if (line !== undefined && entry !== "") {
       const cents = clampFor(line.source, parseInt(entry, 10));
       /* Editing one line of a two-line tender RECOMPUTES the other as the
@@ -4389,17 +4617,38 @@ function PaymentPanel(props: {
        * sum to the server's total. The one exception is a cash line above
        * the whole total: there is no remainder left to give the other
        * line, so it keeps what it has and the surplus is change. */
-      const rest =
-        totalCents === null ? null : Math.max(0, totalCents - cents);
-      setLines((cur) =>
-        cur.map((l) => {
-          if (l.id === line.id) return { ...l, cents };
-          if (cur.length !== 2 || rest === null || rest <= 0) return l;
-          const other =
-            l.source === "credit" ? Math.min(rest, balanceCents ?? 0) : rest;
-          return { ...l, cents: other };
-        }),
-      );
+      /* T219: with more than two parts the remainder still lands on ONE
+       * other part: the newest, or, when the newest is the one being
+       * edited, the part added just before it. With two parts that is
+       * "the other line", exactly as T36 built it, and it is what lets a
+       * third card join: its amount comes off the card before it. */
+      setLines((cur) => {
+        const others = cur.filter((l) => l.id !== line.id);
+        const newest = cur[cur.length - 1];
+        const target =
+          cur.length < 2 || newest === undefined
+            ? undefined
+            : newest.id !== line.id
+              ? newest
+              : others[others.length - 1];
+        const fixed = others
+          .filter((l) => l.id !== target?.id)
+          .reduce((sum, l) => sum + l.cents, 0);
+        const rest =
+          totalCents === null ? null : totalCents - cents - fixed;
+        return cur.map((l) => {
+          /* T219: a typed figure is a choice, not "all of it". */
+          if (l.id === line.id) return { ...l, cents, whole: false };
+          if (target === undefined || l.id !== target.id) return l;
+          if (rest === null || rest <= 0) return l;
+          let other = rest;
+          if (l.source === "credit") other = Math.min(rest, balanceCents ?? 0);
+          if (l.source === "giftcard") {
+            other = Math.min(rest, giftCard?.balanceCents ?? 0);
+          }
+          return { ...l, cents: other, whole: false };
+        });
+      });
       clearStaleResult();
     }
     dismissPad();
@@ -4511,7 +4760,10 @@ function PaymentPanel(props: {
           teacherName: String(body?.teacher?.name ?? ""),
         });
         setLines((cur) =>
-          cur.map((l) => (l.id === line.id ? { ...l, cents: full } : l)),
+          /* T219: the PIN authorized THIS figure, so it must not follow. */
+          cur.map((l) =>
+            l.id === line.id ? { ...l, cents: full, whole: false } : l,
+          ),
         );
         clearStaleResult();
         dismissPad();
@@ -4570,11 +4822,11 @@ function PaymentPanel(props: {
   useEffect(() => {
     if (padFor === null) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !charging) dismissPad();
+      if (e.key === "Escape" && !charging) cancelPadRef.current();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [padFor, charging, dismissPad]);
+  }, [padFor, charging]);
 
   /* T43: the reason dialog owns Escape the same way, and closes as
    * Cancel: nothing armed, the draft gone. */
@@ -4831,8 +5083,13 @@ function PaymentPanel(props: {
       return;
     }
     /* The discount moves the total, so no tender line entered against
-     * the old one survives it (the discountKey effect clears them too). */
-    setLines([]);
+     * the old one survives it (the discountKey effect does the same),
+     * except T219's whole-sale line, which follows the new total. The
+     * comped flag is the CURRENT discount's here, so the 100% case is
+     * left to the effect, which reads the armed one. */
+    setLines((cur) =>
+      cur.length === 1 && cur[0]?.whole === true ? cur : [],
+    );
     dismissPad();
     setComp({
       discount: draftDiscount,
@@ -5828,10 +6085,20 @@ function PaymentPanel(props: {
       {cardEntry ? (
         <CardModal
           mode="sale"
-          clientId={clientId}
+          /* T219: one card on file per client, so once a held card is
+             being kept the next one is offered for this sale only. */
+          clientId={
+            [...typedCards.values()].some((t) => t.card.keep) ? null : clientId
+          }
           name={client ? client.name : "Walk-in sale"}
           current={card}
-          amount={dueCents !== null ? money(dueCents / 100) : "This sale"}
+          amount={
+            dueCents !== null && dueCents > 0
+              ? money(dueCents / 100)
+              : /* T219: a further card on a covered total; its amount
+                   is typed next, and comes off the last part. */
+                "Part of this sale"
+          }
           onClose={dismissCardEntry}
           onUse={applyTypedCard}
         />
@@ -5841,7 +6108,7 @@ function PaymentPanel(props: {
         <div
           className="modal-scrim"
           role="presentation"
-          onClick={dismissPad}
+          onClick={cancelPad}
         >
           <div
             className="modal modal-amount modal-pad"
@@ -6060,7 +6327,7 @@ function PaymentPanel(props: {
                   <button className="modal-confirm go" onClick={applyPad}>
                     Done
                   </button>
-                  <button className="modal-cancel" onClick={dismissPad}>
+                  <button className="modal-cancel" onClick={cancelPad}>
                     Cancel
                   </button>
                 </>
@@ -8185,6 +8452,10 @@ export default function SaleScreen(props: {
    *  Favorites when it has anything to show, else the first section
    *  with a shelf (see the effect below). */
   const [activeCat, setActiveCat] = useState<string | null>(null);
+  /** T219: the item search. Empty is the rail's shelf, as always; a
+   *  query of two letters or more replaces the grid with what matches,
+   *  and any tap on the rail clears it. */
+  const [shelfQuery, setShelfQuery] = useState("");
   /** T76: the chosen child of the active section (a pass group label,
    *  Packages, Memberships, or a retail category label); null shows the
    *  whole section under kickers. */
@@ -8222,6 +8493,7 @@ export default function SaleScreen(props: {
       }
       setActiveCat(label);
       setActiveChild(null);
+      setShelfQuery("");
       if (isSection) setExpanded(label);
     },
     [activeCat, expanded],
@@ -8230,6 +8502,7 @@ export default function SaleScreen(props: {
   const tapChild = useCallback((section: RailSection, label: string) => {
     setActiveCat(section);
     setActiveChild(label);
+    setShelfQuery("");
     if (section === PASSES_SECTION || section === RETAIL_SECTION) {
       setExpanded(section);
     }
@@ -11098,6 +11371,73 @@ export default function SaleScreen(props: {
     </>
   );
 
+  /* T219: the item search's results, from what is loaded and nothing
+   * else. Each item is searched by its name and the shelf it sits on
+   * (the retail category's label, or Passes and its group, or Packages),
+   * each membership by its name and "Memberships", each gift card by its
+   * title and "Gift cards". Deduplicated by the catalog key, since a pass
+   * can be both a pass and in a category. */
+  const shelfWords = shelfQueryWords(shelfQuery);
+  const searching =
+    catalog !== null && shelfQuery.trim().length >= SHELF_SEARCH_MIN;
+  const searchHits = ((): {
+    items: ShelfItem[];
+    contracts: ContractInfo[];
+    gifts: GiftCardProduct[];
+    giftCustom: boolean;
+    more: boolean;
+  } => {
+    const none = { items: [], contracts: [], gifts: [], giftCustom: false, more: false };
+    if (!searching || catalog === null) return none;
+    const shelfOf = (item: ShelfItem): string => {
+      if (item.type === "Package") return PACKAGES_LABEL;
+      const cat =
+        item.categoryId === null
+          ? undefined
+          : catalog.categories.find((c) =>
+              c.categoryIds.includes(item.categoryId as number),
+            );
+      if (cat) return cat.label;
+      return item.type === "Service"
+        ? `${PASSES_SECTION} ${item.group ?? ""}`
+        : "";
+    };
+    const seen = new Set<string>();
+    const items: ShelfItem[] = [];
+    for (const item of [
+      ...catalog.passes,
+      ...catalog.packages,
+      ...catalog.products,
+    ]) {
+      const key = itemKey(item.type, item.id);
+      if (seen.has(key)) continue;
+      if (!shelfMatches(shelfWords, item.name, shelfOf(item))) continue;
+      seen.add(key);
+      items.push(item);
+    }
+    const contracts = catalog.contracts.filter((c) =>
+      shelfMatches(shelfWords, c.name, MEMBERSHIPS_LABEL, "membership"),
+    );
+    const gifts = giftPresets.filter((p) =>
+      shelfMatches(shelfWords, giftCardTitle(p), GIFT_CARDS_LABEL, money(p.cardValue)),
+    );
+    const giftCustom =
+      giftEditableProduct !== null &&
+      shelfMatches(shelfWords, GIFT_CARDS_LABEL, "custom amount");
+    return {
+      items: items.slice(0, SHELF_SEARCH_LIMIT),
+      contracts,
+      gifts,
+      giftCustom,
+      more: items.length > SHELF_SEARCH_LIMIT,
+    };
+  })();
+  const searchEmpty =
+    searchHits.items.length === 0 &&
+    searchHits.contracts.length === 0 &&
+    searchHits.gifts.length === 0 &&
+    !searchHits.giftCustom;
+
 
   /**
    * T38's audit table, one element used in two places: inside the
@@ -11557,6 +11897,68 @@ export default function SaleScreen(props: {
               </div>
             ) : catalog ? (
               <>
+                {/* T219: the item search, above whatever the rail chose.
+                    A query replaces the grid with what matches; the X,
+                    Escape, or any tap on the rail puts the shelf back. It
+                    is a name, never an amount, so a text field is right
+                    here (T35's rule is about money). */}
+                <div className="shelf-search" role="search">
+                  <span className="shelf-search-glass" aria-hidden="true">
+                    <SearchGlassIcon />
+                  </span>
+                  <input
+                    className="shelf-search-input"
+                    type="search"
+                    value={shelfQuery}
+                    onChange={(e) => setShelfQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape" && shelfQuery !== "") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setShelfQuery("");
+                      }
+                    }}
+                    enterKeyHint="search"
+                    placeholder="Search items"
+                    aria-label="Search items"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                  />
+                  {shelfQuery !== "" ? (
+                    <button
+                      type="button"
+                      className="shelf-search-clear"
+                      aria-label="Clear the item search"
+                      onClick={() => setShelfQuery("")}
+                    >
+                      <CloseIcon />
+                    </button>
+                  ) : null}
+                </div>
+                {searching ? (
+                  searchEmpty ? (
+                    <p className="muted">
+                      Nothing on the shelf matches &ldquo;{shelfQuery.trim()}&rdquo;.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="shelf-grid">
+                        {searchHits.items.map(shelfCard)}
+                        {searchHits.contracts.map(contractCard)}
+                        {searchHits.gifts.map(giftProductCell)}
+                        {searchHits.giftCustom ? giftCustomCell : null}
+                      </div>
+                      {searchHits.more ? (
+                        <p className="muted">
+                          Showing the first {SHELF_SEARCH_LIMIT}. Type more to
+                          narrow it.
+                        </p>
+                      ) : null}
+                    </>
+                  )
+                ) : (
+                <>
                 {/* T76: the General | Teacher sub-tabs over a retail
                     child that carries TEACHER items (Food/Drink). The
                     T74 sub-chip idiom, 48px; no All, since General is
@@ -11675,6 +12077,8 @@ export default function SaleScreen(props: {
                       );
                     })}
                   </>
+                )}
+                </>
                 )}
               </>
             ) : null}
