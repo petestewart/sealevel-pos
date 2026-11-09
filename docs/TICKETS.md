@@ -21009,13 +21009,14 @@ workshop is two rows in the drawer.
 
 ### Limits
 
-- **Never run against Mindbody.** Unseen: what `GET /enrollment/enrollments`
-  returns for site 471 (the session times are read from `Classes` when
-  present, else the course's own `StartDate`/`StartTime`), whether
-  `addclienttoenrollment` spends the sold pass on the course the way a
-  class booking does (the request has no `ClientServiceId`), and whether
-  it refuses a full course itself. `scripts/probe-signup-target.ts 743
-  <dummy client>` settles the first and rehearses the second.
+- **Seen working live** (Pete, 2026-11-09, site 471): with the two rows
+  saved as course 743, a real sale signed the buyer up. 743 is the
+  course (enrollment) id; the sold pass is in program 35 "Workshops",
+  `ScheduleType: "Enrollment"`. His first test booked nobody because no
+  rule had been saved, and the screen said nothing: a workshop pass sold
+  with no rule is silent by design today. Still unseen: whether
+  `addclienttoenrollment` spends the sold pass on the course (the request
+  has no `ClientServiceId`), and whether it refuses a full course itself.
 - A T90 PARTIAL ticket (some carts out, some not) enrols nobody; its
   sentence already says which carts landed, and those places are booked
   by hand.
