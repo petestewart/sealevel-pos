@@ -52,6 +52,7 @@ criteria below that require live Mindbody remain open until those pass.
 - [x] Dry run, target and write-guard safety
 - [x] Dev drawer with call log and settings
 - [x] A star beside the M on a student whose first class with the studio is the class on screen (Pete, 2026-11-07). **T216** (`FirstClassDate` from the roster's existing batched client lookup, no new call; the rule is `src/lib/firstclass.ts`). How Mindbody fills that field has not been seen live.
+- [x] The star only on the FIRST class of the first day, not every booking that day (Pete, 2026-11-09). **T217** (`earlier` from one `/client/clientvisits` read per remaining candidate, cached two minutes, at most ten per roster).
 
 **1.1 Verify check-in against a real class.** *Do this first.* Everything else
 in Phase 1 is scaffolding around this one call and nobody has watched it work.

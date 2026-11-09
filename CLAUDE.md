@@ -1138,7 +1138,11 @@ while `git clone` works, so clone the repo rather than fetching files.
   record with NO date counts as a first class. Nobody has looked at what
   Mindbody puts there for a new walk-in, or whether it carries a time.
   If every row on a real roster shows a star, the field is absent and
-  the rule needs another source.
+  the rule needs another source. Since T217 the star also needs NO
+  booking before this class (one `/client/clientvisits` read per
+  remaining candidate, `fillEarlierBookings` in `src/lib/roster.ts`), so
+  only the first class of the first day gets it; whether that read
+  returns booked future classes, not just past ones, is also unseen.
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It

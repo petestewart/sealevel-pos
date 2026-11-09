@@ -498,9 +498,9 @@ function handle(method, path, q, body, res) {
       return send(res, 200, { ...page(rows), Contracts: rows });
     }
     case "/client/clientvisits": {
-      const id = one(q, "ClientId");
+      const uniq = one(q, "UniqueClientId");
+      const c = uniq ? clients.find((x) => String(x.UniqueId) === uniq) : byId(one(q, "ClientId"));
       const past = [];
-      const c = byId(id);
       /* Days ago of each past visit, per client, so the roster's history
        * line varies: "3rd class this week", "5 visits in the last month",
        * "Last here 9/2", or nothing for a brand new student. */
@@ -512,6 +512,22 @@ function handle(method, path, q, body, res) {
       }[c?.Id] ?? [];
       for (const [i, ago] of pattern.entries()) {
         past.push({ Id: 700000 + i, ClientId: c.Id, Name: i % 2 ? "Hot 26" : "Hot Flow", StartDateTime: day(-ago) + "T17:30:00", SignedIn: true, ServiceName: "10 Class Series" });
+      }
+      /* The first-class check (T217) asks oldest-first for everything up
+       * to a class's start, so it also gets the client's bookings in
+       * today's classes. The history line's call (no Order) gets only the
+       * invented past, which keeps those lines as the guide shows them. */
+      if (c && one(q, "Order")) {
+        for (const list of Object.values(visits)) {
+          for (const v of list) if (v.ClientId === c.Id) past.push(v);
+        }
+        const from = (one(q, "StartDate") ?? "").slice(0, 19);
+        const to = (one(q, "EndDate") ?? "9999").slice(0, 19);
+        const rows = past
+          .filter((v) => v.StartDateTime >= from && v.StartDateTime <= to)
+          .sort((a, b) => a.StartDateTime.localeCompare(b.StartDateTime))
+          .slice(0, Number(one(q, "Limit") ?? 100));
+        return send(res, 200, { ...page(rows), Visits: rows });
       }
       return send(res, 200, { ...page(past), Visits: past });
     }
