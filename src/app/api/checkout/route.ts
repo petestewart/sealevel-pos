@@ -78,6 +78,7 @@ import {
   type ResolvedSubstitute,
 } from "@/lib/substitute";
 import { beginIdempotent } from "@/lib/idemstore";
+import { enrolAfterCheckout } from "@/lib/enrolonpurchase";
 import { dryRunState, mindbodyHttpStatus, target } from "@/lib/mindbody";
 
 import {
@@ -469,7 +470,18 @@ export async function POST(request: Request) {
   const gate = await beginIdempotent(request, payload, String(session.staffId));
   if (gate.replay !== null) return gate.replay;
   try {
-    return await gate.record(await runCheckout(request, session, payload));
+    const answered = await runCheckout(request, session, payload);
+    /* T219: a sold pass that comes with a place in a course or a class
+     * books that place, here, at the one point every charge path passes
+     * through, and INSIDE the record, so a request arriving twice
+     * replays the first answer, places included, and books nobody
+     * twice. It reads only an answer that is a sale which stands, and
+     * it never turns one into an error. See src/lib/enrolonpurchase.ts. */
+    const rules = (await currentShelfConfig().catch(() => null))?.config
+      .enrolments ?? [];
+    return await gate.record(
+      await enrolAfterCheckout(answered, payload, session, rules),
+    );
   } catch (err) {
     return gate.recordThrow(err);
   }

@@ -1635,6 +1635,11 @@ type ChargeResult =
        *  be read (the other is the emailed receipt); it is a bearer
        *  secret everywhere else. Empty on a sale with no gift card. */
       giftCards: { value: number; barcodeId: string }[];
+      /** T219: what each sold pass that comes with a place came to, in
+       *  the route's own words: signed up, waiting list, or NOT signed up
+       *  and why. `ok: false` is amber, because the sale stands and the
+       *  place does not. Empty on a sale that sold no such pass. */
+      enrolments: { ok: boolean; sentence: string }[];
     }
   /* T90: `summary` is the route's own sentence for a ticket where some
      carts went out and some were suppressed (the write guard judges each
@@ -3758,6 +3763,11 @@ function PaymentPanel(props: {
           kind: "paid",
           /* T95: what Mindbody recorded, one entry per card. */
           giftCards: soldGiftCards(body?.giftCardsSold),
+          enrolments: Array.isArray(body?.enrolments)
+            ? body.enrolments
+                .filter((e: any) => typeof e?.sentence === "string")
+                .map((e: any) => ({ ok: e.ok === true, sentence: e.sentence }))
+            : [],
           total: comped
             ? typeof disc?.subtotal === "number"
               ? disc.subtotal
@@ -5099,6 +5109,17 @@ function PaymentPanel(props: {
                    is the one thing that differs, and it is said. */
                 <p className="pay-done-detail actor-note">{result.actorNote}</p>
               ) : null}
+              {result.enrolments.map((e, i) => (
+                /* T219: the place a sold pass came with. A place that did
+                   not happen is amber and says to book it by hand. */
+                <p
+                  key={i}
+                  className={`pay-done-detail${e.ok ? "" : " actor-note"}`}
+                  role={e.ok ? undefined : "alert"}
+                >
+                  {e.sentence}
+                </p>
+              ))}
               {result.receiptLine ? (
                 /* T53: emailed only when confirmed, else requested. */
                 <p className="pay-done-detail pay-done-receipt">

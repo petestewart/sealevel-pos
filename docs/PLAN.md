@@ -178,6 +178,25 @@ pack in the same gesture.
 - Upgrade: first-visit $28 drop-in applies toward the special, $21 difference.
 - Blocked on B1 (can we set the price?) and P3 (how long the offer lasts).
 
+**2.7 A pass that comes with a place.** A workshop sold as a pass also
+signs the buyer up for it, so the counter does not stop at the sale.
+- [x] Selling a configured pass books whoever it was bought for into its
+  course or class, straight after the sale, under the teacher's token
+  (Pete, 2026-11-09: the Gratitude Yin Sound Bath's two passes and the
+  workshop on 11/25/26, "classID=743"). **T219** (`enrolments` in the
+  shelf config, rows on the drawer's Shelf tab with a Check that says
+  what an id is; run once in `/api/checkout` inside T113's record;
+  `src/lib/enrolonpurchase.ts`). The next workshop is two rows in the
+  drawer, not a deploy.
+- [ ] Live, owed: `scripts/probe-signup-target.ts 743` on site 471 says
+  what 743 is (a course, by Mindbody's workshop URL; studio class ids
+  are six digits), and the same with a dummy client id rehearses the
+  write with `Test: true`. Then one real sale to a dummy client, and a
+  look at whether Mindbody spent the sold pass on the enrollment.
+- [ ] Configure it on the counter: the drawer's Shelf tab, "sign up on
+  purchase", one row per sound bath pass, course, 743, Check, Save.
+  Needs `DATABASE_URL` (the shelf config lives there).
+
 ---
 
 ## Phase 2.5 — the customer-facing iPad
