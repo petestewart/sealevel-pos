@@ -1986,6 +1986,15 @@ button.chip.action:active {
   flex: 1;
 }
 
+/* One shelf item per ruled row, its dropdown and hide box level with the
+   item's NAME rather than centred on a name that wraps, so it is plain
+   which item a control belongs to. */
+.dev-shelf-row {
+  align-items: flex-start;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
 .dev-setting input[type="number"] {
   width: 90px;
   padding: 6px 8px;
