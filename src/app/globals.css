@@ -2048,6 +2048,17 @@ button.chip.action:active {
   gap: 8px;
 }
 
+/* T219: a sign-up rule's pass on a line of its own, because the two
+   passes of one workshop differ only at the END of the name ("... Sound
+   Bath" and "... Sound Bath (Members)"), which a squeezed select cuts. */
+.dev-setting select.dev-text.dev-signup-pass {
+  flex: 1 1 100%;
+}
+
+.dev-setting .dev-text.dev-signup-id {
+  flex: 0 0 110px;
+}
+
 .dev-sub-match {
   display: flex;
   align-items: center;

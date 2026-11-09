@@ -69,6 +69,16 @@ const services = [
   { Id: "s7", ProductId: 1007, Name: "Towel Rental", Price: 3, OnlinePrice: 3, TaxRate: TAX, Count: 1, Type: "Series", RevenueCategory: "Towel and Mat" },
   { Id: "s8", ProductId: 1008, Name: "Mat Rental", Price: 3, OnlinePrice: 3, TaxRate: TAX, Count: 1, Type: "Series", RevenueCategory: "Towel and Mat" },
 ];
+/* T219: a workshop sold as two passes, with a course to sign the buyer up
+ * for. Only with FAKE_MB_WORKSHOP=1, so the training screenshots' shelf
+ * does not change under them. */
+const WORKSHOP = process.env.FAKE_MB_WORKSHOP === "1";
+if (WORKSHOP) {
+  services.push(
+    { Id: "s9", ProductId: 1009, Name: "Gratitude Yin Sound Bath", Price: 45, OnlinePrice: 45, TaxRate: 0, Count: 1, Type: "Series", RevenueCategory: "Workshops" },
+    { Id: "s10", ProductId: 1010, Name: "Gratitude Yin Sound Bath (Members)", Price: 35, OnlinePrice: 35, TaxRate: 0, Count: 1, Type: "Series", RevenueCategory: "Workshops" },
+  );
+}
 const products = [
   { Id: "p100", ProductId: 2001, Name: "Water Bottle (1L)", Price: 3, OnlinePrice: 3, TaxRate: TAX, CategoryId: 36 },
   { Id: "p101", ProductId: 2002, Name: "Coconut Water", Price: 4.5, OnlinePrice: 4.5, TaxRate: TAX, CategoryId: 36 },
@@ -228,6 +238,41 @@ const classDefs = [
   { Id: 30004, start: 120, len: 60, name: "Hot Flow", teacher: 100000202, cap: 4 },
   { Id: 30005, start: 240, len: 90, name: "Hot 26", teacher: 100000203, cap: 40 },
 ];
+/* T219: the course, ClassScheduleId 743, sixteen days out at 7pm, and its
+ * one session. `enrolled` is who addclienttoenrollment has booked. */
+const enrollments = WORKSHOP
+  ? [
+      {
+        Id: 743,
+        ClassDescription: { Id: 9743, Name: "Gratitude Yin Sound Bath" },
+        StartDate: `${day(16)}T00:00:00`,
+        EndDate: `${day(16)}T00:00:00`,
+        StartTime: "1900-01-01T19:00:00",
+        EndTime: "1900-01-01T20:30:00",
+        cap: 2,
+        enrolled: [],
+      },
+    ]
+  : [];
+const enrollmentRow = (e) => ({
+  Id: e.Id,
+  ClassDescription: e.ClassDescription,
+  StartDate: e.StartDate,
+  EndDate: e.EndDate,
+  StartTime: e.StartTime,
+  EndTime: e.EndTime,
+  Classes: [
+    {
+      Id: 124900 + (e.Id % 100),
+      ClassScheduleId: e.Id,
+      StartDateTime: `${e.StartDate.slice(0, 10)}T${e.StartTime.slice(11)}`,
+      EndDateTime: `${e.EndDate.slice(0, 10)}T${e.EndTime.slice(11)}`,
+      MaxCapacity: e.cap,
+      TotalBooked: e.enrolled.length,
+      IsCanceled: false,
+    },
+  ],
+});
 let visitSeq = 800000;
 const visits = {}; /* classId -> visit[] */
 function visit(classId, clientId, productId, signedIn = false) {
@@ -445,6 +490,21 @@ function handle(method, path, q, body, res) {
       if (cs && cs.Remaining < 900) cs.Remaining -= 1;
       (visits[classId] ??= []).push(v);
       return send(res, 200, { Visit: v });
+    }
+    case "/enrollment/enrollments": {
+      const ids = all(q, "ClassScheduleIds").map(Number);
+      const rows = enrollments.filter((e) => !ids.length || ids.includes(e.Id)).map(enrollmentRow);
+      return send(res, 200, { ...page(rows), Enrollments: rows });
+    }
+    case "/enrollment/addclienttoenrollment": {
+      const e = enrollments.find((x) => x.Id === Number(body.ClassScheduleId));
+      const c = byId(body.ClientId);
+      if (!e) return send(res, 400, { Error: { Message: "Enrollment not found.", Code: "InvalidParameter" } });
+      if (!c) return send(res, 400, { Error: { Message: "Client not found.", Code: "InvalidParameter" } });
+      if (e.enrolled.includes(c.Id)) return send(res, 400, { Error: { Message: "The client is already enrolled.", Code: "ClientIsAlreadyBooked" } });
+      if (body.Test !== true) e.enrolled.push(c.Id);
+      console.log(`[fake-mb] enrolled ${c.Id} in ${e.Id}${body.Waitlist ? " (waiting list)" : ""}`);
+      return send(res, 200, enrollmentRow(e));
     }
     case "/class/removeclientfromclass": {
       const classId = Number(body.ClassId);

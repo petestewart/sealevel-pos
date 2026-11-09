@@ -194,6 +194,29 @@ over-long key, the store off or full of flights in progress all charge as
 before, loudly in the log. Nothing below the gate moved, and nothing about
 it is settable from the drawer.
 
+### A sold pass can come with a place (T219)
+
+A workshop is sold as a pass AND booked, and the counter now does both
+(Pete: the Gratitude Yin Sound Bath's two passes and course 743, "think
+through how to add this as a feature so next time it is easy"). The
+rules are SHELF CONFIGURATION, `enrolments` in `src/lib/shelfconfig.ts`
+(pass id, `"enrollment"` or `"class"`, target id; ids only), edited on
+the drawer's Shelf tab under "sign up on purchase", where Check asks
+`/api/admin/shelf/signup-target` what an id is. A course is
+`/enrollment/addclienttoenrollment` by ClassScheduleId (the id in
+Mindbody's workshop URL); one class is `addclienttoclass` by ClassId.
+`enrolAfterCheckout` (`src/lib/enrolonpurchase.ts`) runs in
+`/api/checkout`'s POST after the checkout answered and INSIDE T113's
+record, so every charge path gets it and a replay books nobody twice.
+Only a sale that stands enrols; the owner is T90's `forClientId`, else
+the payer, never the house client; the target is read first and nothing
+is written unless it is confirmed upcoming; the write is the teacher's
+own, so dry run and the write guard apply; a full one goes on its
+waiting list. The answer carries `enrolments`, shown on the Cart
+screen's done block, amber when the place did not happen. Nothing in it
+can turn a sale into an error. Never run against Mindbody yet: run
+`scripts/probe-signup-target.ts 743 <dummy client>` first.
+
 ### A teacher's PIN now authorizes six separate things
 
 `CompPurpose` in `src/lib/auth.ts` is `comp` (a discount, T48), `overdraft`

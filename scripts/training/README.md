@@ -64,3 +64,9 @@ leaves a `FAILED-<flow>.png` there showing where it stopped.
 
 The demo class starts at the next quarter hour, so times in the pictures
 follow the clock when they were taken.
+
+`FAKE_MB_WORKSHOP=1` adds T219's workshop to the fake: the two Gratitude Yin
+Sound Bath passes (ProductIds 1009 and 1010) and course 743, sixteen days
+out with room for two, with `GET /enrollment/enrollments` and
+`POST /enrollment/addclienttoenrollment`. It is off by default so the
+shelf in the pictures does not change.

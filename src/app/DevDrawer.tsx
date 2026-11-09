@@ -2161,6 +2161,32 @@ interface ShelfAdminSubstitute {
   matchPrice: boolean;
 }
 
+/** T219: mirrors shelfconfig.ts PassEnrolment. */
+interface ShelfAdminEnrolment {
+  passId: string;
+  kind: "enrollment" | "class";
+  targetId: number;
+}
+
+/** T219: a sign-up rule as the tab edits it. The id is the text being
+ *  typed, so a half-typed row is not a number yet. */
+interface SignupRow {
+  passId: string;
+  kind: "enrollment" | "class";
+  targetId: string;
+}
+
+/** T219: what /api/admin/shelf/signup-target found for one id. */
+interface SignupLookup {
+  loading: boolean;
+  error: string | null;
+  enrollment: { label: string } | null;
+  enrollmentError: string | null;
+  cls: { label: string } | null;
+  classError: string | null;
+  schedule: { classId: number; label: string }[];
+}
+
 interface ShelfAdminConfig {
   hidden: string[];
   groups: ShelfAdminGroup[];
@@ -2170,6 +2196,8 @@ interface ShelfAdminConfig {
   products?: { key: string; categoryId: number }[];
   /** T112: the substitute a refused pass may be sold as. */
   substitutes?: ShelfAdminSubstitute[];
+  /** T219: the passes that sign their owner up for something. */
+  enrolments?: ShelfAdminEnrolment[];
 }
 
 /** T76: the rail's fixed pass sub-categories, mirrored from
@@ -2252,6 +2280,10 @@ function ShelfPanel() {
   const [moves, setMoves] = useState<Record<string, number>>({});
   /* T112: the pass substitutions, edited as rows. */
   const [subs, setSubs] = useState<ShelfAdminSubstitute[]>([]);
+  /* T219: the sign-up rules, edited as rows, and what each row's id was
+   * last looked up as, by row index. */
+  const [signups, setSignups] = useState<SignupRow[]>([]);
+  const [lookups, setLookups] = useState<Record<number, SignupLookup>>({});
   const [newLabel, setNewLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [outcome, setOutcome] = useState<
@@ -2299,6 +2331,14 @@ function ShelfPanel() {
         ),
       );
       setSubs((config.substitutes ?? []).map((x) => ({ ...x })));
+      setSignups(
+        (config.enrolments ?? []).map((x) => ({
+          passId: x.passId,
+          kind: x.kind,
+          targetId: String(x.targetId),
+        })),
+      );
+      setLookups({});
       setLoadError(null);
       setLoaded(true);
     } catch (err) {
@@ -2469,6 +2509,14 @@ function ShelfPanel() {
         substitutes: subs.filter(
           (x) => x.refusedId !== "" && x.substituteId !== "" && x.refusedId !== x.substituteId,
         ),
+        /* T219: only the complete rows, for T112's reason. */
+        enrolments: signups
+          .filter((x) => x.passId !== "" && /^[0-9]{1,10}$/.test(x.targetId.trim()))
+          .map((x) => ({
+            passId: x.passId,
+            kind: x.kind,
+            targetId: Number(x.targetId.trim()),
+          })),
       };
       const res = await fetch("/api/admin/shelf", {
         method: "PUT",
@@ -2516,6 +2564,68 @@ function ShelfPanel() {
 
   const byKind = (type: ShelfAdminItem["type"]) =>
     items.filter((i) => i.type === type);
+
+  /* T219: one row's sign-up edits, and its lookup. A change to the row
+   * drops the lookup, which was about the id as it was. */
+  const editSignup = (index: number, patch: Partial<SignupRow>) => {
+    setSignups((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+    setLookups((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
+  };
+  const lookUpSignup = async (index: number, id: string) => {
+    setLookups((prev) => ({
+      ...prev,
+      [index]: {
+        loading: true,
+        error: null,
+        enrollment: null,
+        enrollmentError: null,
+        cls: null,
+        classError: null,
+        schedule: [],
+      },
+    }));
+    let found: SignupLookup;
+    try {
+      const res = await fetch(
+        `/api/admin/shelf/signup-target?id=${encodeURIComponent(id.trim())}`,
+      );
+      const body = await res.json().catch(() => null);
+      found = res.ok
+        ? {
+            loading: false,
+            error: null,
+            enrollment: body?.enrollment ?? null,
+            enrollmentError: body?.enrollmentError ?? null,
+            cls: body?.class ?? null,
+            classError: body?.classError ?? null,
+            schedule: Array.isArray(body?.schedule) ? body.schedule : [],
+          }
+        : {
+            loading: false,
+            error: String(body?.error ?? `HTTP ${res.status}`),
+            enrollment: null,
+            enrollmentError: null,
+            cls: null,
+            classError: null,
+            schedule: [],
+          };
+    } catch (err) {
+      found = {
+        loading: false,
+        error: err instanceof Error ? err.message : String(err),
+        enrollment: null,
+        enrollmentError: null,
+        cls: null,
+        classError: null,
+        schedule: [],
+      };
+    }
+    setLookups((prev) => ({ ...prev, [index]: found }));
+  };
 
   return (
     <div className="dev-settings">
@@ -2723,6 +2833,155 @@ function ShelfPanel() {
           }
         >
           add substitution
+        </button>
+      </div>
+
+      {/* T219: the passes that sign their owner up once sold. Pete: "if
+          someone purchases either 'Gratitude Yin Sound Bath' or
+          'Gratitude Yin Sound Bath (Members)' workshop, they are
+          automatically signed up for the Gratitude Yin Sound Bath on
+          11/25/26 ... think through how to add this as a feature so next
+          time it is easy to implement". The next workshop is a row here,
+          not a deploy. */}
+      <div className="dev-label">sign up on purchase</div>
+      <p className="muted">
+        Selling one of these passes signs whoever it was bought for up for
+        the course or class beside it, straight after the sale, under the
+        teacher&apos;s own sign-in; the done screen says what happened. A
+        full one goes on its waiting list, and one that has ended books
+        nothing. Paste the id from Mindbody and tap Check: a workshop is
+        usually a course, and the id in its Mindbody page (classID=...) is
+        the course&apos;s. Two passes for one workshop are two rows.
+      </p>
+      {signups.map((row, index) => {
+        const look = lookups[index];
+        const idOk = /^[0-9]{1,10}$/.test(row.targetId.trim());
+        return (
+          <div key={index}>
+            <div className="dev-setting dev-sub-row">
+              <select
+                className="dev-text dev-signup-pass"
+                aria-label="The pass that signs its owner up"
+                value={row.passId}
+                onChange={(e) => editSignup(index, { passId: e.target.value })}
+              >
+                <option value="">pass</option>
+                {byKind("Service").map((item) => (
+                  <option key={item.key} value={String(item.id)}>
+                    {item.name} ${item.price.toFixed(2)}
+                  </option>
+                ))}
+              </select>
+              <span className="muted">signs up for</span>
+              <select
+                className="dev-text"
+                aria-label="What the id names"
+                value={row.kind}
+                onChange={(e) =>
+                  editSignup(index, {
+                    kind: e.target.value === "class" ? "class" : "enrollment",
+                  })
+                }
+              >
+                <option value="enrollment">course (enrollment)</option>
+                <option value="class">one class</option>
+              </select>
+              <input
+                className="dev-text dev-signup-id"
+                inputMode="numeric"
+                aria-label="The course or class id"
+                placeholder="id"
+                value={row.targetId}
+                onChange={(e) => editSignup(index, { targetId: e.target.value })}
+              />
+              <button
+                disabled={!idOk || look?.loading === true}
+                onClick={() => void lookUpSignup(index, row.targetId)}
+              >
+                {look?.loading ? "checking" : "check"}
+              </button>
+              <button
+                onClick={() => {
+                  setSignups((prev) => prev.filter((_, i) => i !== index));
+                  setLookups({});
+                }}
+                aria-label="Remove this sign-up rule"
+              >
+                remove
+              </button>
+            </div>
+            {look && !look.loading ? (
+              look.error ? (
+                <p className="dev-bad">{look.error}</p>
+              ) : (
+                <>
+                  <p className={row.kind === "enrollment" && look.enrollment ? "" : "muted"}>
+                    As a course:{" "}
+                    {look.enrollment
+                      ? look.enrollment.label
+                      : look.enrollmentError
+                        ? `did not read (${look.enrollmentError})`
+                        : "no upcoming course has this id"}
+                    {look.enrollment && row.kind !== "enrollment" ? (
+                      <>
+                        {" "}
+                        <button onClick={() => editSignup(index, { kind: "enrollment" })}>
+                          use this
+                        </button>
+                      </>
+                    ) : null}
+                  </p>
+                  <p className={row.kind === "class" && look.cls ? "" : "muted"}>
+                    As one class:{" "}
+                    {look.cls
+                      ? look.cls.label
+                      : look.classError
+                        ? `did not read (${look.classError})`
+                        : "no upcoming class has this id"}
+                    {look.cls && row.kind !== "class" ? (
+                      <>
+                        {" "}
+                        <button onClick={() => editSignup(index, { kind: "class" })}>
+                          use this
+                        </button>
+                      </>
+                    ) : null}
+                  </p>
+                  {look.schedule.map((c) => (
+                    <p key={c.classId} className="muted">
+                      Class schedule {row.targetId.trim()} has class {c.classId}:{" "}
+                      {c.label}{" "}
+                      <button
+                        onClick={() =>
+                          editSignup(index, { kind: "class", targetId: String(c.classId) })
+                        }
+                      >
+                        use this class
+                      </button>
+                    </p>
+                  ))}
+                </>
+              )
+            ) : null}
+          </div>
+        );
+      })}
+      <div className="dev-setting">
+        <button
+          onClick={() =>
+            setSignups((prev) => [
+              ...prev,
+              {
+                passId: "",
+                kind: prev[prev.length - 1]?.kind ?? "enrollment",
+                /* The next row is usually the same workshop's other
+                   price, so it starts on the row above's target. */
+                targetId: prev[prev.length - 1]?.targetId ?? "",
+              },
+            ])
+          }
+        >
+          add sign-up rule
         </button>
       </div>
 

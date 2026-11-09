@@ -20927,3 +20927,101 @@ Not changed: the amber "guest pass is still on their account: sale N was
 paid by Other, not a comp" line from the same test is T63 working as
 specified (a return is only made of a single-item $0 comp sale). Pete's
 own test pass was sold with "Other".
+
+## T219. A pass that comes with a place: selling the workshop signs them up (Pete, 2026-11-09)
+
+Pete: "can you update the app so that if someone purchases either
+'Gratitude Yin Sound Bath' or 'Gratitude Yin Sound Bath (Members)'
+workshop, they are automatically signed up for the Gratitude Yin Sound
+Bath on 11/25/26 (classID=743)? in mindbody we have to sell the pass to
+the person and sign them up for the course. think through how to add
+this as a feature so next time it is easy to implement."
+
+So it is a feature with a configuration, not a constant: the next
+workshop is two rows in the drawer.
+
+### What was built
+
+- **A sign-up rule is shelf configuration** (`enrolments` in
+  `src/lib/shelfconfig.ts`, beside T112's substitutions):
+  `{ passId, kind, targetId }`, ids only per the T29 charter. `kind` is
+  `"enrollment"` (a COURSE, `targetId` its ClassScheduleId, booked with
+  `POST /enrollment/addclienttoenrollment`) or `"class"` (one ClassId,
+  booked with `addclienttoclass` exactly as a walk-in). Several passes may
+  name one target; one pass names at most one. Validation is shape only,
+  because a stored config that fails validation drops the whole config,
+  hide list included.
+- **The drawer's Shelf tab edits it** ("sign up on purchase"): a pass
+  select on its own line (the two sound bath passes differ only at the
+  end of the name), course or one class, the id, and **Check**, which asks
+  `GET /api/admin/shelf/signup-target?id=` (devtools-gated, three reads)
+  what the id is: as a course, as one class, and as a class schedule,
+  with "use this" on whichever it found. Pete's "classID=743" is the id
+  from Mindbody's own workshop page; it is a course by every sign (a
+  studio class id is six digits, like the 124540 quoted earlier in this
+  file), and Check is how that stops being a guess.
+- **It runs once, on the server, at the one point every charge passes**:
+  `/api/checkout`'s POST, after the checkout answered and before T113's
+  idempotency record is written (`enrolAfterCheckout` in
+  `src/lib/enrolonpurchase.ts`). So the Cart screen and the roster's
+  "Pay and check in" both get it with no code of their own (T209's
+  lesson), and a request arriving twice replays the first answer, places
+  included, and books nobody twice (seen: the same key sent again, one
+  enrolment in the fake's log).
+- **Only a sale that stands enrols anybody** (200, `ok: true`, not
+  suppressed). The pass's owner is the line's T90 `forClientId`, else the
+  paying client, never the house client. Two of one workshop's passes on
+  one person are ONE place.
+- **The target is read first and nothing is written unless it is
+  confirmed upcoming** (up to 180 days ahead). Not found, ended,
+  cancelled or unreadable books nothing and says so: a rule left in the
+  drawer after the workshop must not invent attendance. A full one (when
+  the read can count it) goes on its waiting list, T208's rule.
+- **The write is the teacher's own** (`runAsActor`, T49's fallback),
+  through `mindbody()` with the client id, so dry run, the write guard
+  and T89's settling window apply. `SendEmail: false`, like every booking
+  this app makes.
+- **The answer carries `enrolments`**, one per place: status, `ok`, and a
+  sentence. The Cart screen's done block shows each under the sale,
+  amber with `role="alert"` when it is NOT signed up ("... The pass is
+  sold; sign them up in Mindbody by hand."). Nothing here can turn a sale
+  into an error: anything thrown leaves the checkout's own answer
+  untouched with one `[enrol]` log line. Every outcome logs `[enrol]`.
+- `scripts/probe-signup-target.ts <id> [clientId]`: the drawer's Check
+  from a terminal, plus a `Test: true` rehearsal of the write.
+- The fake Mindbody serves the workshop (two passes, course 743 sixteen
+  days out, capacity 2) and the two enrollment endpoints with
+  `FAKE_MB_WORKSHOP=1`, off by default so the training shelf is
+  unchanged.
+
+### Verified
+
+- `tsc --noEmit` and `next build`: clean.
+- Against the fake, through the real routes: a cash sale of the $45 pass
+  books the course ("Signed up for Gratitude Yin Sound Bath, Wed Nov 25,
+  7:00pm."); the same idempotency key again replays without a second
+  enrolment; a second purchase is amber with Mindbody's "already
+  enrolled"; a T90 ticket books the recipient and the payer, the second
+  onto the waiting list once the course was full; a plain sale carries no
+  `enrolments`; a rule naming id 999 books nothing and says so.
+- In Chromium: a stored-card sale on the Cart screen shows the line on the
+  done block; the Shelf tab's rows and Check read correctly.
+
+### Limits
+
+- **Never run against Mindbody.** Unseen: what `GET /enrollment/enrollments`
+  returns for site 471 (the session times are read from `Classes` when
+  present, else the course's own `StartDate`/`StartTime`), whether
+  `addclienttoenrollment` spends the sold pass on the course the way a
+  class booking does (the request has no `ClientServiceId`), and whether
+  it refuses a full course itself. `scripts/probe-signup-target.ts 743
+  <dummy client>` settles the first and rehearses the second.
+- A T90 PARTIAL ticket (some carts out, some not) enrols nobody; its
+  sentence already says which carts landed, and those places are booked
+  by hand.
+- The roster's "Pay and check in" enrols on the server like any sale but
+  closes its dialog with no done block, so its outcome is in the log
+  only. Selling a workshop pass there, to pay for the class on the
+  roster, is not a thing anyone should do.
+- Nothing warns BEFORE the sale that a rule's course has ended. Hide the
+  sound bath passes (same tab) once 11/25 has passed.
