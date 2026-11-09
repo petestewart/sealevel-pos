@@ -215,7 +215,6 @@ const flows = {
     await p.waitForTimeout(2000);
     await p.getByPlaceholder("Search for a walk-in").fill("noah");
     await p.waitForTimeout(2500);
-    await shot(p, "25-full-search");
     await p.getByText("Noah Bennett").first().click();
     await shot(p, "26-waitlist-confirm", { wait: 1200 });
     await p.getByRole("button", { name: "Add to waiting list" }).click();
@@ -262,7 +261,6 @@ const flows = {
     await p.waitForTimeout(1500);
     await p.getByRole("button", { name: /^Cash/ }).first().click();
     await p.waitForTimeout(600);
-    await shot(p, "34a-cash-line");
     /* Cash goes in at the exact amount; tapping the amount opens the keypad. */
     await p.getByRole("button", { name: /\$7\.72/ }).first().click();
     await p.waitForTimeout(600);
@@ -297,7 +295,7 @@ const flows = {
     await shot(p, "38-discount-pin");
     await keypad(p, TEACHER.pin.slice(-1));
     await p.getByRole("button", { name: "Done", exact: true }).click().catch(() => {});
-    await shot(p, "39-discount-confirm", { wait: 1500 });
+    await p.waitForTimeout(1500);
     await p.getByRole("button", { name: "Discount", exact: true }).last().click();
     await shot(p, "40-discount-applied", { wait: 2500 });
     await p.context().close();
@@ -323,7 +321,6 @@ const flows = {
     await p.getByRole("button", { name: "Sell without a signature" }).click();
     await p.waitForTimeout(500);
     await keypad(p, TEACHER.pin.slice(0, -1));
-    await shot(p, "43-membership-pin");
     await p.context().close();
   },
 
