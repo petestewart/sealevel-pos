@@ -69,6 +69,7 @@ import type { CardOnFile } from "@/lib/clientcard";
 import type { ClientProfile } from "@/lib/clientprofile";
 import { stripSignatures } from "@/lib/notesig";
 import { IDEMPOTENCY_HEADER, newIdempotencyKey } from "@/lib/idemkey";
+import { isFirstClass, type FirstClassFact } from "@/lib/firstclass";
 
 /**
  * The counter screen. One class selector, one roster, one search box.
@@ -112,6 +113,9 @@ interface RosterEntry {
   balance: number | null;
   /** MembershipIcon nonzero on the client record; null when unknown. */
   member: boolean | null;
+  /** The client record's FirstClassDate, behind the first-class star
+   *  (src/lib/firstclass.ts); null when the lookup did not answer. */
+  firstClass: FirstClassFact | null;
   /** T62: whose guest this visit is, from the server's guest_visits
    *  table; null with no marker or no database (then the page's own
    *  memory, guestBy, covers the class view). */
@@ -514,6 +518,22 @@ function InfoIcon() {
       size={18}
       extra={<circle cx="12" cy="12" r="9" />}
     />
+  );
+}
+
+/** A filled five-point star: the first-class marker on a roster row.
+ *  Filled rather than stroked so it reads at 16px inside its chip. */
+function StarIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z" />
+    </svg>
   );
 }
 
@@ -7799,6 +7819,23 @@ function FrontDesk({
                     Two slots in a set order, the M slot empty on a
                     non-member row so the info icons line up too. */}
                 <span className="cell-icons">
+                  {/* The M and the first-class star travel as a pair: side
+                      by side in landscape, and in portrait sharing the
+                      M's one slot (stacked when a row has both), so the
+                      narrow layout gives the name no width away. */}
+                  {(() => {
+                    const firstClass = isFirstClass(
+                      entry.firstClass,
+                      activeClass?.startsAt,
+                    );
+                    return (
+                  <span
+                    className={
+                      entry.member && firstClass
+                        ? "marker-pair both"
+                        : "marker-pair"
+                    }
+                  >
                   {/* T52: the M is a button (Pete: "clicking on an 'M'
                       icon should show more info about their
                       membership"), opening the Membership modal. */}
@@ -7818,6 +7855,31 @@ function FrontDesk({
                   ) : (
                     <span className="m-slot" aria-hidden="true" />
                   )}
+                  {/* The first-class star (Pete: "when a class is going
+                      to be a student's first class with us a star is
+                      shown on their row in the same area where \"M\"
+                      is"). Its own fixed slot after the M, empty on
+                      every other row, so the M and the info icons keep
+                      their columns. Mindbody's FirstClassDate against
+                      the class on screen; src/lib/firstclass.ts has the
+                      rule. A marker, not a control. */}
+                  {firstClass ? (
+                    <span
+                      className="first-slot"
+                      role="img"
+                      title="First class with us"
+                      aria-label={`First class with us: ${entry.name}`}
+                    >
+                      <span className="m-chip">
+                        <StarIcon />
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="m-slot" aria-hidden="true" />
+                  )}
+                  </span>
+                    );
+                  })()}
                   {/* On EVERY row: dimmed when the client has no red
                       alert, no yellow alert and no notes, because adding
                       the first one starts here too; bright when any

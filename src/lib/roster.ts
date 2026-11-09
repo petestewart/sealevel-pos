@@ -1,4 +1,5 @@
 import { logClientPick, pickClientRecord } from "./clientrecord";
+import type { FirstClassFact } from "./firstclass";
 import { mindbody, type Actor } from "./mindbody";
 
 /**
@@ -46,6 +47,10 @@ export interface RosterEntry {
   /** Whether the client has a membership (`MembershipIcon` nonzero on the
    *  client record). null when the lookup failed. */
   member: boolean | null;
+  /** The client record's `FirstClassDate`, behind the roster row's
+   *  first-class star (src/lib/firstclass.ts decides). null when the
+   *  lookup failed or missed this client: unknown, so no star. */
+  firstClass: FirstClassFact | null;
   /** T62: whose guest this visit is, from the guest_visits table (the
    *  roster route fills it; Mindbody's visit says "Guest Pass" and no
    *  more). Null with no marker, no database, or a dead one. */
@@ -390,6 +395,7 @@ export async function rosterFor(classId: number): Promise<RosterEntry[]> {
       /** Filled by classRoster's batched client lookup. */
       balance: null,
       member: null,
+      firstClass: null,
       /** Filled by the roster route from guest_visits (T62). */
       guestOf: null,
       /**
@@ -450,6 +456,9 @@ interface ClientBrief {
    *  Devin: one Drop In at 0 remaining, still an M). The M chip's modal
    *  reads /api/membership to show what it rests on. */
   member: boolean;
+  /** `FirstClassDate`, a top-level Client field (client.yml); null when
+   *  the record carries none. */
+  firstClassDate: string | null;
 }
 
 /**
@@ -546,6 +555,10 @@ async function briefsForIds(ids: string[]): Promise<ClientBriefs> {
             : null,
         member:
           typeof c?.MembershipIcon === "number" && c.MembershipIcon !== 0,
+        firstClassDate:
+          typeof c?.FirstClassDate === "string" && c.FirstClassDate.trim()
+            ? c.FirstClassDate.trim()
+            : null,
       });
     }
   }
@@ -624,6 +637,9 @@ export async function classRoster(
        * the same fail-open posture as waiverSigned. */
       balance: brief ? brief.balance : null,
       member: brief ? brief.member : null,
+      /* The first-class star's evidence rides the same batch; a client
+       * the lookup missed is unknown, never "no first class on record". */
+      firstClass: brief ? { date: brief.firstClassDate } : null,
       mindbodyId: entry.mindbodyId ?? brief?.uniqueId ?? null,
     };
   });
