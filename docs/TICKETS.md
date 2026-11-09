@@ -20904,3 +20904,26 @@ student's 9am from their 5pm.
   ones (the spec's `crossRegionalLookup` text says "past and scheduled").
   If it returns only past visits, a student booked into two classes
   today gets the star on both until the first has happened.
+
+## T218. A note that saved slowly is not a failure (Pete, 2026-11-09)
+
+Pete's guest-pass test on site 471: the sheet showed, in red, "Notes:
+failed. guest: no answer in 8s; the note may still file". The call log
+says Alison's `updateclient` answered 200 after 9152ms: the note filed,
+and the sheet called it failed. The same session's `updateclient`
+writes took 3.3s, 4.0s, 6.3s and 9.2s.
+
+- `FORMULA_NOTE_WAIT_MS` 8s to 15s (`src/lib/formulanote.ts`), for every
+  caller. Still bounded, so a hung Mindbody cannot hold a done screen
+  for the transport's 20s.
+- The timeout reads "Mindbody had not answered after 15 seconds, and may
+  still save it", and the guest route names the person ("Alison
+  Stewart's note: ...") instead of "guest:" / "member:".
+- The guest sheet shows a note that did not confirm in amber as "not
+  confirmed ... Check the profile before adding it again", never red and
+  never "failed": the note records a check-in that already stands.
+
+Not changed: the amber "guest pass is still on their account: sale N was
+paid by Other, not a comp" line from the same test is T63 working as
+specified (a return is only made of a single-item $0 comp sale). Pete's
+own test pass was sold with "Other".

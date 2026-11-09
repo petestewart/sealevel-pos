@@ -623,12 +623,24 @@ export default function GuestModal({
        * signed entry in each profile's Notes; the label says which. */
       const viaNotes =
         answer.noteVia?.guest === "notes" || answer.noteVia?.member === "notes";
-      say(
-        viaNotes ? "Notes" : "Formula Notes",
-        steps.notes,
-        viaNotes ? "a signed entry added to both profiles." : "filed on both.",
-        "",
-      );
+      /* A note is a record of a check-in that already happened, so a
+       * note that did not confirm is amber, never red, and never
+       * "failed": the commonest cause is a slow Mindbody that saved it
+       * anyway (Pete's test, 2026-11-08: red at 8s, filed at 9.2s). */
+      const notesLabel = viaNotes ? "Notes" : "Formula Notes";
+      if (typeof steps.notes === "object") {
+        lines.push({
+          text: `${notesLabel}: not confirmed. ${steps.notes.error.replace(/\.$/, "")}. Check the profile before adding it again.`,
+          tone: "warn",
+        });
+      } else {
+        say(
+          notesLabel,
+          steps.notes,
+          viaNotes ? "a signed entry added to both profiles." : "filed on both.",
+          "",
+        );
+      }
       if (answer.verified === false) {
         /* T62: the visit is written and signed in, but neither read-back
          * could say whose pass paid; the teacher looks at the row. */

@@ -44,7 +44,12 @@ import type { StaffSession } from "./staffsession";
  * simply has no id in the answer. It never throws.
  */
 
-export const FORMULA_NOTE_WAIT_MS = 8_000;
+/* 15s, up from 8s (Pete's guest-pass test, 2026-11-08): site 471's
+ * `updateclient` answered in 3.3s, 4.0s, 6.3s and 9.2s in one session,
+ * so the 9.2s write was reported "failed" on the sheet while it filed.
+ * The wait still ends, so a hung Mindbody cannot hold the done screen
+ * for the transport's full 20s. */
+export const FORMULA_NOTE_WAIT_MS = 15_000;
 
 /** Mindbody's wording for a site without the feature, as Pete's
  *  screenshot showed it, matched loosely enough to survive a rephrase
@@ -95,7 +100,7 @@ export async function fileFormulaNote(opts: {
           () =>
             reject(
               new Error(
-                `no answer in ${waitMs / 1000}s; the note may still file`,
+                `Mindbody had not answered after ${waitMs / 1000} seconds, and may still save it`,
               ),
             ),
           waitMs,
