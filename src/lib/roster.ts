@@ -1,5 +1,5 @@
 import { logClientPick, pickClientRecord } from "./clientrecord";
-import type { FirstClassFact } from "./firstclass";
+import { needsVisitCheck, type FirstClassFact } from "./firstclass";
 import { mindbody, type Actor } from "./mindbody";
 
 /**
@@ -353,8 +353,24 @@ export function sessionless(name: unknown): boolean {
 }
 
 export async function rosterFor(classId: number): Promise<RosterEntry[]> {
+  return (await readRoster(classId)).entries;
+}
+
+/** The roster plus the class's own start, read off its visits (T217's
+ *  first-class check needs it on a day the around-now summary skips). */
+async function readRoster(
+  classId: number,
+): Promise<{ entries: RosterEntry[]; startsAt: string | null }> {
   const body = await mindbody(`/class/classvisits?ClassId=${classId}`);
   const visits = body?.Class?.Visits ?? body?.Visits ?? [];
+  const startsAt =
+    [body?.Class?.StartDateTime, ...visits.map((v: any) => v?.StartDateTime)].find(
+      (x: unknown): x is string => typeof x === "string" && /^\d{4}-\d\d-\d\d/.test(x),
+    ) ?? null;
+  return { entries: mapVisits(visits), startsAt };
+}
+
+function mapVisits(visits: any[]): RosterEntry[] {
   /* Mindbody's Remaining on a visit's pass is the count AFTER this visit
    * took its session: the booking consumed it. Pete (2026-09-14): "the
    * amount should be how many they have remaining BEFORE using one for
@@ -577,10 +593,11 @@ export async function classRoster(
   classId: number,
   opts: { summary?: boolean } = {},
 ): Promise<ClassRoster> {
-  const [classes, rawEntries] = await Promise.all([
+  const [classes, read] = await Promise.all([
     opts.summary === false ? Promise.resolve([]) : classesAroundNow(),
-    rosterFor(classId),
+    readRoster(classId),
   ]);
+  const rawEntries = read.entries;
 
   /**
    * ONE batched client lookup for ALL ids on this roster. It used to run
@@ -638,12 +655,14 @@ export async function classRoster(
       balance: brief ? brief.balance : null,
       member: brief ? brief.member : null,
       /* The first-class star's evidence rides the same batch; a client
-       * the lookup missed is unknown, never "no first class on record". */
-      firstClass: brief ? { date: brief.firstClassDate } : null,
+       * the lookup missed is unknown, never "no first class on record".
+       * `earlier` is filled below (T217). */
+      firstClass: brief ? { date: brief.firstClassDate, earlier: null } : null,
       mindbodyId: entry.mindbodyId ?? brief?.uniqueId ?? null,
     };
   });
   const summary = classes.find((c) => c.classId === classId);
+  await fillEarlierBookings(entries, summary?.startsAt || read.startsAt);
   return {
     classId,
     name: summary?.name ?? "Class",
@@ -655,6 +674,98 @@ export async function classRoster(
     entries,
     waiverError,
   };
+}
+
+/**
+ * T217: whether each first-class candidate has a booking that starts
+ * before this class, which is what limits the star to the first class on
+ * a student's first day (src/lib/firstclass.ts has the rule).
+ *
+ * Only rows `needsVisitCheck` keeps are asked about: a regular whose
+ * `FirstClassDate` is on an earlier day costs nothing. Each candidate is
+ * ONE read on the service account, `/client/clientvisits` from two years
+ * back to the class's start, oldest first and at most ten, by UniqueId
+ * when the visit carried one (T114) and by Id otherwise. Any returned
+ * visit that starts before this class, and was not late-cancelled or
+ * missed, means this is not their first.
+ *
+ * Bounded twice, because the roster re-reads every 30 seconds (T213):
+ * answers are kept in memory for two minutes per client and class
+ * start, and at most EARLIER_BUDGET rows are asked per load. A roster
+ * with more candidates than that is itself a sign that Mindbody is not
+ * sending `FirstClassDate` at all (T216's open question), so the extra
+ * rows draw no star and the log says so. Every failure leaves `earlier`
+ * null, which draws nothing.
+ */
+const EARLIER_BUDGET = 10;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const EARLIER_TTL_MS = 2 * 60 * 1000;
+const EARLIER_LOOKBACK_DAYS = 730;
+const earlierCache = new Map<string, { at: number; earlier: boolean }>();
+
+async function fillEarlierBookings(
+  entries: RosterEntry[],
+  classStartsAt: string | null | undefined,
+): Promise<void> {
+  if (!classStartsAt || !/^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(classStartsAt)) return;
+  const start = classStartsAt.slice(0, 19);
+  const candidates = entries.filter(
+    (e) => e.firstClass !== null && needsVisitCheck(e.firstClass.date, start),
+  );
+  if (candidates.length > EARLIER_BUDGET) {
+    console.warn(
+      `[first-class] ${candidates.length} candidates on one roster (budget ${EARLIER_BUDGET}); ` +
+        "is FirstClassDate missing from Mindbody's client records?",
+    );
+  }
+  const now = Date.now();
+  for (const [key, hit] of earlierCache) {
+    if (now - hit.at > EARLIER_TTL_MS) earlierCache.delete(key);
+  }
+  const lookback = new Date(
+    Date.parse(`${start.slice(0, 10)}T00:00:00Z`) - EARLIER_LOOKBACK_DAYS * DAY_MS,
+  )
+    .toISOString()
+    .slice(0, 10);
+  await Promise.all(
+    candidates.slice(0, EARLIER_BUDGET).map(async (entry) => {
+      const fact = entry.firstClass;
+      if (!fact) return;
+      const who =
+        entry.mindbodyId !== null
+          ? `UniqueClientId=${entry.mindbodyId}`
+          : `ClientId=${encodeURIComponent(entry.clientId)}`;
+      const key = `${who}|${start}`;
+      const hit = earlierCache.get(key);
+      if (hit) {
+        fact.earlier = hit.earlier;
+        return;
+      }
+      try {
+        const body = await mindbody(
+          `/client/clientvisits?${who}` +
+            `&StartDate=${encodeURIComponent(`${lookback}T00:00:00`)}` +
+            `&EndDate=${encodeURIComponent(start)}` +
+            "&Order=asc&Limit=10",
+        );
+        const visits: any[] = Array.isArray(body?.Visits) ? body.Visits : [];
+        const earlier = visits.some(
+          (v) =>
+            typeof v?.StartDateTime === "string" &&
+            v.StartDateTime.slice(0, 19) < start &&
+            !v?.LateCancelled &&
+            !v?.Missed,
+        );
+        fact.earlier = earlier;
+        earlierCache.set(key, { at: now, earlier });
+      } catch (err) {
+        console.warn(
+          `[first-class] visit read failed for client ${entry.clientId}: ` +
+            (err instanceof Error ? err.message : String(err)),
+        );
+      }
+    }),
+  );
 }
 
 /**

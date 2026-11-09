@@ -20848,3 +20848,82 @@ is".
   the first look at a real roster: that is the thing to check.
 - Search results and the waiting list section show no star; only the
   roster rows have a class to compare against.
+
+## T217. The first-class star only on the first class of the first day (Pete, 2026-11-09)
+
+Pete booked himself into five classes on one day and every one showed
+T216's star: "it should only have the star if it's their first class on
+their first day".
+
+### Why T216 starred all five
+
+`FirstClassDate` is a day at best, and T216 counted a record with no date
+as a first class and a bare date (midnight) as matching any class that
+day. So everyone booked into several classes before their first visit,
+or on their first day, got a star on each. The date alone cannot tell a
+student's 9am from their 5pm.
+
+### What changed
+
+- **A second fact, `earlier`.** `FirstClassFact` is now
+  `{date, earlier}`: whether the client has a booking that starts before
+  this class, on an earlier day or earlier the same day. `isFirstClass`
+  (`src/lib/firstclass.ts`, still pure and run in the browser) draws the
+  star only when `earlier` is `false` and the date is not on an earlier
+  day. `null` (not asked, the read failed, over budget) draws nothing.
+- **The roster asks, only for candidates.** `fillEarlierBookings` in
+  `src/lib/roster.ts` runs after the batched client lookup. A row whose
+  `FirstClassDate` is on an earlier day than the class (every regular)
+  is ruled out with no call (`needsVisitCheck`). Each remaining row is
+  ONE `/client/clientvisits` read on the service account: by
+  `UniqueClientId` when the visit carried one (T114), two years back to
+  the class's start, `Order=asc`, `Limit=10`; any visit before this
+  class that was not late-cancelled or missed means not first.
+- **Bounded for T213's 30 second re-read.** Answers are cached in
+  memory for two minutes per client and class start, and at most ten
+  rows are asked per load. More candidates than that on one roster is
+  the sign that Mindbody is not sending `FirstClassDate` at all; the
+  rest draw no star and `[first-class]` says so in the log.
+- **The class's start comes from its own visits** (`readRoster`), so a
+  class on another day, which skips the around-now summary, is checked
+  too.
+
+### Verified
+
+- `tsc --noEmit` and `next build`: clean.
+- Against `scripts/training/fake-mindbody.mjs`: a client with no
+  `FirstClassDate` and no history, booked into three classes the same
+  day, has the star on the earliest only, in Chromium on the roster
+  screen; regulars with an earlier first class date get no star and
+  cost no read.
+
+### Limits
+
+- Still unseen live: what Mindbody puts in `FirstClassDate`, and whether
+  `/client/clientvisits` returns booked future classes alongside past
+  ones (the spec's `crossRegionalLookup` text says "past and scheduled").
+  If it returns only past visits, a student booked into two classes
+  today gets the star on both until the first has happened.
+
+## T218. A note that saved slowly is not a failure (Pete, 2026-11-09)
+
+Pete's guest-pass test on site 471: the sheet showed, in red, "Notes:
+failed. guest: no answer in 8s; the note may still file". The call log
+says Alison's `updateclient` answered 200 after 9152ms: the note filed,
+and the sheet called it failed. The same session's `updateclient`
+writes took 3.3s, 4.0s, 6.3s and 9.2s.
+
+- `FORMULA_NOTE_WAIT_MS` 8s to 15s (`src/lib/formulanote.ts`), for every
+  caller. Still bounded, so a hung Mindbody cannot hold a done screen
+  for the transport's 20s.
+- The timeout reads "Mindbody had not answered after 15 seconds, and may
+  still save it", and the guest route names the person ("Alison
+  Stewart's note: ...") instead of "guest:" / "member:".
+- The guest sheet shows a note that did not confirm in amber as "not
+  confirmed ... Check the profile before adding it again", never red and
+  never "failed": the note records a check-in that already stands.
+
+Not changed: the amber "guest pass is still on their account: sale N was
+paid by Other, not a comp" line from the same test is T63 working as
+specified (a return is only made of a single-item $0 comp sale). Pete's
+own test pass was sold with "Other".

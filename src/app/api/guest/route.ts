@@ -838,12 +838,13 @@ async function guestFlow(session: StaffSession, raw: unknown): Promise<Response>
     notes.member = m.id;
     noteVia.guest = g.via;
     noteVia.member = m.via;
+    /* Named, not "guest:"/"member:": the line is read by a teacher. */
     const errors = [
-      g.error === null ? null : `guest: ${g.error}`,
-      m.error === null ? null : `member: ${m.error}`,
+      g.error === null ? null : `${guestLabel}'s note: ${g.error}`,
+      m.error === null ? null : `${memberLabel}'s note: ${m.error}`,
     ].filter((e): e is string => e !== null);
     const errorLine =
-      g.error !== null && g.error === m.error ? `both: ${g.error}` : errors.join("; ");
+      g.error !== null && g.error === m.error ? `both notes: ${g.error}` : errors.join("; ");
     steps.notes =
       errors.length > 0
         ? { error: errorLine }

@@ -1,0 +1,1020 @@
+<title>Sealevel Front Desk Guide</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,400..800;1,100,400&display=swap">
+<style>
+/* Layout: a sticky contents rail beside one reading column, screenshots
+   wider than the text. Same palette, font and square corners as the app,
+   so the guide looks like the thing it teaches. */
+:root {
+  --bg: #f0efee;
+  --surface: #ffffff;
+  --surface-2: #f8f4f4;
+  --line: #d7d3d3;
+  --rule: #201e1d;
+  --ink: #201e1d;
+  --muted: #605d5d;
+  --accent: #166d67;
+  --accent-ink: #ffffff;
+  --accent-bg: #e3efee;
+  --ok: #0f6b46;
+  --ok-bg: #e3f1e9;
+  --warn: #7a4f00;
+  --warn-bg: #f7ecd4;
+  --stop: #a32020;
+  --stop-bg: #f8e6e6;
+  --gold: #6d4a05;
+  --gold-bg: #f0dcae;
+  --scrim: rgba(24, 22, 21, 0.82);
+  --shadow: 0 12px 36px rgba(24, 22, 21, 0.18);
+
+  --font: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --step--1: 0.875rem;
+  --step-0: 1.0625rem;
+  --step-1: 1.25rem;
+  --step-2: 1.625rem;
+  --step-3: 2.25rem;
+  --step-4: 3rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121313; --surface: #1c1d1d; --surface-2: #252626; --line: #3a3b3b;
+    --rule: #f3f2f2; --ink: #f3f2f2; --muted: #a9a5a5; --accent: #3fa89f;
+    --accent-ink: #07211f; --accent-bg: #16302e; --ok: #6cc79b; --ok-bg: #12291f;
+    --warn: #e2b768; --warn-bg: #2c2110; --stop: #e88b8b; --stop-bg: #2e1616;
+    --gold: #e8cf94; --gold-bg: #2b2410; --scrim: rgba(0, 0, 0, 0.86);
+    --shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121313; --surface: #1c1d1d; --surface-2: #252626; --line: #3a3b3b;
+  --rule: #f3f2f2; --ink: #f3f2f2; --muted: #a9a5a5; --accent: #3fa89f;
+  --accent-ink: #07211f; --accent-bg: #16302e; --ok: #6cc79b; --ok-bg: #12291f;
+  --warn: #e2b768; --warn-bg: #2c2110; --stop: #e88b8b; --stop-bg: #2e1616;
+  --gold: #e8cf94; --gold-bg: #2b2410; --scrim: rgba(0, 0, 0, 0.86);
+  --shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: var(--step-0);
+  line-height: 1.6;
+  -webkit-text-size-adjust: 100%;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 1fr;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+@media (min-width: 1040px) {
+  .shell { grid-template-columns: 250px minmax(0, 1fr); gap: 56px; }
+}
+
+/* ---------- masthead ---------- */
+.masthead {
+  grid-column: 1 / -1;
+  border-bottom: 2px solid var(--rule);
+  padding-block: 40px 28px;
+  display: grid;
+  gap: 14px;
+}
+.kicker {
+  margin: 0;
+  font-size: var(--step--1);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.masthead h1 {
+  margin: 0;
+  font-size: clamp(2.1rem, 6vw, var(--step-4));
+  font-weight: 800;
+  font-stretch: 112%;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.masthead .lede { margin: 0; max-width: 62ch; font-size: var(--step-1); color: var(--muted); line-height: 1.5; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: var(--step--1); color: var(--muted); margin: 0; }
+
+/* ---------- contents rail ---------- */
+.toc { padding-block: 24px 0; }
+.toc details { border: 1px solid var(--line); background: var(--surface); }
+.toc summary {
+  cursor: pointer; padding: 14px 16px; font-weight: 700; list-style: none;
+  display: flex; justify-content: space-between; align-items: center; min-height: 52px;
+}
+.toc summary::-webkit-details-marker { display: none; }
+.toc summary::after { content: "+"; font-size: 1.4rem; font-weight: 400; }
+.toc details[open] summary::after { content: "\2212"; }
+.toc ol { margin: 0; padding: 4px 0 12px; list-style: none; counter-reset: toc; }
+.toc li { counter-increment: toc; }
+.toc a {
+  display: grid; grid-template-columns: 2.2em 1fr; padding: 7px 16px;
+  color: var(--ink); text-decoration: none; font-size: 0.97rem; line-height: 1.35;
+}
+.toc a::before { content: counter(toc); color: var(--muted); font-variant-numeric: tabular-nums; }
+.toc a:hover, .toc a:focus-visible { background: var(--accent-bg); color: var(--accent); outline: none; }
+@media (min-width: 1040px) {
+  .toc { position: sticky; top: env(safe-area-inset-top, 0px); align-self: start; max-height: 100vh; overflow-y: auto; padding-block: 32px; }
+  .toc details { border: 0; background: transparent; }
+  .toc summary { pointer-events: none; padding: 0 0 12px; min-height: 0; font-size: var(--step--1); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); border-bottom: 2px solid var(--rule); }
+  .toc summary::after { content: none; }
+  .toc ol { padding-top: 8px; }
+  .toc a { padding: 6px 0; }
+  .toc a:hover, .toc a:focus-visible { background: transparent; }
+}
+
+/* ---------- reading column ---------- */
+main { min-width: 0; padding-block: 8px 80px; }
+section { padding-block: 40px 8px; border-bottom: 1px solid var(--line); }
+section:last-of-type { border-bottom: 0; }
+.prose { max-width: 66ch; }
+h2 {
+  margin: 0 0 6px;
+  font-size: clamp(1.6rem, 4vw, var(--step-3));
+  font-weight: 800;
+  font-stretch: 108%;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+.secnum { display: block; font-size: var(--step--1); font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
+h3 { margin: 32px 0 6px; font-size: var(--step-1); font-weight: 750; line-height: 1.3; text-wrap: balance; }
+p { margin: 0 0 14px; }
+.intro { font-size: var(--step-1); color: var(--muted); line-height: 1.5; max-width: 60ch; }
+ul, ol { padding-left: 1.3em; margin: 0 0 16px; }
+li { margin-bottom: 6px; }
+li::marker { color: var(--muted); }
+strong { font-weight: 700; }
+a { color: var(--accent); }
+
+/* numbered steps: the order is the point */
+ol.steps { list-style: none; padding: 0; counter-reset: step; display: grid; gap: 12px; max-width: 66ch; }
+ol.steps > li { counter-increment: step; display: grid; grid-template-columns: 2.25rem minmax(0, 1fr); gap: 12px; margin: 0; }
+ol.steps > li::before {
+  content: counter(step);
+  width: 2.25rem; height: 2.25rem; display: grid; place-items: center;
+  background: var(--ink); color: var(--bg); font-weight: 800; font-variant-numeric: tabular-nums;
+}
+ol.steps > li > div { padding-top: 4px; }
+
+/* on-screen words, styled like the app's own controls */
+.btn {
+  display: inline-block; padding: 0 7px; border: 1px solid var(--line); background: var(--surface);
+  font-weight: 700; font-size: 0.94em; line-height: 1.5; white-space: nowrap;
+}
+.btn.long { white-space: normal; }
+.btn.go { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.chip { display: inline-block; padding: 0 8px; font-weight: 700; font-size: 0.94em; line-height: 1.6; white-space: nowrap; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); }
+.chip.ok { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.chip.warn { background: var(--warn-bg); color: var(--warn); border: 2px solid var(--warn); }
+.chip.stop { background: var(--stop-bg); color: var(--stop); border: 2px solid var(--stop); }
+.chip.busy { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.chip.m { background: var(--gold-bg); color: var(--gold); border-color: transparent; padding: 0 6px; }
+.say { font-style: italic; }
+
+/* callouts */
+.callout { border-left: 4px solid var(--accent); background: var(--surface); padding: 14px 18px; margin: 18px 0; max-width: 66ch; }
+.callout p:last-child, .callout ul:last-child { margin-bottom: 0; }
+.callout .label { display: block; font-size: var(--step--1); font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+.callout.careful { border-left-color: var(--warn); background: var(--warn-bg); }
+.callout.careful .label { color: var(--warn); }
+.callout.practice { border-left-color: var(--ink); background: var(--surface-2); }
+.callout.practice .label { color: var(--ink); }
+
+/* screenshots */
+figure { margin: 22px 0 26px; max-width: 920px; }
+.shot {
+  position: relative; display: block; width: 100%; padding: 0; border: 1px solid var(--line);
+  background: var(--surface); cursor: zoom-in; box-shadow: var(--shadow);
+}
+.shot img { display: block; width: 100%; height: auto; aspect-ratio: 1180 / 820; }
+.shot.strip img { aspect-ratio: 2360 / 436; }
+.shot:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+figcaption { margin-top: 10px; font-size: var(--step--1); color: var(--muted); max-width: 70ch; line-height: 1.5; }
+.pair { display: grid; grid-template-columns: 1fr; gap: 18px; max-width: 920px; margin: 22px 0 26px; }
+.pair figure { margin: 0; }
+@media (min-width: 700px) { .pair { grid-template-columns: 1fr 1fr; } }
+
+/* numbered markers on the screen tour */
+.pin {
+  position: absolute; transform: translate(-50%, -50%);
+  width: clamp(20px, 3.2vw, 30px); height: clamp(20px, 3.2vw, 30px);
+  display: grid; place-items: center; border-radius: 50%;
+  background: #c2410c; color: #ffffff; font-weight: 800; font-size: clamp(11px, 1.6vw, 15px);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9); pointer-events: none; font-variant-numeric: tabular-nums;
+}
+.legend { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 10px; max-width: 70ch; counter-reset: lg; }
+.legend li { counter-increment: lg; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; margin: 0; align-items: start; }
+.legend li::before {
+  content: counter(lg); width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  background: #c2410c; color: #ffffff; font-weight: 800; font-size: 14px; margin-top: 1px;
+}
+
+/* tables */
+.table-wrap { overflow-x: auto; margin: 16px 0 22px; max-width: 920px; }
+table { border-collapse: collapse; width: 100%; background: var(--surface); font-size: 0.98rem; }
+th, td { text-align: left; vertical-align: top; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+th { font-size: var(--step--1); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); border-bottom: 2px solid var(--rule); font-weight: 700; }
+td:first-child { white-space: nowrap; }
+td.wrap { white-space: normal; min-width: 14em; }
+
+/* quick reference */
+.refgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 14px; max-width: 920px; margin-top: 18px; }
+.ref { background: var(--surface); border-top: 4px solid var(--accent); padding: 16px 18px; }
+.ref h3 { margin: 0 0 8px; font-size: 1.05rem; }
+.ref ul { margin: 0; padding-left: 1.1em; font-size: 0.97rem; }
+.ref li { margin-bottom: 4px; }
+
+.trainer { background: var(--surface); border: 2px solid var(--rule); padding: 20px 22px; margin: 28px 0 0; max-width: 920px; }
+.trainer h2 { font-size: var(--step-2); }
+.trainer ol { margin-bottom: 8px; }
+
+/* lightbox */
+.lightbox { border: 0; padding: 0; background: transparent; max-width: 100vw; max-height: 100vh; width: 100vw; height: 100vh; }
+.lightbox::backdrop { background: var(--scrim); }
+.lightbox-inner { width: 100%; height: 100%; display: grid; place-items: center; padding: 16px; cursor: zoom-out; }
+.lightbox img { max-width: 100%; max-height: calc(100vh - 80px); width: auto; height: auto; box-shadow: var(--shadow); background: var(--surface); }
+.lightbox p { color: #ffffff; margin: 10px 0 0; font-size: var(--step--1); text-align: center; max-width: 80ch; }
+
+footer { grid-column: 1 / -1; border-top: 2px solid var(--rule); padding-block: 20px 40px; color: var(--muted); font-size: var(--step--1); }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="kicker">Sealevel Hot Yoga · Teacher training</p>
+    <h1>Front Desk Guide</h1>
+    <p class="lede">How to run the counter iPad before class: signing in, checking students in, walk-ins and new students, and selling passes, memberships, drinks and gift cards.</p>
+    <p class="meta"><span>For every teacher who works the front desk</span><span>November 2026</span><span>About 20 minutes to read</span></p>
+  </header>
+
+  <nav class="toc" aria-label="Contents">
+    <details id="toc-details" open>
+      <summary>Contents</summary>
+      <ol>
+        <li><a href="#start">Before you start</a></li>
+        <li><a href="#signin">Signing in</a></li>
+        <li><a href="#screen">The Sign-in screen</a></li>
+        <li><a href="#checkin">Checking students in</a></li>
+        <li><a href="#attention">Rows that need attention</a></li>
+        <li><a href="#walkins">Walk-ins and new students</a></li>
+        <li><a href="#guests">Guests on a member's pass</a></li>
+        <li><a href="#waitlist">Full classes and the waiting list</a></li>
+        <li><a href="#selling">Selling</a></li>
+        <li><a href="#discounts">Discounts and comps</a></li>
+        <li><a href="#memberships">Memberships</a></li>
+        <li><a href="#giftcards">Gift cards</a></li>
+        <li><a href="#profile">Student profile and card on file</a></li>
+        <li><a href="#signout">Signing out</a></li>
+        <li><a href="#problems">When something goes wrong</a></li>
+        <li><a href="#reference">Quick reference</a></li>
+      </ol>
+    </details>
+  </nav>
+
+  <main>
+
+    <aside class="trainer" aria-labelledby="trainer-h">
+      <p class="kicker">For the trainer</p>
+      <h2 id="trainer-h">Running the session</h2>
+      <p>Walk through the sections in order with an iPad on the counter, one person driving. The flow that matters most is sections 4 to 6: check-in, the two red and amber rows, and a walk-in. Selling (9 to 12) can be faster if your group already sells in Mindbody.</p>
+      <ol>
+        <li>Make sure everyone knows their own Mindbody username and password before the session. Section 2 does not work without it.</li>
+        <li>Have each teacher sign in once and set their PIN during the session, so nobody meets that screen for the first time with a queue.</li>
+        <li>Practise on a test student, not a real one. If a banner across the top of the iPad says <strong>Dry run</strong> or <strong>SANDBOX</strong>, taps are practice and do not touch real students (see <a href="#problems">section 15</a>).</li>
+      </ol>
+      <p style="margin:0">The people in the screenshots are made up. Every screen is the real app.</p>
+    </aside>
+
+    <!-- 1 -->
+    <section id="start">
+      <span class="secnum">Section 1</span>
+      <h2>Before you start</h2>
+      <div class="prose">
+        <p class="intro">The front desk app is a faster way to do the things you already do in Mindbody before class. It reads and writes straight to Mindbody, so anything you do here shows up in Mindbody right away, under your name.</p>
+        <p>The iPad has four buttons along the bottom:</p>
+        <ul>
+          <li><strong>Sign-in</strong>: the class list. This is where you spend most of your time.</li>
+          <li><strong>Cart</strong>: the shelf of passes, memberships, drinks, clothing, rentals and gift cards.</li>
+          <li><strong>Pay</strong>: taking payment for what is in the cart.</li>
+          <li><strong>Your name</strong>: who is signed in, your PIN, and Sign out.</li>
+        </ul>
+        <div class="callout">
+          <span class="label">Three habits</span>
+          <ul>
+            <li><strong>Wait for the answer.</strong> When you check someone in, the button spins while Mindbody answers (usually under a second). It only turns green when the student is really checked in.</li>
+            <li><strong>Sign in as yourself.</strong> Everything you do is recorded under your Mindbody login. Never use someone else's.</li>
+            <li><strong>Keep your PIN to yourself.</strong> It is your signature for discounts, comps and overrides.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2 -->
+    <section id="signin">
+      <span class="secnum">Section 2</span>
+      <h2>Signing in</h2>
+      <div class="prose">
+        <p class="intro">The first thing the iPad shows is a sign-in box. Every teacher signs in with their own Mindbody login.</p>
+      </div>
+
+      <h3>Sign in with your own Mindbody login</h3>
+      <ol class="steps">
+        <li><div>Type your <strong>Mindbody username</strong> (your email) and <strong>password</strong>. These are the same ones you use for the Mindbody app or website.</div></li>
+        <li><div>Tap <span class="btn go">Sign in</span>.</div></li>
+      </ol>
+      <figure>
+        <button class="shot" type="button" data-full="img/02-signin.png"><img src="img/02-signin.png" alt="Sign in to Mindbody box with username and password filled in" loading="lazy"></button>
+        <figcaption>Nothing else on the iPad works until a teacher is signed in.</figcaption>
+      </figure>
+      <div class="callout">
+        <span class="label">Good to know</span>
+        <p>A sign-in lasts <strong>two hours</strong>, then this screen comes back and you sign in again. That is normal. If the studio account or an owner login is refused, use your own teacher login instead.</p>
+      </div>
+
+      <h3>Set up your PIN (first time only)</h3>
+      <div class="prose">
+        <p>The first time you sign in, the app asks you to choose a personal PIN of 4 to 6 digits. You will type it whenever you give a discount or comp, check someone in without a waiver, or override something. Your name is recorded each time.</p>
+      </div>
+      <ol class="steps">
+        <li><div>Type a PIN you will remember and nobody can guess, then tap <span class="btn">Next</span>.</div></li>
+        <li><div>Type it again. It saves as soon as the second entry matches, and a <strong>PIN set</strong> bar appears at the top of the screen.</div></li>
+      </ol>
+      <div class="pair">
+        <figure>
+          <button class="shot" type="button" data-full="img/03-pin-setup.png"><img src="img/03-pin-setup.png" alt="Set up your PIN box with a keypad, Not now and Next buttons" loading="lazy"></button>
+          <figcaption>Choose your PIN.</figcaption>
+        </figure>
+        <figure>
+          <button class="shot" type="button" data-full="img/04-pin-confirm.png"><img src="img/04-pin-confirm.png" alt="The same box asking to enter the same PIN again" loading="lazy"></button>
+          <figcaption>Enter the same PIN again.</figcaption>
+        </figure>
+      </div>
+      <div class="callout careful">
+        <span class="label">Careful</span>
+        <p><span class="btn">Not now</span> skips this, but you will be stuck the first time a student needs a discount or a waiver override. Set it up now. If two teachers pick the same PIN the app asks the second one to choose another.</p>
+      </div>
+    </section>
+
+    <!-- 3 -->
+    <section id="screen">
+      <span class="secnum">Section 3</span>
+      <h2>The Sign-in screen</h2>
+      <div class="prose">
+        <p class="intro">After you sign in you land on the class that is about to start (or the one that started in the last two hours). Each row is one student booked into that class.</p>
+      </div>
+      <figure>
+        <button class="shot" type="button" data-full="img/05-roster.png">
+          <img src="img/05-roster.png" alt="The Sign-in screen showing the Hot 26 class with Maya Chen and ten booked students" loading="lazy">
+          <span class="pin" style="left:5.6%;top:2.0%">1</span>
+          <span class="pin" style="left:25.4%;top:2.7%">2</span>
+          <span class="pin" style="left:56.9%;top:2.0%">3</span>
+          <span class="pin" style="left:65.3%;top:6.3%">4</span>
+          <span class="pin" style="left:19.5%;top:12.9%">5</span>
+          <span class="pin" style="left:87.3%;top:11.0%">6</span>
+          <span class="pin" style="left:17.8%;top:28.2%">7</span>
+          <span class="pin" style="left:26.7%;top:29.5%">8</span>
+          <span class="pin" style="left:44.1%;top:45.6%">9</span>
+          <span class="pin" style="left:58.5%;top:55.9%">10</span>
+          <span class="pin" style="left:67.8%;top:44.4%">11</span>
+          <span class="pin" style="left:84.7%;top:29.5%">12</span>
+          <span class="pin" style="left:44.1%;top:96.3%">13</span>
+        </button>
+        <figcaption>Tap any screenshot in this guide to see it larger.</figcaption>
+      </figure>
+      <ol class="legend">
+        <li><div><strong>Change day.</strong> A calendar for looking at another day's classes.</div></li>
+        <li><div><strong>The class on screen.</strong> Date, time, class and teacher. Tap it to switch to another class today.</div></li>
+        <li><div><strong>Refresh.</strong> Reloads the list. It also refreshes by itself every 30 seconds, so people who check in on the Mindbody app appear on their own.</div></li>
+        <li><div><strong>Counters.</strong> How many are signed up, checked in and on the waiting list. Tap <em>Checked in</em> or <em>Waitlist</em> to see the names.</div></li>
+        <li><div><strong>Search for a walk-in.</strong> Find anyone in Mindbody to add them to this class (<a href="#walkins">section 6</a>).</div></li>
+        <li><div><strong>New client.</strong> Create a Mindbody account for someone who has never been here.</div></li>
+        <li><div><strong>Line number and name.</strong> Under the name, how often they have been coming ("3rd class this week", "Last here Sep 4"). A brand-new student has nothing there.</div></li>
+        <li><div><strong>M, the star and the info icon.</strong> <span class="chip m">M</span> means a member: tap it for their membership. <span class="chip m">★</span> means this is their <strong>first class</strong> at the studio (<a href="#firstclass">5.5</a>). The <strong>ⓘ</strong> icon opens alerts and notes; it is dark when there is something to read and faint when there is nothing.</div></li>
+        <li><div><strong>Payment.</strong> The pass paying for this class, how many classes are left and when it expires. <span class="chip m">1 remaining</span> is highlighted: this is their last class on the pass. <strong>No pass</strong> in amber means the booking is not paid.</div></li>
+        <li><div><strong>Account.</strong> Their account balance. Red with a minus sign means they owe the studio money.</div></li>
+        <li><div><strong>The check-in button.</strong> Tap it to check the student in. Its colour tells you the state (table below).</div></li>
+        <li><div><strong>Row tools.</strong> Trash can: remove from class. $: open the Cart for this student. Person: their profile. Arrow: open them in Mindbody.</div></li>
+        <li><div><strong>The four bottom buttons:</strong> Sign-in, Cart, Pay, and your name.</div></li>
+      </ol>
+
+      <h3>What the check-in button tells you</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Button</th><th>Meaning</th><th>What to do</th></tr></thead>
+          <tbody>
+            <tr><td><span class="chip">check in</span></td><td class="wrap">Booked and paid, not checked in yet.</td><td class="wrap">Tap it when they arrive.</td></tr>
+            <tr><td><span class="chip busy">checking in</span></td><td class="wrap">Waiting for Mindbody to answer.</td><td class="wrap">Wait. Do not tap again.</td></tr>
+            <tr><td><span class="chip ok">✓ checked in</span></td><td class="wrap">Done. Mindbody has them as attended.</td><td class="wrap">Nothing. Tap only to undo a mistake.</td></tr>
+            <tr><td><span class="chip warn">unpaid</span></td><td class="wrap">Booked with no pass paying for the class.</td><td class="wrap">Tap it to pay and check in (<a href="#unpaid">5.2</a>).</td></tr>
+            <tr><td><span class="chip stop">no waiver</span></td><td class="wrap">They have never signed the studio's waiver.</td><td class="wrap">Tap it to have them read and agree (<a href="#nowaiver">5.1</a>).</td></tr>
+            <tr><td><span class="chip stop">failed</span></td><td class="wrap">Mindbody refused. The reason is written in red under the name.</td><td class="wrap">Read the reason; see <a href="#problems">section 15</a>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Looking at another class or day</h3>
+      <div class="pair">
+        <figure>
+          <button class="shot" type="button" data-full="img/06-class-picker.png"><img src="img/06-class-picker.png" alt="The class list dropdown showing classes from 12:00 PM to 9:00 PM with booked counts like 10/40" loading="lazy"></button>
+          <figcaption>Tap the class name for today's other classes. The number on the right is booked out of the room's capacity.</figcaption>
+        </figure>
+        <figure>
+          <button class="shot" type="button" data-full="img/07-calendar.png"><img src="img/07-calendar.png" alt="A month calendar with Cancel and Today buttons" loading="lazy"></button>
+          <figcaption>The calendar picks another day. <span class="btn">Today</span> brings you back.</figcaption>
+        </figure>
+      </div>
+      <div class="callout">
+        <span class="label">Good to know</span>
+        <p>On a future day you can book people but not check them in; a banner says "Booking only; check-in opens on the day." On a past day a banner warns that every change is recorded with your name.</p>
+      </div>
+    </section>
+
+    <!-- 4 -->
+    <section id="checkin">
+      <span class="secnum">Section 4</span>
+      <h2>Checking students in</h2>
+      <div class="prose">
+        <p class="intro">For most students this is one tap.</p>
+      </div>
+      <ol class="steps">
+        <li><div>Find their row. If the list is long, the arrows icon at the right end of the column headings sorts it by first or last name.</div></li>
+        <li><div>Tap <span class="chip">check in</span>. It turns into a spinner and the line under their name says <span class="say">Talking to Mindbody...</span></div></li>
+        <li><div>When it turns green, <span class="chip ok">✓ checked in</span>, they are done. The <strong>Checked in</strong> counter goes up by one.</div></li>
+      </ol>
+      <div class="pair">
+        <figure>
+          <button class="shot" type="button" data-full="img/11-checking-in.png"><img src="img/11-checking-in.png" alt="Jamie Ortiz's row with a teal checking in spinner" loading="lazy"></button>
+          <figcaption>Waiting for Mindbody. Look at the next student while it works.</figcaption>
+        </figure>
+        <figure>
+          <button class="shot" type="button" data-full="img/12-checked-in.png"><img src="img/12-checked-in.png" alt="Jamie Ortiz's row now shows a green checked in button" loading="lazy"></button>
+          <figcaption>Checked in. The counter at the top now says 3.</figcaption>
+        </figure>
+      </div>
+
+      <h3>Fixing a mistake</h3>
+      <div class="prose">
+        <p><strong>Checked in the wrong person?</strong> Tap their green <span class="chip ok">✓ checked in</span> button and confirm <span class="btn">Check out</span>. They are marked as not attended and stay booked.</p>
+        <p><strong>Someone is not coming, or was booked into the wrong class?</strong> Tap the trash can on their row and confirm <span class="btn">Remove</span>. This cancels their booking. The trash can only appears on rows that are not checked in, so check them out first if needed.</p>
+      </div>
+      <div class="pair">
+        <figure>
+          <button class="shot" type="button" data-full="img/13-check-out.png"><img src="img/13-check-out.png" alt="Check out Jamie Ortiz? box with Cancel and a red Check out button" loading="lazy"></button>
+          <figcaption>Check out: undoes a check-in.</figcaption>
+        </figure>
+        <figure>
+          <button class="shot" type="button" data-full="img/14-remove.png"><img src="img/14-remove.png" alt="Remove Dana Whitfield from this class? box with Cancel and a red Remove button" loading="lazy"></button>
+          <figcaption>Remove: cancels the booking.</figcaption>
+        </figure>
+      </div>
+
+      <h3>Last class on a pass</h3>
+      <div class="prose">
+        <p>When a check-in uses the last class on someone's pass, the app offers to sell them the next one right there. It suggests the same pass and shows which card or balance will pay.</p>
+        <ul>
+          <li>If they want it, pick a pass and tap <span class="btn go">Charge $115.00</span> (the amount changes with the pass).</li>
+          <li>If not, tap <span class="btn">Not now</span>. They are still checked in.</li>
+        </ul>
+      </div>
+      <figure>
+        <button class="shot" type="button" data-full="img/15-last-session.png"><img src="img/15-last-session.png" alt="Sell the next pack? box for Riley Thompson listing passes, with 5 Class Series selected and a Charge $115.00 button" loading="lazy"></button>
+        <figcaption>Always ask before you charge. The card on file is charged as soon as you tap.</figcaption>
+      </figure>
+    </section>
+
+    <!-- 5 -->
+    <section id="attention">
+      <span class="secnum">Section 5</span>
+      <h2>Rows that need attention</h2>
+      <div class="prose">
+        <p class="intro">Red and amber buttons mean the app needs something from you before it can check the student in.</p>
+      </div>
+
+      <h3 id="nowaiver">5.1 No waiver</h3>
+      <div class="prose">
+        <p>Every student has to agree to the studio's liability waiver once. If they have not, the row shows <span class="chip stop">no waiver</span>.</p>
+      </div>
+      <ol class="steps">
+        <li><div>Tap <span class="chip stop">no waiver</span>, then <span class="btn go">Read the waiver</span>.</div></li>
+        <li><div><strong>Hand the iPad to the student.</strong> They read the waiver to the end (scrolling down if it is long).</div></li>
+        <li><div>They tap <span class="btn go">Record agreement and check in</span>. Their agreement is saved in Mindbody and they are checked in.</div></li>
+      </ol>
+      <div class="pair">
+        <figure>
+          <button class="shot" type="button" data-full="img/16-waiver-needed.png"><img src="img/16-waiver-needed.png" alt="Waiver needed box for Chris Albright with Read the waiver and Check in without a waiver buttons" loading="lazy"></button>
+          <figcaption>The first box explains why.</figcaption>
+        </figure>
+        <figure>
+          <button class="shot" type="button" data-full="img/17-waiver-read.png"><img src="img/17-waiver-read.png" alt="Read and agree box showing the waiver text and a Record agreement and check in button" loading="lazy"></button>
+          <figcaption>The student reads, then agrees.</figcaption>
+        </figure>
+      </div>
+
+      <h3>When they cannot sign right now</h3>
+      <div class="prose">
+        <p>If the waiver will not load, or there is a good reason to let them in without signing today, you can override with your PIN. You must type a reason.</p>
+      </div>
+      <ol class="steps">
+        <li><div>Tap <span class="btn">Check in without a waiver</span> (it is at the bottom of the waiver box).</div></li>
+        <li><div>Type the reason, for example "Signing on the Mindbody app after class, phone was dead".</div></li>
+        <li><div>Type your PIN and tap <span class="btn">Done</span>.</div></li>
+      </ol>
+      <figure>
+        <button class="shot" type="button" data-full="img/19-waiver-override.png"><img src="img/19-waiver-override.png" alt="Check them in without a waiver box with a reason typed in and a PIN keypad" loading="lazy"></button>
+        <figcaption>Your name, your PIN and the reason are saved on the student's profile.</figcaption>
+      </figure>
+      <div class="callout careful">
+        <span class="label">Careful</span>
+        <p>An override does <strong>not</strong> sign the waiver. The same red button will be there next visit until they actually agree to it. Use it as an exception, not a shortcut.</p>
+      </div>
+
+      <h3 id="unpaid">5.2 Unpaid</h3>
+      <div class="prose">
+        <p><span class="chip warn">unpaid</span> means the student booked but nothing is paying for the class. Tapping it opens <strong>Pay and check in</strong>.</p>
+      </div>
+      <ol class="steps">
+        <li><div>Pick what they are buying. <strong>Drop In</strong> is selected to start with.</div></li>
+        <li><div>Check the line under the list. It says what will pay, for example <span class="say">Pays with the stored card ...8210</span>.</div></li>
+        <li><div>Tap <span class="btn go">Charge $25.00 and check in</span>. The button steps through charging, attaching the pass and checking in.</div></li>
+      </ol>
+      <figure>
+        <button class="shot" type="button" data-full="img/20-pay-and-check-in.png"><img src="img/20-pay-and-check-in.png" alt="Pay and check in box for Taylor Brooks with Drop In selected and a Charge $25.00 and check in button" loading="lazy"></button>
+        <figcaption>One tap charges the card on file and checks them in.</figcaption>
+      </figure>
+      <ul class="prose">
+        <li><strong>Paying cash, or no card on file?</strong> The button says <span class="btn go">Cart and check in</span> instead. It takes you to the Cart with the pass already on the ticket; take payment there and the app checks them in afterwards. See <a href="#selling">section 9</a>.</li>
+        <li><strong>Check in free (comp)</strong> lets them in without paying. Only use it when the studio has said that class is free for them.</li>
+      </ul>
+
+      <h3>5.3 Alerts and notes</h3>
+      <div class="prose">
+        <p>Tap the <strong>ⓘ</strong> icon on a row to read what the studio has written about a student. A <strong>red alert</strong> is something you must act on (shown in red); a <strong>yellow alert</strong> is something to know (an injury, a preference); <strong>notes</strong> are general.</p>
+        <p>Tap the pencil next to any of them to edit. What you save is signed with your name and date.</p>
+      </div>
+      <figure>
+        <button class="shot" type="button" data-full="img/08-alerts.png"><img src="img/08-alerts.png" alt="Alerts and notes box for Jamie Ortiz with a red alert: ask Jamie to update the card on file before class" loading="lazy"></button>
+        <figcaption>Read red alerts before you check the student in.</figcaption>
+      </figure>
+
+      <h3>5.4 Members and balances</h3>
+      <div class="prose">
+        <p>Tap the <span class="chip m">M</span> badge to see a member's contract and passes. A red amount in the Account column (like <strong style="color:var(--stop)">-$12.50</strong>) means they owe the studio; let them know, or settle it in the Cart.</p>
+      </div>
+      <figure>
+        <button class="shot" type="button" data-full="img/10-membership.png"><img src="img/10-membership.png" alt="Membership box for Dana Whitfield listing the Monthly Committed Membership contract and Month Unlimited pass" loading="lazy"></button>
+        <figcaption>The membership box.</figcaption>
+      </figure>
+
+      <h3 id="firstclass">5.5 First class</h3>
+      <div class="prose">
+        <p>A gold <span class="chip m">★</span> next to the name means the class on screen is the student's <strong>first class at the studio</strong>, going by Mindbody's records. Take a moment with them: show them the room, the water and the towels. A first-timer usually also needs to agree to the waiver.</p>
+      </div>
+      <figure>
+        <button class="shot strip" type="button" data-full="img/05-roster.png"><img src="img/05b-first-class.png" alt="Three roster rows: Dana Whitfield with an M badge, Chris Albright with a gold star and a red no waiver button, and Jamie Ortiz" loading="lazy"></button>
+        <figcaption>Chris Albright is new: a star, no pass yet, and no waiver.</figcaption>
+      </figure>
+      <div class="callout">
+        <span class="label">Good to know</span>
+        <p>Only their very first class gets the star. If a new student books two classes on their first day, only the earlier one has it. A walk-in you add from search who has never been here gets it too.</p>
+      </div>
+    </section>
+
+    <!-- 6 -->
+    <section id="walkins">
+      <span class="secnum">Section 6</span>
+      <h2>Walk-ins and new students</h2>
+      <div class="prose">
+        <p class="intro">Anyone who is not on the list: search for them first, and only create a new account if they are really not in Mindbody.</p>
+      </div>
+
+      <h3>Find them and add them to the class</h3>
+      <ol class="steps">
+        <li><div>Type at least <strong>three letters</strong> of their first name, last name or email into <strong>Search for a walk-in</strong>. Results appear as you type.</div></li>
+        <li><div>Check it is the right person (the email and phone are under the name), then <strong>tap their row</strong>. They are added to the class on screen.</div></li>
+        <li><div>Find them at the bottom of the list and check them in. If they have no pass, the row is <span class="chip warn">unpaid</span>; tap it to sell them one (<a href="#unpaid">5.2</a>).</div></li>
+      </ol>
+      <div class="pair">
+        <figure>
+          <button class="shot" type="button" data-full="img/21-search-results.png"><img src="img/21-search-results.png" alt="Results for den showing Dennis Carver and Denise Fowler" loading="lazy"></button>
+          <figcaption>Results for "den". Tap a name to add them to this class.</figcaption>
+        </figure>
+        <figure>
+          <button class="shot" type="button" data-full="img/22-walkin-added.png"><img src="img/22-walkin-added.png" alt="The class list now ends with Dennis Carver, No pass, unpaid" loading="lazy"></button>
+          <figcaption>Dennis is now on the list, unpaid.</figcaption>
+        </figure>
+      </div>
+      <div class="callout">
+        <span class="label">Good to know</span>
+        <p>If the person has never signed the waiver, the waiver box opens as soon as you tap them, before they are added. Hand them the iPad as in <a href="#nowaiver">5.1</a>.</p>
+      </div>
+
+      <h3>A brand-new student</h3>
+      <ol class="steps">
+        <li><div>Tap <span class="btn">New client</span> (top right of the Sign-in screen, or in the search results when nobody is found).</div></li>
+        <li><div>Fill in <strong>first name, last name, email and phone</strong>. Tick the email boxes if they want account emails or news and offers.</div></li>
+        <li><div>Tap <span class="btn go">Create</span>. They now have a Mindbody account and show up in the results, ready to tap into the class.</div></li>
+        <li><div>They will be asked to agree to the waiver when you add them to the class. Hand them the iPad.</div></li>
+      </ol>
+      <figure>
+        <button class="shot" type="button" data-full="img/23-new-client.png"><img src="img/23-new-client.png" alt="New client form with First name Robin, Last name Castillo, email and phone filled in, and a Create button" loading="lazy"></button>
+        <figcaption>Many new students fill this in themselves. Hand them the iPad and check it before tapping Create.</figcaption>
+      </figure>
+      <div class="callout careful">
+        <span class="label">Careful</span>
+        <p>If Mindbody says <span class="say">"already has a client with this name and email"</span>, they already have an account. Close the form and search for them instead.</p>
+      </div>
+    </section>
+
+    <!-- 7 -->
+    <section id="guests">
+      <span class="secnum">Section 7</span>
+      <h2>Guests on a member's pass</h2>
+      <div class="prose">
+        <p class="intro">Some memberships come with guest passes. When a member has one left, their row shows a small <strong>person with a plus</strong> icon next to their pass.</p>
+      </div>
+      <ol class="steps">
+        <li><div>Tap the guest icon on the member's row.</div></li>
+        <li><div>Search for the guest and press Enter, or pick them from <strong>In class</strong> if they already booked. If they are new, tap <span class="btn">New client</span>.</div></li>
+        <li><div>Read the sentence that explains what will happen, then tap <span class="btn go">Confirm</span>. The guest is checked in on the member's guest pass.</div></li>
+      </ol>
+      <figure>
+        <button class="shot" type="button" data-full="img/24-guest.png"><img src="img/24-guest.png" alt="Guest of Morgan Lee box: Check in Elena Petrova as Morgan Lee's guest, with Cancel and Confirm" loading="lazy"></button>
+        <figcaption>The guest's row then reads "Guest of Morgan Lee".</figcaption>
+      </figure>
+    </section>
+
+    <!-- 8 -->
+    <section id="waitlist">
+      <span class="secnum">Section 8</span>
+      <h2>Full classes and the waiting list</h2>
+      <div class="prose">
+        <p class="intro">When a class is full, the search box says so, and adding someone puts them on the waiting list instead.</p>
+      </div>
+      <ol class="steps">
+        <li><div>Search and tap the person as usual. A box asks <strong>This class is full.</strong></div></li>
+        <li><div>Tap <span class="btn go">Add to waiting list</span>.</div></li>
+        <li><div>The waiting list appears at the bottom of the class. When a spot opens, tap <span class="btn">promote</span> on their row to move them into the class.</div></li>
+      </ol>
+      <div class="pair">
+        <figure>
+          <button class="shot" type="button" data-full="img/26-waitlist-confirm.png"><img src="img/26-waitlist-confirm.png" alt="Waiting list box: This class is full. Add Noah Bennett to the waiting list?" loading="lazy"></button>
+          <figcaption>A full class offers the waiting list.</figcaption>
+        </figure>
+        <figure>
+          <button class="shot" type="button" data-full="img/27-waitlist-row.png"><img src="img/27-waitlist-row.png" alt="Hot Flow class list with a Waiting list (1) section showing Noah Bennett and a promote button" loading="lazy"></button>
+          <figcaption>Promote moves them into the class when there is room.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- 9 -->
+    <section id="selling">
+      <span class="secnum">Section 9</span>
+      <h2>Selling</h2>
+      <div class="prose">
+        <p class="intro">Selling has two steps: <strong>Cart</strong> (what they are buying) and <strong>Pay</strong> (how they are paying).</p>
+      </div>
+
+      <h3>Open the Cart</h3>
+      <ul class="prose">
+        <li><strong>For a student in the class:</strong> tap the <strong>$</strong> icon on their row. The cart opens with their name at the top (<span class="say">Sale for Jordan Kim</span>), so their card on file and account balance are ready to use.</li>
+        <li><strong>For anyone else:</strong> tap <strong>Cart</strong> at the bottom. Then tap <span class="btn">Attach a client</span> to search for them, <span class="btn">Walk-in</span> for a quick sale to someone you do not need to name (a bottle of water), or <span class="btn">New client</span>.</li>
+      </ul>
+      <div class="pair">
+        <figure>
+          <button class="shot" type="button" data-full="img/28-cart-shelf.png"><img src="img/28-cart-shelf.png" alt="Cart screen for Jordan Kim showing passes: Drop In, 5 Class Series, 10 Class Series, Month Unlimited, a special and a membership" loading="lazy"></button>
+          <figcaption>Opened from Jordan's row: Sale for Jordan Kim.</figcaption>
+        </figure>
+        <figure>
+          <button class="shot" type="button" data-full="img/33-cart-nobody.png"><img src="img/33-cart-nobody.png" alt="Cart screen with nobody attached, showing Attach a client, Walk-in and New client at the top" loading="lazy"></button>
+          <figcaption>Opened from the bottom bar: choose who the sale is for.</figcaption>
+        </figure>
+      </div>
+
+      <h3>Build the ticket</h3>
+      <ol class="steps">
+        <li><div>Pick a section on the left: <strong>Passes</strong>, <strong>Retail</strong> (Food/Drink, Clothing, Accessories, Gift cards) or <strong>Rentals</strong>. Starred items appear under <strong>Favorites</strong>.</div></li>
+        <li><div>Tap an item to add it to the <strong>Ticket</strong> on the right. Use <strong>−</strong> and <strong>+</strong> on the item to change the quantity, or tap a line on the ticket to change or remove it.</div></li>
+        <li><div>Check the total, then tap <span class="btn go">Pay</span>.</div></li>
+      </ol>
+      <figure>
+        <button class="shot" type="button" data-full="img/29-cart-ticket.png"><img src="img/29-cart-ticket.png" alt="Food and drink shelf with Coconut Water selected, and a ticket with 10 Class Series and Coconut Water totalling $214.97" loading="lazy"></button>
+        <figcaption>A 10 Class Series and a coconut water. Tax is added automatically, and only to items that are taxed.</figcaption>
+      </figure>
+      <div class="callout">
+        <span class="label">Good to know</span>
+        <p>A pass always belongs to a person, so a walk-in sale cannot include one. The app will ask who the pass is for. To buy a pass for someone else (a parent paying for a teen), tap the ticket line and choose <span class="btn">Other Client</span>.</p>
+      </div>
+
+      <h3>Take payment</h3>
+      <ol class="steps">
+        <li><div>On the Pay screen, tap how they are paying: <strong>Account</strong>, <strong>Card</strong> (the card on file), <strong>Cash</strong> or <strong>Gift card</strong>.</div></li>
+        <li><div>Leave <strong>Email receipt</strong> ticked if they want one.</div></li>
+        <li><div>Tap <span class="btn go">Finalize Sale</span>. The card is charged at this moment.</div></li>
+        <li><div>Read the green <strong>Sale complete</strong> box, then tap <span class="btn go">Done</span> to go back to the class.</div></li>
+      </ol>
+      <div class="pair">
+        <figure>
+          <button class="shot" type="button" data-full="img/30-pay.png"><img src="img/30-pay.png" alt="Pay screen showing a total of $214.97 and tiles for Account, Card, Cash and Gift card" loading="lazy"></button>
+          <figcaption>Choose how they are paying.</figcaption>
+        </figure>
+        <figure>
+          <button class="shot" type="button" data-full="img/31-pay-card.png"><img src="img/31-pay-card.png" alt="The Card tile selected, a Card line for $214.97, and the Finalize Sale button" loading="lazy"></button>
+          <figcaption>Card on file chosen. Finalize Sale charges it.</figcaption>
+        </figure>
+      </div>
+      <figure>
+        <button class="shot" type="button" data-full="img/32-sale-complete.png"><img src="img/32-sale-complete.png" alt="Sale complete: Charged $214.97, 2 items, paid by stored card ...7311 for Jordan Kim" loading="lazy"></button>
+        <figcaption>Sale complete. The sale is in Mindbody under your name.</figcaption>
+      </figure>
+
+      <h3>Cash</h3>
+      <ol class="steps">
+        <li><div>Tap <strong>Cash</strong>. It fills in the exact amount.</div></li>
+        <li><div>If they hand you more, tap the amount and enter what they gave you, or tap a quick button: <span class="btn">Exact</span> <span class="btn">$5</span> <span class="btn">$10</span> <span class="btn">$20</span>. The keypad shows the <strong>change due</strong>. Tap <span class="btn go">Done</span>.</div></li>
+        <li><div>Tap <span class="btn go">Finalize Sale</span>. The receipt box tells you how much change to give from the drawer.</div></li>
+      </ol>
+      <div class="pair">
+        <figure>
+          <button class="shot" type="button" data-full="img/34-cash-keypad.png"><img src="img/34-cash-keypad.png" alt="Cash received keypad: $20.00 received, $7.72 due, change due $12.28" loading="lazy"></button>
+          <figcaption>$20 handed over for a $7.72 sale.</figcaption>
+        </figure>
+        <figure>
+          <button class="shot" type="button" data-full="img/35-cash-complete.png"><img src="img/35-cash-complete.png" alt="Sale complete with Change $12.28 from the drawer" loading="lazy"></button>
+          <figcaption>Give the change shown here.</figcaption>
+        </figure>
+      </div>
+
+      <h3>Other ways to pay</h3>
+      <ul class="prose">
+        <li><strong>A card that is not on file:</strong> tap the small keypad square on the Card tile and type the card in. You can use it once, or keep it on file for next time.</li>
+        <li><strong>Account:</strong> uses their account credit. Charging more than they have puts their account below zero and needs your PIN.</li>
+        <li><strong>Gift card:</strong> type or scan the gift card number and tap <span class="btn">Check balance</span>.</li>
+        <li><strong>Splitting:</strong> a sale can be paid two ways (some cash, the rest on card). Tap a second tile and adjust the amounts.</li>
+        <li><strong>Card sales under $10:</strong> the card is charged $10 and the difference stays on their account as credit for next time. Tell the student.</li>
+      </ul>
+    </section>
+
+    <!-- 10 -->
+    <section id="discounts">
+      <span class="secnum">Section 10</span>
+      <h2>Discounts and comps</h2>
+      <div class="prose">
+        <p class="intro">A discount takes money off a sale. A comp makes the whole sale free. Both need a reason and your PIN, and both are recorded with your name.</p>
+      </div>
+      <ol class="steps">
+        <li><div>On the Pay screen, tap <span class="btn">Discount</span>.</div></li>
+        <li><div>Choose <strong>Percent</strong>, <strong>Amount</strong>, or <strong>Entire sale</strong> (a comp). Tap a quick button like <span class="btn">20%</span> or type the number on the keypad. The line underneath says what they will pay.</div></li>
+        <li><div>Choose a reason: <strong>Trade</strong>, <strong>Damaged item</strong> or <strong>Other</strong>. Trade and Other need a short note. Tap <span class="btn go">Next</span>.</div></li>
+        <li><div>Type your PIN and tap <span class="btn">Done</span>.</div></li>
+        <li><div>Check the summary and tap <span class="btn go">Discount</span> (or <span class="btn go">Comp</span>). Then finish the sale as usual.</div></li>
+      </ol>
+      <div class="pair">
+        <figure>
+          <button class="shot" type="button" data-full="img/37-discount-reason.png"><img src="img/37-discount-reason.png" alt="Discount this sale box with 20 percent chosen and Damaged item selected as the reason" loading="lazy"></button>
+          <figcaption>20% off a damaged tank top.</figcaption>
+        </figure>
+        <figure>
+          <button class="shot" type="button" data-full="img/38-discount-pin.png"><img src="img/38-discount-pin.png" alt="Who is discounting this? box asking for a PIN" loading="lazy"></button>
+          <figcaption>Your PIN says who gave it.</figcaption>
+        </figure>
+      </div>
+      <figure>
+        <button class="shot" type="button" data-full="img/40-discount-applied.png"><img src="img/40-discount-applied.png" alt="Pay screen with the discount applied: Discount 20 percent minus $6.40, total $28.25" loading="lazy"></button>
+        <figcaption>The discount shows on the ticket. To take it off, tap the amber discount button.</figcaption>
+      </figure>
+    </section>
+
+    <!-- 11 -->
+    <section id="memberships">
+      <span class="secnum">Section 11</span>
+      <h2>Memberships</h2>
+      <div class="prose">
+        <p class="intro">A membership is an ongoing monthly contract charged to the student's card on file. It is sold from its own box, not the ticket.</p>
+      </div>
+      <ol class="steps">
+        <li><div>Open the Cart for the student (they must have a card on file; if not, the box offers <span class="btn">Add card</span>).</div></li>
+        <li><div>Under <strong>Passes → Memberships</strong>, tap the membership.</div></li>
+        <li><div>Go through the box with the student: the first payment today, the monthly amount, the contract total, and the terms. Tap <strong>Starts</strong> to pick a later start date if they want one.</div></li>
+        <li><div>Tap the long button that describes the charge, for example <span class="btn go long">Charge $149.00 today, then $149.00 monthly...</span></div></li>
+        <li><div>The app asks for the student's signature on the customer screen, which we are not using yet. Tap <span class="btn go">Sell without a signature</span>, type your PIN, and tap <span class="btn">Done</span>.</div></li>
+      </ol>
+      <div class="pair">
+        <figure>
+          <button class="shot" type="button" data-full="img/41-membership.png"><img src="img/41-membership.png" alt="Monthly Committed Membership box: first payment $149.00, then $149.00 monthly, contract total $1,788.00, starts today" loading="lazy"></button>
+          <figcaption>Read the amounts and terms out loud.</figcaption>
+        </figure>
+        <figure>
+          <button class="shot" type="button" data-full="img/42-membership-no-screen.png"><img src="img/42-membership-no-screen.png" alt="The customer screen is not connected, with Cancel and Sell without a signature buttons" loading="lazy"></button>
+          <figcaption>Expected for now: tap Sell without a signature.</figcaption>
+        </figure>
+      </div>
+      <div class="callout careful">
+        <span class="label">Careful</span>
+        <p>Your PIN here records that you sold the membership without a signature on the iPad. Make sure the student has heard the terms and agrees before you type it.</p>
+      </div>
+    </section>
+
+    <!-- 12 -->
+    <section id="giftcards">
+      <span class="secnum">Section 12</span>
+      <h2>Gift cards</h2>
+      <div class="prose">
+        <p class="intro">Gift cards are under <strong>Retail → Gift cards</strong>. The app makes up the card's number; you write it on a blank card.</p>
+      </div>
+      <ol class="steps">
+        <li><div>Tap a gift card, or <strong>Custom</strong> for any amount (typed on the keypad).</div></li>
+        <li><div>Take payment as usual and tap <span class="btn go">Finalize Sale</span>.</div></li>
+        <li><div>The receipt box shows the gift card number in large letters. <strong>Write it on the blank gift card</strong>, then tap <span class="btn go">Written on the card</span>. The app will not let you leave until you do.</div></li>
+      </ol>
+      <div class="pair">
+        <figure>
+          <button class="shot" type="button" data-full="img/44-giftcard-shelf.png"><img src="img/44-giftcard-shelf.png" alt="Gift cards shelf showing Single Class $25.00, Five Class $115.00 and Custom any amount" loading="lazy"></button>
+          <figcaption>Gift card choices.</figcaption>
+        </figure>
+        <figure>
+          <button class="shot" type="button" data-full="img/45-giftcard-write.png"><img src="img/45-giftcard-write.png" alt="Sale complete: Write this on the $25.00 card, G4M23L, with a Written on the card button" loading="lazy"></button>
+          <figcaption>Copy the number exactly onto the card.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- 13 -->
+    <section id="profile">
+      <span class="secnum">Section 13</span>
+      <h2>Student profile and card on file</h2>
+      <div class="prose">
+        <p class="intro">Tap the <strong>person</strong> icon on any row to see a student's phone, email, waiver, visits, passes and card on file.</p>
+        <p>To add or update a card, tap <span class="btn go">Add card</span> or <span class="btn go">Replace card</span> and type it in (or let the student do it). Mindbody keeps the card; the iPad never stores it.</p>
+        <p>Email preferences can be ticked or unticked here and save by themselves. Text message preferences are set in Mindbody.</p>
+      </div>
+      <figure>
+        <button class="shot" type="button" data-full="img/09-profile.png"><img src="img/09-profile.png" alt="Client profile for Dana Whitfield with phone, email, opt-ins, visits, waiver signed, card on file Visa ...1881 and a Replace card button" loading="lazy"></button>
+        <figcaption>The profile. The arrow icon on the row opens the same person in Mindbody for anything not here.</figcaption>
+      </figure>
+    </section>
+
+    <!-- 14 -->
+    <section id="signout">
+      <span class="secnum">Section 14</span>
+      <h2>Signing out</h2>
+      <div class="prose">
+        <p class="intro">When you hand the desk to another teacher, sign out so their work is recorded under their name, not yours.</p>
+      </div>
+      <ol class="steps">
+        <li><div>Tap <strong>your name</strong> in the bottom right.</div></li>
+        <li><div>Tap <span class="btn" style="color:var(--stop)">Sign out</span>. The next teacher signs in with their own login.</div></li>
+      </ol>
+      <figure>
+        <button class="shot" type="button" data-full="img/46-signed-in.png"><img src="img/46-signed-in.png" alt="Signed in box for Maya Chen with a list of permissions, Change PIN and Sign out buttons" loading="lazy"></button>
+        <figcaption>This box also has <strong>Change PIN</strong>. The green checklist shows what your Mindbody login is allowed to do; a missing tick is something to tell the manager about.</figcaption>
+      </figure>
+    </section>
+
+    <!-- 15 -->
+    <section id="problems">
+      <span class="secnum">Section 15</span>
+      <h2>When something goes wrong</h2>
+      <div class="prose">
+        <p class="intro">The app always says what happened in a sentence. These are the ones you are most likely to meet.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>You see</th><th>What it means and what to do</th></tr></thead>
+          <tbody>
+            <tr><td class="wrap"><strong>The sign-in screen comes back</strong></td><td class="wrap">Your two hours are up, or the iPad was restarted. Sign in again. If it says "Nothing was written", repeat what you were doing.</td></tr>
+            <tr><td class="wrap"><strong>Mindbody did not accept that sign-in.</strong></td><td class="wrap">Wrong username or password. Try the Mindbody app with the same login to check it.</td></tr>
+            <tr><td class="wrap"><strong>That is not your PIN.</strong> / <strong>That PIN does not match any teacher.</strong></td><td class="wrap">Your PIN was mistyped. Try again. If you have forgotten it, sign in again and use <strong>Change PIN</strong> (<a href="#signout">section 14</a>).</td></tr>
+            <tr><td class="wrap"><strong>A red line under a name</strong></td><td class="wrap">Mindbody refused that check-in or booking and the sentence says why. Fix it (a pass, the waiver) and tap again, or do it in Mindbody.</td></tr>
+            <tr><td class="wrap"><strong>Done as the studio account: ...</strong></td><td class="wrap">It worked, but your Mindbody login is missing a permission, so it was recorded under the studio's account. Tell the manager.</td></tr>
+            <tr><td class="wrap"><strong>Not charged: ...</strong></td><td class="wrap">Nothing was charged. It is safe to try again or use another way to pay.</td></tr>
+            <tr><td class="wrap"><strong>The charge may or may not have gone through.</strong></td><td class="wrap">Do <strong>not</strong> charge again. Check the student's account in Mindbody first, or ask the manager.</td></tr>
+            <tr><td class="wrap"><strong>Totals disagree. Do not charge.</strong></td><td class="wrap">The price on screen and Mindbody's price differ. Tap <span class="btn">Recheck prices</span>. If it stays, ring it up in Mindbody and tell the manager.</td></tr>
+            <tr><td class="wrap"><strong>A banner across the top saying Dry run or SANDBOX</strong></td><td class="wrap">Practice mode. Taps do nothing in the real Mindbody. On a normal day there is no banner at all. If you see one before real classes, tell the manager.</td></tr>
+            <tr><td class="wrap"><strong>Your sign-in belongs to a different Mindbody site.</strong></td><td class="wrap">Sign in again. If it keeps happening, tell the manager.</td></tr>
+            <tr><td class="wrap"><strong>First-class stars on regulars</strong></td><td class="wrap">The star is wrong for that class. Ignore it and tell the manager which class and student.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout">
+        <span class="label">When in doubt</span>
+        <p>Anything the iPad cannot do, you can still do in Mindbody exactly as before. The arrow icon on each row opens that student in Mindbody.</p>
+      </div>
+    </section>
+
+    <!-- 16 -->
+    <section id="reference">
+      <span class="secnum">Section 16</span>
+      <h2>Quick reference</h2>
+      <div class="refgrid">
+        <div class="ref">
+          <h3>Start of shift</h3>
+          <ul>
+            <li>Your Mindbody email and password, <strong>Sign in</strong></li>
+            <li>Sign in again every two hours</li>
+          </ul>
+        </div>
+        <div class="ref">
+          <h3>Check in</h3>
+          <ul>
+            <li>Tap <strong>check in</strong>, wait for green</li>
+            <li><strong>★</strong> = their first class: welcome them</li>
+            <li>Wrong person: tap green, <strong>Check out</strong></li>
+            <li>Not coming: trash can, <strong>Remove</strong></li>
+          </ul>
+        </div>
+        <div class="ref">
+          <h3>Red and amber rows</h3>
+          <ul>
+            <li><strong>no waiver</strong>: hand them the iPad to read and agree</li>
+            <li>Can't sign: <strong>Check in without a waiver</strong>, reason, PIN</li>
+            <li><strong>unpaid</strong>: pick a pass, <strong>Charge and check in</strong></li>
+          </ul>
+        </div>
+        <div class="ref">
+          <h3>Walk-ins</h3>
+          <ul>
+            <li>Search 3+ letters, tap the person</li>
+            <li>Not in Mindbody: <strong>New client</strong>, then add</li>
+            <li>Full class: <strong>Add to waiting list</strong></li>
+          </ul>
+        </div>
+        <div class="ref">
+          <h3>Selling</h3>
+          <ul>
+            <li><strong>$</strong> on the row, or <strong>Cart</strong></li>
+            <li>Tap items, then <strong>Pay</strong></li>
+            <li>Choose Card, Cash, Account or Gift card</li>
+            <li><strong>Finalize Sale</strong>, then <strong>Done</strong></li>
+          </ul>
+        </div>
+        <div class="ref">
+          <h3>Needs your PIN</h3>
+          <ul>
+            <li>Discounts and comps</li>
+            <li>Checking in without a waiver</li>
+            <li>A membership without a signature</li>
+            <li>Charging an account below zero</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    Sealevel Hot Yoga front desk app. Screenshots taken from the real app with made-up students. Questions go to the studio manager.
+  </footer>
+</div>
+
+<dialog class="lightbox" id="lightbox" aria-label="Enlarged screenshot">
+  <div class="lightbox-inner" id="lightbox-inner">
+    <div>
+      <img id="lightbox-img" alt="">
+      <p id="lightbox-cap"></p>
+    </div>
+  </div>
+</dialog>
+
+<script>
+(function () {
+  var box = document.getElementById("lightbox");
+  var img = document.getElementById("lightbox-img");
+  var cap = document.getElementById("lightbox-cap");
+  document.querySelectorAll(".shot").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var inner = btn.querySelector("img");
+      img.src = btn.getAttribute("data-full");
+      img.alt = inner ? inner.alt : "";
+      var fc = btn.closest("figure") && btn.closest("figure").querySelector("figcaption");
+      cap.textContent = fc ? fc.textContent : "";
+      if (typeof box.showModal === "function") box.showModal();
+    });
+  });
+  box.addEventListener("click", function () { box.close(); });
+  /* On narrow screens the contents list starts closed so the guide is the first thing seen. */
+  var toc = document.getElementById("toc-details");
+  if (window.matchMedia("(max-width: 1039px)").matches) toc.removeAttribute("open");
+  toc.querySelectorAll("a").forEach(function (a) {
+    a.addEventListener("click", function () {
+      if (window.matchMedia("(max-width: 1039px)").matches) toc.removeAttribute("open");
+    });
+  });
+})();
+</script>
