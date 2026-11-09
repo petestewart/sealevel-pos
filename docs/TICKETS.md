@@ -20927,3 +20927,148 @@ Not changed: the amber "guest pass is still on their account: sale N was
 paid by Other, not a comp" line from the same test is T63 working as
 specified (a return is only made of a single-item $0 comp sale). Pete's
 own test pass was sold with "Other".
+
+## T219. Six things from Pete's counter list (Pete, 2026-11-09)
+
+Pete: "Search feature (ex: gift card) ... dual CC payment option ... bug
+fix: eliminate need to select payment method again after discount is
+entered ... We should be able to discount a gift card at 100%. Does
+mindbody allow us to do this? ... bugfix: when finalizing a sale with a
+Gift card - 'missing key account' bug ... Apple Pay: apple pay needs to
+be an available form of payment".
+
+### 1. A gift card tender refused at Finalize for a missing key
+
+T83 sent the `GiftCard` payment's `Metadata` as a STRING of JSON
+(`"{\"amount\":...,\"cardNumber\":...}"`), following the spec's `type:
+string` and Mindbody's gift card page, and recorded the shape as
+unverified, naming the object form as the first thing to try if Mindbody
+refused it. A string has no keys, so Mindbody found no amount in it. It
+now goes out as an OBJECT, `{ amount, cardNumber }`, the shape every
+payment that has settled live has used (`checkoutPaymentPayload`,
+`src/lib/sale.ts`). The lowercase spellings are the gift card page's; the
+other types' PascalCase `Amount` is read, so the keys are not
+case-sensitive. The drawer keeps showing the barcode (T109): `redactCard`
+in `src/lib/calllog.ts` no longer applies the key rule inside a GiftCard
+payment's Metadata, and still applies the digit and CVV scrub.
+
+Not verified live: the exact sentence Pete saw was not in the code (it is
+Mindbody's), and nobody has paid with a gift card since. If it is refused
+again, the drawer's copy of the call is the next thing to read.
+
+### 2. The payment method had to be picked again after a discount
+
+Any discount change cleared every tender line (T79's `discountKey`
+effect and `confirmComp`), so the method had to be chosen again, and a
+tap made while Mindbody was still repricing the discounted cart did
+nothing (the tile is greyed "Pricing with Mindbody..." until the total
+lands). Now a line taken
+by one tap for the whole due is flagged `whole` on `TenderLine`, and such
+a line, when it is the only one, SURVIVES a discount and FOLLOWS the
+total: an effect sets it to the new total (capped by the account balance
+or the gift card balance, as a tap would be) once Mindbody has priced it.
+The total is null while pricing, so Finalize cannot fire on the old
+figure. A typed amount, a second line or an overdraft PIN ends `whole`,
+because then the figure is somebody's choice. A 100% discount still
+clears everything (a comp takes no tender), and a cart edit still clears
+the lines as before.
+
+### 3. Search on the cart screen
+
+A 64px search row above the grid ("Search items"). Two letters or more
+replace the grid with what matches; the X, Escape or any tap on the rail
+put the shelf back. It searches what is already loaded, the catalog
+payload and the gift card list, and makes NO Mindbody call. Every word of
+the query must appear in the item's name or the shelf it lives on (the
+retail category, Passes and its group, Packages, Memberships, Gift
+cards), so "gift card" finds every gift card cell including the custom
+amount, "towel" finds what is filed under Towel and Mat, and word order
+does not matter. At most 60 results, with a line saying so.
+
+### 4. A sale split across several cards
+
+T28 built exactly two legs of different methods, and T93 refused a
+stored and a typed card in the same payment. Now:
+
+- `/api/checkout` takes a `split` of two to FOUR legs
+  (`MAX_SPLIT_LEGS`). Each method appears once except `typedcard`, which
+  may appear several times; at most one typed card may be kept on file.
+  Every leg goes to Mindbody in ONE `checkoutshoppingcart` call, as T28's
+  two did, so a decline on one card leaves none of them charged. Each
+  card leg, stored or typed, is held to the $10 floor on its own. The
+  answer's `legs` carry each typed leg's last four.
+- The payment screen holds one typed card PER LINE (`typedCards`, keyed
+  by line id), so the keypad square opens again with a typed card in the
+  payment, and the saved card and typed cards may share it. At most four
+  parts.
+- Room for a third part: with the total covered, a tile (or the keypad
+  square) adds a part at $0.00 with its keypad open, and what is typed
+  there comes off the part added before it. T36's rule generalised: the
+  remainder of an edit lands on the newest other part, or on the one
+  before it when the newest is being edited; with two parts that is "the
+  other line", unchanged. A part added for nothing and left with nothing
+  (Cancel, Escape, the scrim, Done with no digits) is removed again,
+  which is not T36's trap: it never had an amount. A gift card cannot be
+  added onto a covered total (its modal is built around what is due).
+- With three or four parts the button reads "Charge $X in N parts" and
+  each part's figure is on its row; the done screen names every leg and
+  each typed card's last four.
+
+Not verified live: that Mindbody accepts several `CreditCard` entries,
+or a `StoredCard` beside a `CreditCard`, in one checkout. The spec puts
+no limit on `Payments` (sale.yml:5643), T28's two entries have been
+sold, and a refusal is a clean nothing-charged failure.
+
+### 5. A 100% discount on a gift card
+
+Not yet, and it is Mindbody's answer to give rather than ours to guess.
+What is known: `purchasegiftcard` refuses a `Comp` payment outright
+("Invalid payment method", T103's probes, 2026-09-17), and a gift card
+cannot ride a cart (T103: it sells nothing). What is not known is whether
+ANY zero payment issues a card worth its face value.
+`scripts/probe-giftcard-free.ts` asks exactly that, five shapes against a
+fixed and the custom product, all `Test: true`, and has never been run.
+Its answer decides it: a shape that issues the face value for nothing
+lifts T102's refusal (with the value still asserted to the cent); a card
+worth zero, or every shape refused, keeps it.
+
+### 6. Apple Pay
+
+Not buildable as a tender tile, and not buildable blind. Through the API
+Apple Pay is an alternative payment: `initiatecheckoutshoppingcart`
+answers a URL the CUSTOMER opens on their own phone, Mindbody returns
+them to a callback URL of ours, and `completecheckoutshoppingcart`
+finishes the sale. Those endpoints work only at the online store
+(LocationId 98, online prices, online-store reporting), need a public
+HTTPS callback (the deployed service Phase 1.5 has not produced), and
+the one call ever made to the gate, `alternativepaymentmethods`,
+answered HTTP 400 (probe B2, never re-run). The spec does not say what
+an Apple Pay `Payments` entry looks like.
+
+`scripts/probe-applepay.ts` is the next step: read-only by default (the
+method list at location 98, 1 and none), and with `--initiate <clientId>
+<productId>` a `Test: true` initiate in each plausible payment shape.
+Its output decides the build: a QR on the customer screen that opens
+Mindbody's page on the student's phone, a callback route, and the
+completion, which is Phase 3's design.
+
+### Verified
+
+- `tsc --noEmit` and `next build`: clean.
+- Against `scripts/training/fake-mindbody.mjs`, in Chromium at
+  1180x820: search finds the three gift card cells for "gift card", the
+  tank top for "tank", and says so for nothing; a card line survives a
+  20% discount and moves from $35.31 to $28.25 with Finalize Sale live;
+  a $210.00 sale split $100.00 stored card, $60.00 and $50.00 on two
+  typed cards went out as three Payments entries in one call; a covered
+  card line plus a Cash tap, cancelled, leaves the card alone, and $10.00
+  cash takes the card to $25.31; a gift card tender goes out as
+  `{"Type":"GiftCard","Metadata":{"amount":35.31,"cardNumber":...}}`.
+- `/api/checkout` refuses five legs, two stored card legs and two kept
+  typed cards, each 400 in words with nothing sent.
+
+### Limits
+
+- With three or four parts the Finalize button is below the fold at
+  820px tall; the payment column scrolls to it.
+- Nothing here has met live Mindbody.

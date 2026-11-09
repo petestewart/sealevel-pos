@@ -29,7 +29,8 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 | # | Probe | Answers | Status |
 |---|---|---|---|
 | B1 | `POST /sale/checkoutshoppingcart` with a candidate price/discount key in item `Metadata`, `Test: true`, compare returned total | Whether the POS can set a cart price directly. If yes, the $21 SKU is unnecessary | **Mostly answered from the spec (2026-08-30): CheckoutItemWrapper.DiscountAmount discounts a cart line directly, so the $21 SKU is unnecessary. One Test: true probe still owed for quantity semantics and permission gating; see TICKETS.** |
-| B2 | `GET /sale/alternativepaymentmethods` with `LocationId=98` | The HTTP 400 that gates all Apple Pay scoping | Not run |
+| B2 | `GET /sale/alternativepaymentmethods` with `LocationId=98` | The HTTP 400 that gates all Apple Pay scoping | **Script written, not run** (T219, Pete asked for Apple Pay 2026-11-09): `scripts/probe-applepay.ts`, read-only by default; `--initiate <clientId> <productId>` adds a `Test: true` initiate in each plausible Payments shape |
+| B5 | `scripts/probe-giftcard-free.ts <clientId>` | Whether ANY zero payment makes `purchasegiftcard` issue a card at face value, which is what a 100% discount on a gift card needs (Pete asked again 2026-11-09, T219) | Written 2026-09-19, not run |
 | B3 | Re-run `mindbody:probe-payments --live` against a client with a current card | Whether a charge actually settles through Stripe. Only ever reached "card is expired" | Not run |
 | B4 | Confirm a per-client Mindbody-hosted card capture page exists and is reachable by URL | Whether Phase 3 card capture is buildable at all | Not run |
 
@@ -177,6 +178,15 @@ pack in the same gesture.
   drop-in is recorded.
 - Upgrade: first-visit $28 drop-in applies toward the special, $21 difference.
 - Blocked on B1 (can we set the price?) and P3 (how long the offer lasts).
+
+**Pete's counter list, 2026-11-09 (T219):**
+
+- [x] Item search on the cart screen, over the loaded catalog and gift cards, no Mindbody call.
+- [x] A sale split across up to four parts: the saved card and any number of typed cards beside the account, cash and a gift card, in one checkout call.
+- [x] A payment line taken for the whole sale follows the total through a discount instead of having to be chosen again.
+- [x] A gift card tender's `Metadata` is an object; the string T83 sent was refused for a missing key. Not yet seen settling live.
+- [ ] A 100% discount on a gift card: waits on B5.
+- [ ] Apple Pay: waits on B2, then Phase 3's QR flow and the deployed callback URL.
 
 ---
 

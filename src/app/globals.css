@@ -3869,6 +3869,66 @@ button.sale-for:disabled {
  * quiet / filled idiom at the roster chip's 48px, flush-left, wrapping
  * when the studio's labels outgrow one line. Absent entirely when no
  * groups are configured. */
+/* T219: the cart screen's item search, above the grid. One 64px row on
+ * the surface with a hairline, the roster search's type size; the glass
+ * is decoration and the X is a full tap target inside the right edge. */
+.shelf-search {
+  display: flex;
+  align-items: stretch;
+  min-height: 64px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.shelf-search:focus-within {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.shelf-search-glass {
+  flex: 0 0 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.shelf-search-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 62px;
+  padding: 0 12px 0 0;
+  font-size: 19px;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.shelf-search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  display: none;
+}
+
+.shelf-search-clear {
+  flex: 0 0 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+}
+
+.shelf-search-clear:active {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
 .shelf-subchips {
   display: flex;
   flex-wrap: wrap;

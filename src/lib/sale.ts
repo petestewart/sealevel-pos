@@ -1408,23 +1408,24 @@ export type CheckoutPayment =
 export function checkoutPaymentPayload(
   p: CheckoutPayment,
 ): Record<string, unknown> {
-  /* T83: the ONE entry whose Metadata goes out as a STRING of JSON with
-   * lowercase keys, which is what the spec types Metadata as
-   * (sale.yml:3932, `type: string`) and what Mindbody's own gift card
-   * documentation lists for this type (keys `amount`, `cardNumber`; that
-   * page needs a login, so it is hearsay this file cannot verify). Every
-   * other type here sends a PascalCase OBJECT, because that is the shape
-   * the one live checkout known to have passed used, and changing a
-   * proven shape on a hunch is not a trade worth making. If Mindbody
-   * refuses a GiftCard payment for a metadata it cannot read, the first
-   * thing to try is the other shape -- an object, `{ Amount, CardNumber
-   * }` -- and NOT an automatic retry: a refused payment type is a clean
-   * nothing-charged failure, and a money call must never quietly try
-   * itself again in a different shape. */
+  /* T219: the GiftCard entry's Metadata is an OBJECT, like every other
+   * type here. T83 sent it as a STRING of JSON (the spec types the field
+   * `string`, sale.yml:3934, and Mindbody's gift card page lists the
+   * lowercase keys `amount`, `cardNumber`), and T83 itself recorded that
+   * shape as unverified and named this one as the first thing to try if
+   * Mindbody refused it. Pete's first live gift card tender (2026-11-09)
+   * was refused for a missing key at Finalize: a string has no keys, so
+   * Mindbody found no amount in it. Every payment that has ever settled
+   * live sent an object (StoredCard, DebitAccount, Cash, Comp, and the
+   * purchasegiftcard PaymentInfo), and their PascalCase `Amount` is read,
+   * so the keys are not case-sensitive; the lowercase spellings are kept
+   * because they are the gift card documentation's own. Still a refused
+   * payment type is a clean nothing-charged failure, and a money call
+   * never retries itself in another shape. */
   if (p.type === "GiftCard") {
     return {
       Type: "GiftCard",
-      Metadata: JSON.stringify({ amount: p.amount, cardNumber: p.cardNumber }),
+      Metadata: { amount: p.amount, cardNumber: p.cardNumber },
     };
   }
   /* T93: the typed card. The keys are CreditCardInfo's spelling
@@ -1489,7 +1490,8 @@ export interface CheckoutOutcome {
  * /api/checkout, which fires only from an explicit Charge tap.
  *
  * Payments takes ONE entry for every ordinary sale, and since T28 may
- * take TWO for an explicit split. The vendored schema is on side:
+ * take TWO for an explicit split (up to FOUR since T219, two of them
+ * typed cards if the customer hands over two). The vendored schema is on side:
  * `Payments` is a plain `type: array` of CheckoutPaymentInfo with no
  * maxItems or any other constraint (sale.yml:5643-5649), so nothing
  * forbids two entries -- though note the T28 sandbox caveat: the Test:
@@ -1537,8 +1539,9 @@ export async function checkoutCart(
       "checkoutCart needs a payment unless the discount covers the entire sale.",
     );
   }
-  if (payments.length > 2) {
-    throw new Error("checkoutCart takes one or two payment entries.");
+  /* T219: up to four, the split's limit in /api/checkout. */
+  if (payments.length > 4) {
+    throw new Error("checkoutCart takes one to four payment entries.");
   }
   for (const p of payments) {
     if (!Number.isFinite(p.amount) || p.amount < 0) {
