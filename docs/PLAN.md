@@ -188,14 +188,13 @@ signs the buyer up for it, so the counter does not stop at the sale.
   what an id is; run once in `/api/checkout` inside T113's record;
   `src/lib/enrolonpurchase.ts`). The next workshop is two rows in the
   drawer, not a deploy.
-- [ ] Live, owed: `scripts/probe-signup-target.ts 743` on site 471 says
-  what 743 is (a course, by Mindbody's workshop URL; studio class ids
-  are six digits), and the same with a dummy client id rehearses the
-  write with `Test: true`. Then one real sale to a dummy client, and a
-  look at whether Mindbody spent the sold pass on the enrollment.
-- [ ] Configure it on the counter: the drawer's Shelf tab, "sign up on
-  purchase", one row per sound bath pass, course, 743, Check, Save.
-  Needs `DATABASE_URL` (the shelf config lives there).
+- [x] Live on site 471 (Pete, 2026-11-09): configured in the drawer as
+  course 743, and a real sale of the sound bath pass signed the buyer up.
+  743 IS the course (enrollment) id from Mindbody's workshop URL. The
+  first try booked nobody because no rule was saved: the feature does
+  nothing until a row exists, and nothing on screen says so.
+- [ ] Still unseen: whether Mindbody spends the sold pass on the
+  enrollment (the request carries no `ClientServiceId`).
 
 ---
 

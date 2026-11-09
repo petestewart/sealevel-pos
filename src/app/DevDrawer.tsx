@@ -3010,7 +3010,12 @@ function ShelfPanel() {
               )
             ) : null}
             {list.map((item) => (
-              <div key={item.key} className="dev-setting">
+              /* Each item a ruled row with its controls on its FIRST line:
+                 centred against a name that wraps to three lines, a
+                 dropdown sat between two items and read as either's
+                 (Pete: "how can i even tell which drop down goes with what
+                 here"). */
+              <div key={item.key} className="dev-setting dev-shelf-row">
                 <span className="dev-setting-label">
                   {item.name}
                   {/* T97 review: the custom amount product has no figure

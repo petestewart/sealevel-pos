@@ -214,8 +214,10 @@ is written unless it is confirmed upcoming; the write is the teacher's
 own, so dry run and the write guard apply; a full one goes on its
 waiting list. The answer carries `enrolments`, shown on the Cart
 screen's done block, amber when the place did not happen. Nothing in it
-can turn a sale into an error. Never run against Mindbody yet: run
-`scripts/probe-signup-target.ts 743 <dummy client>` first.
+can turn a sale into an error. Seen working live on site 471
+(2026-11-09) with course 743. **It does nothing until a rule is
+saved**, and a workshop pass sold without one says nothing, which is
+how the first live test signed nobody up.
 
 ### A teacher's PIN now authorizes six separate things
 
