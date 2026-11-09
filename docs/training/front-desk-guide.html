@@ -203,6 +203,7 @@ figure { margin: 22px 0 26px; max-width: 920px; }
   background: var(--surface); cursor: zoom-in; box-shadow: var(--shadow);
 }
 .shot img { display: block; width: 100%; height: auto; aspect-ratio: 1180 / 820; }
+.shot.strip img { aspect-ratio: 2360 / 436; }
 .shot:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 figcaption { margin-top: 10px; font-size: var(--step--1); color: var(--muted); max-width: 70ch; line-height: 1.5; }
 .pair { display: grid; grid-template-columns: 1fr; gap: 18px; max-width: 920px; margin: 22px 0 26px; }
@@ -387,7 +388,7 @@ footer { grid-column: 1 / -1; border-top: 2px solid var(--rule); padding-block: 
           <span class="pin" style="left:19.5%;top:12.9%">5</span>
           <span class="pin" style="left:87.3%;top:11.0%">6</span>
           <span class="pin" style="left:17.8%;top:28.2%">7</span>
-          <span class="pin" style="left:30.5%;top:29.5%">8</span>
+          <span class="pin" style="left:26.7%;top:29.5%">8</span>
           <span class="pin" style="left:44.1%;top:45.6%">9</span>
           <span class="pin" style="left:58.5%;top:55.9%">10</span>
           <span class="pin" style="left:67.8%;top:44.4%">11</span>
@@ -404,7 +405,7 @@ footer { grid-column: 1 / -1; border-top: 2px solid var(--rule); padding-block: 
         <li><div><strong>Search for a walk-in.</strong> Find anyone in Mindbody to add them to this class (<a href="#walkins">section 6</a>).</div></li>
         <li><div><strong>New client.</strong> Create a Mindbody account for someone who has never been here.</div></li>
         <li><div><strong>Line number and name.</strong> Under the name, how often they have been coming ("3rd class this week", "Last here Sep 4"). A brand-new student has nothing there.</div></li>
-        <li><div><strong>M and the info icon.</strong> <span class="chip m">M</span> means a member: tap it for their membership. The <strong>ⓘ</strong> icon opens alerts and notes; it is dark when there is something to read and faint when there is nothing.</div></li>
+        <li><div><strong>M, the star and the info icon.</strong> <span class="chip m">M</span> means a member: tap it for their membership. <span class="chip m">★</span> means this is their <strong>first class</strong> at the studio (<a href="#firstclass">5.5</a>). The <strong>ⓘ</strong> icon opens alerts and notes; it is dark when there is something to read and faint when there is nothing.</div></li>
         <li><div><strong>Payment.</strong> The pass paying for this class, how many classes are left and when it expires. <span class="chip m">1 remaining</span> is highlighted: this is their last class on the pass. <strong>No pass</strong> in amber means the booking is not paid.</div></li>
         <li><div><strong>Account.</strong> Their account balance. Red with a minus sign means they owe the studio money.</div></li>
         <li><div><strong>The check-in button.</strong> Tap it to check the student in. Its colour tells you the state (table below).</div></li>
@@ -579,6 +580,19 @@ footer { grid-column: 1 / -1; border-top: 2px solid var(--rule); padding-block: 
         <button class="shot" type="button" data-full="img/10-membership.png"><img src="img/10-membership.png" alt="Membership box for Dana Whitfield listing the Monthly Committed Membership contract and Month Unlimited pass" loading="lazy"></button>
         <figcaption>The membership box.</figcaption>
       </figure>
+
+      <h3 id="firstclass">5.5 First class</h3>
+      <div class="prose">
+        <p>A gold <span class="chip m">★</span> next to the name means the class on screen is the student's <strong>first class at the studio</strong>, going by Mindbody's records. Take a moment with them: show them the room, the water and the towels. A first-timer usually also needs to agree to the waiver.</p>
+      </div>
+      <figure>
+        <button class="shot strip" type="button" data-full="img/05-roster.png"><img src="img/05b-first-class.png" alt="Three roster rows: Dana Whitfield with an M badge, Chris Albright with a gold star and a red no waiver button, and Jamie Ortiz" loading="lazy"></button>
+        <figcaption>Chris Albright is new: a star, no pass yet, and no waiver.</figcaption>
+      </figure>
+      <div class="callout">
+        <span class="label">Good to know</span>
+        <p>The star stays until their first class is behind them; from their second class on, it is gone. A walk-in you add from search who has never been here gets it too.</p>
+      </div>
     </section>
 
     <!-- 6 -->
@@ -894,6 +908,7 @@ footer { grid-column: 1 / -1; border-top: 2px solid var(--rule); padding-block: 
             <tr><td class="wrap"><strong>Totals disagree. Do not charge.</strong></td><td class="wrap">The price on screen and Mindbody's price differ. Tap <span class="btn">Recheck prices</span>. If it stays, ring it up in Mindbody and tell the manager.</td></tr>
             <tr><td class="wrap"><strong>A banner across the top saying Dry run or SANDBOX</strong></td><td class="wrap">Practice mode. Taps do nothing in the real Mindbody. On a normal day there is no banner at all. If you see one before real classes, tell the manager.</td></tr>
             <tr><td class="wrap"><strong>Your sign-in belongs to a different Mindbody site.</strong></td><td class="wrap">Sign in again. If it keeps happening, tell the manager.</td></tr>
+            <tr><td class="wrap"><strong>A first-class star on every row</strong></td><td class="wrap">Mindbody is not sending first class dates, so the star cannot be trusted. Ignore it and tell the manager.</td></tr>
           </tbody>
         </table>
       </div>
@@ -919,6 +934,7 @@ footer { grid-column: 1 / -1; border-top: 2px solid var(--rule); padding-block: 
           <h3>Check in</h3>
           <ul>
             <li>Tap <strong>check in</strong>, wait for green</li>
+            <li><strong>★</strong> = their first class: welcome them</li>
             <li>Wrong person: tap green, <strong>Check out</strong></li>
             <li>Not coming: trash can, <strong>Remove</strong></li>
           </ul>

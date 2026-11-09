@@ -126,6 +126,10 @@ function client(id, first, last, extra = {}) {
     Notes: null,
     BirthDate: null,
     CreationDate: "2025-03-14T10:12:00",
+    /* T216's star: a date before today means "been before". The two
+     * first-timers below override it with null, which is what a client
+     * who has never taken a class carries. */
+    FirstClassDate: "2025-03-14T00:00:00",
     SendAccountEmails: true,
     SendAccountTexts: false,
     SendPromotionalEmails: true,
@@ -141,7 +145,7 @@ const clients = [
   client(10102, "Sam", "Okafor"),
   client(10103, "Riley", "Thompson", { YellowAlert: "Bad left knee, offer a block" }),
   client(10104, "Dana", "Whitfield", { MembershipIcon: 1, AccountBalance: -12.5 }),
-  client(10105, "Chris", "Albright", { Liability: { IsReleased: false } }),
+  client(10105, "Chris", "Albright", { Liability: { IsReleased: false }, FirstClassDate: null }),
   client(10106, "Jamie", "Ortiz", { RedAlert: "Front desk: ask Jamie to update the card on file before class" }),
   client(10107, "Taylor", "Brooks"),
   client(10108, "Morgan", "Lee", { MembershipIcon: 1 }),
@@ -152,7 +156,7 @@ const clients = [
   client(10113, "Devon", "Hart", { MembershipIcon: 1 }),
   client(10114, "Elena", "Petrova"),
   client(10115, "Noah", "Bennett"),
-  client(10116, "Dennis", "Carver"),
+  client(10116, "Dennis", "Carver", { FirstClassDate: null }),
   client(10117, "Denise", "Fowler", { Liability: { IsReleased: false } }),
   client(10118, "Sofia", "Marquez"),
   client(10119, "Liam", "O'Connell"),
@@ -520,6 +524,7 @@ function handle(method, path, q, body, res) {
         MobilePhone: body.MobilePhone ?? "",
         Liability: { IsReleased: false },
         CreationDate: wall(new Date()),
+        FirstClassDate: null,
       });
       clients.push(c);
       return send(res, 200, { Client: c });
