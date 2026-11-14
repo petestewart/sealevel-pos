@@ -8913,3 +8913,56 @@ textarea.reason-note-field:disabled::placeholder {
   color: var(--stop);
   font-weight: 700;
 }
+
+/* T221: a pass Mindbody refuses for the attached client. Greyed, not
+ * hidden: the tile keeps its place and its tap opens the refused-line
+ * notice (another client, Override, gift card), so it is muted rather
+ * than disabled. The tag is the warn pairing the refused-line notice
+ * uses; the reason is Mindbody's own sentence. */
+.shelf-item.unavailable {
+  background: var(--surface-2);
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.shelf-item.unavailable .shelf-name,
+.shelf-item.unavailable .shelf-amt {
+  color: var(--muted);
+}
+
+.shelf-unavailable {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+}
+
+.shelf-unavailable-tag {
+  align-self: flex-start;
+  padding: 2px 8px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.shelf-unavailable-why {
+  font-size: 16px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+
+/* T221: the roster pay dialog's own version of the same thing. */
+.pass-opt.unavailable {
+  opacity: 0.7;
+  border-style: dashed;
+}
+
+.pass-opt-why {
+  display: block;
+  font-size: 16px;
+  color: var(--warn);
+  font-weight: 700;
+}

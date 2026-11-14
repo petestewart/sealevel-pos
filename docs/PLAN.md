@@ -200,6 +200,15 @@ pack in the same gesture.
 - [ ] Check the deployed drawer's Shelf tab does not hide `Service:581`.
   Then merge and deploy.
 
+**2.6b Passes a client cannot buy.**
+- [x] Greyed out before the tap, with Mindbody's reason, on the Cart
+  screen and in the roster's pay dialog (Pete, 2026-11-14). **T221**
+  (`/api/pass-availability`: each intro offer and member-only pass priced
+  `Test: true` for the attached client, in parallel, cached two minutes;
+  a tap on a greyed tile opens the refused-line notice instead).
+- [x] Live on site 471 (2026-11-14): John NewGuy's Specials greyed 414,
+  478 and 581 with Mindbody's reasons; a tap added nothing; Drop In priced.
+
 **2.7 A pass that comes with a place.** A workshop sold as a pass also
 signs the buyer up for it, so the counter does not stop at the sale.
 - [x] Selling a configured pass books whoever it was bought for into its

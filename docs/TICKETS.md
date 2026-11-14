@@ -21146,3 +21146,70 @@ needs to be added immediately".
   a dummy client in the write guard, then one real coded sale.
 - Whether a `Test: true` pricing counts against `MaxUses: 1`. If it did,
   pricing would spend the code; a second probe run would show it.
+
+## T221. A pass the client cannot buy is greyed out before the tap (Pete, 2026-11-14)
+
+Pete, after Mindbody refused 581 for John NewGuy ("Client has hit the
+purchase count for this intro series.") and the Cart screen took it back
+off the ticket: "is there any way to make it greyed out with a UNAVAILABLE
+indicator so i cannot even put it in the cart to begin with?", then "can
+items be restricted to only certain types of members as well?"
+
+### What was built
+
+- **Mindbody is asked, per client, not second-guessed.**
+  `src/lib/passavailability.ts` prices each pass that can be refused per
+  client alone, `Test: true`, for that client, all in parallel, and
+  reports the 4xx answers with Mindbody's sentence (`plainRefusal`). The
+  passes asked about come from the live catalog: `IsIntroOffer` or a
+  non-empty `RestrictToMembershipIds` (new on `CatalogItem`), minus the
+  shelf's hide list. Site 471: 414, 478, 581, 539, 576.
+- **Only evidence greys a pass.** A suppressed check (dry run, write
+  guard), a 5xx or a dead transport leaves it open, and is not cached.
+  Answers are cached two minutes per target and client; the Cart screen
+  asks with `fresh=1` after a sale. The house client and no client cost
+  nothing.
+- **`GET /api/pass-availability?clientId=`**, behind the device session,
+  no sign-in (it is pricing, like `/api/price-cart`).
+- **Cart screen:** the tile is greyed (dashed, muted, an UNAVAILABLE tag in
+  the warn pairing, the reason under it); a tap adds nothing and opens the
+  refused-line notice with T112's three ways forward. A line already on
+  the ticket, or one an Override puts back, is untouched.
+- **Roster pay dialog:** the option is disabled with "Unavailable:
+  <reason>", the default selection skips refused passes, and a selection
+  made before the answer landed moves to the next sensible pass (never
+  while a stage is in flight).
+- The fake answers per-client refusals with `FAKE_MB_PROMO=1` (Jordan Kim
+  10110: 1004 and 581; Taylor Brooks 10107: 1004).
+
+### Verified
+
+- `tsc --noEmit` and `next build`: clean.
+- **Live, site 471**, `passAvailability` from a cloud session: John NewGuy
+  (100042041) refused 414 and 478 ("Only new clients qualify for this
+  intro series.") and 581 ("Client has hit the purchase count for this
+  intro series."), 576 allowed; client 100041277 refused 414, 478 and 576
+  ("This item may only be sold to those with memberships."). 2.0s and
+  5.2s for the five parallel checks.
+- In Chromium against the fake: Jordan Kim's Specials show both intro
+  passes greyed with their reasons; a tap on Welcome Back leaves the
+  ticket empty and shows "... is not available for Jordan Kim: ..." with
+  Buy it for another client, Override and Sell it as a gift card; a Drop
+  In still adds at $25.00. Taylor Brooks's pay dialog disables the New
+  Student pass with its reason, keeps Welcome Back open and defaults to
+  Drop In.
+
+- **Live on the Cart screen, site 471** (Pete's say-so, a cloud session on
+  the environment without the injected key, write guard on 100042041):
+  the route answered 414, 478, 581 unavailable in 3.31s (0.018s cached);
+  the three Specials tiles were greyed with those reasons; a tap on
+  Welcome Back left the ticket at 0 items with "... is not available for
+  John NewGuy: Client has hit the purchase count for this intro series."
+  and the three ways forward; Drop In priced $28.00; the server log shows
+  only Test pricings and no checkout.
+
+### Limits
+
+- The answer takes seconds, and a tap before it lands gets T100's
+  added-then-removed behaviour.
+- The roster's pay dialog has been seen against the fake only.

@@ -34,6 +34,12 @@ client 100042041, $21.00 cash, Mindbody's line: $49.00 less $28.00).
 Owed: the code reads as spent afterwards, and whether 581 refuses a
 client who already bought it (see Known gaps).
 
+**T221 (2026-11-14): passes a client cannot buy are greyed out before the
+tap**, on the Cart screen and in the roster's pay dialog, with Mindbody's
+own reason. Driven live against site 471 on 2026-11-14 (Cart screen, dummy
+client John NewGuy): 414, 478 and 581 greyed with Mindbody's reasons, a tap
+put nothing on the ticket, Drop In still priced.
+
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
 there. `docs/design/front-desk-pos.md` carries the reasoning behind every item
@@ -294,6 +300,37 @@ other ticket hashes exactly as before), and a code arriving or leaving
 ends an outstanding customer approval the way a cart edit does. The
 answer to a sale that stands carries `promotion: { code, discount }`,
 named on the done block; every outcome logs `[promo]`.
+
+### A pass the client cannot buy is greyed out before the tap (T221)
+
+Pete, after 581 was refused for a client who already held it: "is there
+any way to make it greyed out with a UNAVAILABLE indicator so i cannot
+even put it in the cart to begin with?", and "can items be restricted to
+only certain types of members as well?" Mindbody refuses a pass for a
+CLIENT on its own rules (T112), so those rules are not rebuilt here:
+`GET /api/pass-availability?clientId=` (`src/lib/passavailability.ts`)
+prices each pass that CAN be refused per client alone, `Test: true`, for
+that client, in parallel, and reports the 4xx ones with Mindbody's own
+sentence. Which passes is read off the live catalog: `IsIntroOffer` (any
+`IntroOfferType`) or a non-empty `RestrictToMembershipIds` (now carried on
+`CatalogItem`), minus the shelf's hide list. On site 471 that is five
+(414, 478, 581, 539, 576). Only a 4xx greys anything: a suppressed check
+(dry run, the write guard), a 5xx or a dead transport leaves the pass
+open, and the cart's own pricing (T100's refused line) stays the
+backstop. Answers are cached two minutes per target and client, and the
+Cart screen asks fresh after a sale, since a sale is what changes them.
+The house client and no client are answered empty with no call.
+
+The **Cart screen** greys the tile (dashed, muted, an UNAVAILABLE tag and
+the reason) and a tap puts NOTHING on the ticket: it opens the refused-line
+notice with the same three ways forward, buy it for another client,
+Override, gift card, because selling that pass to somebody else is still
+an ordinary sale. A line already on the ticket is not touched. The
+**roster's pay dialog** disables the option with "Unavailable: <reason>",
+never defaults to one, and moves a selection that turns out refused to the
+next sensible pass. Both run in the background: nothing waits for the
+answer, which took **2 to 5 seconds** live (five parallel Test pricings),
+so a tap in those first seconds gets T100's added-then-removed behaviour.
 
 
 - **Web app, not Swift.** Card-present is 0.4% of counter transactions (25
@@ -1018,7 +1055,13 @@ while `git clone` works, so clone the repo rather than fetching files.
   `"NewAndExistingClients"`, both `IsIntroOffer: true`, sellable at
   location 1. `NewAndExistingClients` still means ONCE per client: after
   one sale of 581, Mindbody refuses the next with "Client has hit the
-  purchase count for this intro series." (T220, 2026-11-14). The app reads only `IsIntroOffer`, and only to file a pass
+  purchase count for this intro series." (T220, 2026-11-14). A pass with
+  `RestrictToMembershipIds` refuses a non-member "This item may only be
+  sold to those with memberships." (576 for client 100041277, T221), and
+  478 "ClassPass Convert 2 Weeks (1 time only)" is an intro offer too
+  ("Only new clients qualify for this intro series."). Membership 3 is
+  "Membership Series", which most of 471's passes grant to whoever holds
+  them. The app reads only `IsIntroOffer`, and only to file a pass
   under Specials (`passGroupByRule`); nothing in the code hides a pass
   from a returning client, and the design doc's new-students-only rule
   for the $49 special was never built (PLAN 2.6). So 581 reaches a
@@ -1262,6 +1305,16 @@ while `git clone` works, so clone the repo rather than fetching files.
   read (the probe stops at the pass refusal), but it was single-use and a
   real sale used it. The sale's `SalesRepId` came back null, which is T49's
   open attribution question below, not this feature's.
+- **T221 is live-verified on the Cart screen, not yet on the roster
+  dialog.** Driven against site 471 (2026-11-14) from a cloud session with
+  the write guard on dummy client John NewGuy (100042041): the check
+  answered 414 and 478 ("Only new clients qualify for this intro series.")
+  and 581 ("Client has hit the purchase count for this intro series.") in
+  1.6 to 3.3s (0.018s from cache); the three Specials tiles were greyed
+  with those reasons by the time Specials opened; a tap on Welcome Back
+  left the ticket at 0 items with the notice and its three ways forward;
+  Drop In added and priced $28.00. The roster's pay dialog has been seen
+  against the fake only.
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It

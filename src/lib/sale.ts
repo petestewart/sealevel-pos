@@ -142,6 +142,12 @@ export interface CatalogItem {
    *  `Program.Name` or a bare `Program` string, whichever the response
    *  carries (the spec lists only `ProgramId`). Null otherwise. */
   program: string | null;
+  /** T221, services only: `RestrictToMembershipIds` (sale.yml:5318), the
+   *  memberships a client must hold to buy this option (site 471's 576,
+   *  the members' sound bath, carries [3]). Absent or empty means anyone.
+   *  Read only to decide which passes to ask Mindbody about per client;
+   *  Mindbody's own Test pricing is what decides. */
+  restrictToMembershipIds?: number[] | null;
 }
 
 function num(v: unknown): number | null {
@@ -291,6 +297,11 @@ export async function pricingOptions(): Promise<CatalogItem[]> {
         serviceType: str(s?.Type),
         isIntroOffer: typeof s?.IsIntroOffer === "boolean" ? s.IsIntroOffer : null,
         program: str(s?.Program?.Name) ?? str(s?.Program),
+        restrictToMembershipIds: Array.isArray(s?.RestrictToMembershipIds)
+          ? (s.RestrictToMembershipIds as unknown[])
+              .map((v) => num(v))
+              .filter((v): v is number => v !== null)
+          : null,
       };
     })
     .filter((s: CatalogItem | null): s is CatalogItem => s !== null)

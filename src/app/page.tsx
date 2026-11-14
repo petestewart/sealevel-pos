@@ -1288,6 +1288,14 @@ function FrontDesk({
    * sentence in `payPromoNote`. A CODE, not an amount (T35's exception).
    */
   const [payPromoCode, setPayPromoCode] = useState<string | null>(null);
+  /** T221: the passes this dialog's client cannot buy, with Mindbody's
+   *  sentence for each (GET /api/pass-availability), keyed by the client
+   *  it was asked for. Null until it answers; a check that could not
+   *  answer disables nothing. */
+  const [payAvailability, setPayAvailability] = useState<{
+    clientId: string;
+    unavailable: Map<string, string>;
+  } | null>(null);
   const [payPromoDraft, setPayPromoDraft] = useState("");
   const [payPromoNote, setPayPromoNote] = useState<string | null>(null);
   const [payPriceError, setPayPriceError] = useState<string | null>(null);
@@ -3910,9 +3918,64 @@ function FrontDesk({
         return;
       }
     }
-    const best = [...passes].sort(payOptionOrder)[0];
+    /* T221: never default to a pass Mindbody refuses this client. */
+    const refused =
+      payAvailability?.clientId === payDialog.entry.clientId
+        ? payAvailability.unavailable
+        : null;
+    const best = [...passes]
+      .filter((p) => !refused?.has(String(p.id)))
+      .sort(payOptionOrder)[0];
     if (best) setPaySelectedId(best.id);
-  }, [payDialog, paySelectedId, payCatalog.passes]);
+  }, [payDialog, paySelectedId, payCatalog.passes, payAvailability]);
+
+  /* T221: which passes this dialog's client cannot buy, asked once per
+   * open. In the background; the list is usable before it answers. */
+  const payAvailClientId = payDialog?.entry.clientId ?? null;
+  useEffect(() => {
+    if (payAvailClientId === null) {
+      setPayAvailability(null);
+      return;
+    }
+    let alive = true;
+    fetch(`/api/pass-availability?clientId=${encodeURIComponent(payAvailClientId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!alive) return;
+        const list = Array.isArray(body?.unavailable) ? body.unavailable : [];
+        setPayAvailability({
+          clientId: payAvailClientId,
+          unavailable: new Map(
+            list
+              .filter(
+                (u: any) =>
+                  typeof u?.metadataId === "string" &&
+                  typeof u?.reason === "string",
+              )
+              .map((u: any) => [u.metadataId as string, u.reason as string]),
+          ),
+        });
+      })
+      .catch(() => {
+        if (alive) setPayAvailability(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [payAvailClientId]);
+
+  /* T221: a pass chosen before the answer landed, that Mindbody refuses,
+   * gives way to the next sensible one. Never while a stage is in
+   * flight: the charge already named its pass. */
+  useEffect(() => {
+    if (!payDialog || paySelectedId === null || payStage !== null) return;
+    if (payAvailability?.clientId !== payDialog.entry.clientId) return;
+    if (!payAvailability.unavailable.has(String(paySelectedId))) return;
+    const best = [...(payCatalog.passes ?? [])]
+      .filter((p) => !payAvailability.unavailable.has(String(p.id)))
+      .sort(payOptionOrder)[0];
+    setPaySelectedId(best ? best.id : null);
+  }, [payAvailability, payDialog, paySelectedId, payStage, payCatalog.passes]);
 
   /**
    * The dialog's pricing loop, T23's pessimistic pattern in miniature:
@@ -10462,12 +10525,32 @@ function FrontDesk({
                   .map((p) => {
                     const short = shortPassName(p.name);
                     const selected = paySelectedId === p.id;
+                    /* T221: refused for this client by Mindbody, with its
+                       own sentence; not choosable here. Buying it for
+                       somebody else is the Cart screen's job. */
+                    const refusedWhy =
+                      payAvailability?.clientId === payDialog.entry.clientId
+                        ? (payAvailability.unavailable.get(String(p.id)) ?? null)
+                        : null;
                     return (
                       <button
                         key={`payopt-${p.id}`}
-                        className={selected ? "pass-opt sel" : "pass-opt"}
-                        disabled={payStage !== null || payMoneyMoved}
+                        className={
+                          refusedWhy !== null
+                            ? "pass-opt unavailable"
+                            : selected
+                              ? "pass-opt sel"
+                              : "pass-opt"
+                        }
+                        disabled={
+                          payStage !== null || payMoneyMoved || refusedWhy !== null
+                        }
                         aria-pressed={selected}
+                        aria-label={
+                          refusedWhy !== null
+                            ? `${p.name} is unavailable for this client: ${refusedWhy}`
+                            : undefined
+                        }
                         onClick={() => setPaySelectedId(p.id)}
                       >
                         <span className="pass-check">
@@ -10477,6 +10560,11 @@ function FrontDesk({
                           <span className="pass-opt-name">{short}</span>
                           {short !== p.name.trim() ? (
                             <span className="pass-opt-full">{p.name}</span>
+                          ) : null}
+                          {refusedWhy !== null ? (
+                            <span className="pass-opt-why">
+                              Unavailable: {refusedWhy}
+                            </span>
                           ) : null}
                         </span>
                         <span className="pass-col">{money(p.price)}</span>
