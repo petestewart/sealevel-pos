@@ -27,9 +27,10 @@ ai-manager's `npm run mindbody:probe-payments`.
 **Newest (T220, 2026-11-14): a Mindbody promotion code can be applied at
 the counter**, on the Cart screen and in the roster's "Pay and check in",
 for the $28-off codes on pass 581 the studio is emailing returning
-drop-ins. Built and driven against the fake; **never yet run against
-Mindbody**, so the first thing owed is `scripts/probe-promo-code.ts` in the
-sandbox, then against prod (see Known gaps).
+drop-ins. **Probed live on prod (2026-11-14): Mindbody honours a code on
+the `Test: true` rehearsal ($49.00 -> $21.00, T75 agreeing) and pricing does
+not spend a one-use code.** Owed: one real coded sale to a dummy client
+(see Known gaps).
 
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
@@ -269,7 +270,12 @@ since it priced, say) refuses the SALE, 409 `reason: "promotion"`,
 nothing charged: the teacher quoted the coded price, so the uncoded one is
 never charged on the same tap. Listing codes (`GET /site/promocodes`)
 needs the "Set up promotions / Semester discounts" permission and is not
-used.
+used. **Probe B5 settled the two things this rests on** (Pete, prod,
+2026-11-14, dummy client 100042041, a throwaway one-use code for 581):
+the code is HONOURED on `Test: true` (SubTotal $49.00, DiscountTotal
+$28.00, GrandTotal $21.00, so SubTotal stays pre-discount and T75 agrees),
+and a `Test: true` pricing does NOT spend a one-use code (priced twice,
+applied twice), so showing a student their price cannot burn their code.
 
 **The rails apply unchanged.** T75 compares Mindbody's SubTotal, which is
 before discounts, so a code does not trip it; T79's DiscountTotal check
@@ -1019,7 +1025,10 @@ while `git clone` works, so clone the repo rather than fetching files.
   prod probe, 2026-11-14). `GET /site/promocodes` lists site 471's codes
   with `Discount.Type: "FlatRate"`, and `POST /site/addpromocode` refuses
   that word: "'FlatRate' is not a valid discount type. Options are: Amount
-  or Percent". Write `Amount`; expect to read `FlatRate` back.
+  or Percent". Write `Amount`; expect to read `FlatRate` back. And
+  `addpromocode` answers `PromotionID: 0` for a code it really created
+  (it was 4 on the site's list), so the id that `deactivatepromocode`
+  needs is read back from `GET /site/promocodes` by code.
 - **"Delegated staff does not belong to the subscriber." is a staff token
   used against the wrong SiteId** (Pete's third sandbox drive, 2026-09-21,
   T210). Not a permission, not an expired token, and not about the client or
@@ -1233,29 +1242,17 @@ while `git clone` works, so clone the repo rather than fetching files.
   remaining candidate, `fillEarlierBookings` in `src/lib/roster.ts`), so
   only the first class of the first day gets it; whether that read
   returns booked future classes, not just past ones, is also unseen.
-- **The promotion code has met Mindbody only as a refusal (T220).**
-  Probe B5 on prod (Pete, 2026-11-14, dummy client 100042041, Drop In 298,
-  the expired code `STORM`): Mindbody answered a 4xx, "Promotion code is
-  not active.", and `priceCartWithPromotion` repriced the cart without it
-  at $28.00 with T75 agreeing, which is the refusal path working as built.
-  No VALID code has been priced yet. Built and driven
-  in Chromium against the fake (`FAKE_MB_PROMO=1`: an expired, an unknown
-  and a used code each show their sentence and leave the ticket at $49.00;
-  a good one shows -$28.00 and $21.00 and the charge carries it; a code
-  spent between pricing and Charge refuses the sale with nothing charged),
-  but nobody has seen what MINDBODY does with a code it accepts. Owed, in order:
-  `scripts/probe-promo-code.ts` in the sandbox (it can make a code there
-  with `--create`) to see whether `PromotionCode` is HONOURED on
-  `Test: true` (if the total does not move, every code will read "took
-  nothing off" and the field is useless), whether `SubTotal` stays
-  before the discount (if it does not, T75 refuses every coded sale,
-  loudly, which is the safe failure), and what Mindbody's refusal
-  sentences actually say; then against prod with a dummy client in the
-  write guard and pass 581; then one real coded sale to a dummy client.
-  Also unseen: whether Mindbody counts a `Test: true` use against
-  `MaxUses: 1` (a second probe run would show it), and whether 581's
-  intro offer refuses a client who has bought it before. Check the
-  drawer's Shelf tab does not hide `Service:581`.
+- **The promotion code is probed, not yet sold, live (T220).** Probe B5
+  on prod (Pete, 2026-11-14, dummy client 100042041): an inactive code is
+  refused 4xx "Promotion code is not active." and the cart reprices
+  without it, a valid one-use code for 581 is honoured on `Test: true`
+  ($49.00 -> $21.00, T75 agreeing), and pricing it twice applied it twice,
+  so a `Test: true` pricing does not spend it. Still owed: ONE real coded
+  sale to a dummy client (that the live charge carries the code, charges
+  $21.00, spends the use, and passes T103's basket check), whether 581's
+  intro offer refuses a client who has bought it before, and a look at
+  the drawer's Shelf tab for a hidden `Service:581`. The probe makes and
+  deactivates its own throwaway code (`--create 28`, `--deactivate`).
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It

@@ -21117,6 +21117,15 @@ needs to be added immediately".
   100042041, Drop In 298, the expired code `STORM`): a 4xx, "Promotion
   code is not active.", and the cart repriced without it at $28.00 with
   T75 agreeing. The refusal path works against Mindbody.
+- **Probe B5 on prod, the rest** (Pete, same day, same client, a
+  throwaway `T220-PROBE-1`: one use, in store only, $28 off 581, expiring
+  the next day): without a code $49.00; with it SubTotal $49.00,
+  DiscountTotal $28.00, GrandTotal $21.00, T75 agreeing; priced a second
+  time, applied again. So the code is honoured on `Test: true` and a Test
+  pricing does not spend a one-use code. Mindbody's `addpromocode`
+  refused `FlatRate` (the list's own spelling) and wanted `Amount`, and
+  answered `PromotionID: 0`, so the probe's clean-up missed the real id
+  (4); it now reads the id back from the list and has `--deactivate`.
 - The same probe from a cloud session was refused "This endpoint requires
   a staff level or higher user token." on every checkout call while that
   session's staff token read fine, and ran on Pete's machine with the POS's
@@ -21124,7 +21133,10 @@ needs to be added immediately".
 
 ### Not verified, and owed first
 
-- **No VALID code has met Mindbody.** No sandbox staff credentials were
+- **No coded sale has been made for real.** One to a dummy client is
+  owed: that the live checkout charges $21.00, spends the use and passes
+  T103's basket check.
+- **Earlier wording, kept for the record: no VALID code had met Mindbody.** No sandbox staff credentials were
   available to the session that built it (the public sandbox owner login
   is refused), so whether `PromotionCode` is honoured on `Test: true`,
   whether SubTotal stays pre-discount, and Mindbody's real refusal words

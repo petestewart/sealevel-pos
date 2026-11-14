@@ -32,7 +32,7 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 | B2 | `GET /sale/alternativepaymentmethods` with `LocationId=98` | The HTTP 400 that gates all Apple Pay scoping | Not run |
 | B3 | Re-run `mindbody:probe-payments --live` against a client with a current card | Whether a charge actually settles through Stripe. Only ever reached "card is expired" | Not run |
 | B4 | Confirm a per-client Mindbody-hosted card capture page exists and is reachable by URL | Whether Phase 3 card capture is buildable at all | Not run |
-| B5 | `scripts/probe-promo-code.ts <client> <code> <option>`: the same cart `Test: true` with and without `PromotionCode` (sandbox first, `--create` makes a code there; then prod, pass 581, a dummy client in the write guard) | Whether Mindbody honours a promotion code on the rehearsal, whether SubTotal stays pre-discount, and its refusal wording. T220 rests on the first | **Half run, prod, 2026-11-14 (Pete, dummy client 100042041, Drop In 298, code `STORM`, expired): REFUSED 4xx "Promotion code is not active.", repriced without it at $28.00, T75 agreeing.** The refusal path works against Mindbody. Still owed: a VALID code. One run does it: `--create 28` on prod makes a throwaway (one use, in store only, item 581 only, expires tomorrow), prices it twice and deactivates it, so the first coded pricing says whether the Test total moves and SubTotal stays pre-discount, and the second whether a Test pricing used the code up |
+| B5 | `scripts/probe-promo-code.ts <client> <code> <option> --create 28`: makes a throwaway one-use code, prices the cart without it and with it twice, deactivates it | Whether Mindbody honours a promotion code on the rehearsal, whether SubTotal stays pre-discount, its refusal wording, and whether pricing spends a one-use code | **Answered, prod, 2026-11-14 (Pete, dummy client 100042041).** An inactive code: 4xx "Promotion code is not active.", repriced without it. A valid one-use code for 581: HONOURED on `Test: true`, $49.00 -> $21.00, DiscountTotal $28.00, SubTotal $49.00, T75 agreeing; priced twice, applied twice, so pricing does NOT spend it. Along the way: `addpromocode` takes `Amount`/`Percent` while the list reads `FlatRate`, and answers `PromotionID: 0` |
 
 ---
 
@@ -191,9 +191,12 @@ pack in the same gesture.
   line or a gift card. 581 is `IntroOfferType: "NewAndExistingClients"`
   and nothing in the app hides it from a returning client (the
   new-students-only rule above is for 414 and was never built).
-- [ ] Live, owed: probe B5 in the sandbox, then prod with pass 581, then
-  one real coded sale to a dummy client. Check the drawer's Shelf tab
-  does not hide `Service:581`.
+- [x] Probe B5 on prod (2026-11-14): a code is honoured on the rehearsal
+  and pricing does not spend it.
+- [ ] Live, owed: one real coded sale to a dummy client on the counter
+  (charges $21.00, spends the use, passes T103), and whether 581 refuses a
+  client who already bought it. Check the drawer's Shelf tab does not
+  hide `Service:581`.
 
 **2.7 A pass that comes with a place.** A workshop sold as a pass also
 signs the buyer up for it, so the counter does not stop at the sale.

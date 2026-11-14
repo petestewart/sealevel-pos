@@ -38,6 +38,15 @@
  * would suppress them; they are sent under the probe's own client id,
  * which the usage below puts in the guard. Dry run still suppresses them.
  *
+ * `addpromocode` answers `PromotionID: 0` on prod (Pete's run,
+ * 2026-11-14) however real the code is, so the id is always read back
+ * from the site's list by code. `--deactivate` deactivates a code the
+ * probe made on an earlier run and does nothing else; it refuses any code
+ * whose name does not start "T220 probe", so it cannot reach a student's.
+ *
+ *   MINDBODY_TARGET=prod POS_DRY_RUN=false POS_WRITE_CLIENT_IDS=<clientId> \
+ *     npx tsx --env-file=.env scripts/probe-promo-code.ts <clientId> <code> <optionId> --deactivate
+ *
  * Usage, sandbox (dry run is forced off there):
  *
  *   MINDBODY_TARGET=sandbox npx tsx --env-file=.env \
@@ -76,7 +85,9 @@ function studioDay(offsetDays: number): string {
 
 /** The site's codes, as `GET /site/promocodes` lists them (inactive ones
  *  included). Read on the service account. */
-async function siteCodes(): Promise<{ PromotionID?: number; Code?: string }[]> {
+async function siteCodes(): Promise<
+  { PromotionID?: number; Code?: string; Name?: string; Active?: boolean }[]
+> {
   const res = await mindbody<any>(
     "/site/promocodes?request.activeOnly=false&request.limit=200",
   );
@@ -90,12 +101,28 @@ async function main(): Promise<void> {
   if (!clientId || !code || !optionRaw) {
     console.error(
       "Usage: npx tsx --env-file=.env scripts/probe-promo-code.ts " +
-        "<clientId> <code> <pricingOptionId> [--create <amountOff>]",
+        "<clientId> <code> <pricingOptionId> [--create <amountOff> | --deactivate]",
     );
     process.exit(1);
   }
   const optionId = Number(optionRaw);
   console.log(`\n=== target ${target()}, client ${clientId}, code ${code}, option ${optionId}`);
+
+  if (args.includes("--deactivate")) {
+    const found = (await siteCodes()).find((c) => c.Code === code);
+    if (!found || typeof found.PromotionID !== "number" || found.PromotionID <= 0) {
+      console.log(`\n--- ${code} is not on this site. Nothing to deactivate.`);
+      return;
+    }
+    if (!(found.Name ?? "").startsWith("T220 probe")) {
+      console.error(
+        `--deactivate refused: ${code} is "${found.Name ?? ""}", not a code this probe made.`,
+      );
+      process.exit(1);
+    }
+    await deactivate(code, found.PromotionID, clientId);
+    return;
+  }
 
   /** The code this run made, to deactivate at the end. */
   let created: { id: number | null } | null = null;
@@ -139,10 +166,16 @@ async function main(): Promise<void> {
         console.log("    SUPPRESSED: dry run or the write guard. Set them as the usage says.");
         return;
       }
+      /* The answer's PromotionID is 0 on prod, so a positive one is
+       * believed and anything else is read back from the list by code. */
+      const answered = made?.PromoCode?.PromotionID;
+      const listed = (await siteCodes()).find((c) => c.Code === code)?.PromotionID;
       const id =
-        typeof made?.PromoCode?.PromotionID === "number"
-          ? made.PromoCode.PromotionID
-          : ((await siteCodes()).find((c) => c.Code === code)?.PromotionID ?? null);
+        typeof answered === "number" && answered > 0
+          ? answered
+          : typeof listed === "number" && listed > 0
+            ? listed
+            : null;
       created = { id };
       console.log(`    created, PromotionID ${id ?? "(not found)"}`);
     } catch (err) {
@@ -219,21 +252,35 @@ async function main(): Promise<void> {
       if (created.id === null) {
         console.log(`\n--- ${code} could not be found to deactivate. Deactivate it by hand in Mindbody.`);
       } else {
-        try {
-          await mindbody("/site/deactivatepromocode", {
-            method: "POST",
-            body: { PromotionId: created.id },
-            clientId,
-          });
-          console.log(`\n--- deactivated ${code} (PromotionID ${created.id}).`);
-        } catch (err) {
-          console.log(
-            `\n--- COULD NOT DEACTIVATE ${code} (PromotionID ${created.id}): ` +
-              `${err instanceof Error ? err.message : String(err)} Deactivate it by hand in Mindbody.`,
-          );
-        }
+        await deactivate(code, created.id, clientId);
       }
     }
+  }
+}
+
+/** Deactivate one code by its PromotionID, then read the list back and
+ *  say what Mindbody now holds, rather than trusting a 200. */
+async function deactivate(code: string, id: number, clientId: string): Promise<void> {
+  try {
+    const res = await mindbody<any>("/site/deactivatepromocode", {
+      method: "POST",
+      body: { PromotionId: id },
+      clientId,
+    });
+    if (res?.DryRun === true || res?.WriteSuppressed === true) {
+      console.log(`\n--- deactivating ${code} was SUPPRESSED (dry run or the write guard).`);
+      return;
+    }
+    const after = (await siteCodes()).find((c) => c.PromotionID === id);
+    console.log(
+      `\n--- deactivated ${code} (PromotionID ${id}); the site now lists it ` +
+        `Active ${String(after?.Active ?? "(not listed)")}.`,
+    );
+  } catch (err) {
+    console.log(
+      `\n--- COULD NOT DEACTIVATE ${code} (PromotionID ${id}): ` +
+        `${err instanceof Error ? err.message : String(err)} Deactivate it by hand in Mindbody.`,
+    );
   }
 }
 
