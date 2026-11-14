@@ -21133,9 +21133,11 @@ needs to be added immediately".
 
 ### Not verified, and owed first
 
-- **No coded sale has been made for real.** One to a dummy client is
-  owed: that the live checkout charges $21.00, spends the use and passes
-  T103's basket check.
+- **One coded sale was made for real** (Pete, 2026-11-14, local counter
+  build against prod, writes guarded to the dummy client): sale 428528,
+  one 581 line, UnitPrice $49.00, DiscountAmount $28.00 (57.14%),
+  TotalAmount $21.00, one $21.00 Cash payment, the pass on the client
+  from 11/14 to 11/27. Still to see: the code reading as spent afterwards.
 - **Earlier wording, kept for the record: no VALID code had met Mindbody.** No sandbox staff credentials were
   available to the session that built it (the public sandbox owner login
   is refused), so whether `PromotionCode` is honoured on `Test: true`,

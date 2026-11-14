@@ -29,8 +29,10 @@ the counter**, on the Cart screen and in the roster's "Pay and check in",
 for the $28-off codes on pass 581 the studio is emailing returning
 drop-ins. **Probed live on prod (2026-11-14): Mindbody honours a code on
 the `Test: true` rehearsal ($49.00 -> $21.00, T75 agreeing) and pricing does
-not spend a one-use code.** Owed: one real coded sale to a dummy client
-(see Known gaps).
+not spend a one-use code.** **And sold for real** (sale 428528, dummy
+client 100042041, $21.00 cash, Mindbody's line: $49.00 less $28.00).
+Owed: the code reads as spent afterwards, and whether 581 refuses a
+client who already bought it (see Known gaps).
 
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
@@ -1242,17 +1244,20 @@ while `git clone` works, so clone the repo rather than fetching files.
   remaining candidate, `fillEarlierBookings` in `src/lib/roster.ts`), so
   only the first class of the first day gets it; whether that read
   returns booked future classes, not just past ones, is also unseen.
-- **The promotion code is probed, not yet sold, live (T220).** Probe B5
-  on prod (Pete, 2026-11-14, dummy client 100042041): an inactive code is
-  refused 4xx "Promotion code is not active." and the cart reprices
-  without it, a valid one-use code for 581 is honoured on `Test: true`
-  ($49.00 -> $21.00, T75 agreeing), and pricing it twice applied it twice,
-  so a `Test: true` pricing does not spend it. Still owed: ONE real coded
-  sale to a dummy client (that the live charge carries the code, charges
-  $21.00, spends the use, and passes T103's basket check), whether 581's
-  intro offer refuses a client who has bought it before, and a look at
-  the drawer's Shelf tab for a hidden `Service:581`. The probe makes and
-  deactivates its own throwaway code (`--create 28`, `--deactivate`).
+- **The promotion code has been probed and sold live, once (T220).** Probe
+  B5 on prod (Pete, 2026-11-14, dummy client 100042041 "John NewGuy"): an
+  inactive code is refused 4xx "Promotion code is not active." and the cart
+  reprices without it; a valid one-use code for 581 is honoured on
+  `Test: true` ($49.00 -> $21.00, T75 agreeing); pricing it twice applied it
+  twice, so a Test pricing does not spend it. Then a REAL sale on the
+  counter build with that code: sale 428528, one 581 line at UnitPrice
+  $49.00, DiscountAmount $28.00, TotalAmount $21.00, paid $21.00 cash, the
+  pass active 11/14 to 11/27. Still owed: that the code now reads as spent
+  (the probe without `--create` on the same code), whether 581 refuses a
+  client who already holds it (the same run answers it, since that client
+  now does), and a look at the deployed drawer's Shelf tab for a hidden
+  `Service:581`. The sale's `SalesRepId` came back null, which is T49's
+  open attribution question below, not this feature's.
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It
