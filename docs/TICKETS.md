@@ -21111,9 +21111,20 @@ needs to be added immediately".
   unknown code leaves "Charge $49.00 and check in", WB-GOOD makes it
   "Charge $21.00 and check in", and the charge and check-in complete.
 
+### Live, so far
+
+- **Probe B5 on prod, refusal half** (Pete, 2026-11-14, dummy client
+  100042041, Drop In 298, the expired code `STORM`): a 4xx, "Promotion
+  code is not active.", and the cart repriced without it at $28.00 with
+  T75 agreeing. The refusal path works against Mindbody.
+- The same probe from a cloud session was refused "This endpoint requires
+  a staff level or higher user token." on every checkout call while that
+  session's staff token read fine, and ran on Pete's machine with the POS's
+  own key: the cloud environment's stored Api-Key is not the POS's.
+
 ### Not verified, and owed first
 
-- **Nothing here has met Mindbody.** No sandbox staff credentials were
+- **No VALID code has met Mindbody.** No sandbox staff credentials were
   available to the session that built it (the public sandbox owner login
   is refused), so whether `PromotionCode` is honoured on `Test: true`,
   whether SubTotal stays pre-discount, and Mindbody's real refusal words

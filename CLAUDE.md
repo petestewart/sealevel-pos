@@ -1228,12 +1228,17 @@ while `git clone` works, so clone the repo rather than fetching files.
   remaining candidate, `fillEarlierBookings` in `src/lib/roster.ts`), so
   only the first class of the first day gets it; whether that read
   returns booked future classes, not just past ones, is also unseen.
-- **The promotion code has never met Mindbody (T220).** Built and driven
+- **The promotion code has met Mindbody only as a refusal (T220).**
+  Probe B5 on prod (Pete, 2026-11-14, dummy client 100042041, Drop In 298,
+  the expired code `STORM`): Mindbody answered a 4xx, "Promotion code is
+  not active.", and `priceCartWithPromotion` repriced the cart without it
+  at $28.00 with T75 agreeing, which is the refusal path working as built.
+  No VALID code has been priced yet. Built and driven
   in Chromium against the fake (`FAKE_MB_PROMO=1`: an expired, an unknown
   and a used code each show their sentence and leave the ticket at $49.00;
   a good one shows -$28.00 and $21.00 and the charge carries it; a code
   spent between pricing and Charge refuses the sale with nothing charged),
-  but nobody has seen what MINDBODY does. Owed, in order:
+  but nobody has seen what MINDBODY does with a code it accepts. Owed, in order:
   `scripts/probe-promo-code.ts` in the sandbox (it can make a code there
   with `--create`) to see whether `PromotionCode` is HONOURED on
   `Test: true` (if the total does not move, every code will read "took
