@@ -1015,6 +1015,11 @@ while `git clone` works, so clone the repo rather than fetching files.
   returning client's shelf unless the drawer's hide list names
   `Service:581`, and whether Mindbody sells it to them is the rehearsal's
   answer.
+- **A promotion code's discount type is spelled two ways** (T220, Pete's
+  prod probe, 2026-11-14). `GET /site/promocodes` lists site 471's codes
+  with `Discount.Type: "FlatRate"`, and `POST /site/addpromocode` refuses
+  that word: "'FlatRate' is not a valid discount type. Options are: Amount
+  or Percent". Write `Amount`; expect to read `FlatRate` back.
 - **"Delegated staff does not belong to the subscriber." is a staff token
   used against the wrong SiteId** (Pete's third sandbox drive, 2026-09-21,
   T210). Not a permission, not an expired token, and not about the client or

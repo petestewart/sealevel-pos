@@ -29,7 +29,10 @@
  * created it DEACTIVATES at the end (`POST /site/deactivatepromocode`),
  * whatever happened in between, and says so. Both calls need the "Set up
  * promotions / Semester discounts" staff permission. The discount type is
- * `FlatRate`, the spelling site 471's own codes carry.
+ * `Amount`: `GET /site/promocodes` LISTS site 471's own codes as
+ * `FlatRate`, but `addpromocode` refuses that spelling ("'FlatRate' is
+ * not a valid discount type. Options are: Amount or Percent", Pete's
+ * prod run, 2026-11-14).
  *
  * Those two writes name no client, so the write guard (POS_WRITE_CLIENT_IDS)
  * would suppress them; they are sent under the probe's own client id,
@@ -120,7 +123,7 @@ async function main(): Promise<void> {
           Code: code,
           Name: `T220 probe ${code} (safe to delete)`,
           Active: true,
-          Discount: { Type: "FlatRate", Amount: amount },
+          Discount: { Type: "Amount", Amount: amount },
           ActivationDate: studioDay(0),
           ExpirationDate: studioDay(1),
           MaxUses: 1,
