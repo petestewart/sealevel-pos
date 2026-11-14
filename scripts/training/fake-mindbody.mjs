@@ -79,6 +79,17 @@ if (PROMO) {
     { Id: "000581", ProductId: 581, Name: "Welcome Back \u2013 2 Weeks Unlimited ($49)", Price: 49, OnlinePrice: 49, TaxRate: 0, Count: 99999, Type: "Unlimited", IsIntroOffer: true, IntroOfferType: "NewAndExistingClients", RevenueCategory: "Classes" },
   );
 }
+/* T221: per-client refusals, the shapes site 471 answered live: an intro
+ * offer for a client who is not new, a once-per-client offer already
+ * used, a members-only pass. Jordan Kim (10110) and Taylor Brooks (10107)
+ * are returning students; everyone else is new. */
+const clientRefusals = PROMO
+  ? {
+      "10110:581": "Client has hit the purchase count for this intro series.",
+      "10110:1004": "Only new clients qualify for this intro series.",
+      "10107:1004": "Only new clients qualify for this intro series.",
+    }
+  : {};
 const promoCodes = { "WB-GOOD": { off: 28, item: "581", used: false }, "WB-OLD": { off: 28, item: "581", expired: true } };
 /** The refusal for a code on this cart, or null when it applies. */
 function promoRefusal(code, lines) {
@@ -667,6 +678,10 @@ function handle(method, path, q, body, res) {
       return send(res, 200, { BarcodeId: one(q, "barcodeId"), RemainingBalance: 0 });
     case "/sale/checkoutshoppingcart": {
       const p = priceCart(body);
+      for (const l of p.lines) {
+        const why = clientRefusals[`${body.ClientId}:${l.found?.ProductId}`];
+        if (why) return send(res, 400, { Error: { Message: `mb.Core.BLL.ShoppingCart failed validation ${why}`, Code: "InvalidParameter" } });
+      }
       if (typeof body.PromotionCode === "string") {
         const why = promoRefusal(body.PromotionCode, p.lines);
         if (why) return send(res, 400, { Error: { Message: why, Code: "InvalidParameter" } });

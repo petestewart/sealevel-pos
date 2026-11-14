@@ -8745,6 +8745,22 @@ export default function SaleScreen(props: {
    *  carry. Cleared by anything that makes it untrue: the line leaving
    *  the ticket, the client changing, the sale completing, Empty cart. */
   const [override, setOverride] = useState<ArmedOverride | null>(null);
+  /**
+   * T221: the passes the attached client cannot buy, with Mindbody's own
+   * sentence for each (GET /api/pass-availability, which Test-prices the
+   * intro offers and member-only passes for this client). Keyed by the
+   * client it was asked for, so an answer that lands after the teacher
+   * switched clients greys nothing. Null until it answers, and a check
+   * that could not answer leaves every pass open: the cart's own pricing
+   * (T100's refused line) is still the backstop.
+   */
+  const [availability, setAvailability] = useState<{
+    clientId: string;
+    unavailable: Map<string, string>;
+  } | null>(null);
+  /** T221: bumped after a sale, which is what changes the answer, so the
+   *  next check skips the server's two-minute cache. */
+  const [availabilityNonce, setAvailabilityNonce] = useState(0);
   const overrideRef = useRef<ArmedOverride | null>(null);
   overrideRef.current = override;
   /** Stale-response guard, the codebase's activeIdRef pattern: only the
@@ -9276,6 +9292,47 @@ export default function SaleScreen(props: {
    */
   const clientId = client?.id ?? null;
 
+  /* T221: ask which passes this client cannot buy, on attach and again
+   * after a sale. In the background: nothing waits for it, the shelf is
+   * drawn as before, and a refused pass greys out when the answer lands
+   * (a few seconds on site 471: one Test pricing per intro offer and
+   * member-only pass, in parallel). */
+  useEffect(() => {
+    if (clientId === null) {
+      setAvailability(null);
+      return;
+    }
+    let alive = true;
+    const fresh = availabilityNonce > 0 ? "&fresh=1" : "";
+    fetch(
+      `/api/pass-availability?clientId=${encodeURIComponent(clientId)}${fresh}`,
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!alive) return;
+        const list = Array.isArray(body?.unavailable) ? body.unavailable : [];
+        setAvailability({
+          clientId,
+          unavailable: new Map(
+            list
+              .filter(
+                (u: any) =>
+                  typeof u?.metadataId === "string" &&
+                  typeof u?.reason === "string",
+              )
+              .map((u: any) => [u.metadataId as string, u.reason as string]),
+          ),
+        });
+      })
+      .catch(() => {
+        /* Nothing known, nothing greyed. */
+        if (alive) setAvailability(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [clientId, availabilityNonce]);
+
   /** Card-on-file and account-credit lookup, on attach and again on every
    *  bump of profileNonce (after a charge). The result gates which method
    *  cards light up and what the header chip shows; /api/checkout re-reads
@@ -9722,6 +9779,34 @@ export default function SaleScreen(props: {
       addLines([{ item, quantity: 1 }]);
     },
     [client, addLines],
+  );
+
+  /**
+   * T221: a tap on a pass Mindbody refuses for this client. Nothing goes
+   * on the ticket; the refused-line notice opens instead, with
+   * Mindbody's sentence and the same three ways forward (T112), so the
+   * tile is never a dead end: buying it for somebody else is still an
+   * ordinary sale.
+   */
+  const showUnavailable = useCallback(
+    (item: ShelfItem, reason: string) => {
+      setCartNotice({
+        text: `${item.name} is not available for ${client?.name ?? "this client"}: ${reason}`,
+        offers:
+          item.price > 0
+            ? [
+                {
+                  key: itemKey(item.type, item.id),
+                  name: item.name,
+                  cents: Math.round(item.price * 100),
+                  item,
+                  reason,
+                },
+              ]
+            : [],
+      });
+    },
+    [client],
   );
 
   /**
@@ -10735,17 +10820,48 @@ export default function SaleScreen(props: {
        this card is about that line and its controls act on it. */
     const key = cartKey(item, null);
     const count = inCart.get(key) ?? 0;
+    /* T221: Mindbody refuses this pass for the attached client. The tile
+     * stays on the shelf, greyed with the reason, and a tap opens the
+     * same notice a refused line does (another client, Override, gift
+     * card) instead of putting it on the ticket. A line already there,
+     * or one an override puts back, is not touched. */
+    const unavailable =
+      item.type === "Service" &&
+      client !== null &&
+      availability?.clientId === client.id
+        ? (availability.unavailable.get(String(item.id)) ?? null)
+        : null;
     return (
       <div
         className={count > 0 ? "shelf-cell has-qty" : "shelf-cell"}
         key={`${item.type}-${item.id}`}
       >
         <button
-          className={count > 0 ? "shelf-item in-cart" : "shelf-item"}
-          onClick={() => addItem(item)}
-          aria-label={`Add ${item.name}, ${money(item.price)}`}
+          className={
+            unavailable !== null && count === 0
+              ? "shelf-item unavailable"
+              : count > 0
+                ? "shelf-item in-cart"
+                : "shelf-item"
+          }
+          onClick={() =>
+            unavailable !== null && count === 0
+              ? showUnavailable(item, unavailable)
+              : addItem(item)
+          }
+          aria-label={
+            unavailable !== null && count === 0
+              ? `${item.name} is unavailable for this client: ${unavailable}`
+              : `Add ${item.name}, ${money(item.price)}`
+          }
         >
           <span className="shelf-name">{item.name}</span>
+          {unavailable !== null && count === 0 ? (
+            <span className="shelf-unavailable">
+              <span className="shelf-unavailable-tag">Unavailable</span>
+              <span className="shelf-unavailable-why">{unavailable}</span>
+            </span>
+          ) : null}
           <span className="shelf-foot">
             <span className="shelf-price">
               <span className="shelf-amt">
@@ -11931,6 +12047,9 @@ export default function SaleScreen(props: {
               /* T112: and the override, for the same reason and one
                  more: its token is spent, so it authorizes nothing. */
               setOverride(null);
+              /* T221: a sale is what changes which passes this client
+                 may buy (581 is once per client), so ask again. */
+              setAvailabilityNonce((n) => n + 1);
               /* T220: and the code, which the sale just spent. */
               setPromoCode(null);
               setPromoDraft("");
