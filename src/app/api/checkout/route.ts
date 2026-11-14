@@ -2470,12 +2470,12 @@ async function runCheckout(
         return NextResponse.json(
           {
             error:
-              `Discounting that gift card would make it worth ` +
-              `${trial.value.toFixed(2)} instead of ` +
-              `${unit.cardValue.toFixed(2)}: on this card Mindbody takes the ` +
-              "discount off what the card is WORTH, not off what it costs. " +
-              "Sell it at its full price, or discount the rest of the " +
-              "ticket instead. Nothing was charged.",
+              `Remove the discount — this gift card can't be sold for ` +
+              `less than its value. The discount comes off what's on the ` +
+              `card, so this would hand over a $${trial.value.toFixed(2)} ` +
+              `card instead of a $${unit.cardValue.toFixed(2)} one. Giving ` +
+              `it away? Ring it at full price and take the payment as cash. ` +
+              "Nothing was charged.",
             stage: "rehearsal",
           },
           { status: 409 },
