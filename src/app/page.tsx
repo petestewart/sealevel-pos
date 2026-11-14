@@ -369,6 +369,15 @@ interface PayPriced {
   grandTotal: number | null;
   expectedTotal: number;
   disagrees: boolean;
+  /** T220: Mindbody's DiscountTotal, which with a promotion code is the
+   *  code's own figure, and what became of the code. */
+  discountTotal?: number | null;
+  promotion?: {
+    code: string;
+    applied: boolean;
+    discount: number | null;
+    refusal: string | null;
+  };
 }
 
 /**
@@ -1271,6 +1280,16 @@ function FrontDesk({
    *  number or none. */
   const [payPriced, setPayPriced] = useState<PayPriced | null>(null);
   const [payPricing, setPayPricing] = useState(false);
+  /**
+   * T220: a Mindbody promotion code on this dialog's sale, the Cart
+   * screen's field in miniature. The pricing loop sends it, Mindbody
+   * judges it, and only a code the newest pricing APPLIED is charged
+   * with (`payAppliedPromo`). A refused code leaves with Mindbody's
+   * sentence in `payPromoNote`. A CODE, not an amount (T35's exception).
+   */
+  const [payPromoCode, setPayPromoCode] = useState<string | null>(null);
+  const [payPromoDraft, setPayPromoDraft] = useState("");
+  const [payPromoNote, setPayPromoNote] = useState<string | null>(null);
   const [payPriceError, setPayPriceError] = useState<string | null>(null);
   /** Stale-response guard for the dialog's profile fetch: bumped on
    *  every open and close, the waiverGen pattern. */
@@ -1341,6 +1360,13 @@ function FrontDesk({
           subtotal: usable?.subTotal ?? null,
           tax: usable?.taxTotal ?? null,
           total: usable?.grandTotal ?? null,
+          /* T220: the code's discount, Mindbody's own figure, so the
+             student reads the same $28.00 off the teacher quoted. */
+          ...(usable?.promotion?.applied === true &&
+          typeof usable.discountTotal === "number" &&
+          usable.discountTotal > 0
+            ? { discountTotal: usable.discountTotal }
+            : {}),
         },
         /* The cart the SERVER hashes, in the same shape the charge below
            sends it: the client and the one line's type, id, quantity and
@@ -1355,6 +1381,11 @@ function FrontDesk({
             },
           ],
           clientId: dialog.entry.clientId,
+          /* T220: in the hash, as the charge below sends it. */
+          ...(usable?.promotion?.applied === true &&
+          usable.promotion.code === payPromoCode
+            ? { promotionCode: usable.promotion.code }
+            : {}),
         },
       };
     },
@@ -1388,6 +1419,13 @@ function FrontDesk({
       "The pass changed. Charge again to ask the customer.",
     );
   }, [paySelectedId, abandonPayApproval]);
+  /* T220: and a promotion code arriving or leaving, which changes what
+   * Mindbody charges as surely as a different pass does. */
+  useEffect(() => {
+    abandonPayApproval(
+      "The code changed. Charge again to ask the customer.",
+    );
+  }, [payPromoCode, abandonPayApproval]);
   /** Rows with a check-in in flight. */
   const [busy, setBusy] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
@@ -3650,6 +3688,10 @@ function FrontDesk({
       setPayPriceError(null);
       setPayPricing(false);
       setPaySelectedId(null);
+      /* T220: a code belongs to the sale it was typed for. */
+      setPayPromoCode(null);
+      setPayPromoDraft("");
+      setPayPromoNote(null);
       setPayDialog({ entry, classId: activeId, flavor });
       if (profile) {
         setPayProfile(profile);
@@ -3734,6 +3776,9 @@ function FrontDesk({
     setPayPricing(false);
     setPaySelectedId(null);
     setPayProfile(null);
+    setPayPromoCode(null);
+    setPayPromoDraft("");
+    setPayPromoNote(null);
   }, [payStage, cancelPayApproval]);
 
   /**
@@ -3910,12 +3955,31 @@ function FrontDesk({
               },
             ],
             clientId,
+            /* T220: the code, judged by Mindbody on this Test call. */
+            ...(payPromoCode !== null ? { promotionCode: payPromoCode } : {}),
           }),
         });
         const body = await res.json();
         if (payPriceGen.current !== gen) return;
+        if (!res.ok && body?.reason === "promotion" && payPromoCode !== null) {
+          setPayPromoCode(null);
+          setPayPromoNote(String(body?.error ?? "That code cannot go on this sale."));
+          return;
+        }
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
         setPayPriced(body as PayPriced);
+        /* T220: a code Mindbody refused or took nothing off for leaves,
+         * with its sentence; the totals just set are the sale without it. */
+        const promo = (body as PayPriced).promotion;
+        if (
+          promo !== undefined &&
+          !promo.applied &&
+          promo.refusal !== null &&
+          promo.code === payPromoCode
+        ) {
+          setPayPromoCode(null);
+          setPayPromoNote(promo.refusal);
+        }
       } catch (err) {
         if (payPriceGen.current !== gen) return;
         setPayPriced(null);
@@ -3925,7 +3989,7 @@ function FrontDesk({
       }
     }, 350);
     return () => clearTimeout(timer);
-  }, [payDialog, paySelectedId, payCatalog.passes]);
+  }, [payDialog, paySelectedId, payCatalog.passes, payPromoCode]);
 
   /** Escape closes the pay dialog like its Cancel does -- never while a
    *  stage of the gesture is in flight: money may be moving, and the
@@ -6339,6 +6403,21 @@ function FrontDesk({
   /* The chargeable total: the server's number, current selection only.
    * While the pricing loop (or its debounce) is pending, the previous
    * selection's total must not be restated on the button. */
+  /* T220: the code the NEWEST pricing applied, and only that; the one
+   * value the charge sends. */
+  const payAppliedPromo =
+    !payPricing &&
+    payPromoCode !== null &&
+    payPriced?.promotion?.applied === true &&
+    payPriced.promotion.code === payPromoCode
+      ? payPromoCode
+      : null;
+  const applyPayPromo = () => {
+    const code = payPromoDraft.trim();
+    if (code === "" || payStage !== null) return;
+    setPayPromoNote(null);
+    setPayPromoCode(code);
+  };
   const payTotal =
     !payPricing && payPriced && !payPriced.suppressed && !payPriced.disagrees
       ? payPriced.grandTotal
@@ -6442,6 +6521,11 @@ function FrontDesk({
               },
             ],
             clientId: entry.clientId,
+            /* T220: the code the pricing applied; the route rehearses
+               with it and charges Mindbody's rehearsed total. */
+            ...(payAppliedPromo !== null
+              ? { promotionCode: payAppliedPromo }
+              : {}),
             /* T209: the customer's approval, or the PIN that stood in
                for it. The server checks the setting itself and refuses
                a charge that carries neither. */
@@ -6555,6 +6639,17 @@ function FrontDesk({
           kind: "charge-failed",
           message: String(chargeBody?.error ?? `HTTP ${chargeRes.status}`),
         });
+        /* T220: a refused code leaves the sale, which reprices without
+         * it; the outcome above already says nothing was charged. */
+        if (chargeBody?.reason === "promotion") {
+          setPayPromoCode(null);
+          setPayPromoNote(
+            String(
+              chargeBody?.promotion?.refusal ??
+                "Mindbody did not accept that code.",
+            ),
+          );
+        }
         return;
       }
 
@@ -10416,6 +10511,69 @@ function FrontDesk({
                   ? money(payPriced.grandTotal)
                   : "nothing"}
                 . Do not charge; this is a bug to report.
+              </div>
+            ) : null}
+
+            {/* T220: the promotion code, the Cart screen's field in
+                miniature. The discount line is Mindbody's own
+                DiscountTotal for the coded sale and nothing else; a
+                refused code leaves with Mindbody's sentence. */}
+            {paySelected !== null && !payMoneyMoved ? (
+              <div className="promo-row">
+                {payPromoCode !== null ? (
+                  <div className="promo-applied">
+                    <span className="promo-applied-text">
+                      {payAppliedPromo !== null &&
+                      typeof payPriced?.discountTotal === "number"
+                        ? `Code ${payPromoCode}: ${money(payPriced.discountTotal)} off, by Mindbody.`
+                        : payPricing
+                          ? `Checking code ${payPromoCode} with Mindbody...`
+                          : `Code ${payPromoCode}.`}
+                    </span>
+                    <button
+                      className="promo-btn"
+                      disabled={payStage !== null}
+                      onClick={() => {
+                        setPayPromoCode(null);
+                        setPayPromoNote(null);
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <div className="promo-entry">
+                    <input
+                      className="promo-input"
+                      value={payPromoDraft}
+                      onChange={(e) => setPayPromoDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") applyPayPromo();
+                      }}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                      enterKeyHint="done"
+                      maxLength={50}
+                      disabled={payStage !== null}
+                      aria-label="Promotion code"
+                      placeholder="Promotion code"
+                    />
+                    <button
+                      className="promo-btn"
+                      disabled={payStage !== null || payPromoDraft.trim() === ""}
+                      onClick={applyPayPromo}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                )}
+                {payPromoNote !== null ? (
+                  <p className="promo-note bad" role="status">
+                    {`${payPromoNote} The code was not applied.`}
+                  </p>
+                ) : null}
               </div>
             ) : null}
 

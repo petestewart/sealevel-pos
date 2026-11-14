@@ -37,7 +37,8 @@ import {
   type Discount,
 } from "./comp";
 import { logSharedId } from "./clientrecord";
-import { mindbody, type Actor } from "./mindbody";
+import { mindbody, mindbodyHttpStatus, type Actor } from "./mindbody";
+import { PROMO_TOOK_NOTHING, type PromotionOutcome } from "./promocode";
 import { plainText } from "./richtext";
 import { studioWall } from "./roster";
 import type { TypedCard } from "./typedcard";
@@ -863,6 +864,14 @@ export async function priceCart(
    *  (parseDiscount); spread over the lines HERE, never taken from the
    *  browser, and sent as DiscountAmount per line. */
   discount?: Discount | null,
+  /** T220: a Mindbody promotion code, validated by the route
+   *  (parsePromotionCode) and sent as the cart's `PromotionCode`
+   *  (sale.yml:5684). Its discount lands in Mindbody's DiscountTotal and
+   *  GrandTotal; nothing here computes it. Never sent beside a
+   *  `discount` (promotionRefusal), so T79's DiscountTotal check, which
+   *  runs only when a discount was sent, is untouched, and T75's
+   *  pre-discount SubTotal assertion runs exactly as before. */
+  promotionCode?: string | null,
 ): Promise<PricedCart> {
   assertCartLines(items, "priceCart");
   const spread = discount ? spreadDiscount(items, discount) : undefined;
@@ -881,6 +890,7 @@ export async function priceCart(
   const baseBody: Record<string, unknown> = {
     Items: cartItemsPayload(items, spread),
     ...(clientId ? { ClientId: clientId } : {}),
+    ...(promotionCode ? { PromotionCode: promotionCode } : {}),
     Test: true,
     LocationId: STUDIO_LOCATION_ID,
     InStore: true,
@@ -1525,6 +1535,11 @@ export async function checkoutCart(
    *  the no-Payments shape /api/checkout tries first for a 100%
    *  discount before falling back to the proven Comp payment. */
   discount?: Discount | null,
+  /** T220: the promotion code the rehearsal applied, sent as the cart's
+   *  `PromotionCode` on the real call so Mindbody charges the total it
+   *  just rehearsed. Absent or null sends no key at all, which is the
+   *  body every sale sent before T220. */
+  promotionCode?: string | null,
 ): Promise<CheckoutOutcome> {
   assertCartLines(items, "checkoutCart");
   const spread = discount ? spreadDiscount(items, discount) : undefined;
@@ -1554,6 +1569,7 @@ export async function checkoutCart(
         ? { Payments: payments.map(checkoutPaymentPayload) }
         : {}),
       ...(clientId ? { ClientId: clientId } : {}),
+      ...(promotionCode ? { PromotionCode: promotionCode } : {}),
       Test: false,
       LocationId: STUDIO_LOCATION_ID,
       InStore: true,
@@ -1626,9 +1642,97 @@ export async function rehearseCheckout(
    * Comp stub, same strict total and discount assertions.
    */
   actor?: Actor | null,
+  /** T220: rehearsed WITH the code the real call will carry. */
+  promotionCode?: string | null,
 ): Promise<PricedCart> {
-  return priceCart(items, clientId, actor ?? null, discount);
+  return priceCart(items, clientId, actor ?? null, discount, promotionCode);
 }
+
+/**
+ * T220: price a cart WITH a promotion code, and say what became of it.
+ * Shared by /api/price-cart and /api/checkout's rehearsal, so the ticket
+ * on the screen and the rehearsal that decides the charge judge a code
+ * the same way.
+ *
+ * - Priced with the code and Mindbody's DiscountTotal above zero: the
+ *   code is APPLIED, and the cart returned is the coded one, its
+ *   DiscountTotal and GrandTotal Mindbody's own.
+ * - Priced with the code and nothing taken off: NOT applied, with
+ *   PROMO_TOOK_NOTHING. The coded cart is returned (nothing came off, so
+ *   its total is the uncoded one), and the caller drops the code.
+ * - Refused with a 4xx: the same cart is priced ONCE more with no code.
+ *   If that prices, the refusal was the code's, and the answer is the
+ *   uncoded cart with Mindbody's own sentence as the refusal, so the
+ *   ticket stays chargeable without it. If that is refused too, the
+ *   refusal is the CART's and the uncoded call's error is thrown, which
+ *   the caller handles exactly as it handles any cart refusal. One extra
+ *   metered Test call, and only after a refusal.
+ * - Suppressed (dry run, the write guard): nothing is known, so not
+ *   applied and no refusal; the screen already says pricing was
+ *   suppressed.
+ * - A 5xx or a dead transport is rethrown untouched: it said nothing
+ *   about the code.
+ */
+export async function priceCartWithPromotion(
+  items: readonly CartLine[],
+  clientId: string | undefined,
+  actor: Actor | null,
+  promotionCode: string,
+): Promise<{ priced: PricedCart; promotion: PromotionOutcome }> {
+  let priced: PricedCart;
+  try {
+    priced = await priceCart(items, clientId, actor, null, promotionCode);
+  } catch (err) {
+    const status = mindbodyHttpStatus(err);
+    if (status === null || status >= 500) throw err;
+    const reason = plainRefusal(err instanceof Error ? err.message : String(err));
+    const plain = await priceCart(items, clientId, actor, null, null);
+    console.log(
+      `[promo] refused code=${promotionCode} client=${clientId ?? "none"} ` +
+        `reason=${JSON.stringify(reason)}`,
+    );
+    return {
+      priced: plain,
+      promotion: {
+        code: promotionCode,
+        applied: false,
+        discount: null,
+        refusal: reason,
+      },
+    };
+  }
+  if (priced.suppressed) {
+    return {
+      priced,
+      promotion: { code: promotionCode, applied: false, discount: null, refusal: null },
+    };
+  }
+  const off = priced.discountTotal ?? 0;
+  if (off > 0) {
+    return {
+      priced,
+      promotion: {
+        code: promotionCode,
+        applied: true,
+        discount: roundToCents(off),
+        refusal: null,
+      },
+    };
+  }
+  console.log(
+    `[promo] took nothing code=${promotionCode} client=${clientId ?? "none"}`,
+  );
+  return {
+    priced,
+    promotion: {
+      code: promotionCode,
+      applied: false,
+      discount: null,
+      refusal: PROMO_TOOK_NOTHING,
+    },
+  };
+}
+
 
 /** Outcome of buying account credit; same suppression posture. */
 export interface CreditPurchaseOutcome {

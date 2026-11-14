@@ -21025,3 +21025,99 @@ workshop is two rows in the drawer.
   roster, is not a thing anyone should do.
 - Nothing warns BEFORE the sale that a rule's course has ended. Hide the
   sound bath passes (same tab) once 11/25 has passed.
+
+## T220. A Mindbody promotion code at the counter (Pete, 2026-11-14)
+
+The studio is about to email recent drop-in students a per-student,
+single-use promotion code, made with `POST /site/addpromocode` with
+`MaxUses: 1`, `ApplicableItems` = pass 581 ("Welcome Back - 2 Weeks
+Unlimited ($49)") and a per-student expiry, that takes their $28 drop-in
+off and makes the pass $21. Students can redeem online, but some will
+come to the counter, and the POS had no way to enter a code. Pete: "that
+needs to be added immediately".
+
+### What was built
+
+- **One field, two screens.** Under the Cart screen's totals, and in the
+  roster's "Pay and check in" dialog (T209: those are the only two ways to
+  `/api/checkout`). Apply sends the code with the next pricing; Remove
+  takes it off. A CODE, not an amount, so a real text field: recorded as
+  T35's third exception in CLAUDE.md's Conventions, beside the gift card
+  barcode and the discount reason. 64px, 20px type, tokens only.
+- **Mindbody judges it, and the figures are Mindbody's.** The code goes
+  as the cart's `PromotionCode` (sale.yml:5684) on `/api/price-cart`'s
+  `Test: true` call, on `/api/checkout`'s rehearsal and on every real
+  `checkoutshoppingcart` of the single-cart paths after it (split, cash,
+  typed card, gift card tender, account, stored card, the under-$10
+  path). `priceCartWithPromotion` (`src/lib/sale.ts`) is the one judge
+  for both routes: priced with the code and a DiscountTotal above zero is
+  APPLIED; refused with a 4xx, the cart is priced once more without it
+  and the answer carries Mindbody's sentence and the uncoded totals; a
+  code accepted with nothing taken off is not applied; a refusal of the
+  uncoded cart too is the cart's own problem and handled as before. The
+  answers carry `promotion: { code, applied, discount, refusal }`.
+- **Only a code the newest pricing applied is charged with**, and a code
+  the charge's rehearsal refuses (spent online since it priced) refuses
+  the SALE, 409 `reason: "promotion"`, with nothing charged: the price
+  the teacher quoted had the code in it. The screen drops the code with
+  Mindbody's sentence and reprices.
+- **Refused before any Mindbody call** (`promotionRefusal`,
+  `src/lib/promocode.ts`): beside a teacher's discount or a T112
+  substitution (T79 asserts DiscountTotal to the cent against the
+  discount, and a code's discount lands in the same figure), on a T90
+  ticket with a line for someone else (a single-use code on two carts is
+  spent by the first after it charged), beside a gift card
+  (`purchasegiftcard` takes no code). The screens grey Apply with the
+  same reason.
+- **The rails, unchanged.** T75 compares SubTotal, which is pre-discount;
+  T103, T113 (its fingerprint is the whole body, code included), T49, dry
+  run and the write guard are untouched. **T203's cart sha** gains a
+  `promo|<code>` line only when a code is present, so every other ticket
+  hashes byte for byte as before (checked against the previous
+  `cartsha.ts`), and a code arriving or leaving ends an outstanding
+  customer approval like a cart edit. The display ticket's discount was
+  already Mindbody's DiscountTotal, so the student's screen shows the
+  code's $28.00 with no change there.
+- **581 for returning clients.** Read live from site 471:
+  `IsIntroOffer: true` with `IntroOfferType: "NewAndExistingClients"`
+  (414 is `"NewClients"`), sellable at location 1, $49.00. Nothing in the
+  app hides a pass from a returning client: `IsIntroOffer` only files it
+  under Specials, and PLAN 2.6's new-students-only rule was never built.
+  Only the drawer's hide list could, so check it for `Service:581`.
+- `scripts/probe-promo-code.ts <client> <code> <option> [--create <off>]`:
+  the same cart `Test: true` with and without the code, through the
+  counter's own `priceCartWithPromotion`; `--create` makes a one-use code
+  with `addpromocode`, sandbox only.
+- The fake serves pass 581 and three codes with `FAKE_MB_PROMO=1`
+  (WB-GOOD $28 once, WB-OLD expired, anything else unknown), off by
+  default so the training shelf is unchanged.
+
+### Verified
+
+- `tsc --noEmit` and `next build`: clean.
+- `priceCartWithPromotion` and `checkoutCart` through the real
+  `mindbody()` client against a stubbed fetch: applied ($49 -> $21, T75
+  agreeing), refused (repriced at $49 with Mindbody's sentence), took
+  nothing, a pass refusal rethrown as the cart's; a live body carries
+  `PromotionCode` and a no-code body carries no such key.
+- In Chromium against the fake, through the real routes: on the Cart
+  screen WB-OLD reads "This promotion code has expired. The code was not
+  applied." at $49.00; WB-GOOD reads "Code WB-GOOD -$28.00 ... Total
+  $21.00", the stored card is charged $21.00 and the done block says
+  "Promotion code WB-GOOD took $28.00 off."; a code spent between pricing
+  and Finalize is "Not charged: This promotion code has reached its
+  maximum number of uses. The code was not applied and nothing was
+  charged." with the ticket back at $49.00. In the roster dialog an
+  unknown code leaves "Charge $49.00 and check in", WB-GOOD makes it
+  "Charge $21.00 and check in", and the charge and check-in complete.
+
+### Not verified, and owed first
+
+- **Nothing here has met Mindbody.** No sandbox staff credentials were
+  available to the session that built it (the public sandbox owner login
+  is refused), so whether `PromotionCode` is honoured on `Test: true`,
+  whether SubTotal stays pre-discount, and Mindbody's real refusal words
+  are all unseen. Run probe B5 in the sandbox, then on prod with 581 and
+  a dummy client in the write guard, then one real coded sale.
+- Whether a `Test: true` pricing counts against `MaxUses: 1`. If it did,
+  pricing would spend the code; a second probe run would show it.

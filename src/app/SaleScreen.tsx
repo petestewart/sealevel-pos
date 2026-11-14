@@ -1128,6 +1128,16 @@ interface PricedResult {
    *  before the tap. Never a browser estimate: a cart Mindbody could not
    *  price carries a null grandTotal and the sentence says so. */
   carts?: { forClientId: string | null; grandTotal: number | null }[];
+  /** T220: what became of the promotion code this pricing carried
+   *  (src/lib/promocode.ts PromotionOutcome). Applied means the totals
+   *  above are the coded cart's, Mindbody's own; not applied means they
+   *  are the cart's without it and `refusal` says why. */
+  promotion?: {
+    code: string;
+    applied: boolean;
+    discount: number | null;
+    refusal: string | null;
+  };
 }
 
 /** Mirrors src/lib/sale.ts LineAudit. Built server-side only for a
@@ -2014,6 +2024,18 @@ function PaymentPanel(props: {
    * one.
    */
   override: ArmedOverride | null;
+  /**
+   * T220: the promotion code Mindbody's last pricing APPLIED, or null.
+   * The panel sends it on the charge and in the approval cart, and does
+   * nothing else with it: the code is SaleScreen's cart state, entered
+   * beside the ticket, and only a code the pricing said worked is ever
+   * charged with (a pending or refused one is never sent).
+   */
+  promotionCode: string | null;
+  /** T220: the charge's rehearsal refused the code (used up since it
+   *  priced, say). Mindbody's sentence goes up so the code leaves the
+   *  ticket and the ticket reprices without it. */
+  onPromotionRefused: (sentence: string) => void;
   onDiscountChange: (next: ArmedDiscount | null) => void;
   /** T53: whether a receipt can be emailed, and where. The toggle
    *  below the tender reads it; the Charge tap sends the toggle. */
@@ -2062,6 +2084,8 @@ function PaymentPanel(props: {
     discount: comp,
     onDiscountChange: setComp,
     override: armedOverride,
+    promotionCode,
+    onPromotionRefused,
     receipt,
     pendingResult,
     customerConfirmsSale,
@@ -2693,6 +2717,14 @@ function PaymentPanel(props: {
       "The ticket changed. Charge again to ask the customer.",
     );
   }, [cart, dismissPad, approvalAbandon]);
+
+  /* T220: a promotion code arriving or leaving changes what Mindbody
+   * charges, so it is a ticket edit like any other: the customer's
+   * outstanding approval was for the other price, and it ends now with
+   * the same sentence rather than as a server refusal after their tap. */
+  useEffect(() => {
+    approvalAbandon("The ticket changed. Charge again to ask the customer.");
+  }, [promotionCode, approvalAbandon]);
 
   /* "Empty cart" on the client-change dialog: the cart SaleScreen just
    * cleared was what the tender was for, so nothing stays armed, comp
@@ -3430,6 +3462,8 @@ function PaymentPanel(props: {
       : {}),
     ...(clientId ? { clientId } : {}),
     ...(comp !== null ? { discount: comp.discount } : {}),
+    /* T220: in the hash, so an approval binds to the coded ticket. */
+    ...(promotionCode !== null ? { promotionCode } : {}),
   });
 
   const doCharge = async (approved?: {
@@ -3638,6 +3672,10 @@ function PaymentPanel(props: {
           ...(armedOverride !== null
             ? { override: overrideEnvelope(armedOverride) }
             : {}),
+          /* T220: the code the pricing applied. The route rehearses WITH
+             it and charges Mindbody's rehearsed total, so the figure on
+             the ticket and the charge are the same Mindbody answer. */
+          ...(promotionCode !== null ? { promotionCode } : {}),
           /* T90: display only, for the route's per-cart sentence; every
              decision there is made on the id. */
           ...(hasOtherClient && client ? { clientName: client.name } : {}),
@@ -3839,6 +3877,15 @@ function PaymentPanel(props: {
             body?.creditPurchased
               ? `Includes a ${money(body.creditPurchased)} account balance purchase (card minimum); the unspent remainder stays on their account.`
               : null,
+            /* T220: the code and what Mindbody took off for it, in the
+               server's words; the code is spent now. */
+            typeof body?.promotion?.code === "string"
+              ? `Promotion code ${body.promotion.code}${
+                  typeof body.promotion.discount === "number"
+                    ? ` took ${money(body.promotion.discount)} off`
+                    : " applied"
+                }.`
+              : null,
           ]
             .filter(Boolean)
             .join(" ") || null,
@@ -3984,6 +4031,17 @@ function PaymentPanel(props: {
           kind: "error",
           message: String(body?.error ?? `HTTP ${res.status}`),
         });
+        /* T220: a refused code leaves the ticket, which reprices
+         * without it; nothing was charged and the sentence above says so. */
+        if (body?.reason === "promotion" && promotionCode !== null) {
+          onPromotionRefused(
+            String(
+              body?.promotion?.refusal ??
+                body?.error ??
+                "Mindbody did not accept that code.",
+            ),
+          );
+        }
       }
     } catch {
       /* The request itself died between us and the server: the outcome
@@ -8641,6 +8699,21 @@ export default function SaleScreen(props: {
   const [armedDiscount, setArmedDiscount] = useState<ArmedDiscount | null>(
     null,
   );
+  /**
+   * T220: the Mindbody promotion code on this ticket, as typed (trimmed),
+   * or null. It is cart state like the discount: the pricing loop sends
+   * it, Mindbody decides what it is worth, and only a code the newest
+   * pricing APPLIED reaches the charge (`appliedPromo` below). A code
+   * Mindbody refuses leaves here with its sentence in `promoNote`, and
+   * the ticket reprices without it.
+   */
+  const [promoCode, setPromoCode] = useState<string | null>(null);
+  /** The field's text before Apply. A CODE, not an amount: T35's
+   *  recorded exception, beside the gift card barcode. */
+  const [promoDraft, setPromoDraft] = useState("");
+  /** Mindbody's sentence for the last refused code, or ours for one it
+   *  took nothing off for. Cleared by the next Apply. */
+  const [promoNote, setPromoNote] = useState<string | null>(null);
   const [priced, setPriced] = useState<PricedResult | null>(null);
   /** True from the moment the cart changes until Mindbody's answer for
    *  THAT cart lands: the debounce window counts, because the total on
@@ -9304,6 +9377,8 @@ export default function SaleScreen(props: {
        * themselves, each one paid for with less, so it is only an empty
        * ticket that clears it. */
       if (cart.length === 0) setArmedDiscount(null);
+      /* T220: and nothing to apply a code to. */
+      if (priceable.length === 0) setPromoCode(null);
       return;
     }
     setPricing(true);
@@ -9346,10 +9421,21 @@ export default function SaleScreen(props: {
             ...(overrideRef.current
               ? { override: overrideEnvelope(overrideRef.current) }
               : {}),
+            /* T220: the code, judged by Mindbody on this Test call. */
+            ...(promoCode !== null ? { promotionCode: promoCode } : {}),
           }),
         });
         const body = await res.json();
         if (priceGen.current !== gen) return;
+        /* T220: a ticket that cannot carry a code at all (a discount
+         * beside it, a line for someone else) is refused before any
+         * Mindbody call. The code leaves with the sentence and the
+         * ticket reprices without it, so the sale is never stuck. */
+        if (!res.ok && body?.reason === "promotion" && promoCode !== null) {
+          setPromoCode(null);
+          setPromoNote(String(body?.error ?? "That code cannot go on this ticket."));
+          return;
+        }
         if (!res.ok) {
           const refused = Array.isArray(body?.refused)
             ? (body.refused as { type: string; metadataId: string; reason: string }[])
@@ -9423,6 +9509,19 @@ export default function SaleScreen(props: {
           throw new Error(body?.error ?? `HTTP ${res.status}`);
         }
         setPriced(body as PricedResult);
+        /* T220: a code Mindbody refused, or took nothing off for. The
+         * totals just set are already the ticket WITHOUT it (or equal to
+         * it); the code leaves, with Mindbody's own sentence. */
+        const promo = (body as PricedResult).promotion;
+        if (
+          promo !== undefined &&
+          !promo.applied &&
+          promo.refusal !== null &&
+          promo.code === promoCode
+        ) {
+          setPromoCode(null);
+          setPromoNote(promo.refusal);
+        }
       } catch (err) {
         if (priceGen.current !== gen) return;
         setPriced(null);
@@ -9435,7 +9534,7 @@ export default function SaleScreen(props: {
     /* T112: `overrideKey` is in the list so arming or dropping an
        override reprices the ticket at once; the envelope itself is read
        off a ref, as the discount's value is. */
-  }, [cart, clientId, armedDiscountKey, overrideKey]);
+  }, [cart, clientId, armedDiscountKey, overrideKey, promoCode]);
 
   /**
    * T112: an override is about ONE line. When that line leaves the ticket
@@ -11256,6 +11355,106 @@ export default function SaleScreen(props: {
       </div>
     );
   };
+  /**
+   * T220: the code the NEWEST pricing applied, and only that: while the
+   * ticket reprices, or when the answer was for another code, nothing is
+   * charged with a code. This is the one value the panel sends.
+   */
+  const appliedPromo =
+    !pricing &&
+    promoCode !== null &&
+    priced?.promotion?.applied === true &&
+    priced.promotion.code === promoCode
+      ? promoCode
+      : null;
+  /** Why a code cannot go on this ticket right now, or null. The same
+   *  shapes the routes refuse (src/lib/promocode.ts promotionRefusal),
+   *  said before the tap so Apply is never a refusal waiting to happen. */
+  const promoBlocked: string | null =
+    override?.substitute != null
+      ? "A substituted pass is already discounted, so it cannot take a code."
+      : armedDiscount !== null
+        ? "Take the discount off to use a promotion code."
+        : cart.some((l) => !isGiftCardLine(l) && l.forClient)
+          ? "A code applies to one person's sale. Ring up lines for someone else on their own ticket."
+          : cart.some(isGiftCardLine)
+            ? "A code cannot go on a ticket holding a gift card."
+            : null;
+  const applyPromo = () => {
+    const code = promoDraft.trim();
+    if (code === "" || promoBlocked !== null || charging) return;
+    setPromoNote(null);
+    setPromoCode(code);
+  };
+  /**
+   * T220: the promotion code field, under the ticket's totals. Its own
+   * row, 64px, a real text field because a code is read off an email and
+   * is NOT an amount (T35's recorded exception, beside the gift card
+   * barcode and the discount reason). The figure it moves is Mindbody's:
+   * the discount line above appears only from the rehearsal's own
+   * DiscountTotal, and a refused code leaves with Mindbody's sentence.
+   */
+  const promoField: ReactNode = !cart.some((l) => !isGiftCardLine(l)) ? null : (
+    <div className="promo-row">
+      {promoCode !== null ? (
+        <div className="promo-applied">
+          <span className="promo-applied-text">
+            {appliedPromo !== null
+              ? `Code ${promoCode} applied by Mindbody.`
+              : pricing
+                ? `Checking code ${promoCode} with Mindbody...`
+                : `Code ${promoCode}.`}
+          </span>
+          <button
+            className="promo-btn"
+            disabled={charging}
+            onClick={() => {
+              setPromoCode(null);
+              setPromoNote(null);
+            }}
+          >
+            Remove
+          </button>
+        </div>
+      ) : (
+        <div className="promo-entry">
+          <input
+            className="promo-input"
+            value={promoDraft}
+            onChange={(e) => setPromoDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applyPromo();
+            }}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            enterKeyHint="done"
+            maxLength={50}
+            disabled={charging || promoBlocked !== null}
+            aria-label="Promotion code"
+            placeholder="Promotion code"
+          />
+          <button
+            className="promo-btn"
+            disabled={
+              charging || promoBlocked !== null || promoDraft.trim() === ""
+            }
+            onClick={applyPromo}
+          >
+            Apply
+          </button>
+        </div>
+      )}
+      {promoNote !== null ? (
+        <p className="promo-note bad" role="status">
+          {`${promoNote} The code was not applied.`}
+        </p>
+      ) : promoCode === null && promoBlocked !== null && promoDraft.trim() !== "" ? (
+        <p className="promo-note muted-note">{promoBlocked}</p>
+      ) : null}
+    </div>
+  );
   const payNotice: ReactNode =
     cart.length > 0 && !pricing && totals?.suppressed ? (
       <div className="pass-note t-suppressed">
@@ -11732,6 +11931,10 @@ export default function SaleScreen(props: {
               /* T112: and the override, for the same reason and one
                  more: its token is spent, so it authorizes nothing. */
               setOverride(null);
+              /* T220: and the code, which the sale just spent. */
+              setPromoCode(null);
+              setPromoDraft("");
+              setPromoNote(null);
               /* T51: the walk-in declaration was for the sale just made. */
               setWalkIn(false);
               /* T53: so was the gate's answer; the next sale asks again. */
@@ -11748,6 +11951,11 @@ export default function SaleScreen(props: {
             discount={armedDiscount}
             onDiscountChange={setArmedDiscount}
             override={override}
+            promotionCode={appliedPromo}
+            onPromotionRefused={(sentence) => {
+              setPromoCode(null);
+              setPromoNote(sentence);
+            }}
             receipt={receipt}
             pendingResult={pendingCheckInResult ?? null}
           />
@@ -12469,6 +12677,18 @@ export default function SaleScreen(props: {
                     {/* T79: the discount, between Subtotal and tax, as
                         Mindbody priced it. */}
                     {discountRow(totals)}
+                    {/* T220: the code's discount, Mindbody's own
+                        DiscountTotal for the coded cart. Never beside
+                        T79's row: a ticket takes one or the other. */}
+                    {totals.promotion?.applied === true &&
+                    (totals.discountTotal ?? 0) > 0 ? (
+                      <div className="t-line t-discount">
+                        <span>{`Code ${totals.promotion.code}`}</span>
+                        <span className="amt">
+                          -{money(totals.discountTotal ?? 0)}
+                        </span>
+                      </div>
+                    ) : null}
                     {totals.taxTotal !== null ? (
                       <div className="t-line t-muted">
                         <span>{taxLabel}</span>
@@ -12513,6 +12733,7 @@ export default function SaleScreen(props: {
                         already carries which shape priced the cart. */}
                   </>
                 ) : null}
+                {promoField}
                 {/* T70: the tender lines' slot (Payment.dc.html). The
                     panel fills it in pay mode through a portal; empty in
                     shelf mode. */}

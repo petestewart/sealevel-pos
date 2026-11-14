@@ -24,6 +24,13 @@ an actual counter.
 Phase 2 (sales) is unblocked but not started. The sale path was verified with
 ai-manager's `npm run mindbody:probe-payments`.
 
+**Newest (T220, 2026-11-14): a Mindbody promotion code can be applied at
+the counter**, on the Cart screen and in the roster's "Pay and check in",
+for the $28-off codes on pass 581 the studio is emailing returning
+drop-ins. Built and driven against the fake; **never yet run against
+Mindbody**, so the first thing owed is `scripts/probe-promo-code.ts` in the
+sandbox, then against prod (see Known gaps).
+
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
 there. `docs/design/front-desk-pos.md` carries the reasoning behind every item
@@ -239,7 +246,47 @@ was authorized, which is T202's rule for a suppressed release. A refusal or
 an error still costs the PIN, because neither is evidence that nothing was
 written.
 
-## Locked decisions
+### A promotion code is Mindbody's to judge (T220)
+
+The studio emails returning drop-in students a per-student, single-use
+code (`POST /site/addpromocode`, `MaxUses: 1`, `ApplicableItems` = pass
+581, "Welcome Back - 2 Weeks Unlimited ($49)") worth their $28 drop-in;
+Pete: "that needs to be added immediately" for the ones who come to the
+counter. A field under the Cart screen's totals and in the roster's pay
+dialog takes the code, and it goes to Mindbody as the cart's
+`PromotionCode` (sale.yml:5684) on the `Test: true` pricing, on the
+checkout's rehearsal and on EVERY real `checkoutshoppingcart` after it
+(`priceCart`, `checkoutCart`, `rehearseCheckout` take it; one shared
+`priceCartWithPromotion` in `src/lib/sale.ts` judges it for both routes).
+**Nothing here computes what a code is worth**: the discount line is
+Mindbody's DiscountTotal for the coded cart and the total charged is the
+rehearsal's GrandTotal. A code Mindbody refuses (a 4xx) is priced once
+more WITHOUT it, so the screen shows Mindbody's own sentence and a ticket
+still chargeable at full price; one it accepts and takes nothing off for
+is treated as not applied. Only a code the newest pricing APPLIED is sent
+on a charge. At the charge, a code the rehearsal refuses (spent online
+since it priced, say) refuses the SALE, 409 `reason: "promotion"`,
+nothing charged: the teacher quoted the coded price, so the uncoded one is
+never charged on the same tap. Listing codes (`GET /site/promocodes`)
+needs the "Set up promotions / Semester discounts" permission and is not
+used.
+
+**The rails apply unchanged.** T75 compares Mindbody's SubTotal, which is
+before discounts, so a code does not trip it; T79's DiscountTotal check
+runs only with a teacher's discount, and **a code is refused beside a
+discount or a T112 substitution** (one discount per ticket), **on a T90
+ticket with a line for someone else** (a single-use code on two carts is
+spent by the first after it charged) and **beside a gift card**
+(`purchasegiftcard` takes no code): `promotionRefusal` in
+`src/lib/promocode.ts`, before any Mindbody call or spent PIN. T103's
+basket assertion, T113's key (its fingerprint is the whole body), T49's
+token, dry run and the write guard are untouched. **The code is in T203's
+cart sha** (a `promo|` line, appended only when there is one, so every
+other ticket hashes exactly as before), and a code arriving or leaving
+ends an outstanding customer approval the way a cart edit does. The
+answer to a sale that stands carries `promotion: { code, discount }`,
+named on the done block; every outcome logs `[promo]`.
+
 
 - **Web app, not Swift.** Card-present is 0.4% of counter transactions (25
   sales in a year), and the studio's reader is a networked WisePOS E rather
@@ -956,6 +1003,18 @@ while `git clone` works, so clone the repo rather than fetching files.
   figures before the tap and on the ticket after it, because the receipt and
   Mindbody will say the substitute's name. The whole story is filed on the
   client the way T45/T62 file a comp's reason.
+- **`IsIntroOffer` is not "new clients only"; `IntroOfferType` says which**
+  (read live from site 471, 2026-11-14, T220). `GET /sale/services` answers
+  414 "New Student 2 Week Unlimited" with `IntroOfferType: "NewClients"`
+  and 581 "Welcome Back - 2 Weeks Unlimited ($49)" with
+  `"NewAndExistingClients"`, both `IsIntroOffer: true`, sellable at
+  location 1. The app reads only `IsIntroOffer`, and only to file a pass
+  under Specials (`passGroupByRule`); nothing in the code hides a pass
+  from a returning client, and the design doc's new-students-only rule
+  for the $49 special was never built (PLAN 2.6). So 581 reaches a
+  returning client's shelf unless the drawer's hide list names
+  `Service:581`, and whether Mindbody sells it to them is the rehearsal's
+  answer.
 - **"Delegated staff does not belong to the subscriber." is a staff token
   used against the wrong SiteId** (Pete's third sandbox drive, 2026-09-21,
   T210). Not a permission, not an expired token, and not about the client or
@@ -1045,9 +1104,12 @@ while `git clone` works, so clone the repo rather than fetching files.
   the counter in T98: the cash pad raises no keyboard "because there are no
   text fields? this is probably ideal"). Every amount, from every source,
   is entered on a keypad, which is what keeps the OS keyboard out of the
-  money path. Two fields sit beside a pad and are NOT amounts: the gift
-  card's barcode (T83; the studio's scanner types it) and the discount
-  pad's reason note and PIN (T43/T48/T71). Card entry keeps the OS
+  money path. Three fields sit beside the money and are NOT amounts: the
+  gift card's barcode (T83; the studio's scanner types it), the discount
+  pad's reason note and PIN (T43/T48/T71), and the Mindbody promotion
+  code (T220, on the Cart screen and in the roster's pay dialog): a CODE
+  read off an email, whose worth Mindbody decides and the screen only
+  reports. Card entry keeps the OS
   keyboard on purpose, because that is where Apple's "Scan Credit Card"
   lives; T98 lifts every modal above the keyboard instead (`--vvh`,
   `--vv-top`, `--vv-bot`, `src/app/viewport.ts`). T98 has never been
@@ -1166,6 +1228,24 @@ while `git clone` works, so clone the repo rather than fetching files.
   remaining candidate, `fillEarlierBookings` in `src/lib/roster.ts`), so
   only the first class of the first day gets it; whether that read
   returns booked future classes, not just past ones, is also unseen.
+- **The promotion code has never met Mindbody (T220).** Built and driven
+  in Chromium against the fake (`FAKE_MB_PROMO=1`: an expired, an unknown
+  and a used code each show their sentence and leave the ticket at $49.00;
+  a good one shows -$28.00 and $21.00 and the charge carries it; a code
+  spent between pricing and Charge refuses the sale with nothing charged),
+  but nobody has seen what MINDBODY does. Owed, in order:
+  `scripts/probe-promo-code.ts` in the sandbox (it can make a code there
+  with `--create`) to see whether `PromotionCode` is HONOURED on
+  `Test: true` (if the total does not move, every code will read "took
+  nothing off" and the field is useless), whether `SubTotal` stays
+  before the discount (if it does not, T75 refuses every coded sale,
+  loudly, which is the safe failure), and what Mindbody's refusal
+  sentences actually say; then against prod with a dummy client in the
+  write guard and pass 581; then one real coded sale to a dummy client.
+  Also unseen: whether Mindbody counts a `Test: true` use against
+  `MaxUses: 1` (a second probe run would show it), and whether 581's
+  intro offer refuses a client who has bought it before. Check the
+  drawer's Shelf tab does not hide `Service:581`.
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It

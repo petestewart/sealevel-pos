@@ -8830,3 +8830,86 @@ textarea.reason-note-field:disabled::placeholder {
     color: var(--muted);
   }
 }
+
+/* T220: the promotion code field under the ticket's totals. A CODE, not
+ * an amount (T35's recorded exception), so a real field: 64px, 20px type
+ * so iOS does not zoom, tokens only. The applied state is one line and a
+ * Remove; a refusal is Mindbody's sentence in stop text. */
+.promo-row {
+  margin: 12px 0 0;
+}
+
+.promo-entry,
+.promo-applied {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.promo-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 64px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.promo-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+.promo-input::placeholder {
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.promo-input:disabled {
+  color: var(--muted);
+}
+
+.promo-applied-text {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  min-height: 64px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.promo-btn {
+  flex: 0 0 auto;
+  min-height: 64px;
+  min-width: 96px;
+  padding: 0 16px;
+  border: 1px solid var(--accent);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.promo-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.promo-note {
+  margin: 8px 0 0;
+  font-size: 16px;
+}
+
+.promo-note.bad {
+  color: var(--stop);
+  font-weight: 700;
+}

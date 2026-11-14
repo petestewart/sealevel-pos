@@ -32,6 +32,7 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 | B2 | `GET /sale/alternativepaymentmethods` with `LocationId=98` | The HTTP 400 that gates all Apple Pay scoping | Not run |
 | B3 | Re-run `mindbody:probe-payments --live` against a client with a current card | Whether a charge actually settles through Stripe. Only ever reached "card is expired" | Not run |
 | B4 | Confirm a per-client Mindbody-hosted card capture page exists and is reachable by URL | Whether Phase 3 card capture is buildable at all | Not run |
+| B5 | `scripts/probe-promo-code.ts <client> <code> <option>`: the same cart `Test: true` with and without `PromotionCode` (sandbox first, `--create` makes a code there; then prod, pass 581, a dummy client in the write guard) | Whether Mindbody honours a promotion code on the rehearsal, whether SubTotal stays pre-discount, and its refusal wording. T220 rests on the first | **Not run. Owed before the code field is used at the counter** |
 
 ---
 
@@ -177,6 +178,22 @@ pack in the same gesture.
   drop-in is recorded.
 - Upgrade: first-visit $28 drop-in applies toward the special, $21 difference.
 - Blocked on B1 (can we set the price?) and P3 (how long the offer lasts).
+- [x] The RETURNING student's version arrived first, as a Mindbody
+  promotion code (Pete, 2026-11-14: per-student, single-use codes taking
+  $28 off pass 581, "Welcome Back - 2 Weeks Unlimited ($49)", emailed to
+  recent drop-ins; "that needs to be added immediately"). **T220**: a code
+  field on the Cart screen and in the roster's "Pay and check in", sent as
+  the cart's `PromotionCode` on the pricing, the rehearsal and every real
+  checkout; the discount and total shown are Mindbody's; a refused code
+  shows Mindbody's sentence and the ticket stays chargeable without it; a
+  code refused at the charge refuses the sale with nothing charged; it is
+  in T203's cart sha; refused beside a discount, a substitution, a T90
+  line or a gift card. 581 is `IntroOfferType: "NewAndExistingClients"`
+  and nothing in the app hides it from a returning client (the
+  new-students-only rule above is for 414 and was never built).
+- [ ] Live, owed: probe B5 in the sandbox, then prod with pass 581, then
+  one real coded sale to a dummy client. Check the drawer's Shelf tab
+  does not hide `Service:581`.
 
 **2.7 A pass that comes with a place.** A workshop sold as a pass also
 signs the buyer up for it, so the counter does not stop at the sale.
