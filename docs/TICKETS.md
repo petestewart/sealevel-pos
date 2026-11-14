@@ -21199,9 +21199,17 @@ items be restricted to only certain types of members as well?"
   Student pass with its reason, keeps Welcome Back open and defaults to
   Drop In.
 
+- **Live on the Cart screen, site 471** (Pete's say-so, a cloud session on
+  the environment without the injected key, write guard on 100042041):
+  the route answered 414, 478, 581 unavailable in 3.31s (0.018s cached);
+  the three Specials tiles were greyed with those reasons; a tap on
+  Welcome Back left the ticket at 0 items with "... is not available for
+  John NewGuy: Client has hit the purchase count for this intro series."
+  and the three ways forward; Drop In priced $28.00; the server log shows
+  only Test pricings and no checkout.
+
 ### Limits
 
 - The answer takes seconds, and a tap before it lands gets T100's
   added-then-removed behaviour.
-- The screens have not been seen with a real student attached; running
-  the local app against prod from a cloud session needs Pete's say-so.
+- The roster's pay dialog has been seen against the fake only.

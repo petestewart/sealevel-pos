@@ -36,8 +36,9 @@ client who already bought it (see Known gaps).
 
 **T221 (2026-11-14): passes a client cannot buy are greyed out before the
 tap**, on the Cart screen and in the roster's pay dialog, with Mindbody's
-own reason. The check is live-verified on site 471; the screens have been
-driven against the fake only.
+own reason. Driven live against site 471 on 2026-11-14 (Cart screen, dummy
+client John NewGuy): 414, 478 and 581 greyed with Mindbody's reasons, a tap
+put nothing on the ticket, Drop In still priced.
 
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
@@ -1304,13 +1305,16 @@ while `git clone` works, so clone the repo rather than fetching files.
   read (the probe stops at the pass refusal), but it was single-use and a
   real sale used it. The sale's `SalesRepId` came back null, which is T49's
   open attribution question below, not this feature's.
-- **T221's screens have not met Mindbody.** `passAvailability` ran live
-  against site 471 (2026-11-14): John NewGuy (100042041) refused 414, 478
-  and 581 and was allowed 576 (his 581 grants membership 3); client
-  100041277 refused 414, 478 and 576. The greyed tiles, the tap's notice
-  and the pay dialog were driven in Chromium against the fake
-  (`FAKE_MB_PROMO=1` now carries per-client refusals). Owed: one look at
-  the Cart screen with a real returning student attached.
+- **T221 is live-verified on the Cart screen, not yet on the roster
+  dialog.** Driven against site 471 (2026-11-14) from a cloud session with
+  the write guard on dummy client John NewGuy (100042041): the check
+  answered 414 and 478 ("Only new clients qualify for this intro series.")
+  and 581 ("Client has hit the purchase count for this intro series.") in
+  1.6 to 3.3s (0.018s from cache); the three Specials tiles were greyed
+  with those reasons by the time Specials opened; a tap on Welcome Back
+  left the ticket at 0 items with the notice and its three ways forward;
+  Drop In added and priced $28.00. The roster's pay dialog has been seen
+  against the fake only.
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.
 - `GET /sale/alternativepaymentmethods` returns HTTP 400, cause not chased. It
