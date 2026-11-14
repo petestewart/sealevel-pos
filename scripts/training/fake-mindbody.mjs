@@ -69,6 +69,27 @@ const services = [
   { Id: "s7", ProductId: 1007, Name: "Towel Rental", Price: 3, OnlinePrice: 3, TaxRate: TAX, Count: 1, Type: "Series", RevenueCategory: "Towel and Mat" },
   { Id: "s8", ProductId: 1008, Name: "Mat Rental", Price: 3, OnlinePrice: 3, TaxRate: TAX, Count: 1, Type: "Series", RevenueCategory: "Towel and Mat" },
 ];
+/* T220: the Welcome Back pass and three promotion codes for it, only with
+ * FAKE_MB_PROMO=1. WB-GOOD takes $28 off 581 once (a real checkout spends
+ * it); WB-OLD has expired; anything else is unknown. The refusal words
+ * are invented: what Mindbody really says is the sandbox probe's job. */
+const PROMO = process.env.FAKE_MB_PROMO === "1";
+if (PROMO) {
+  services.push(
+    { Id: "000581", ProductId: 581, Name: "Welcome Back \u2013 2 Weeks Unlimited ($49)", Price: 49, OnlinePrice: 49, TaxRate: 0, Count: 99999, Type: "Unlimited", IsIntroOffer: true, IntroOfferType: "NewAndExistingClients", RevenueCategory: "Classes" },
+  );
+}
+const promoCodes = { "WB-GOOD": { off: 28, item: "581", used: false }, "WB-OLD": { off: 28, item: "581", expired: true } };
+/** The refusal for a code on this cart, or null when it applies. */
+function promoRefusal(code, lines) {
+  const c = promoCodes[code];
+  if (!c) return "Invalid promotion code.";
+  if (c.expired) return "This promotion code has expired.";
+  if (c.used) return "This promotion code has reached its maximum number of uses.";
+  if (!lines.some((l) => String(l.found?.ProductId) === c.item)) return "The promotion code does not apply to any item in the cart.";
+  return null;
+}
+
 /* T219: a workshop sold as two passes, with a course to sign the buyer up
  * for. Only with FAKE_MB_WORKSHOP=1, so the training screenshots' shelf
  * does not change under them. */
@@ -361,6 +382,12 @@ function priceCart(body) {
     const d = Number(it?.DiscountAmount ?? 0);
     if (Number.isFinite(d)) disc += d;
   }
+  /* T220: a promotion code's discount, on the line it is for. */
+  if (typeof body.PromotionCode === "string" && promoCodes[body.PromotionCode]) {
+    const c = promoCodes[body.PromotionCode];
+    const hit = lines.find((l) => String(l.found?.ProductId) === c.item);
+    if (hit) disc += Math.min(c.off, hit.found.Price * hit.qty);
+  }
   /* Tax on the discounted amount, proportionally. */
   if (sub > 0 && disc > 0) tax = tax * ((sub - disc) / sub);
   const r = (n) => Math.round(n * 100) / 100;
@@ -640,6 +667,11 @@ function handle(method, path, q, body, res) {
       return send(res, 200, { BarcodeId: one(q, "barcodeId"), RemainingBalance: 0 });
     case "/sale/checkoutshoppingcart": {
       const p = priceCart(body);
+      if (typeof body.PromotionCode === "string") {
+        const why = promoRefusal(body.PromotionCode, p.lines);
+        if (why) return send(res, 400, { Error: { Message: why, Code: "InvalidParameter" } });
+        if (body.Test !== true) promoCodes[body.PromotionCode].used = true;
+      }
       const purchased = p.lines.map((l) => ({
         Id: l.found?.ProductId ?? l.id,
         BarcodeId: l.found?.Id ?? null,

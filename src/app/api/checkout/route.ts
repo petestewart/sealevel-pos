@@ -78,6 +78,11 @@ import {
   type ResolvedSubstitute,
 } from "@/lib/substitute";
 import { beginIdempotent } from "@/lib/idemstore";
+import {
+  parsePromotionCode,
+  promotionRefusal,
+  type PromotionOutcome,
+} from "@/lib/promocode";
 import { enrolAfterCheckout } from "@/lib/enrolonpurchase";
 import { dryRunState, mindbodyHttpStatus, target } from "@/lib/mindbody";
 
@@ -98,6 +103,7 @@ import {
   latestSale,
   parseCartLines,
   passWithoutOwner,
+  priceCartWithPromotion,
   purchaseCredit,
   rehearseCheckout,
   roundToCents,
@@ -267,6 +273,24 @@ export const dynamic = "force-dynamic";
  *         The token is spent once here, before the rehearsal, exactly as
  *         a discount's and an overdraft's are. The whole story is filed
  *         on the client (T45/T62's note path) and logged once.
+ *         -- T220: `promotionCode`, a Mindbody promotion code typed at
+ *         the counter (Pete: the $28-off codes on pass 581, "that needs
+ *         to be added immediately"). Validated by parsePromotionCode and
+ *         refused before any Mindbody call beside a discount, a
+ *         substitution, a gift card or a line bought for another client
+ *         (promotionRefusal). It rides the single-cart rehearsal
+ *         (priceCartWithPromotion) and EVERY real checkout after it as
+ *         the cart's `PromotionCode`, so the total charged is the total
+ *         Mindbody rehearsed WITH the code, and nothing here computes
+ *         what the code is worth. A code the rehearsal refuses, or one
+ *         it takes nothing off for, refuses the sale 409 `reason:
+ *         "promotion"` with Mindbody's sentence and nothing charged:
+ *         the teacher quoted a price with the code, so the sale is never
+ *         quietly charged without it. T75's subtotal assertion, T103's
+ *         basket assertion, T113's key, T49's token, dry run and the
+ *         write guard all apply unchanged; the code is in T203's cart
+ *         sha, so an approval binds to the coded ticket. The answer
+ *         carries `promotion: { code, discount }` on a sale that stands.
  *   or, since T28, `split` instead of `method`:
  *       { items, clientId, split: { legs: [{method, amount}, {method,
  *         amount}] } } -- exactly two legs, methods from the whitelist
@@ -470,7 +494,13 @@ export async function POST(request: Request) {
   const gate = await beginIdempotent(request, payload, String(session.staffId));
   if (gate.replay !== null) return gate.replay;
   try {
-    const answered = await runCheckout(request, session, payload);
+    /* T220: what the rehearsal took off for a promotion code, filled in
+     * by runCheckout and added to the answer of a sale that stands. */
+    const promo: { applied: PromotionOutcome | null } = { applied: null };
+    const answered = await withPromotion(
+      await runCheckout(request, session, payload, promo),
+      promo.applied,
+    );
     /* T219: a sold pass that comes with a place in a course or a class
      * books that place, here, at the one point every charge path passes
      * through, and INSIDE the record, so a request arriving twice
@@ -487,12 +517,38 @@ export async function POST(request: Request) {
   }
 }
 
+/**
+ * T220: a sale that stands, sold with a promotion code, says so: the
+ * answer gains `promotion: { code, discount }`, the discount being the
+ * rehearsal's own DiscountTotal, which is what the screen's done block
+ * names. Anything else (a refusal, a suppression, a partial, a sale
+ * sold with no code) is returned exactly as it was.
+ */
+async function withPromotion(
+  res: Response,
+  applied: PromotionOutcome | null,
+): Promise<Response> {
+  if (applied === null || res.status !== 200) return res;
+  const answer = await res.clone().json().catch(() => null);
+  if (answer === null || answer.ok !== true || answer.suppressed) return res;
+  console.log(
+    `[promo] sold code=${applied.code} discount=${applied.discount ?? "?"} ` +
+      `sale=${answer.saleId ?? "none"}`,
+  );
+  return NextResponse.json({
+    ...answer,
+    promotion: { code: applied.code, discount: applied.discount },
+  });
+}
+
 /** The checkout itself: exactly what it was before T113, apart from
- *  taking its session and its already-parsed body as arguments. */
+ *  taking its session and its already-parsed body as arguments. T220
+ *  adds `promo`, where the rehearsal leaves what a code took off. */
 async function runCheckout(
   request: Request,
   session: StaffSession,
   payload: any,
+  promo: { applied: PromotionOutcome | null },
 ) {
 
   /* T95: the gift card lines, read before the cart lines because they
@@ -1021,6 +1077,34 @@ async function runCheckout(
     );
   }
 
+  /* T220: the promotion code, read and refused in its impossible shapes
+   * HERE, beside the discount and the override and for their reason: a
+   * refusal that costs a metered call, or a teacher's PIN, is a refusal
+   * that could have been free. Nothing above this has called Mindbody or
+   * spent a token. */
+  const promoParsed = parsePromotionCode(payload?.promotionCode);
+  if ("error" in promoParsed) {
+    return NextResponse.json({ error: promoParsed.error }, { status: 400 });
+  }
+  const promotionCode = promoParsed.code;
+  if (promotionCode !== null) {
+    const payerForPromo =
+      typeof payload?.clientId === "string" ? payload.clientId.trim() : "";
+    const refusal = promotionRefusal({
+      discount: discount !== null,
+      substitute: override?.mode === "substitute",
+      otherClientLines: items.some(
+        (line) => line.forClientId && line.forClientId !== payerForPromo,
+      ),
+      giftCards: giftLines.length > 0,
+    });
+    if (refusal !== null) {
+      return NextResponse.json(
+        { error: refusal, stage: "method", reason: "promotion" },
+        { status: 409 },
+      );
+    }
+  }
   /* T48: who is discounting. Checked FIRST, before the client, the
    * reason and the rehearsal: a discount with nobody's PIN behind it
    * costs no Mindbody call at all and is refused the same way with the
@@ -3456,12 +3540,44 @@ async function runCheckout(
      * (T49). Every other rail is untouched: this is still a `Test: true`
      * call, its total is still the only one that may be charged, and
      * T75's assertion still runs against it. */
-    priced = await rehearseCheckout(
-      items,
-      saleClientId,
-      discount,
-      override?.mode === "attempt" ? actorOf(session) : null,
-    );
+    const rehearsalActor =
+      override?.mode === "attempt" ? actorOf(session) : null;
+    if (promotionCode !== null) {
+      /* T220: rehearsed WITH the code, judged by Mindbody. Never a
+       * discount beside it (refused above), so this is the same Test
+       * call with one key more. A code the rehearsal refuses or takes
+       * nothing off for refuses the SALE: the price the teacher quoted
+       * had the code in it, and charging the uncoded total on the same
+       * tap would be a different sale from the one on the screen. */
+      const judged = await priceCartWithPromotion(
+        items,
+        saleClientId,
+        rehearsalActor,
+        promotionCode,
+      );
+      if (!judged.priced.suppressed && !judged.promotion.applied) {
+        return NextResponse.json(
+          {
+            error:
+              `${judged.promotion.refusal ?? "Mindbody did not accept that code."} ` +
+              "The code was not applied and nothing was charged.",
+            stage: "rehearsal",
+            reason: "promotion",
+            promotion: judged.promotion,
+          },
+          { status: 409 },
+        );
+      }
+      priced = judged.priced;
+      if (judged.promotion.applied) promo.applied = judged.promotion;
+    } else {
+      priced = await rehearseCheckout(
+        items,
+        saleClientId,
+        discount,
+        rehearsalActor,
+      );
+    }
   } catch (err) {
     return NextResponse.json(
       { error: errMessage(err), stage: "rehearsal" },
@@ -4063,6 +4179,7 @@ async function runCheckout(
           actor,
           sendEmail,
           discount,
+          promotionCode,
         ),
       );
       const outcome = run.result;
@@ -4329,6 +4446,7 @@ async function runCheckout(
           actor,
           sendEmail,
           discount,
+          promotionCode,
         ),
       );
       const outcome = run.result;
@@ -4397,6 +4515,7 @@ async function runCheckout(
           actor,
           sendEmail,
           discount,
+          promotionCode,
         ),
       );
       const outcome = run.result;
@@ -4460,6 +4579,7 @@ async function runCheckout(
           actor,
           sendEmail,
           discount,
+          promotionCode,
         ),
       );
       const outcome = run.result;
@@ -4561,6 +4681,7 @@ async function runCheckout(
           actor,
           sendEmail,
           discount,
+          promotionCode,
         ),
       );
       const outcome = run.result;
@@ -4655,6 +4776,7 @@ async function runCheckout(
           actor,
           sendEmail,
           discount,
+          promotionCode,
         ),
       );
       const outcome = run.result;
@@ -4791,6 +4913,7 @@ async function runCheckout(
           actor,
           sendEmail,
           discount,
+          promotionCode,
         ),
       );
       const outcome = run.result;

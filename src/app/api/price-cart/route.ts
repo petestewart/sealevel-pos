@@ -9,6 +9,7 @@ import {
   type OverrideAsk,
 } from "@/lib/override";
 import { resolveSubstitute } from "@/lib/substitute";
+import { parsePromotionCode, promotionRefusal } from "@/lib/promocode";
 import {
   discountCents,
   discountRefusal,
@@ -27,6 +28,7 @@ import {
   passWithoutOwner,
   plainRefusal,
   priceCart,
+  priceCartWithPromotion,
   roundToCents,
   splitDiscount,
   type CartLine,
@@ -85,6 +87,17 @@ export const dynamic = "force-dynamic";
  *
  * With no override the route is byte-for-byte what it was: reads stay on
  * the service account, and no sign-in is required to price a cart.
+ *
+ * T220: an optional `promotionCode`, a Mindbody promotion code typed at
+ * the counter. It is sent as the cart's `PromotionCode` and Mindbody is
+ * the judge of it (priceCartWithPromotion in src/lib/sale.ts). The answer
+ * adds `promotion: { code, applied, discount, refusal }`: applied means
+ * the totals beside it are the CODED cart's, Mindbody's own DiscountTotal
+ * and GrandTotal; not applied means the totals are the cart's WITHOUT the
+ * code and `refusal` is Mindbody's sentence (or ours, when it took
+ * nothing off), so the screen drops the code and the ticket stays
+ * chargeable. Refused in words beside a discount, a substitution, or a
+ * line bought for another client (promotionRefusal), before any call.
  */
 export async function POST(request: Request) {
   const denied = requireSession(request);
@@ -197,6 +210,28 @@ export async function POST(request: Request) {
     }
     discount = d;
   }
+  /* T220: the promotion code, checked before any Mindbody call. */
+  const promoParsed = parsePromotionCode(payload?.promotionCode);
+  if ("error" in promoParsed) {
+    return NextResponse.json({ error: promoParsed.error }, { status: 400 });
+  }
+  const promotionCode = promoParsed.code;
+  if (promotionCode !== null) {
+    const refusal = promotionRefusal({
+      discount: discount !== null && override?.mode !== "substitute",
+      substitute: override?.mode === "substitute",
+      otherClientLines: parsed.items.some(
+        (line) => line.forClientId && line.forClientId !== clientId,
+      ),
+      giftCards: false,
+    });
+    if (refusal !== null) {
+      return NextResponse.json(
+        { error: refusal, reason: "promotion" },
+        { status: 409 },
+      );
+    }
+  }
   /* T112: a refusal check the browser's discount got at the top of its
    * own branch, applied to the substitution's too: Mindbody ignores a
    * discount on a package line, so a ticket holding one cannot carry
@@ -245,6 +280,20 @@ export async function POST(request: Request) {
       ? groups.map(() => null)
       : splitDiscount(parsed.items, discount, groups);
   try {
+    if (
+      promotionCode !== null &&
+      groups.length === 1 &&
+      groups[0]?.forClientId == null
+    ) {
+      /* T220: the one shape a code may ride (promotionRefusal above). */
+      const { priced, promotion } = await priceCartWithPromotion(
+        parsed.items,
+        effectiveClientId,
+        overrideActor,
+        promotionCode,
+      );
+      return NextResponse.json({ ...priced, promotion });
+    }
     if (groups.length === 1 && groups[0]?.forClientId == null) {
       const priced = await priceCart(
         parsed.items,

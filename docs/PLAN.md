@@ -32,6 +32,7 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 | B2 | `GET /sale/alternativepaymentmethods` with `LocationId=98` | The HTTP 400 that gates all Apple Pay scoping | Not run |
 | B3 | Re-run `mindbody:probe-payments --live` against a client with a current card | Whether a charge actually settles through Stripe. Only ever reached "card is expired" | Not run |
 | B4 | Confirm a per-client Mindbody-hosted card capture page exists and is reachable by URL | Whether Phase 3 card capture is buildable at all | Not run |
+| B5 | `scripts/probe-promo-code.ts <client> <code> <option> --create 28`: makes a throwaway one-use code, prices the cart without it and with it twice, deactivates it | Whether Mindbody honours a promotion code on the rehearsal, whether SubTotal stays pre-discount, its refusal wording, and whether pricing spends a one-use code | **Answered, prod, 2026-11-14 (Pete, dummy client 100042041).** An inactive code: 4xx "Promotion code is not active.", repriced without it. A valid one-use code for 581: HONOURED on `Test: true`, $49.00 -> $21.00, DiscountTotal $28.00, SubTotal $49.00, T75 agreeing; priced twice, applied twice, so pricing does NOT spend it. Along the way: `addpromocode` takes `Amount`/`Percent` while the list reads `FlatRate`, and answers `PromotionID: 0` |
 
 ---
 
@@ -177,6 +178,27 @@ pack in the same gesture.
   drop-in is recorded.
 - Upgrade: first-visit $28 drop-in applies toward the special, $21 difference.
 - Blocked on B1 (can we set the price?) and P3 (how long the offer lasts).
+- [x] The RETURNING student's version arrived first, as a Mindbody
+  promotion code (Pete, 2026-11-14: per-student, single-use codes taking
+  $28 off pass 581, "Welcome Back - 2 Weeks Unlimited ($49)", emailed to
+  recent drop-ins; "that needs to be added immediately"). **T220**: a code
+  field on the Cart screen and in the roster's "Pay and check in", sent as
+  the cart's `PromotionCode` on the pricing, the rehearsal and every real
+  checkout; the discount and total shown are Mindbody's; a refused code
+  shows Mindbody's sentence and the ticket stays chargeable without it; a
+  code refused at the charge refuses the sale with nothing charged; it is
+  in T203's cart sha; refused beside a discount, a substitution, a T90
+  line or a gift card. 581 is `IntroOfferType: "NewAndExistingClients"`
+  and nothing in the app hides it from a returning client (the
+  new-students-only rule above is for 414 and was never built).
+- [x] Probe B5 on prod (2026-11-14): a code is honoured on the rehearsal
+  and pricing does not spend it.
+- [x] One real coded sale on the counter build (Pete, 2026-11-14): sale
+  428528 to dummy client 100042041, 581 at $49.00 less $28.00, $21.00 cash.
+- [x] 581 is one per client: the next pricing for that client was refused
+  "Client has hit the purchase count for this intro series."
+- [ ] Check the deployed drawer's Shelf tab does not hide `Service:581`.
+  Then merge and deploy.
 
 **2.7 A pass that comes with a place.** A workshop sold as a pass also
 signs the buyer up for it, so the counter does not stop at the sale.

@@ -33,7 +33,13 @@ import { createHash } from "node:crypto";
  *   T90 line bought for somebody else;
  * - every gift card line (T95/T96): its product id, its quantity and the
  *   chosen amount in cents when the product is the editable one;
- * - the whole-cart discount (T79), as its mode and value.
+ * - the whole-cart discount (T79), as its mode and value;
+ * - the promotion code (T220), trimmed, when the ticket carries one. A
+ *   code changes what Mindbody charges as surely as a discount does, so
+ *   a customer who approved $21.00 with a code must not be charged on an
+ *   approval of the same lines at $49.00 without it, or the reverse. The
+ *   line is appended ONLY when a code is present, so every ticket
+ *   without one hashes to exactly what it did before T220.
  *
  * WHAT IS DELIBERATELY NOT, and why:
  *
@@ -129,12 +135,19 @@ function discountText(raw: unknown): string {
   return `discount|${mode}|${value}`;
 }
 
+/** T220: the promotion code's line, or none. Trimmed, case kept: the
+ *  code is sent to Mindbody as typed (src/lib/promocode.ts). */
+function promoLines(raw: unknown): string[] {
+  const code = textOf(raw);
+  return code === "" ? [] : [`promo|${code}`];
+}
+
 /**
  * The canonical text a cart hashes to. Exported so a driver (and a
  * reader) can see exactly what went in without reversing a digest.
  *
  * `input` is the body both routes already receive: `items`, `giftCards`,
- * `discount` and `clientId` at its top level.
+ * `discount`, `promotionCode` and `clientId` at its top level.
  */
 export function canonicalCart(input: unknown): string {
   const body =
@@ -152,6 +165,7 @@ export function canonicalCart(input: unknown): string {
     `client|${textOf(body["clientId"])}`,
     ...lines,
     discountText(body["discount"]),
+    ...promoLines(body["promotionCode"]),
   ].join("\n");
 }
 
