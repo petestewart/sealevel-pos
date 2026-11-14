@@ -1016,7 +1016,9 @@ while `git clone` works, so clone the repo rather than fetching files.
   414 "New Student 2 Week Unlimited" with `IntroOfferType: "NewClients"`
   and 581 "Welcome Back - 2 Weeks Unlimited ($49)" with
   `"NewAndExistingClients"`, both `IsIntroOffer: true`, sellable at
-  location 1. The app reads only `IsIntroOffer`, and only to file a pass
+  location 1. `NewAndExistingClients` still means ONCE per client: after
+  one sale of 581, Mindbody refuses the next with "Client has hit the
+  purchase count for this intro series." (T220, 2026-11-14). The app reads only `IsIntroOffer`, and only to file a pass
   under Specials (`passGroupByRule`); nothing in the code hides a pass
   from a returning client, and the design doc's new-students-only rule
   for the $49 special was never built (PLAN 2.6). So 581 reaches a
@@ -1252,11 +1254,13 @@ while `git clone` works, so clone the repo rather than fetching files.
   twice, so a Test pricing does not spend it. Then a REAL sale on the
   counter build with that code: sale 428528, one 581 line at UnitPrice
   $49.00, DiscountAmount $28.00, TotalAmount $21.00, paid $21.00 cash, the
-  pass active 11/14 to 11/27. Still owed: that the code now reads as spent
-  (the probe without `--create` on the same code), whether 581 refuses a
-  client who already holds it (the same run answers it, since that client
-  now does), and a look at the deployed drawer's Shelf tab for a hidden
-  `Service:581`. The sale's `SalesRepId` came back null, which is T49's
+  pass active 11/14 to 11/27. **581 is ONE per client**: the next pricing
+  for that client was refused "Client has hit the purchase count for this
+  intro series." (prod, same day), which the Cart screen's refused-line
+  notice showed as built. Still owed: a look at the deployed drawer's
+  Shelf tab for a hidden `Service:581`. The code's spent state was not
+  read (the probe stops at the pass refusal), but it was single-use and a
+  real sale used it. The sale's `SalesRepId` came back null, which is T49's
   open attribution question below, not this feature's.
 - **Offline behaviour is unhandled.** Phase 1 arrivals could queue and replay;
   a Phase 2 sale must never queue.

@@ -195,10 +195,10 @@ pack in the same gesture.
   and pricing does not spend it.
 - [x] One real coded sale on the counter build (Pete, 2026-11-14): sale
   428528 to dummy client 100042041, 581 at $49.00 less $28.00, $21.00 cash.
-- [ ] Live, owed: the probe on the same code reads it as spent, and says
-  whether 581 refuses a client who already holds it (that client now
-  does). Check the deployed drawer's Shelf tab does not hide
-  `Service:581`. Then merge and deploy.
+- [x] 581 is one per client: the next pricing for that client was refused
+  "Client has hit the purchase count for this intro series."
+- [ ] Check the deployed drawer's Shelf tab does not hide `Service:581`.
+  Then merge and deploy.
 
 **2.7 A pass that comes with a place.** A workshop sold as a pass also
 signs the buyer up for it, so the counter does not stop at the sale.
