@@ -295,6 +295,15 @@ decide if the read cannot, since a hold is the one tender that can still go
 either way safely. The execution plan, with every failure window between
 those steps, is in `docs/PLAN.md` Phase 4.
 
+**U.S. Bank's own POS (Elavon) was looked at and set aside (Pete,
+2026-11-15: "not worth the effort").** Its in-person rate (2.60% + 12c) is
+within cents of Stripe's either way, but its readers are driven by its own
+app (a Bluetooth Moby5500 with the Elavon Mobile App) or by a native SDK
+from a solution engineer, not by a server-side web API a web app can call.
+Elavon's cloud "Fusebox" might be, but it has no public docs or self-serve
+sandbox. Revisit only if the bank offers a server-driven terminal API with
+test credentials.
+
 The seam this needs is the `CheckoutPayment` union in `src/lib/sale.ts`,
 which gains a `Custom` variant; the `payment/` interface sketched elsewhere
 in this document was never built as a module.
