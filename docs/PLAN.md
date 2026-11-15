@@ -46,7 +46,7 @@ Cheap, and each one removes a guess. All are read-only or `Test: true`.
 | R2 | `checkoutshoppingcart`, `Test: true`, a Custom payment with the new id | Whether Mindbody accepts it, and in which key casing | Not run (T222) |
 | R3 | R2 with a `Notes` key carrying a PaymentIntent id | Whether `SalePayment.Notes` (sale.yml:4557) can carry the link, which would make the match exact inside Mindbody | Not run (T222) |
 | R4 | One real Custom sale for dummy client 100042041, then `/sale/sales` with `request.paymentMethodId` | How the sale reads back, whether the filter takes a custom id, how it shows in Pete's reports, and how a return of it reads | Not run (T231) |
-| R5 | `purchasegiftcard`, `Test: true`, a Custom payment | Whether a gift card can be sold this way at all (Comp is refused there) | Not run (T232) |
+| R5 | Three `Test: true` calls: (a) `purchasegiftcard` paid Custom; (b) `purchaseaccountcredit` paid Custom; (c) `purchasegiftcard` paid `DebitAccount` | Which gift card route the reader can use: directly (a), or Pete's credit-then-spend workaround (b then c). c asks against the client's existing balance, so "insufficient" there is about the balance, not the payment type | Not run (T222; `scripts/probe-custom-payment.ts`) |
 | R6 | Stripe's simulated reader, test mode | Every (U) in Phase 4: `process_config` names, reader action statuses and failure codes, offline and busy errors, whether the reader times out by itself, how long a `card_present` hold lasts (believed about two days), metadata on capture, `amount_to_capture`, the simulated registration codes and test helper, test-mode decline behaviour | Not run (before T225 is done) |
 
 ---
@@ -463,23 +463,51 @@ Failure windows:
 
 ### First version: supported and refused
 
-Supported: one cart, the whole ticket on the reader, a named client or the
-house client, with a discount, a promotion code, an override or a
-substitution. From the Cart screen and the roster's "Pay and check in".
+**In the first version (Pete, 2026-11-15: splits and tickets for several
+people are not deferred):** a cart with a named client or the house client,
+with a discount, a promotion code, an override or a substitution, from the
+Cart screen and the roster's "Pay and check in", and:
 
-Refused in words before any call, each lifted by its own item:
+- **Split tenders** (T233): the reader pays its share, entered on the
+  existing keypad, beside cash, account credit or a gift card. Mindbody
+  records every payment on a cart in ONE checkout, so it is still one hold,
+  one checkout carrying the Custom payment beside the others, then one
+  capture.
+- **T90 tickets with lines for other people** (T234): one hold for the whole
+  ticket, one Mindbody checkout per recipient as today, and a capture of
+  exactly what stood. A second cart refused after the first stood captures
+  only the first (`amount_to_capture`, U) and the rest of the hold is
+  released.
 
-- **Split** (reader plus cash, credit or gift card): "The card reader pays
-  the whole ticket." T233.
-- **T90 tickets with a line for someone else**: several carts on one hold
-  needs partial capture. T234.
-- **Selling a gift card** (`purchasegiftcard`): blocked on probe R5. T232,
-  the first follow-up, since a gift card bought on a physical card is a
-  likely lost sale in December.
+**Gift cards** (T232), by whichever route probe R5 opens, in this order:
+
+1. `purchasegiftcard` paid with the Custom payment directly (R5a), if
+   Mindbody accepts it there. It already refuses Comp, so this is a real
+   question.
+2. Otherwise **Pete's own workaround, which the studio already does by
+   hand**: sell the purchaser account credit on the reader
+   (`purchaseaccountcredit` paid with Custom, R5b), then pay for the gift
+   card from that credit (`purchasegiftcard` paid `DebitAccount`, R5c). It
+   is the counter's existing under-$10 pattern (credit first, then spend),
+   so nothing about it is new to Mindbody or to this app. Its limits: it
+   needs a NAMED purchaser, never the house client, whose credit belongs to
+   nobody; it records a credit purchase and a credit redemption rather than
+   a card sale, which is the reporting cost the design doc's "$10 card
+   minimum" section warns about, accepted here because the studio already
+   books gift cards this way by hand; and its two calls cannot be atomic, so
+   a gift card refused AFTER the credit stood captures the hold for the
+   credit, leaves it on the purchaser's account, and says so in words
+   ("$50.00 is on Sam's account as credit; the gift card was not issued"),
+   with Try again spending that credit and charging nothing new.
+
+Refused in words before any call:
+
 - **Memberships** (`purchasecontract`): refused for good. The request takes
   only `CreditCardInfo`, `StoredCardInfo`, direct debit or account credit
-  (sale.yml:6261 on), and autopay needs a card on file the reader cannot put
-  there. "A membership bills a card on file. Add a card first."
+  (sale.yml:6261 on), has no slot for an outside payment, and every autopay
+  after the first bills the card on file. The path stays what it is today:
+  type the card once with "keep on file" and sell against it. "A membership
+  bills a card on file. Add a card first."
 - **Under $10**: refused like a typed card until P10 is answered.
 
 ### The teacher's screen
@@ -551,9 +579,10 @@ Refused in words before any call, each lifted by its own item:
 
 ### Work items
 
-- [ ] **T222 Probes R1 to R3**, `scripts/probe-custom-payment.ts`. Done when
-  the script prints both sites' custom payment methods and a `Test: true`
-  cart priced with a Custom payment, and the answers are recorded here.
+- [ ] **T222 Probes R1, R2, R3 and R5**, `scripts/probe-custom-payment.ts`
+  (written 2026-11-15, not yet run; needs P7's method to exist). Done when
+  it has been run on both sites and the answers are recorded in the probe
+  table.
 - [ ] **T223 The Stripe client and the mode.** `stripe.ts`, the call log's
   `service` field, the environment table, the `livemode` assertion,
   `/api/config`, the `modeNotice` state. Done when a reader read shows in
@@ -587,14 +616,16 @@ Refused in words before any call, each lifted by its own item:
 - [ ] **T231 Reconciliation.** The match, the admin sheet, the header
   count. Done when a day with one planted mismatch of each kind lists all
   of them and a clean day lists none.
-- [ ] **T232 Gift card sales on the reader**, if R5 allows. Partial capture
-  for a ticket that sold in part. Done when a card is sold in the sandbox
-  with `Value` and `AmountPaid` asserted and exactly the sold amount
-  captured.
-- [ ] **T233 Split with a reader leg.** Done when reader plus cash stands as
-  one sale, and a refusal releases the hold and takes no cash.
-- [ ] **T234 T90 tickets.** Done when two recipients' carts stand on one
-  hold, and a refused second cart captures only the first.
+- [ ] **T232 Gift card sales on the reader**, by the route R5 opens (direct,
+  or credit then `DebitAccount`). Done when a card is sold in the sandbox
+  with `Value` and `AmountPaid` asserted, exactly the right amount captured,
+  and, on the credit route, a forced gift card refusal leaves the credit on
+  the account with the sentence above.
+- [ ] **T233 Split with a reader leg (first version).** Done when reader plus
+  cash stands as one sale, and a refusal releases the hold and takes no
+  cash.
+- [ ] **T234 T90 tickets (first version).** Done when two recipients' carts
+  stand on one hold, and a refused second cart captures only the first.
 - [ ] **T235 Refund on card.** Admin, PIN, its own purpose. Done when a test
   capture is refunded from the sheet and the match clears.
 - [ ] **T236 Webhook hardening**, only if polling proves thin.
@@ -605,7 +636,9 @@ Refused in words before any call, each lifted by its own item:
   refunded and voided, and the next day's match is clean. Then the training
   guide and `DEPLOY.md`.
 
-T222 to T227 are the path to a working flow before hardware arrives.
+T222 to T227 are the path to a working flow before hardware arrives. T233
+and T234 belong to the first version and come straight after T229, before
+the reader goes live (T237); T232 follows as soon as R5 has answered.
 
 ### Rails this phase moves
 
