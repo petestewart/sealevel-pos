@@ -21436,3 +21436,56 @@ and read back from `/api/devlog`:
   with its $10.00 badge as before.
 
 `tsc --noEmit` and `next build` clean.
+
+## T240. The customer iPad always names the payment method; T239's discount rule and two balance gaps (Pete, 2026-11-15)
+
+Pete, on T239's review: "we should always list the payment method on the
+custmer ipad"; on the automatic Account line being held back for any
+discount: "i dont even understand the logic of this decision at all"; and
+on the two balance gaps the review found: "fix them".
+
+### To do
+
+- [ ] **The customer iPad names how the student is paying, on every scene
+      that shows a ticket**: the live ticket mirror (T201) once a tender is
+      on the ticket, the approval (T203, "approve" mode) and the post-sale
+      summary (which already carries it). In words only, per T201's rule
+      that no card detail beyond the tender's WORD reaches that screen:
+      "Account balance", "Card", "Cash", "Gift card", and each with its
+      amount on a split ("Account balance $15.00, Card $10.00"). A card's
+      last four is NOT shown there. `readTicketPayload` still rebuilds the
+      payload field by field, now with a tender list it validates the same
+      way. Both charge paths (the Cart screen and the roster's "Pay and
+      check in") send it, through `useSaleApproval`, the one shared piece
+      (T209).
+- [ ] **What the student approved is what is charged, tender included.**
+      Since the approval now names the tender, the tender must not change
+      between the approval being presented and the charge: on the Cart
+      screen it is already frozen by Finalize; in the roster dialog the
+      "Use the card instead" control must be locked from the moment the
+      approval is BEGUN, not only once its request id has come back (T238's
+      review noted that one round trip). A tender change that does get
+      through ends the outstanding approval the way a cart edit does. Decide
+      whether the tender belongs in T203's cart sha (`src/lib/cartsha.ts`)
+      so the server enforces it; if it goes in, every ticket WITHOUT the
+      field must still hash exactly as before, as T220 did for the promo.
+- [ ] **T239's automatic Account line appears for a discounted total too.**
+      Only a full comp (nothing to pay) leaves it off. Arming or changing a
+      discount re-judges the line against the new total while the tender is
+      untouched.
+- [ ] **Fix 1 (T239 review):** the automatic line is never judged on a
+      balance that is being re-read. After a sale the stored-card lookup
+      refetches with the old balance still in hand and `loading: true`;
+      `autoBalance` must wait for the fresh figure (`!cardLookup.loading`).
+- [ ] **Fix 2 (T239 review):** the balance a refused charge reported
+      (`freshBalance`) does not outlive the ticket: `resetTender` clears it,
+      or it is keyed to the client id the way the lookup is, so a newer
+      lookup is never overridden by an older refusal and the client-switch
+      commit no longer depends on an unwritten invariant.
+- [ ] Unchanged on purpose until Pete answers: the automatic line still
+      applies to a ticket holding a gift card.
+- [ ] `tsc --noEmit` and `next build` clean; driven in Chromium against the
+      fake with a paired display: the approval scene names "Account balance"
+      for an automatic line and "Card" after switching; a $5 discount on a
+      $25 ticket for a client with $100 opens with "Account $20.00"; the two
+      balance gaps are forced and no longer offer a line on a stale figure.

@@ -1248,11 +1248,12 @@ while `git clone` works, so clone the repo rather than fetching files.
   file and check them in together, keeping free entry as the deliberate
   exception. See the phasing section of the design doc.
 
-- **The live charge has never fully settled.** The probe reached payment
-  handling and was refused with "Credit card is expired", which proves
-  authorization but not that a charge reaches Stripe. Re-run
-  `mindbody:probe-payments --live` in ai-manager against a client with a
-  current card to close this.
+- **Card charges are live-proven by use, not by a recorded probe** (Pete,
+  2026-11-15: "weve been using the app for months", and typed cards have
+  been charged in testing). The note that stood here, that a live charge
+  had never settled because the 2026-08-26 probe met an expired card, was
+  stale. What is still unseen is only what T238 changed: a card charge
+  UNDER $10 as one checkout.
 - **Teacher attribution is unverified live (T49).** A comp still takes
   the teacher's own PIN in the dialog, every time (T48: stored hashed and
   unique in `teacher_pins`, enrolled through a one-time Mindbody sign-in
