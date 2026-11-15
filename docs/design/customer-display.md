@@ -461,6 +461,58 @@ before T240); a stored card and a card typed at the counter are both
 changes; the roster dialog has no mirror, and names its tender on the
 approval.
 
+**The student chooses how to pay** (T241, Pete, 2026-11-15: "would be
+better to surface a choice to the customer for the payment method if they
+want to switch it"; on the balance: "yes"; on cash, another card and a
+gift card: "why wouldnt they be able to choose this themselves"). It works
+with the approval setting off (the live mirror) and on (the approval).
+The student CHOOSES; the teacher's iPad still does every part that needs a
+person or a device, and makes every write.
+
+- **The offer is the teacher's.** A ticket paid by one method carries
+  `choices`, keys from a fixed list (`TENDER_CHOICES`: credit, storedcard,
+  cash, giftcard, typedcard), built by the teacher's iPad from the rule
+  its own tiles follow, less the method already chosen. The account is
+  offered only when the balance covers the whole total, with the balance
+  shown; the house client gets no account and no card on file; a split, a
+  comp and an unpriced ticket get no offer; the offer leaves the live
+  mirror the moment a charge begins. The roster's "Pay and check in" has
+  no mirror, so it offers on the approval only, and only Account balance
+  and Card on file.
+- **The pick is checked against it.** The display's Change (64px) opens
+  "Account balance ($100.00 available)", "Card on file", "Cash", "Gift
+  card", "A different card"; a tap posts one key to
+  `/api/display/choose`, refused unless it is on the offer the server
+  stored for that ticket. One offer buys one pick, in memory only.
+- **The teacher's iPad moves its own tender.** The pick arrives on the
+  stream the live mirror already holds (`tender-pick`) and on the
+  approval poll, into one shared piece (`useTenderPick`), and reads as one
+  sentence ("Taylor chose Cash"). The tender is replaced: one line for the
+  whole total (account, card on file), a cash line with the keypad open,
+  or the gift card entry open. A pick never charges and is refused with
+  nothing changed during a charge or after the sale resolved.
+- **Under an approval** (T240 binds the tender), a tender ready without
+  hands is asked again IN PLACE: the pending approve ticket is replaced
+  with the new tender and cart sha under the same request id, so the
+  screen never blinks to idle and the student's next tap is Approve on
+  the new one. Cash and a gift card end the approval instead ("One
+  moment. The front desk is switching to Cash.") and Finalize asks again
+  once the teacher has the money or the card.
+- **"A different card" is the student's own** (Pete: "a student shouldnt
+  have to hand them their card"). The display opens T93's card form
+  (`cc-number` for Scan Credit Card, the T98 keyboard lift) and posts the
+  card to `/api/display/card`. The server holds it in MEMORY, on that
+  request, for one charge: never a table, never a log line beyond a last
+  four, never the teacher's browser, never back to the display; dropped
+  on cancel, expiry, a ticket or client change, unpair and the teacher's
+  release; lost on a restart. The teacher hears "Taylor entered a card
+  ending 4242", and `/api/checkout` takes the card from memory by the
+  request id under the teacher's token, as an ordinary typed card. A
+  "Save this card for next time" box (unticked) is T93's keep on file,
+  offered only for an attached client. **Card data travels display ->
+  our server's memory -> the teacher's checkout, and nowhere else**, and
+  the display still adds no write path to Mindbody.
+
 **The setting.** `app_settings` `customer_confirms_sale`, `"true"` or
 `"false"`, default off. Global, because it is a studio policy, not a
 per-iPad tunable: the drawer's localStorage settings are for numbers
@@ -690,8 +742,10 @@ counter that made the request and only once.
 
 ## Security, plainly
 
-- The customer iPad holds a cookie that opens four routes, none of which
-  read Mindbody or name a client by id. Its scene payload is what the
+- The customer iPad holds a cookie that opens only `/api/display/*`,
+  none of which read Mindbody or name a client by id. Since T241 one of
+  them takes a card the student types, holds it in server memory for one
+  charge and answers nothing about it. Its scene payload is what the
   student may see anyway (their own name, their own ticket, the studio's
   waiver).
 - Every write is the teacher's, under the teacher's token, from the

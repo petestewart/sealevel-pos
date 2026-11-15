@@ -21634,17 +21634,24 @@ able to choose this themselves". And: "customer approves each sale" is
 NOT on at the studio, because no customer iPad has been rolled out yet,
 so the choice must not depend on that setting.
 
+Then, on "A different card" opening the teacher's typed-card modal: "i
+dont want teachers to have to do that. a student shouldnt have to hand
+them their card." So the student types it on the customer iPad.
+
 ### The rule
 
 The student CHOOSES; the teacher's iPad still does every part of the
 payment that needs a person or a device, and still makes every write.
 The display keeps adding zero write paths to Mindbody (CLAUDE.md,
 Customer display): the choice is a word from a fixed list, sent to our
-server, delivered to the teacher's iPad, and acted on there.
+server, delivered to the teacher's iPad, and acted on there. The one
+exception to "a word" is a card the student types for "A different
+card", and its rule is narrow: card data travels display -> our
+server's MEMORY -> the teacher's checkout, and nowhere else.
 
 ### To do
 
-- [ ] **On the customer iPad**, every scene that shows a ticket with a
+- [x] **On the customer iPad**, every scene that shows a ticket with a
       single-method tender (the live mirror, and the approval when that
       setting is on) has a 64px "Change" control under "Paying by ...". It
       opens the ways to pay that the TEACHER'S iPAD offered for this ticket
@@ -21658,12 +21665,12 @@ server, delivered to the teacher's iPad, and acted on there.
       - "A different card".
       A split tender shows no Change control. The house client gets no
       account or card-on-file choice.
-- [ ] **The offer is the teacher's, the pick is checked against it.** The
+- [x] **The offer is the teacher's, the pick is checked against it.** The
       teacher's iPad sends the list of options it can accept with the
       ticket it presents; the server keeps it on the request and refuses
       a pick that is not on that list. Nothing the display sends can name
       an amount, a card, or anything but one of those words.
-- [ ] **On the teacher's iPad, a pick arrives as one sentence and a moved
+- [x] **On the teacher's iPad, a pick arrives as one sentence and a moved
       tender**, e.g. "Taylor chose Cash", on both charge screens through
       ONE shared piece (T209's rule):
       - Account balance / Card on file: the tender becomes that one line for
@@ -21671,23 +21678,182 @@ server, delivered to the teacher's iPad, and acted on there.
       - Cash: the tender becomes cash and the cash keypad opens for the
         amount handed over.
       - Gift card: the gift card entry opens, ready for the scanner.
-      - A different card: the typed card entry opens (until Phase 4's
-        reader, whose "tap your card" becomes the same choice).
+      - A different card: the student types the card ON THE CUSTOMER
+        iPAD (see below); the teacher hears "Taylor entered a card ending
+        4242" and the tender becomes that card for the whole total, ready
+        for Finalize. The teacher's own typed-card modal stays as it is.
       The roster's "Pay and check in" dialog offers only Account balance
       and Card on file (it already sends cash to the Cart screen).
-- [ ] **A pick never charges and never lands mid-charge.** While a charge
+- [x] **A pick never charges and never lands mid-charge.** While a charge
       is in flight or a sale has resolved, a pick is refused with nothing
       changed. Under an outstanding approval, a pick ends that approval and
       presents again with the new tender, since T240 binds the tender to
       the approval; the student then taps Approve on the new one.
-- [ ] **A pick counts as the tender being chosen** (T239's automatic line
+- [x] **A pick counts as the tender being chosen** (T239's automatic line
       never moves it back), and a teacher can still change it afterwards
       exactly as today.
-- [ ] Works with "customer approves each sale" OFF (the live mirror) and ON
+- [x] **The student's own card** (Pete: "a student shouldnt have to hand
+      them their card"). "A different card" opens a card form on the
+      display: number, expiry, CVV, name, postal code, through T93's own
+      validator (`src/lib/typedcard.ts`), the OS keyboard kept on the
+      number for "Scan Credit Card", the T98 keyboard lift. The card goes
+      to our server through a `/api/display/*` route and is held IN MEMORY
+      ONLY on that display request for one charge: never in the database,
+      never logged, never sent to the teacher's browser; it lives as long
+      as an approval (30 minutes) and goes on consume, cancel, client
+      change or ticket change, and a restart loses it. The teacher's iPad
+      hears the last four (never the display). `/api/checkout` takes the
+      card from memory by the display request id under the teacher's
+      token, as a `CreditCard` payment exactly as today; dry run, the
+      write guard, T113, T75, T103 and T240's binding apply unchanged.
+      An unticked "Save this card for next time" box uses T93's keep on
+      file, offered only for an attached client.
+- [x] Works with "customer approves each sale" OFF (the live mirror) and ON
       (the approval).
-- [ ] CLAUDE.md's Customer display section and docs/design/customer-display.md
+- [x] CLAUDE.md's Customer display section and docs/design/customer-display.md
       updated; `tsc --noEmit` and `next build` clean; driven in Chromium
       against the fake with a paired display, with the setting off and on:
       each of the five picks moves the teacher's screen as written, a pick
-      not offered is refused by the server, and a pick during a charge is
-      refused with nothing changed.
+      not offered is refused by the server, a pick during a charge is
+      refused with nothing changed, and a card typed on the display
+      charges once and appears nowhere in the database or the server log.
+- [ ] Pete: one card typed on a real customer iPad against the
+      write-guarded dummy client (100042041), to see Apple's "Scan Credit
+      Card" offered on the number field and the keyboard lift hold.
+
+### Done (2026-11-15)
+
+**The offer.** A live or approve ticket whose tender is ONE method, priced
+above zero and not a comp, carries `choices`: keys from a fixed list,
+`TENDER_CHOICES` in `src/lib/displayticket.ts` (credit, storedcard, cash,
+giftcard, typedcard), the account with the balance it would draw on
+(dropped unless it covers the total) and the different card with whether
+a "Save this card" box may show. `readTicketPayload` rebuilds the list
+in that fixed order and drops an offer that cannot apply (a split, no
+tender, "No charge", a summary, no total). The Cart screen offers each
+source its tiles would accept for the whole total on a FRESH tender
+(`addReason(source, true)`, the tiles' own rule) less the one already
+chosen, and withdraws the offer from the live mirror the moment a charge
+begins or the sale resolves. The roster dialog offers only the other of
+Account balance and Card on file, when both can pay. The house client
+(no client attached) gets neither the account nor the card on file.
+
+**The pick.** The display's Change (64px, under "Paying by ...") opens the
+list; a tap posts ONE key to `POST /api/display/choose`, which reads
+`requestId` and `choice` and nothing else and refuses any key not on the
+offer the SERVER stored for that ticket (409), an unknown key (400), and
+any pick on a ticket that is not this display's current pending live or
+approve ticket. One offer buys one pick: the next present of the ticket
+reopens it. The pick lives in memory on the request (`pick`, `pickOpen`;
+never written to the row).
+
+**Delivery, and why.** Two doors into ONE shared piece,
+`src/app/useTenderPick.ts`: the `tender-pick` event on the teacher's
+events stream, read by the EventSource the Cart screen's live mirror
+(`useDisplayMirror`) already holds, and a `pick` field on the 1 second
+approval poll (`/api/display/approval`), which both charge screens run
+while the student is looking at an approval. No new EventSource: the
+teacher's iPad already holds several, and a browser on HTTP/1.1 gives an
+origin six connections. The stream is instant for the live mirror and
+replays on a reconnect by `Last-Event-ID`; the poll keeps an approval's
+pick through a dropped stream. The same pick arriving by both doors is
+acted on once, by its id, and only for a ticket that screen is showing.
+
+**On the teacher's iPad.** One sentence ("Taylor chose Cash. Enter what
+they hand you."), and the tender REPLACED, counting as touched (T239's
+automatic line never moves it back): Account balance or Card on file is
+one line for the whole total; Cash is a cash line with the keypad open;
+Gift card opens the gift card entry; a card from the display is one line,
+"Card from the customer screen ending 4242". A pick while a charge is in
+flight, on a resolved or part-sold sale, or one the tender can no longer
+take is refused with the reason and nothing changed ("Sam asked to pay by
+Gift card. The sale is already being charged. Nothing changed.").
+
+**Under an approval.** Where the new tender is ready with no hands
+(Account balance, Card on file, a card from the display) the approval is
+asked again IN PLACE: `useSaleApproval.askAgain` presents with `replaces`
+naming the pending approve ticket, the hub replaces it (payload, private
+half, cart sha) without the screen blinking to idle, the wait carries on
+on the same id, and the student taps Approve on the new tender. It never
+charges: with the setting off it does nothing. Where the teacher has
+something to enter first (Cash, Gift card) the approval ENDS, the display
+says "One moment. The front desk is switching to Cash.", and Finalize
+asks again once the tender is there. T240's binding is untouched: what is
+re-presented is hashed afresh, and a tender moved after Approve is still
+refused 409.
+
+**The student's card.** `src/app/display/CardForm.tsx`, the same fields
+and validator as T93 (`cc-number` and friends kept for "Scan Credit
+Card"; the display now runs `useVisualViewport`), posts to
+`POST /api/display/card`, which validates with `parseTypedCard` and holds
+it in `src/lib/displaycard.ts`: a Map on globalThis, bound to the client
+on the request's server-only half (the live mirror now sends it), with
+the approval's 30 minutes, dropped on cancel, expiry, unpair, a present
+that changes the lines, discount, name or client, and the teacher's
+`POST /api/display/card/release` when the line leaves the tender. The
+display is answered `{ok: true}` and nothing about the card. The teacher
+hears `{choice: "typedcard", lastFour, keep}`. `/api/checkout` takes
+`displayCard: {requestId}` (single `typedcard` shape only, never beside a
+`typedCard`) BELOW T113's gate, claims the card for that one checkout
+(a second concurrent claim is refused), checks the client, puts it where
+T93's `typedCard` goes, and spends it once the checkout has answered,
+whatever the answer: a refusal costs the student one more entry, and no
+answer has to be judged for whether it reached a charge. A pick the
+teacher's iPad refused holds the offer shut for ten seconds at most, so
+the student is never stuck on "already changing that". An approval taken
+down lets go of the card with it, and the Cart screen takes the line off
+and says so. "Save this card for next time" (unticked) is T93's keep on
+file, offered only with a client attached.
+
+**Verified** against the scratch fake (Taylor $100 on account, Sam $10),
+a local Postgres, `next build`/`next start`, a display paired through
+`/api/admin/display/pair`, Chromium, read back from `/api/devlog`:
+
+- OFF, Cart screen, Taylor, Drop In $25: the display read "Paying by
+  Account balance" with Change; the list was Card on file, Cash, Gift
+  card, A different card. Cash: "Taylor chose Cash. Enter what they hand
+  you.", one Cash line, the cash keypad open, display "Paying by Cash".
+  Card on file: one Card line, display "Paying by Card". Account balance
+  ($100.00 available): one Account line. Gift card: the gift card entry
+  open and the tender empty (and so no Change on the display). A
+  different card typed on the display with Save ticked: "Taylor entered a
+  card ending 4242, to keep on file.", the line "Card from the customer
+  screen ending 4242", the display showing no digit of it; Finalize: ONE
+  live `checkoutshoppingcart` with one `CreditCard` payment of $25, the
+  number struck in the call log, "card was kept on file".
+- Not offered: Sam's ticket offered no account (balance short); a forged
+  `credit` pick answered 409 "That way to pay is not offered for this
+  ticket.", an unknown key 400, an `amount` riding along changed nothing.
+- During a charge (Sam, cash, the checkout held 4 seconds): a pick 150ms
+  after Finalize reached the server before the offer was withdrawn and
+  was refused on the teacher's iPad ("The sale is already being charged.
+  Nothing changed."), the tender still Cash; one 1.6 seconds in was
+  refused by the server (the offer was gone, and so was Change). One cash
+  checkout.
+- ON, Cart screen: approval "Paying by Account balance" with Change; Card
+  on file re-asked in place ("Paying by Card", Cancel and Approve, the
+  teacher still waiting); Approve: one live checkout on `StoredCard`.
+  Cash: the approval ended, the keypad opened, $30 entered, Finalize asked
+  again "Paying by Cash", Approve: one cash checkout, "Change $5.00 from
+  the drawer". Gift card: the approval ended and the gift card entry
+  opened. A different card on the approval: re-asked in place "Paying by
+  Card", Approve: one `CreditCard` checkout. A pick after Approve: 409.
+- ON, roster "Pay and check in", Taylor: the approval offered only "Card
+  on file"; the pick re-asked "Paying by Card", the dialog read "Pays with
+  the stored card ...8210", Approve: one `StoredCard` checkout.
+- Both card sales: the server log carries `[display-card] held ... ending
+  4242 (memory only)` and `spent`, and no card number; a `pg_dump` of the
+  database holds no card number.
+
+`tsc --noEmit` and `next build` clean.
+
+**For Pete.** (1) Cash and Gift card END an outstanding approval (the
+teacher has money or a card to take first) and Finalize asks again; the
+other three ask again in place. (2) A student's card is let go of when
+its approval is cancelled or the ticket changes; they type it again. (3)
+A pick that lands in the instant after Finalize is refused on the
+teacher's iPad; the display shows "One moment" and then the ticket again,
+unchanged. (4) The roster dialog has no live mirror (only the Cart
+screen mirrors), so there the student can choose only on the approval,
+with the setting on, and only between Account balance and Card on file.
+

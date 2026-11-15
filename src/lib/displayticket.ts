@@ -67,6 +67,19 @@ export interface TicketPayload {
    * no tender is on the ticket yet.
    */
   tenders?: TicketTender[];
+  /**
+   * T241 (Pete: "would be better to surface a choice to the customer for
+   * the payment method if they want to switch it"): the other ways to pay
+   * that the TEACHER'S iPad will accept for this ticket, in a fixed
+   * order. Present only on a live or approve ticket whose tender is ONE
+   * method (a split shows no Change control) and whose total Mindbody has
+   * priced. Each entry is a key from TENDER_CHOICES and nothing else; the
+   * account entry carries the balance it would draw on, and the "A
+   * different card" entry whether a "Save this card" box may be offered.
+   * The display renders these; /api/display/choose and /api/display/card
+   * refuse anything not on the list the SERVER stored.
+   */
+  choices?: TenderOffer[];
   /** Summary only: what was charged, and whether a receipt was
    *  CONFIRMED emailed (null when none was asked for). */
   charged?: number;
@@ -92,6 +105,77 @@ export interface TicketTender {
   word: TenderWord;
   /** Dollars, Mindbody-priced or the teacher's own split. */
   amount?: number;
+}
+
+/**
+ * T241: the ways to pay a student may pick on the customer iPad, as
+ * /api/checkout spells the method each one becomes. A fixed list, in the
+ * order the Change list draws them, so nothing the display sends can be
+ * anything but one of these five keys.
+ */
+export const TENDER_CHOICES = [
+  "credit",
+  "storedcard",
+  "cash",
+  "giftcard",
+  "typedcard",
+] as const;
+export type TenderChoice = (typeof TENDER_CHOICES)[number];
+
+export function isTenderChoice(v: unknown): v is TenderChoice {
+  return (
+    typeof v === "string" && (TENDER_CHOICES as readonly string[]).includes(v)
+  );
+}
+
+export interface TenderOffer {
+  choice: TenderChoice;
+  /** `credit` only, and required there: the balance, in dollars, which
+   *  covers the whole total (Pete, on showing the balance: "yes"). */
+  available?: number;
+  /** `typedcard` only: true when the ticket's client is a real person,
+   *  so a "Save this card for next time" box may be offered (T93's keep
+   *  on file, which /api/checkout refuses for the house client). */
+  keep?: boolean;
+}
+
+/** T241: the words a choice reads as on the CUSTOMER screen. No digits
+ *  of any card, ever: "Card on file" is the whole of it. */
+export function choiceWord(offer: TenderOffer): string {
+  switch (offer.choice) {
+    case "credit":
+      return offer.available === undefined
+        ? "Account balance"
+        : `Account balance (${offer.available.toLocaleString("en-US", {
+            style: "currency",
+            currency: "USD",
+          })} available)`;
+    case "storedcard":
+      return "Card on file";
+    case "cash":
+      return "Cash";
+    case "giftcard":
+      return "Gift card";
+    case "typedcard":
+      return "A different card";
+  }
+}
+
+/** T241: the same choice in the TEACHER's sentence ("Taylor chose
+ *  Cash"). */
+export function choiceTeacherWord(choice: TenderChoice): string {
+  switch (choice) {
+    case "credit":
+      return "Account balance";
+    case "storedcard":
+      return "Card on file";
+    case "cash":
+      return "Cash";
+    case "giftcard":
+      return "Gift card";
+    case "typedcard":
+      return "a different card";
+  }
 }
 
 /**
@@ -257,6 +341,25 @@ export function readTicketPayload(
     if (typeof tenders === "string") return { ok: false, error: tenders };
     if (tenders.length > 0) out.tenders = tenders;
   }
+  /* T241: the offer, rebuilt like the tender. Kept only where a Change
+   * control belongs: a live or approve ticket, priced above zero, paid
+   * by ONE method that is not a full comp. Anything else is dropped
+   * rather than refused, because an offer that cannot apply is simply
+   * not made. */
+  if (
+    raw.choices !== undefined &&
+    raw.choices !== null &&
+    mode !== "summary" &&
+    out.tenders !== undefined &&
+    out.tenders.length === 1 &&
+    out.tenders[0]?.word !== "No charge" &&
+    out.total !== null &&
+    out.total > 0
+  ) {
+    const choices = readChoices(raw.choices, out.total);
+    if (typeof choices === "string") return { ok: false, error: choices };
+    if (choices.length > 0) out.choices = choices;
+  }
   if (mode === "summary") {
     const charged = money(raw.charged);
     if (charged !== null) out.charged = charged;
@@ -293,6 +396,61 @@ function readTenders(value: unknown): TicketTender[] | string {
     out.push({ word, amount });
   }
   return out;
+}
+
+/** T241: a payload's offer, in TENDER_CHOICES order with no repeats,
+ *  or the reason it is not one. An account entry whose balance does not
+ *  cover `total` is dropped: Pete's rule is that it is offered only
+ *  when the balance pays the whole ticket. */
+function readChoices(value: unknown, total: number): TenderOffer[] | string {
+  if (!Array.isArray(value)) return "choices must be an array";
+  if (value.length > TENDER_CHOICES.length) return "too many choices";
+  const seen = new Map<TenderChoice, TenderOffer>();
+  for (const entry of value) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      return "each choice must be an object";
+    }
+    const c = entry as Record<string, unknown>;
+    if (!isTenderChoice(c.choice)) {
+      return `each choice must be one of ${TENDER_CHOICES.join(", ")}`;
+    }
+    if (seen.has(c.choice)) continue;
+    if (c.choice === "credit") {
+      const available = money(c.available);
+      if (available === null || available < total) continue;
+      seen.set("credit", { choice: "credit", available });
+      continue;
+    }
+    if (c.choice === "typedcard") {
+      seen.set("typedcard", { choice: "typedcard", keep: c.keep === true });
+      continue;
+    }
+    seen.set(c.choice, { choice: c.choice });
+  }
+  return TENDER_CHOICES.flatMap((k) => {
+    const o = seen.get(k);
+    return o === undefined ? [] : [o];
+  });
+}
+
+/** T241: whether a stored ticket's offer includes `choice`. Read off
+ *  the payload the SERVER rebuilt and keeps, never off a request body. */
+export function offerOf(
+  payload: Record<string, unknown>,
+  choice: TenderChoice,
+): TenderOffer | null {
+  const list = payload.choices;
+  if (!Array.isArray(list)) return null;
+  for (const entry of list) {
+    if (
+      entry !== null &&
+      typeof entry === "object" &&
+      (entry as TenderOffer).choice === choice
+    ) {
+      return entry as TenderOffer;
+    }
+  }
+  return null;
 }
 
 /** T240: the tender as one line of words, "Card", or on a split

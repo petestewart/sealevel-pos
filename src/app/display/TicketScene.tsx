@@ -1,10 +1,17 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { plainText } from "@/lib/richtext";
 
-import { tenderSentence, type TicketPayload } from "@/lib/displayticket";
+import {
+  choiceWord,
+  tenderSentence,
+  type TenderOffer,
+  type TicketPayload,
+} from "@/lib/displayticket";
+
+import CardForm from "./CardForm";
 
 /**
  * The ticket, as the student sees it (T201, Phase 2.5 item 2; design
@@ -46,6 +53,10 @@ export default function TicketScene(props: {
   /** Told when the student has answered, so the screen can move on while
    *  the server catches up. */
   onAnswered?: (approved: boolean) => void;
+  /** T241: told when the server has the student's pick, with the words
+   *  of what they picked, so the screen can say "One moment" across the
+   *  teacher's iPad asking again. */
+  onPicked?: (words: string) => void;
 }) {
   const t = props.payload;
   const summary = t.mode === "summary";
@@ -72,7 +83,75 @@ export default function TicketScene(props: {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { requestId, onAnswered } = props;
+  const { requestId, onAnswered, onPicked } = props;
+
+  /**
+   * T241 (Pete: "would be better to surface a choice to the customer for
+   * the payment method if they want to switch it"): the Change control
+   * and what it opens. The list is the TEACHER's offer, as the server
+   * stored it; a pick sends one key from it and nothing else, and the
+   * server refuses a key that is not on it. A pick charges nothing.
+   */
+  const choices: TenderOffer[] =
+    !summary && t.choices !== undefined && requestId ? t.choices : [];
+  const [view, setView] = useState<"ticket" | "change" | "card" | "sent">(
+    "ticket",
+  );
+  const [sentWords, setSentWords] = useState<string | null>(null);
+  /* A new present of this ticket (the teacher's iPad answering the pick,
+   * or any other change) is the ticket as it now stands: back to it. */
+  const payloadKey = JSON.stringify(t);
+  useEffect(() => {
+    setView("ticket");
+    setSentWords(null);
+  }, [payloadKey]);
+  /* If the teacher's iPad never answers (it was charging, say, and
+   * refused the pick with nothing changed), the ticket comes back. */
+  useEffect(() => {
+    if (view !== "sent") return;
+    const timer = setTimeout(() => setView("ticket"), 8_000);
+    return () => clearTimeout(timer);
+  }, [view]);
+
+  const pick = useCallback(
+    async (offer: TenderOffer) => {
+      if (busy || !requestId) return;
+      if (offer.choice === "typedcard") {
+        setError(null);
+        setView("card");
+        return;
+      }
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await fetch("/api/display/choose", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ requestId, choice: offer.choice }),
+        });
+        const body = await res.json().catch(() => null);
+        if (!res.ok) {
+          setView("ticket");
+          setError(
+            typeof body?.error === "string" && body.error
+              ? body.error
+              : "That did not go through. Please tell the front desk.",
+          );
+          return;
+        }
+        const words = choiceWord({ choice: offer.choice });
+        setSentWords(words);
+        setView("sent");
+        onPicked?.(words);
+      } catch {
+        setView("ticket");
+        setError("That did not go through. Please tell the front desk.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, requestId, onPicked],
+  );
 
   const answer = useCallback(
     async (approved: boolean) => {
@@ -105,6 +184,69 @@ export default function TicketScene(props: {
     },
     [busy, requestId, onAnswered],
   );
+
+  if (view === "card" && requestId) {
+    const card = choices.find((c) => c.choice === "typedcard");
+    return (
+      <CardForm
+        requestId={requestId}
+        canKeep={card?.keep === true}
+        onCancel={() => setView("change")}
+        onSent={() => {
+          setSentWords("Your card");
+          setView("sent");
+          onPicked?.("your card");
+        }}
+      />
+    );
+  }
+
+  if (view === "sent") {
+    return (
+      <section className="dticket" aria-label="Your ticket">
+        <h1 className="dticket-heading">Thank you</h1>
+        <p className="dticket-tender">
+          {sentWords === "Your card"
+            ? "Your card is with the front desk. One moment."
+            : `The front desk will switch to ${sentWords ?? "that"}. One moment.`}
+        </p>
+      </section>
+    );
+  }
+
+  if (view === "change") {
+    return (
+      <section className="dticket" aria-label="How would you like to pay?">
+        <h1 className="dticket-heading">How would you like to pay?</h1>
+        {t.total !== null ? (
+          <p className="dticket-tender">Total {money(t.total)}</p>
+        ) : null}
+        <div className="dchoice-list">
+          {choices.map((offer) => (
+            <button
+              key={offer.choice}
+              type="button"
+              className="dscene-btn dchoice"
+              disabled={busy}
+              onClick={() => void pick(offer)}
+            >
+              {choiceWord(offer)}
+            </button>
+          ))}
+        </div>
+        <div className="dticket-approve-buttons">
+          <button
+            type="button"
+            className="dscene-btn"
+            disabled={busy}
+            onClick={() => setView("ticket")}
+          >
+            Back
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="dticket" aria-label="Your ticket">
@@ -167,10 +309,28 @@ export default function TicketScene(props: {
       </dl>
 
       {!summary && paying !== null ? (
-        <p className="dticket-tender">
-          {noCharge ? "No charge" : `Paying by ${paying}`}
-        </p>
+        <div className="dticket-tender-row">
+          <p className="dticket-tender">
+            {noCharge ? "No charge" : `Paying by ${paying}`}
+          </p>
+          {/* T241: a single-method tender may be changed by the student,
+              to a way the teacher's iPad offered for this ticket. */}
+          {choices.length > 0 ? (
+            <button
+              type="button"
+              className="dscene-btn dticket-change"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setView("change");
+              }}
+            >
+              Change
+            </button>
+          ) : null}
+        </div>
       ) : null}
+      {!approve && error !== null ? <p className="dticket-error">{error}</p> : null}
 
       {approve ? (
         <div className="dticket-approve">

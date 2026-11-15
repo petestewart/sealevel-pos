@@ -132,6 +132,18 @@ export interface SaleApproval {
   /** Drop everything outstanding (a new ticket, a finished sale), and
    *  take the scene off the student's screen with it. */
   reset: () => void;
+  /**
+   * T241: the student picked another way to pay on the approval, and the
+   * tender has moved; ask them again with the new one. The approve
+   * ticket on the screen is REPLACED in place (same request id, the
+   * wait carries on), so the screen does not blink to idle. It NEVER
+   * charges: with the setting off it does nothing at all, and with
+   * nothing outstanding it presents like the primary tap's first half.
+   */
+  askAgain: () => void;
+  /** T241: the request id of the approval this screen is waiting on (or
+   *  that its PIN pad was opened over), or null. */
+  requestId: () => string | null;
 }
 
 export function useSaleApproval(input: {
@@ -152,6 +164,13 @@ export function useSaleApproval(input: {
    * not a screen gone, and it must read as one.
    */
   onStaffSessionEnded?: () => void;
+  /** T241: a pick the approval poll's answer carried, handed to the
+   *  screen's `useTenderPick`, which acts on each pick once. */
+  onPick?: (value: unknown) => void;
+  /** T241: a presented approval was taken back down (`requestId`), so a
+   *  card the student typed on it is let go of by the server and the
+   *  screen can say so. */
+  onSceneCancelled?: (requestId: string) => void;
 }): SaleApproval {
   const [approval, setApproval] = useState<ApprovalState | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -180,6 +199,15 @@ export function useSaleApproval(input: {
   chargeRef.current = input.charge;
   const staffGoneRef = useRef(input.onStaffSessionEnded);
   staffGoneRef.current = input.onStaffSessionEnded;
+  const onPickRef = useRef(input.onPick);
+  onPickRef.current = input.onPick;
+  const sceneGoneRef = useRef(input.onSceneCancelled);
+  sceneGoneRef.current = input.onSceneCancelled;
+  /** T241: the cancel last sent for a scene this hook took down. A
+   *  present waits for it, so a cancel and the present after it cannot
+   *  arrive the other way round and leave the new ticket refused "busy"
+   *  behind the old one. */
+  const lastCancel = useRef<Promise<unknown> | null>(null);
   /**
    * T209 review: which attempt is the live one.
    *
@@ -210,7 +238,7 @@ export function useSaleApproval(input: {
    * them is a way past the setting, because the only two things that
    * satisfy it are the customer's own tap and a teacher's PIN.
    */
-  const present = useCallback(async (): Promise<void> => {
+  const present = useCallback(async (replaces?: string): Promise<void> => {
     const ticket = buildRef.current();
     if (ticket === null) {
       /* Nothing to ask about (no client, no line, no price yet). There
@@ -238,11 +266,17 @@ export function useSaleApproval(input: {
       setApproval(next);
     };
     try {
+      if (lastCancel.current !== null) {
+        await lastCancel.current.catch(() => undefined);
+      }
       const res = await fetch("/api/display/present", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           kind: "ticket",
+          /* T241: an approval asked again after a pick replaces its own
+             ticket in place. */
+          ...(replaces !== undefined ? { replaces } : {}),
           payload,
           ...(payload.clientFirstName
             ? { clientFirstName: payload.clientFirstName }
@@ -349,6 +383,9 @@ export function useSaleApproval(input: {
         );
         const body = await res.json().catch(() => null);
         if (stopped || body === null) return;
+        /* T241: a pick rides the same answer, so a dropped stream does
+         * not lose the student's choice. Acted on once, by its id. */
+        if (body.pick && body.status === "pending") onPickRef.current?.(body.pick);
         if (body.status === "completed" && body.approved === true) {
           stopped = true;
           setApproval(null);
@@ -439,7 +476,16 @@ export function useSaleApproval(input: {
     const sceneUp =
       held.stage === "waiting" ||
       (held.stage === "pin" && held.resume !== undefined);
-    if (sceneUp) void fetch("/api/display/cancel", { method: "POST" });
+    if (sceneUp) {
+      lastCancel.current = fetch("/api/display/cancel", { method: "POST" });
+      const gone =
+        held.stage === "waiting"
+          ? held.requestId
+          : held.stage === "pin"
+            ? held.resume?.requestId
+            : undefined;
+      if (gone !== undefined) sceneGoneRef.current?.(gone);
+    }
   }, [setPresentingBoth]);
 
   /* Handed straight to an onClick, so it takes no argument: a
@@ -531,6 +577,43 @@ export function useSaleApproval(input: {
 
   const reset = useCallback(() => endWait(null), [endWait]);
 
+  const requestId = useCallback((): string | null => {
+    const held = approvalRef.current;
+    if (held?.stage === "waiting") return held.requestId;
+    if (held?.stage === "pin") return held.resume?.requestId ?? null;
+    return null;
+  }, []);
+
+  const askAgain = useCallback(() => {
+    /* Never a charge: `begin` charges with the setting off, this does
+       nothing at all. */
+    if (!onRef.current) return;
+    const held = approvalRef.current;
+    const replaces =
+      held?.stage === "waiting"
+        ? held.requestId
+        : held?.stage === "pin"
+          ? held.resume?.requestId
+          : undefined;
+    if (replaces === undefined) {
+      if (held !== null || presentingRef.current) return;
+      setNote(null);
+      gen.current += 1;
+      void present();
+      return;
+    }
+    /* The PIN pad, if it was open over the wait, closes: the ticket it
+       was about is being asked again. The wait stays on the same id. */
+    if (held?.stage === "pin") {
+      const next: ApprovalState = { stage: "waiting", requestId: replaces };
+      approvalRef.current = next;
+      setApproval(next);
+    }
+    setNote(null);
+    gen.current += 1;
+    void present(replaces);
+  }, [present]);
+
   return {
     approval,
     note,
@@ -545,5 +628,7 @@ export function useSaleApproval(input: {
     closePin,
     armed,
     reset,
+    askAgain,
+    requestId,
   };
 }

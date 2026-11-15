@@ -78,6 +78,7 @@ import {
   type ResolvedSubstitute,
 } from "@/lib/substitute";
 import { beginIdempotent } from "@/lib/idemstore";
+import { claimDisplayCard, settleDisplayCard } from "@/lib/displaycard";
 import {
   parsePromotionCode,
   promotionRefusal,
@@ -465,6 +466,37 @@ function parseSplitLeg(raw: unknown): SplitLeg | string {
   };
 }
 
+/**
+ * T241: the `displayCard` reference on a checkout body, or null when it
+ * has none, or the 400 reason. Only on the single-method `typedcard`
+ * shape, and never beside a `typedCard` the browser typed itself: a
+ * student's card pays the whole sale, and a request carrying two cards
+ * is a mistake, not something to pick between.
+ */
+function readDisplayCardRef(
+  payload: unknown,
+): { requestId: string } | { error: string } | null {
+  const body = (payload ?? {}) as Record<string, unknown>;
+  const ref = body["displayCard"];
+  if (ref === undefined || ref === null) return null;
+  const requestId = (ref as { requestId?: unknown })?.requestId;
+  if (typeof requestId !== "string" || requestId.trim() === "") {
+    return { error: "displayCard needs the display request's id" };
+  }
+  if (body["method"] !== "typedcard" || body["split"] !== undefined) {
+    return {
+      error:
+        "a card from the customer screen pays the whole sale, as method typedcard",
+    };
+  }
+  if (body["typedCard"] !== undefined) {
+    return {
+      error: "send a typed card or a card from the customer screen, not both",
+    };
+  }
+  return { requestId: requestId.trim() };
+}
+
 export async function POST(request: Request) {
   const denied = requireSession(request);
   if (denied) return denied;
@@ -490,14 +522,55 @@ export async function POST(request: Request) {
    * costs nothing at all. See src/lib/idemstore.ts. */
   const gate = await beginIdempotent(request, payload, String(session.staffId));
   if (gate.replay !== null) return gate.replay;
+  /* T241: a card the STUDENT typed on the customer iPad. The browser
+   * sends only the display request's id (`displayCard: { requestId }`);
+   * the card itself is taken here from the server's memory, BELOW the
+   * idempotency gate (so a replay never touches it) and claimed for this
+   * one checkout, then spent once it has answered, whatever it said. From here on it is a
+   * typed card like T93's, through the same `typedCard` path, under the
+   * teacher's token: dry run, the write guard, T75, T103 and T240's
+   * tender binding apply unchanged (the method is still `typedcard`). */
+  const displayRef = readDisplayCardRef(payload);
+  if (displayRef !== null && "error" in displayRef) {
+    return gate.record(
+      NextResponse.json({ error: displayRef.error }, { status: 400 }),
+    );
+  }
+  const displayCard = displayRef === null ? null : displayRef.requestId;
+  let charged = payload;
+  if (displayCard !== null) {
+    const claim = claimDisplayCard(
+      displayCard,
+      typeof payload?.clientId === "string" ? payload.clientId : "",
+    );
+    if (!claim.ok) {
+      return gate.record(
+        NextResponse.json(
+          { error: claim.error, reason: "displaycard" },
+          { status: 409 },
+        ),
+      );
+    }
+    const { displayCard: _ref, ...rest } = payload;
+    charged = { ...rest, typedCard: claim.card };
+  }
   try {
     /* T220: what the rehearsal took off for a promotion code, filled in
      * by runCheckout and added to the answer of a sale that stands. */
     const promo: { applied: PromotionOutcome | null } = { applied: null };
-    const answered = await withPromotion(
-      await runCheckout(request, session, payload, promo),
-      promo.applied,
-    );
+    let ran: Response;
+    try {
+      ran = await runCheckout(request, session, charged, promo);
+    } catch (err) {
+      if (displayCard !== null) settleDisplayCard(displayCard, true);
+      throw err;
+    }
+    /* Spent by ANY answer, a refusal included: a card typed by a student
+     * pays for one checkout and is never offered to a second, so nothing
+     * here has to judge whether an answer reached a charge. A refusal
+     * costs the student one more entry, which is the safe direction. */
+    if (displayCard !== null) settleDisplayCard(displayCard, true);
+    const answered = await withPromotion(ran, promo.applied);
     /* T219: a sold pass that comes with a place in a course or a class
      * books that place, here, at the one point every charge path passes
      * through, and INSIDE the record, so a request arriving twice

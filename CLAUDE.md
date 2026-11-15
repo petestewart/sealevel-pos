@@ -67,6 +67,10 @@ T237 in `docs/PLAN.md`; T222 to T227 reach a working flow on Stripe's
 simulated reader before hardware arrives. Blocked on Pete for the Stripe
 account (P6) and the Mindbody custom payment method (P7).
 
+**T241 (2026-11-15): the student chooses how to pay on the customer
+iPad**, and can type their own card there (Pete: "a student shouldnt have
+to hand them their card"). See Customer display below.
+
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
 there. `docs/design/front-desk-pos.md` carries the reasoning behind every item
@@ -532,7 +536,13 @@ imports `mindbody()`. A student's answer is a stored result on a
 `display_requests` row; the write happens afterwards from the TEACHER's
 iPad, under the teacher's token, through a write route that already
 exists, which is what keeps dry run, the write guard, T49 attribution
-and T50's refusal applying unchanged.
+and T50's refusal applying unchanged. **Card data has exactly one path
+through it** (T241): a card the student types on the display travels
+display -> this server's MEMORY (`src/lib/displaycard.ts`, on that display
+request, for one charge) -> the teacher's `/api/checkout`, and nowhere
+else: never a table (not `display_requests`, not any payload or result
+column), never a log line beyond a last four, never the teacher's
+browser, never back to the display.
 
 **A live ticket is the one scene that is REPLACED in place** (T201,
 Phase 2.5 item 2). The sale screen mirrors the priced cart as it is
@@ -650,6 +660,57 @@ line amounts and Xs, and the roster dialog's switch. A tender that moves
 by itself under one (a credit line dropped by a refetch, the card lookup
 answering) ends it with one sentence, the way a cart edit does, and
 `endWait` now also ends a present still in flight.
+
+**The student chooses how to pay** (T241, Pete: "would be better to
+surface a choice to the customer for the payment method if they want to
+switch it", and it must not depend on the approval setting). A live or
+approve ticket paid by ONE method carries `choices`, keys from the fixed
+`TENDER_CHOICES` (credit, storedcard, cash, giftcard, typedcard), which
+the TEACHER's iPad builds from the very rule its tiles are greyed by
+(`addReason(source, true)`, a fresh tender for the whole total) less the
+method already chosen; the account is offered only when the balance
+covers the total and shows it ("Account balance ($100.00 available)"),
+the house client gets neither the account nor the card on file, and the
+offer is withdrawn from the live mirror the moment a charge begins. The
+display's 64px Change opens the list; `POST /api/display/choose` reads a
+request id and ONE key and refuses a key not on the offer the SERVER
+stored (one offer, one pick: the next present reopens it). The teacher's
+iPad hears it through ONE piece, `src/app/useTenderPick.ts`, fed by the
+`tender-pick` event on the stream the live mirror already holds and by a
+`pick` on the approval poll (no new EventSource: the iPad holds several
+and HTTP/1.1 allows six), acted on once per pick id and only for a
+ticket that screen is showing. It says one sentence ("Taylor chose
+Cash. Enter what they hand you.") and REPLACES the tender, which counts
+as touched: Account balance or Card on file, one line for the whole
+total; Cash, a cash line with the keypad open; Gift card, the gift card
+entry. **A pick never charges**: refused with the reason and nothing
+changed during a charge or after the sale resolved. Under an approval, a
+tender ready with no hands is asked again IN PLACE (`askAgain`, a present
+with `replaces` naming the pending approve ticket, same request id, new
+cart sha, never a charge, nothing with the setting off), and Cash or a
+gift card ENDS the approval for Finalize to ask again. The roster's pay
+dialog offers only the other of Account balance and Card on file, and
+only on the approval: it has no live mirror.
+
+**"A different card" is typed by the STUDENT on the display** (T241,
+Pete: "i dont want teachers to have to do that. a student shouldnt have
+to hand them their card."). `src/app/display/CardForm.tsx` is T93's
+fields and validator (`cc-number` kept for Scan Credit Card; the display
+runs `useVisualViewport`), posting to `POST /api/display/card`, which
+validates with `parseTypedCard` and holds it in `src/lib/displaycard.ts`:
+memory only, bound to the ticket's client (the live mirror now puts it
+on the request's server-only half), the approval's 30 minutes, dropped
+on cancel, expiry, unpair, a present that changes the lines, discount,
+name or client, and the teacher's `/api/display/card/release`. The
+teacher hears the last four only; `/api/checkout` takes `displayCard:
+{requestId}` on the single `typedcard` shape BELOW T113's gate, claims it
+for one checkout, checks the client, charges it as T93's `typedCard`
+under the teacher's token (dry run, write guard, T75, T103, T240's
+binding unchanged; the word is still "Card"), and spends it once the
+checkout answered (a refusal included). An approval taken down
+takes the card with it. "Save this card for next time", unticked, is
+T93's keep on file, offered only with a client attached. The teacher's
+own typed-card modal is unchanged.
 
 **A student can sign themselves up** (T204, Phase 2.5 item 5). The idle
 screen's "New here? Sign up" calls `POST /api/display/start`, the one

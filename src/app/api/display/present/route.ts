@@ -135,6 +135,15 @@ export async function POST(request: Request) {
         cartSha256: cartSha256(cart, { tender: tenderBound }),
         tenderBound,
       };
+    } else if (ticket.value.mode === "live") {
+      /* T241: the client a live ticket is for, on the server-only half
+       * and nowhere the display can see, so a card the student types on
+       * it is bound to that client and let go of when the ticket moves
+       * to somebody else. */
+      privateHalf = {
+        clientId:
+          typeof input.clientId === "string" ? input.clientId.trim() : "",
+      };
     }
   }
   /* T202: a WAIVER's payload is built here, not forwarded. The browser
@@ -276,6 +285,11 @@ export async function POST(request: Request) {
     initiator: "teacher",
     requestedByStaffId: String(actor.session.staffId),
     ...(ttlMs === undefined ? {} : { ttlMs }),
+    /* T241: an approval asked again after the student picked another
+     * way to pay replaces its own ticket in place. */
+    ...(input.kind === "ticket" && typeof input.replaces === "string"
+      ? { replaces: input.replaces }
+      : {}),
   });
   if (!presented.ok) {
     /* T201: `reason` is what lets the live mirror drop a refusal the

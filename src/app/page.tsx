@@ -61,6 +61,7 @@ import WaiverOverrideDialog, {
 import { waiverOverrideLabel, type WaiverFlow } from "@/lib/waiveroverride";
 import ApprovalWait from "./ApprovalWait";
 import { useSaleApproval } from "./useSaleApproval";
+import { useTenderPick, type TenderPick } from "./useTenderPick";
 import { displayFirstName, tendersFromCharge } from "@/lib/displayticket";
 import { DEFAULT_SETTINGS, useSettings } from "./settings";
 import { toggleTheme, watchSystemTheme } from "./theme";
@@ -1387,6 +1388,12 @@ function FrontDesk({
              server rewrites this from the cart's own method below, so
              the words and the hash cannot disagree. */
           tenders: tendersFromCharge({ method }) ?? [],
+          /* T241: the one other way this dialog can pay, when both can
+             (Account balance and Card on file only: cash and the rest
+             have a whole screen of their own, the Cart screen). */
+          ...(payChoicesRef.current.length > 0
+            ? { choices: payChoicesRef.current }
+            : {}),
         },
         /* The cart the SERVER hashes, in the same shape the charge below
            sends it: the client and the one line's type, id, quantity and
@@ -1418,6 +1425,10 @@ function FrontDesk({
        write's `staffSessionEnded`. The gate comes back; the panel does
        not claim the customer screen is at fault. */
     onStaffSessionEnded: () => setTeacher(null),
+    /* T241: a pick that rode the approval poll's answer. This dialog has
+       no live mirror (the Cart screen is the only screen that mirrors),
+       so the approval is the one scene a student can pick on here. */
+    onPick: (value) => payPick.receive(value),
   });
   /* Pulled out by name: the handlers the hook returns are stable, the
    * object around them is not, and closePayDialog is a dependency of
@@ -1458,6 +1469,25 @@ function FrontDesk({
    * further down; the builder above reads the method through this ref,
    * which the render body keeps current. */
   const payMethodRef = useRef<"credit" | "storedcard" | null>(null);
+  /** T241: the ways to pay this dialog offers on the approval, kept
+   *  current by the render body beside `payMethod`. */
+  const payChoicesRef = useRef<
+    { choice: "credit" | "storedcard"; available?: number }[]
+  >([]);
+  /** T241: the dialog's own pick handler, set beside `payMethod` where
+   *  everything it judges by is in scope. */
+  const payPickApply = useRef<(pick: TenderPick) => string | null>(
+    () => "The dialog is not open.",
+  );
+  /** T241: a pick moved the method under a live wait, which is asked
+   *  again in place rather than ended. */
+  const payPickReask = useRef(false);
+  const [payReaskNonce, setPayReaskNonce] = useState(0);
+  const payPick = useTenderPick({
+    owns: (requestId) => requestId === payApproval.requestId(),
+    firstName: displayFirstName(payDialog?.entry.name ?? null),
+    apply: (pick) => payPickApply.current(pick),
+  });
   /** Rows with a check-in in flight. */
   const [busy, setBusy] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
@@ -6537,12 +6567,56 @@ function FrontDesk({
   /* T240: the method moved under an outstanding approval (see
    * payMethodRef): it ends, with one sentence. A no-op otherwise. */
   useEffect(() => {
+    /* T241: except when the student's own pick moved it under a live
+     * wait, which is asked again in place just below. */
+    if (payPickReask.current) return;
     abandonPayApproval(
       "The payment method changed. Charge again to ask the customer.",
     );
   }, [payMethod, abandonPayApproval]);
+  const payAskAgain = payApproval.askAgain;
+  useEffect(() => {
+    if (payReaskNonce === 0) return;
+    payPickReask.current = false;
+    payAskAgain();
+  }, [payReaskNonce, payAskAgain]);
   /** T238: both tenders can pay, so the dialog offers the other one. */
   const payCanSwitchMethod = payCreditCovers && payCardLive;
+  /* T241: and so does the customer screen, on the approval: the one
+   * other method, with the balance beside the account (Pete: "yes"). */
+  payChoicesRef.current =
+    !payCanSwitchMethod || payMethod === null
+      ? []
+      : payMethod === "credit"
+        ? [{ choice: "storedcard" }]
+        : payBalance !== null
+          ? [{ choice: "credit", available: payBalance }]
+          : [];
+  payPickApply.current = (pick: TenderPick): string | null => {
+    if (payFlight.current || payStage !== null) {
+      return "The sale is already being charged.";
+    }
+    if (payMoneyMoved) return "This sale is already done.";
+    if (pick.choice === "credit") {
+      if (!payCreditCovers) return "The account balance does not cover it.";
+      setPayUseCard(false);
+    } else if (pick.choice === "storedcard") {
+      if (!payCardLive) return "There is no usable card on file.";
+      setPayUseCard(true);
+    } else {
+      return "This dialog takes the account balance or the card on file. Use Cart for anything else.";
+    }
+    /* Under a live wait, the approval is asked again in place with the
+     * new method; otherwise the switch simply stands, ready for Charge. */
+    const waiting = payApproval.requestId() !== null;
+    if (waiting) {
+      payPickReask.current = true;
+      setPayReaskNonce((n) => n + 1);
+    } else if (payApproval.pending) {
+      cancelPayApproval();
+    }
+    return null;
+  };
   /* The one-line reason there is nothing to charge with, greyed and
    * shown rather than hidden (T24's posture). */
   const payMethodReason =
@@ -10677,6 +10751,12 @@ function FrontDesk({
                 retired rule 1, see payMethod), otherwise the stored
                 card. A missing method renders its reason rather than
                 disappearing. */}
+            {/* T241: what the student chose on the customer iPad. */}
+            {payPick.note !== null ? (
+              <p className="pick-note" role="status">
+                {payPick.note}
+              </p>
+            ) : null}
             <p className="pay-method-line">
               {payMethod === "credit"
                 ? `Pays with account balance (${
