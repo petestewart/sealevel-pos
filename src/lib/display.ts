@@ -20,7 +20,12 @@ import {
 } from "./db";
 import type { DisplayRequestRow } from "./db";
 import { displayCookieDurable } from "./displayauth";
-import { dropAllDisplayCards, dropDisplayCard, holdDisplayCard } from "./displaycard";
+import {
+  dropAllDisplayCards,
+  dropDisplayCard,
+  holdDisplayCard,
+  sweepDisplayCards,
+} from "./displaycard";
 import {
   isApproveTicket,
   isLiveTicket,
@@ -124,6 +129,19 @@ export interface DisplayRequest {
    */
   pickOpen?: boolean;
   pick?: TenderPick | null;
+  /** T241 review: bumped by every present of this request, including an
+   *  in-place replace, and carried to the display with the scene, so an
+   *  Approve tapped on one version of a ticket cannot complete the next.
+   *  Memory only; a request reloaded after a restart is version 1. */
+  version?: number;
+  /** T241 review: whether an approve ticket has been replaced in place
+   *  as an approve ticket (a pick answered), which is when an Approve
+   *  that names no version can no longer be trusted to be for it. */
+  approveReplaced?: boolean;
+  /** T241 review: when this request was last presented, so a live
+   *  ticket a closed tab left behind can be taken over by another iPad
+   *  after a while rather than blocking its mirror for 30 minutes. */
+  presentedAt?: number;
 }
 
 /** T241: what the teacher's iPad is told about a pick. A key from the
@@ -135,6 +153,9 @@ export interface TenderPick {
   choice: TenderChoice;
   lastFour?: string;
   keep?: boolean;
+  /** T241 review: the tab that presented the ticket, so a teacher's iPad
+   *  acts only on picks made on its own ticket. */
+  presenter?: string;
   at: number;
 }
 
@@ -844,6 +865,9 @@ export function sceneFor(request: DisplayRequest | null): {
       kind: request.kind,
       initiator: request.initiator,
       payload: request.payload,
+      /* T241 review: which version of this request the screen is
+       * showing, for an approve ticket's answer to name. */
+      version: request.version ?? 1,
     },
   };
 }
@@ -893,6 +917,7 @@ export async function presentRequest(input: {
   await ensureDisplayLoaded();
   const now = input.now ?? Date.now();
   expireIfDue(now);
+  sweepDisplayCards(now);
   const p = state.paired;
   if (p === null) {
     return {
@@ -936,8 +961,24 @@ export async function presentRequest(input: {
       input.replaces === held.id &&
       isApproveTicket(held.kind, held.payload) &&
       input.payload.mode === "approve";
+    /* T241 review: a ticket belongs to the teacher and the TAB that put
+     * it up. Two Cart screens on one counter used to replace each
+     * other's live ticket in place, sharing one request id, so a
+     * student's pick moved both iPads' tenders and a card typed for one
+     * could be charged by the other. Another presenter is now "busy",
+     * like any other scene, unless the live ticket has gone stale (a
+     * closed tab), when it is retired and a new request goes up. */
+    const sameOwner = sameTicketOwner(held, input);
     if (
       input.kind === "ticket" &&
+      isLiveTicket(held.kind, held.payload) &&
+      !sameOwner &&
+      now - (held.presentedAt ?? held.createdAt) > LIVE_STALE_MS
+    ) {
+      retire(held, now, "live ticket left by another iPad");
+    } else if (
+      input.kind === "ticket" &&
+      sameOwner &&
       (isLiveTicket(held.kind, held.payload) || replacingApproval)
     ) {
       /* T241: a card the student typed belongs to THIS ticket. A present
@@ -957,6 +998,9 @@ export async function presentRequest(input: {
         dropDisplayCard(held.id, "ticket changed");
       }
       held.pickOpen = true;
+      held.version = (held.version ?? 1) + 1;
+      if (replacingApproval) held.approveReplaced = true;
+      held.presentedAt = now;
       held.expiresAt = now + (input.ttlMs ?? REQUEST_TTL_MS);
       armExpiry(held, now);
       void boundedDb(
@@ -974,6 +1018,9 @@ export async function presentRequest(input: {
       emit("display", scene.event, scene.data);
       return { ok: true, request: held, replaced: true };
     }
+  }
+  if (state.current !== null && state.current.status === "pending") {
+    const held = state.current;
     const signupHolds = isSelfServeSignup(held);
     return {
       ok: false,
@@ -1002,6 +1049,8 @@ export async function presentRequest(input: {
     expiresAt: now + (input.ttlMs ?? REQUEST_TTL_MS),
     pickOpen: true,
     pick: null,
+    version: 1,
+    presentedAt: now,
   };
   state.current = request;
   armExpiry(request, now);
@@ -1096,6 +1145,9 @@ export async function completeRequest(
   requestId: string,
   result: Record<string, unknown>,
   now = Date.now(),
+  /** T241 review: the version of the scene the student answered, for an
+   *  approve ticket, which can now be replaced in place. */
+  version?: unknown,
 ): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   await ensureDisplayLoaded();
   expireIfDue(now);
@@ -1105,6 +1157,22 @@ export async function completeRequest(
   }
   if (c.status !== "pending") {
     return { ok: false, status: 409, error: "That request is already done." };
+  }
+  /* An Approve is for the ticket the student READ. An approve ticket
+   * replaced in place since (a pick answered) is a different ticket, so
+   * a tap on the old one is refused and the screen already shows the new
+   * one. A display page from before versions sends none, which is only
+   * accepted while the approval has never been replaced by another. */
+  if (isApproveTicket(c.kind, c.payload)) {
+    const current = c.version ?? 1;
+    const named = typeof version === "number" ? version : null;
+    if (named === null ? c.approveReplaced === true : named !== current) {
+      return {
+        ok: false,
+        status: 409,
+        error: "The ticket changed. Please check it and approve again.",
+      };
+    }
   }
   c.status = "completed";
   c.result = result;
@@ -1156,6 +1224,9 @@ export async function refuseRequest(
   c.reason = reason;
   c.completedAt = now;
   clearAbandonTimer();
+  /* T241 review: a student who cancels the approval withdraws the card
+   * they typed on it; a PIN-approved charge must not still find it. */
+  dropDisplayCard(c.id, "refused by the customer");
   void boundedDb(
     updateDisplayRequest({
       id: c.id,
@@ -1181,13 +1252,63 @@ export async function refuseRequest(
 /** How long one pick holds the offer shut with no new present. */
 const PICK_HOLD_MS = 10_000;
 
+/** T241 review: how long another iPad's live ticket must have gone
+ *  without a present before this one may retire it. A Cart screen being
+ *  used re-presents on every priced change; two minutes of nothing is a
+ *  tab that closed without cancelling. */
+const LIVE_STALE_MS = 2 * 60 * 1000;
+
+/** T241 review: whether `input` comes from the teacher and the tab that
+ *  put `held` up. A request from before presenters existed (no
+ *  presenter on its private half) belongs to whoever presents next, as
+ *  it always did. */
+function sameTicketOwner(
+  held: DisplayRequest,
+  input: { private?: Record<string, unknown>; requestedByStaffId: string | null },
+): boolean {
+  const owner = held.private.presenter;
+  if (typeof owner === "string" && owner !== input.private?.presenter) {
+    return false;
+  }
+  if (
+    held.requestedByStaffId !== null &&
+    input.requestedByStaffId !== null &&
+    held.requestedByStaffId !== input.requestedByStaffId
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/** T241 review: retire a stale live ticket so another iPad's can go up.
+ *  Quietly: the new present follows at once, so no idle is pushed. */
+function retire(held: DisplayRequest, now: number, why: string): void {
+  held.status = "cancelled";
+  held.completedAt = now;
+  state.current = null;
+  clearExpiryTimer();
+  dropDisplayCard(held.id, why);
+  void boundedDb(
+    updateDisplayRequest({
+      id: held.id,
+      status: "cancelled",
+      result: null,
+      completedAt: new Date(now),
+    }),
+    TABLE_WAIT_MS,
+    false,
+  );
+}
+
 function ticketKey(
   payload: Record<string, unknown>,
   priv: Record<string, unknown>,
 ): string {
+  /* Not the discount: it goes null while Mindbody reprices, like the
+   * totals. A discount armed or changed on the teacher's iPad clears its
+   * tender lines, and the card leaves with its line (the release). */
   return JSON.stringify([
     payload.lines ?? null,
-    payload.discountTotal ?? null,
     payload.clientFirstName ?? null,
     priv.clientId ?? null,
   ]);
@@ -1234,10 +1355,12 @@ function recordPick(
   pick: Omit<TenderPick, "pickId" | "requestId" | "at">,
   now: number,
 ): TenderPick {
+  const presenter = c.private.presenter;
   const full: TenderPick = {
     pickId: randomBytes(9).toString("base64url"),
     requestId: c.id,
     at: now,
+    ...(typeof presenter === "string" ? { presenter } : {}),
     ...pick,
   };
   c.pick = full;
@@ -1313,14 +1436,23 @@ export async function chooseTypedCard(
    * there to keep it for; anything else is used once. */
   const keep = card.keep === true && offer.keep === true;
   const priv = found.request.private;
-  const { lastFour } = holdDisplayCard({
+  /* Bound to the client, the teacher and the tab the ticket belongs to,
+   * so no other iPad's checkout can claim it (T241 review). */
+  const held = holdDisplayCard({
     requestId: found.request.id,
     card: { ...card, keep },
     clientId: typeof priv.clientId === "string" ? priv.clientId : "",
+    staffId: found.request.requestedByStaffId ?? "",
+    presenter: typeof priv.presenter === "string" ? priv.presenter : "",
     ttlMs: REQUEST_TTL_MS,
     now,
   });
-  recordPick(found.request, { choice: "typedcard", lastFour, keep }, now);
+  if (!held.ok) return { ok: false, status: 409, error: held.error };
+  recordPick(
+    found.request,
+    { choice: "typedcard", lastFour: held.lastFour, keep },
+    now,
+  );
   return { ok: true };
 }
 

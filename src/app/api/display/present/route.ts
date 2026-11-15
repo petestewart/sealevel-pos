@@ -146,6 +146,20 @@ export async function POST(request: Request) {
       };
     }
   }
+  /* T241 review: every ticket names the tab that presented it, on the
+   * server-only half, so the hub can keep two iPads' tickets apart: a
+   * present from another tab does not take over this one, a pick goes to
+   * the tab whose ticket it was made on, and a card the student types is
+   * claimable only by that tab's checkout (with the same teacher). */
+  if (input.kind === "ticket") {
+    const presenter =
+      typeof input.presenter === "string"
+        ? input.presenter.trim().slice(0, 64)
+        : "";
+    if (presenter.length > 0) {
+      privateHalf = { ...(privateHalf ?? {}), presenter };
+    }
+  }
   /* T202: a WAIVER's payload is built here, not forwarded. The browser
    * sends a client id and nothing that matters; the server fetches its
    * own copy of the waiver text (the same cache /api/waiver and

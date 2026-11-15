@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { presenterId } from "./presenter";
 import {
   choiceTeacherWord,
   isTenderChoice,
@@ -40,6 +41,8 @@ export interface TenderPick {
   lastFour?: string;
   /** And whether they ticked "Save this card for next time". */
   keep?: boolean;
+  /** The tab whose ticket it was made on (T241 review). */
+  presenter?: string;
 }
 
 /** A pick off the wire, or null. Only the fixed keys are read. */
@@ -63,12 +66,18 @@ export function readTenderPick(value: unknown): TenderPick | null {
       ? { lastFour: v.lastFour }
       : {}),
     ...(v.keep === true ? { keep: true } : {}),
+    ...(typeof v.presenter === "string" ? { presenter: v.presenter } : {}),
   };
 }
 
 /** How long the teacher's sentence stands. Long enough to read across a
  *  queue; a new pick or a new ticket replaces it sooner. */
 const NOTE_MS = 15_000;
+/** T241 review: how long after a pick MOVED the tender the screen's
+ *  charge control ignores taps, with the sentence highlighted, so a
+ *  teacher reaching for Finalize as the student taps sees the new method
+ *  before charging it. Light on purpose: no extra confirm tap. */
+export const PICK_SETTLE_MS = 1_500;
 
 export interface TenderPickApi {
   /** The teacher's sentence, or null. */
@@ -77,6 +86,13 @@ export interface TenderPickApi {
   receive: (value: unknown) => void;
   /** Take the sentence down (a new ticket, a finished sale). */
   clear: () => void;
+  /** T241 review: a pick moved the tender in the last PICK_SETTLE_MS.
+   *  The screen's charge control is disabled and the sentence drawn
+   *  highlighted while this holds. */
+  settling: boolean;
+  /** The same, read synchronously by a tap handler, so a tap in the same
+   *  instant as the pick (before the next render) is ignored too. */
+  settlingNow: () => boolean;
   /** Put a sentence of the screen's own in the same place (a student's
    *  card let go with the approval it was typed on). */
   say: (line: string) => void;
@@ -97,6 +113,8 @@ export function useTenderPick(input: {
   apply: (pick: TenderPick) => string | null;
 }): TenderPickApi {
   const [note, setNote] = useState<string | null>(null);
+  const [settling, setSettling] = useState(false);
+  const appliedAt = useRef(0);
   /* Read through refs: the screen's closures are rebuilt every render,
    * and the stream listener and the poll must see THIS render's tender
    * without being re-subscribed per keystroke. */
@@ -114,6 +132,8 @@ export function useTenderPick(input: {
     if (pick === null) return;
     if (seen.current.has(pick.pickId)) return;
     if (!ownsRef.current(pick.requestId)) return;
+    /* A pick on another tab's ticket is that tab's (T241 review). */
+    if (pick.presenter !== undefined && pick.presenter !== presenterId()) return;
     seen.current.add(pick.pickId);
     if (seen.current.size > 100) {
       const first = seen.current.values().next();
@@ -126,6 +146,8 @@ export function useTenderPick(input: {
       setNote(`${who} asked to pay by ${word}. ${refused} Nothing changed.`);
       return;
     }
+    appliedAt.current = Date.now();
+    setSettling(true);
     switch (pick.choice) {
       case "typedcard":
         setNote(
@@ -151,8 +173,19 @@ export function useTenderPick(input: {
     return () => clearTimeout(timer);
   }, [note]);
 
+  useEffect(() => {
+    if (!settling) return;
+    const timer = setTimeout(() => setSettling(false), PICK_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [settling, note]);
+
   const clear = useCallback(() => setNote(null), []);
   const say = useCallback((line: string) => setNote(line), []);
 
-  return { note, receive, clear, say };
+  const settlingNow = useCallback(
+    () => Date.now() - appliedAt.current < PICK_SETTLE_MS,
+    [],
+  );
+
+  return { note, receive, clear, say, settling, settlingNow };
 }

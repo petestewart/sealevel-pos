@@ -47,7 +47,13 @@ interface Config {
 type Scene =
   /* T203: the ticket carries its request id now, because the APPROVE
    *  mode is answered from this screen; live and summary ignore it. */
-  | { kind: "ticket"; requestId: string; payload: TicketPayload }
+  | {
+      kind: "ticket";
+      requestId: string;
+      payload: TicketPayload;
+      /** T241 review: the version the Approve names. */
+      version?: number;
+    }
   /* T202: the waiver carries its request id, because this is the first
    *  scene the STUDENT answers: completing and refusing both name it. */
   | { kind: "waiver"; requestId: string; payload: WaiverPayload }
@@ -307,6 +313,9 @@ export default function DisplayScreen() {
                 ? String((data as { requestId?: unknown }).requestId)
                 : "",
             payload: ticket.value,
+            ...(typeof (data as { version?: unknown }).version === "number"
+              ? { version: (data as { version: number }).version }
+              : {}),
           });
           return;
         }
@@ -484,6 +493,7 @@ export default function DisplayScreen() {
             <TicketScene
               payload={scene.payload}
               requestId={scene.requestId}
+              {...(scene.version !== undefined ? { version: scene.version } : {})}
               onPicked={(words) =>
                 setPickNotice(
                   words === "your card"

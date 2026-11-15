@@ -8212,6 +8212,7 @@ textarea.reason-note-field:disabled::placeholder {
   width: 100%;
   max-width: 820px;
   max-height: calc(var(--vvh) - 32px);
+  overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -8258,11 +8259,18 @@ textarea.reason-note-field:disabled::placeholder {
 .pick-note {
   margin: 0 0 12px;
   padding: 12px 16px;
-  border-left: 4px solid var(--rule);
+  border-left: 2px solid var(--rule);
   background: var(--surface);
   color: var(--ink);
   font-size: 18px;
   font-weight: 600;
+}
+
+/* T241 review: for the moment after a pick moved the tender, while the
+ * charge control ignores taps: the new method, as just selected. */
+.pick-note.fresh {
+  border-left-color: var(--accent);
+  background: var(--accent-bg);
 }
 
 /* T203: the apology a "Take over" leaves on the customer screen for a

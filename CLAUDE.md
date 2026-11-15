@@ -698,19 +698,40 @@ to hand them their card."). `src/app/display/CardForm.tsx` is T93's
 fields and validator (`cc-number` kept for Scan Credit Card; the display
 runs `useVisualViewport`), posting to `POST /api/display/card`, which
 validates with `parseTypedCard` and holds it in `src/lib/displaycard.ts`:
-memory only, bound to the ticket's client (the live mirror now puts it
-on the request's server-only half), the approval's 30 minutes, dropped
-on cancel, expiry, unpair, a present that changes the lines, discount,
-name or client, and the teacher's `/api/display/card/release`. The
-teacher hears the last four only; `/api/checkout` takes `displayCard:
-{requestId}` on the single `typedcard` shape BELOW T113's gate, claims it
-for one checkout, checks the client, charges it as T93's `typedCard`
-under the teacher's token (dry run, write guard, T75, T103, T240's
-binding unchanged; the word is still "Card"), and spends it once the
-checkout answered (a refusal included). An approval taken down
-takes the card with it. "Save this card for next time", unticked, is
-T93's keep on file, offered only with a client attached. The teacher's
-own typed-card modal is unchanged.
+memory only. **It belongs to the client, the teacher and the TAB whose
+ticket it was typed on** (T241 review): every ticket present carries a
+per-tab presenter id (`src/app/presenter.ts`) on the request's
+server-only half beside the staff id, another tab's present no longer
+takes over a live ticket in place (it is "busy", unless that ticket has
+gone two minutes without a present, a closed tab, when it is retired),
+a pick goes only to the tab whose ticket it was, and the checkout's claim
+checks the client, the staff session and the presenter. It is
+**released** on the approval's 30 minutes (a timer sweeps, so a closed
+tab cannot leave it in memory), on cancel, on the student's own Cancel
+of the approval, on expiry, unpair, a present that changes the lines,
+name or client, and the teacher's `/api/display/card/release` when the
+line leaves the tender; a claimed card is never replaced, evicted or
+dropped from under its checkout. The teacher hears the last four only;
+`/api/checkout` takes `displayCard: {requestId, presenter}` on the single
+`typedcard` shape BELOW T113's gate, claims it for one checkout, charges
+it as T93's `typedCard` under the teacher's token (dry run, write guard,
+T75, T103, T240's binding unchanged; the word is still "Card"), and
+**spends it on every answer that asked Mindbody to write anything**
+(`src/lib/mbtrace.ts` counts non-GET calls inside the checkout; a
+suppressed write counts), keeping it only for a refusal that provably
+asked nothing. An answer that spent it says `displayCardSpent`, and a
+gone card is a 409 `reason: "displaycard"`; either takes the teacher's
+line off with "The customer's card is no longer held. Ask them to enter
+it again.", and "A different card" stays offered while a typed card is
+the tender. For 1.5 seconds after a pick moves the tender, the charge
+control ignores taps with the sentence highlighted (`settling` on
+`useTenderPick`), so a teacher never charges a method they have not
+seen. An approve ticket's Approve names the scene's version, so a tap
+on a ticket since replaced in place is refused. "Save this card for next
+time", unticked, is T93's keep on file, offered only with a client
+attached; the form's name and postal fields have autocomplete off
+(AutoFill should be off on the display iPad). The teacher's own
+typed-card modal is unchanged.
 
 **A student can sign themselves up** (T204, Phase 2.5 item 5). The idle
 screen's "New here? Sign up" calls `POST /api/display/start`, the one

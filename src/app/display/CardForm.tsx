@@ -29,12 +29,17 @@ import { parseTypedCard } from "@/lib/typedcard";
  * follows.
  */
 
+/* T241 review: `cc-number` (with the expiry beside it) is kept, because
+ * it is what puts Apple's "Scan Credit Card" on the keyboard. The name and
+ * the postal code are `off`: this iPad is held by one student after
+ * another, and AutoFill must not offer the last student's details to the
+ * next. AutoFill should be off on the display iPad itself as well. */
 const CC = {
   number: "cc-number",
   expMonth: "cc-exp-month",
   expYear: "cc-exp-year",
-  holder: "cc-name",
-  postal: "postal-code",
+  holder: "off",
+  postal: "off",
 } as const;
 
 const MONTHS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];

@@ -79,6 +79,7 @@ import {
 } from "@/lib/substitute";
 import { beginIdempotent } from "@/lib/idemstore";
 import { claimDisplayCard, settleDisplayCard } from "@/lib/displaycard";
+import { traceMindbody } from "@/lib/mbtrace";
 import {
   parsePromotionCode,
   promotionRefusal,
@@ -475,7 +476,7 @@ function parseSplitLeg(raw: unknown): SplitLeg | string {
  */
 function readDisplayCardRef(
   payload: unknown,
-): { requestId: string } | { error: string } | null {
+): { requestId: string; presenter: string } | { error: string } | null {
   const body = (payload ?? {}) as Record<string, unknown>;
   const ref = body["displayCard"];
   if (ref === undefined || ref === null) return null;
@@ -494,7 +495,24 @@ function readDisplayCardRef(
       error: "send a typed card or a card from the customer screen, not both",
     };
   }
-  return { requestId: requestId.trim() };
+  const presenter = (ref as { presenter?: unknown })?.presenter;
+  return {
+    requestId: requestId.trim(),
+    presenter: typeof presenter === "string" ? presenter : "",
+  };
+}
+
+/** T241 review: an answer that spent the customer's card says so, so the
+ *  teacher's iPad takes the line off rather than offering a dead card. */
+async function withDisplayCardSpent(res: Response): Promise<Response> {
+  const body = await res.clone().json().catch(() => null);
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return res;
+  }
+  return NextResponse.json(
+    { ...body, displayCardSpent: true },
+    { status: res.status },
+  );
 }
 
 export async function POST(request: Request) {
@@ -526,8 +544,10 @@ export async function POST(request: Request) {
    * sends only the display request's id (`displayCard: { requestId }`);
    * the card itself is taken here from the server's memory, BELOW the
    * idempotency gate (so a replay never touches it) and claimed for this
-   * one checkout, then spent once it has answered, whatever it said. From here on it is a
-   * typed card like T93's, through the same `typedCard` path, under the
+   * one checkout, which must come from the teacher and the tab whose
+   * ticket the student typed it on (T241 review), then spent once it has
+   * answered, unless the answer is a refusal that provably asked
+   * Mindbody to write nothing. From here on it is a typed card like T93's, through the same `typedCard` path, under the
    * teacher's token: dry run, the write guard, T75, T103 and T240's
    * tender binding apply unchanged (the method is still `typedcard`). */
   const displayRef = readDisplayCardRef(payload);
@@ -536,13 +556,14 @@ export async function POST(request: Request) {
       NextResponse.json({ error: displayRef.error }, { status: 400 }),
     );
   }
-  const displayCard = displayRef === null ? null : displayRef.requestId;
+  const displayCard = displayRef;
   let charged = payload;
   if (displayCard !== null) {
-    const claim = claimDisplayCard(
-      displayCard,
-      typeof payload?.clientId === "string" ? payload.clientId : "",
-    );
+    const claim = claimDisplayCard(displayCard.requestId, {
+      clientId: typeof payload?.clientId === "string" ? payload.clientId : "",
+      staffId: String(session.staffId),
+      presenter: displayCard.presenter,
+    });
     if (!claim.ok) {
       return gate.record(
         NextResponse.json(
@@ -559,18 +580,31 @@ export async function POST(request: Request) {
      * by runCheckout and added to the answer of a sale that stands. */
     const promo: { applied: PromotionOutcome | null } = { applied: null };
     let ran: Response;
+    let writes = 0;
     try {
-      ran = await runCheckout(request, session, charged, promo);
+      const traced = await traceMindbody(() =>
+        runCheckout(request, session, charged, promo),
+      );
+      ran = traced.value;
+      writes = traced.writes;
     } catch (err) {
-      if (displayCard !== null) settleDisplayCard(displayCard, true);
+      if (displayCard !== null) settleDisplayCard(displayCard.requestId, true);
       throw err;
     }
-    /* Spent by ANY answer, a refusal included: a card typed by a student
-     * pays for one checkout and is never offered to a second, so nothing
-     * here has to judge whether an answer reached a charge. A refusal
-     * costs the student one more entry, which is the safe direction. */
-    if (displayCard !== null) settleDisplayCard(displayCard, true);
-    const answered = await withPromotion(ran, promo.applied);
+    /* T241 review: spent by every answer that asked Mindbody to write
+     * anything (sent, suppressed or refused alike: a rehearsal is a POST
+     * too), and kept only for a refusal that provably asked nothing, our
+     * own validation turning the request away. The answer says which, so
+     * the teacher's iPad can let go of a spent card's line. */
+    let spent = false;
+    if (displayCard !== null) {
+      spent = !(ran.status >= 400 && writes === 0);
+      settleDisplayCard(displayCard.requestId, spent);
+    }
+    const answered = await withPromotion(
+      spent ? await withDisplayCardSpent(ran) : ran,
+      promo.applied,
+    );
     /* T219: a sold pass that comes with a place in a course or a class
      * books that place, here, at the one point every charge path passes
      * through, and INSIDE the record, so a request arriving twice

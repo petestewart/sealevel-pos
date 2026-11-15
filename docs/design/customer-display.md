@@ -512,6 +512,19 @@ person or a device, and makes every write.
   offered only for an attached client. **Card data travels display ->
   our server's memory -> the teacher's checkout, and nowhere else**, and
   the display still adds no write path to Mindbody.
+- **Whose ticket, whose card** (T241 review). Every ticket names the tab
+  that presented it (a per-page presenter id, beside the teacher's staff
+  id). Another tab cannot take over a live ticket in place (it is busy,
+  unless the ticket has gone two minutes without a present), a pick goes
+  only to the tab whose ticket it was, and a typed card is claimable only
+  by that teacher's checkout from that tab, for that client. The card is
+  swept by a timer at its 30 minutes, dropped when the student cancels
+  the approval, and spent by every checkout answer that asked Mindbody to
+  write anything; a refusal that asked nothing keeps it. A teacher's
+  line for a card that is gone comes off with one sentence, and "A
+  different card" stays offered. For 1.5 seconds after a pick moves the
+  tender the charge control ignores taps, so the teacher sees the new
+  method first. An Approve names the version of the ticket it was given.
 
 **The setting.** `app_settings` `customer_confirms_sale`, `"true"` or
 `"false"`, default off. Global, because it is a studio policy, not a

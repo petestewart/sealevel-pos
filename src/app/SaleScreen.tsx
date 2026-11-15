@@ -20,6 +20,7 @@ import { useDisplayMirror } from "./useDisplayMirror";
 import ApprovalWait from "./ApprovalWait";
 import { useSaleApproval } from "./useSaleApproval";
 import { useTenderPick, type TenderPick } from "./useTenderPick";
+import { presenterId } from "./presenter";
 import type { TypedCard } from "@/lib/typedcard";
 import {
   TENDER_CHOICES,
@@ -3735,14 +3736,19 @@ function PaymentPanel(props: {
       result.kind !== "error" &&
       result.kind !== "suppressed") ||
     comped ||
-    lines.length !== 1 ||
+    /* A split shows no Change; one method or none yet (T241 review: a
+     * card let go of leaves none, and the student may choose again). */
+    lines.length > 1 ||
     totalCents === null ||
     totalCents <= 0;
   const currentSource = lines.length === 1 ? lines[0]?.source : undefined;
   const displayChoices: TenderOffer[] | null = choicesFrozen
     ? null
     : TENDER_CHOICES.flatMap((choice): TenderOffer[] => {
-        if (choice === currentSource) return [];
+        /* T241 review: a different card stays on offer while a typed
+         * card is the tender, so a student whose card was let go of
+         * (or who wants another) can always enter one again. */
+        if (choice === currentSource && choice !== "typedcard") return [];
         if (choice === "credit") {
           if (
             client === null ||
@@ -4019,7 +4025,14 @@ function PaymentPanel(props: {
                 ? typedCard.displayRequestId !== undefined
                   ? /* T241: the student's card is the SERVER's; only the
                        request it is held on travels. */
-                    { displayCard: { requestId: typedCard.displayRequestId } }
+                    {
+                      displayCard: {
+                        requestId: typedCard.displayRequestId,
+                        /* T241 review: the card is claimable only from the
+                           tab whose ticket it was typed on. */
+                        presenter: presenterId(),
+                      },
+                    }
                   : typedCard.card !== null
                     ? { typedCard: typedCard.card }
                     : {}
@@ -4197,6 +4210,19 @@ function PaymentPanel(props: {
       }
       /* T49: whatever the outcome, a dead staff token is reported up. */
       if (body?.staffSessionEnded === true) onStaffSessionEnded();
+      /* T241 review: the student's card is gone from the server (it was
+       * let go of, or this attempt spent it without a sale), so the line
+       * naming it comes off, the student can enter it again ("A different
+       * card" stays offered), and the teacher is told in one sentence. */
+      const cardGone =
+        (res.status === 409 && body?.reason === "displaycard") ||
+        (body?.displayCardSpent === true && !(res.ok && body?.ok === true));
+      if (cardGone && typedCard?.displayRequestId !== undefined) {
+        setLines((cur) => cur.filter((l) => l.source !== "typedcard"));
+        tenderPick.say(
+          "The customer's card is no longer held. Ask them to enter it again.",
+        );
+      }
       if (body === null && (res.ok || res.status >= 500)) {
         /* A 200 whose body could not be read, or a 500-class answer with
          * no readable verdict (a gateway 502/504 serves HTML): the route
@@ -4533,6 +4559,8 @@ function PaymentPanel(props: {
    * tap are unchanged; they are simply somewhere both charge screens
    * can reach them. */
   const onPrimaryTap = () => {
+    /* T241 review: the synchronous half of the settle above. */
+    if (tenderPick.settlingNow()) return;
     /* T239: Finalize is the teacher accepting the tender on screen, so
      * nothing automatic moves it from here on, including in the moment
      * before an approval's request id comes back. */
@@ -5547,9 +5575,14 @@ function PaymentPanel(props: {
    * the tap will do is never hidden, only off the face of the button.
    */
   const primaryLabel = "Finalize Sale";
-  const primaryOn = dueSettled && chargeable;
+  /* T241 review: for a moment after the student's pick moved the tender,
+   * Finalize ignores taps, so the teacher sees the new method (the
+   * sentence is highlighted meanwhile) before charging it. */
+  const primaryOn = dueSettled && chargeable && !tenderPick.settling;
   const primaryWhy = primaryOn
     ? null
+    : tenderPick.settling
+      ? "The customer just changed how they are paying"
     : charging
       ? "Charging..."
       : partialLock !== null
@@ -6178,7 +6211,12 @@ function PaymentPanel(props: {
               {/* T241: what the student chose on the customer iPad, in
                   one sentence, where the teacher is looking. */}
               {tenderPick.note !== null ? (
-                <p className="pick-note" role="status">
+                <p
+                  className={
+                    tenderPick.settling ? "pick-note fresh" : "pick-note"
+                  }
+                  role="status"
+                >
                   {tenderPick.note}
                 </p>
               ) : null}

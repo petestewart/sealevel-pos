@@ -50,6 +50,11 @@ export default function TicketScene(props: {
   /** T203: the request this ticket is, for the approve mode's two taps.
    *  Absent for a live mirror and a summary, which nobody answers. */
   requestId?: string;
+  /** T241 review: which version of the request this is. An approve
+   *  ticket can be replaced in place after a pick, and the Approve names
+   *  the version the student read, so a tap on the old one cannot
+   *  complete the new. */
+  version?: number;
   /** Told when the student has answered, so the screen can move on while
    *  the server catches up. */
   onAnswered?: (approved: boolean) => void;
@@ -98,13 +103,26 @@ export default function TicketScene(props: {
     "ticket",
   );
   const [sentWords, setSentWords] = useState<string | null>(null);
-  /* A new present of this ticket (the teacher's iPad answering the pick,
-   * or any other change) is the ticket as it now stands: back to it. */
-  const payloadKey = JSON.stringify(t);
+  /* A different request is a different ticket: back to it, whatever
+   * was open. */
   useEffect(() => {
     setView("ticket");
     setSentWords(null);
+  }, [requestId]);
+  /* A new present of THIS request is the teacher's iPad answering the
+   * pick (or the ticket moving): "sent" gives way to the ticket as it
+   * now stands. A half-typed card is NOT wiped by it (T241 review: the
+   * teacher's screen re-presents as a balance settles or a code is
+   * applied); the form stays until the student sends it or backs out,
+   * or the request ends. The list stays open while it still has
+   * anything on it. */
+  const payloadKey = JSON.stringify(t);
+  useEffect(() => {
+    setView((v) => (v === "sent" ? "ticket" : v));
   }, [payloadKey]);
+  useEffect(() => {
+    if (view === "change" && choices.length === 0) setView("ticket");
+  }, [view, choices.length]);
   /* If the teacher's iPad never answers (it was charging, say, and
    * refused the pick with nothing changed), the ticket comes back. */
   useEffect(() => {
@@ -166,13 +184,24 @@ export default function TicketScene(props: {
             headers: { "content-type": "application/json" },
             body: JSON.stringify(
               approved
-                ? { requestId, result: { approved: true } }
+                ? {
+                    requestId,
+                    result: { approved: true },
+                    ...(props.version !== undefined
+                      ? { version: props.version }
+                      : {}),
+                  }
                 : { requestId, reason: "Customer cancelled" },
             ),
           },
         );
         if (!res.ok) {
-          setError("That did not go through. Please tell the front desk.");
+          const body = await res.json().catch(() => null);
+          setError(
+            res.status === 409 && typeof body?.error === "string"
+              ? body.error
+              : "That did not go through. Please tell the front desk.",
+          );
           return;
         }
         onAnswered?.(approved);
@@ -182,7 +211,7 @@ export default function TicketScene(props: {
         setBusy(false);
       }
     },
-    [busy, requestId, onAnswered],
+    [busy, requestId, onAnswered, props.version],
   );
 
   if (view === "card" && requestId) {
@@ -328,6 +357,25 @@ export default function TicketScene(props: {
               Change
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {/* T241 review: no tender yet, and ways to pay on offer (a card
+          that was let go of, a gift card entry cancelled): the student
+          may choose rather than wait. */}
+      {!summary && paying === null && choices.length > 0 ? (
+        <div className="dticket-tender-row">
+          <p className="dticket-tender">How would you like to pay?</p>
+          <button
+            type="button"
+            className="dscene-btn dticket-change"
+            disabled={busy}
+            onClick={() => {
+              setError(null);
+              setView("change");
+            }}
+          >
+            Choose
+          </button>
         </div>
       ) : null}
       {!approve && error !== null ? <p className="dticket-error">{error}</p> : null}

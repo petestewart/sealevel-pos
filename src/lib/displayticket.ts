@@ -72,8 +72,8 @@ export interface TicketPayload {
    * the payment method if they want to switch it"): the other ways to pay
    * that the TEACHER'S iPad will accept for this ticket, in a fixed
    * order. Present only on a live or approve ticket whose tender is ONE
-   * method (a split shows no Change control) and whose total Mindbody has
-   * priced. Each entry is a key from TENDER_CHOICES and nothing else; the
+   * method or none yet (a split shows no Change control) and whose total
+   * Mindbody has priced. Each entry is a key from TENDER_CHOICES and nothing else; the
    * account entry carries the balance it would draw on, and the "A
    * different card" entry whether a "Save this card" box may be offered.
    * The display renders these; /api/display/choose and /api/display/card
@@ -350,9 +350,11 @@ export function readTicketPayload(
     raw.choices !== undefined &&
     raw.choices !== null &&
     mode !== "summary" &&
-    out.tenders !== undefined &&
-    out.tenders.length === 1 &&
-    out.tenders[0]?.word !== "No charge" &&
+    /* T241 review: no tender yet counts too, so a student whose card was
+     * let go of (or whose gift card entry was cancelled) can choose
+     * again rather than wait for the teacher to pick a tile. */
+    (out.tenders === undefined ||
+      (out.tenders.length === 1 && out.tenders[0]?.word !== "No charge")) &&
     out.total !== null &&
     out.total > 0
   ) {

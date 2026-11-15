@@ -21857,3 +21857,115 @@ unchanged. (4) The roster dialog has no live mirror (only the Cart
 screen mirrors), so there the student can choose only on the approval,
 with the setting on, and only between Account balance and Card on file.
 
+
+### Review (2026-11-15)
+
+An independent review of ed2542d found ten defects and two nits. All are
+fixed in a follow-up commit. I checked each against the code first, and
+none was a false alarm.
+
+1. **Two Cart screens shared one live request.** The hub replaced a live
+   ticket in place whoever presented it. A pick moved both iPads'
+   tenders, and a card typed for one could be charged by the other's
+   Finalize. Every ticket present now carries a per-tab presenter id
+   (`src/app/presenter.ts`, random per page load, beside the staff id) on
+   the request's server-only half. A present from another tab or teacher
+   is "busy" and no longer replaces in place. The exception is a live
+   ticket that has gone two minutes without a present (a closed tab),
+   which is retired so that iPad's mirror is not blocked for 30 minutes.
+   The pick event carries the presenter and `useTenderPick` ignores
+   another tab's. A held card records the client, the staff id and the
+   presenter, and the checkout's claim checks all three ("The customer's
+   card was entered for a ticket on another iPad. Nothing was charged.").
+2. **The student's Cancel did not release their card.** `refuseRequest`
+   now drops it. The approval poll's end (refused, cancelled, gone) now
+   tells the screen, which takes the line off with a sentence. A charge
+   on that card afterwards is 409 `reason: "displaycard"`.
+3. **Expiry was lazy.** `src/lib/displaycard.ts` now runs an unref'd
+   30 second sweep timer, one per process, and the hub sweeps on every
+   present too.
+4. **A gone card stuck the teacher.**
+   - SaleScreen now handles 409 `reason: "displaycard"`, and a new
+     `displayCardSpent` flag on any answer that spent the card without a
+     sale. Either takes the line off with "The customer's card is no
+     longer held. Ask them to enter it again."
+   - "A different card" stays offered while a typed card is the tender.
+   - Choices are now also offered on an EMPTY tender ("How would you like
+     to pay?" with a 64px Choose), so the student is never stuck waiting
+     for a tile.
+   - `discountTotal` is out of `ticketKey`, because it goes null while
+     Mindbody reprices. A discount change clears the teacher's lines,
+     and the card leaves with its line.
+   - The card is no longer spent by a refusal that provably asked
+     Mindbody nothing. `src/lib/mbtrace.ts` counts every non-GET call
+     inside the checkout (an AsyncLocalStorage, incremented at the top of
+     `mindbody()`), and the card is kept only for a 4xx with zero writes.
+     Reads are not counted because they cannot move money. A suppressed
+     write is counted, which errs toward spending.
+5. **A claimed card could be replaced or evicted.** A hold on a request
+   whose card is claimed is now refused, and the MAX_CARDS eviction skips
+   claimed entries.
+6. **`askAgain` could present from scratch.** The fallback is removed: it
+   re-asks only an outstanding approval and otherwise does nothing.
+7. **A re-present wiped a half-typed card.** TicketScene now resets only
+   when the REQUEST changes. A new present of the same request moves
+   "sent" back to the ticket and leaves the card form, and an open list
+   that still has choices, as they were.
+8. **Approve was bound to the request id only.** Each request carries a
+   `version`, bumped on every present including an in-place replace, and
+   sent with the scene. The display names it on Approve, and
+   `completeRequest` refuses a stale one ("The ticket changed. Please
+   check it and approve again."). A display page from before this deploy
+   sends no version. That is accepted unless the approval has been
+   replaced by another approval, so an un-reloaded display keeps working
+   for ordinary approvals.
+9. **A pick an instant before Finalize.** For 1.5 seconds after a pick
+   moves the tender, the charge control ignores taps (`settling` and
+   `settlingNow()` on `useTenderPick`; the Cart screen's Finalize is
+   aria-disabled with a title, the roster's Charge disabled). The pick
+   sentence is highlighted meanwhile (`.pick-note.fresh`, `--accent` /
+   `--accent-bg`). There is no confirm tap.
+10. **Autocomplete on a shared iPad.** The card form's name and postal
+    fields are `autocomplete="off"`; `cc-number` and the expiry are kept
+    for Scan Credit Card. **AutoFill should be turned off in Safari on the
+    display iPad itself** (Settings, Apps, Safari, AutoFill), so the next
+    student is never offered the last one's details.
+
+Nits: `.pick-note` takes a 2px `--rule`, and `.dcard` scrolls within its
+max-height so "Use this card" stays reachable with the keyboard up.
+
+**Driven again** (`tsc --noEmit` and `next build` clean, the fake, a
+paired display):
+
+- Two teacher iPads on one session (separate browsers, as two iPads are):
+  - B's mirror got 409 busy and B showed no "Showing on the customer
+    screen".
+  - A pick of Cash moved A only.
+  - B's checkout naming A's card was refused 409 "another iPad".
+  - A's own validation refusal (a bad item) kept the card
+    (`displayCardSpent` false), and A's Finalize then charged it, one
+    `CreditCard` checkout.
+- Settle: 250ms after a pick Finalize was aria-disabled with the sentence
+  highlighted; 1.85s after, enabled and plain.
+- Card form: after a few digits, the teacher took the tender line off (a
+  re-present of the same request); the form stayed open with the number.
+- Gone card: the card was released on the server, then Finalize. The line
+  came off with the sentence, nothing was charged, and the display offered
+  all five ways to pay again.
+- Approval on:
+  - A card typed on the approval re-asked it in place.
+  - An Approve naming version 1 was refused 409.
+  - The student's Cancel took the teacher's line off with "The card from
+    the customer screen was let go with the approval. Ask them to enter
+    it again."
+  - A charge on that card was then 409 `displaycard`.
+  - Nothing put up a new approval afterwards: only the live mirror came
+    back.
+- The full T241 drive, off and on, reran with the same results as before.
+  None of the server logs or the database dump holds the card number.
+
+**Deliberately not changed.** A refusal after a write was asked (a
+rehearsal included) still spends the card, so a decline costs the student
+one more entry; that is the direction the review asked for. The retired
+stale live ticket is cancelled quietly (no idle pushed), because the new
+iPad's ticket follows at once.

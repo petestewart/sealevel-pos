@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { TicketPayload } from "@/lib/displayticket";
 
+import { presenterId } from "./presenter";
+
 /**
  * The teacher's half of the ticket scene (T201, Phase 2.5 item 2).
  *
@@ -162,6 +164,9 @@ export function useDisplayMirror(
             ? { clientFirstName: payload.clientFirstName }
             : {}),
           ...(payload.mode === "live" ? { clientId } : {}),
+          /* T241 review: this tab, so the hub keeps two iPads' tickets
+             (and a student's pick and card) apart. */
+          presenter: presenterId(),
         }),
       });
       const body = await res.json().catch(() => null);

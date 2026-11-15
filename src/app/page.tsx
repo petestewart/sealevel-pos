@@ -10753,7 +10753,10 @@ function FrontDesk({
                 disappearing. */}
             {/* T241: what the student chose on the customer iPad. */}
             {payPick.note !== null ? (
-              <p className="pick-note" role="status">
+              <p
+                className={payPick.settling ? "pick-note fresh" : "pick-note"}
+                role="status"
+              >
                 {payPick.note}
               </p>
             ) : null}
@@ -10877,14 +10880,19 @@ function FrontDesk({
               ) : !payMoneyMoved ? (
                 <button
                   className="modal-confirm pay-charge"
-                  disabled={!payChargeable}
+                  /* T241 review: and for a moment after the student's
+                     pick moved the method, so the teacher sees it first. */
+                  disabled={!payChargeable || payPick.settling}
                   /* T209: with "customer approves each sale" off this is
                      the charge and nothing else, exactly as before. With
                      it on the ticket goes on the customer screen and the
                      charge follows their own tap, or the teacher's PIN.
                      The decision is the shared hook's, not this
                      dialog's. */
-                  onClick={payApproval.begin}
+                  onClick={() => {
+                    if (payPick.settlingNow()) return;
+                    payApproval.begin();
+                  }}
                 >
                   {payStage === "charge" ? (
                     <>

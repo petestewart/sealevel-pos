@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { TicketPayload } from "@/lib/displayticket";
 
+import { presenterId } from "./presenter";
+
 /**
  * T203's approval, in ONE place (T209).
  *
@@ -137,8 +139,8 @@ export interface SaleApproval {
    * tender has moved; ask them again with the new one. The approve
    * ticket on the screen is REPLACED in place (same request id, the
    * wait carries on), so the screen does not blink to idle. It NEVER
-   * charges: with the setting off it does nothing at all, and with
-   * nothing outstanding it presents like the primary tap's first half.
+   * charges, and it does nothing at all with the setting off or with no
+   * approval outstanding.
    */
   askAgain: () => void;
   /** T241: the request id of the approval this screen is waiting on (or
@@ -277,6 +279,8 @@ export function useSaleApproval(input: {
           /* T241: an approval asked again after a pick replaces its own
              ticket in place. */
           ...(replaces !== undefined ? { replaces } : {}),
+          /* T241 review: this tab, which the hub binds the ticket to. */
+          presenter: presenterId(),
           payload,
           ...(payload.clientFirstName
             ? { clientFirstName: payload.clientFirstName }
@@ -372,8 +376,13 @@ export function useSaleApproval(input: {
     let stopped = false;
     const finish = (line: string | null) => {
       stopped = true;
+      approvalRef.current = null;
       setApproval(null);
       setNote(line);
+      /* T241 review: the scene is over (the customer cancelled, or it
+       * went), and a card the student typed on it went with it on the
+       * server; the screen lets go of its line too. */
+      sceneGoneRef.current?.(requestId);
     };
     const tick = async () => {
       if (stopped) return;
@@ -595,13 +604,11 @@ export function useSaleApproval(input: {
         : held?.stage === "pin"
           ? held.resume?.requestId
           : undefined;
-    if (replaces === undefined) {
-      if (held !== null || presentingRef.current) return;
-      setNote(null);
-      gen.current += 1;
-      void present();
-      return;
-    }
+    /* T241 review: only an OUTSTANDING approval is asked again. With
+     * the wait already over there is nothing to re-ask, and presenting
+     * from scratch here would put up an approval (and charge on its
+     * Approve) that no teacher tapped for. */
+    if (replaces === undefined) return;
     /* The PIN pad, if it was open over the wait, closes: the ticket it
        was about is being asked again. The wait stays on the same id. */
     if (held?.stage === "pin") {
