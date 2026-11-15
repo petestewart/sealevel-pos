@@ -21482,7 +21482,7 @@ on the two balance gaps the review found: "fix them".
       or it is keyed to the client id the way the lookup is, so a newer
       lookup is never overridden by an older refusal and the client-switch
       commit no longer depends on an unwritten invariant.
-- [x] Unchanged on purpose until Pete answers: the automatic line still
+- [x] **Answered, Pete 2026-11-15: no exception ("i dont see a reason to do that").** As built: the automatic line still
       applies to a ticket holding a gift card.
 - [x] `tsc --noEmit` and `next build` clean; driven in Chromium against the
       fake with a paired display: the approval scene names "Account balance"
