@@ -50,6 +50,10 @@ defaults to a balance that covers the total, with the card offered beside
 it, and since T239 the Cart screen starts the same way: one account-credit
 line for the whole total, put there only while the teacher has touched no
 tender, removable with its X and replaced by the first other tender tapped.
+Since T240 a discounted total gets it too (only a full comp leaves it off),
+it is never judged on a balance being re-read (a refetch in flight freezes
+it), and a refused charge's reported balance is keyed to its client, cleared
+with the tender, and loses to any profile read begun after it.
 `purchaseCredit` is kept, unreached, for Phase 4's gift card (PLAN
 T232). The design doc's "$10 card minimum" section is reasoning of record
 only. **A service charge on card transactions under $10 is planned, not
@@ -547,6 +551,19 @@ rebuilds the payload field by field so no client, product or pricing
 option id and no card detail beyond the tender's WORD can reach a screen
 a student is holding.
 
+**Every ticket scene names the payment method, in words** (T240, Pete:
+"we should always list the payment method on the custmer ipad"): the
+live mirror once a tender is on the ticket, the approval and the
+summary. "Paying by Account balance", "Paying by Card", and on a split
+each leg with its amount ("Account balance $15.00, Card $10.00");
+"Paid $25.00 by Card" after. The words are a FIXED list, `TENDER_WORDS`
+in `src/lib/displayticket.ts` (Account balance, Card, Cash, Gift card,
+No charge), and `readTicketPayload` refuses any other, so the payload's
+`tenders` cannot carry a card's digits; **a card's last four is no
+longer shown there**, the summary included ("Card ending 1234" before
+T240). The Cart screen reports its tender up to the mirror
+(`onTenderChange`); both charge paths put it on the approval.
+
 **A screen that goes says so at once** (T206): the display's SSE stream
 closing is the signal, so a Safari tab shut on the counter reaches the
 teacher's mark as `disconnected` in a second rather than in up to 75
@@ -570,7 +587,17 @@ each line's type, id, quantity, unit price and T90 recipient, the gift
 card lines, the discount; sorted, so order is not a change). Tax and the
 total are NOT in it, because the checkout body never carries them, and
 T75's rehearsal already refuses a total that moved. The browser never
-sends a hash. The approval is spent only AFTER the charge resolved
+sends a hash. **Since T240 the TENDER is in it too, whenever the approval
+named one**: both charge paths send their `method` or `split.legs`
+(method and amount, never a card or gift card number) in the presented
+cart, `/api/display/present` rewrites the scene's tender words from that
+same tender and hashes it with `{ tender: true }` (a stored and a typed
+card fold to one word, as the student reads them), recording
+`tenderBound` on the private half, and `/api/checkout` hashes its own
+body the same way, so a tender switched after the student approved is
+refused, nothing charged. An approval presented with no tender (a page
+loaded before T240) hashes exactly as before and binds no tender, because
+it showed none. The approval is spent only AFTER the charge resolved
 (`recordApproval`, built above every write path and called from each:
 `recordDiscount` on the single-cart paths, the gift card and T90
 tickets directly, and the sold-nothing answer;
@@ -614,6 +641,15 @@ customer's tap still charges. Take over's three second apology is
 cancellable, so Cancel during it puts no ticket up. "Check in free
 (comp)" is not a charge and presents nothing. A THIRD charge path added
 later belongs in that hook on the day it is written, not after a drive.
+**The tender cannot move under an approval** (T240): the hook's `pending`
+is true from the primary tap, the present's round trip INCLUDED (T238's
+review found the roster dialog's "Use the card instead" live for exactly
+that round trip), until the approval is answered, and both screens lock
+their tender controls on it: the Cart screen's tiles, keypad square,
+line amounts and Xs, and the roster dialog's switch. A tender that moves
+by itself under one (a credit line dropped by a refetch, the card lookup
+answering) ends it with one sentence, the way a cart edit does, and
+`endWait` now also ends a present still in flight.
 
 **A student can sign themselves up** (T204, Phase 2.5 item 5). The idle
 screen's "New here? Sign up" calls `POST /api/display/start`, the one

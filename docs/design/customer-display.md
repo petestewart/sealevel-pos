@@ -445,6 +445,22 @@ client id, no pricing option ids, no tender details. Re-presenting a live
 ticket replaces the previous one; it is the one scene kind that is
 updated in place rather than completed.
 
+**The payment method, in words, on every ticket scene** (T240, Pete: "we
+should always list the payment method on the custmer ipad"). Once a tender
+is on the ticket the live mirror, the approval and the summary all say
+how the student is paying: "Paying by Account balance", "Paying by
+Card", and on a split each leg with its amount ("Account balance $15.00,
+Card $10.00"); the summary reads "Paid $25.00 by Card". The words are a
+FIXED list (`TENDER_WORDS` in `src/lib/displayticket.ts`: Account
+balance, Card, Cash, Gift card, No charge) that `readTicketPayload`
+checks each entry against, rebuilding `{word, amount}` and nothing else,
+so no string a caller sends can carry a card's digits. A card's last
+four is not shown, on the summary included (it said "Card ending 1234"
+before T240); a stored card and a card typed at the counter are both
+"Card". The Cart screen reports its tender up to the mirror as it
+changes; the roster dialog has no mirror, and names its tender on the
+approval.
+
 **The setting.** `app_settings` `customer_confirms_sale`, `"true"` or
 `"false"`, default off. Global, because it is a studio policy, not a
 per-iPad tunable: the drawer's localStorage settings are for numbers
@@ -480,6 +496,30 @@ refuses the request with the reason shown to the teacher ("Customer
 cancelled"), the ticket stays as built, and the teacher fixes it and
 charges again. A disconnected display while the setting is on refuses
 the charge the same way and says why.
+
+**What the student approved is what is charged, tender included**
+(T240). The approval names the payment method, so the tender is bound
+to it. Both charge paths put their tender in the cart they present
+(`method`, or `split.legs` of method and amount, never a card or gift
+card number), and `/api/display/present` does two things with it: it
+REWRITES the scene's tender words from that same tender, so the student
+cannot read "Card" over an account charge, and it hashes it into the
+cart sha (`cartSha256(cart, { tender: true })`, each leg folded to the
+word the student read, its amount in cents on a split), recording
+`tenderBound: true` on the private half. `/api/checkout` hashes its own
+body the same way, so a tender changed after the tap is refused ("The
+ticket or the payment changed after the customer approved it. Ask them
+again.") with nothing charged. An approval presented WITHOUT a tender, by
+a page loaded before T240, shows no tender and hashes exactly as it
+always did: what it did not name it does not bind. On screen the tender
+cannot move under an approval: from the primary tap until the approval
+is answered, INCLUDING the present's round trip before its request id
+returns (`pending` on `useSaleApproval`), the Cart screen's tiles,
+keypad square, line amounts and Xs and the roster dialog's "Use the card
+instead" are locked, and a tender that moves by itself under one (a line
+taken off by a balance refetch, a card lookup answering) ends it with
+"The payment changed. Charge again to ask the customer.", the way a cart
+edit does.
 
 **A screen that is not there does not skip the panel.** With no display
 paired or connected the SAME panel appears, with its line changed to

@@ -4,7 +4,7 @@ import { useCallback, useState } from "react";
 
 import { plainText } from "@/lib/richtext";
 
-import type { TicketPayload } from "@/lib/displayticket";
+import { tenderSentence, type TicketPayload } from "@/lib/displayticket";
 
 /**
  * The ticket, as the student sees it (T201, Phase 2.5 item 2; design
@@ -58,6 +58,14 @@ export default function TicketScene(props: {
     : name.length > 0
       ? `Hello, ${name}`
       : "Your ticket";
+
+  /* T240: how the student is paying, in the fixed words the payload
+   * was checked against, on every mode once a tender is on the ticket.
+   * Never a card's digits: the list cannot carry any. */
+  const paying =
+    t.tenders !== undefined && t.tenders.length > 0
+      ? tenderSentence(t.tenders)
+      : null;
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -155,6 +163,10 @@ export default function TicketScene(props: {
         )}
       </dl>
 
+      {!summary && paying !== null ? (
+        <p className="dticket-tender">Paying by {paying}</p>
+      ) : null}
+
       {approve ? (
         <div className="dticket-approve">
           {error !== null ? <p className="dticket-error">{error}</p> : null}
@@ -184,10 +196,10 @@ export default function TicketScene(props: {
           {t.charged !== undefined ? (
             <p className="dticket-charged">
               Paid {money(t.charged)}
-              {t.tender ? ` by ${plainText(t.tender)}` : ""}
+              {paying !== null ? ` by ${paying}` : ""}
             </p>
-          ) : t.tender ? (
-            <p className="dticket-charged">Paid by {plainText(t.tender)}</p>
+          ) : paying !== null ? (
+            <p className="dticket-charged">Paid by {paying}</p>
           ) : null}
           {t.emailedReceipt === true ? (
             <p className="dticket-receipt">A receipt is on its way by email.</p>

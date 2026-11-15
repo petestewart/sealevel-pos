@@ -92,6 +92,15 @@ export interface SaleApproval {
   /** Whether the teacher chose "Wait" on a busy screen, so the present
    *  is retried until it goes through. */
   waitingForScreen: boolean;
+  /**
+   * T240: whether an approval is outstanding IN ANY FORM, including the
+   * round trip between the primary tap and the present's request id
+   * coming back (and Take over's apology), when `approval` is still
+   * null. The approval names the tender, so a screen locks its tender
+   * controls on THIS, not on `approval`: T238's review found the roster
+   * dialog's "Use the card instead" live for exactly that round trip.
+   */
+  pending: boolean;
   /** The primary tap. With the setting off this is the charge and
    *  nothing else; with it on the ticket goes up and the charge follows
    *  the customer's own tap. */
@@ -147,6 +156,15 @@ export function useSaleApproval(input: {
   const [approval, setApproval] = useState<ApprovalState | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [waitingForScreen, setWaitingForScreen] = useState(false);
+  /** T240: a present (or Take over's apology before one) is in flight,
+   *  so the approval is begun though `approval` is still null. The ref
+   *  is what a tap reads, synchronously; the state is what draws. */
+  const [presenting, setPresenting] = useState(false);
+  const presentingRef = useRef(false);
+  const setPresentingBoth = useCallback((on: boolean) => {
+    presentingRef.current = on;
+    setPresenting(on);
+  }, []);
 
   /* The three inputs are read through refs, updated in the render body,
    * for two separate reasons. The charge and the builder are rebuilt
@@ -197,11 +215,20 @@ export function useSaleApproval(input: {
     if (ticket === null) {
       /* Nothing to ask about (no client, no line, no price yet). There
        * is no screen state that says so, and the teacher has not been
-       * told a lie: the primary tap simply did nothing. */
+       * told a lie: the primary tap simply did nothing. (Take over sets
+       * `presenting` before it gets here, so it is cleared here too.) */
+      setPresentingBoth(false);
       return;
     }
     const mine = gen.current;
     const payload = ticket.payload;
+    /* T240: begun, though not yet answered. Cleared below once this
+     * attempt resolves, if it is still the live one; an attempt that
+     * was ended under it was cleared by whatever ended it. */
+    setPresentingBoth(true);
+    const settle = () => {
+      if (gen.current === mine) setPresentingBoth(false);
+    };
     try {
       const res = await fetch("/api/display/present", {
         method: "POST",
@@ -228,10 +255,12 @@ export function useSaleApproval(input: {
           void fetch("/api/display/cancel", { method: "POST" });
           return;
         }
+        settle();
         setApproval({ stage: "waiting", requestId: body.requestId });
         return;
       }
       if (gen.current !== mine) return;
+      settle();
       if (body?.reason === "busy") {
         setApproval({
           stage: "busy",
@@ -277,9 +306,12 @@ export function useSaleApproval(input: {
     } catch {
       /* The request never reached the server, so nothing was presented
          and there is nothing to take down. */
-      if (gen.current === mine) setApproval({ stage: "offline" });
+      if (gen.current === mine) {
+        settle();
+        setApproval({ stage: "offline" });
+      }
     }
-  }, []);
+  }, [setPresentingBoth]);
 
   /**
    * While the ticket is on the customer screen, ask how it went.
@@ -359,7 +391,7 @@ export function useSaleApproval(input: {
       chargeRef.current();
       return;
     }
-    if (approvalRef.current !== null) return;
+    if (approvalRef.current !== null || presentingRef.current) return;
     setNote(null);
     setWaitingForScreen(false);
     gen.current += 1;
@@ -379,16 +411,28 @@ export function useSaleApproval(input: {
    */
   const endWait = useCallback((line: string | null) => {
     const held = approvalRef.current;
-    if (held === null) return;
+    /* T240: a present still in flight is outstanding too. Bumping the
+     * generation is what makes it take its own scene back down when its
+     * answer arrives, so the student never holds a ticket for a tender
+     * the teacher has already changed. */
+    const inFlight = presentingRef.current;
+    if (held === null && !inFlight) return;
     gen.current += 1;
+    setPresentingBoth(false);
     setWaitingForScreen(false);
     setApproval(null);
+    /* Synchronously too: two effects in one commit can each end the
+     * wait (a cart edit and the tender it clears), and the second must
+     * find nothing outstanding rather than cancel twice and overwrite
+     * the first one's sentence. */
+    approvalRef.current = null;
     setNote(line);
+    if (held === null) return;
     const sceneUp =
       held.stage === "waiting" ||
       (held.stage === "pin" && held.resume !== undefined);
     if (sceneUp) void fetch("/api/display/cancel", { method: "POST" });
-  }, []);
+  }, [setPresentingBoth]);
 
   /* Handed straight to an onClick, so it takes no argument: a
      MouseEvent must never arrive where a note is expected. */
@@ -407,6 +451,8 @@ export function useSaleApproval(input: {
     setWaitingForScreen(false);
     gen.current += 1;
     const mine = gen.current;
+    /* T240: the apology is part of the ask; the tender stays locked. */
+    setPresentingBoth(true);
     void (async () => {
       await fetch("/api/display/cancel", {
         method: "POST",
@@ -421,7 +467,7 @@ export function useSaleApproval(input: {
       if (gen.current !== mine) return;
       await present();
     })();
-  }, [present]);
+  }, [present, setPresentingBoth]);
 
   const toPin = useCallback(() => {
     const held = approvalRef.current;
@@ -467,12 +513,13 @@ export function useSaleApproval(input: {
   }, []);
 
   const armed = useCallback((token: string) => {
+    setPresentingBoth(false);
     setApproval(null);
     setNote(null);
     /* The screen is no longer being waited on; the route cancels a
        pending approval of its own when it takes the PIN. */
     chargeRef.current({ token });
-  }, []);
+  }, [setPresentingBoth]);
 
   const reset = useCallback(() => endWait(null), [endWait]);
 
@@ -480,6 +527,7 @@ export function useSaleApproval(input: {
     approval,
     note,
     waitingForScreen,
+    pending: approval !== null || presenting,
     begin,
     cancel,
     abandon,

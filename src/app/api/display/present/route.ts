@@ -9,8 +9,8 @@ import {
   presentRequest,
   readJsonObject,
 } from "@/lib/display";
-import { cartSha256 } from "@/lib/cartsha";
-import { readTicketPayload } from "@/lib/displayticket";
+import { cartSha256, carriesTender } from "@/lib/cartsha";
+import { readTicketPayload, tendersFromCharge } from "@/lib/displayticket";
 import { readContractPayload } from "@/lib/displaycontract";
 import { buildContractScene } from "@/lib/contractscene";
 import { readWaiverPayload } from "@/lib/displaywaiver";
@@ -108,10 +108,32 @@ export async function POST(request: Request) {
         input.cart !== null && typeof input.cart === "object"
           ? (input.cart as Record<string, unknown>)
           : {};
+      /* T240: the approval names how the student is paying, so the
+       * tender the cart carries is BOUND: it goes into the hash, and the
+       * words the student reads are rebuilt HERE from that same tender
+       * rather than taken from the payload, so the scene cannot say
+       * "Card" over a hash of an account charge. A cart carrying no
+       * tender (a page loaded before T240) hashes exactly as it always
+       * did and the scene shows no tender, which is what it approved. */
+      const tenderBound = carriesTender(cart);
+      if (tenderBound) {
+        const words = tendersFromCharge(cart);
+        if (words === null) {
+          return NextResponse.json(
+            { error: "cart: the tender could not be read" },
+            { status: 400 },
+          );
+        }
+        scene = { ...ticket.value, tenders: words };
+      } else {
+        const { tenders: _dropped, ...rest } = ticket.value;
+        scene = rest;
+      }
       privateHalf = {
         clientId:
           typeof cart["clientId"] === "string" ? cart["clientId"].trim() : "",
-        cartSha256: cartSha256(cart),
+        cartSha256: cartSha256(cart, { tender: tenderBound }),
+        tenderBound,
       };
     }
   }

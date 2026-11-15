@@ -8095,6 +8095,16 @@ textarea.reason-note-field:disabled::placeholder {
   font-size: 24px;
 }
 
+/* T240: how the student is paying, under the total on the live mirror
+ * and the approval, in words only. Ink rather than --accent: it is a
+ * fact about the ticket, not something to tap. */
+.dticket-tender {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
 .dticket-paid {
   display: flex;
   flex-direction: column;

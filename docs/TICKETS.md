@@ -21446,7 +21446,7 @@ on the two balance gaps the review found: "fix them".
 
 ### To do
 
-- [ ] **The customer iPad names how the student is paying, on every scene
+- [x] **The customer iPad names how the student is paying, on every scene
       that shows a ticket**: the live ticket mirror (T201) once a tender is
       on the ticket, the approval (T203, "approve" mode) and the post-sale
       summary (which already carries it). In words only, per T201's rule
@@ -21458,7 +21458,7 @@ on the two balance gaps the review found: "fix them".
       way. Both charge paths (the Cart screen and the roster's "Pay and
       check in") send it, through `useSaleApproval`, the one shared piece
       (T209).
-- [ ] **What the student approved is what is charged, tender included.**
+- [x] **What the student approved is what is charged, tender included.**
       Since the approval now names the tender, the tender must not change
       between the approval being presented and the charge: on the Cart
       screen it is already frozen by Finalize; in the roster dialog the
@@ -21469,23 +21469,136 @@ on the two balance gaps the review found: "fix them".
       whether the tender belongs in T203's cart sha (`src/lib/cartsha.ts`)
       so the server enforces it; if it goes in, every ticket WITHOUT the
       field must still hash exactly as before, as T220 did for the promo.
-- [ ] **T239's automatic Account line appears for a discounted total too.**
+- [x] **T239's automatic Account line appears for a discounted total too.**
       Only a full comp (nothing to pay) leaves it off. Arming or changing a
       discount re-judges the line against the new total while the tender is
       untouched.
-- [ ] **Fix 1 (T239 review):** the automatic line is never judged on a
+- [x] **Fix 1 (T239 review):** the automatic line is never judged on a
       balance that is being re-read. After a sale the stored-card lookup
       refetches with the old balance still in hand and `loading: true`;
       `autoBalance` must wait for the fresh figure (`!cardLookup.loading`).
-- [ ] **Fix 2 (T239 review):** the balance a refused charge reported
+- [x] **Fix 2 (T239 review):** the balance a refused charge reported
       (`freshBalance`) does not outlive the ticket: `resetTender` clears it,
       or it is keyed to the client id the way the lookup is, so a newer
       lookup is never overridden by an older refusal and the client-switch
       commit no longer depends on an unwritten invariant.
-- [ ] Unchanged on purpose until Pete answers: the automatic line still
+- [x] Unchanged on purpose until Pete answers: the automatic line still
       applies to a ticket holding a gift card.
-- [ ] `tsc --noEmit` and `next build` clean; driven in Chromium against the
+- [x] `tsc --noEmit` and `next build` clean; driven in Chromium against the
       fake with a paired display: the approval scene names "Account balance"
       for an automatic line and "Card" after switching; a $5 discount on a
       $25 ticket for a client with $100 opens with "Account $20.00"; the two
       balance gaps are forced and no longer offer a line on a stale figure.
+
+### Done (2026-11-15)
+
+**The words.** `TicketPayload` has a `tenders` list on every mode, each
+entry a word from a FIXED list, `TENDER_WORDS` in
+`src/lib/displayticket.ts` (Account balance, Card, Cash, Gift card, No
+charge), with an amount only where it is not simply the whole total (a
+split's legs, or on the live mirror one line that does not cover the
+ticket yet). `readTicketPayload` rebuilds each entry as `{word, amount}`
+and refuses any other word, so "Card ending 8210" is a 400 and an extra
+key on an entry is dropped. The old free-text `tender` on the summary is
+gone with the last four it carried: the summary now reads "Paid $25.00 by
+Card". `TicketScene` draws "Paying by ..." under the total on the live
+mirror and the approval. A stored card and a typed card are both "Card"; a
+full comp is "No charge" (my word: the ticket listed four, and "Comp" is
+the studio's word, not the student's). The Cart screen builds the words
+from its tender lines and their coverage and reports them up to the live
+mirror (`onTenderChange`); both charge paths put them on the approval.
+
+**The tender went into the cart sha, and why.** The approval now shows the
+tender, so what the student approved and what is charged can only be the
+same if the server checks it: a promise the tender has not changed, made
+by the browser that changes it, is T203's rule's exact counterexample.
+Both charge paths add their tender to the presented cart (`method`, or
+`split.legs` of method and amount, never a card or gift card number).
+`/api/display/present` then REWRITES the scene's words from that same
+tender (`tendersFromCharge`), so the screen cannot say "Card" over a hash
+of an account charge, hashes it with `cartSha256(cart, { tender: true })`
+(each leg folded to the word the student read, amount in cents on a split,
+sorted, appended last) and records `tenderBound: true` on the private
+half. `/api/checkout` hashes its own body with the same flag. A cart
+presented with no tender (a page loaded before this deploy) shows no
+tender, hashes byte for byte as before and binds none, because it named
+none; without that, a stale tab would have refused every approval until
+reloaded. Nothing else about what the server charges changed.
+
+**The lock.** `useSaleApproval` exposes `pending`, true from the primary
+tap (the present's round trip and Take over's apology included) until the
+approval is answered; `begin` also refuses a second tap in that window
+now, which used to be able to present twice. The roster dialog's "Use the
+card instead" is disabled on it, and the Cart screen's tiles, keypad
+square, line amounts and Xs are too (Finalize froze only T239's automatic
+line, not the controls, so a teacher could change the tender under a live
+approval). A tender that moves by itself under one ends it with "The
+payment changed. Charge again to ask the customer." (Cart screen) or "The
+payment method changed. ..." (roster dialog), and `endWait` now ends a
+present still in flight too, so its scene comes back down when it lands.
+
+**The discount rule.** The automatic line is held back only by a full
+comp (`comped`), not by any discount. Arming or changing a discount
+already cleared the lines (the `discountKey` effect), so an untouched
+tender is judged again at the discounted total.
+
+**Fix 1.** The automatic line is frozen while this client's profile read
+is in flight (`balanceSettling`), so the refetch after a sale, which keeps
+the old balance on screen with `loading: true`, never chooses a tender.
+**Fix 2.** `freshBalance` is now a report keyed to its client and stamped
+(`performance.now()`) against `CardLookup.startedAt`: it counts only for
+that client and only until a read BEGUN after it lands, and `resetTender`
+clears it (the client-switch effect still does too, but nothing depends on
+it).
+
+**Verified** against a scratch copy of the fake (Taylor Brooks $100.00 on
+account) with a local Postgres, `next build`/`next start`,
+`POS_CUSTOMER_CONFIRMS_SALE=true` and a display paired through
+`/api/admin/display/pair`, driven in Chromium with Playwright (a teacher
+context and a display context), read back from `/api/devlog`:
+
+- Cart screen, Taylor, Drop In $25.00: opened on "Account $25.00"; the
+  display's live mirror read "Paying by Account balance"; Finalize put up
+  the approval reading "Paying by Account balance" with Cancel and
+  Approve, and every tile, the keypad square and the line's X were
+  disabled while it waited. Cancel, X, Card: the mirror read "Paying by
+  Card", Finalize, the approval read "Paying by Card", Approve on the
+  display charged one live `checkoutshoppingcart` on `StoredCard` $25, and
+  the display's summary read "Paid $25.00 by Card" (no last four).
+- Cart screen, Taylor, Drop In $25.00 with a 20% ($5.00) discount: the
+  line came back as "Account $20.00"; the approval read "Paying by Account
+  balance" over a $20.00 total.
+- Server: an approval presented for `method: "credit"` (with the browser
+  claiming "Card": the display read "Paying by Account balance", the
+  server's words) and approved on the display was refused 409 "The ticket
+  or the payment changed after the customer approved it. Ask them again."
+  when charged on `storedcard`, and charged $25 on `credit`. An approval
+  presented with no tender in its cart showed no tender line and charged
+  on `storedcard` as before.
+- Roster "Pay and check in", Taylor's unpaid row: "Pays with account
+  balance ($100.00)" with "Use the card ...8210 instead". With
+  `/api/display/present` held 2.5 seconds, the switch was disabled 0.4
+  seconds after Charge, before any request id existed. The approval read
+  "Paying by Account balance"; Cancel, switch, Charge: "Paying by Card",
+  Approve on the display, one live checkout on `StoredCard` $25.
+- Fix 1, forced: after an account sale, every `/api/stored-card` read was
+  held 15 seconds and answered $5.00. A new $25.00 ticket 7.4 seconds in,
+  with the tile still showing $100.00: no automatic line; after the read
+  landed ($5.00): none. The same drive on a build with `balanceSettling`
+  disabled put "Account $25.00" on the ticket on the stale $100.00.
+- Fix 2, forced: with the profile answering $5.00, a charge answered
+  ambiguous with `creditBalance: 30`, which re-reads the profile: the
+  Account tile then read $5.00. On a build without the stamp it read
+  $30.00, the older refusal overriding the newer read.
+
+`tsc --noEmit` and `next build` clean.
+
+**For Pete.** (1) "No charge" is the word a full comp shows on the
+customer screen; say if you want another. (2) The Cart screen's tender is
+now locked while the customer is looking at the approval: to change how
+they pay, Cancel on the teacher's panel, change it, Finalize again. (3) An
+approval no longer survives a change of payment method: switching after
+the student tapped Approve needs a second tap from them (or the PIN). (4)
+Gift card tickets still get the automatic Account line, as before, until
+you answer.
+

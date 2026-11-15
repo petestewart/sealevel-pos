@@ -20,7 +20,9 @@
  *    id, a pricing option id, a product id, a card number or anything
  *    else a caller put in the body is dropped on the floor rather than
  *    forwarded to a screen a student is holding. The tender is a WORD
- *    ("Cash", "Card ending 1234"), never a payment detail.
+ *    from a fixed list ("Account balance", "Card", "Cash", "Gift card",
+ *    "No charge"), with an amount on a split, and never a payment
+ *    detail: since T240 not even a card's last four reaches that screen.
  *
  * Nothing in this file calls Mindbody, and nothing in it may.
  */
@@ -56,11 +58,96 @@ export interface TicketPayload {
   discountTotal?: number;
   tax: number | null;
   total: number | null;
-  /** Summary only: the tender in words, what was charged, and whether a
-   *  receipt was CONFIRMED emailed (null when none was asked for). */
-  tender?: string;
+  /**
+   * T240 (Pete: "we should always list the payment method on the custmer
+   * ipad"): how the student is paying, on every mode. One entry per
+   * tender, in the teacher's order. `amount` is present only when it is
+   * not simply the whole total, which is a split's two legs (or one leg
+   * that does not yet cover the ticket, on the live mirror). Absent when
+   * no tender is on the ticket yet.
+   */
+  tenders?: TicketTender[];
+  /** Summary only: what was charged, and whether a receipt was
+   *  CONFIRMED emailed (null when none was asked for). */
   charged?: number;
   emailedReceipt?: boolean | null;
+}
+
+/**
+ * T240: the only words a tender may be on the customer screen. A fixed
+ * list rather than free text, so `readTicketPayload` can refuse anything
+ * else outright: there is no string a caller could put here that
+ * carries a card's digits, a gift card's number or a client's name.
+ */
+export const TENDER_WORDS = [
+  "Account balance",
+  "Card",
+  "Cash",
+  "Gift card",
+  "No charge",
+] as const;
+export type TenderWord = (typeof TENDER_WORDS)[number];
+
+export interface TicketTender {
+  word: TenderWord;
+  /** Dollars, Mindbody-priced or the teacher's own split. */
+  amount?: number;
+}
+
+/**
+ * T240: a tender method, as /api/checkout spells it, in the customer
+ * screen's words. A stored card and a card typed at the counter are both
+ * "Card" to the person paying; a comp is "No charge".
+ */
+export function tenderWord(method: unknown): TenderWord | null {
+  switch (method) {
+    case "credit":
+      return "Account balance";
+    case "storedcard":
+    case "typedcard":
+      return "Card";
+    case "cash":
+      return "Cash";
+    case "giftcard":
+      return "Gift card";
+    case "comp":
+      return "No charge";
+    default:
+      return null;
+  }
+}
+
+/**
+ * T240: the tender a charge body describes, in words, or null when it
+ * describes none. Reads ONLY `method`, and `split.legs[].method` and
+ * `.amount`, the shape /api/checkout accepts (and that the approval cart
+ * carries, without any card or gift card number), so the words a student
+ * approves and the tender the server hashes come from the same fields.
+ * A single method carries no amount: it pays the whole total, which the
+ * ticket already shows.
+ */
+export function tendersFromCharge(input: unknown): TicketTender[] | null {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return null;
+  }
+  const body = input as Record<string, unknown>;
+  const split = body["split"];
+  if (split !== undefined && split !== null) {
+    const legs = (split as { legs?: unknown })?.legs;
+    if (!Array.isArray(legs) || legs.length === 0 || legs.length > 2) {
+      return null;
+    }
+    const out: TicketTender[] = [];
+    for (const leg of legs) {
+      const word = tenderWord((leg as { method?: unknown })?.method);
+      const amount = money((leg as { amount?: unknown })?.amount);
+      if (word === null || amount === null) return null;
+      out.push({ word, amount });
+    }
+    return out;
+  }
+  const word = tenderWord(body["method"]);
+  return word === null ? null : [{ word }];
 }
 
 /**
@@ -80,7 +167,8 @@ export function displayFirstName(name: string | null): string | null {
 /** A ticket is a handful of lines; a longer one is a bug, not a sale. */
 const MAX_LINES = 40;
 const MAX_NAME = 120;
-const MAX_TENDER = 60;
+/** T240: /api/checkout takes one method or exactly two split legs. */
+const MAX_TENDERS = 2;
 
 function money(v: unknown): number | null {
   if (typeof v !== "number" || !Number.isFinite(v)) return null;
@@ -160,15 +248,67 @@ export function readTicketPayload(
   if (discountTotal !== null && discountTotal !== 0) {
     out.discountTotal = discountTotal;
   }
+  /* T240: the tender, rebuilt like the lines: each entry a word from
+   * TENDER_WORDS and an optional amount, and nothing else copied. A
+   * malformed list is refused rather than half-shown, because a student
+   * reading one of two payments has been told something untrue. */
+  if (raw.tenders !== undefined && raw.tenders !== null) {
+    const tenders = readTenders(raw.tenders);
+    if (typeof tenders === "string") return { ok: false, error: tenders };
+    if (tenders.length > 0) out.tenders = tenders;
+  }
   if (mode === "summary") {
-    const tender = text(raw.tender, MAX_TENDER);
-    if (tender !== null) out.tender = tender;
     const charged = money(raw.charged);
     if (charged !== null) out.charged = charged;
     out.emailedReceipt =
       typeof raw.emailedReceipt === "boolean" ? raw.emailedReceipt : null;
   }
   return { ok: true, value: out as TicketPayload & Record<string, unknown> };
+}
+
+/** T240: a payload's tender list, or the reason it is not one. */
+function readTenders(value: unknown): TicketTender[] | string {
+  if (!Array.isArray(value)) return "tenders must be an array";
+  if (value.length > MAX_TENDERS) {
+    return `too many tenders (over ${MAX_TENDERS})`;
+  }
+  const out: TicketTender[] = [];
+  for (const entry of value) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      return "each tender must be an object";
+    }
+    const t = entry as Record<string, unknown>;
+    const word = TENDER_WORDS.find((w) => w === t.word);
+    if (word === undefined) {
+      return `each tender's word must be one of ${TENDER_WORDS.join(", ")}`;
+    }
+    if (t.amount === undefined || t.amount === null) {
+      out.push({ word });
+      continue;
+    }
+    const amount = money(t.amount);
+    if (amount === null || amount < 0) {
+      return "a tender's amount must be dollars";
+    }
+    out.push({ word, amount });
+  }
+  return out;
+}
+
+/** T240: the tender as one line of words, "Card", or on a split
+ *  "Account balance $15.00, Card $10.00". The display's own formatting
+ *  of figures it was handed; no arithmetic. */
+export function tenderSentence(tenders: readonly TicketTender[]): string {
+  return tenders
+    .map((t) =>
+      t.amount === undefined
+        ? t.word
+        : `${t.word} ${t.amount.toLocaleString("en-US", {
+            style: "currency",
+            currency: "USD",
+          })}`,
+    )
+    .join(", ");
 }
 
 /** Whether a stored request is an APPROVE ticket, which is the scene

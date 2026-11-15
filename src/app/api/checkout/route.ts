@@ -988,9 +988,22 @@ async function runCheckout(
           "That approval was for a different customer. Ask them again.",
         );
       }
-      if (String(held.private.cartSha256 ?? "") !== cartSha256(payload)) {
+      /* T240: an approval that NAMED the tender binds it. The hash is
+       * this body's own `method` or `split`, so a teacher who switched
+       * from the account to the card after the student approved
+       * "Account balance" is asked again rather than charged on it. An
+       * approval presented without a tender (a page from before T240)
+       * is checked exactly as it always was. */
+      const tenderBound = held.private.tenderBound === true;
+      if (
+        String(held.private.cartSha256 ?? "") !==
+        cartSha256(payload, { tender: tenderBound })
+      ) {
         return refuse(
-          "The ticket changed after the customer approved it. Ask them again.",
+          tenderBound
+            ? "The ticket or the payment changed after the customer approved " +
+                "it. Ask them again."
+            : "The ticket changed after the customer approved it. Ask them again.",
         );
       }
       approvalId = held.id;

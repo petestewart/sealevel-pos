@@ -61,7 +61,7 @@ import WaiverOverrideDialog, {
 import { waiverOverrideLabel, type WaiverFlow } from "@/lib/waiveroverride";
 import ApprovalWait from "./ApprovalWait";
 import { useSaleApproval } from "./useSaleApproval";
-import { displayFirstName } from "@/lib/displayticket";
+import { displayFirstName, tendersFromCharge } from "@/lib/displayticket";
 import { DEFAULT_SETTINGS, useSettings } from "./settings";
 import { toggleTheme, watchSystemTheme } from "./theme";
 import { useVisualViewport } from "./viewport";
@@ -1348,6 +1348,11 @@ function FrontDesk({
           ? (payCatalog.passes?.find((o) => o.id === paySelectedId) ?? null)
           : null;
       if (dialog === null || sel === null) return null;
+      /* T240: the tender the charge will send, which the approval now
+         NAMES and the server binds. No method, nothing to charge with,
+         and nothing to ask about. */
+      const method = payMethodRef.current;
+      if (method === null) return null;
       /* Mindbody's figures or none. The same rule the Charge button
          follows: a cart that is still pricing, was suppressed or whose
          total Mindbody disagreed with carries NO totals to a student's
@@ -1378,6 +1383,10 @@ function FrontDesk({
           usable.discountTotal > 0
             ? { discountTotal: usable.discountTotal }
             : {}),
+          /* T240: "Account balance" or "Card", never the last four. The
+             server rewrites this from the cart's own method below, so
+             the words and the hash cannot disagree. */
+          tenders: tendersFromCharge({ method }) ?? [],
         },
         /* The cart the SERVER hashes, in the same shape the charge below
            sends it: the client and the one line's type, id, quantity and
@@ -1397,6 +1406,9 @@ function FrontDesk({
           usable.promotion.code === payPromoCode
             ? { promotionCode: usable.promotion.code }
             : {}),
+          /* T240: and the tender, exactly as the charge sends it, so a
+             switch after the student approved is refused, not charged. */
+          method,
         },
       };
     },
@@ -1437,6 +1449,15 @@ function FrontDesk({
       "The code changed. Charge again to ask the customer.",
     );
   }, [payPromoCode, abandonPayApproval]);
+  /* T240: and the payment method, which the approval now names. The
+   * switch is locked while one is outstanding (`pending`), so this is
+   * for a method that moved by itself under it: the card lookup
+   * answering, or a refused balance changing what covers the total. The
+   * server refuses a changed tender anyway; this says so before the
+   * student taps rather than after. The effect sits beside `payMethod`,
+   * further down; the builder above reads the method through this ref,
+   * which the render body keeps current. */
+  const payMethodRef = useRef<"credit" | "storedcard" | null>(null);
   /** Rows with a check-in in flight. */
   const [busy, setBusy] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
@@ -6512,6 +6533,14 @@ function FrontDesk({
       : payCardLive
         ? "storedcard"
         : null;
+  payMethodRef.current = payMethod;
+  /* T240: the method moved under an outstanding approval (see
+   * payMethodRef): it ends, with one sentence. A no-op otherwise. */
+  useEffect(() => {
+    abandonPayApproval(
+      "The payment method changed. Charge again to ask the customer.",
+    );
+  }, [payMethod, abandonPayApproval]);
   /** T238: both tenders can pay, so the dialog offers the other one. */
   const payCanSwitchMethod = payCreditCovers && payCardLive;
   /* The one-line reason there is nothing to charge with, greyed and
@@ -10663,7 +10692,11 @@ function FrontDesk({
             {payCanSwitchMethod && !payMoneyMoved && payCard ? (
               <button
                 className="pay-method-switch"
-                disabled={payStage !== null || payApproval.approval !== null}
+                /* T240: locked from the moment the approval is BEGUN,
+                   not only once its request id is back: the student is
+                   about to read the tender on their screen, and what
+                   they approve is what is charged. */
+                disabled={payStage !== null || payApproval.pending}
                 onClick={() => setPayUseCard((cur) => !cur)}
               >
                 {payMethod === "credit"

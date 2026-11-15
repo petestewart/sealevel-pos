@@ -20,11 +20,12 @@ import { useDisplayMirror } from "./useDisplayMirror";
 import ApprovalWait from "./ApprovalWait";
 import { useSaleApproval } from "./useSaleApproval";
 import type { TypedCard } from "@/lib/typedcard";
-import { displayFirstName } from "@/lib/displayticket";
+import { displayFirstName, tenderWord } from "@/lib/displayticket";
 import type {
   TicketLine,
   TicketMode,
   TicketPayload,
+  TicketTender,
 } from "@/lib/displayticket";
 import { IDEMPOTENCY_HEADER, newIdempotencyKey } from "@/lib/idemkey";
 
@@ -1067,6 +1068,9 @@ function displayTicketPayload(input: {
   clientName: string | null;
   giftCardsCharged: number;
   giftDiscountOff: number;
+  /** T240: how the student is paying, in words, or null with no tender
+   *  on the ticket yet (the display then names none). */
+  tenders: readonly TicketTender[] | null;
 }): TicketPayload {
   const saleLines = input.cart.filter((line) => !isGiftCardLine(line));
   const priced = input.pricing ? null : input.priced;
@@ -1087,6 +1091,9 @@ function displayTicketPayload(input: {
       cartTotal === null
         ? null
         : roundToCents(cartTotal + input.giftCardsCharged),
+    ...(input.tenders !== null && input.tenders.length > 0
+      ? { tenders: [...input.tenders] }
+      : {}),
   };
 }
 
@@ -1484,6 +1491,11 @@ interface CardLookup {
    *  never gate the current one's methods. */
   clientId: string;
   loading: boolean;
+  /** T240: when this read was STARTED (performance.now(), the same clock
+   *  a refusal's report is stamped with). A balance a refused
+   *  charge reported is fresher than a read begun before it and staler
+   *  than one begun after, and this is what tells the two apart. */
+  startedAt: number;
   card: StoredCardInfo | null;
   /** Account credit, as of this lookup. Null when Mindbody reports none
    *  or the read failed. */
@@ -2049,6 +2061,10 @@ function PaymentPanel(props: {
    * cleared in the same commit the sale lands in.
    */
   onDisplaySummary: (payload: TicketPayload) => void;
+  /** T240: the tender in the customer screen's words, reported up as it
+   *  changes, so the live mirror (SaleScreen's) can name it. Null with
+   *  no tender on the ticket. */
+  onTenderChange: (tenders: TicketTender[] | null) => void;
   /**
    * T203: whether the studio has turned `customer_confirms_sale` on, as
    * /api/config reports it. It decides what this panel DRAWS and nothing
@@ -2151,6 +2167,9 @@ function PaymentPanel(props: {
         clientName: client?.name ?? null,
         giftCardsCharged,
         giftDiscountOff: roundToCents(armedParts.giftCents / 100),
+        /* T240: the server rewrites these from the cart's own tender,
+           so what the student reads is what it hashes. */
+        tenders: displayTenders,
       }),
       cart: approvalCart(),
     }),
@@ -2165,6 +2184,14 @@ function PaymentPanel(props: {
   const waitingForScreen = approvalFlow.waitingForScreen;
   const approvalReset = approvalFlow.reset;
   const approvalAbandon = approvalFlow.abandon;
+  /**
+   * T240: the approval names the tender, so from the Finalize tap until
+   * it is answered (the present's round trip included, `pending`) the
+   * tender controls are locked: the tiles, the keypad square, each
+   * line's amount and its X. Cancel on the approval panel is the way
+   * back to them. What the student approves is what is charged.
+   */
+  const tenderHeld = approvalFlow.pending;
   /** Comp stays OUT of the list: it is a whole-sale gesture with its own
    *  hold, not a tender. Arming it clears the lines; adding a line
    *  disarms it. The two can never both be set.
@@ -2485,16 +2512,41 @@ function PaymentPanel(props: {
 
   /** A fresher balance than the attach snapshot, learned from a
    *  refusal that named the live balance (a credit line over it), so the
-   *  Account tile reflects what Mindbody said at the charge. */
-  const [freshBalance, setFreshBalance] = useState<number | null>(null);
+   *  Account tile reflects what Mindbody said at the charge.
+   *
+   *  T240 (T239 review, fix 2): it does not outlive the ticket or the
+   *  client it was learned for. It is KEYED to the client and stamped
+   *  with when it was learned, so it counts only for that client and
+   *  only until a profile read BEGUN after it lands (a newer lookup is
+   *  never overridden by an older refusal), and `resetTender` clears it.
+   *  The client-switch effect still clears it too, but nothing depends
+   *  on that running first any more. */
+  const [freshReport, setFreshBalanceReport] = useState<{
+    clientId: string | null;
+    balance: number;
+    at: number;
+  } | null>(null);
 
   const card = cardLookup?.card ?? null;
   /* Freshest first: a refusal's reported balance, then the profile lookup
    * (refetched after every charge), then the attach snapshot the roster
    * row supplied. Only lookups for THIS client count. */
-  const lookedUpBalance =
+  const lookupForClient =
     cardLookup && cardLookup.clientId === (client?.id ?? null)
-      ? cardLookup.balance
+      ? cardLookup
+      : null;
+  const lookedUpBalance = lookupForClient?.balance ?? null;
+  /* T240: the refusal's figure counts for its own client, and only until
+   * a read begun after it. */
+  const freshBalance =
+    freshReport !== null &&
+    freshReport.clientId === (client?.id ?? null) &&
+    !(
+      lookupForClient !== null &&
+      !lookupForClient.loading &&
+      lookupForClient.startedAt > freshReport.at
+    )
+      ? freshReport.balance
       : null;
   const balance = freshBalance ?? lookedUpBalance ?? client?.balance ?? null;
   /* T82: credit is a tender like any other, so a balance that covers the
@@ -2608,6 +2660,9 @@ function PaymentPanel(props: {
    *  completed sale. */
   const resetTender = useCallback(() => {
     setLines([]);
+    /* T240 (T239 review, fix 2): a refusal's balance belonged to the
+     * ticket it refused. */
+    setFreshBalanceReport(null);
     /* T239: a tender started over is judged afresh. */
     setAutoLineId(null);
     setTenderTouched(false);
@@ -2689,7 +2744,7 @@ function PaymentPanel(props: {
    * client B (whose card or credit may not even exist; the server would
    * refuse, but the button must not offer it). */
   useEffect(() => {
-    setFreshBalance(null);
+    setFreshBalanceReport(null);
     resetTender();
   }, [clientId, resetTender]);
 
@@ -2937,13 +2992,23 @@ function PaymentPanel(props: {
    *  - a real client is attached (an anonymous sale rides the house
    *    client, whose account is nobody's to spend), with no line bought
    *    for someone else and nothing else `creditReason` refuses;
-   *  - no discount or comp is armed (a comp takes no tender at all);
+   *  - no full comp is armed (a comp takes no tender at all). T240 (Pete:
+   *    "i dont even understand the logic of this decision at all"): a
+   *    PARTIAL discount no longer holds it back. The line is judged
+   *    against the discounted total, and arming, changing or removing a
+   *    discount clears the lines (the discountKey effect), so an
+   *    untouched tender is judged again at the new figure;
    *  - Mindbody has priced the ticket, above zero;
    *  - the balance covers ALL of it. Only `freshBalance` and the profile
    *    lookup for this client count, never the roster row's snapshot: a
    *    figure nobody has read back for this ticket does not choose a
    *    tender. The server re-reads the balance at the charge and refuses
    *    a credit line above it, exactly as for a line a teacher added.
+   *    T240 (T239 review, fix 1): and never while that lookup is being
+   *    RE-read. After a sale the refetch keeps the old balance on screen
+   *    with `loading: true`; judging on it would offer a line for money
+   *    the sale just spent. So the line waits, frozen, until the read
+   *    lands, and is judged then on the figure it returned;
    *
    * While it stands it follows the ticket: a new total moves its amount
    * (a cart edit clears every line and it comes back for the new total).
@@ -2961,8 +3026,11 @@ function PaymentPanel(props: {
     autoBalance === null ? null : Math.round(autoBalance * 100);
   const autoLine =
     autoLineId === null ? undefined : lines.find((l) => l.id === autoLineId);
+  /** T240 fix 1: this client's profile read is in flight. */
+  const balanceSettling = lookupForClient?.loading === true;
   const autoFrozen =
     tenderTouched ||
+    balanceSettling ||
     charging ||
     approval !== null ||
     waitingForScreen ||
@@ -2970,7 +3038,7 @@ function PaymentPanel(props: {
     (result !== null && result.kind !== "error" && result.kind !== "suppressed");
   const autoTarget =
     client !== null &&
-    comp === null &&
+    !comped &&
     creditReason === null &&
     totalCents !== null &&
     totalCents > 0 &&
@@ -3511,6 +3579,80 @@ function PaymentPanel(props: {
             : `Charge ${money(total)}`;
 
   /**
+   * T240: the tender as the charge describes it, in the two shapes
+   * /api/checkout accepts (`method`, or `split.legs` of method and
+   * amount), WITHOUT any card or gift card number. It rides in the
+   * approval cart because the approval now names the tender and the
+   * server binds it (src/lib/cartsha.ts); doCharge sends the same
+   * methods and the same leg amounts, with the numbers beside them.
+   */
+  const tenderShape = ():
+    | { method: string }
+    | { split: { legs: { method: string; amount: number }[] } }
+    | null =>
+    comped
+      ? { method: "comp" }
+      : lines.length === 2
+        ? {
+            split: {
+              legs: lines.map((line, i) => ({
+                method: line.source,
+                amount: (coverage[i] ?? 0) / 100,
+              })),
+            },
+          }
+        : soleLine !== undefined
+          ? { method: soleLine.source }
+          : null;
+
+  /**
+   * T240 (Pete: "we should always list the payment method on the custmer
+   * ipad"): the tender in the customer screen's words, for the live
+   * mirror, the approval and the summary alike. One line that covers the
+   * whole total is its word alone; anything else (a split, or one line
+   * that does not cover the ticket yet) carries what each line covers.
+   * While Mindbody is repricing there is no total to cover, so the words
+   * go alone rather than beside a $0.00 nobody chose. A full comp is
+   * "No charge". Null with no tender on the ticket.
+   */
+  const displayTenders: TicketTender[] | null = comped
+    ? [{ word: "No charge" }]
+    : lines.length === 0
+      ? null
+      : lines.flatMap((line, i): TicketTender[] => {
+          const word = tenderWord(line.source);
+          if (word === null) return [];
+          const covers = coverage[i] ?? 0;
+          return totalCents === null ||
+            (lines.length === 1 && covers >= totalCents)
+            ? [{ word }]
+            : [{ word, amount: covers / 100 }];
+        });
+  /* Reported up for the live mirror, which SaleScreen builds. Keyed by
+   * its text so a re-render with the same tender sends nothing. */
+  const displayTendersKey =
+    displayTenders === null ? "" : JSON.stringify(displayTenders);
+  const { onTenderChange } = props;
+  useEffect(() => {
+    onTenderChange(
+      displayTendersKey === ""
+        ? null
+        : (JSON.parse(displayTendersKey) as TicketTender[]),
+    );
+  }, [displayTendersKey, onTenderChange]);
+  /* T240: the tender moving under an outstanding approval ends it, the
+   * way a cart edit does: the student is reading a payment method that
+   * is no longer the one that would be charged. The controls are locked
+   * while one is pending, so this is the backstop for a line that moves
+   * by itself (the credit-visibility filter, a reset). A no-op when
+   * nothing is outstanding. */
+  useEffect(() => {
+    approvalAbandon(
+      "The payment changed. Charge again to ask the customer.",
+    );
+  }, [displayTendersKey, approvalAbandon]);
+
+  /**
    * T203: the cart, in exactly the shape both /api/display/present and
    * /api/checkout hash. Built in ONE place on purpose: the approval is
    * only worth anything if the ticket the customer approved and the
@@ -3542,6 +3684,8 @@ function PaymentPanel(props: {
     ...(comp !== null ? { discount: comp.discount } : {}),
     /* T220: in the hash, so an approval binds to the coded ticket. */
     ...(promotionCode !== null ? { promotionCode } : {}),
+    /* T240: and the tender, which the approval now names. */
+    ...(tenderShape() ?? {}),
   });
 
   const doCharge = async (approved?: {
@@ -3650,6 +3794,10 @@ function PaymentPanel(props: {
      * display's summary. Built here for the same reason the count and
      * the receipt address are: the cart is cleared in the commit the
      * sale lands in, and a summary built after it would be empty. */
+    /* The tender in WORDS, which is all a student's screen ever learns
+     * about how a sale was paid. Since T240 that is the word alone
+     * ("Card", "Account balance"), with each leg's amount on a split:
+     * no card's last four, and nothing at all of a gift card's number. */
     const displaySummaryAtTap = displayTicketPayload({
       mode: "summary",
       cart,
@@ -3658,29 +3806,8 @@ function PaymentPanel(props: {
       clientName: client?.name ?? null,
       giftCardsCharged,
       giftDiscountOff: roundToCents(armedParts.giftCents / 100),
+      tenders: displayTenders,
     });
-    /* The tender in WORDS, which is all a student's screen ever learns
-     * about how a sale was paid: a card's last four and nothing else of
-     * a card, and nothing at all of a gift card's number. */
-    const displayTender = comped
-      ? "Comp"
-      : lines.length === 2
-        ? "Two payments"
-        : soleLine === undefined
-          ? "Payment"
-          : soleLine.source === "storedcard"
-            ? card
-              ? `Card ending ${card.lastFour}`
-              : "Card"
-            : soleLine.source === "typedcard"
-              ? typedLastFourAtTap
-                ? `Card ending ${typedLastFourAtTap}`
-                : "Card"
-              : soleLine.source === "credit"
-                ? "Account credit"
-                : soleLine.source === "giftcard"
-                  ? "Gift card"
-                  : "Cash";
     inFlight.current = true;
     setCharging(true);
     onBusyChange(true);
@@ -3782,7 +3909,11 @@ function PaymentPanel(props: {
        * a method-stage refusal ("credit covers this") and the split
        * failure both name the number the next decision must be made on. */
       if (typeof body?.creditBalance === "number") {
-        setFreshBalance(body.creditBalance);
+        setFreshBalanceReport({
+          clientId,
+          balance: body.creditBalance,
+          at: performance.now(),
+        });
       }
       /* T49: whatever the outcome, a dead staff token is reported up. */
       if (body?.staffSessionEnded === true) onStaffSessionEnded();
@@ -3870,7 +4001,7 @@ function PaymentPanel(props: {
         /* The sale stands, so every client number this screen holds is a
          * pre-sale snapshot: drop the one learned from a refusal and let
          * the refetch onClientDataStale triggers be the answer. */
-        setFreshBalance(null);
+        setFreshBalanceReport(null);
         onClientDataStale();
         /* T79: the discount as the SERVER recorded it (its own spread
          * and Mindbody's totals), never the browser's copy. */
@@ -3971,7 +4102,6 @@ function PaymentPanel(props: {
            leave this ticket in front of the next person in the queue. */
         props.onDisplaySummary({
           ...displaySummaryAtTap,
-          tender: displayTender,
           charged: typeof body?.total === "number" ? body.total : (total ?? 0),
           /* T53's rule, on the student's screen too: only a receipt
              Mindbody CONFIRMED is one this screen promises. */
@@ -3995,7 +4125,6 @@ function PaymentPanel(props: {
            so a scene here never has to lie about the mode. */
         props.onDisplaySummary({
           ...displaySummaryAtTap,
-          tender: displayTender,
           charged: total ?? 0,
           emailedReceipt: null,
         });
@@ -4160,7 +4289,7 @@ function PaymentPanel(props: {
    *  that source's rule: one tap, no typing, for the ordinary whole-sale
    *  case. */
   const addLine = (source: TenderSource) => {
-    if (addReason(source) !== null || charging) return;
+    if (addReason(source) !== null || charging || tenderHeld) return;
     /* T239: a tap that replaces the automatic line pays what that line
      * was paying, the whole total. */
     const replacing = replacesAuto(source);
@@ -4205,6 +4334,7 @@ function PaymentPanel(props: {
   };
 
   const removeLine = (id: number) => {
+    if (tenderHeld) return;
     setLines((cur) => cur.filter((l) => l.id !== id));
     /* T239: taking a line off, the automatic one included, is choosing. */
     touchTender();
@@ -4218,6 +4348,7 @@ function PaymentPanel(props: {
    *  rather than appending to it, and an empty entry on Done means the
    *  line keeps the amount it already had. */
   const openPad = (id: number) => {
+    if (tenderHeld) return;
     /* T239: so is opening a line's amount, on the automatic line too. */
     touchTender();
     setPadFor(id);
@@ -4247,7 +4378,7 @@ function PaymentPanel(props: {
   /** Open the modal for a new gift card. Refused for the same reasons
    *  the tile is greyed, so a keyboard Enter cannot get past them. */
   const openGift = () => {
-    if (addReason("giftcard") !== null || charging) return;
+    if (addReason("giftcard") !== null || charging || tenderHeld) return;
     if (!takeAutoFor("giftcard")) return;
     setGift({
       step: "number",
@@ -4276,7 +4407,7 @@ function PaymentPanel(props: {
   /** Open the modal. Refused for the same reasons the keypad square is
    *  greyed, so a keyboard Enter cannot get past them. */
   const openCardEntry = () => {
-    if (addReason("typedcard") !== null || charging) return;
+    if (addReason("typedcard") !== null || charging || tenderHeld) return;
     if (!takeAutoFor("typedcard")) return;
     setCardEntry(true);
     dismissPad();
@@ -5408,7 +5539,7 @@ function PaymentPanel(props: {
                       className={
                         (off ? "pay-tile off" : "pay-tile") + (inPayment ? " in" : "")
                       }
-                      disabled={off || charging}
+                      disabled={off || charging || tenderHeld}
                       onClick={() =>
                         reopen && s === "cash" && cashLine !== undefined
                           ? openPad(cashLine.id)
@@ -5454,7 +5585,7 @@ function PaymentPanel(props: {
                             ? "pay-keypad on"
                             : "pay-keypad"
                         }
-                        disabled={typedReason !== null || charging}
+                        disabled={typedReason !== null || charging || tenderHeld}
                         onClick={openCardEntry}
                         aria-label="Type a card number for this sale"
                         title={
@@ -5514,7 +5645,7 @@ function PaymentPanel(props: {
                           className={
                             padFor === line.id ? "tender-amt on" : "tender-amt"
                           }
-                          disabled={charging}
+                          disabled={charging || tenderHeld}
                           onClick={() => openPad(line.id)}
                           aria-label={`${sourceLabel(line.source)} amount ${money(line.cents / 100)}, tap to change`}
                           title="Tap to change this amount"
@@ -5523,7 +5654,7 @@ function PaymentPanel(props: {
                         </button>
                         <button
                           className="tender-x"
-                          disabled={charging}
+                          disabled={charging || tenderHeld}
                           onClick={() => removeLine(line.id)}
                           aria-label={`Remove the ${sourceLabel(line.source)} payment`}
                           title="Remove this payment"
@@ -9424,16 +9555,20 @@ export default function SaleScreen(props: {
       return;
     }
     let alive = true;
+    /* T240: when this read began, which is what a refused charge's
+     * reported balance is compared with. */
+    const startedAt = performance.now();
     /* A REFETCH for the same client keeps the numbers it already has on
      * screen while it runs: blanking them would flicker the method row and
      * the balance chip to "loading" right after a sale. A client CHANGE
      * blanks, because the previous client's card is not this one's. */
     setCardLookup((prev) =>
       prev && prev.clientId === clientId
-        ? { ...prev, loading: true, error: null }
+        ? { ...prev, loading: true, startedAt, error: null }
         : {
             clientId,
             loading: true,
+            startedAt,
             card: null,
             balance: null,
             error: null,
@@ -9450,6 +9585,7 @@ export default function SaleScreen(props: {
           setCardLookup({
             clientId,
             loading: false,
+            startedAt,
             card: body?.card ?? null,
             balance: typeof body?.balance === "number" ? body.balance : null,
             error: null,
@@ -9470,6 +9606,7 @@ export default function SaleScreen(props: {
           setCardLookup({
             clientId,
             loading: false,
+            startedAt,
             card: null,
             balance: null,
             error: e instanceof Error ? e.message : String(e),
@@ -10633,6 +10770,12 @@ export default function SaleScreen(props: {
       stopped = true;
     };
   }, [props.open]);
+  /** T240: the tender on the ticket in the customer screen's words, as
+   *  the payment panel last reported it, so the live mirror names how
+   *  the student is paying once a tender is on. */
+  const [liveTenders, setLiveTenders] = useState<TicketTender[] | null>(
+    null,
+  );
   const livePayload =
     cart.length === 0
       ? null
@@ -10644,6 +10787,7 @@ export default function SaleScreen(props: {
           clientName: client?.name ?? null,
           giftCardsCharged,
           giftDiscountOff,
+          tenders: liveTenders,
         });
   const liveKey = livePayload === null ? "" : JSON.stringify(livePayload);
   const mirrorLive = mirror.live;
@@ -12105,6 +12249,7 @@ export default function SaleScreen(props: {
           <PaymentPanel
             customerConfirmsSale={confirmsSale}
             onDisplaySummary={onDisplaySummary}
+            onTenderChange={setLiveTenders}
             cart={cart}
             priced={priced}
             pricing={pricing}
