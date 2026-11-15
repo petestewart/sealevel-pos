@@ -21324,3 +21324,48 @@ screen offered her Card tile (not greyed) for a $3.31 sale and charged it.
   with its badge as before.
 - PLAN P2 (partial credit) still reads "let the floor top it back up"; T82
   already answered it (credit is a split leg), so it was left as it was.
+
+## T239. The Cart screen starts on account credit when it covers the total (Pete, 2026-11-15)
+
+Pete, asked after T238 whether the Cart screen should also start with
+account credit selected when the balance covers the sale, as the roster's
+pay dialog does: "yes". And, on the processor-minimum note in T238's
+review: "this is fine, but note that we are eventually going to implement
+adding a service charge for CC transactions under $10".
+
+### To do
+
+- [ ] When the ticket's client holds an account balance that covers the
+      whole priced total, and the teacher has not chosen a tender yet, the
+      payment surface starts with ONE account-credit line for the whole
+      total, already on the ticket. This is T82's "credit is a tender, not a
+      rule" kept intact: the teacher can take the line off with its X, or
+      pick Card, Cash or any other tender, exactly as with a line they added
+      themselves.
+- [ ] The automatic line follows the ticket while the teacher has not
+      touched the tenders: it tracks the total as lines are added or
+      removed, and it comes off by itself if the total grows past the
+      balance or the client changes. Once the teacher touches any tender
+      (adds, removes, edits an amount), nothing is chosen for them again on
+      that ticket.
+- [ ] It is never added for the house client, for a client with no balance,
+      for a comp, or while a charge or a customer approval is in progress,
+      and it never changes what an outstanding approval was presented for
+      (the approval is over the cart, not the tender, but nothing may move
+      under a sale that is being charged).
+- [ ] The balance it is judged against is the one the screen already reads
+      (`freshBalance`, then the looked-up balance); the server still re-reads
+      the balance at the charge and refuses a credit line above it, as now.
+- [ ] Docs: record Pete's future rule beside T238 wherever the card minimum
+      is now described as retired (design doc "$10 card minimum" section,
+      PLAN.md, CLAUDE.md's T238 note): **a service charge on card
+      transactions under $10 is planned, not built; until it is, a card is
+      charged exactly the sale.** Add it to PLAN.md as an open item with
+      what is not yet decided (the amount, whether it is a Mindbody product
+      line or a fee, whether it applies to the reader, typed cards and the
+      card on file alike, and how it is shown to the student before the
+      tap). Nothing in this ticket builds it.
+- [ ] `tsc --noEmit` and `next build` clean; driven against the fake
+      Mindbody in Chromium: a client whose balance covers a $25 ticket opens
+      Finalize with the account line on it; X takes it off; Card then
+      charges the card; a client whose balance does not cover gets no line.
