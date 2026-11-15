@@ -66,6 +66,9 @@ export default function TicketScene(props: {
     t.tenders !== undefined && t.tenders.length > 0
       ? tenderSentence(t.tenders)
       : null;
+  /* T240 review: a full comp reads "No charge" on its own, never
+   * "Paying by No charge" or "Paid $0.00 by No charge". */
+  const noCharge = paying === "No charge";
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -164,7 +167,9 @@ export default function TicketScene(props: {
       </dl>
 
       {!summary && paying !== null ? (
-        <p className="dticket-tender">Paying by {paying}</p>
+        <p className="dticket-tender">
+          {noCharge ? "No charge" : `Paying by ${paying}`}
+        </p>
       ) : null}
 
       {approve ? (
@@ -193,7 +198,9 @@ export default function TicketScene(props: {
 
       {summary ? (
         <div className="dticket-paid">
-          {t.charged !== undefined ? (
+          {noCharge ? (
+            <p className="dticket-charged">No charge</p>
+          ) : t.charged !== undefined ? (
             <p className="dticket-charged">
               Paid {money(t.charged)}
               {paying !== null ? ` by ${paying}` : ""}

@@ -21602,3 +21602,24 @@ the student tapped Approve needs a second tap from them (or the PIN). (4)
 Gift card tickets still get the automatic Account line, as before, until
 you answer.
 
+
+### Review (2026-11-15)
+
+An independent read-only review found no high-severity defect: the tender
+hashes the same on both sides for every charge shape, tickets without a
+tender hash byte for byte as before, and the server's 409 catches a tender
+that moves after Approve. Two findings fixed in a follow-up commit:
+
+- **A double present in a few-millisecond gap.** `present` cleared its
+  in-flight flag before the next render put the approval in the ref, so a
+  tap in that gap could put the ticket up twice and read "busy" over the
+  teacher's own ticket. Each landing now writes the ref in the same tick
+  (`land` in `src/app/useSaleApproval.ts`).
+- **"Paying by No charge".** A full comp now reads "No charge" alone, on
+  the live ticket, the approval and the summary.
+
+Noted, not changed: the approval binds "Card", not WHICH card (stored or
+typed fold to the same word, by design); the tender stays locked in the
+busy, offline and refused stages until Cancel; a checkout served by an
+older instance mid-deploy would refuse a tender-bound approval (one
+instance on Railway).

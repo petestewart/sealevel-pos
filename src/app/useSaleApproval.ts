@@ -229,6 +229,14 @@ export function useSaleApproval(input: {
     const settle = () => {
       if (gen.current === mine) setPresentingBoth(false);
     };
+    /* T240 review: the approval lands in the ref in the same tick the
+     * presenting flag clears, so a tap in the gap before the next render
+     * cannot pass begin()'s guard and present the ticket a second time
+     * (which the hub would answer busy, over the teacher's own ticket). */
+    const land = (next: ApprovalState | null) => {
+      approvalRef.current = next;
+      setApproval(next);
+    };
     try {
       const res = await fetch("/api/display/present", {
         method: "POST",
@@ -256,13 +264,13 @@ export function useSaleApproval(input: {
           return;
         }
         settle();
-        setApproval({ stage: "waiting", requestId: body.requestId });
+        land({ stage: "waiting", requestId: body.requestId });
         return;
       }
       if (gen.current !== mine) return;
       settle();
       if (body?.reason === "busy") {
-        setApproval({
+        land({
           stage: "busy",
           ...(body?.holdingSignup === true ? { signup: true } : {}),
         });
@@ -289,7 +297,7 @@ export function useSaleApproval(input: {
        *   teacher is never trapped by a refusal they cannot read.
        */
       if (res.status === 401 && body?.reason === "staff") {
-        setApproval(null);
+        land(null);
         setNote(null);
         staffGoneRef.current?.();
         return;
@@ -299,16 +307,16 @@ export function useSaleApproval(input: {
           ? body.error.trim()
           : null;
       if (res.status === 409 || res.status >= 500 || sentence === null) {
-        setApproval({ stage: "offline" });
+        land({ stage: "offline" });
         return;
       }
-      setApproval({ stage: "refused", error: sentence });
+      land({ stage: "refused", error: sentence });
     } catch {
       /* The request never reached the server, so nothing was presented
          and there is nothing to take down. */
       if (gen.current === mine) {
         settle();
-        setApproval({ stage: "offline" });
+        land({ stage: "offline" });
       }
     }
   }, [setPresentingBoth]);
