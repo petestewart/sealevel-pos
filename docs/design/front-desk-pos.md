@@ -289,11 +289,15 @@ a return in Mindbody cannot refund a card it never charged.
 collect a PaymentIntent with `capture_method: manual`, so the student's tap
 places a hold and takes nothing; run the real `checkoutshoppingcart` with the
 custom payment; capture only if that sale stands (T75's total and T103's
-basket assertions included); cancel the hold if it does not. The execution
-plan, with every failure window between those steps, is in `docs/PLAN.md`.
+basket assertions included); cancel the hold if it does not; and if Mindbody
+does not answer at all, keep the hold, read the sale back, and let a human
+decide if the read cannot, since a hold is the one tender that can still go
+either way safely. The execution plan, with every failure window between
+those steps, is in `docs/PLAN.md` Phase 4.
 
-The payment layer was kept behind one interface so this stayed possible; this
-is what it was kept for.
+The seam this needs is the `CheckoutPayment` union in `src/lib/sale.ts`,
+which gains a `Custom` variant; the `payment/` interface sketched elsewhere
+in this document was never built as a module.
 
 ## Shape of the thing
 
@@ -1117,8 +1121,10 @@ account is wired up and enumerate any custom payment types.
 
 **2. What fraction of transactions involve a card not on file?** Answered above:
 0.4% of in-studio sales were swiped, and ~15% of in-studio card sales were a
-client's first-ever purchase, about one a day. Option C is dead; options A and B
-cover the rest.
+client's first-ever purchase, about one a day. Option C was declared dead
+on that count; on 2026-11-15 Pete chose it after teachers reported students
+walking away who could only tap, dip or use a phone wallet, which the count
+could not see. See option C.
 
 **3. Teacher identity. Answered twice (Pete, 2026-09-02): T44 tried a
 shift sign-in from the last four of a teacher's phone; T48 replaced it after

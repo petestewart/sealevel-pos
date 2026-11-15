@@ -40,6 +40,13 @@ own reason. Driven live against site 471 on 2026-11-14 (Cart screen, dummy
 client John NewGuy): 414, 478 and 581 greyed with Mindbody's reasons, a tap
 put nothing on the ticket, Drop In still priced.
 
+**Next (planned 2026-11-15, not started): Phase 4, the studio's own Stripe
+card reader**, so a student can pay by chip, tap, Apple Pay or Google Pay
+at the counter (teachers report lost sales without it). Work items T222 to
+T237 in `docs/PLAN.md`; T222 to T227 reach a working flow on Stripe's
+simulated reader before hardware arrives. Blocked on Pete for the Stripe
+account (P6) and the Mindbody custom payment method (P7).
+
 **`docs/PLAN.md` is the execution plan**: ordered work items, what each one is
 done when, the probes still to run, and the questions blocked on Pete. Start
 there. `docs/design/front-desk-pos.md` carries the reasoning behind every item
