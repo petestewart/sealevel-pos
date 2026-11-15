@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { TicketPayload } from "@/lib/displayticket";
 
-import { presenterId } from "./presenter";
+import { cancelOnDisplay, presenterId } from "./presenter";
 
 /**
  * T203's approval, in ONE place (T209).
@@ -298,7 +298,7 @@ export function useSaleApproval(input: {
              in flight, and the scene now EXISTS on the server. Take it
              back down rather than leaving a student holding a ticket
              nobody is waiting on. */
-          void fetch("/api/display/cancel", { method: "POST" });
+          void cancelOnDisplay();
           return;
         }
         settle();
@@ -307,6 +307,18 @@ export function useSaleApproval(input: {
       }
       if (gen.current !== mine) return;
       settle();
+      /* T241 second review (E): an approval asked again in place had
+       * already ended (the student cancelled, or it went). Nothing is put
+       * up in its place; the teacher reads why and Finalizes again. */
+      if (body?.reason === "gone") {
+        land(null);
+        setNote(
+          typeof body?.error === "string"
+            ? body.error
+            : "The approval ended. Finalize again to ask the customer.",
+        );
+        return;
+      }
       if (body?.reason === "busy") {
         land({
           stage: "busy",
@@ -486,7 +498,7 @@ export function useSaleApproval(input: {
       held.stage === "waiting" ||
       (held.stage === "pin" && held.resume !== undefined);
     if (sceneUp) {
-      lastCancel.current = fetch("/api/display/cancel", { method: "POST" });
+      lastCancel.current = cancelOnDisplay();
       const gone =
         held.stage === "waiting"
           ? held.requestId
@@ -517,11 +529,7 @@ export function useSaleApproval(input: {
     /* T240: the apology is part of the ask; the tender stays locked. */
     setPresentingBoth(true);
     void (async () => {
-      await fetch("/api/display/cancel", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ takenOver: true }),
-      }).catch(() => undefined);
+      await cancelOnDisplay({ takenOver: true }).catch(() => undefined);
       await new Promise((r) => setTimeout(r, 3_000));
       /* T209 review: Cancel during the apology means no ticket goes up.
          Three seconds is long enough to change your mind in, and a

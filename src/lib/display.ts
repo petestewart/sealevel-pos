@@ -351,6 +351,24 @@ const state: HubState = (G.__posDisplay ??= {
 state.streamOpen ??= 0;
 state.lastClosedAt ??= null;
 state.spent ??= new Set<string>();
+/* T241 second review: ticket requests this process has closed
+ * (cancelled, refused, retired, expired), so a checkout can refuse a
+ * student's card whose ticket is over even in a race with its drop. */
+const G2 = globalThis as typeof globalThis & { __posClosedTickets?: Set<string> };
+const closedTickets: Set<string> = (G2.__posClosedTickets ??= new Set<string>());
+function markClosed(requestId: string): void {
+  closedTickets.add(requestId);
+  while (closedTickets.size > MAX_SPENT_IDS) {
+    const oldest = closedTickets.values().next();
+    if (oldest.done) break;
+    closedTickets.delete(oldest.value);
+  }
+}
+/** Whether this process closed `requestId` (cancelled, refused, retired
+ *  or expired). A card typed on it must not be charged. */
+export function displayRequestClosed(requestId: string): boolean {
+  return closedTickets.has(requestId);
+}
 
 /** How many spent ids are remembered. A sign-up lives four hours and a
  *  counter takes a few dozen a day, so this covers a day of them; past
@@ -838,6 +856,7 @@ function expireIfDue(now: number): void {
   if (c !== null && now >= c.expiresAt) {
     state.current = null;
     clearExpiryTimer();
+    markClosed(c.id);
     dropDisplayCard(c.id, "request expired");
     emit("display", "idle", {});
   }
@@ -906,7 +925,7 @@ export async function presentRequest(input: {
       ok: false;
       status: number;
       error: string;
-      reason: "unpaired" | "disconnected" | "busy";
+      reason: "unpaired" | "disconnected" | "busy" | "gone";
       /** T204: true when what holds the screen is a student's own
        *  self-serve sign-up, which is the one case the teacher's screen
        *  words differently ("Someone is signing up on the customer
@@ -938,6 +957,30 @@ export async function presentRequest(input: {
     };
   }
   const held = state.current;
+  /* T241 second review (E): `replaces` asks the approval again IN PLACE
+   * and nothing else. When it no longer names a pending approve ticket
+   * this tab owns (the student cancelled, it was approved, or it went),
+   * there is nothing to re-ask, and presenting a fresh approval here
+   * would put one up that no teacher tapped for. */
+  if (
+    input.kind === "ticket" &&
+    typeof input.replaces === "string" &&
+    !(
+      held !== null &&
+      held.status === "pending" &&
+      held.id === input.replaces &&
+      isApproveTicket(held.kind, held.payload) &&
+      sameTicketOwner(held, input)
+    )
+  ) {
+    return {
+      ok: false,
+      status: 409,
+      reason: "gone",
+      error:
+        "The approval ended before it could be asked again. Finalize again to ask the customer.",
+    };
+  }
   if (held !== null && held.status === "pending") {
     /* T201: the ONE scene that is updated in place rather than completed.
      * A live ticket mirrors a cart the teacher is still building, so a
@@ -1096,8 +1139,17 @@ export async function presentRequest(input: {
  */
 export async function cancelRequest(
   now = Date.now(),
-  opts: { takenOver?: boolean; abandoned?: boolean } = {},
-): Promise<{ cancelled: boolean }> {
+  opts: {
+    takenOver?: boolean;
+    abandoned?: boolean;
+    /** T241 second review (N3): a cancel from a TEACHER's iPad, which
+     *  names its tab. It may not take down a ticket another tab owns,
+     *  except a live mirror on an explicit Take over (the mirror is
+     *  informational; an approval is a student mid-answer and is never
+     *  taken). The hub's own cancels (an abandoned sign-up) pass none. */
+    teacher?: { presenter: string | null; requestId?: string };
+  } = {},
+): Promise<{ cancelled: boolean; foreign?: boolean }> {
   await ensureDisplayLoaded();
   expireIfDue(now);
   const c = state.current;
@@ -1107,12 +1159,30 @@ export async function cancelRequest(
     emit("display", "idle", {});
     return { cancelled: false };
   }
+  if (opts.teacher !== undefined) {
+    /* A cancel for one request (the pagehide cancel) touches no other. */
+    if (
+      opts.teacher.requestId !== undefined &&
+      opts.teacher.requestId !== c.id
+    ) {
+      return { cancelled: false };
+    }
+    const owner = c.kind === "ticket" ? c.private.presenter : undefined;
+    if (typeof owner === "string" && owner !== opts.teacher.presenter) {
+      if (!(opts.takenOver === true && isLiveTicket(c.kind, c.payload))) {
+        return { cancelled: false, foreign: true };
+      }
+      /* Taken over: the owner's mirror is told it is no longer up. */
+      emit("teacher", "ticket-retired", { requestId: c.id, presenter: owner });
+    }
+  }
   c.status = "cancelled";
   c.completedAt = now;
   state.current = null;
   clearExpiryTimer();
   clearAbandonTimer();
   /* T241: the ticket a student's card was typed for is gone. */
+  markClosed(c.id);
   dropDisplayCard(c.id, "request cancelled");
   void boundedDb(
     updateDisplayRequest({
@@ -1226,6 +1296,7 @@ export async function refuseRequest(
   clearAbandonTimer();
   /* T241 review: a student who cancels the approval withdraws the card
    * they typed on it; a PIN-approved charge must not still find it. */
+  markClosed(c.id);
   dropDisplayCard(c.id, "refused by the customer");
   void boundedDb(
     updateDisplayRequest({
@@ -1287,7 +1358,16 @@ function retire(held: DisplayRequest, now: number, why: string): void {
   held.completedAt = now;
   state.current = null;
   clearExpiryTimer();
+  markClosed(held.id);
   dropDisplayCard(held.id, why);
+  /* Second review (N3): not silent to its owner. That tab's mirror is
+   * told it is no longer showing, so it says so and stops believing a
+   * pick or a card on that request could still be its own. */
+  const owner = held.private.presenter;
+  emit("teacher", "ticket-retired", {
+    requestId: held.id,
+    ...(typeof owner === "string" ? { presenter: owner } : {}),
+  });
   void boundedDb(
     updateDisplayRequest({
       id: held.id,

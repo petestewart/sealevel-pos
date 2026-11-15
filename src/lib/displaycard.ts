@@ -52,6 +52,10 @@ interface HeldCard {
   expiresAt: number;
   /** A checkout holds it right now. */
   claimed: boolean;
+  /** Second review (D): it was let go of (the student cancelled, the
+   *  ticket changed or ended) WHILE a checkout held it. The checkout
+   *  settles it either way; a withdrawn card is never handed back. */
+  withdrawn: boolean;
 }
 
 /** A counter holds one ticket at a time; a handful covers a sale that
@@ -128,6 +132,7 @@ export function holdDisplayCard(input: {
     presenter: input.presenter,
     expiresAt: now + input.ttlMs,
     claimed: false,
+    withdrawn: false,
   });
   console.log(
     `[display-card] held for request ${input.requestId}, ending ${lastFour} (memory only)`,
@@ -139,7 +144,13 @@ export function holdDisplayCard(input: {
  *  holding: that one is settled by the checkout. */
 export function dropDisplayCard(requestId: string, why: string): void {
   const held = cards.get(requestId);
-  if (held === undefined || held.claimed) return;
+  if (held === undefined) return;
+  if (held.claimed) {
+    /* Not from under its checkout, but never back to anybody after it. */
+    held.withdrawn = true;
+    console.log(`[display-card] withdrawn for request ${requestId} (${why})`);
+    return;
+  }
   cards.delete(requestId);
   console.log(`[display-card] dropped for request ${requestId} (${why})`);
 }
@@ -149,7 +160,16 @@ export function dropAllDisplayCards(why: string): void {
   for (const id of [...cards.keys()]) dropDisplayCard(id, why);
 }
 
-const GONE =
+/** Why a claim was refused. Every one but `charging` means the card on
+ *  the teacher's line cannot be charged and the student should enter it
+ *  again; `charging` means another checkout has it right now. */
+export type DisplayCardRefusal = "gone" | "elsewhere" | "mismatch" | "charging";
+
+const ELSEWHERE =
+  "The customer's card was entered for a different sale. Ask them to " +
+  "enter it again. Nothing was charged.";
+
+export const DISPLAY_CARD_GONE =
   "The customer's card is no longer held (it is kept for one charge, for " +
   "30 minutes, and not across a restart). Ask them to enter it again. " +
   "Nothing was charged.";
@@ -163,34 +183,50 @@ const GONE =
  */
 export function claimDisplayCard(
   requestId: string,
-  who: { clientId: string; staffId: string; presenter: string },
+  who: {
+    clientId: string;
+    staffId: string;
+    presenter: string;
+    /** Second review (F): the last four the teacher's line shows. A held
+     *  card with any other last four is not the card the teacher is
+     *  about to charge, and is refused. */
+    lastFour: string;
+  },
   now = Date.now(),
-): { ok: true; card: TypedCard } | { ok: false; error: string } {
+):
+  | { ok: true; card: TypedCard }
+  | { ok: false; error: string; code: DisplayCardRefusal } {
   sweepDisplayCards(now);
   const held = cards.get(requestId);
-  if (held === undefined) return { ok: false, error: GONE };
+  if (held === undefined || held.withdrawn) {
+    return { ok: false, error: DISPLAY_CARD_GONE, code: "gone" };
+  }
   if (held.claimed) {
     return {
       ok: false,
+      code: "charging",
       error:
         "The customer's card is already being charged. Nothing more was " +
         "charged.",
     };
   }
-  if (held.clientId !== who.clientId.trim()) {
-    return {
-      ok: false,
-      error:
-        "The customer's card was entered for a different client's ticket. " +
-        "Ask them to enter it again. Nothing was charged.",
-    };
+  /* Second review (G): a different client, teacher or tab is "a
+   * different sale", which is true in every case (another iPad, or the
+   * same iPad after a teacher change), and never "no longer held". */
+  if (
+    held.clientId !== who.clientId.trim() ||
+    held.staffId !== who.staffId ||
+    held.presenter !== who.presenter
+  ) {
+    return { ok: false, error: ELSEWHERE, code: "elsewhere" };
   }
-  if (held.staffId !== who.staffId || held.presenter !== who.presenter) {
+  if (held.lastFour !== who.lastFour) {
     return {
       ok: false,
+      code: "mismatch",
       error:
-        "The customer's card was entered for a ticket on another iPad. " +
-        "Nothing was charged.",
+        "The card the customer entered is not the one on this sale. Ask " +
+        "them to enter it again. Nothing was charged.",
     };
   }
   held.claimed = true;
@@ -202,9 +238,11 @@ export function claimDisplayCard(
 export function settleDisplayCard(requestId: string, spend: boolean): void {
   const held = cards.get(requestId);
   if (held === undefined) return;
-  if (spend) {
+  if (spend || held.withdrawn) {
     cards.delete(requestId);
-    console.log(`[display-card] spent for request ${requestId}`);
+    console.log(
+      `[display-card] ${spend ? "spent" : "let go after its checkout"} for request ${requestId}`,
+    );
     return;
   }
   held.claimed = false;

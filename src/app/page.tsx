@@ -1,5 +1,6 @@
 "use client";
 
+import { cancelOnDisplay } from "./presenter";
 import {
   Suspense,
   type ReactNode,
@@ -4221,7 +4222,7 @@ function FrontDesk({
      * the customer screen takes that scene down with it. Leaving it up
      * would put one student's waiver in front of the next person. */
     if (waiverOnDisplay !== null) {
-      void fetch("/api/display/cancel", { method: "POST" });
+      void cancelOnDisplay();
       setWaiverOnDisplay(null);
     }
     setWaiverDisplayNote(null);
@@ -6082,7 +6083,7 @@ function FrontDesk({
     setWaiverOnDisplay(null);
     setWaiverDisplayNote(null);
     try {
-      await fetch("/api/display/cancel", { method: "POST" });
+      await cancelOnDisplay();
     } catch {
       /* The hub expires it either way. */
     }
@@ -10121,11 +10122,7 @@ function FrontDesk({
                           "Taking the screen over. It goes up in a moment.",
                         );
                         void (async () => {
-                          await fetch("/api/display/cancel", {
-                            method: "POST",
-                            headers: { "content-type": "application/json" },
-                            body: JSON.stringify({ takenOver: true }),
-                          }).catch(() => undefined);
+                          await cancelOnDisplay({ takenOver: true }).catch(() => undefined);
                           await new Promise((r) => setTimeout(r, 3_000));
                           setWaiverDisplayBusy(false);
                           await sendWaiverToDisplay();

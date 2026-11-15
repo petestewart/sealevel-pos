@@ -21927,9 +21927,9 @@ none was a false alarm.
    `--accent-bg`). There is no confirm tap.
 10. **Autocomplete on a shared iPad.** The card form's name and postal
     fields are `autocomplete="off"`; `cc-number` and the expiry are kept
-    for Scan Credit Card. **AutoFill should be turned off in Safari on the
-    display iPad itself** (Settings, Apps, Safari, AutoFill), so the next
-    student is never offered the last one's details.
+    for Scan Credit Card. **Safari AutoFill must be switched off on the
+    display iPad (Settings > Safari > AutoFill)**: that is the only full
+    answer to one student's details being offered to the next.
 
 Nits: `.pick-note` takes a 2px `--rule`, and `.dcard` scrolls within its
 max-height so "Use this card" stays reachable with the keyboard up.
@@ -21969,3 +21969,89 @@ rehearsal included) still spends the card, so a decline costs the student
 one more entry; that is the direction the review asked for. The retired
 stale live ticket is cancelled quietly (no idle pushed), because the new
 iPad's ticket follows at once.
+
+#### Second review (2026-11-15)
+
+A second independent review confirmed 1, 3, 5, 6, 7, 8 and 9 fixed. It
+found the following, all real, all fixed in a further commit:
+
+- **N1, money.** Any unsuccessful answer that spent the card used to show
+  "The customer's card is no longer held. Ask them to enter it again.",
+  including beside an AMBIGUOUS outcome ("It may or may not have gone
+  through"), a sold-nothing and a partial. That invited a second charge
+  after an unknown outcome. The sentence now appears ONLY after a
+  definite outcome that charged nothing:
+  - a refused claim (409 `displaycard`, every `card` code but `charging`);
+  - a 4xx refusal that spent it;
+  - a whole-ticket suppression.
+
+  After no readable answer, a 5xx, ambiguous, sold-nothing, partial or a
+  part-suppressed T90 ticket, the line comes off without a word and the
+  pick's sentence is cleared. No way to pay is offered on the display
+  (`pickHold`, and a pick is refused "The last charge needs checking
+  first.") until the teacher has dismissed that result or the ticket
+  starts over.
+- **N2.** The presenter id is kept in sessionStorage, so a reload or a
+  Safari tab eviction is the same owner and replaces its own ticket in
+  place. Where storage throws, the id is this page load's own. On
+  pagehide, a tab sends a keepalive cancel naming itself and its own live
+  request.
+- **N3.** Every teacher-side cancel now goes through `cancelOnDisplay`,
+  which names the tab. `cancelRequest` makes a cancel of a ticket another
+  tab owns a no-op (`foreign: true`, and no idle pushed), as it does for a
+  cancel naming no tab. The one exception is an explicit Take over of a
+  live mirror; an approval is never taken. A take-over and `retire()`
+  both emit `ticket-retired` to the owner, whose mirror stops believing
+  it is up. **The two-minute retirement is kept:** with a stable id and
+  the pagehide cancel, a reload or a closed tab no longer needs it, but
+  an iPad that dies (battery, crash) sends nothing. Without it, its live
+  ticket would block the other iPad's mirror, approval and the self-serve
+  sign-up for 30 minutes.
+- **D.** A drop that meets a claimed card marks it `withdrawn`, and its
+  settle then deletes it rather than handing it back. A claim refuses a
+  withdrawn card. The checkout also refuses a card whose request this
+  process has closed (cancelled, refused, retired, expired;
+  `displayRequestClosed`).
+- **E.** A present with `replaces` that does not name a pending approve
+  ticket owned by this presenter answers 409 `reason: "gone"`, and the
+  approval hook says "The approval ended before it could be asked again.
+  Finalize again to ask the customer." Nothing is put up.
+- **F.** The Cart screen releases (by request id) every card pick it
+  refuses. The checkout sends the last four the line shows, and the claim
+  refuses any other ("The card the customer entered is not the one on
+  this sale.").
+- **G.** A claim for a different client, teacher or tab reads "The
+  customer's card was entered for a different sale. Ask them to enter it
+  again. Nothing was charged." It is never "no longer held".
+- **10.** As above.
+
+**Driven** (`tsc --noEmit`, `next build` clean; approval off unless
+said):
+
+- A reload kept the presenter. Its pagehide cancel took the old ticket
+  down, and the reloaded tab's ticket went up.
+- Another tab's plain cancel, and a cancel naming no tab, both answered
+  `foreign` with A's ticket still showing.
+- `replaces` naming a non-pending request answered 409 `gone` with
+  nothing presented.
+- A 502 ambiguous answer on the student's card took the line off with no
+  "enter it again" and no pick sentence, beside "may or may not". The
+  display offered no way to pay until the teacher tapped Understood, then
+  did.
+- A card released on the server, then Finalize: the line came off with
+  the server's "no longer held ... Ask them to enter it again."
+- A card typed on the display while the teacher's cash charge was in
+  flight was refused on the teacher's screen and released on the server
+  (`[display-card] dropped ... released by the teacher`). The cash sale
+  went through.
+- Closing the teacher's tab took its live ticket off the display.
+- The claim logic, run directly under Node:
+  - a hold on a claimed card is refused;
+  - a drop during a claim, then a no-write settle, leaves the card gone;
+  - a wrong last four is `mismatch`;
+  - another tab or client is `elsewhere`;
+  - the right claim after a no-write refusal succeeds.
+- The first review's drive and the full T241 drive, off and on, reran
+  with the same results. No server log and no database dump holds the
+  card number.
+

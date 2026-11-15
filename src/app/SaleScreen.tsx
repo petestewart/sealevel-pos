@@ -20,7 +20,7 @@ import { useDisplayMirror } from "./useDisplayMirror";
 import ApprovalWait from "./ApprovalWait";
 import { useSaleApproval } from "./useSaleApproval";
 import { useTenderPick, type TenderPick } from "./useTenderPick";
-import { presenterId } from "./presenter";
+import { cancelOnDisplay, presenterId } from "./presenter";
 import type { TypedCard } from "@/lib/typedcard";
 import {
   TENDER_CHOICES,
@@ -2168,6 +2168,10 @@ function PaymentPanel(props: {
    *  tender words reads the ref; the nonce runs the ask). */
   const pickReask = useRef(false);
   const [reaskNonce, setReaskNonce] = useState(0);
+  /** T241 second review (N1): a charge on the student's card ended with
+   *  an outcome that may have moved money. No way to pay is offered on
+   *  the display until the teacher has dealt with that result. */
+  const [pickHold, setPickHold] = useState(false);
   const touchTender = () => {
     setTenderTouched(true);
     setAutoLineId(null);
@@ -2713,6 +2717,9 @@ function PaymentPanel(props: {
     setFreshBalanceReport(null);
     /* T239: a tender started over is judged afresh. */
     setAutoLineId(null);
+    /* T241 second review: and a new ticket is not held by the last one's
+     * outcome. */
+    setPickHold(false);
     setTenderTouched(false);
     setComp(null);
     setCompCleared(false);
@@ -3729,7 +3736,13 @@ function PaymentPanel(props: {
    * house client's, so `client === null` offers neither the account nor
    * a card on file.
    */
+  /* N1: the hold lifts once the teacher has dismissed the result (or the
+   * ticket starts over). */
+  useEffect(() => {
+    if (result === null) setPickHold(false);
+  }, [result]);
   const choicesFrozen =
+    pickHold ||
     charging ||
     partialLock !== null ||
     (result !== null &&
@@ -3813,6 +3826,7 @@ function PaymentPanel(props: {
       return "This sale is already done.";
     }
     if (partialLock !== null) return "Part of this ticket is already sold.";
+    if (pickHold) return "The last charge needs checking first.";
     if (comped) return "The sale is comped.";
     if (totalCents === null || totalCents <= 0) {
       return "The ticket is still being priced.";
@@ -3896,7 +3910,22 @@ function PaymentPanel(props: {
       requestId === props.mirrorRequestId() ||
       requestId === approvalFlow.requestId(),
     firstName: displayFirstName(client?.name ?? null),
-    apply: applyPick,
+    apply: (pick) => {
+      const refused = applyPick(pick);
+      /* Second review (F): a card pick this screen refuses is a card the
+       * server holds that no line names, or one that replaced the card
+       * the line does name. Released by request id either way; a line
+       * that still names the request then finds nothing at Finalize and
+       * says so, rather than charging a card it does not show. */
+      if (refused !== null && pick.choice === "typedcard") {
+        void fetch("/api/display/card/release", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ requestId: pick.requestId }),
+        }).catch(() => undefined);
+      }
+      return refused;
+    },
   });
   pickReceive.current = tenderPick.receive;
   props.pickInbox.current = tenderPick.receive;
@@ -4031,6 +4060,9 @@ function PaymentPanel(props: {
                         /* T241 review: the card is claimable only from the
                            tab whose ticket it was typed on. */
                         presenter: presenterId(),
+                        /* Second review (F): and only if it is the card
+                           this line names. */
+                        lastFour: typedCard.lastFour,
                       },
                     }
                   : typedCard.card !== null
@@ -4214,14 +4246,51 @@ function PaymentPanel(props: {
        * let go of, or this attempt spent it without a sale), so the line
        * naming it comes off, the student can enter it again ("A different
        * card" stays offered), and the teacher is told in one sentence. */
-      const cardGone =
-        (res.status === 409 && body?.reason === "displaycard") ||
-        (body?.displayCardSpent === true && !(res.ok && body?.ok === true));
-      if (cardGone && typedCard?.displayRequestId !== undefined) {
-        setLines((cur) => cur.filter((l) => l.source !== "typedcard"));
-        tenderPick.say(
-          "The customer's card is no longer held. Ask them to enter it again.",
-        );
+      /* T241 second review (N1): "enter it again" ONLY after a DEFINITE
+       * outcome that charged nothing: the server refused the card itself
+       * (409 `displaycard`, every case but another checkout holding it),
+       * a 4xx refusal that spent it, or a whole-ticket suppression. Never
+       * beside an outcome that may have moved money (no readable answer,
+       * a 5xx, ambiguous, sold-nothing, partial, or a part-suppressed
+       * T90 ticket): there the line comes off without a word, the result
+       * block says what is known, and no way to pay is offered until the
+       * teacher has dealt with it (`choicesFrozen` holds while that
+       * result stands), because a second charge after an unknown outcome
+       * is the thing this app never invites. */
+      if (typedCard?.displayRequestId !== undefined) {
+        const uncertain =
+          body === null ||
+          res.status >= 500 ||
+          body?.ambiguous === true ||
+          body?.soldNothing === true ||
+          body?.partial === true ||
+          (body?.suppressed && typeof body?.summary === "string");
+        const refusedCard =
+          res.status === 409 &&
+          body?.reason === "displaycard" &&
+          body?.card !== "charging";
+        const definite =
+          !uncertain &&
+          (refusedCard ||
+            (body?.displayCardSpent === true &&
+              ((res.status >= 400 && res.status < 500) ||
+                (res.ok && body?.suppressed))));
+        if (definite) {
+          setLines((cur) => cur.filter((l) => l.source !== "typedcard"));
+          tenderPick.say(
+            refusedCard && typeof body?.error === "string"
+              ? body.error
+              : "The customer's card is no longer held. Ask them to enter it again.",
+          );
+        } else if (uncertain) {
+          /* And the pick's own sentence goes, so nothing on screen reads
+           * as an invitation to take the card again. */
+          tenderPick.clear();
+          if (body?.displayCardSpent === true) {
+            setLines((cur) => cur.filter((l) => l.source !== "typedcard"));
+          }
+          setPickHold(true);
+        }
       }
       if (body === null && (res.ok || res.status >= 500)) {
         /* A 200 whose body could not be read, or a 500-class answer with
@@ -8349,7 +8418,7 @@ function ContractDialog(props: {
                     setSign(null);
                     setSignNote(null);
                     if (sign.stage === "waiting") {
-                      void fetch("/api/display/cancel", { method: "POST" });
+                      void cancelOnDisplay();
                     }
                   }}
                 >
@@ -8377,11 +8446,7 @@ function ContractDialog(props: {
                          somebody else's membership. */
                       setWaitingForScreen(false);
                       void (async () => {
-                        await fetch("/api/display/cancel", {
-                          method: "POST",
-                          headers: { "content-type": "application/json" },
-                          body: JSON.stringify({ takenOver: true }),
-                        }).catch(() => undefined);
+                        await cancelOnDisplay({ takenOver: true }).catch(() => undefined);
                         await new Promise((r) => setTimeout(r, 3_000));
                         await presentContract();
                       })();

@@ -78,8 +78,13 @@ import {
   type ResolvedSubstitute,
 } from "@/lib/substitute";
 import { beginIdempotent } from "@/lib/idemstore";
-import { claimDisplayCard, settleDisplayCard } from "@/lib/displaycard";
+import {
+  DISPLAY_CARD_GONE,
+  claimDisplayCard,
+  settleDisplayCard,
+} from "@/lib/displaycard";
 import { traceMindbody } from "@/lib/mbtrace";
+import { displayRequestClosed } from "@/lib/display";
 import {
   parsePromotionCode,
   promotionRefusal,
@@ -476,7 +481,10 @@ function parseSplitLeg(raw: unknown): SplitLeg | string {
  */
 function readDisplayCardRef(
   payload: unknown,
-): { requestId: string; presenter: string } | { error: string } | null {
+):
+  | { requestId: string; presenter: string; lastFour: string }
+  | { error: string }
+  | null {
   const body = (payload ?? {}) as Record<string, unknown>;
   const ref = body["displayCard"];
   if (ref === undefined || ref === null) return null;
@@ -496,9 +504,11 @@ function readDisplayCardRef(
     };
   }
   const presenter = (ref as { presenter?: unknown })?.presenter;
+  const lastFour = (ref as { lastFour?: unknown })?.lastFour;
   return {
     requestId: requestId.trim(),
     presenter: typeof presenter === "string" ? presenter : "",
+    lastFour: typeof lastFour === "string" ? lastFour : "",
   };
 }
 
@@ -559,15 +569,22 @@ export async function POST(request: Request) {
   const displayCard = displayRef;
   let charged = payload;
   if (displayCard !== null) {
-    const claim = claimDisplayCard(displayCard.requestId, {
-      clientId: typeof payload?.clientId === "string" ? payload.clientId : "",
-      staffId: String(session.staffId),
-      presenter: displayCard.presenter,
-    });
+    /* Second review (D): a ticket this process closed (cancelled,
+     * refused, retired, expired) takes its card with it, whatever race
+     * its drop lost. */
+    const claim = displayRequestClosed(displayCard.requestId)
+      ? ({ ok: false, error: DISPLAY_CARD_GONE, code: "gone" } as const)
+      : claimDisplayCard(displayCard.requestId, {
+          clientId:
+            typeof payload?.clientId === "string" ? payload.clientId : "",
+          staffId: String(session.staffId),
+          presenter: displayCard.presenter,
+          lastFour: displayCard.lastFour,
+        });
     if (!claim.ok) {
       return gate.record(
         NextResponse.json(
-          { error: claim.error, reason: "displaycard" },
+          { error: claim.error, reason: "displaycard", card: claim.code },
           { status: 409 },
         ),
       );

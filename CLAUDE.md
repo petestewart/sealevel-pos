@@ -700,18 +700,28 @@ runs `useVisualViewport`), posting to `POST /api/display/card`, which
 validates with `parseTypedCard` and holds it in `src/lib/displaycard.ts`:
 memory only. **It belongs to the client, the teacher and the TAB whose
 ticket it was typed on** (T241 review): every ticket present carries a
-per-tab presenter id (`src/app/presenter.ts`) on the request's
-server-only half beside the staff id, another tab's present no longer
-takes over a live ticket in place (it is "busy", unless that ticket has
-gone two minutes without a present, a closed tab, when it is retired),
-a pick goes only to the tab whose ticket it was, and the checkout's claim
-checks the client, the staff session and the presenter. It is
+per-tab presenter id (`src/app/presenter.ts`, kept in sessionStorage so
+a reload or a tab eviction is still the same owner) on the request's
+server-only half beside the staff id. Another tab's present no longer
+takes over a live ticket in place (it is "busy"). A ticket that has gone
+two minutes without a present is retired, which is kept for an iPad that
+died without saying so; the owner is told (`ticket-retired`). A pick
+goes only to the tab whose ticket it was. The checkout's claim checks
+the client, the staff session, the presenter and the last four the
+teacher's line shows ("for a different sale" otherwise). **Every
+teacher-side cancel names its tab** (`cancelOnDisplay`), and the hub
+refuses, as a no-op, a cancel of a ticket another tab owns, except a
+live mirror on an explicit Take over (an approval is never taken). A
+tab leaving (pagehide) cancels its own live ticket with a keepalive
+request naming it. It is
 **released** on the approval's 30 minutes (a timer sweeps, so a closed
 tab cannot leave it in memory), on cancel, on the student's own Cancel
 of the approval, on expiry, unpair, a present that changes the lines,
 name or client, and the teacher's `/api/display/card/release` when the
-line leaves the tender; a claimed card is never replaced, evicted or
-dropped from under its checkout. The teacher hears the last four only;
+line leaves the tender, or the teacher's screen refuses the student's
+card pick; a claimed card is never replaced, evicted or dropped from
+under its checkout, and a drop while claimed marks it withdrawn so it
+is never handed back. The teacher hears the last four only;
 `/api/checkout` takes `displayCard: {requestId, presenter}` on the single
 `typedcard` shape BELOW T113's gate, claims it for one checkout, charges
 it as T93's `typedCard` under the teacher's token (dry run, write guard,
@@ -720,17 +730,25 @@ T75, T103, T240's binding unchanged; the word is still "Card"), and
 (`src/lib/mbtrace.ts` counts non-GET calls inside the checkout; a
 suppressed write counts), keeping it only for a refusal that provably
 asked nothing. An answer that spent it says `displayCardSpent`, and a
-gone card is a 409 `reason: "displaycard"`; either takes the teacher's
-line off with "The customer's card is no longer held. Ask them to enter
-it again.", and "A different card" stays offered while a typed card is
-the tender. For 1.5 seconds after a pick moves the tender, the charge
+refused claim is a 409 `reason: "displaycard"` with a `card` code. **"Ask
+them to enter it again" is shown ONLY after a definite outcome that
+charged nothing**: a refused claim (other than another checkout holding
+it), a 4xx refusal, or a whole-ticket suppression. After an outcome that
+may have moved money (no readable answer, a 5xx, ambiguous, sold
+nothing, partial, a part-suppressed T90 ticket) the line comes off
+without a word and no way to pay is offered on the display until the
+teacher has dismissed that result. "A different card" stays offered
+while a typed card is the tender, and choices are offered on an empty
+tender too. For 1.5 seconds after a pick moves the tender, the charge
 control ignores taps with the sentence highlighted (`settling` on
 `useTenderPick`), so a teacher never charges a method they have not
 seen. An approve ticket's Approve names the scene's version, so a tap
 on a ticket since replaced in place is refused. "Save this card for next
 time", unticked, is T93's keep on file, offered only with a client
-attached; the form's name and postal fields have autocomplete off
-(AutoFill should be off on the display iPad). The teacher's own
+attached; the form's name and postal fields have autocomplete off,
+and **Safari AutoFill must be switched off on the display iPad
+(Settings > Safari > AutoFill)**, which is the only full answer to one
+student's details being offered to the next. The teacher's own
 typed-card modal is unchanged.
 
 **A student can sign themselves up** (T204, Phase 2.5 item 5). The idle

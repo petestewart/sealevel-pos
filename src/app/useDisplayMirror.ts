@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { TicketPayload } from "@/lib/displayticket";
 
-import { presenterId } from "./presenter";
+import { cancelOnDisplay, presenterId } from "./presenter";
 
 /**
  * The teacher's half of the ticket scene (T201, Phase 2.5 item 2).
@@ -113,13 +113,32 @@ export function useDisplayMirror(
         /* An unreadable pick is no pick. */
       }
     };
+    /* T241 second review (N3): another tab took this tab's live ticket
+     * over (Take over, or a stale ticket retired), so it is no longer up:
+     * the next priced change presents again, and meets "busy" if the
+     * other tab still holds the screen. */
+    const retired = (ev: Event) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as {
+          requestId?: unknown;
+        };
+        if (data.requestId !== liveId.current) return;
+        liveId.current = null;
+        up.current = false;
+        setShowing(false);
+      } catch {
+        /* An unreadable event changes nothing. */
+      }
+    };
     source.addEventListener("connected", on);
     source.addEventListener("disconnected", off);
     source.addEventListener("tender-pick", pick);
+    source.addEventListener("ticket-retired", retired);
     return () => {
       source?.removeEventListener("connected", on);
       source?.removeEventListener("disconnected", off);
       source?.removeEventListener("tender-pick", pick);
+      source?.removeEventListener("ticket-retired", retired);
       source?.close();
     };
   }, []);
@@ -151,7 +170,7 @@ export function useDisplayMirror(
         up.current = false;
         liveId.current = null;
         if (alive.current) setShowing(false);
-        await fetch("/api/display/cancel", { method: "POST" });
+        await cancelOnDisplay();
         return;
       }
       const res = await fetch("/api/display/present", {
@@ -261,6 +280,26 @@ export function useDisplayMirror(
     },
     [connected, post],
   );
+
+  /* T241 second review (N2): a tab that goes away (closed, reloaded,
+   * evicted) takes its own live ticket off the student's screen on the
+   * way out, best effort: a keepalive cancel naming this tab and that
+   * request, so it can never take down another tab's. A reload comes
+   * back as the same presenter (sessionStorage) and simply presents
+   * again. */
+  useEffect(() => {
+    const leave = () => {
+      const rid = liveId.current;
+      if (rid === null) return;
+      liveId.current = null;
+      up.current = false;
+      void cancelOnDisplay({ requestId: rid, keepalive: true }).catch(
+        () => undefined,
+      );
+    };
+    window.addEventListener("pagehide", leave);
+    return () => window.removeEventListener("pagehide", leave);
+  }, []);
 
   const requestId = useCallback(() => liveId.current, []);
 
