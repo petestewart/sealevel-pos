@@ -69,8 +69,8 @@ import OverrideDialog, {
  * availability (card on file, balance covering the total), and the Charge
  * button POSTs /api/checkout, the one route that moves money -- always
  * from an explicit tap, always pessimistic, with suppression, failure,
- * the under-$10 split failure and an unanswered write each rendered as
- * exactly what they are. The whole payment area still lives behind the
+ * a partial ticket and an unanswered write each rendered as exactly what
+ * they are. The whole payment area still lives behind the
  * <PaymentPanel> boundary, apart from the cart and the pricing loop.
  *
  * Pricing is live and pessimistic: every cart change debounces ~400ms and
@@ -1602,11 +1602,6 @@ interface TenderLine {
   cents: number;
 }
 
-/** Keep in sync with src/lib/sale.ts CARD_MINIMUM_USD. The server
- *  refuses a card leg under it regardless; this mirror only lets the
- *  Charge button grey with the reason instead of a round trip. */
-const CARD_MINIMUM_USD = 10;
-
 /** What the last Charge tap came back as. Every shape here is an HONEST
  *  outcome: suppression is amber and never a receipt, a split failure is
  *  a stop block, an unanswered write says it may have gone through. */
@@ -1656,7 +1651,6 @@ type ChargeResult =
      cart by its own client id). Null on the ordinary whole-ticket
      suppression. */
   | { kind: "suppressed"; mode: string; summary?: string | null }
-  | { kind: "split"; message: string; mindbody: string }
   /* T95: some of the ticket went out and some did not, and the route's
      sentence says exactly which. Its own kind because the one thing that
      must not happen next is a second tap on Finalize Sale.
@@ -1982,10 +1976,11 @@ function PaymentPanel(props: {
    * A charge finished in a state that may have moved money, so everything
    * this screen shows about the client (credit above all, and the roster
    * underneath) is now a stale snapshot. Fired for a completed sale, for
-   * the credit-purchased split failure, and for an ambiguous outcome --
-   * never for a definite refusal or a suppressed write, where nothing
-   * changed. Re-reading is the honest move in all three: it is a read,
-   * and it cannot make a wrong number righter than the truth.
+   * a ticket that took money (partial, or sold nothing), and for an
+   * ambiguous outcome -- never for a definite refusal or a suppressed
+   * write, where nothing changed. Re-reading is the honest move in each:
+   * it is a read, and it cannot make a wrong number righter than the
+   * truth.
    */
   onClientDataStale: () => void;
   /** Mirrors the in-flight charge up to SaleScreen so ambient Escape
@@ -2469,10 +2464,9 @@ function PaymentPanel(props: {
   const total =
     cartTotal === null ? null : roundToCents(cartTotal + giftCardsCharged);
 
-  /** A fresher balance than the attach snapshot, learned from a split
-   *  failure's report: it is what lets Account credit light up so the
-   *  honest retry (spend the credit that now exists) is available while
-   *  the dangerous one (buy it again) is not. */
+  /** A fresher balance than the attach snapshot, learned from a
+   *  refusal that named the live balance (a credit line over it), so the
+   *  Account tile reflects what Mindbody said at the charge. */
   const [freshBalance, setFreshBalance] = useState<number | null>(null);
 
   const card = cardLookup?.card ?? null;
@@ -2485,20 +2479,11 @@ function PaymentPanel(props: {
       : null;
   const balance = freshBalance ?? lookedUpBalance ?? client?.balance ?? null;
   /* T82: credit is a tender like any other, so a balance that covers the
-   * total no longer refuses the card (rule 1 and assumption P2 are
-   * retired: "Credit should be an option, not forced"). This survives for
-   * the ONE card sale that would BUY credit -- a total under the $10 card
-   * minimum goes out as a $10 credit purchase plus a debit -- where
-   * credit that already covers the total must be spent instead of adding
-   * a second $10. The attach snapshot (or a split failure's fresher
-   * report) gates the button; /api/checkout re-reads the balance
-   * server-side and never trusts this number. */
-  const cardWouldBuyCredit =
-    balance !== null &&
-    total !== null &&
-    total < CARD_MINIMUM_USD &&
-    balance >= total;
-  const spendCreditFirst = `Spend the ${money(balance ?? 0)} on account: a card sale under $${CARD_MINIMUM_USD} would buy more credit`;
+   * total never refuses the card (rule 1 and assumption P2 are retired:
+   * "Credit should be an option, not forced"). T238 removed the last
+   * exception, the under-$10 card sale that bought $10 of credit: a card
+   * is now charged what it pays, however small, so the card is offered
+   * beside the balance for every total. */
 
   const totalCents = total === null ? null : Math.round(total * 100);
   const balanceCents = balance === null ? null : Math.round(balance * 100);
@@ -2779,19 +2764,18 @@ function PaymentPanel(props: {
 
   /**
    * T95: each part of a gift card ticket is its own Mindbody sale and so
-   * its own card charge, which is what the $10 floor is measured against
-   * (assumption P4's reading). The server refuses a part under it; this
-   * mirror only lets the tile grey with the reason instead of a round
-   * trip.
+   * its own card charge, for exactly what that part costs (T238: no card
+   * floor). The server refuses a part that would charge the card
+   * nothing; this mirror only lets the tile grey with the reason instead
+   * of a round trip.
    */
   const giftCardParts: number[] = [
     ...(saleLines.length > 0 && cartTotal !== null ? [cartTotal] : []),
-    /* T102: what each card is CHARGED, since that is the authorization
-     * the $10 floor is measured against. */
+    /* T102: what each card is CHARGED, since that is the authorization. */
     ...armedParts.cardCharges,
   ];
-  const giftShortPart = hasGiftCard
-    ? giftCardParts.find((part) => part < CARD_MINIMUM_USD)
+  const giftEmptyPart = hasGiftCard
+    ? giftCardParts.find((part) => Math.round(part * 100) <= 0)
     : undefined;
 
   /* Source availability. An unavailable source renders greyed WITH the
@@ -2907,12 +2891,8 @@ function PaymentPanel(props: {
    * client" rather than absent, which is T35's rule for every other
    * source.
    *
-   * The split-failure seam keeps it up with no client too: a $10 credit
-   * purchase certainly went through, and if the balance read that
-   * followed it failed, hiding the honest retry is the worst outcome on
-   * that screen.
    */
-  const creditVisible = Boolean(client) || result?.kind === "split";
+  const creditVisible = Boolean(client);
 
   /* A source that is no longer on screen must not stay in the tender:
    * credit can vanish under the teacher (the post-sale profile refetch
@@ -3082,8 +3062,8 @@ function PaymentPanel(props: {
       if (lines.length >= 1) {
         return "One tender only while a gift card is on the ticket";
       }
-      if (source === "storedcard" && giftShortPart !== undefined) {
-        return `A gift card is its own sale, so ${money(giftShortPart)} would go on the card alone, under the $${CARD_MINIMUM_USD} minimum`;
+      if (source === "storedcard" && giftEmptyPart !== undefined) {
+        return `A gift card is its own sale, so a ${money(giftEmptyPart)} part would go on the card alone`;
       }
     }
     /* T38: while the ticket shows the browser's estimate the sources
@@ -3101,11 +3081,10 @@ function PaymentPanel(props: {
      * RECIPIENT, and a typed card pays every one of them, authorized once
      * per cart. It is NOT greyed here; the line under the tender says how
      * many times the card will be charged and for what, and /api/checkout
-     * refuses before any charge if a cart is under the $10 floor. */
+     * refuses before any charge if a cart comes to nothing. */
     /* T93: one card leg at a time. A stored card and a typed card in the
      * same payment would be two card charges in one sale, which nobody
-     * asked for and which the $10-per-leg floor makes worse; greyed WITH
-     * the reason, as every other refusal here is. */
+     * asked for; greyed WITH the reason, as every other refusal here is. */
     if (source === "typedcard" && usedSources.has("storedcard")) {
       return "Already paying by card";
     }
@@ -3114,14 +3093,6 @@ function PaymentPanel(props: {
     if (source === "storedcard") {
       if (usedSources.has("typedcard")) return "Already paying by card";
       if (cardReason !== null) return cardReason;
-      /* T82: the under-$10 guard, not rule 1. A whole-sale card payment
-       * (the card as the first and therefore only line) under the $10
-       * minimum buys $10 of credit on the way, which /api/checkout
-       * refuses outright when the account already holds enough; greyed
-       * with that reason beats a certain 409. A split's card leg cannot
-       * reach the credit purchase (the server refuses a leg under the
-       * minimum), so it is not asked here. */
-      if (lines.length === 0 && cardWouldBuyCredit) return spendCreditFirst;
     }
     return null;
   };
@@ -3184,43 +3155,30 @@ function PaymentPanel(props: {
        * the card. Refused rather than charged on a card this render does
        * not hold. */
       if (typedCard === null) return "Enter the card again";
-      /* The $10 floor is a card-processing floor, so it applies to a
-       * typed card whether it is the whole sale or one leg: unlike the
-       * stored card there is no credit-purchase path under it, and
-       * /api/checkout refuses it outright. */
-      if (covered < CARD_MINIMUM_USD * 100) {
-        return `A card payment is under the $${CARD_MINIMUM_USD} card minimum`;
-      }
-      /* T93 review: on a T90 ticket the card is authorized once per
-       * Mindbody cart, so the floor is each CART's. /api/checkout refuses
-       * before any charge; this says so first, with Mindbody's own figure
-       * for the cart that is short. */
-      const shortCart = (priced?.carts ?? []).find(
-        (c) => c.grandTotal !== null && c.grandTotal * 100 < CARD_MINIMUM_USD * 100,
+      /* T238: a typed card is charged what it covers, however small,
+       * whole sale or one leg. On a T90 ticket it is authorized once per
+       * Mindbody cart, and a cart that comes to nothing cannot be a card
+       * charge: /api/checkout refuses before any charge, and this says
+       * so first, with Mindbody's own figure for that cart. */
+      const emptyCart = (priced?.carts ?? []).find(
+        (c) => c.grandTotal !== null && Math.round(c.grandTotal * 100) <= 0,
       );
-      if (shortCart !== undefined) {
+      if (emptyCart !== undefined) {
         const who =
-          shortCart.forClientId === null
+          emptyCart.forClientId === null
             ? client
               ? client.name
               : "this sale"
-            : (cart.find((l) => l.forClient?.id === shortCart.forClientId)
+            : (cart.find((l) => l.forClient?.id === emptyCart.forClientId)
                 ?.forClient?.name ?? "another client");
-        return `The cart for ${who} is ${money(shortCart.grandTotal ?? 0)}, under the $${CARD_MINIMUM_USD} card minimum`;
+        return `The cart for ${who} comes to ${money(emptyCart.grandTotal ?? 0)}, so the card would be charged nothing for it`;
       }
       return null;
     }
     if (line.source === "storedcard") {
+      /* T238: no card floor, whole sale or split leg; the card is
+       * charged what it covers. */
       if (cardReason !== null) return cardReason;
-      /* T82's under-$10 guard again, for a card that has BECOME the whole
-       * sale (the other line was removed under it). */
-      if (lines.length === 1 && cardWouldBuyCredit) return spendCreditFirst;
-      /* The $10 minimum bites on a card LEG of a split, which the server
-       * refuses outright; a whole-sale card under $10 is fine, since that
-       * is PLAN 2.3's credit-purchase path. */
-      if (lines.length === 2 && covered < CARD_MINIMUM_USD * 100) {
-        return `The card leg is under the $${CARD_MINIMUM_USD} card minimum`;
-      }
       return null;
     }
     return null;
@@ -3874,9 +3832,6 @@ function PaymentPanel(props: {
                       : "Mindbody did not confirm it."
                   }`
               : null,
-            body?.creditPurchased
-              ? `Includes a ${money(body.creditPurchased)} account balance purchase (card minimum); the unspent remainder stays on their account.`
-              : null,
             /* T220: the code and what Mindbody took off for it, in the
                server's words; the code is spent now. */
             typeof body?.promotion?.code === "string"
@@ -3923,28 +3878,6 @@ function PaymentPanel(props: {
           tender: displayTender,
           charged: total ?? 0,
           emailedReceipt: null,
-        });
-      } else if (body?.stage === "checkout-after-credit") {
-        /* THE seam, rendered verbatim and prominent: the credit exists,
-         * the sale does not, and the credit step must not run again. The
-         * tender is CLEARED so a bare re-tap of Charge is impossible,
-         * and the fresh balance lets Credit light up: the honest retry
-         * is spending the credit that now exists, never re-buying it, so
-         * there is no retry affordance on the credit step. */
-        resetTender();
-        /* The credit purchase went through: their balance really did
-         * change, whatever happened to the checkout after it. */
-        onClientDataStale();
-        setResult({
-          kind: "split",
-          message:
-            `The $10 credit purchase succeeded; the checkout failed; ` +
-            `their balance is now ${
-              typeof body?.creditBalance === "number"
-                ? money(body.creditBalance)
-                : "unknown (Mindbody did not answer the balance read)"
-            }; do NOT re-run the credit step.`,
-          mindbody: String(body?.error ?? "no reason returned"),
         });
       } else if (body?.soldNothing === true) {
         /* T103: Mindbody took the payment and the sale holds nothing
@@ -5537,17 +5470,6 @@ function PaymentPanel(props: {
                     onClick={() => setResult(null)}
                   >
                     OK
-                  </button>
-                </div>
-              ) : result?.kind === "split" ? (
-                <div className="sale-stop pay-split" role="alert">
-                  <p className="pay-split-head">{result.message}</p>
-                  <p className="pay-split-why">Mindbody said: {result.mindbody}</p>
-                  <button
-                    className="class-change pay-dismiss"
-                    onClick={() => setResult(null)}
-                  >
-                    Understood
                   </button>
                 </div>
               ) : result?.kind === "partial" ? (

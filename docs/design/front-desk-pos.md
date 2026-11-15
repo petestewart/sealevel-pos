@@ -579,10 +579,29 @@ Three details from the live response worth keeping:
   taxed. That back-solved pricing is itself a useful signal, since an odd price
   like $2.72 or $1.81 is evidence the studio worked backwards from a round
   charged total, and `2.72 x 1.1035 = 3.00` exactly.
-- **"CC purchase under $10" (-13)** is the card-minimum policy, and it is live.
-  It gets its own section below.
+- **"CC purchase under $10" (-13)** is the card-minimum policy. It was live
+  when this was written and is retired since 2026-11-15 (T238); the section
+  below says why it existed and what replaced it.
 
 ## The $10 card minimum
+
+**Superseded, 2026-11-15 (T238).** Pete, told the counter still refused to
+run a card for less than $10 and bought $10 of account credit instead: "oh we
+need to change this, that is an old policy! ... change it so any amount can be
+charged." So a card (stored, typed, a split's card leg, each cart of a
+typed-card ticket, and the Phase 4 reader) is now charged exactly what it
+pays, however small, in ONE `checkoutshoppingcart`. No card sale buys account
+credit, the two-call path and its failure seam below are gone from the code,
+and only a card charge of nothing (zero or less) is refused. Rule 1 was
+already retired by T82 ("Credit should be an option, not forced"); what is
+left of it is a suggestion in the roster's "Pay and check in" dialog, which
+still defaults to a balance that covers the total but offers the card beside
+it. The Cart screen has never armed credit on its own since T82. PLAN's P4
+(before or after tax) is moot and P10 (does it apply to the reader) is
+answered: no. The rest of this section is kept as the reasoning of record for
+why the floor existed and why `purchaseaccountcredit` was ever on a card path;
+`purchaseCredit` in `src/lib/sale.ts` stays, unreached, because Phase 4's gift
+card on the reader (PLAN T232) may want a credit-then-spend path again.
 
 The studio does not put a card through for less than $10. Under that, the card
 is charged $10 and the difference lands on the student's account as credit,
@@ -771,8 +790,8 @@ made today, at the drop-in price. Note this ties to the visit, not the class, so
 a student who drops in twice in one day is an edge case worth deciding on
 rather than discovering.
 
-All three prices sit above the $10 card minimum, so the payment paths above
-apply unchanged.
+All three prices sit above the old $10 card minimum (retired by T238), so
+the payment paths above apply unchanged either way.
 
 ## Everything on account: what shows when a student comes up
 
@@ -934,10 +953,11 @@ against live student data and, later, live cards.
 **Phase 2 — sales.** Cart, catalog with the hardcoded categories, and a payment
 chooser covering stored card, account credit, cash, gift card and comp, with
 balances read before each is offered and account credit defaulted whenever it
-covers the sale. **The $10 card minimum is part of this phase, not a refinement
-of it**: a chooser that can charge a card is incomplete until it handles the
-floor automatically, and the rule creates the account credit that the default
-above then spends. Priced at the in-studio rate, with
+covers the sale. **The $10 card minimum was part of this phase, not a refinement
+of it**: a chooser that can charge a card was incomplete until it handled the
+floor automatically, and the rule created the account credit that the default
+above then spent. (Retired 2026-11-15 by T238: a card is charged any amount.)
+Priced at the in-studio rate, with
 `LocationId` and `InStore` set so the server agrees with the screen. Receipt by
 email through Mindbody.
 

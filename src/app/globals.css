@@ -5969,6 +5969,27 @@ textarea.reason-note-field:disabled::placeholder {
   font-size: 17px;
 }
 
+/* T238: the other tender, when the balance and the card can both pay. */
+.pay-method-switch {
+  width: 100%;
+  min-height: 64px;
+  margin: 8px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.pay-method-switch:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.pay-method-switch:disabled {
+  color: var(--muted);
+}
+
 .pay-cash-note {
   margin: 0 0 16px;
   font-size: 16px;

@@ -398,7 +398,6 @@ type PayOutcome =
      charge. The gesture stops here, so nothing is attached and nobody is
      checked in on a pass that does not exist. */
   | { kind: "sold-nothing"; message: string }
-  | { kind: "split"; message: string; mindbody: string }
   | { kind: "attach-failed"; message: string }
   | { kind: "checkin-failed" };
 
@@ -1298,6 +1297,10 @@ function FrontDesk({
   } | null>(null);
   const [payPromoDraft, setPayPromoDraft] = useState("");
   const [payPromoNote, setPayPromoNote] = useState<string | null>(null);
+  /** T238: the teacher chose the card on file over a balance that
+   *  covers the total. Credit is this dialog's default, never its rule,
+   *  so the card is one tap away beside it. Reset per open. */
+  const [payUseCard, setPayUseCard] = useState(false);
   const [payPriceError, setPayPriceError] = useState<string | null>(null);
   /** Stale-response guard for the dialog's profile fetch: bumped on
    *  every open and close, the waiverGen pattern. */
@@ -3700,6 +3703,7 @@ function FrontDesk({
       setPayPromoCode(null);
       setPayPromoDraft("");
       setPayPromoNote(null);
+      setPayUseCard(false);
       setPayDialog({ entry, classId: activeId, flavor });
       if (profile) {
         setPayProfile(profile);
@@ -3787,6 +3791,7 @@ function FrontDesk({
     setPayPromoCode(null);
     setPayPromoDraft("");
     setPayPromoNote(null);
+    setPayUseCard(false);
   }, [payStage, cancelPayApproval]);
 
   /**
@@ -6487,22 +6492,28 @@ function FrontDesk({
       : null;
   const payBalance = payProfile?.balance ?? payDialog?.entry.balance ?? null;
   const payCard = payProfile?.card ?? null;
-  /* T24's method rules, applied without a chooser: when credit covers
-   * the total, credit IS the method here; otherwise a live card on
-   * file. No cash here: this dialog is one primary action, and a cash
-   * sale has a whole screen. T82 retired rule 1, so the server no
-   * longer refuses a card that credit could have covered (the store's
-   * pay screen offers the choice Pete asked for). This dialog's
-   * preference for credit is now ITS OWN, not the server's: it has no
-   * tender chooser to offer, and spending a balance before a card is
-   * the right default for a one-tap sale. */
+  /* T24's method rules: when credit covers the total, credit is the
+   * DEFAULT here; otherwise a live card on file. No cash here: this
+   * dialog is one primary action, and a cash sale has a whole screen.
+   * T82 retired rule 1, so the server never refuses a card that credit
+   * could have covered, and T238 retired the $10 card floor, so the card
+   * is charged what the pass costs, however small. Spending a balance
+   * first is this dialog's own suggestion (so balances the old floor
+   * left behind get used), never a rule: with a live card on file the
+   * card is offered beside it (`payUseCard`), one tap away. */
   const payCreditCovers =
     payBalance !== null && payTotal !== null && payBalance >= payTotal;
-  const payMethod: "credit" | "storedcard" | null = payCreditCovers
-    ? "credit"
-    : payProfile && !payProfile.loading && payCard && !payCard.expired
-      ? "storedcard"
-      : null;
+  const payCardLive = Boolean(
+    payProfile && !payProfile.loading && payCard && !payCard.expired,
+  );
+  const payMethod: "credit" | "storedcard" | null =
+    payCreditCovers && !(payUseCard && payCardLive)
+      ? "credit"
+      : payCardLive
+        ? "storedcard"
+        : null;
+  /** T238: both tenders can pay, so the dialog offers the other one. */
+  const payCanSwitchMethod = payCreditCovers && payCardLive;
   /* The one-line reason there is nothing to charge with, greyed and
    * shown rather than hidden (T24's posture). */
   const payMethodReason =
@@ -6634,38 +6645,6 @@ function FrontDesk({
         return;
       }
       if (!(chargeRes.ok && chargeBody?.ok === true)) {
-        if (chargeBody?.stage === "checkout-after-credit") {
-          /* T24's seam, surfaced with the same discipline: the $10
-           * credit exists, the sale did not complete (or, when the route
-           * flagged the checkout ambiguous, MAY not have), and the
-           * credit step must not run again. This dialog offers no path
-           * that could -- and when the sale's own outcome is unknown,
-           * the message must not assert it failed, or the teacher
-           * re-sells a pass that may already exist. */
-          const saleVerdict =
-            chargeBody?.ambiguous === true
-              ? "the pass sale may or may not have completed, so check the " +
-                "dev drawer or Mindbody before selling again"
-              : "the pass sale failed";
-          setPayOutcome({
-            kind: "split",
-            message:
-              `The $10 credit purchase succeeded; ${saleVerdict}; ` +
-              `their balance is now ${
-                typeof chargeBody?.creditBalance === "number"
-                  ? money(chargeBody.creditBalance)
-                  : "unknown (Mindbody did not answer the balance read)"
-              }; do NOT re-run the credit step.` +
-              (chargeBody?.ambiguous === true
-                ? ""
-                : flavor === "renewal"
-                  ? " Sell the pack in Cart, on account balance."
-                  : " Sell the pass in Cart, on account balance, then attach " +
-                    "and check in from the row."),
-            mindbody: String(chargeBody?.error ?? "no reason returned"),
-          });
-          return;
-        }
         if (chargeBody?.soldNothing === true) {
           /* T103: Mindbody took the payment and sold nothing. The
              gesture stops: no attach, no check-in, and the wording is
@@ -6689,10 +6668,9 @@ function FrontDesk({
         }
         /* A definite refusal: nothing was charged, nothing else
          * happened, and saying so is what makes a retry safe. A refusal
-         * that names the live balance (a credit line over it, or since
-         * T82 an under-$10 card sale on an account that already holds
-         * credit) refreshes the method gate, T24's freshBalance move, so
-         * the retry runs on credit instead of failing identically. */
+         * that names the live balance (a credit payment over it)
+         * refreshes the method gate, T24's freshBalance move, so the
+         * retry runs on the card instead of failing identically. */
         if (typeof chargeBody?.creditBalance === "number") {
           setPayProfile((prof) =>
             prof ? { ...prof, balance: chargeBody.creditBalance } : prof,
@@ -10666,7 +10644,7 @@ function FrontDesk({
             ) : null}
 
             {/* How it gets paid, derived from T24's rules: credit when it
-                covers the total (this dialog's own preference since T82
+                covers the total (this dialog's own default since T82
                 retired rule 1, see payMethod), otherwise the stored
                 card. A missing method renders its reason rather than
                 disappearing. */}
@@ -10679,6 +10657,20 @@ function FrontDesk({
                   ? `Pays with the stored card ...${payCard.lastFour}.`
                   : payMethodReason}
             </p>
+            {/* T238: when the balance and the card can both pay, the
+                other one is a tap away. The balance is the default, not
+                the rule. */}
+            {payCanSwitchMethod && !payMoneyMoved && payCard ? (
+              <button
+                className="pay-method-switch"
+                disabled={payStage !== null || payApproval.approval !== null}
+                onClick={() => setPayUseCard((cur) => !cur)}
+              >
+                {payMethod === "credit"
+                  ? `Use the card ...${payCard.lastFour} instead`
+                  : "Use the account balance instead"}
+              </button>
+            ) : null}
             {/* T88: with nothing to charge with, "use Buy" was an
                 instruction where an action belongs. The line stays for
                 every other case. */}
@@ -10719,13 +10711,6 @@ function FrontDesk({
                 The charge may or may not have gone through. Check the dev
                 drawer or Mindbody before charging again.
                 {payOutcome.message ? ` (${payOutcome.message})` : ""}
-              </div>
-            ) : payOutcome?.kind === "split" ? (
-              <div className="sale-stop">
-                <p className="pay-split-head">{payOutcome.message}</p>
-                <p className="pay-split-why">
-                  Mindbody said: {payOutcome.mindbody}
-                </p>
               </div>
             ) : payOutcome?.kind === "attach-failed" ? (
               <div className="sale-stop">

@@ -21228,26 +21228,99 @@ policy, never an API limit: `purchaseaccountcredit` and
 
 ### To do
 
-- [ ] A card (stored card, typed card, and any split's card leg) is charged
+- [x] A card (stored card, typed card, and any split's card leg) is charged
       exactly what it pays, however small. Nothing is lifted to $10 and no
       account credit is bought to cover a small card sale.
-- [ ] The two-call under-$10 path (`purchaseaccountcredit` then
+- [x] The two-call under-$10 path (`purchaseaccountcredit` then
       `DebitAccount`) is no longer reached by any card sale. `purchaseCredit`
       stays if anything else uses it, and Phase 4's gift card workaround
       (PLAN T232) may need it again.
-- [ ] **Account credit is still spent first by default** when it covers the
+- [x] **Account credit is still spent first by default** when it covers the
       whole total (so balances the old rule created get used), but it is a
       suggestion, not a rule: the card is offered beside it, not hidden.
       This is the one judgment call in the ticket; flip it if Pete wants
       rule 1 kept strictly.
-- [ ] Every screen line, refusal sentence and comment that names the $10
+- [x] Every screen line, refusal sentence and comment that names the $10
       minimum is removed or rewritten, with no em dashes in copy.
-- [ ] Docs: the design doc's "$10 card minimum" section is marked
+- [x] Docs: the design doc's "$10 card minimum" section is marked
       superseded with this decision (kept as reasoning of record); PLAN.md's
       P4 is answered as moot and P10 as answered (any amount on the reader
       too); CLAUDE.md is updated wherever it relies on the floor.
-- [ ] `tsc --noEmit` and `next build` clean; the fake Mindbody
+- [x] `tsc --noEmit` and `next build` clean; the fake Mindbody
       (`scripts/training/fake-mindbody.mjs`) drives a $3 card sale end to end
       as one checkout with no credit purchase.
 - [ ] Pete: one small card sale on prod against the write-guarded dummy
       client (100042041), read back in Mindbody as a single card sale.
+
+### Done (2026-11-15)
+
+**One card path.** `CARD_MINIMUM_USD` is gone; `cardChargeable` in
+`src/lib/sale.ts` is what is left of it, and it refuses only a card charge
+of nothing (zero, negative or not a number). `/api/checkout` charges a
+stored card the rehearsed total in ONE `checkoutshoppingcart` on
+`StoredCard`, whatever the total; a typed card, a split's card leg (stored
+or typed), each part of a gift card ticket on the card on file and each
+cart of a typed-card T90 ticket likewise. The under-$10 branch is deleted
+with everything that only it needed: the `purchaseCredit` call, the
+"spend the balance instead" refusal (T82's surviving piece of rule 1), and
+the `checkout-after-credit` seam with its `creditPurchased` answer, its
+`credit-purchase` stage and the T203 `recordApproval` call inside it. Every
+remaining path runs exactly as before: the idempotency gate (T113), the
+rehearsal and T75's total assertion, T103's `basketStop`, T203's approval
+through `recordDiscount`, T49's `runAsActor`. A leg of zero or less is
+still refused by `parseSplitLeg`, before any of this.
+
+`purchaseCredit` is KEPT in `src/lib/sale.ts`, unreached and documented as
+such, because PLAN T232's gift card on the reader may want a
+credit-then-spend path (R5b, R5c).
+
+**The judgment call, as built.** The Cart screen has not armed credit on its
+own since T82, and still does not: the card tile is simply no longer greyed
+for a small sale on an account that holds credit (the old "Spend the $X on
+account: a card sale under $10 would buy more credit"). The roster's "Pay
+and check in" dialog is where credit really was the method whenever it
+covered the total, with no way to the card; it still defaults to the
+balance, and now offers a 64px "Use the card ...1234 instead" beside it
+(and "Use the account balance instead" back), whenever a live card is on
+file. The switch is locked while a charge or a customer approval is in
+flight, so the tender the customer approved is the one charged. **Pete
+should confirm** both halves: that the Cart screen should stay unarmed, and
+that the dialog's default stays credit.
+
+**Screens.** The Cart screen's three floor reasons, its done-block line
+about "an account balance purchase (card minimum)" and the seam's stop
+block are gone, in SaleScreen.tsx and in page.tsx's dialog. What replaces
+the per-cart and per-part floors on screen is the same zero check as the
+server, with its own sentence. The training guide's "Card sales under $10"
+line now reads "any amount can go on a card".
+
+**Verified** against `scripts/training/fake-mindbody.mjs` with a local
+Postgres, `next build` and `next start`, driven with Playwright and read
+back from `/api/devlog`: Jordan Kim, Water Bottle (1L), Cart screen, Card,
+Finalize: one live `checkoutshoppingcart` with `StoredCard` $3.31 under
+Maya's token, done block "Paid $3.31 by stored card ...7311", and no
+`purchaseaccountcredit` anywhere in the log. Through the route: a $1.00
+stored card leg plus $2.31 cash, a $0.50 typed card leg plus $2.81 cash and
+a $3.31 typed card whole sale each went out as one checkout with exactly
+those payments; a $0.00 and a -$1.00 card leg were refused 400 "each split
+leg needs a positive amount" with nothing sent. With a copy of the fake
+giving Taylor Brooks $100.00 of credit: the roster dialog opened on "Pays
+with account balance ($100.00)" with "Use the card ...8210 instead" under
+it, and after the tap charged the $25.00 drop-in on `storedcard`; the Cart
+screen offered her Card tile (not greyed) for a $3.31 sale and charged it.
+`tsc --noEmit` and `next build` clean.
+
+**Not anticipated by the ticket.**
+
+- The card processor may have a floor of its own. Stripe's documented
+  minimum charge is $0.50 in USD, and Mindbody's processor may refuse
+  small amounts too; nothing here has seen what Mindbody answers for a
+  $0.25 card charge. A refusal would come back as Mindbody's 4xx and the
+  screen says "not charged" in its words, so it fails safe, but it is
+  worth knowing for T226: the reader's PaymentIntent will meet Stripe's
+  $0.50 minimum directly.
+- Balances the old rule left on accounts are not touched. The roster
+  dialog's default spends them; the Cart screen offers the Account tile
+  with its badge as before.
+- PLAN P2 (partial credit) still reads "let the floor top it back up"; T82
+  already answered it (credit is a split leg), so it was left as it was.

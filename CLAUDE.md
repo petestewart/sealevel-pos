@@ -40,6 +40,17 @@ own reason. Driven live against site 471 on 2026-11-14 (Cart screen, dummy
 client John NewGuy): 414, 478 and 581 greyed with Mindbody's reasons, a tap
 put nothing on the ticket, Drop In still priced.
 
+**T238 (2026-11-15): the $10 card minimum is retired** (Pete: "that is an
+old policy! ... change it so any amount can be charged"). A stored card, a
+typed card, a split's card leg and each cart of a typed-card ticket are
+charged exactly what they pay in ONE `checkoutshoppingcart`; no card sale
+buys account credit, and only a card charge of nothing is refused
+(`cardChargeable` in `src/lib/sale.ts`). The roster's pay dialog still
+defaults to a balance that covers the total, with the card offered beside
+it. `purchaseCredit` is kept, unreached, for Phase 4's gift card (PLAN
+T232). The design doc's "$10 card minimum" section is reasoning of record
+only.
+
 **Next (planned 2026-11-15, not started): Phase 4, the studio's own Stripe
 card reader**, so a student can pay by chip, tap, Apple Pay or Google Pay
 at the counter (teachers report lost sales without it). Work items T222 to
@@ -557,7 +568,7 @@ T75's rehearsal already refuses a total that moved. The browser never
 sends a hash. The approval is spent only AFTER the charge resolved
 (`recordApproval`, built above every write path and called from each:
 `recordDiscount` on the single-cart paths, the gift card and T90
-tickets directly, the sold-nothing answer and the card-credit seam;
+tickets directly, and the sold-nothing answer;
 claimed through T202's `beginFinalisation`), so a refused charge can be
 retried on the same cart and a spent one is refused twice over. The D1 override is
 T48's PIN with its own purpose, spent once, and filed on the client the
