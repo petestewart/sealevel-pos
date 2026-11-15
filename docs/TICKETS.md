@@ -21213,3 +21213,41 @@ items be restricted to only certain types of members as well?"
 - The answer takes seconds, and a tap before it lands gets T100's
   added-then-removed behaviour.
 - The roster's pay dialog has been seen against the fake only.
+
+## T238. Retire the $10 card minimum: a card can be charged any amount (Pete, 2026-11-15)
+
+Pete, told the counter still refuses to run a card for less than $10 and
+buys $10 of account credit instead: "oh we need to change this, that is an
+old policy! ... change it so any amount can be charged."
+
+The floor is the design doc's "The $10 card minimum" section (a studio
+policy, never an API limit: `purchaseaccountcredit` and
+`checkoutshoppingcart` take any amount), enforced through
+`CARD_MINIMUM_USD` in `src/lib/sale.ts` and used across `/api/checkout`,
+`SaleScreen.tsx` and `page.tsx`.
+
+### To do
+
+- [ ] A card (stored card, typed card, and any split's card leg) is charged
+      exactly what it pays, however small. Nothing is lifted to $10 and no
+      account credit is bought to cover a small card sale.
+- [ ] The two-call under-$10 path (`purchaseaccountcredit` then
+      `DebitAccount`) is no longer reached by any card sale. `purchaseCredit`
+      stays if anything else uses it, and Phase 4's gift card workaround
+      (PLAN T232) may need it again.
+- [ ] **Account credit is still spent first by default** when it covers the
+      whole total (so balances the old rule created get used), but it is a
+      suggestion, not a rule: the card is offered beside it, not hidden.
+      This is the one judgment call in the ticket; flip it if Pete wants
+      rule 1 kept strictly.
+- [ ] Every screen line, refusal sentence and comment that names the $10
+      minimum is removed or rewritten, with no em dashes in copy.
+- [ ] Docs: the design doc's "$10 card minimum" section is marked
+      superseded with this decision (kept as reasoning of record); PLAN.md's
+      P4 is answered as moot and P10 as answered (any amount on the reader
+      too); CLAUDE.md is updated wherever it relies on the floor.
+- [ ] `tsc --noEmit` and `next build` clean; the fake Mindbody
+      (`scripts/training/fake-mindbody.mjs`) drives a $3 card sale end to end
+      as one checkout with no credit purchase.
+- [ ] Pete: one small card sale on prod against the write-guarded dummy
+      client (100042041), read back in Mindbody as a single card sale.
