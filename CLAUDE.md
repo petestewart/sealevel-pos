@@ -333,10 +333,15 @@ answer, which took **2 to 5 seconds** live (five parallel Test pricings),
 so a tap in those first seconds gets T100's added-then-removed behaviour.
 
 
-- **Web app, not Swift.** Card-present is 0.4% of counter transactions (25
-  sales in a year), and the studio's reader is a networked WisePOS E rather
+- **Web app, not Swift.** The studio's reader is a networked WisePOS E rather
   than a Bluetooth accessory, so native buys nothing. Full argument in the
-  design doc.
+  design doc. **Card-present is no longer ruled out** (Pete, 2026-11-15):
+  the 0.4% figure (25 swiped sales a year) counted sales that happened, and
+  teachers report students walking away who could only tap, dip or use a
+  phone wallet. The answer is the design doc's option C, the studio's own
+  Stripe smart reader driven server-side from this app (Phase 4 in
+  `docs/PLAN.md`), not a hand-off to the Mindbody app and not a flow on the
+  student's phone, both of which Pete rejected.
 - **Its own repo, its own Railway service.** Separate from ai-manager, which
   is a back-office worker with a different uptime story and different users.
   The two share an API, not a codebase: `src/lib/mindbody.ts` is adapted from

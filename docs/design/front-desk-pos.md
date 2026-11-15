@@ -50,6 +50,16 @@ So: **Swift would buy Bluetooth to a reader that handles 0.4% of transactions**
 and, as it turns out, the studio's reader is not even a Bluetooth device. Build
 the web app.
 
+**The 25 a year no longer decides the card-present question (Pete,
+2026-11-15).** The teachers working the front desk report that sales are
+being lost because a student cannot pay with a physical card or a phone
+wallet at the counter. The count above is of sales that HAPPENED, on a
+counter where the reader lived inside Mindbody's own app; it cannot count a
+student who walked away, and once the counter runs on this app the reader
+is not reachable at all. The web-app conclusion stands (nothing below needs
+native code), but option C, which this section was used to rule out, is now
+the chosen path. See "The card-present problem" and option C.
+
 Narrowing further, of the 2,411 in-studio keyed sales, 355 (15%) were that
 client's first-ever purchase, so roughly one a day is a genuinely new person who
 plausibly has no card on file. The other 2,056 are returning clients who almost
@@ -65,6 +75,16 @@ and the fix is option B below either way. The daily peaks in the data
 counter rushes, so they do not change the picture.
 
 ## The card-present problem (the honest answer)
+
+**Decision (Pete, 2026-11-15): option C. The studio gets its own Stripe
+reader, driven from this app.** Teachers report lost sales to students who
+can only tap, dip or pay with Apple Pay or Google Pay. The two cheaper
+answers were each rejected by name: ringing the sale up in the Mindbody app
+on the existing reader ("this is what we need to avoid"), even as a
+stopgap, and any flow on the student's own phone ("we need it to be as
+frictionless as possible"). What follows is the reasoning that established
+why the EXISTING reader cannot be used, which still holds; option C below
+is how the counter gets a reader it can use.
 
 **Confirmed 2026-08-26 from the payments portal at payments.mindbody.io:** the
 account is on **Mindbody Payments** (Stripe underneath), status Account Live,
@@ -193,6 +213,12 @@ where it belongs:
 - **There is therefore no counter tap.** Nothing lets a teacher press Apple Pay
   on the studio iPad and have a customer's phone respond.
 
+**Not for counter payments (Pete, 2026-11-15).** Option C's reader takes
+Apple Pay and Google Pay as a tap, which is the frictionless version; the
+redirect flow below is no longer a way to take a payment at the counter.
+What remains of it is reasoning about Mindbody's endpoints, kept for the
+record.
+
 Apple Pay is not a fourth entry in the payment chooser. It is structurally the
 same gesture as card capture: **put a link or QR in front of the customer and
 let them finish on their phone.** That makes it part of option B rather than a
@@ -204,7 +230,12 @@ was never chased. That endpoint is the gate for all of the above, and the
 likely cause is the missing `LocationId=98`. Re-probe it before planning this
 work in detail.
 
-### A. Fall back to Mindbody for new-card sales (recommended, v1)
+### A. Fall back to Mindbody for new-card sales (cut, and rejected as a stopgap)
+
+Cut in the phasing below, and on 2026-11-15 Pete rejected it even as the
+interim answer for a student who can only tap or dip: sending a sale back to
+the Mindbody app is the friction this app exists to remove. Kept for the
+record.
 
 The POS builds the cart, then for a student with no card on file it deep-links
 to the Mindbody business app with the client pre-selected, teacher finishes on
@@ -231,20 +262,38 @@ $25-$200 yoga sale with a known member, that is a fair trade. It also requires
 Payments API access on the account, which is the single thing to confirm before
 committing to this path.
 
-### C. Our own Stripe Terminal reader (ruled out by the data, not by the tech)
+### C. Our own Stripe Terminal reader (chosen, 2026-11-15)
 
-Buy a second WisePOS E on the studio's own Stripe account, drive it from our web
-app server-side (`/v1/terminal/readers/:id/process_payment_intent`), then post
-the Mindbody sale with a `Custom` payment so the pass and check-in still land in
-Mindbody while the money lands in Stripe. Technically clean, and now clearly
-buildable as a web app, since the reader we would buy is the same networked
-model already sitting on the desk.
+Buy a second Stripe smart reader (S700 or WisePOS E) on a Stripe account the
+studio owns, drive it from our server with Stripe Terminal's server-driven
+integration (`/v1/terminal/readers/:id/process_payment_intent`), then post the
+Mindbody sale with a `Custom` payment so the pass and check-in still land in
+Mindbody while the money lands in Stripe. Stripe recommends exactly this
+integration for a web point of sale, and a smart reader takes chip, tap, Apple
+Pay and Google Pay. No native code, and no SDK in the browser.
 
-It is still not worth it. It would serve about 25 transactions a year and $1,377
-of revenue, and the cost is two deposit streams, a nightly Stripe-to-Mindbody
-reconciliation job, a second reader on the counter, and a payment type the
-bookkeeping has to learn to read. Keep the payment layer behind one interface so
-this stays possible. Do not build it.
+**Why it is now worth it.** This section used to end "do not build it", on the
+25 swiped sales a year above. The teachers say sales are being lost, and that
+count could not see them (see "What the data says"). Pete chose it over A and
+over a phone flow because it is the only answer that is one tap for the
+student.
+
+**What it costs, which has not changed:** two deposit streams (Stripe for
+reader sales, Mindbody Payments for everything else), a daily Stripe-to-Mindbody
+reconciliation, a second reader on the counter, a Mindbody custom payment type
+the bookkeeping has to learn to read, and refunds that happen in Stripe, since
+a return in Mindbody cannot refund a card it never charged.
+
+**The money is ordered so that Mindbody's refusal moves nothing.** Price and
+`Test: true`-rehearse the cart as every other tender does; have the reader
+collect a PaymentIntent with `capture_method: manual`, so the student's tap
+places a hold and takes nothing; run the real `checkoutshoppingcart` with the
+custom payment; capture only if that sale stands (T75's total and T103's
+basket assertions included); cancel the hold if it does not. The execution
+plan, with every failure window between those steps, is in `docs/PLAN.md`.
+
+The payment layer was kept behind one interface so this stayed possible; this
+is what it was kept for.
 
 ## Shape of the thing
 
@@ -919,14 +968,22 @@ one piece of work, because all three are structurally the same gesture: put
 something in front of the student on their own device, off the critical path,
 while the teacher serves the next person.
 
+*(2026-11-15: the "pay now with Apple Pay" outcome is dropped for counter
+payments. Pete wants the counter frictionless, and Phase 4's reader takes
+Apple Pay as a tap. Storing a card and the waiver are unaffected.)*
+
 Prerequisite: re-probe `/sale/alternativepaymentmethods` with `LocationId=98`,
 and establish that a per-client hosted card page actually exists and is
 reachable. Both are unproven, and Phase 3 cannot be scoped honestly until they
 are.
 
-**Phase 4 — only if needed (option C).** Stripe Terminal behind the existing
-payment interface, plus the nightly Stripe-to-Mindbody reconciliation job.
-Ruled out by the data. Keep the seam, do not build it.
+**Phase 4 — the studio's own card reader (option C), now planned
+(2026-11-15).** Stripe Terminal behind the existing payment interface, plus the
+daily Stripe-to-Mindbody reconciliation. Once ruled out by the data; brought
+forward because teachers report lost sales to students who can only tap, dip
+or use a phone wallet. It does not wait on Phase 3, and the Apple Pay half of
+Phase 3 is dropped for counter payments: the reader takes Apple Pay as a tap.
+See option C and `docs/PLAN.md`.
 
 ## Open questions to settle first
 
