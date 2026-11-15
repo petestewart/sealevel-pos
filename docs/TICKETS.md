@@ -21623,3 +21623,71 @@ typed fold to the same word, by design); the tender stays locked in the
 busy, offline and refused stages until Cancel; a checkout served by an
 older instance mid-deploy would refuse a tender-bound approval (one
 instance on Railway).
+
+## T241. The student chooses how to pay on the customer iPad (Pete, 2026-11-15)
+
+Pete, after T240 put the payment method on the customer iPad: "would be
+better to surface a choice to the customer for the payment method if they
+want to switch it"; on showing the balance beside the account option:
+"yes"; on cash, a different card and a gift card: "why wouldnt they be
+able to choose this themselves". And: "customer approves each sale" is
+NOT on at the studio, because no customer iPad has been rolled out yet,
+so the choice must not depend on that setting.
+
+### The rule
+
+The student CHOOSES; the teacher's iPad still does every part of the
+payment that needs a person or a device, and still makes every write.
+The display keeps adding zero write paths to Mindbody (CLAUDE.md,
+Customer display): the choice is a word from a fixed list, sent to our
+server, delivered to the teacher's iPad, and acted on there.
+
+### To do
+
+- [ ] **On the customer iPad**, every scene that shows a ticket with a
+      single-method tender (the live mirror, and the approval when that
+      setting is on) has a 64px "Change" control under "Paying by ...". It
+      opens the ways to pay that the TEACHER'S iPAD offered for this ticket
+      and client, in this order, each a 64px choice:
+      - "Account balance ($100.00 available)" only when the balance covers
+        the whole total (Pete: show the balance);
+      - "Card on file" only when the client has a usable stored card (no
+        digits: T201's rule);
+      - "Cash";
+      - "Gift card";
+      - "A different card".
+      A split tender shows no Change control. The house client gets no
+      account or card-on-file choice.
+- [ ] **The offer is the teacher's, the pick is checked against it.** The
+      teacher's iPad sends the list of options it can accept with the
+      ticket it presents; the server keeps it on the request and refuses
+      a pick that is not on that list. Nothing the display sends can name
+      an amount, a card, or anything but one of those words.
+- [ ] **On the teacher's iPad, a pick arrives as one sentence and a moved
+      tender**, e.g. "Taylor chose Cash", on both charge screens through
+      ONE shared piece (T209's rule):
+      - Account balance / Card on file: the tender becomes that one line for
+        the whole total, ready for Finalize.
+      - Cash: the tender becomes cash and the cash keypad opens for the
+        amount handed over.
+      - Gift card: the gift card entry opens, ready for the scanner.
+      - A different card: the typed card entry opens (until Phase 4's
+        reader, whose "tap your card" becomes the same choice).
+      The roster's "Pay and check in" dialog offers only Account balance
+      and Card on file (it already sends cash to the Cart screen).
+- [ ] **A pick never charges and never lands mid-charge.** While a charge
+      is in flight or a sale has resolved, a pick is refused with nothing
+      changed. Under an outstanding approval, a pick ends that approval and
+      presents again with the new tender, since T240 binds the tender to
+      the approval; the student then taps Approve on the new one.
+- [ ] **A pick counts as the tender being chosen** (T239's automatic line
+      never moves it back), and a teacher can still change it afterwards
+      exactly as today.
+- [ ] Works with "customer approves each sale" OFF (the live mirror) and ON
+      (the approval).
+- [ ] CLAUDE.md's Customer display section and docs/design/customer-display.md
+      updated; `tsc --noEmit` and `next build` clean; driven in Chromium
+      against the fake with a paired display, with the setting off and on:
+      each of the five picks moves the teacher's screen as written, a pick
+      not offered is refused by the server, and a pick during a charge is
+      refused with nothing changed.
